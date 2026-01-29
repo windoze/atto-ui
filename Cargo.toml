@@ -9,3 +9,9 @@ crossterm = "0.28"
 ratatui = "0.30"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+
+[dev-dependencies]
+chatty-test-host = { path = "crates/chatty-test-host" }
+
+[workspace]
+members = ["crates/chatty-test-host"]
