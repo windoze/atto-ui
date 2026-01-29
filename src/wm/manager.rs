@@ -1,0 +1,814 @@
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Borders};
+use ratatui::Frame;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+use crate::theme::Theme;
+use crate::view::{ViewAction, ViewContext};
+
+use super::{Window, WindowId, WindowKind, WindowState};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowManagerInputMode {
+    Normal,
+    WindowManagement,
+}
+
+#[derive(Debug, Default)]
+pub struct WindowManagerAction {
+    pub consumed: bool,
+    pub close: Option<WindowId>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DragState {
+    window_id: WindowId,
+    offset_x: u16,
+    offset_y: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HitRegion {
+    TitleBar,
+    MinimizeButton,
+    MaximizeButton,
+    CloseButton,
+    Body,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HitTest {
+    window_id: WindowId,
+    region: HitRegion,
+}
+
+#[derive(Default)]
+pub struct WindowManager {
+    next_id: u64,
+    windows: Vec<Window>,
+    focused: Option<WindowId>,
+    drag: Option<DragState>,
+}
+
+impl WindowManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn windows(&self) -> &[Window] {
+        &self.windows
+    }
+
+    pub fn windows_mut(&mut self) -> &mut [Window] {
+        &mut self.windows
+    }
+
+    pub fn focused(&self) -> Option<WindowId> {
+        self.active_modal_id().or(self.focused)
+    }
+
+    pub fn add_window(&mut self, mut window: Window, bounds: Rect) -> WindowId {
+        self.next_id += 1;
+        let id = WindowId(self.next_id);
+        window.id = id;
+        window.rect = normalize_rect(window.rect, bounds, window.min_size);
+
+        if window.kind == WindowKind::Modal {
+            // Ensure modals are always on top and focused.
+            self.focused = Some(id);
+        } else if window.kind.is_focusable() {
+            self.focused = Some(id);
+        }
+
+        self.windows.push(window);
+        self.bring_to_front(id);
+        id
+    }
+
+    pub fn close(&mut self, id: WindowId) {
+        self.drag = match self.drag {
+            Some(d) if d.window_id == id => None,
+            other => other,
+        };
+        let was_focused = self.focused == Some(id);
+        self.windows.retain(|w| w.id != id);
+        if was_focused {
+            self.focused = self.topmost_focusable_id();
+        }
+    }
+
+    pub fn bring_to_front(&mut self, id: WindowId) {
+        let Some(pos) = self.windows.iter().position(|w| w.id == id) else {
+            return;
+        };
+        let w = self.windows.remove(pos);
+        self.windows.push(w);
+    }
+
+    pub fn focus(&mut self, id: WindowId) {
+        if self.active_modal_id().is_some() {
+            return;
+        }
+        if !self.windows.iter().any(|w| w.id == id && w.kind.is_focusable()) {
+            return;
+        }
+        self.focused = Some(id);
+        self.bring_to_front(id);
+    }
+
+    pub fn focus_next(&mut self) {
+        if self.active_modal_id().is_some() {
+            return;
+        }
+        let ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| w.kind.is_focusable() && w.state != WindowState::Minimized)
+            .map(|w| w.id)
+            .collect();
+        if ids.is_empty() {
+            self.focused = None;
+            return;
+        }
+        let current = self.focused;
+        let next = match current.and_then(|c| ids.iter().position(|id| *id == c)) {
+            Some(idx) => ids[(idx + 1) % ids.len()],
+            None => ids[0],
+        };
+        self.focused = Some(next);
+        self.bring_to_front(next);
+    }
+
+    pub fn move_focused(&mut self, dx: i16, dy: i16, bounds: Rect) {
+        let Some(id) = self.focused() else { return };
+        self.move_window(id, dx, dy, bounds);
+    }
+
+    pub fn resize_focused(&mut self, dw: i16, dh: i16, bounds: Rect) {
+        let Some(id) = self.focused() else { return };
+        self.resize_window(id, dw, dh, bounds);
+    }
+
+    pub fn toggle_maximize_focused(&mut self, bounds: Rect) {
+        let Some(id) = self.focused() else { return };
+        self.toggle_maximize(id, bounds);
+    }
+
+    pub fn minimize_focused(&mut self) {
+        let Some(id) = self.focused() else { return };
+        if let Some(w) = self.window_mut(id) {
+            w.state = WindowState::Minimized;
+        }
+        self.focused = self.topmost_focusable_id();
+    }
+
+    pub fn restore_focused(&mut self) {
+        let Some(id) = self.focused() else { return };
+        if let Some(w) = self.window_mut(id) {
+            if w.state == WindowState::Minimized {
+                w.state = WindowState::Normal;
+            }
+        }
+    }
+
+    pub fn handle_event(
+        &mut self,
+        event: &Event,
+        bounds: Rect,
+        mode: WindowManagerInputMode,
+    ) -> WindowManagerAction {
+        match event {
+            Event::Mouse(m) => self.handle_mouse(m, bounds),
+            Event::Key(k) => self.handle_key(*k, bounds, mode),
+            _ => WindowManagerAction::default(),
+        }
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame<'_>, bounds: Rect, theme: &Theme) {
+        let focused = self.focused();
+        let modal = self.active_modal_id();
+        if modal.is_some() {
+            // Dim the desktop behind the modal.
+            fill_rect(frame.buffer_mut(), bounds, theme.desktop_dim, ' ');
+        }
+
+        for window in self.windows.iter_mut() {
+            if window.state == WindowState::Minimized {
+                continue;
+            }
+
+            let rect = match window.state {
+                WindowState::Maximized => bounds,
+                _ => normalize_rect(window.rect, bounds, window.min_size),
+            };
+            window.rect = rect;
+
+            if modal.is_some() && Some(window.id) != modal {
+                // Block non-modal windows visually by dimming their chrome.
+            }
+
+            if window.decorations.shadow {
+                draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);
+            }
+
+            let is_focused = focused == Some(window.id);
+            let border_style = if is_focused {
+                theme.window_border_focused
+            } else {
+                theme.window_border
+            };
+            let title_style = if is_focused {
+                theme.window_title_focused
+            } else {
+                theme.window_title
+            };
+
+            if window.decorations.border {
+                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                frame.render_widget(block, rect);
+                draw_titlebar(
+                    frame.buffer_mut(),
+                    rect,
+                    &window.title,
+                    title_style,
+                    &window.decorations,
+                );
+            }
+
+            let inner = window.inner_rect();
+            let ctx = ViewContext {
+                theme,
+                window_id: window.id,
+                is_focused,
+            };
+            window.view.draw(frame, inner, ctx);
+        }
+    }
+
+    pub fn dispatch_to_focused_view(
+        &mut self,
+        event: &Event,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> Option<(WindowId, ViewAction)> {
+        let id = self.focused()?;
+        let idx = self.windows.iter().position(|w| w.id == id)?;
+        let is_focused = true;
+        let ctx = ViewContext {
+            theme,
+            window_id: id,
+            is_focused,
+        };
+        let action = {
+            let w = &mut self.windows[idx];
+            if w.state == WindowState::Minimized {
+                return None;
+            }
+            // Ensure rect stays clamped before passing input.
+            w.rect = match w.state {
+                WindowState::Maximized => bounds,
+                _ => normalize_rect(w.rect, bounds, w.min_size),
+            };
+            w.view.handle_event(event, ctx)
+        };
+        Some((id, action))
+    }
+
+    pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
+        self.windows.iter_mut().find(|w| w.id == id)
+    }
+
+    fn topmost_focusable_id(&self) -> Option<WindowId> {
+        self.windows
+            .iter()
+            .rev()
+            .find(|w| w.kind.is_focusable() && w.state != WindowState::Minimized)
+            .map(|w| w.id)
+    }
+
+    fn active_modal_id(&self) -> Option<WindowId> {
+        self.windows
+            .iter()
+            .rev()
+            .find(|w| w.kind.is_modal() && w.state != WindowState::Minimized)
+            .map(|w| w.id)
+    }
+
+    fn handle_mouse(&mut self, m: &MouseEvent, bounds: Rect) -> WindowManagerAction {
+        use crossterm::event::MouseEventKind;
+
+        let modal = self.active_modal_id();
+
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.drag = None;
+                let Some(hit) = self.hit_test(m.column, m.row, modal) else {
+                    return WindowManagerAction::default();
+                };
+
+                let mut action = WindowManagerAction {
+                    consumed: true,
+                    close: None,
+                };
+
+                let window_id = hit.window_id;
+                if modal.is_none() {
+                    if self
+                        .windows
+                        .iter()
+                        .any(|w| w.id == window_id && w.kind.is_focusable())
+                    {
+                        self.focus(window_id);
+                    }
+                }
+
+                match hit.region {
+                    HitRegion::CloseButton => {
+                        if let Some(w) = self.window_mut(window_id) {
+                            if w.closable && w.decorations.buttons.close {
+                                action.close = Some(window_id);
+                            }
+                        }
+                    }
+                    HitRegion::MaximizeButton => {
+                        let can_maximize = self
+                            .windows
+                            .iter()
+                            .any(|w| w.id == window_id && w.decorations.buttons.maximize);
+                        if can_maximize {
+                            self.toggle_maximize(window_id, bounds);
+                        }
+                    }
+                    HitRegion::MinimizeButton => {
+                        if let Some(w) = self.window_mut(window_id) {
+                            if w.decorations.buttons.minimize {
+                                w.state = WindowState::Minimized;
+                                self.focused = self.topmost_focusable_id();
+                            }
+                        }
+                    }
+                    HitRegion::TitleBar => {
+                        if let Some(w) = self.window_mut(window_id) {
+                            if w.movable && w.state != WindowState::Maximized {
+                                self.drag = Some(DragState {
+                                    window_id,
+                                    offset_x: m.column.saturating_sub(w.rect.x),
+                                    offset_y: m.row.saturating_sub(w.rect.y),
+                                });
+                            }
+                        }
+                    }
+                    HitRegion::Body => {}
+                }
+
+                action
+            }
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                let Some(drag) = self.drag else {
+                    return WindowManagerAction::default();
+                };
+                let Some(w) = self.window_mut(drag.window_id) else {
+                    self.drag = None;
+                    return WindowManagerAction::default();
+                };
+                if !w.movable || w.state == WindowState::Maximized {
+                    return WindowManagerAction::default();
+                }
+                let new_x = m.column.saturating_sub(drag.offset_x);
+                let new_y = m.row.saturating_sub(drag.offset_y);
+                w.rect.x = new_x;
+                w.rect.y = new_y;
+                w.rect = normalize_rect(w.rect, bounds, w.min_size);
+                WindowManagerAction {
+                    consumed: true,
+                    close: None,
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.drag = None;
+                WindowManagerAction::default()
+            }
+            _ => WindowManagerAction::default(),
+        }
+    }
+
+    fn handle_key(
+        &mut self,
+        k: KeyEvent,
+        bounds: Rect,
+        mode: WindowManagerInputMode,
+    ) -> WindowManagerAction {
+        if k.code == KeyCode::F(6) && mode == WindowManagerInputMode::Normal {
+            self.focus_next();
+            return WindowManagerAction {
+                consumed: true,
+                close: None,
+            };
+        }
+
+        if mode != WindowManagerInputMode::WindowManagement {
+            return WindowManagerAction::default();
+        }
+
+        let mut action = WindowManagerAction {
+            consumed: true,
+            close: None,
+        };
+
+        match k.code {
+            KeyCode::Left => {
+                if k.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.resize_focused(-1, 0, bounds);
+                } else {
+                    self.move_focused(-1, 0, bounds);
+                }
+            }
+            KeyCode::Right => {
+                if k.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.resize_focused(1, 0, bounds);
+                } else {
+                    self.move_focused(1, 0, bounds);
+                }
+            }
+            KeyCode::Up => {
+                if k.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.resize_focused(0, -1, bounds);
+                } else {
+                    self.move_focused(0, -1, bounds);
+                }
+            }
+            KeyCode::Down => {
+                if k.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.resize_focused(0, 1, bounds);
+                } else {
+                    self.move_focused(0, 1, bounds);
+                }
+            }
+            KeyCode::Tab => self.focus_next(),
+            KeyCode::Char('c') => {
+                if let Some(id) = self.focused() {
+                    action.close = Some(id);
+                }
+            }
+            KeyCode::Char('m') => self.minimize_focused(),
+            KeyCode::Char('r') => self.restore_focused(),
+            KeyCode::Char('x') => self.toggle_maximize_focused(bounds),
+            _ => action.consumed = false,
+        }
+
+        action
+    }
+
+    fn hit_test(&self, x: u16, y: u16, modal: Option<WindowId>) -> Option<HitTest> {
+        let iter: Box<dyn Iterator<Item = &Window>> = if let Some(modal_id) = modal {
+            Box::new(self.windows.iter().filter(move |w| w.id == modal_id))
+        } else {
+            Box::new(self.windows.iter().rev())
+        };
+
+        for w in iter {
+            if w.state == WindowState::Minimized {
+                continue;
+            }
+            if !contains(w.rect, x, y) {
+                continue;
+            }
+
+            if let Some(titlebar) = w.titlebar_rect() {
+                if y == titlebar.y && x >= titlebar.x && x < titlebar.x + titlebar.width {
+                    if let Some(btn) = hit_test_buttons(w, x, y) {
+                        return Some(HitTest {
+                            window_id: w.id,
+                            region: btn,
+                        });
+                    }
+                    return Some(HitTest {
+                        window_id: w.id,
+                        region: HitRegion::TitleBar,
+                    });
+                }
+            }
+
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::Body,
+            });
+        }
+        None
+    }
+
+    fn move_window(&mut self, id: WindowId, dx: i16, dy: i16, bounds: Rect) {
+        let Some(w) = self.window_mut(id) else { return };
+        if !w.movable || w.state == WindowState::Maximized {
+            return;
+        }
+        w.rect.x = add_signed(w.rect.x, dx);
+        w.rect.y = add_signed(w.rect.y, dy);
+        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+    }
+
+    fn resize_window(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
+        let Some(w) = self.window_mut(id) else { return };
+        if !w.resizable || w.state == WindowState::Maximized {
+            return;
+        }
+        let (min_w, min_h) = w.min_size;
+        let new_w = add_signed(w.rect.width, dw).max(min_w);
+        let new_h = add_signed(w.rect.height, dh).max(min_h);
+        w.rect.width = new_w;
+        w.rect.height = new_h;
+        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+    }
+
+    fn toggle_maximize(&mut self, id: WindowId, bounds: Rect) {
+        let Some(w) = self.window_mut(id) else { return };
+        match w.state {
+            WindowState::Maximized => {
+                w.state = WindowState::Normal;
+                if let Some(r) = w.restore_rect.take() {
+                    w.rect = normalize_rect(r, bounds, w.min_size);
+                }
+            }
+            WindowState::Normal => {
+                w.restore_rect = Some(w.rect);
+                w.state = WindowState::Maximized;
+                w.rect = bounds;
+            }
+            WindowState::Minimized => {}
+        }
+    }
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn add_signed(v: u16, dv: i16) -> u16 {
+    if dv.is_negative() {
+        v.saturating_sub(dv.wrapping_abs() as u16)
+    } else {
+        v.saturating_add(dv as u16)
+    }
+}
+
+fn normalize_rect(mut rect: Rect, bounds: Rect, min_size: (u16, u16)) -> Rect {
+    let min_w = min_size.0.min(bounds.width);
+    let min_h = min_size.1.min(bounds.height);
+
+    rect.width = rect.width.max(min_w).min(bounds.width);
+    rect.height = rect.height.max(min_h).min(bounds.height);
+
+    let max_x = bounds
+        .x
+        .saturating_add(bounds.width.saturating_sub(rect.width));
+    let max_y = bounds
+        .y
+        .saturating_add(bounds.height.saturating_sub(rect.height));
+
+    rect.x = rect.x.clamp(bounds.x, max_x);
+    rect.y = rect.y.clamp(bounds.y, max_y);
+    rect
+}
+
+fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+
+    let shadow_x = rect.x.saturating_add(rect.width);
+    let shadow_y = rect.y.saturating_add(rect.height);
+
+    // Vertical shadow.
+    if shadow_x < bounds.x.saturating_add(bounds.width) {
+        for y in rect.y.saturating_add(1)..rect.y.saturating_add(rect.height) {
+            if y >= bounds.y.saturating_add(bounds.height) {
+                break;
+            }
+            if shadow_x < bounds.x || y < bounds.y {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((shadow_x, y)) {
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+    }
+
+    // Horizontal shadow.
+    if shadow_y < bounds.y.saturating_add(bounds.height) {
+        for x in rect.x.saturating_add(1)..rect.x.saturating_add(rect.width) {
+            if x >= bounds.x.saturating_add(bounds.width) {
+                break;
+            }
+            if x < bounds.x || shadow_y < bounds.y {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((x, shadow_y)) {
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+    }
+}
+
+fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
+    let symbol = ch.to_string();
+    for y in rect.y..rect.y.saturating_add(rect.height) {
+        for x in rect.x..rect.x.saturating_add(rect.width) {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_style(style);
+                cell.set_symbol(&symbol);
+            }
+        }
+    }
+}
+
+fn draw_titlebar(buf: &mut Buffer, rect: Rect, title: &str, style: Style, deco: &super::WindowDecorations) {
+    if rect.width < 3 {
+        return;
+    }
+    let inner_left = rect.x.saturating_add(1);
+    let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
+    let mut cursor = inner_left;
+
+    // Buttons (right side).
+    let mut button_cols = Vec::new();
+    if deco.buttons.minimize {
+        button_cols.push((HitRegion::MinimizeButton, inner_right.saturating_sub(4)));
+    }
+    if deco.buttons.maximize {
+        button_cols.push((HitRegion::MaximizeButton, inner_right.saturating_sub(2)));
+    }
+    if deco.buttons.close {
+        button_cols.push((HitRegion::CloseButton, inner_right));
+    }
+
+    // Title, truncated to not overwrite buttons.
+    let reserved_right = button_cols
+        .iter()
+        .map(|(_, col)| *col)
+        .min()
+        .unwrap_or(inner_right)
+        .saturating_sub(2);
+
+    for g in title.graphemes(true) {
+        if cursor > reserved_right {
+            break;
+        }
+        let Some(cell) = buf.cell_mut((cursor, rect.y)) else {
+            break;
+        };
+        cell.set_style(style);
+        cell.set_symbol(g);
+        cursor = cursor
+            .saturating_add(UnicodeWidthStr::width(g) as u16)
+            .max(cursor + 1);
+    }
+
+    // Draw buttons.
+    for (region, col) in button_cols {
+        if col < inner_left || col > inner_right {
+            continue;
+        }
+        let symbol = match region {
+            HitRegion::MinimizeButton => "−",
+            HitRegion::MaximizeButton => "□",
+            HitRegion::CloseButton => "×",
+            _ => "?",
+        };
+        if let Some(cell) = buf.cell_mut((col, rect.y)) {
+            cell.set_style(style);
+            cell.set_symbol(symbol);
+        }
+    }
+}
+
+fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> {
+    if y != w.rect.y || w.rect.width < 3 {
+        return None;
+    }
+    let inner_right = w.rect.x.saturating_add(w.rect.width).saturating_sub(2);
+    if w.decorations.buttons.close && x == inner_right {
+        return Some(HitRegion::CloseButton);
+    }
+    if w.decorations.buttons.maximize && x == inner_right.saturating_sub(2) {
+        return Some(HitRegion::MaximizeButton);
+    }
+    if w.decorations.buttons.minimize && x == inner_right.saturating_sub(4) {
+        return Some(HitRegion::MinimizeButton);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowManager;
+    use crate::view::{View, ViewContext};
+    use crate::wm::{Window, WindowKind};
+    use crossterm::event::Event;
+    use ratatui::layout::Rect;
+    use ratatui::Frame;
+
+    #[derive(Default)]
+    struct DummyView;
+
+    impl View for DummyView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> crate::view::ViewAction {
+            crate::view::ViewAction::None
+        }
+    }
+
+    #[test]
+    fn focus_cycles_between_windows() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut wm = WindowManager::new();
+        let id1 = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DummyView::default()),
+            ),
+            bounds,
+        );
+        let id2 = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Two",
+                Rect {
+                    x: 3,
+                    y: 3,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DummyView::default()),
+            ),
+            bounds,
+        );
+
+        assert_eq!(wm.focused(), Some(id2));
+        wm.focus_next();
+        assert_eq!(wm.focused(), Some(id1));
+    }
+
+    #[test]
+    fn modal_window_blocks_focus_changes() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut wm = WindowManager::new();
+        let _id1 = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect {
+                    x: 1,
+                    y: 1,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DummyView::default()),
+            ),
+            bounds,
+        );
+        let modal_id = wm.add_window(
+            Window::new(
+                WindowKind::Modal,
+                "Modal",
+                Rect {
+                    x: 10,
+                    y: 8,
+                    width: 30,
+                    height: 8,
+                },
+                Box::new(DummyView::default()),
+            ),
+            bounds,
+        );
+
+        assert_eq!(wm.focused(), Some(modal_id));
+        wm.focus_next();
+        assert_eq!(wm.focused(), Some(modal_id));
+    }
+}
