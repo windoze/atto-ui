@@ -15,6 +15,7 @@ pub struct RadioGroup {
     options: Vec<String>,
     selected: usize,
     focused: bool,
+    area: Option<Rect>,
 }
 
 impl RadioGroup {
@@ -25,6 +26,7 @@ impl RadioGroup {
             options,
             selected: selected.min(options_len.saturating_sub(1)),
             focused: false,
+            area: None,
         }
     }
 
@@ -38,26 +40,53 @@ impl Control for RadioGroup {
         self.focused = focused;
     }
 
+    fn set_area(&mut self, area: Rect) {
+        self.area = Some(area);
+    }
+
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        let Event::Key(KeyEvent { code, .. }) = event else {
-            return (ControlOutcome::Ignored, FormAction::None);
-        };
         if self.options.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
-        match code {
-            KeyCode::Up => {
-                if self.selected == 0 {
-                    self.selected = self.options.len() - 1;
-                } else {
-                    self.selected -= 1;
+        match event {
+            Event::Mouse(m) => {
+                use crossterm::event::MouseButton;
+                use crossterm::event::MouseEventKind;
+
+                if m.kind != MouseEventKind::Down(MouseButton::Left) {
+                    return (ControlOutcome::Ignored, FormAction::None);
                 }
-                (ControlOutcome::Consumed, FormAction::Changed)
+                let Some(area) = self.area else {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                };
+
+                let options_y = area.y.saturating_add(1);
+                if m.row < options_y || m.row >= options_y.saturating_add(self.options.len() as u16)
+                {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                }
+                let idx = m.row.saturating_sub(options_y) as usize;
+                if idx < self.options.len() {
+                    self.selected = idx;
+                    return (ControlOutcome::Consumed, FormAction::Changed);
+                }
+                (ControlOutcome::Ignored, FormAction::None)
             }
-            KeyCode::Down => {
-                self.selected = (self.selected + 1) % self.options.len();
-                (ControlOutcome::Consumed, FormAction::Changed)
-            }
+            Event::Key(KeyEvent { code, .. }) => match code {
+                KeyCode::Up => {
+                    if self.selected == 0 {
+                        self.selected = self.options.len() - 1;
+                    } else {
+                        self.selected -= 1;
+                    }
+                    (ControlOutcome::Consumed, FormAction::Changed)
+                }
+                KeyCode::Down => {
+                    self.selected = (self.selected + 1) % self.options.len();
+                    (ControlOutcome::Consumed, FormAction::Changed)
+                }
+                _ => (ControlOutcome::Ignored, FormAction::None),
+            },
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }

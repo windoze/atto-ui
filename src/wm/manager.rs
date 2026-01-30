@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, BorderType, Borders};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,10 +25,15 @@ pub struct WindowManagerAction {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum DragKind {
+    Move { offset_x: u16, offset_y: u16 },
+    Resize { anchor_x: u16, anchor_y: u16 },
+}
+
+#[derive(Clone, Copy, Debug)]
 struct DragState {
     window_id: WindowId,
-    offset_x: u16,
-    offset_y: u16,
+    kind: DragKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +42,7 @@ enum HitRegion {
     MinimizeButton,
     MaximizeButton,
     CloseButton,
+    ResizeHandle,
     Body,
 }
 
@@ -104,6 +110,21 @@ impl WindowManager {
         self.windows.retain(|w| w.id != id);
         if was_focused {
             self.focused = self.topmost_focusable_id();
+        }
+    }
+
+    pub fn request_close(&mut self, id: WindowId) -> bool {
+        let allow = {
+            let Some(w) = self.window_mut(id) else {
+                return false;
+            };
+            w.allow_close()
+        };
+        if allow {
+            self.close(id);
+            true
+        } else {
+            false
         }
     }
 
@@ -228,21 +249,26 @@ impl WindowManager {
             fill_rect(frame.buffer_mut(), rect, theme.window_bg, ' ');
 
             let is_focused = focused == Some(window.id);
-            let border_style = if is_focused {
+            let border_style = theme.window_bg.patch(if is_focused {
                 theme.window_border_focused
             } else {
                 theme.window_border
-            };
-            let title_style = if is_focused {
+            });
+            let title_style = theme.window_bg.patch(if is_focused {
                 theme.window_title_focused
             } else {
                 theme.window_title
-            };
+            });
 
             if window.decorations.border {
                 let block = Block::default()
                     .borders(Borders::ALL)
-                    .border_style(border_style);
+                    .border_style(border_style)
+                    .border_type(if is_focused {
+                        BorderType::Double
+                    } else {
+                        BorderType::Plain
+                    });
                 frame.render_widget(block, rect);
                 draw_titlebar(
                     frame.buffer_mut(),
@@ -374,8 +400,24 @@ impl WindowManager {
                         {
                             self.drag = Some(DragState {
                                 window_id,
-                                offset_x: m.column.saturating_sub(w.rect.x),
-                                offset_y: m.row.saturating_sub(w.rect.y),
+                                kind: DragKind::Move {
+                                    offset_x: m.column.saturating_sub(w.rect.x),
+                                    offset_y: m.row.saturating_sub(w.rect.y),
+                                },
+                            });
+                        }
+                    }
+                    HitRegion::ResizeHandle => {
+                        if let Some(w) = self.window_mut(window_id)
+                            && w.resizable
+                            && w.state != WindowState::Maximized
+                        {
+                            self.drag = Some(DragState {
+                                window_id,
+                                kind: DragKind::Resize {
+                                    anchor_x: w.rect.x,
+                                    anchor_y: w.rect.y,
+                                },
                             });
                         }
                     }
@@ -392,14 +434,45 @@ impl WindowManager {
                     self.drag = None;
                     return WindowManagerAction::default();
                 };
-                if !w.movable || w.state == WindowState::Maximized {
-                    return WindowManagerAction::default();
+                match drag.kind {
+                    DragKind::Move { offset_x, offset_y } => {
+                        if !w.movable || w.state == WindowState::Maximized {
+                            return WindowManagerAction::default();
+                        }
+                        let new_x = m.column.saturating_sub(offset_x);
+                        let new_y = m.row.saturating_sub(offset_y);
+                        w.rect.x = new_x;
+                        w.rect.y = new_y;
+                        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+                    }
+                    DragKind::Resize { anchor_x, anchor_y } => {
+                        if !w.resizable || w.state == WindowState::Maximized {
+                            return WindowManagerAction::default();
+                        }
+
+                        // Keep the top-left anchored and clamp to the available space to the
+                        // right/bottom of the anchor.
+                        w.rect.x = anchor_x;
+                        w.rect.y = anchor_y;
+
+                        let max_w = bounds
+                            .x
+                            .saturating_add(bounds.width)
+                            .saturating_sub(anchor_x);
+                        let max_h = bounds
+                            .y
+                            .saturating_add(bounds.height)
+                            .saturating_sub(anchor_y);
+                        let min_w = w.min_size.0.min(max_w);
+                        let min_h = w.min_size.1.min(max_h);
+
+                        let desired_w = m.column.saturating_sub(anchor_x).saturating_add(1);
+                        let desired_h = m.row.saturating_sub(anchor_y).saturating_add(1);
+
+                        w.rect.width = desired_w.clamp(min_w, max_w);
+                        w.rect.height = desired_h.clamp(min_h, max_h);
+                    }
                 }
-                let new_x = m.column.saturating_sub(drag.offset_x);
-                let new_y = m.row.saturating_sub(drag.offset_y);
-                w.rect.x = new_x;
-                w.rect.y = new_y;
-                w.rect = normalize_rect(w.rect, bounds, w.min_size);
                 WindowManagerAction {
                     consumed: true,
                     close: None,
@@ -515,6 +588,22 @@ impl WindowManager {
                     window_id: w.id,
                     region: HitRegion::TitleBar,
                 });
+            }
+
+            if w.decorations.border
+                && w.resizable
+                && w.state != WindowState::Maximized
+                && w.rect.width >= 2
+                && w.rect.height >= 2
+            {
+                let br_x = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
+                let br_y = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
+                if x == br_x && y == br_y {
+                    return Some(HitTest {
+                        window_id: w.id,
+                        region: HitRegion::ResizeHandle,
+                    });
+                }
             }
 
             return Some(HitTest {
@@ -754,7 +843,7 @@ mod tests {
     use crate::theme::Theme;
     use crate::view::{View, ViewContext, ViewEventResult};
     use crate::wm::{Window, WindowKind};
-    use crossterm::event::Event;
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Frame;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -856,6 +945,99 @@ mod tests {
         assert_eq!(wm.focused(), Some(modal_id));
         wm.focus_next();
         assert_eq!(wm.focused(), Some(modal_id));
+    }
+
+    #[test]
+    fn mouse_drag_resize_handle_resizes_window() {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Resizable",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DummyView),
+            ),
+            bounds,
+        );
+
+        // Down on bottom-right corner starts resize.
+        wm.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 21,
+                row: 7,
+                modifiers: KeyModifiers::NONE,
+            }),
+            bounds,
+            super::WindowManagerInputMode::Normal,
+        );
+
+        // Drag outwards increases width/height.
+        wm.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 25,
+                row: 9,
+                modifiers: KeyModifiers::NONE,
+            }),
+            bounds,
+            super::WindowManagerInputMode::Normal,
+        );
+
+        let w = wm.window_mut(id).expect("window");
+        assert_eq!(w.rect.width, 24);
+        assert_eq!(w.rect.height, 8);
+    }
+
+    #[test]
+    fn close_hook_can_cancel_close_request() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = Arc::clone(&calls);
+
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Hooked",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DummyView),
+            )
+            .with_close_hook(move |_id| {
+                calls2.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+            bounds,
+        );
+
+        assert!(wm.window_mut(id).is_some());
+        assert!(!wm.request_close(id), "expected close to be cancelled");
+        assert!(wm.window_mut(id).is_some(), "window should remain");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

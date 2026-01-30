@@ -1,9 +1,11 @@
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -23,7 +25,15 @@ use chatty::widgets::{
 use chatty::wm::{Window, WindowKind};
 
 #[derive(Default)]
-struct LogView;
+struct LogView {
+    is_dark: Arc<AtomicBool>,
+}
+
+impl LogView {
+    fn new(is_dark: Arc<AtomicBool>) -> Self {
+        Self { is_dark }
+    }
+}
 
 impl View for LogView {
     fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
@@ -36,8 +46,16 @@ impl View for LogView {
         } else {
             ctx.theme.widget.normal
         };
+        let theme_label = if self.is_dark.load(Ordering::SeqCst) {
+            "Dark"
+        } else {
+            "Light"
+        };
         frame.render_widget(
-            Paragraph::new(Line::styled("Log window (click to focus).", style)),
+            Paragraph::new(vec![
+                Line::styled("Log window (click to focus).", style),
+                Line::styled(format!("Theme: {theme_label}"), style),
+            ]),
             area,
         );
     }
@@ -148,15 +166,25 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
+    let theme_state = Arc::new(AtomicBool::new(true));
     let mut is_dark = true;
     let menu = MenuBar::new(vec![
         MenuSpec::new(
             "File",
-            vec![MenuItem::command("Quit", "app.quit").shortcut("q")],
+            vec![
+                MenuItem::submenu(
+                    "Theme",
+                    vec![
+                        MenuItem::command("Dark", "theme.dark").shortcut("d"),
+                        MenuItem::command("Light", "theme.light").shortcut("l"),
+                    ],
+                ),
+                MenuItem::command("Quit", "app.quit").shortcut("q"),
+            ],
         ),
         MenuSpec::new(
             "Help",
-            vec![MenuItem::command("About", "help.about").shortcut("F1")],
+            vec![MenuItem::command("About", "help.about").shortcut("a")],
         ),
     ]);
     let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -187,13 +215,13 @@ fn main() -> Result<()> {
                 width: 30,
                 height: 10,
             },
-            Box::new(LogView),
+            Box::new(LogView::new(Arc::clone(&theme_state))),
         ),
         screen,
     );
     desktop.wm.focus(widgets_id);
 
-    let res = run(&mut terminal, &mut desktop, &mut is_dark);
+    let res = run(&mut terminal, &mut desktop, &mut is_dark, &theme_state);
 
     disable_raw_mode()?;
     execute!(
@@ -211,6 +239,7 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     desktop: &mut Desktop,
     is_dark: &mut bool,
+    theme_state: &Arc<AtomicBool>,
 ) -> Result<()> {
     loop {
         terminal.draw(|f| desktop.draw(f))?;
@@ -220,8 +249,20 @@ fn run(
         }
         let ev = event::read()?;
 
+        // Deterministic quit key for PTY tests: accept both Ctrl+Q and raw DC1 (0x11). This is
+        // checked before dispatch so focused text inputs can't consume it.
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
+            modifiers,
+            kind: KeyEventKind::Press,
+            ..
+        }) = ev
+            && modifiers.contains(KeyModifiers::CONTROL)
+        {
+            break;
+        }
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Char('\u{11}'),
             kind: KeyEventKind::Press,
             ..
         }) = ev
@@ -229,28 +270,48 @@ fn run(
             break;
         }
 
-        if let Event::Key(KeyEvent {
-            code: KeyCode::F(2),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            *is_dark = !*is_dark;
-            desktop.theme = if *is_dark {
-                Theme::dark()
-            } else {
-                Theme::light()
-            };
-            continue;
-        }
-
         let screen: Rect = terminal.size()?.into();
-        match desktop.handle_event(&ev, screen).action {
+        let result = desktop.handle_event(&ev, screen);
+
+        match result.action {
             chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "app.quit" => break,
             chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "help.about" => {
                 open_about_modal(desktop, screen);
             }
+            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "theme.dark" => {
+                *is_dark = true;
+                theme_state.store(true, Ordering::SeqCst);
+                desktop.theme = Theme::dark();
+            }
+            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "theme.light" => {
+                *is_dark = false;
+                theme_state.store(false, Ordering::SeqCst);
+                desktop.theme = Theme::light();
+            }
             _ => {}
+        }
+
+        // Application-level shortcuts: only run if the event was not handled by the view/window/desktop.
+        if result.outcome == chatty::view::EventOutcome::Ignored
+            && let Event::Key(KeyEvent {
+                code,
+                kind: KeyEventKind::Press,
+                ..
+            }) = ev
+        {
+            match code {
+                KeyCode::Char('q') => break,
+                KeyCode::F(2) => {
+                    *is_dark = !*is_dark;
+                    theme_state.store(*is_dark, Ordering::SeqCst);
+                    desktop.theme = if *is_dark {
+                        Theme::dark()
+                    } else {
+                        Theme::light()
+                    };
+                }
+                _ => {}
+            }
         }
     }
     Ok(())

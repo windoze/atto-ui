@@ -25,7 +25,7 @@ fn pty_menu_dropdown_renders_above_windows() {
 
     // Close menu, then quit app.
     host.send(b"\x1b").expect("esc");
-    host.send_str("q").expect("send quit");
+    host.send_ctrl('q').expect("send quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
@@ -41,7 +41,7 @@ fn pty_bracketed_paste_inserts_unicode() {
     host.wait_for_text("你好👋", Duration::from_secs(2))
         .expect("text visible in textbox");
 
-    host.send_str("q").expect("send quit");
+    host.send_ctrl('q').expect("send quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
@@ -76,7 +76,7 @@ fn pty_window_management_moves_window_title() {
         "expected Widgets title to move right (before {col_before}, after {col_after})\n--- before ---\n{before}\n--- after ---\n{after}"
     );
 
-    host.send_str("q").expect("send quit");
+    host.send_ctrl('q').expect("send quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
@@ -93,7 +93,7 @@ fn pty_mouse_click_changes_focus_status() {
     host.wait_for_text("Focus: 2", Duration::from_secs(2))
         .expect("log focused");
 
-    host.send_str("q").expect("send quit");
+    host.send_ctrl('q').expect("send quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }

@@ -1,4 +1,6 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,6 +10,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
+
+use super::status::Fill;
 
 #[derive(Clone, Debug)]
 pub struct MenuItem {
@@ -132,7 +136,10 @@ impl MenuBar {
                 MenuAction::None
             }
             KeyCode::Right => {
-                if self.open_selected_submenu() {
+                // Turbo Vision-ish behavior:
+                // - At the top-level drop-down, Right switches to the next menu.
+                // - Within submenus, Right opens deeper submenus when available.
+                if self.state.stack.len() > 1 && self.open_selected_submenu() {
                     MenuAction::None
                 } else {
                     self.next_menu();
@@ -157,6 +164,12 @@ impl MenuBar {
                 }
                 MenuAction::None
             }
+            KeyCode::Char(c)
+                if !modifiers.contains(KeyModifiers::CONTROL)
+                    && !modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.handle_shortcut_char(*c)
+            }
             KeyCode::Char(' ') if modifiers.contains(KeyModifiers::CONTROL) => {
                 // Turbo Vision-style: Ctrl+Space toggles menu.
                 self.deactivate();
@@ -164,6 +177,135 @@ impl MenuBar {
             }
             _ => MenuAction::None,
         }
+    }
+
+    pub fn handle_mouse(&mut self, m: &MouseEvent, menu_bar_area: Rect) -> MenuAction {
+        if self.menus.is_empty() {
+            return MenuAction::None;
+        }
+
+        if m.kind != MouseEventKind::Down(MouseButton::Left) {
+            return MenuAction::None;
+        }
+
+        if menu_bar_area.height == 0 || menu_bar_area.width == 0 {
+            return MenuAction::None;
+        }
+
+        if m.row == menu_bar_area.y
+            && m.column >= menu_bar_area.x
+            && m.column < menu_bar_area.x.saturating_add(menu_bar_area.width)
+        {
+            if let Some(menu_idx) = self.hit_test_menu_title(m.column, menu_bar_area) {
+                self.activate_menu(menu_idx);
+                return MenuAction::None;
+            }
+
+            // Clicking the menu bar but not on a title closes an open menu.
+            if self.state.active {
+                self.deactivate();
+                return MenuAction::Closed;
+            }
+            return MenuAction::None;
+        }
+
+        if !self.state.active {
+            return MenuAction::None;
+        }
+
+        enum DropdownHit {
+            InsideDropdown,
+            Item {
+                depth: usize,
+                row: usize,
+                has_submenu: bool,
+                command: Option<String>,
+            },
+        }
+
+        let mut hit: Option<DropdownHit> = None;
+        for (depth, (rect, items)) in self.dropdown_levels(menu_bar_area).into_iter().enumerate() {
+            if !contains(rect, m.column, m.row) {
+                continue;
+            }
+
+            let inner = Rect {
+                x: rect.x.saturating_add(1),
+                y: rect.y.saturating_add(1),
+                width: rect.width.saturating_sub(2),
+                height: rect.height.saturating_sub(2),
+            };
+            if inner.width == 0 || inner.height == 0 {
+                hit = Some(DropdownHit::InsideDropdown);
+                continue;
+            }
+
+            if m.row < inner.y
+                || m.row >= inner.y.saturating_add(inner.height)
+                || m.column < inner.x
+                || m.column >= inner.x.saturating_add(inner.width)
+            {
+                hit = Some(DropdownHit::InsideDropdown);
+                continue;
+            }
+
+            let row = m.row.saturating_sub(inner.y) as usize;
+            if row >= items.len() {
+                hit = Some(DropdownHit::InsideDropdown);
+                continue;
+            }
+
+            let (has_submenu, command) = {
+                let item = &items[row];
+                let has_submenu = !item.submenu.is_empty();
+                let command = if item.enabled {
+                    item.command.clone()
+                } else {
+                    None
+                };
+                (has_submenu, command)
+            };
+
+            hit = Some(DropdownHit::Item {
+                depth,
+                row,
+                has_submenu,
+                command,
+            });
+        }
+
+        match hit {
+            Some(DropdownHit::InsideDropdown) => return MenuAction::None,
+            Some(DropdownHit::Item {
+                depth,
+                row,
+                has_submenu,
+                command,
+            }) => {
+                self.state.stack.truncate(depth.saturating_add(1));
+                if self.state.stack.len() < depth.saturating_add(1) {
+                    self.state.stack.resize(depth.saturating_add(1), 0);
+                }
+                self.state.stack[depth] = row;
+
+                if has_submenu {
+                    self.state.stack.push(0);
+                    return MenuAction::None;
+                }
+
+                if let Some(cmd) = command {
+                    self.deactivate();
+                    return MenuAction::Command(cmd);
+                }
+
+                return MenuAction::None;
+            }
+            None => {}
+        }
+
+        // Click outside closes the open menu.
+        self.deactivate();
+        MenuAction::Closed
     }
 
     pub fn draw(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -194,6 +336,7 @@ impl MenuBar {
         let Some(menu) = self.menus.get(self.state.menu_index) else {
             return;
         };
+        let screen = frame.area();
 
         let menu_x = menu_title_x(&self.menus, menu_bar_area.x, self.state.menu_index);
         let dropdown_y = menu_bar_area.y.saturating_add(1);
@@ -210,10 +353,18 @@ impl MenuBar {
                 width: w,
                 height: h,
             };
+            draw_shadow(frame.buffer_mut(), rect, screen, theme.window_shadow);
             frame.render_widget(Clear, rect);
+            frame.render_widget(
+                Fill {
+                    style: theme.menu_item,
+                    ch: ' ',
+                },
+                rect,
+            );
             let block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme.window_border);
+                .border_style(theme.menu_item.patch(theme.window_border));
             frame.render_widget(block, rect);
 
             let inner = Rect {
@@ -313,6 +464,139 @@ impl MenuBar {
         }
         item.command.clone()
     }
+
+    pub fn activate_menu(&mut self, menu_index: usize) {
+        self.state.active = true;
+        self.state.menu_index = menu_index.min(self.menus.len().saturating_sub(1));
+        self.state.stack = vec![0];
+    }
+
+    pub fn menu_index_for_shortcut(&self, c: char) -> Option<usize> {
+        let target = c.to_ascii_lowercase();
+        self.menus.iter().position(|menu| {
+            menu.title
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(|first| first.to_ascii_lowercase() == target)
+        })
+    }
+
+    fn handle_shortcut_char(&mut self, c: char) -> MenuAction {
+        if self.menus.is_empty() {
+            return MenuAction::None;
+        }
+        if self.state.stack.is_empty() {
+            self.state.stack = vec![0];
+        }
+
+        let target = c.to_ascii_lowercase();
+        let depth = self.state.stack.len().saturating_sub(1);
+
+        let (hit_idx, has_submenu, command) = {
+            let Some(items) = self.selected_items() else {
+                return MenuAction::None;
+            };
+
+            let mut hit: Option<(usize, bool, Option<String>)> = None;
+            for (idx, item) in items.iter().enumerate() {
+                if !item.enabled {
+                    continue;
+                }
+                let Some(sc) = &item.shortcut else {
+                    continue;
+                };
+                if sc.chars().count() != 1 {
+                    continue;
+                }
+                let Some(sc_char) = sc.chars().next() else {
+                    continue;
+                };
+                if sc_char.to_ascii_lowercase() == target {
+                    hit = Some((idx, !item.submenu.is_empty(), item.command.clone()));
+                    break;
+                }
+            }
+
+            let Some((idx, has_submenu, command)) = hit else {
+                return MenuAction::None;
+            };
+            (idx, has_submenu, command)
+        };
+
+        if depth < self.state.stack.len() {
+            self.state.stack[depth] = hit_idx;
+        } else {
+            self.state.stack.push(hit_idx);
+        }
+
+        if has_submenu {
+            self.state.stack.push(0);
+            return MenuAction::None;
+        }
+
+        if let Some(cmd) = command {
+            self.deactivate();
+            return MenuAction::Command(cmd);
+        }
+
+        MenuAction::None
+    }
+
+    fn dropdown_levels(&self, menu_bar_area: Rect) -> Vec<(Rect, &[MenuItem])> {
+        let Some(menu) = self.menus.get(self.state.menu_index) else {
+            return Vec::new();
+        };
+
+        let dropdown_y = menu_bar_area.y.saturating_add(1);
+        let mut origin_x = menu_title_x(&self.menus, menu_bar_area.x, self.state.menu_index);
+        let mut origin_y = dropdown_y;
+        let mut items: &[MenuItem] = &menu.items;
+
+        let mut levels = Vec::new();
+        for (depth, &selected_idx) in self.state.stack.iter().enumerate() {
+            let (w, h) = dropdown_size(items);
+            let rect = Rect {
+                x: origin_x,
+                y: origin_y,
+                width: w,
+                height: h,
+            };
+            levels.push((rect, items));
+
+            let Some(sel_item) = items.get(selected_idx) else {
+                break;
+            };
+            if depth + 1 < self.state.stack.len() {
+                items = &sel_item.submenu;
+                origin_x = rect.x.saturating_add(rect.width);
+                origin_y = rect.y.saturating_add(1 + selected_idx as u16);
+            }
+        }
+        levels
+    }
+
+    fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {
+        let mut cur_x = menu_bar_area.x;
+        for (idx, menu) in self.menus.iter().enumerate() {
+            let label = format!(" {} ", menu.title);
+            let w = UnicodeWidthStr::width(label.as_str()) as u16;
+            let start = cur_x;
+            let end = cur_x.saturating_add(w);
+            if x >= start && x < end {
+                return Some(idx);
+            }
+            cur_x = cur_x.saturating_add(w).saturating_add(1);
+        }
+        None
+    }
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
 }
 
 fn dropdown_size(items: &[MenuItem]) -> (u16, u16) {
@@ -401,5 +685,57 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
         cell.set_symbol(g);
         let w = UnicodeWidthStr::width(g) as u16;
         cx = cx.saturating_add(w.max(1));
+    }
+}
+
+fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+
+    let shadow_x = rect.x.saturating_add(rect.width);
+    let shadow_y = rect.y.saturating_add(rect.height);
+
+    // Vertical shadow.
+    if shadow_x < bounds.x.saturating_add(bounds.width) {
+        for y in rect.y.saturating_add(1)..rect.y.saturating_add(rect.height) {
+            if y >= bounds.y.saturating_add(bounds.height) {
+                break;
+            }
+            if shadow_x < bounds.x || y < bounds.y {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((shadow_x, y)) {
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+    }
+
+    // Horizontal shadow.
+    if shadow_y < bounds.y.saturating_add(bounds.height) {
+        for x in rect.x.saturating_add(1)..rect.x.saturating_add(rect.width) {
+            if x >= bounds.x.saturating_add(bounds.width) {
+                break;
+            }
+            if x < bounds.x || shadow_y < bounds.y {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((x, shadow_y)) {
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+    }
+
+    // Bottom-right corner.
+    if shadow_x < bounds.x.saturating_add(bounds.width)
+        && shadow_y < bounds.y.saturating_add(bounds.height)
+        && shadow_x >= bounds.x
+        && shadow_y >= bounds.y
+        && let Some(cell) = buf.cell_mut((shadow_x, shadow_y))
+    {
+        cell.set_symbol(" ");
+        cell.set_style(style);
     }
 }

@@ -17,6 +17,7 @@ pub struct TextBox {
     buffer: TextBuffer,
     focused: bool,
     scroll: u16,
+    area: Option<Rect>,
 }
 
 impl TextBox {
@@ -26,6 +27,7 @@ impl TextBox {
             buffer: TextBuffer::new(),
             focused: false,
             scroll: 0,
+            area: None,
         }
     }
 
@@ -44,12 +46,49 @@ impl Control for TextBox {
         self.focused = focused;
     }
 
+    fn set_area(&mut self, area: Rect) {
+        self.area = Some(area);
+    }
+
     fn desired_height(&self) -> u16 {
         3
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
         match event {
+            Event::Mouse(m) => {
+                use crossterm::event::MouseButton;
+                use crossterm::event::MouseEventKind;
+
+                if m.kind != MouseEventKind::Down(MouseButton::Left) {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                }
+
+                let Some(area) = self.area else {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                };
+                let inner = Rect {
+                    x: area.x.saturating_add(1),
+                    y: area.y.saturating_add(1),
+                    width: area.width.saturating_sub(2),
+                    height: area.height.saturating_sub(2),
+                };
+                if inner.width == 0 || inner.height == 0 {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                }
+
+                // TextBox is a single-line editor.
+                if m.row != inner.y {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                }
+                if m.column < inner.x || m.column >= inner.x.saturating_add(inner.width) {
+                    return (ControlOutcome::Ignored, FormAction::None);
+                }
+
+                let col = self.scroll.saturating_add(m.column.saturating_sub(inner.x));
+                self.buffer.set_cursor_display_col(col);
+                (ControlOutcome::Consumed, FormAction::None)
+            }
             Event::Paste(s) => {
                 self.buffer.insert_str(s);
                 (ControlOutcome::Consumed, FormAction::Changed)

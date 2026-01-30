@@ -143,12 +143,44 @@ impl Desktop {
     pub fn handle_event(&mut self, event: &Event, screen: Rect) -> DesktopEventResult {
         let layout = Self::layout(screen);
 
+        // Desktop chrome mouse routing (menu bar / status bar) comes first so clicks don't
+        // accidentally fall through to the focused view.
+        if let Event::Mouse(m) = event {
+            if layout.status_bar.height > 0 && m.row == layout.status_bar.y {
+                return DesktopEventResult::consumed();
+            }
+            if layout.menu_bar.height > 0 && m.row == layout.menu_bar.y {
+                match self.menu.handle_mouse(m, layout.menu_bar) {
+                    MenuAction::None => {
+                        if self.menu.is_active() {
+                            self.mode = DesktopMode::Menu;
+                        }
+                        return DesktopEventResult::consumed();
+                    }
+                    MenuAction::Closed => {
+                        self.mode = DesktopMode::Normal;
+                        self.menu.deactivate();
+                        return DesktopEventResult::consumed();
+                    }
+                    MenuAction::Command(cmd) => {
+                        self.mode = DesktopMode::Normal;
+                        self.menu.deactivate();
+                        return DesktopEventResult::menu_command(cmd);
+                    }
+                }
+            }
+        }
+
         // Menu captures all input while active.
         if self.mode == DesktopMode::Menu || self.menu.is_active() {
             if self.mode != DesktopMode::Menu {
                 self.mode = DesktopMode::Menu;
             }
-            let action = match self.menu.handle_event(event) {
+            let action = match event {
+                Event::Mouse(m) => self.menu.handle_mouse(m, layout.menu_bar),
+                _ => self.menu.handle_event(event),
+            };
+            let action = match action {
                 MenuAction::None => DesktopAction::None,
                 MenuAction::Closed => {
                     self.mode = DesktopMode::Normal;
@@ -188,8 +220,10 @@ impl Desktop {
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
             {
                 if res.action == ViewAction::CloseWindow {
-                    self.wm.close(id);
-                    return DesktopEventResult::close_window(id);
+                    if self.wm.request_close(id) {
+                        return DesktopEventResult::close_window(id);
+                    }
+                    return DesktopEventResult::consumed();
                 }
                 if res.is_consumed() {
                     return DesktopEventResult::consumed();
@@ -199,8 +233,10 @@ impl Desktop {
 
         let wm_action = self.wm.handle_event(event, layout.work_area, input_mode);
         if let Some(id) = wm_action.close {
-            self.wm.close(id);
-            return DesktopEventResult::close_window(id);
+            if self.wm.request_close(id) {
+                return DesktopEventResult::close_window(id);
+            }
+            return DesktopEventResult::consumed();
         }
         if wm_action.consumed {
             return DesktopEventResult::consumed();
@@ -215,8 +251,10 @@ impl Desktop {
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
         {
             if res.action == ViewAction::CloseWindow {
-                self.wm.close(id);
-                return DesktopEventResult::close_window(id);
+                if self.wm.request_close(id) {
+                    return DesktopEventResult::close_window(id);
+                }
+                return DesktopEventResult::consumed();
             }
             if res.is_consumed() {
                 return DesktopEventResult::consumed();
@@ -240,6 +278,15 @@ impl Desktop {
             if *code == KeyCode::F(10) {
                 self.mode = DesktopMode::Menu;
                 self.menu.activate();
+                return DesktopEventResult::consumed();
+            }
+
+            if modifiers.contains(KeyModifiers::ALT)
+                && let KeyCode::Char(c) = *code
+                && let Some(menu_idx) = self.menu.menu_index_for_shortcut(c)
+            {
+                self.mode = DesktopMode::Menu;
+                self.menu.activate_menu(menu_idx);
                 return DesktopEventResult::consumed();
             }
 

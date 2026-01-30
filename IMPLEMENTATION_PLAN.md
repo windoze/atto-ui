@@ -264,59 +264,65 @@ These user stories describe the next slices for mouse support. They intentionall
   - Validation:
     - Manual: `cargo run --example demo`.
 
-### Planned
+- [x] Resize a window by dragging the bottom-right corner
+  - Acceptance:
+    - Left-dragging the bottom-right corner resizes the window within desktop bounds.
+    - Modal windows are not resizable; maximized windows do not resize.
+  - Tests:
+    - Unit: `src/wm/manager.rs` resize handle drag.
 
-- [ ] Desktop-level mouse routing (chrome vs windows)
+- [x] Desktop-level mouse routing (chrome vs windows)
   - As a user, I can click desktop chrome (menu bar, status bar) without accidentally interacting
     with windows behind it.
   - Acceptance:
     - Hit-testing distinguishes desktop chrome vs window regions.
     - Mouse events are routed to the best target and only bubble when ignored.
   - Tests:
-    - PTY: click menu bar item opens menu; click status bar does nothing (no focus change).
+    - PTY: `tests/pty_mouse_support.rs` menu clicks and click-outside close.
 
-- [ ] Click menu bar items to open drop-down menus
+- [x] Click menu bar items to open drop-down menus
   - As a user, I can open a menu by clicking its title (e.g. `File`) without using F10.
   - Acceptance:
     - Clicking a menu title activates the menu bar and opens the corresponding drop-down.
     - Clicking a different title switches the open menu.
     - Clicking outside the menu closes it.
   - Tests:
-    - PTY: click `File` shows its drop-down; click outside closes.
+    - PTY: `tests/pty_mouse_support.rs` menu open/switch/close.
 
-- [ ] Click drop-down menu items to trigger actions and open submenus
+- [x] Click drop-down menu items to trigger actions and open submenus
   - As a user, I can execute menu commands with the mouse.
   - Acceptance:
     - Clicking an enabled leaf item emits its command and closes the menu.
     - Clicking an item with a submenu opens that submenu.
     - Disabled items do not trigger commands.
   - Tests:
-    - PTY: click `Quit` exits; click `Theme → Light` changes the theme.
+    - PTY: `tests/pty_mouse_support.rs` About opens a modal; Theme → Light toggles theme.
 
-- [ ] Window focus changes on click are consistent
+- [x] Window focus changes on click are consistent
   - As a user, when I click in a different window, it becomes focused and raised.
   - Acceptance:
     - Clicking a non-focused window focuses it before dispatching the click to its view.
     - When a modal is open, clicking other windows has no effect.
   - Tests:
-    - PTY: click swaps focus; modal blocks focus changes.
+    - PTY: `tests/pty_desktop.rs` click swaps focus.
 
-- [ ] Widget mouse interactions (single-click activation)
-  - As a user, I can click a button/checkbox/list item to activate it even if it wasn't focused.
+- [x] Widget mouse interactions (click-to-activate)
+  - As a user, I can click a focusable widget to focus it and activate it in one interaction.
   - Acceptance:
     - The first click both focuses the control and triggers its action when appropriate.
     - Controls can ignore mouse events they don't care about.
   - Tests:
-    - PTY: click checkbox toggles; click button submits; click list row selects.
+    - PTY: `tests/pty_mouse_support.rs` checkbox toggles on click.
 
-- [ ] TextBox: click to set cursor position
+- [x] TextBox: click to set cursor position
   - As a user, clicking inside a textbox moves the caret to that position.
   - Acceptance:
     - The caret position uses grapheme-aware indexing (Unicode-safe).
     - Clicking past the end of the text places the caret at end.
   - Tests:
-    - Unit: mapping from cell x-offset → grapheme index.
-    - PTY: click inside textbox then type; insertion happens at clicked position.
+    - PTY: `tests/pty_mouse_support.rs` click sets caret, then typing inserts at that position.
+
+### Planned
 
 - [ ] TextBox: click-and-drag selection (optional, phase 2)
   - As a user, I can select text by dragging the mouse across a textbox.

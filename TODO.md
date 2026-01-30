@@ -17,67 +17,45 @@
 
 ## Missing Features and Improvements
 
-- [ ] Focused window should have double-line border
-- [ ] Window should be resizable by mouse dragging the bottom right corner
-- [ ] Window closing hooks, the user should be able to register a callback that is called when the user tries to close the window, e.g., to pop up a "Are you sure?" dialog.
-- [ ] Dropdown menus should also have drop shadows
-- [ ] Menu item in the menu bar should also have an optional keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
-- [ ] Menu items in drop down menus should have an optional keyboard shortcuts, e.g., when the "File" menu is open, pressing "N" should trigger the "New File" action.
+- [x] Focused window should have double-line border
+- [x] Window should be resizable by mouse dragging the bottom right corner
+- [x] Window closing hooks, the user should be able to register a callback that is called when the user tries to close the window, e.g., to pop up a "Are you sure?" dialog.
+- [x] Dropdown menus should also have drop shadows
+- [x] Menu item in the menu bar should also have an optional keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
+- [x] Menu items in drop down menus should have an optional keyboard shortcuts, e.g., when the "File" menu is open, pressing "N" should trigger the "New File" action.
 
 ## Mouse Support
 
-Mouse support is a relatively big feature and needs a clear split between:
-1) raw terminal mouse input, 2) routing/hit-testing, and 3) higher-level gestures.
+Mouse support is implemented in layered slices so routing stays deterministic and testable.
 
-### 1) Raw terminal input (Crossterm-level)
+### Coordinate system
 
-- Use Crossterm's mouse events (`MouseEvent { kind, column, row, modifiers }`) as the raw input.
-- Coordinates should be defined as **screen-cell positions** (0-based, like Crossterm), and interpreted relative to the current `Rect` for hit-testing.
-- Treat the event stream as **best-effort**:
-  - Some terminals do not report all mouse kinds (e.g. motion events) unless tracking is enabled.
-  - Some terminals/platforms do not reliably report all modifier combinations for all mouse kinds.
+- Use Crossterm mouse events (`MouseEvent { kind, column, row, modifiers }`) as the raw input.
+- Treat `(column, row)` as **absolute screen-cell coordinates** in the same space as `Rect { x, y }`.
+- Hit-testing compares absolute coordinates against the last-drawn `Rect`s for desktop chrome,
+  windows, and widgets.
 
-### 2) Hit-testing + routing (Chatty-level)
+### Routing (desktop → window manager → focused view)
 
-- Add a central router that maps `(x, y)` to a target:
-  - Desktop chrome (menu bar, status bar)
-  - Window chrome (borders/titlebar/buttons/resize handle)
-  - Window body (the `View` inside the window's inner rect)
-- Routing should follow the same layered rules as keyboard input:
-  - If a modal is active, it is an **event sink** (events do not bubble to global shortcuts).
-  - Otherwise, route to the best target and bubble only if the target ignores the event.
-- Mouse events often need **pre-routing focus policy**:
-  - On mouse-down, the window manager may need to hit-test and change focus/z-order first.
-  - After focus is updated, the event can be dispatched to the now-focused view/control.
+- Desktop chrome gets first refusal for mouse-down:
+  - menu bar: clicks activate/switch menus
+  - status bar: clicks are consumed (no focus changes)
+- While a menu is active, it acts as an **event sink**:
+  - clicking outside closes the menu
+  - clicks do not fall through to underlying windows/views
+- The window manager then hit-tests window chrome:
+  - title bar drag moves windows
+  - bottom-right corner drag resizes windows
+  - buttons (min/max/close) consume the click
+  - body clicks focus/raise a window first, then dispatch to the focused view
 
-### 3) Derived gestures (optional layer on top of raw events)
+### Optional gesture layer (phase 2)
 
-Raw terminals events are usually just `Down/Up/Drag/Moved/Scroll*`. Concepts like "click",
-"double-click", "hover enter/leave", or "drop" should be treated as **derived gestures**:
+- Keep derived gestures (double-click, hover enter/leave, drag selection, wheel scrolling) separate
+  from raw terminal mouse events so timing-sensitive behavior can be disabled in tests.
 
-- Implement a small gesture recognizer that consumes raw events and emits higher-level events:
-  - `Click` (Down+Up on same target)
-  - `DoubleClick` (two clicks within a configurable timeout)
-  - `DragStart/DragMove/DragEnd` (with optional threshold)
-  - `HoverChanged { entered/exited }` (only if motion events are available/enabled)
-- Keep this layer separate so it can be disabled or made deterministic for tests.
+### Testing
 
-### 4) Focus policy
-
-- Mouse clicks should be able to trigger focus changes.
-- Clicking a focusable control should support "click-to-activate" in one interaction:
-  - focus changes first, then the same click can trigger the control action (no second click).
-- Focus gained/lost notifications should not require mouse coordinates; instead include an optional
-  **cause** (mouse / keyboard / programmatic) and keep pointer state separately.
-
-### 5) Pointer/hover state
-
-- Avoid "views query the global mouse position" as a primary API.
-- Prefer passing pointer state through context (or explicit enter/leave events) so hover effects are
-  derived from routing, not from ad-hoc global queries.
-
-### 6) Testing expectations
-
-- Prefer PTY tests that use deterministic scripts:
-  - Click and drag using SGR mouse encoding
-  - Avoid depending on motion/hover/double-click unless explicitly enabled and deterministic
+- Prefer PTY tests with deterministic input scripts:
+  - fixed terminal sizes
+  - SGR mouse sequences for click and drag

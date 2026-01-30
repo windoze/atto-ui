@@ -49,7 +49,7 @@ fn pty_modal_blocks_desktop_shortcuts() {
         .expect("menu works after modal closed");
 
     host.send(b"\x1b").expect("esc (close menu)");
-    host.send_str("q").expect("quit");
+    host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }

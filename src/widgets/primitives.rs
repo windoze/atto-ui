@@ -1,4 +1,6 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
@@ -24,6 +26,8 @@ pub trait Control: Send {
 
     fn set_focused(&mut self, _focused: bool) {}
 
+    fn set_area(&mut self, _area: Rect) {}
+
     fn handle_event(&mut self, _event: &Event) -> (ControlOutcome, FormAction) {
         (ControlOutcome::Ignored, FormAction::None)
     }
@@ -38,6 +42,7 @@ pub trait Control: Send {
 pub struct Form {
     controls: Vec<Box<dyn Control>>,
     focused: Option<usize>,
+    layout: Vec<Option<Rect>>,
 }
 
 impl Form {
@@ -46,10 +51,19 @@ impl Form {
             .iter()
             .position(|c| c.is_focusable())
             .or(if controls.is_empty() { None } else { Some(0) });
-        Self { controls, focused }
+        let layout = vec![None; controls.len()];
+        Self {
+            controls,
+            focused,
+            layout,
+        }
     }
 
     pub fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if let Event::Mouse(m) = event {
+            return self.handle_mouse_event(m, event);
+        }
+
         if let Event::Key(KeyEvent {
             code: KeyCode::Tab,
             modifiers,
@@ -74,6 +88,9 @@ impl Form {
     }
 
     pub fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        self.layout.clear();
+        self.layout.resize(self.controls.len(), None);
+
         let mut y = area.y;
         for (idx, control) in self.controls.iter_mut().enumerate() {
             let h = control.desired_height().min(area.y + area.height - y);
@@ -83,6 +100,8 @@ impl Form {
                 width: area.width,
                 height: h,
             };
+            self.layout[idx] = Some(r);
+            control.set_area(r);
             control.set_focused(self.focused == Some(idx));
             control.draw(frame, r, theme);
             y = y.saturating_add(h);
@@ -120,5 +139,57 @@ impl Form {
                 return;
             }
         }
+    }
+
+    fn handle_mouse_event(
+        &mut self,
+        m: &MouseEvent,
+        event: &Event,
+    ) -> (ControlOutcome, FormAction) {
+        if m.kind != MouseEventKind::Down(MouseButton::Left) {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
+
+        let Some(idx) = self.hit_test(m.column, m.row) else {
+            return (ControlOutcome::Ignored, FormAction::None);
+        };
+
+        let focus_changed = self
+            .controls
+            .get(idx)
+            .is_some_and(|c| c.is_focusable() && self.focused != Some(idx));
+        if focus_changed {
+            self.focused = Some(idx);
+        }
+
+        let Some(control) = self.controls.get_mut(idx) else {
+            return (ControlOutcome::Ignored, FormAction::None);
+        };
+        let (outcome, action) = control.handle_event(event);
+
+        let consumed = focus_changed || outcome == ControlOutcome::Consumed;
+        let final_outcome = if consumed {
+            ControlOutcome::Consumed
+        } else {
+            ControlOutcome::Ignored
+        };
+
+        (final_outcome, action)
+    }
+
+    fn hit_test(&self, x: u16, y: u16) -> Option<usize> {
+        for (idx, rect) in self.layout.iter().enumerate() {
+            let Some(r) = rect else {
+                continue;
+            };
+            if x >= r.x
+                && x < r.x.saturating_add(r.width)
+                && y >= r.y
+                && y < r.y.saturating_add(r.height)
+            {
+                return Some(idx);
+            }
+        }
+        None
     }
 }

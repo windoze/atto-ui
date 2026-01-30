@@ -5,6 +5,8 @@ use crate::view::View;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
 
+pub type WindowCloseHook = Box<dyn FnMut(WindowId) -> bool + Send>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Normal,
@@ -76,6 +78,7 @@ pub struct Window {
     pub movable: bool,
     pub resizable: bool,
     pub closable: bool,
+    close_hook: Option<WindowCloseHook>,
     pub(crate) restore_rect: Option<Rect>,
 }
 
@@ -98,12 +101,21 @@ impl Window {
             movable: !kind.is_modal(),
             resizable: !kind.is_modal(),
             closable: true,
+            close_hook: None,
             restore_rect: None,
         }
     }
 
     pub fn with_decorations(mut self, decorations: WindowDecorations) -> Self {
         self.decorations = decorations;
+        self
+    }
+
+    pub fn with_close_hook<F>(mut self, hook: F) -> Self
+    where
+        F: FnMut(WindowId) -> bool + Send + 'static,
+    {
+        self.close_hook = Some(Box::new(hook));
         self
     }
 
@@ -145,5 +157,12 @@ impl Window {
             width: self.rect.width,
             height: 1,
         })
+    }
+
+    pub(crate) fn allow_close(&mut self) -> bool {
+        match self.close_hook.as_mut() {
+            Some(hook) => hook(self.id),
+            None => true,
+        }
     }
 }

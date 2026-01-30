@@ -40,6 +40,23 @@ impl TextBuffer {
         UnicodeWidthStr::width(prefix).min(u16::MAX as usize) as u16
     }
 
+    pub fn set_cursor_display_col(&mut self, target_col: u16) {
+        let mut col: u16 = 0;
+        for (byte_idx, g) in self.text.grapheme_indices(true) {
+            let w = (UnicodeWidthStr::width(g) as u16).max(1);
+            let next = col.saturating_add(w);
+            if target_col < next {
+                self.cursor = byte_idx;
+                self.clamp_cursor();
+                return;
+            }
+            col = next;
+        }
+
+        self.cursor = self.text.len();
+        self.clamp_cursor();
+    }
+
     pub fn insert_str(&mut self, s: &str) {
         if s.is_empty() {
             return;

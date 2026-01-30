@@ -29,13 +29,22 @@ impl Control for Button {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        let Event::Key(KeyEvent { code, .. }) = event else {
-            return (ControlOutcome::Ignored, FormAction::None);
-        };
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                (ControlOutcome::Consumed, FormAction::Submitted)
+        match event {
+            Event::Mouse(m) => {
+                use crossterm::event::MouseButton;
+                use crossterm::event::MouseEventKind;
+
+                if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    return (ControlOutcome::Consumed, FormAction::Submitted);
+                }
+                (ControlOutcome::Ignored, FormAction::None)
             }
+            Event::Key(KeyEvent { code, .. }) => match code {
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    (ControlOutcome::Consumed, FormAction::Submitted)
+                }
+                _ => (ControlOutcome::Ignored, FormAction::None),
+            },
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }

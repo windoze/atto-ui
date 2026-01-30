@@ -35,14 +35,24 @@ impl Control for Checkbox {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        let Event::Key(KeyEvent { code, .. }) = event else {
-            return (ControlOutcome::Ignored, FormAction::None);
-        };
-        match code {
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                self.checked = !self.checked;
-                (ControlOutcome::Consumed, FormAction::Changed)
+        match event {
+            Event::Mouse(m) => {
+                use crossterm::event::MouseButton;
+                use crossterm::event::MouseEventKind;
+
+                if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.checked = !self.checked;
+                    return (ControlOutcome::Consumed, FormAction::Changed);
+                }
+                (ControlOutcome::Ignored, FormAction::None)
             }
+            Event::Key(KeyEvent { code, .. }) => match code {
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    self.checked = !self.checked;
+                    (ControlOutcome::Consumed, FormAction::Changed)
+                }
+                _ => (ControlOutcome::Ignored, FormAction::None),
+            },
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }
