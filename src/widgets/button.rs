@@ -39,12 +39,10 @@ impl Control for Button {
                 }
                 (ControlOutcome::Ignored, FormAction::None)
             }
-            Event::Key(KeyEvent { code, .. }) => match code {
-                KeyCode::Enter | KeyCode::Char(' ') => {
-                    (ControlOutcome::Consumed, FormAction::Submitted)
-                }
-                _ => (ControlOutcome::Ignored, FormAction::None),
-            },
+            Event::Key(KeyEvent { code: KeyCode::Enter | KeyCode::Char(' '), .. }) => {
+                (ControlOutcome::Consumed, FormAction::Submitted)
+            }
+            Event::Key(KeyEvent { .. }) => (ControlOutcome::Ignored, FormAction::None),
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }
