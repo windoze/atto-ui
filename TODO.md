@@ -12,8 +12,8 @@
 
 - [x] Drop down menu should be above other content, now it is below window
 - [x] Modal window (include dropdown menus) should grab the input so global shortcuts do not trigger actions when modal is open
-- [ ] Drop shadow missing the bottom right corner
-- [ ] View/Window should have a solid background by default, now it is transparent, that is, the content behind it is visible if foreground has no text.
+- [x] Drop shadow missing the bottom right corner
+- [x] View/Window should have a solid background by default, now it is transparent, that is, the content behind it is visible if foreground has no text.
 
 ## Missing Features and Improvements
 

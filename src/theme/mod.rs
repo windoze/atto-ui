@@ -17,6 +17,7 @@ pub struct Theme {
     pub window_border_focused: Style,
     pub window_title: Style,
     pub window_title_focused: Style,
+    pub window_bg: Style,
     pub window_shadow: Style,
 
     pub menu_bar: Style,
@@ -46,6 +47,7 @@ impl Theme {
             window_title_focused: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
+            window_bg: Style::default().bg(Color::Rgb(16, 16, 16)).fg(Color::Gray),
             window_shadow: Style::default().bg(Color::Rgb(8, 8, 8)),
 
             menu_bar: Style::default().bg(Color::Rgb(24, 24, 24)).fg(Color::Gray),
@@ -91,6 +93,9 @@ impl Theme {
             window_title_focused: Style::default()
                 .fg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
+            window_bg: Style::default()
+                .bg(Color::Rgb(250, 250, 250))
+                .fg(Color::Black),
             window_shadow: Style::default().bg(Color::Rgb(210, 210, 210)),
 
             menu_bar: Style::default()

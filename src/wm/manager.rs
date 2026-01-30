@@ -225,6 +225,8 @@ impl WindowManager {
                 draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);
             }
 
+            fill_rect(frame.buffer_mut(), rect, theme.window_bg, ' ');
+
             let is_focused = focused == Some(window.id);
             let border_style = if is_focused {
                 theme.window_border_focused
@@ -638,6 +640,17 @@ fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
             }
         }
     }
+
+    // Bottom-right corner.
+    if shadow_x < bounds.x.saturating_add(bounds.width)
+        && shadow_y < bounds.y.saturating_add(bounds.height)
+        && shadow_x >= bounds.x
+        && shadow_y >= bounds.y
+        && let Some(cell) = buf.cell_mut((shadow_x, shadow_y))
+    {
+        cell.set_symbol(" ");
+        cell.set_style(style);
+    }
 }
 
 fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
@@ -737,12 +750,17 @@ fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> {
 
 #[cfg(test)]
 mod tests {
-    use super::WindowManager;
+    use super::{WindowManager, draw_shadow};
+    use crate::theme::Theme;
     use crate::view::{View, ViewContext, ViewEventResult};
     use crate::wm::{Window, WindowKind};
     use crossterm::event::Event;
     use ratatui::Frame;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::{Color, Style};
 
     #[derive(Default)]
     struct DummyView;
@@ -838,5 +856,96 @@ mod tests {
         assert_eq!(wm.focused(), Some(modal_id));
         wm.focus_next();
         assert_eq!(wm.focused(), Some(modal_id));
+    }
+
+    #[test]
+    fn shadow_includes_bottom_right_corner() {
+        let bounds = Rect::new(0, 0, 10, 10);
+        let rect = Rect::new(1, 1, 3, 3);
+        let style = Style::default().bg(Color::Red);
+
+        let mut buf = Buffer::empty(bounds);
+        assert_eq!(buf.cell((4, 4)).unwrap().bg, Color::Reset);
+
+        draw_shadow(&mut buf, rect, bounds, style);
+
+        assert_eq!(buf.cell((4, 4)).unwrap().bg, Color::Red);
+    }
+
+    #[test]
+    fn window_background_is_opaque_by_default() {
+        #[derive(Default)]
+        struct UnderlayView {
+            target: (u16, u16),
+        }
+
+        impl View for UnderlayView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+                ViewEventResult::ignored()
+            }
+
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+                let (x, y) = self.target;
+                if x >= area.x
+                    && x < area.x.saturating_add(area.width)
+                    && y >= area.y
+                    && y < area.y.saturating_add(area.height)
+                    && let Some(cell) = frame.buffer_mut().cell_mut((x, y))
+                {
+                    cell.set_symbol("X");
+                }
+            }
+        }
+
+        #[derive(Default)]
+        struct OverlayView;
+
+        impl View for OverlayView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+                ViewEventResult::ignored()
+            }
+
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        }
+
+        let theme = Theme::dark();
+        let bounds = Rect::new(0, 0, 30, 10);
+        let target = (5, 3);
+
+        let mut wm = WindowManager::new();
+        let mut underlay = Window::new(
+            WindowKind::Normal,
+            "Underlay",
+            Rect::new(1, 1, 20, 7),
+            Box::new(UnderlayView { target }),
+        );
+        underlay.decorations.shadow = false;
+        wm.add_window(underlay, bounds);
+
+        let overlay_rect = Rect::new(5, 3, 20, 6);
+        let mut overlay = Window::new(
+            WindowKind::Normal,
+            "Overlay",
+            overlay_rect,
+            Box::new(OverlayView),
+        );
+        overlay.decorations.shadow = false;
+        wm.add_window(overlay, bounds);
+
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let cell = terminal.backend().buffer().cell(target).expect("cell");
+        assert_ne!(
+            cell.bg,
+            Color::Reset,
+            "expected window background fill to set a non-reset bg color (including border)"
+        );
+        assert_ne!(
+            cell.symbol(),
+            "X",
+            "expected overlapping window to clear underlay content (including border)"
+        );
     }
 }
