@@ -46,7 +46,10 @@ impl Control for Checkbox {
                 }
                 (ControlOutcome::Ignored, FormAction::None)
             }
-            Event::Key(KeyEvent { code: KeyCode::Char(' ') | KeyCode::Enter, .. }) => {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(' ') | KeyCode::Enter,
+                ..
+            }) => {
                 self.checked = !self.checked;
                 (ControlOutcome::Consumed, FormAction::Changed)
             }

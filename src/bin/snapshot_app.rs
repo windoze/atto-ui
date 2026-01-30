@@ -19,6 +19,7 @@ use ratatui::{Frame, Terminal};
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
 use chatty::view::{View, ViewContext, ViewEventResult};
+use chatty::views::{ControlView, EdgeInsets, HBox, LayoutParams, Size, VBox};
 use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
@@ -124,6 +125,45 @@ impl View for WidgetsView {
     }
 }
 
+fn view_hierarchy_demo() -> VBox {
+    let mut root = VBox::new().with_padding(EdgeInsets::all(1)).with_spacing(1);
+
+    root.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Label::new(
+            "View hierarchy demo (VBox + HBox + ControlView)",
+        )))),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    let mut row = HBox::new().with_spacing(2);
+    row.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Checkbox::new(
+            "Nested checkbox",
+            false,
+        )))),
+        LayoutParams {
+            width: Size::Fixed(20),
+            ..LayoutParams::default()
+        },
+    );
+    row.add_child(Box::new(ControlView::new(Box::new(Label::new(
+        "click to toggle",
+    )))));
+
+    root.add_child_with_layout(
+        Box::new(row),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    root
+}
+
 #[derive(Default)]
 struct AboutView;
 
@@ -216,6 +256,21 @@ fn main() -> Result<()> {
                 height: 10,
             },
             Box::new(LogView::new(Arc::clone(&theme_state))),
+        ),
+        screen,
+    );
+
+    let _views_id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Views",
+            Rect {
+                x: 46,
+                y: 14,
+                width: 30,
+                height: 8,
+            },
+            Box::new(view_hierarchy_demo()),
         ),
         screen,
     );

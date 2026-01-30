@@ -17,6 +17,9 @@ use ratatui::{Frame, Terminal};
 use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
+use chatty::views::{
+    Align, Anchor, AnchorPlacement, ControlView, EdgeInsets, Grid, HBox, LayoutParams, Size, VBox,
+};
 use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
@@ -72,6 +75,7 @@ impl DialogView {
             Box::new(Label::new("Keys:")),
             Box::new(Label::new("  F10 menu   Ctrl+W window mode   F2 theme")),
             Box::new(Label::new("  n new win  a about/modal        t tooltip")),
+            Box::new(Label::new("  v layout demo (view hierarchy)")),
             Box::new(Label::new("")),
             Box::new(Button::new("Close (Enter)")),
         ];
@@ -208,6 +212,152 @@ impl View for TooltipView {
     }
 }
 
+#[derive(Clone, Debug)]
+struct IntrinsicLabelView {
+    text: String,
+}
+
+impl IntrinsicLabelView {
+    fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+}
+
+impl View for IntrinsicLabelView {
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.text.len().min(u16::MAX as usize) as u16)
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let style = ctx.theme.widget.accent;
+        frame.render_widget(Paragraph::new(Line::styled(self.text.clone(), style)), area);
+    }
+}
+
+fn build_layout_demo_view() -> VBox {
+    let mut root = VBox::new().with_padding(EdgeInsets::all(1)).with_spacing(1);
+
+    // Anchor demo: this badge sticks to the top-right of the view content area.
+    root.add_child_with_layout(
+        Box::new(IntrinsicLabelView::new("[ANCHOR]")),
+        LayoutParams {
+            width: Size::Content,
+            height: Size::Content,
+            anchor: Some(AnchorPlacement {
+                anchor: Anchor::TopRight,
+                offset_x: 0,
+                offset_y: 0,
+            }),
+            ..LayoutParams::default()
+        },
+    );
+
+    // Margin demo: reserve some space on the right so the anchored badge doesn't overlap.
+    root.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Label::new(
+            "M6 layout demo (resize window)",
+        )))),
+        LayoutParams {
+            height: Size::Content,
+            margin: EdgeInsets {
+                right: 10,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+
+    // HBox demo:
+    // - left: content-based sizing (intrinsic width)
+    // - middle/right: weighted sizing (1:2 split)
+    // - vertical alignment: the badge is centered within the 3-row toolbar
+    let mut toolbar = HBox::new().with_spacing(1);
+    toolbar.add_child_with_layout(
+        Box::new(IntrinsicLabelView::new("Content")),
+        LayoutParams {
+            width: Size::Content,
+            height: Size::Content,
+            align_y: Align::Center,
+            margin: EdgeInsets {
+                left: 1,
+                right: 1,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+    toolbar.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Button::new("W1")))),
+        LayoutParams {
+            width: Size::Weight(1),
+            ..LayoutParams::default()
+        },
+    );
+    toolbar.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Button::new("W2")))),
+        LayoutParams {
+            width: Size::Weight(2),
+            ..LayoutParams::default()
+        },
+    );
+
+    root.add_child_with_layout(
+        Box::new(toolbar),
+        LayoutParams {
+            height: Size::Fixed(3),
+            ..LayoutParams::default()
+        },
+    );
+
+    // Grid demo:
+    // - 2 columns with equal widths
+    // - row height is tallest child in the row (Button is 3 rows tall)
+    // - checkbox is vertically centered in that tall row
+    let mut grid = Grid::new(2).with_row_gap(1).with_column_gap(2);
+    grid.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Button::new("Tall")))),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    grid.add_child_with_layout(
+        Box::new(ControlView::new(Box::new(Checkbox::new("Centered", false)))),
+        LayoutParams {
+            align_y: Align::Center,
+            ..LayoutParams::default()
+        },
+    );
+    grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
+        "Row 2A", false,
+    )))));
+    grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
+        "Row 2B", false,
+    )))));
+
+    root.add_child_with_layout(
+        Box::new(grid),
+        LayoutParams {
+            height: Size::Fixed(5),
+            margin: EdgeInsets {
+                left: 2,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+
+    root
+}
+
 fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -229,15 +379,17 @@ fn main() -> Result<()> {
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
     let screen: Rect = terminal.size()?.into();
+    let work = Desktop::layout(screen).work_area;
+
     let widgets_id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
             "Widgets",
             Rect {
-                x: 2,
-                y: 2,
-                width: 50,
-                height: 20,
+                x: work.x.saturating_add(2),
+                y: work.y.saturating_add(1),
+                width: 40,
+                height: work.height.saturating_sub(1),
             },
             Box::new(WidgetsView::new()),
         ),
@@ -245,21 +397,37 @@ fn main() -> Result<()> {
     );
     desktop.wm.focus(widgets_id);
 
+    let mut layout_demo_window_id = Some(desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Layout",
+            Rect {
+                x: work.x.saturating_add(43),
+                y: work.y.saturating_add(1),
+                width: 36,
+                height: 15,
+            },
+            Box::new(build_layout_demo_view()),
+        ),
+        screen,
+    ));
+
     let log_id = desktop.add_window(
         Window::new(
             WindowKind::Floating,
             "Notes",
             Rect {
-                x: 55,
-                y: 3,
-                width: 24,
-                height: 12,
+                x: work.x.saturating_add(43),
+                y: work.y.saturating_add(16),
+                width: 36,
+                height: 6,
             },
             Box::new(TextView::new(vec![
                 "Mouse: click to focus; drag title bar".into(),
                 "Ctrl+W: window mode (move/resize/min/max/close)".into(),
                 "F2: toggle theme".into(),
                 "Paste: bracketed paste into textbox".into(),
+                "V: focus/open layout demo".into(),
             ])),
         ),
         screen,
@@ -271,6 +439,7 @@ fn main() -> Result<()> {
         &mut desktop,
         &mut is_dark,
         log_id,
+        &mut layout_demo_window_id,
         &mut tooltip,
     );
 
@@ -306,6 +475,7 @@ fn build_menu() -> MenuBar {
             "Window",
             vec![
                 MenuItem::command("Next", "window.next").shortcut("F6"),
+                MenuItem::command("Layout demo", "window.layout_demo").shortcut("v"),
                 MenuItem::command("Minimize", "window.min").shortcut("m"),
                 MenuItem::command("Maximize", "window.max").shortcut("x"),
                 MenuItem::command("Close", "window.close").shortcut("c"),
@@ -323,6 +493,7 @@ fn run(
     desktop: &mut Desktop,
     is_dark: &mut bool,
     notes_window_id: WindowId,
+    layout_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
@@ -370,6 +541,9 @@ fn run(
                     );
                 }
                 "window.next" => desktop.wm.focus_next(),
+                "window.layout_demo" => {
+                    open_layout_demo(desktop, screen, layout_demo_window_id)?;
+                }
                 "window.min" => desktop.wm.minimize_focused(),
                 "window.max" => {
                     let screen: Rect = terminal.size()?.into();
@@ -442,6 +616,9 @@ fn run(
                 (KeyCode::Char('t'), KeyModifiers::NONE) => {
                     open_tooltip(desktop, screen, tooltip)?;
                 }
+                (KeyCode::Char('v'), KeyModifiers::NONE) => {
+                    open_layout_demo(desktop, screen, layout_demo_window_id)?;
+                }
                 _ => {}
             }
         }
@@ -475,6 +652,38 @@ fn open_about_modal(desktop: &mut Desktop, screen: Rect) -> Result<()> {
         ),
         screen,
     );
+    Ok(())
+}
+
+fn open_layout_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    layout_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *layout_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Layout",
+            Rect {
+                x: work.x.saturating_add(43),
+                y: work.y.saturating_add(1),
+                width: 36,
+                height: 15,
+            },
+            Box::new(build_layout_demo_view()),
+        ),
+        screen,
+    );
+    *layout_demo_window_id = Some(id);
     Ok(())
 }
 

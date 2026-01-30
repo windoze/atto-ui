@@ -3,6 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
+use crate::views::ViewNode;
 use crate::wm::WindowId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,6 +61,34 @@ impl ViewEventResult {
 }
 
 pub trait View: Send {
+    fn is_focusable(&self) -> bool {
+        false
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        None
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        None
+    }
+
+    fn children(&self) -> &[ViewNode] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ViewNode>> {
+        None
+    }
+
+    fn handle_event_capture(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        ViewEventResult::ignored()
+    }
+
+    fn handle_event_bubble(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        ViewEventResult::ignored()
+    }
+
     fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         ViewEventResult::ignored()
     }

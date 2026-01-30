@@ -4,6 +4,7 @@ pub mod app;
 pub mod text;
 pub mod theme;
 pub mod view;
+pub mod views;
 pub mod widgets;
 pub mod wm;
 

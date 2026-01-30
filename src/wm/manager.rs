@@ -313,6 +313,14 @@ impl WindowManager {
                 WindowState::Maximized => bounds,
                 _ => normalize_rect(w.rect, bounds, w.min_size),
             };
+            if let Event::Mouse(m) = event {
+                // Views render inside the inner rect; clicks on window chrome/borders should not
+                // be delivered to the view layer.
+                let inner = w.inner_rect();
+                if !contains(inner, m.column, m.row) {
+                    return Some((id, ViewEventResult::ignored()));
+                }
+            }
             w.view.handle_event(event, ctx)
         };
         Some((id, action))
