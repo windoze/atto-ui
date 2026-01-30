@@ -260,7 +260,7 @@ impl Grid {
             .focused
             .and_then(|id| focusable.iter().position(|x| *x == id))
         {
-            Some(idx) if idx == 0 => focusable[focusable.len() - 1],
+            Some(0) => focusable[focusable.len() - 1],
             Some(idx) => focusable[idx - 1],
             None => focusable[0],
         };

@@ -86,35 +86,29 @@ pub fn apply_padding_local(size: (u16, u16), padding: EdgeInsets) -> (u16, u16) 
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Align {
+    #[default]
     Start,
     Center,
     End,
     Stretch,
 }
 
-impl Default for Align {
-    fn default() -> Self {
-        Self::Start
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Size {
+    #[default]
     Fill,
     Fixed(u16),
     Weight(u16),
     Content,
 }
 
-impl Default for Size {
-    fn default() -> Self {
-        Self::Fill
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Anchor {
+    #[default]
     TopLeft,
     TopRight,
     BottomLeft,
@@ -124,12 +118,6 @@ pub enum Anchor {
     Left,
     Right,
     Center,
-}
-
-impl Default for Anchor {
-    fn default() -> Self {
-        Self::TopLeft
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
