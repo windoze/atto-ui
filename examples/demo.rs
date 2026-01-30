@@ -16,8 +16,10 @@ use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
-use chatty::view::{View, ViewAction, ViewContext};
-use chatty::widgets::{Button, Checkbox, Form, Label, ListBox, RadioGroup, TableView, TextBox};
+use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
+use chatty::widgets::{
+    Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
+};
 use chatty::wm::{Window, WindowId, WindowKind, WindowState};
 
 #[derive(Default)]
@@ -32,16 +34,16 @@ impl TextView {
 }
 
 impl View for TextView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewAction {
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
             kind: KeyEventKind::Press,
             ..
         }) = event
         {
-            return ViewAction::CloseWindow;
+            return ViewEventResult::close_window();
         }
-        ViewAction::None
+        ViewEventResult::ignored()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
@@ -80,10 +82,14 @@ impl DialogView {
 }
 
 impl View for DialogView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewAction {
-        match self.form.handle_event(event) {
-            chatty::widgets::FormAction::Submitted => ViewAction::CloseWindow,
-            _ => ViewAction::None,
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        let (outcome, action) = self.form.handle_event(event);
+        if action == chatty::widgets::FormAction::Submitted {
+            return ViewEventResult::close_window();
+        }
+        match outcome {
+            ControlOutcome::Consumed => ViewEventResult::consumed(),
+            ControlOutcome::Ignored => ViewEventResult::ignored(),
         }
     }
 
@@ -143,7 +149,7 @@ impl WidgetsView {
 }
 
 impl View for WidgetsView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewAction {
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
             modifiers,
@@ -152,14 +158,17 @@ impl View for WidgetsView {
         }) = event
             && modifiers.contains(KeyModifiers::CONTROL)
         {
-            return ViewAction::CloseWindow;
+            return ViewEventResult::close_window();
         }
 
-        let action = self.form.handle_event(event);
+        let (outcome, action) = self.form.handle_event(event);
         if action == chatty::widgets::FormAction::Submitted {
             self.last_msg = "Submitted!".to_string();
         }
-        ViewAction::None
+        match outcome {
+            ControlOutcome::Consumed => ViewEventResult::consumed(),
+            ControlOutcome::Ignored => ViewEventResult::ignored(),
+        }
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
@@ -335,81 +344,10 @@ fn run(
         }
         let ev = event::read()?;
 
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            break;
-        }
+        let screen: Rect = terminal.size()?.into();
+        let result = desktop.handle_event(&ev, screen);
 
-        if let Event::Key(KeyEvent {
-            code: KeyCode::F(2),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            *is_dark = !*is_dark;
-            desktop.theme = if *is_dark {
-                Theme::dark()
-            } else {
-                Theme::light()
-            };
-            continue;
-        }
-
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Char('n'),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            next_float += 1;
-            let screen: Rect = terminal.size()?.into();
-            let title = format!("Floating {next_float}");
-            desktop.add_window(
-                Window::new(
-                    WindowKind::Floating,
-                    title,
-                    Rect {
-                        x: 8 + (next_float as u16 % 20),
-                        y: 4 + (next_float as u16 % 8),
-                        width: 30,
-                        height: 8,
-                    },
-                    Box::new(TextView::new(vec![
-                        "Floating window".into(),
-                        "Press Esc to close.".into(),
-                    ])),
-                ),
-                screen,
-            );
-            continue;
-        }
-
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Char('a'),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            open_about_modal(desktop, terminal.size()?.into())?;
-            continue;
-        }
-
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Char('t'),
-            kind: KeyEventKind::Press,
-            ..
-        }) = ev
-        {
-            open_tooltip(desktop, terminal.size()?.into(), tooltip)?;
-            continue;
-        }
-
-        let action = desktop.handle_event(&ev, terminal.size()?.into());
-        if let DesktopAction::MenuCommand(cmd) = action {
+        if let DesktopAction::MenuCommand(cmd) = result.action {
             match cmd.as_str() {
                 "app.quit" => break,
                 "window.new" => {
@@ -443,7 +381,7 @@ fn run(
                         desktop.wm.close(id);
                     }
                 }
-                "help.about" => open_about_modal(desktop, terminal.size()?.into())?,
+                "help.about" => open_about_modal(desktop, screen)?,
                 "theme.dark" => {
                     *is_dark = true;
                     desktop.theme = Theme::dark();
@@ -455,6 +393,56 @@ fn run(
                 _ => {
                     // Unknown commands are ignored.
                 }
+            }
+        }
+
+        // Application-level shortcuts: only run if the event was not handled by the view/window/desktop.
+        if result.outcome == EventOutcome::Ignored
+            && let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            }) = ev
+        {
+            match (code, modifiers) {
+                (KeyCode::Char('q'), KeyModifiers::NONE) => break,
+                (KeyCode::F(2), _) => {
+                    *is_dark = !*is_dark;
+                    desktop.theme = if *is_dark {
+                        Theme::dark()
+                    } else {
+                        Theme::light()
+                    };
+                }
+                (KeyCode::Char('n'), KeyModifiers::NONE) => {
+                    next_float += 1;
+                    let title = format!("Floating {next_float}");
+                    desktop.add_window(
+                        Window::new(
+                            WindowKind::Floating,
+                            title,
+                            Rect {
+                                x: 8 + (next_float as u16 % 20),
+                                y: 4 + (next_float as u16 % 8),
+                                width: 30,
+                                height: 8,
+                            },
+                            Box::new(TextView::new(vec![
+                                "Floating window".into(),
+                                "Press Esc to close.".into(),
+                            ])),
+                        ),
+                        screen,
+                    );
+                }
+                (KeyCode::Char('a'), KeyModifiers::NONE) => {
+                    open_about_modal(desktop, screen)?;
+                }
+                (KeyCode::Char('t'), KeyModifiers::NONE) => {
+                    open_tooltip(desktop, screen, tooltip)?;
+                }
+                _ => {}
             }
         }
 

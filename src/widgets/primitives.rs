@@ -49,7 +49,7 @@ impl Form {
         Self { controls, focused }
     }
 
-    pub fn handle_event(&mut self, event: &Event) -> FormAction {
+    pub fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
         if let Event::Key(KeyEvent {
             code: KeyCode::Tab,
             modifiers,
@@ -61,17 +61,16 @@ impl Form {
             } else {
                 self.focus_next();
             }
-            return FormAction::None;
+            return (ControlOutcome::Consumed, FormAction::None);
         }
 
         let Some(idx) = self.focused else {
-            return FormAction::None;
+            return (ControlOutcome::Ignored, FormAction::None);
         };
         let Some(control) = self.controls.get_mut(idx) else {
-            return FormAction::None;
+            return (ControlOutcome::Ignored, FormAction::None);
         };
-        let (_outcome, action) = control.handle_event(event);
-        action
+        control.handle_event(event)
     }
 
     pub fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {

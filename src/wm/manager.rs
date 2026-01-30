@@ -8,7 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
-use crate::view::{ViewAction, ViewContext};
+use crate::view::{ViewContext, ViewEventResult};
 
 use super::{Window, WindowId, WindowKind, WindowState};
 
@@ -52,6 +52,7 @@ pub struct WindowManager {
     windows: Vec<Window>,
     focused: Option<WindowId>,
     drag: Option<DragState>,
+    mouse_capture: bool,
 }
 
 impl WindowManager {
@@ -65,6 +66,10 @@ impl WindowManager {
 
     pub fn windows_mut(&mut self) -> &mut [Window] {
         &mut self.windows
+    }
+
+    pub fn has_active_modal(&self) -> bool {
+        self.active_modal_id().is_some()
     }
 
     pub fn focused(&self) -> Option<WindowId> {
@@ -94,6 +99,7 @@ impl WindowManager {
             Some(d) if d.window_id == id => None,
             other => other,
         };
+        self.mouse_capture = false;
         let was_focused = self.focused == Some(id);
         self.windows.retain(|w| w.id != id);
         if was_focused {
@@ -260,7 +266,7 @@ impl WindowManager {
         event: &Event,
         bounds: Rect,
         theme: &Theme,
-    ) -> Option<(WindowId, ViewAction)> {
+    ) -> Option<(WindowId, ViewEventResult)> {
         let id = self.focused()?;
         let idx = self.windows.iter().position(|w| w.id == id)?;
         let is_focused = true;
@@ -312,12 +318,14 @@ impl WindowManager {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.drag = None;
+                self.mouse_capture = false;
                 let Some(hit) = self.hit_test(m.column, m.row, modal) else {
                     return WindowManagerAction::default();
                 };
 
+                self.mouse_capture = !matches!(hit.region, HitRegion::Body);
                 let mut action = WindowManagerAction {
-                    consumed: true,
+                    consumed: self.mouse_capture,
                     close: None,
                 };
 
@@ -396,8 +404,13 @@ impl WindowManager {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                let consumed = self.drag.is_some() || self.mouse_capture;
                 self.drag = None;
-                WindowManagerAction::default()
+                self.mouse_capture = false;
+                WindowManagerAction {
+                    consumed,
+                    close: None,
+                }
             }
             _ => WindowManagerAction::default(),
         }
@@ -725,7 +738,7 @@ fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> {
 #[cfg(test)]
 mod tests {
     use super::WindowManager;
-    use crate::view::{View, ViewContext};
+    use crate::view::{View, ViewContext, ViewEventResult};
     use crate::wm::{Window, WindowKind};
     use crossterm::event::Event;
     use ratatui::Frame;
@@ -736,12 +749,8 @@ mod tests {
 
     impl View for DummyView {
         fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
-        fn handle_event(
-            &mut self,
-            _event: &Event,
-            _ctx: ViewContext<'_>,
-        ) -> crate::view::ViewAction {
-            crate::view::ViewAction::None
+        fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+            ViewEventResult::ignored()
         }
     }
 

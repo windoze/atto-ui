@@ -2,7 +2,7 @@
 
 ## Mis-designs
 
-- [ ] Layered event handling, e.g., when a modal window is open, only that window should receive input events. Events may bubble up to parent views/windows if not handled. A typical flow is:
+- [x] Layered event handling, e.g., when a modal window is open, only that window should receive input events. Events may bubble up to parent views/windows if not handled. A typical flow is:
     1. Focused view receives event first
     2. If not handled, focused window receives event
     3. If not handled, application receives event

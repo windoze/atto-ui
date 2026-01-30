@@ -16,16 +16,18 @@ use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
-use chatty::view::{View, ViewAction, ViewContext};
-use chatty::widgets::{Button, Checkbox, Form, Label, ListBox, RadioGroup, TableView, TextBox};
+use chatty::view::{View, ViewContext, ViewEventResult};
+use chatty::widgets::{
+    Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
+};
 use chatty::wm::{Window, WindowKind};
 
 #[derive(Default)]
 struct LogView;
 
 impl View for LogView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewAction {
-        ViewAction::None
+    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        ViewEventResult::ignored()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
@@ -91,13 +93,43 @@ impl WidgetsView {
 }
 
 impl View for WidgetsView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewAction {
-        let _ = self.form.handle_event(event);
-        ViewAction::None
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        let (outcome, _action) = self.form.handle_event(event);
+        match outcome {
+            ControlOutcome::Consumed => ViewEventResult::consumed(),
+            ControlOutcome::Ignored => ViewEventResult::ignored(),
+        }
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
         self.form.draw(frame, area, ctx.theme);
+    }
+}
+
+#[derive(Default)]
+struct AboutView;
+
+impl View for AboutView {
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc | KeyCode::Enter,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return ViewEventResult::close_window();
+        }
+        ViewEventResult::ignored()
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                "About modal (Esc to close).",
+                ctx.theme.widget.normal,
+            )),
+            area,
+        );
     }
 }
 
@@ -212,10 +244,34 @@ fn run(
             continue;
         }
 
-        match desktop.handle_event(&ev, terminal.size()?.into()) {
+        let screen: Rect = terminal.size()?.into();
+        match desktop.handle_event(&ev, screen).action {
             chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "app.quit" => break,
+            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "help.about" => {
+                open_about_modal(desktop, screen);
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn open_about_modal(desktop: &mut Desktop, screen: Rect) {
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 36.min(work.width.saturating_sub(2)).max(20);
+    let h = 7.min(work.height.saturating_sub(2)).max(5);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    desktop.add_window(
+        Window::new(WindowKind::Modal, "About", rect, Box::new(AboutView)),
+        screen,
+    );
 }
