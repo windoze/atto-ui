@@ -185,4 +185,3 @@ mod tests {
         assert_eq!(b.text(), "a");
     }
 }
-

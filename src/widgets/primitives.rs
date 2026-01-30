@@ -1,6 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::theme::Theme;
 
@@ -45,12 +45,17 @@ impl Form {
         let focused = controls
             .iter()
             .position(|c| c.is_focusable())
-            .or_else(|| if controls.is_empty() { None } else { Some(0) });
+            .or(if controls.is_empty() { None } else { Some(0) });
         Self { controls, focused }
     }
 
     pub fn handle_event(&mut self, event: &Event) -> FormAction {
-        if let Event::Key(KeyEvent { code: KeyCode::Tab, modifiers, .. }) = event {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Tab,
+            modifiers,
+            ..
+        }) = event
+        {
             if modifiers.contains(KeyModifiers::SHIFT) {
                 self.focus_prev();
             } else {
@@ -118,4 +123,3 @@ impl Form {
         }
     }
 }
-

@@ -2,17 +2,17 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::cursor;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use ratatui::{Terminal, Frame};
+use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
@@ -48,7 +48,9 @@ struct WidgetsView {
 impl WidgetsView {
     fn new() -> Self {
         let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
-            Box::new(Label::new("Paste Unicode into the textbox (bracketed paste).")),
+            Box::new(Label::new(
+                "Paste Unicode into the textbox (bracketed paste).",
+            )),
             Box::new(TextBox::new("Text").with_text("hello")),
             Box::new(Checkbox::new("Enable feature", true)),
             Box::new(RadioGroup::new(
@@ -59,7 +61,12 @@ impl WidgetsView {
             Box::new(
                 ListBox::new(
                     "List",
-                    vec!["Alpha".into(), "Beta".into(), "Gamma".into(), "Delta".into()],
+                    vec![
+                        "Alpha".into(),
+                        "Beta".into(),
+                        "Gamma".into(),
+                        "Delta".into(),
+                    ],
                 )
                 .with_height(5),
             ),
@@ -148,7 +155,7 @@ fn main() -> Result<()> {
                 width: 30,
                 height: 10,
             },
-            Box::new(LogView::default()),
+            Box::new(LogView),
         ),
         screen,
     );
@@ -197,7 +204,11 @@ fn run(
         }) = ev
         {
             *is_dark = !*is_dark;
-            desktop.theme = if *is_dark { Theme::dark() } else { Theme::light() };
+            desktop.theme = if *is_dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            };
             continue;
         }
 

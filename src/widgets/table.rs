@@ -1,8 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -59,7 +59,11 @@ impl Control for TableView {
         let sel = self.state.selected().unwrap_or(0);
         match code {
             KeyCode::Up => {
-                let next = if sel == 0 { self.rows.len() - 1 } else { sel - 1 };
+                let next = if sel == 0 {
+                    self.rows.len() - 1
+                } else {
+                    sel - 1
+                };
                 self.state.select(Some(next));
                 (ControlOutcome::Consumed, FormAction::Changed)
             }
@@ -89,14 +93,19 @@ impl Control for TableView {
                 .collect()
         };
 
-        let header = Row::new(self.headers.iter().cloned().map(Cell::from)).style(theme.widget.accent);
+        let header =
+            Row::new(self.headers.iter().cloned().map(Cell::from)).style(theme.widget.accent);
         let rows = self
             .rows
             .iter()
             .map(|r| Row::new(r.iter().cloned().map(Cell::from)));
         let table = Table::new(rows, widths)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(self.title.clone()))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(self.title.clone()),
+            )
             .row_highlight_style(theme.menu_item_selected)
             .style(base_style);
 

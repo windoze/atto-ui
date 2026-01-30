@@ -80,7 +80,12 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(kind: WindowKind, title: impl Into<String>, rect: Rect, view: Box<dyn View>) -> Self {
+    pub fn new(
+        kind: WindowKind,
+        title: impl Into<String>,
+        rect: Rect,
+        view: Box<dyn View>,
+    ) -> Self {
         Self {
             id: WindowId(0),
             kind,
@@ -142,4 +147,3 @@ impl Window {
         })
     }
 }
-

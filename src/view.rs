@@ -1,6 +1,6 @@
 use crossterm::event::Event;
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::theme::Theme;
 use crate::wm::WindowId;
@@ -26,4 +26,3 @@ pub trait View: Send {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>);
 }
-

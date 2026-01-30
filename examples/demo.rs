@@ -5,7 +5,7 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use crossterm::{cursor, style};
 use ratatui::backend::CrosstermBackend;
@@ -50,12 +50,7 @@ impl View for TextView {
         } else {
             ctx.theme.widget.normal
         };
-        let text = self
-            .lines
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = self.lines.to_vec().join("\n");
         frame.render_widget(
             Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
             area,
@@ -117,7 +112,12 @@ impl WidgetsView {
             Box::new(
                 ListBox::new(
                     "List",
-                    vec!["Alpha".into(), "Beta".into(), "Gamma".into(), "Delta".into()],
+                    vec![
+                        "Alpha".into(),
+                        "Beta".into(),
+                        "Gamma".into(),
+                        "Delta".into(),
+                    ],
                 )
                 .with_height(6),
             ),
@@ -150,10 +150,9 @@ impl View for WidgetsView {
             kind: KeyEventKind::Press,
             ..
         }) = event
+            && modifiers.contains(KeyModifiers::CONTROL)
         {
-            if modifiers.contains(KeyModifiers::CONTROL) {
-                return ViewAction::CloseWindow;
-            }
+            return ViewAction::CloseWindow;
         }
 
         let action = self.form.handle_event(event);
@@ -258,7 +257,13 @@ fn main() -> Result<()> {
     );
 
     let mut tooltip: Option<(WindowId, Instant)> = None;
-    let res = run(&mut terminal, &mut desktop, &mut is_dark, log_id, &mut tooltip);
+    let res = run(
+        &mut terminal,
+        &mut desktop,
+        &mut is_dark,
+        log_id,
+        &mut tooltip,
+    );
 
     disable_raw_mode()?;
     execute!(
@@ -346,7 +351,11 @@ fn run(
         }) = ev
         {
             *is_dark = !*is_dark;
-            desktop.theme = if *is_dark { Theme::dark() } else { Theme::light() };
+            desktop.theme = if *is_dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            };
             continue;
         }
 
@@ -450,10 +459,10 @@ fn run(
         }
 
         // Keep the Notes window from being minimized as a small demo nicety.
-        if let Some(w) = desktop.wm.window_mut(notes_window_id) {
-            if w.state == WindowState::Minimized {
-                w.state = WindowState::Normal;
-            }
+        if let Some(w) = desktop.wm.window_mut(notes_window_id)
+            && w.state == WindowState::Minimized
+        {
+            w.state = WindowState::Normal;
         }
     }
     Ok(())
@@ -470,7 +479,12 @@ fn open_about_modal(desktop: &mut Desktop, screen: Rect) -> Result<()> {
         height: h,
     };
     desktop.add_window(
-        Window::new(WindowKind::Modal, "About", rect, Box::new(DialogView::about())),
+        Window::new(
+            WindowKind::Modal,
+            "About",
+            rect,
+            Box::new(DialogView::about()),
+        ),
         screen,
     );
     Ok(())
@@ -518,4 +532,3 @@ fn open_tooltip(
     *tooltip = Some((id, Instant::now() + Duration::from_millis(1200)));
     Ok(())
 }
-

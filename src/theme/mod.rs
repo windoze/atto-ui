@@ -34,7 +34,9 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             desktop: Style::default().bg(Color::Black).fg(Color::Gray),
-            desktop_dim: Style::default().bg(Color::Rgb(16, 16, 16)).fg(Color::DarkGray),
+            desktop_dim: Style::default()
+                .bg(Color::Rgb(16, 16, 16))
+                .fg(Color::DarkGray),
 
             window_border: Style::default().fg(Color::DarkGray),
             window_border_focused: Style::default()
@@ -77,7 +79,9 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             desktop: Style::default().bg(Color::White).fg(Color::Black),
-            desktop_dim: Style::default().bg(Color::Rgb(235, 235, 235)).fg(Color::DarkGray),
+            desktop_dim: Style::default()
+                .bg(Color::Rgb(235, 235, 235))
+                .fg(Color::DarkGray),
 
             window_border: Style::default().fg(Color::DarkGray),
             window_border_focused: Style::default()
@@ -89,18 +93,24 @@ impl Theme {
                 .add_modifier(Modifier::BOLD),
             window_shadow: Style::default().bg(Color::Rgb(210, 210, 210)),
 
-            menu_bar: Style::default().bg(Color::Rgb(240, 240, 240)).fg(Color::Black),
+            menu_bar: Style::default()
+                .bg(Color::Rgb(240, 240, 240))
+                .fg(Color::Black),
             menu_bar_active: Style::default()
                 .bg(Color::Blue)
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
-            menu_item: Style::default().bg(Color::Rgb(240, 240, 240)).fg(Color::Black),
+            menu_item: Style::default()
+                .bg(Color::Rgb(240, 240, 240))
+                .fg(Color::Black),
             menu_item_selected: Style::default()
                 .bg(Color::Blue)
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
 
-            status_bar: Style::default().bg(Color::Rgb(240, 240, 240)).fg(Color::Black),
+            status_bar: Style::default()
+                .bg(Color::Rgb(240, 240, 240))
+                .fg(Color::Black),
             status_bar_key: Style::default()
                 .bg(Color::Rgb(240, 240, 240))
                 .fg(Color::Blue)
@@ -117,4 +127,3 @@ impl Theme {
         }
     }
 }
-

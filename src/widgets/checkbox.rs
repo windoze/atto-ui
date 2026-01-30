@@ -1,8 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -58,4 +58,3 @@ impl Control for Checkbox {
         frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
     }
 }
-

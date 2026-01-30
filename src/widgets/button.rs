@@ -1,8 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -33,7 +33,9 @@ impl Control for Button {
             return (ControlOutcome::Ignored, FormAction::None);
         };
         match code {
-            KeyCode::Enter | KeyCode::Char(' ') => (ControlOutcome::Consumed, FormAction::Submitted),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                (ControlOutcome::Consumed, FormAction::Submitted)
+            }
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }
@@ -54,4 +56,3 @@ impl Control for Button {
         frame.render_widget(p, area);
     }
 }
-

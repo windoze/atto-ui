@@ -1,9 +1,9 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Clear};
-use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -94,7 +94,10 @@ impl MenuBar {
 
     pub fn activate(&mut self) {
         self.state.active = true;
-        self.state.menu_index = self.state.menu_index.min(self.menus.len().saturating_sub(1));
+        self.state.menu_index = self
+            .state
+            .menu_index
+            .min(self.menus.len().saturating_sub(1));
         self.state.stack = vec![0];
     }
 
@@ -108,7 +111,10 @@ impl MenuBar {
             return MenuAction::None;
         }
 
-        let Event::Key(KeyEvent { code, modifiers, .. }) = event else {
+        let Event::Key(KeyEvent {
+            code, modifiers, ..
+        }) = event
+        else {
             return MenuAction::None;
         };
 
@@ -282,7 +288,12 @@ impl MenuBar {
     fn selected_items(&self) -> Option<&[MenuItem]> {
         let menu = self.menus.get(self.state.menu_index)?;
         let mut items: &[MenuItem] = &menu.items;
-        for &idx in self.state.stack.iter().take(self.state.stack.len().saturating_sub(1)) {
+        for &idx in self
+            .state
+            .stack
+            .iter()
+            .take(self.state.stack.len().saturating_sub(1))
+        {
             let item = items.get(idx)?;
             items = &item.submenu;
         }

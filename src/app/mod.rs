@@ -5,4 +5,3 @@ mod status;
 pub use desktop::{Desktop, DesktopAction, DesktopLayout, DesktopMode};
 pub use menu::{MenuAction, MenuBar, MenuItem, MenuSpec};
 pub use status::StatusBar;
-

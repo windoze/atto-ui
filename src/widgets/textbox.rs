@@ -1,8 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -54,7 +54,9 @@ impl Control for TextBox {
                 self.buffer.insert_str(s);
                 (ControlOutcome::Consumed, FormAction::Changed)
             }
-            Event::Key(KeyEvent { code, modifiers, .. }) => {
+            Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) => {
                 let mods = *modifiers;
                 match code {
                     KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
@@ -110,7 +112,9 @@ impl Control for TextBox {
             theme.widget.normal
         };
 
-        let block = Block::default().borders(Borders::ALL).title(self.title.clone());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(self.title.clone());
         frame.render_widget(block.border_style(style), area);
 
         let inner = Rect {
@@ -178,4 +182,3 @@ fn slice_by_width(text: &str, start_col: u16, width: u16) -> String {
 
     out
 }
-

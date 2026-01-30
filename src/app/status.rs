@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -30,7 +30,7 @@ impl StatusBar {
         if line.len() < width {
             let remaining = width.saturating_sub(line.len());
             let right = self.right.clone();
-            if right.len() + 1 <= remaining {
+            if right.len() < remaining {
                 line.push_str(&" ".repeat(remaining.saturating_sub(right.len())));
                 line.push_str(&right);
             } else {

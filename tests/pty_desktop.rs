@@ -78,4 +78,3 @@ fn pty_mouse_click_changes_focus_status() {
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
-

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use anyhow::{Context, Result, anyhow};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 pub struct PtyTestHost {
     child: Box<dyn portable_pty::Child + Send>,
@@ -19,12 +19,7 @@ pub struct PtyTestHost {
 }
 
 impl PtyTestHost {
-    pub fn spawn(
-        program: impl AsRef<Path>,
-        args: &[&str],
-        cols: u16,
-        rows: u16,
-    ) -> Result<Self> {
+    pub fn spawn(program: impl AsRef<Path>, args: &[&str], cols: u16, rows: u16) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -41,10 +36,7 @@ impl PtyTestHost {
         }
         cmd.env("TERM", "xterm-256color");
 
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .context("spawn_command")?;
+        let child = pair.slave.spawn_command(cmd).context("spawn_command")?;
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().context("try_clone_reader")?;
@@ -60,7 +52,9 @@ impl PtyTestHost {
                 if n == 0 {
                     break;
                 }
-                let mut p = parser_for_thread.lock().map_err(|_| anyhow!("parser poisoned"))?;
+                let mut p = parser_for_thread
+                    .lock()
+                    .map_err(|_| anyhow!("parser poisoned"))?;
                 p.process(&buf[..n]);
             }
             Ok(())
@@ -128,11 +122,7 @@ impl PtyTestHost {
     pub fn wait_for_text(&self, needle: &str, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if self
-                .screen_contents()
-                .unwrap_or_default()
-                .contains(needle)
-            {
+            if self.screen_contents().unwrap_or_default().contains(needle) {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(10));

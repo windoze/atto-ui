@@ -1,8 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
-use ratatui::Frame;
 
 use crate::theme::Theme;
 
@@ -90,7 +90,11 @@ impl Control for ListBox {
             .map(|s| ListItem::new(Line::raw(s.clone())))
             .collect();
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(self.title.clone()))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(self.title.clone()),
+            )
             .highlight_style(theme.menu_item_selected)
             .style(style);
         frame.render_stateful_widget(list, area, &mut self.state);

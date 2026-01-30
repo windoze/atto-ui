@@ -1,6 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::app::status::Fill;
 use crate::theme::Theme;
@@ -102,7 +102,10 @@ impl Desktop {
         let layout = Self::layout(screen);
 
         // Global toggles.
-        if let Event::Key(KeyEvent { code, modifiers, .. }) = event {
+        if let Event::Key(KeyEvent {
+            code, modifiers, ..
+        }) = event
+        {
             if *code == KeyCode::F(10) && self.mode != DesktopMode::Menu {
                 self.mode = DesktopMode::Menu;
                 self.menu.activate();
@@ -153,11 +156,10 @@ impl Desktop {
                 if let Some((id, action)) =
                     self.wm
                         .dispatch_to_focused_view(event, layout.work_area, &self.theme)
+                    && action == crate::view::ViewAction::CloseWindow
                 {
-                    if action == crate::view::ViewAction::CloseWindow {
-                        self.wm.close(id);
-                        return DesktopAction::CloseWindow(id);
-                    }
+                    self.wm.close(id);
+                    return DesktopAction::CloseWindow(id);
                 }
                 DesktopAction::None
             }
@@ -181,7 +183,9 @@ impl Desktop {
         let status_left = match self.mode {
             DesktopMode::Normal => "F10 Menu  Ctrl+W Window  F6 Next",
             DesktopMode::Menu => "Menu: ←/→/↑/↓ Enter  Esc Close",
-            DesktopMode::WindowManagement => "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit",
+            DesktopMode::WindowManagement => {
+                "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit"
+            }
         };
         self.status.set_left(status_left);
         let focused = self

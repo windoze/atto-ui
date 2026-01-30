@@ -1,9 +1,9 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent};
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders};
-use ratatui::Frame;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -113,7 +113,11 @@ impl WindowManager {
         if self.active_modal_id().is_some() {
             return;
         }
-        if !self.windows.iter().any(|w| w.id == id && w.kind.is_focusable()) {
+        if !self
+            .windows
+            .iter()
+            .any(|w| w.id == id && w.kind.is_focusable())
+        {
             return;
         }
         self.focused = Some(id);
@@ -168,10 +172,10 @@ impl WindowManager {
 
     pub fn restore_focused(&mut self) {
         let Some(id) = self.focused() else { return };
-        if let Some(w) = self.window_mut(id) {
-            if w.state == WindowState::Minimized {
-                w.state = WindowState::Normal;
-            }
+        if let Some(w) = self.window_mut(id)
+            && w.state == WindowState::Minimized
+        {
+            w.state = WindowState::Normal;
         }
     }
 
@@ -228,7 +232,9 @@ impl WindowManager {
             };
 
             if window.decorations.border {
-                let block = Block::default().borders(Borders::ALL).border_style(border_style);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(border_style);
                 frame.render_widget(block, rect);
                 draw_titlebar(
                     frame.buffer_mut(),
@@ -316,22 +322,22 @@ impl WindowManager {
                 };
 
                 let window_id = hit.window_id;
-                if modal.is_none() {
-                    if self
+                if modal.is_none()
+                    && self
                         .windows
                         .iter()
                         .any(|w| w.id == window_id && w.kind.is_focusable())
-                    {
-                        self.focus(window_id);
-                    }
+                {
+                    self.focus(window_id);
                 }
 
                 match hit.region {
                     HitRegion::CloseButton => {
-                        if let Some(w) = self.window_mut(window_id) {
-                            if w.closable && w.decorations.buttons.close {
-                                action.close = Some(window_id);
-                            }
+                        if let Some(w) = self.window_mut(window_id)
+                            && w.closable
+                            && w.decorations.buttons.close
+                        {
+                            action.close = Some(window_id);
                         }
                     }
                     HitRegion::MaximizeButton => {
@@ -344,22 +350,23 @@ impl WindowManager {
                         }
                     }
                     HitRegion::MinimizeButton => {
-                        if let Some(w) = self.window_mut(window_id) {
-                            if w.decorations.buttons.minimize {
-                                w.state = WindowState::Minimized;
-                                self.focused = self.topmost_focusable_id();
-                            }
+                        if let Some(w) = self.window_mut(window_id)
+                            && w.decorations.buttons.minimize
+                        {
+                            w.state = WindowState::Minimized;
+                            self.focused = self.topmost_focusable_id();
                         }
                     }
                     HitRegion::TitleBar => {
-                        if let Some(w) = self.window_mut(window_id) {
-                            if w.movable && w.state != WindowState::Maximized {
-                                self.drag = Some(DragState {
-                                    window_id,
-                                    offset_x: m.column.saturating_sub(w.rect.x),
-                                    offset_y: m.row.saturating_sub(w.rect.y),
-                                });
-                            }
+                        if let Some(w) = self.window_mut(window_id)
+                            && w.movable
+                            && w.state != WindowState::Maximized
+                        {
+                            self.drag = Some(DragState {
+                                window_id,
+                                offset_x: m.column.saturating_sub(w.rect.x),
+                                offset_y: m.row.saturating_sub(w.rect.y),
+                            });
                         }
                     }
                     HitRegion::Body => {}
@@ -478,19 +485,21 @@ impl WindowManager {
                 continue;
             }
 
-            if let Some(titlebar) = w.titlebar_rect() {
-                if y == titlebar.y && x >= titlebar.x && x < titlebar.x + titlebar.width {
-                    if let Some(btn) = hit_test_buttons(w, x, y) {
-                        return Some(HitTest {
-                            window_id: w.id,
-                            region: btn,
-                        });
-                    }
+            if let Some(titlebar) = w.titlebar_rect()
+                && y == titlebar.y
+                && x >= titlebar.x
+                && x < titlebar.x + titlebar.width
+            {
+                if let Some(btn) = hit_test_buttons(w, x, y) {
                     return Some(HitTest {
                         window_id: w.id,
-                        region: HitRegion::TitleBar,
+                        region: btn,
                     });
                 }
+                return Some(HitTest {
+                    window_id: w.id,
+                    region: HitRegion::TitleBar,
+                });
             }
 
             return Some(HitTest {
@@ -630,7 +639,13 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
     }
 }
 
-fn draw_titlebar(buf: &mut Buffer, rect: Rect, title: &str, style: Style, deco: &super::WindowDecorations) {
+fn draw_titlebar(
+    buf: &mut Buffer,
+    rect: Rect,
+    title: &str,
+    style: Style,
+    deco: &super::WindowDecorations,
+) {
     if rect.width < 3 {
         return;
     }
@@ -713,15 +728,19 @@ mod tests {
     use crate::view::{View, ViewContext};
     use crate::wm::{Window, WindowKind};
     use crossterm::event::Event;
-    use ratatui::layout::Rect;
     use ratatui::Frame;
+    use ratatui::layout::Rect;
 
     #[derive(Default)]
     struct DummyView;
 
     impl View for DummyView {
         fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
-        fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> crate::view::ViewAction {
+        fn handle_event(
+            &mut self,
+            _event: &Event,
+            _ctx: ViewContext<'_>,
+        ) -> crate::view::ViewAction {
             crate::view::ViewAction::None
         }
     }
@@ -745,7 +764,7 @@ mod tests {
                     width: 20,
                     height: 6,
                 },
-                Box::new(DummyView::default()),
+                Box::new(DummyView),
             ),
             bounds,
         );
@@ -759,7 +778,7 @@ mod tests {
                     width: 20,
                     height: 6,
                 },
-                Box::new(DummyView::default()),
+                Box::new(DummyView),
             ),
             bounds,
         );
@@ -788,7 +807,7 @@ mod tests {
                     width: 20,
                     height: 6,
                 },
-                Box::new(DummyView::default()),
+                Box::new(DummyView),
             ),
             bounds,
         );
@@ -802,7 +821,7 @@ mod tests {
                     width: 30,
                     height: 8,
                 },
-                Box::new(DummyView::default()),
+                Box::new(DummyView),
             ),
             bounds,
         );
