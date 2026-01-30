@@ -12,6 +12,25 @@ fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {
 }
 
 #[test]
+fn pty_menu_dropdown_renders_above_windows() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Widgets", Duration::from_secs(2))
+        .expect("initial render");
+
+    // F10 opens the menu bar.
+    host.send_str("\x1b[21~").expect("F10");
+    host.wait_for_text("Quit", Duration::from_secs(2))
+        .expect("dropdown is visible (not overwritten by window)");
+
+    // Close menu, then quit app.
+    host.send(b"\x1b").expect("esc");
+    host.send_str("q").expect("send quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_bracketed_paste_inserts_unicode() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");

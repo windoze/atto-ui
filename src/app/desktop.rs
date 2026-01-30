@@ -178,6 +178,9 @@ impl Desktop {
             area,
         );
 
+        // Draw windows before chrome overlays so dropdown menus/tooltips can render on top.
+        self.wm.draw(frame, layout.work_area, &self.theme);
+
         self.menu.draw(frame, layout.menu_bar, &self.theme);
 
         let status_left = match self.mode {
@@ -195,7 +198,5 @@ impl Desktop {
             .unwrap_or_else(|| "Focus: none".to_string());
         self.status.set_right(focused);
         self.status.draw(frame, layout.status_bar, &self.theme);
-
-        self.wm.draw(frame, layout.work_area, &self.theme);
     }
 }
