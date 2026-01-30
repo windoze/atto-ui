@@ -24,10 +24,24 @@ pub struct WindowManagerAction {
     pub close: Option<WindowId>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResizeCorner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum DragKind {
-    Move { offset_x: u16, offset_y: u16 },
-    Resize { anchor_x: u16, anchor_y: u16 },
+    Move {
+        offset_x: u16,
+        offset_y: u16,
+    },
+    Resize {
+        start_rect: Rect,
+        corner: ResizeCorner,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -42,7 +56,7 @@ enum HitRegion {
     MinimizeButton,
     MaximizeButton,
     CloseButton,
-    ResizeHandle,
+    ResizeHandle(ResizeCorner),
     Body,
 }
 
@@ -415,17 +429,16 @@ impl WindowManager {
                             });
                         }
                     }
-                    HitRegion::ResizeHandle => {
+                    HitRegion::ResizeHandle(corner) => {
                         if let Some(w) = self.window_mut(window_id)
                             && w.resizable
                             && w.state != WindowState::Maximized
                         {
+                            let start_rect = normalize_rect(w.rect, bounds, w.min_size);
+                            w.rect = start_rect;
                             self.drag = Some(DragState {
                                 window_id,
-                                kind: DragKind::Resize {
-                                    anchor_x: w.rect.x,
-                                    anchor_y: w.rect.y,
-                                },
+                                kind: DragKind::Resize { start_rect, corner },
                             });
                         }
                     }
@@ -453,32 +466,13 @@ impl WindowManager {
                         w.rect.y = new_y;
                         w.rect = normalize_rect(w.rect, bounds, w.min_size);
                     }
-                    DragKind::Resize { anchor_x, anchor_y } => {
+                    DragKind::Resize { start_rect, corner } => {
                         if !w.resizable || w.state == WindowState::Maximized {
                             return WindowManagerAction::default();
                         }
-
-                        // Keep the top-left anchored and clamp to the available space to the
-                        // right/bottom of the anchor.
-                        w.rect.x = anchor_x;
-                        w.rect.y = anchor_y;
-
-                        let max_w = bounds
-                            .x
-                            .saturating_add(bounds.width)
-                            .saturating_sub(anchor_x);
-                        let max_h = bounds
-                            .y
-                            .saturating_add(bounds.height)
-                            .saturating_sub(anchor_y);
-                        let min_w = w.min_size.0.min(max_w);
-                        let min_h = w.min_size.1.min(max_h);
-
-                        let desired_w = m.column.saturating_sub(anchor_x).saturating_add(1);
-                        let desired_h = m.row.saturating_sub(anchor_y).saturating_add(1);
-
-                        w.rect.width = desired_w.clamp(min_w, max_w);
-                        w.rect.height = desired_h.clamp(min_h, max_h);
+                        w.rect = resize_rect_from_corner(
+                            start_rect, corner, m.column, m.row, bounds, w.min_size,
+                        );
                     }
                 }
                 WindowManagerAction {
@@ -581,6 +575,37 @@ impl WindowManager {
                 continue;
             }
 
+            if w.decorations.border
+                && w.resizable
+                && w.state != WindowState::Maximized
+                && w.rect.width >= 2
+                && w.rect.height >= 2
+            {
+                let left = w.rect.x;
+                let top = w.rect.y;
+                let right = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
+                let bottom = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
+
+                let corner = if x == left && y == top {
+                    Some(ResizeCorner::TopLeft)
+                } else if x == right && y == top {
+                    Some(ResizeCorner::TopRight)
+                } else if x == left && y == bottom {
+                    Some(ResizeCorner::BottomLeft)
+                } else if x == right && y == bottom {
+                    Some(ResizeCorner::BottomRight)
+                } else {
+                    None
+                };
+
+                if let Some(corner) = corner {
+                    return Some(HitTest {
+                        window_id: w.id,
+                        region: HitRegion::ResizeHandle(corner),
+                    });
+                }
+            }
+
             if let Some(titlebar) = w.titlebar_rect()
                 && y == titlebar.y
                 && x >= titlebar.x
@@ -596,22 +621,6 @@ impl WindowManager {
                     window_id: w.id,
                     region: HitRegion::TitleBar,
                 });
-            }
-
-            if w.decorations.border
-                && w.resizable
-                && w.state != WindowState::Maximized
-                && w.rect.width >= 2
-                && w.rect.height >= 2
-            {
-                let br_x = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
-                let br_y = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
-                if x == br_x && y == br_y {
-                    return Some(HitTest {
-                        window_id: w.id,
-                        region: HitRegion::ResizeHandle,
-                    });
-                }
             }
 
             return Some(HitTest {
@@ -696,6 +705,70 @@ fn normalize_rect(mut rect: Rect, bounds: Rect, min_size: (u16, u16)) -> Rect {
     rect.x = rect.x.clamp(bounds.x, max_x);
     rect.y = rect.y.clamp(bounds.y, max_y);
     rect
+}
+
+fn resize_rect_from_corner(
+    start: Rect,
+    corner: ResizeCorner,
+    pointer_x: u16,
+    pointer_y: u16,
+    bounds: Rect,
+    min_size: (u16, u16),
+) -> Rect {
+    if start.width == 0 || start.height == 0 || bounds.width == 0 || bounds.height == 0 {
+        return start;
+    }
+
+    let bounds_left = bounds.x;
+    let bounds_top = bounds.y;
+    let bounds_right = bounds.x.saturating_add(bounds.width).saturating_sub(1);
+    let bounds_bottom = bounds.y.saturating_add(bounds.height).saturating_sub(1);
+
+    let start_left = start.x;
+    let start_top = start.y;
+    let start_right = start.x.saturating_add(start.width).saturating_sub(1);
+    let start_bottom = start.y.saturating_add(start.height).saturating_sub(1);
+
+    let (left, right) = match corner {
+        ResizeCorner::BottomRight | ResizeCorner::TopRight => {
+            // Left is fixed.
+            let max_w = bounds_right.saturating_sub(start_left).saturating_add(1);
+            let min_w = min_size.0.min(max_w);
+            let right_min = start_left.saturating_add(min_w).saturating_sub(1);
+            (start_left, pointer_x.clamp(right_min, bounds_right))
+        }
+        ResizeCorner::BottomLeft | ResizeCorner::TopLeft => {
+            // Right is fixed.
+            let max_w = start_right.saturating_sub(bounds_left).saturating_add(1);
+            let min_w = min_size.0.min(max_w);
+            let left_max = start_right.saturating_sub(min_w).saturating_add(1);
+            (pointer_x.clamp(bounds_left, left_max), start_right)
+        }
+    };
+
+    let (top, bottom) = match corner {
+        ResizeCorner::BottomRight | ResizeCorner::BottomLeft => {
+            // Top is fixed.
+            let max_h = bounds_bottom.saturating_sub(start_top).saturating_add(1);
+            let min_h = min_size.1.min(max_h);
+            let bottom_min = start_top.saturating_add(min_h).saturating_sub(1);
+            (start_top, pointer_y.clamp(bottom_min, bounds_bottom))
+        }
+        ResizeCorner::TopRight | ResizeCorner::TopLeft => {
+            // Bottom is fixed.
+            let max_h = start_bottom.saturating_sub(bounds_top).saturating_add(1);
+            let min_h = min_size.1.min(max_h);
+            let top_max = start_bottom.saturating_sub(min_h).saturating_add(1);
+            (pointer_y.clamp(bounds_top, top_max), start_bottom)
+        }
+    };
+
+    Rect {
+        x: left,
+        y: top,
+        width: right.saturating_sub(left).saturating_add(1),
+        height: bottom.saturating_sub(top).saturating_add(1),
+    }
 }
 
 fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
@@ -956,56 +1029,101 @@ mod tests {
     }
 
     #[test]
-    fn mouse_drag_resize_handle_resizes_window() {
+    fn mouse_drag_resize_handles_work_on_all_corners() {
         let bounds = Rect {
             x: 0,
             y: 0,
             width: 80,
             height: 24,
         };
-        let mut wm = WindowManager::new();
-        let id = wm.add_window(
-            Window::new(
-                WindowKind::Normal,
-                "Resizable",
+        let cases = [
+            (
+                "top-left",
+                (2, 2),
+                (0, 0),
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 22,
+                    height: 8,
+                },
+            ),
+            (
+                "top-right",
+                (21, 2),
+                (25, 0),
+                Rect {
+                    x: 2,
+                    y: 0,
+                    width: 24,
+                    height: 8,
+                },
+            ),
+            (
+                "bottom-left",
+                (2, 7),
+                (0, 9),
+                Rect {
+                    x: 0,
+                    y: 2,
+                    width: 22,
+                    height: 8,
+                },
+            ),
+            (
+                "bottom-right",
+                (21, 7),
+                (25, 9),
                 Rect {
                     x: 2,
                     y: 2,
-                    width: 20,
-                    height: 6,
+                    width: 24,
+                    height: 8,
                 },
-                Box::new(DummyView),
             ),
-            bounds,
-        );
+        ];
 
-        // Down on bottom-right corner starts resize.
-        wm.handle_event(
-            &Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: 21,
-                row: 7,
-                modifiers: KeyModifiers::NONE,
-            }),
-            bounds,
-            super::WindowManagerInputMode::Normal,
-        );
+        for (label, down, drag, expected) in cases {
+            let mut wm = WindowManager::new();
+            let id = wm.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Resizable",
+                    Rect {
+                        x: 2,
+                        y: 2,
+                        width: 20,
+                        height: 6,
+                    },
+                    Box::new(DummyView),
+                ),
+                bounds,
+            );
 
-        // Drag outwards increases width/height.
-        wm.handle_event(
-            &Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Drag(MouseButton::Left),
-                column: 25,
-                row: 9,
-                modifiers: KeyModifiers::NONE,
-            }),
-            bounds,
-            super::WindowManagerInputMode::Normal,
-        );
+            wm.handle_event(
+                &Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: down.0,
+                    row: down.1,
+                    modifiers: KeyModifiers::NONE,
+                }),
+                bounds,
+                super::WindowManagerInputMode::Normal,
+            );
+            wm.handle_event(
+                &Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Drag(MouseButton::Left),
+                    column: drag.0,
+                    row: drag.1,
+                    modifiers: KeyModifiers::NONE,
+                }),
+                bounds,
+                super::WindowManagerInputMode::Normal,
+            );
 
-        let w = wm.window_mut(id).expect("window");
-        assert_eq!(w.rect.width, 24);
-        assert_eq!(w.rect.height, 8);
+            let w = wm.window_mut(id).expect("window");
+            assert_eq!(w.rect, expected, "case {label}");
+        }
     }
 
     #[test]

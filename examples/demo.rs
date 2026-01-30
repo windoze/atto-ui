@@ -423,7 +423,7 @@ fn main() -> Result<()> {
                 height: 6,
             },
             Box::new(TextView::new(vec![
-                "Mouse: click to focus; drag title bar".into(),
+                "Mouse: click to focus; drag title bar; drag corners to resize".into(),
                 "Ctrl+W: window mode (move/resize/min/max/close)".into(),
                 "F2: toggle theme".into(),
                 "Paste: bracketed paste into textbox".into(),
