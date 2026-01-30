@@ -10,8 +10,8 @@
 
 ## Bugs
 
-- [ ] Drop down menu should be above other content, now it is below window
-- [ ] Modal window (include dropdown menus) should grab the input so global shortcuts do not trigger actions when modal is open
+- [x] Drop down menu should be above other content, now it is below window
+- [x] Modal window (include dropdown menus) should grab the input so global shortcuts do not trigger actions when modal is open
 - [ ] Drop shadow missing the bottom right corner
 - [ ] View/Window should have a solid background by default, now it is transparent, that is, the content behind it is visible if foreground has no text.
 
@@ -27,5 +27,6 @@
 - [ ] Focused window should have double-line border
 - [ ] Window should be resizable by mouse dragging the bottom right corner
 - [ ] Window closing hooks, the user should be able to register a callback that is called when the user tries to close the window, e.g., to pop up a "Are you sure?" dialog.
+- [ ] Dropdown menus should also have drop shadows
 - [ ] Menu item in the menu bar should also have an optional keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
 - [ ] Menu items in drop down menus should have an optional keyboard shortcuts, e.g., when the "File" menu is open, pressing "N" should trigger the "New File" action.
