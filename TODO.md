@@ -27,4 +27,5 @@
 - [ ] Focused window should have double-line border
 - [ ] Window should be resizable by mouse dragging the bottom right corner
 - [ ] Window closing hooks, the user should be able to register a callback that is called when the user tries to close the window, e.g., to pop up a "Are you sure?" dialog.
-- [ ] Menu item in the menu bar should also have a keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
+- [ ] Menu item in the menu bar should also have an optional keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
+- [ ] Menu items in drop down menus should have an optional keyboard shortcuts, e.g., when the "File" menu is open, pressing "N" should trigger the "New File" action.
