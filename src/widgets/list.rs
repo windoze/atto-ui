@@ -14,6 +14,7 @@ pub struct ListBox {
     items: Vec<String>,
     state: ListState,
     focused: bool,
+    enabled: bool,
     height: u16,
     area: Option<Rect>,
 }
@@ -29,9 +30,15 @@ impl ListBox {
             items,
             state,
             focused: false,
+            enabled: true,
             height: 7,
             area: None,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn with_height(mut self, height: u16) -> Self {
@@ -45,6 +52,14 @@ impl ListBox {
 }
 
 impl Control for ListBox {
+    fn is_focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
@@ -54,6 +69,9 @@ impl Control for ListBox {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         if self.items.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
@@ -114,10 +132,17 @@ impl Control for ListBox {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let style = if self.focused {
+        let style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
+        };
+        let highlight_style = if self.enabled {
+            theme.selection
+        } else {
+            theme.selection.patch(theme.widget.disabled)
         };
         let items: Vec<ListItem> = self
             .items
@@ -128,9 +153,10 @@ impl Control for ListBox {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_set(theme.border_set(false))
                     .title(self.title.clone()),
             )
-            .highlight_style(theme.menu_item_selected)
+            .highlight_style(highlight_style)
             .style(style);
         frame.render_stateful_widget(list, area, &mut self.state);
     }

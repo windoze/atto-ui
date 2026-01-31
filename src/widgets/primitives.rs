@@ -24,6 +24,10 @@ pub trait Control: Send {
         true
     }
 
+    fn is_enabled(&self) -> bool {
+        true
+    }
+
     fn set_focused(&mut self, _focused: bool) {}
 
     fn set_area(&mut self, _area: Rect) {}
@@ -49,7 +53,7 @@ impl Form {
     pub fn new(controls: Vec<Box<dyn Control>>) -> Self {
         let focused = controls
             .iter()
-            .position(|c| c.is_focusable())
+            .position(|c| c.is_focusable() && c.is_enabled())
             .or(if controls.is_empty() { None } else { Some(0) });
         let layout = vec![None; controls.len()];
         Self {
@@ -60,6 +64,8 @@ impl Form {
     }
 
     pub fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        self.ensure_focusable();
+
         if let Event::Mouse(m) = event {
             return self.handle_mouse_event(m, event);
         }
@@ -84,10 +90,15 @@ impl Form {
         let Some(control) = self.controls.get_mut(idx) else {
             return (ControlOutcome::Ignored, FormAction::None);
         };
+        if !control.is_enabled() {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         control.handle_event(event)
     }
 
     pub fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, window_focused: bool) {
+        self.ensure_focusable();
+
         self.layout.clear();
         self.layout.resize(self.controls.len(), None);
 
@@ -103,7 +114,8 @@ impl Form {
             self.layout[idx] = Some(r);
             control.set_area(r);
             // Only set control as focused if both window is focused AND control has focus in form
-            control.set_focused(window_focused && self.focused == Some(idx));
+            control
+                .set_focused(window_focused && self.focused == Some(idx) && control.is_enabled());
             control.draw(frame, r, theme);
             y = y.saturating_add(h);
             if y >= area.y.saturating_add(area.height) {
@@ -120,7 +132,7 @@ impl Form {
         let start = self.focused.unwrap_or(0);
         for i in 1..=self.controls.len() {
             let idx = (start + i) % self.controls.len();
-            if self.controls[idx].is_focusable() {
+            if self.controls[idx].is_focusable() && self.controls[idx].is_enabled() {
                 self.focused = Some(idx);
                 return;
             }
@@ -135,7 +147,7 @@ impl Form {
         let start = self.focused.unwrap_or(0);
         for i in 1..=self.controls.len() {
             let idx = (start + self.controls.len() - i) % self.controls.len();
-            if self.controls[idx].is_focusable() {
+            if self.controls[idx].is_focusable() && self.controls[idx].is_enabled() {
                 self.focused = Some(idx);
                 return;
             }
@@ -154,6 +166,13 @@ impl Form {
         let Some(idx) = self.hit_test(m.column, m.row) else {
             return (ControlOutcome::Ignored, FormAction::None);
         };
+        if self
+            .controls
+            .get(idx)
+            .is_some_and(|c| c.is_focusable() && !c.is_enabled())
+        {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
 
         let focus_changed = self
             .controls
@@ -166,6 +185,9 @@ impl Form {
         let Some(control) = self.controls.get_mut(idx) else {
             return (ControlOutcome::Ignored, FormAction::None);
         };
+        if !control.is_enabled() {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         let (outcome, action) = control.handle_event(event);
 
         let consumed = focus_changed || outcome == ControlOutcome::Consumed;
@@ -192,5 +214,28 @@ impl Form {
             }
         }
         None
+    }
+
+    fn ensure_focusable(&mut self) {
+        if self.controls.is_empty() {
+            self.focused = None;
+            return;
+        }
+
+        let Some(idx) = self.focused else {
+            return;
+        };
+
+        let Some(control) = self.controls.get(idx) else {
+            self.focused = None;
+            return;
+        };
+
+        if control.is_focusable() && control.is_enabled() {
+            return;
+        }
+
+        self.focused = None;
+        self.focus_next();
     }
 }

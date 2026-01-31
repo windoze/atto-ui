@@ -1133,14 +1133,15 @@ impl View for Grid {
 
         let track_style = ctx.theme.scrollbar_track;
         let thumb_style = ctx.theme.scrollbar_thumb;
+        let arrow_style = ctx.theme.scrollbar_arrow;
         let buf = frame.buffer_mut();
 
-        const TRACK: &str = "░";
-        const THUMB: &str = "█";
-        const ARROW_UP: &str = "▲";
-        const ARROW_DOWN: &str = "▼";
-        const ARROW_LEFT: &str = "◄";
-        const ARROW_RIGHT: &str = "►";
+        let track = ctx.theme.glyph("scrollbar-track").unwrap_or("░");
+        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
+        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+        let arrow_left = ctx.theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+        let arrow_right = ctx.theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
         if let Some(vbar) = scrollbars.vbar {
             let layout = scrollbar_layout_1d(
@@ -1153,15 +1154,15 @@ impl View for Grid {
 
             for dy in 0..vbar.height {
                 let (symbol, style) = if layout.has_arrows && dy == 0 {
-                    (ARROW_UP, thumb_style)
+                    (arrow_up, arrow_style)
                 } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
-                    (ARROW_DOWN, thumb_style)
+                    (arrow_down, arrow_style)
                 } else if dy >= layout.thumb_start
                     && dy < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    (THUMB, thumb_style)
+                    (thumb, thumb_style)
                 } else {
-                    (TRACK, track_style)
+                    (track, track_style)
                 };
                 for dx in 0..vbar.width {
                     buf[(
@@ -1185,15 +1186,15 @@ impl View for Grid {
 
             for dx in 0..hbar.width {
                 let (symbol, style) = if layout.has_arrows && dx == 0 {
-                    (ARROW_LEFT, thumb_style)
+                    (arrow_left, arrow_style)
                 } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
-                    (ARROW_RIGHT, thumb_style)
+                    (arrow_right, arrow_style)
                 } else if dx >= layout.thumb_start
                     && dx < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    (THUMB, thumb_style)
+                    (thumb, thumb_style)
                 } else {
-                    (TRACK, track_style)
+                    (track, track_style)
                 };
                 for dy in 0..hbar.height {
                     buf[(
@@ -1219,7 +1220,7 @@ impl View for Grid {
                         area.x.saturating_add(corner.x).saturating_add(dx),
                         area.y.saturating_add(corner.y).saturating_add(dy),
                     )]
-                        .set_symbol(TRACK)
+                        .set_symbol(track)
                         .set_style(track_style);
                 }
             }

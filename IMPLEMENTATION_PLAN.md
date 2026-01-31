@@ -1037,6 +1037,94 @@ rows) can be rendered without constructing a `ViewNode` per row.
 
 ---
 
+## Milestone 10 — Theme Files + Named Tokens (Glyphs / Styles / Colors)
+
+This milestone upgrades theming so the whole app (including user-defined widgets) can be driven
+by **named glyphs** and **named styles** loaded from an external JSON/YAML file.
+
+Key goals:
+
+- All visible elements can express (if applicable) 3 states:
+  - focused/active
+  - normal/inactive
+  - disabled
+- Theme data supports:
+  - **glyphs**: named strings (typically 1-cell glyphs) used by borders, scrollbars, buttons, etc.
+  - **colors**: named foreground/background pairs (e.g. `#RRGGBB`)
+  - **styles**: named modifier lists (e.g. `["bold", "reverse"]`)
+  - user-defined/custom keys, so external widgets can participate in theming
+- The app can:
+  - use built-in defaults (`Theme::dark()` / `Theme::light()`)
+  - OR load a theme file and apply it globally
+
+### US-10.1: Load Theme From JSON/YAML
+
+**As a** developer
+**I want** to load a theme from a JSON/YAML file
+**So that** users can customize glyphs and colors without recompiling
+
+**Design Summary:**
+
+- Introduce a `ThemeConfig` file format shaped like:
+  - `glyphs: { name -> string }`
+  - `colors: { name -> { fg, bg } }`
+  - `styles: { name -> [modifiers...] }`
+- `Theme` exposes:
+  - `theme.glyph(name)` → `Option<&str>`
+  - `theme.style(name)` → `Option<Style>`
+  - allowing user-defined widgets to reference their own keys
+- Built-in widgets/chrome keep using typed `Theme` fields (`theme.window_bg`, etc.), but these
+  fields can be overridden by theme config keys (with sensible fallback to built-ins).
+
+**Acceptance Criteria:**
+
+- [ ] Theme file can be loaded from JSON (`.json`) and YAML (`.yaml`/`.yml`)
+- [ ] Missing keys fall back to built-in defaults (theme files may be partial overlays)
+- [ ] Named glyphs/styles/colors that are not recognized by built-ins are preserved and queryable
+- [ ] Hex colors in `#RRGGBB` form are supported (with a small set of common named colors allowed)
+
+**Implementation Plan:**
+
+1. Add serde-based `ThemeConfig` parsing + color/modifier decoding.
+2. Add `Theme::load_from_path(...)` helpers (detect format by extension + fallback parsing).
+3. Add `Theme` maps for named glyphs/styles in addition to existing typed fields.
+4. Define and document the built-in key mapping (e.g. `active-window-border`, `scrollbar-thumb`).
+
+### US-10.2: Apply Theme Glyphs To Chrome + Scrollbars
+
+**As a** user
+**I want** window borders, title buttons, and scrollbars to use theme-provided glyphs
+**So that** the UI look-and-feel is fully themeable
+
+**Acceptance Criteria:**
+
+- [ ] Window border glyphs (active/inactive) come from theme keys:
+  - `h-border`, `v-border`, corners
+  - `active-h-border`, `active-v-border`, active corners
+- [ ] Titlebar button glyphs come from theme keys:
+  - `minimize-button`, `maximize-button`, `close-button`
+- [ ] Scrollbar glyphs come from theme keys:
+  - `scrollbar-track`, `scrollbar-thumb`, arrow glyphs
+- [ ] Default built-in theme produces the same visuals as before the refactor (no regression)
+
+**Implementation Plan:**
+
+1. Update window chrome drawing (`src/wm/manager.rs`) to use `Block::border_set(...)` from theme.
+2. Update titlebar button drawing to read glyphs from `theme.glyph(...)`.
+3. Update all scrollbar rendering sites (window border, VBox/HBox/Grid, BorderView, ScrollView) to
+   use themed glyphs + themed arrow/track/thumb styles.
+
+### Tests
+
+- Unit tests:
+  - theme file parsing (JSON + YAML)
+  - hex color decoding + modifier parsing
+  - merge behavior (partial overlay overrides a single key)
+- Integration:
+  - keep existing PTY tests as regression coverage (default theme must match current visuals)
+
+---
+
 ## Integration and Testing Strategy for M6-M8
 
 ### Unit Tests

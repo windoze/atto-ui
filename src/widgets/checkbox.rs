@@ -13,6 +13,7 @@ pub struct Checkbox {
     label: String,
     checked: bool,
     focused: bool,
+    enabled: bool,
 }
 
 impl Checkbox {
@@ -21,7 +22,13 @@ impl Checkbox {
             label: label.into(),
             checked,
             focused: false,
+            enabled: true,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn checked(&self) -> bool {
@@ -30,11 +37,22 @@ impl Checkbox {
 }
 
 impl Control for Checkbox {
+    fn is_focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         match event {
             Event::Mouse(m) => {
                 use crossterm::event::MouseButton;
@@ -59,13 +77,19 @@ impl Control for Checkbox {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let style = if self.focused {
+        let style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
         };
-        let mark = if self.checked { "x" } else { " " };
-        let text = format!("[{mark}] {}", self.label);
+        let mark = if self.checked {
+            theme.glyph("checkbox-checked").unwrap_or("[x]")
+        } else {
+            theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
+        };
+        let text = format!("{mark} {}", self.label);
         frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
     }
 }

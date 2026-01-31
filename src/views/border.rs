@@ -1,7 +1,7 @@
 use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::widgets::{Block, Borders};
 
 use crate::view::{ScrollbarHost, View, ViewContext, ViewEventResult};
 
@@ -381,7 +381,7 @@ impl View for BorderView {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(border_style)
-                .border_type(BorderType::Plain);
+                .border_set(ctx.theme.border_set(false));
             frame.render_widget(block, area);
         }
 
@@ -431,12 +431,13 @@ impl View for BorderView {
 
         let buf = frame.buffer_mut();
         let thumb_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_thumb);
+        let arrow_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_arrow);
 
-        const THUMB: &str = "█";
-        const ARROW_UP: &str = "▲";
-        const ARROW_DOWN: &str = "▼";
-        const ARROW_LEFT: &str = "◄";
-        const ARROW_RIGHT: &str = "►";
+        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
+        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+        let arrow_left = ctx.theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+        let arrow_right = ctx.theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
         if show_v && inner_local.height > 0 {
             let layout = scrollbar_layout_1d(
@@ -448,24 +449,23 @@ impl View for BorderView {
             );
             let x = local_area.width.saturating_sub(1);
             for i in 0..inner_local.height {
-                let symbol = if layout.has_arrows && i == 0 {
-                    Some(ARROW_UP)
+                let (symbol, style) = if layout.has_arrows && i == 0 {
+                    (arrow_up, arrow_style)
                 } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                    Some(ARROW_DOWN)
+                    (arrow_down, arrow_style)
                 } else if i >= layout.thumb_start
                     && i < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    Some(THUMB)
+                    (thumb, thumb_style)
                 } else {
-                    None
+                    continue;
                 };
-                let Some(symbol) = symbol else { continue };
                 buf[(
                     area.x.saturating_add(x),
                     area.y.saturating_add(inner_local.y).saturating_add(i),
                 )]
                     .set_symbol(symbol)
-                    .set_style(thumb_style);
+                    .set_style(style);
             }
         }
 
@@ -479,24 +479,23 @@ impl View for BorderView {
             );
             let y = local_area.height.saturating_sub(1);
             for i in 0..inner_local.width {
-                let symbol = if layout.has_arrows && i == 0 {
-                    Some(ARROW_LEFT)
+                let (symbol, style) = if layout.has_arrows && i == 0 {
+                    (arrow_left, arrow_style)
                 } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                    Some(ARROW_RIGHT)
+                    (arrow_right, arrow_style)
                 } else if i >= layout.thumb_start
                     && i < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    Some(THUMB)
+                    (thumb, thumb_style)
                 } else {
-                    None
+                    continue;
                 };
-                let Some(symbol) = symbol else { continue };
                 buf[(
                     area.x.saturating_add(inner_local.x).saturating_add(i),
                     area.y.saturating_add(y),
                 )]
                     .set_symbol(symbol)
-                    .set_style(thumb_style);
+                    .set_style(style);
             }
         }
     }

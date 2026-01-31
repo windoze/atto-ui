@@ -15,6 +15,7 @@ pub struct TableView {
     rows: Vec<Vec<String>>,
     state: TableState,
     focused: bool,
+    enabled: bool,
     height: u16,
     area: Option<Rect>,
 }
@@ -31,9 +32,15 @@ impl TableView {
             rows,
             state,
             focused: false,
+            enabled: true,
             height: 8,
             area: None,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn with_height(mut self, height: u16) -> Self {
@@ -43,6 +50,14 @@ impl TableView {
 }
 
 impl Control for TableView {
+    fn is_focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
@@ -56,6 +71,9 @@ impl Control for TableView {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         if self.rows.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
@@ -115,10 +133,17 @@ impl Control for TableView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let base_style: Style = if self.focused {
+        let base_style: Style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
+        };
+        let highlight_style = if self.enabled {
+            theme.selection
+        } else {
+            theme.selection.patch(theme.widget.disabled)
         };
 
         let widths = if self.headers.is_empty() {
@@ -131,8 +156,12 @@ impl Control for TableView {
                 .collect()
         };
 
-        let header =
-            Row::new(self.headers.iter().cloned().map(Cell::from)).style(theme.widget.accent);
+        let header_style = if self.enabled {
+            theme.widget.accent
+        } else {
+            theme.widget.disabled
+        };
+        let header = Row::new(self.headers.iter().cloned().map(Cell::from)).style(header_style);
         let rows = self
             .rows
             .iter()
@@ -142,9 +171,10 @@ impl Control for TableView {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_set(theme.border_set(false))
                     .title(self.title.clone()),
             )
-            .row_highlight_style(theme.menu_item_selected)
+            .row_highlight_style(highlight_style)
             .style(base_style);
 
         frame.render_stateful_widget(table, area, &mut self.state);

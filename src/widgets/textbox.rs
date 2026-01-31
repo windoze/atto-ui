@@ -16,6 +16,7 @@ pub struct TextBox {
     title: String,
     buffer: TextBuffer,
     focused: bool,
+    enabled: bool,
     scroll: u16,
     area: Option<Rect>,
 }
@@ -26,9 +27,15 @@ impl TextBox {
             title: title.into(),
             buffer: TextBuffer::new(),
             focused: false,
+            enabled: true,
             scroll: 0,
             area: None,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
@@ -42,6 +49,14 @@ impl TextBox {
 }
 
 impl Control for TextBox {
+    fn is_focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
@@ -55,6 +70,9 @@ impl Control for TextBox {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         match event {
             Event::Mouse(m) => {
                 use crossterm::event::MouseButton;
@@ -145,7 +163,9 @@ impl Control for TextBox {
         if area.height == 0 || area.width == 0 {
             return;
         }
-        let style = if self.focused {
+        let style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
@@ -153,6 +173,7 @@ impl Control for TextBox {
 
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_set(theme.border_set(false))
             .title(self.title.clone());
         frame.render_widget(block.border_style(style), area);
 

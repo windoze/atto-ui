@@ -31,7 +31,7 @@
 All visible elements should have 3 states (if applicable):
 - Focused/active
 - Normal/inactive
-- Disabled/unavailable
+- Disabled
 Each style defines colors for background, foreground, border, and special elements (e.g., scrollbar arrows).
 We should define a structure like:
 ```
@@ -75,8 +75,8 @@ We should define a structure like:
   }
 }
 ```
-Above is just an example structure, the actual design may differ.
-When app start, it can load all glyphs, styles, and colors from a JSON/YAML file into a `Theme` struct, or use default built-in theme if no file is provided.
+Above is just an example structure, the actual design may differ. The key point is, controls or user app can also defines their own glyphs/styles/colors with custom names, so the theme can also applied to user-defined widgets.
+App can load all glyphs, styles, and colors from a JSON/YAML file into a `Theme` struct and apply to the whole app, or use default built-in theme if no file is provided.
 
 ## Virtual Scrolling
 

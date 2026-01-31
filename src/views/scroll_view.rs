@@ -388,14 +388,15 @@ impl ScrollView {
 
         let track_style = ctx.theme.scrollbar_track;
         let thumb_style = ctx.theme.scrollbar_thumb;
+        let arrow_style = ctx.theme.scrollbar_arrow;
         let buf = frame.buffer_mut();
 
-        const TRACK: &str = "░";
-        const THUMB: &str = "█";
-        const ARROW_UP: &str = "▲";
-        const ARROW_DOWN: &str = "▼";
-        const ARROW_LEFT: &str = "◄";
-        const ARROW_RIGHT: &str = "►";
+        let track = ctx.theme.glyph("scrollbar-track").unwrap_or("░");
+        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
+        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+        let arrow_left = ctx.theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+        let arrow_right = ctx.theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
         if let Some(vbar) = scrollbars.vbar {
             let layout = scrollbar_layout_1d(
@@ -408,15 +409,15 @@ impl ScrollView {
 
             for dy in 0..vbar.height {
                 let (symbol, style) = if layout.has_arrows && dy == 0 {
-                    (ARROW_UP, thumb_style)
+                    (arrow_up, arrow_style)
                 } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
-                    (ARROW_DOWN, thumb_style)
+                    (arrow_down, arrow_style)
                 } else if dy >= layout.thumb_start
                     && dy < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    (THUMB, thumb_style)
+                    (thumb, thumb_style)
                 } else {
-                    (TRACK, track_style)
+                    (track, track_style)
                 };
                 for dx in 0..vbar.width {
                     buf[(
@@ -440,15 +441,15 @@ impl ScrollView {
 
             for dx in 0..hbar.width {
                 let (symbol, style) = if layout.has_arrows && dx == 0 {
-                    (ARROW_LEFT, thumb_style)
+                    (arrow_left, arrow_style)
                 } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
-                    (ARROW_RIGHT, thumb_style)
+                    (arrow_right, arrow_style)
                 } else if dx >= layout.thumb_start
                     && dx < layout.thumb_start.saturating_add(layout.thumb_len)
                 {
-                    (THUMB, thumb_style)
+                    (thumb, thumb_style)
                 } else {
-                    (TRACK, track_style)
+                    (track, track_style)
                 };
                 for dy in 0..hbar.height {
                     buf[(
@@ -474,7 +475,7 @@ impl ScrollView {
                         area.x.saturating_add(corner.x).saturating_add(dx),
                         area.y.saturating_add(corner.y).saturating_add(dy),
                     )]
-                        .set_symbol(TRACK)
+                        .set_symbol(track)
                         .set_style(track_style);
                 }
             }
@@ -534,196 +535,195 @@ impl View for ScrollView {
         };
 
         // Scrollbar hit-testing is only relevant when scrollbars are hosted by the view itself.
-        if matches!(ctx.scrollbar_host, ScrollbarHost::View) {
-            if let Event::Mouse(m) = event {
-                let Some(area) = self.last_area else {
-                    return ViewEventResult::ignored();
+        if matches!(ctx.scrollbar_host, ScrollbarHost::View)
+            && let Event::Mouse(m) = event
+        {
+            let Some(area) = self.last_area else {
+                return ViewEventResult::ignored();
+            };
+            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                return ViewEventResult::ignored();
+            };
+
+            let scrollbars = self.scrollbars.unwrap_or_else(|| {
+                let viewport = Rect {
+                    x: 0,
+                    y: 0,
+                    width: area.width,
+                    height: area.height,
                 };
-                let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                    return ViewEventResult::ignored();
-                };
+                Scrollbars {
+                    viewport,
+                    content: apply_padding(viewport, self.padding),
+                    vbar: None,
+                    hbar: None,
+                    thickness: self.scroll_config.scrollbar_thickness.max(1),
+                }
+            });
 
-                let scrollbars = self.scrollbars.unwrap_or_else(|| {
-                    let viewport = Rect {
-                        x: 0,
-                        y: 0,
-                        width: area.width,
-                        height: area.height,
-                    };
-                    Scrollbars {
-                        viewport,
-                        content: apply_padding(viewport, self.padding),
-                        vbar: None,
-                        hbar: None,
-                        thickness: self.scroll_config.scrollbar_thickness.max(1),
-                    }
-                });
-
-                // If we started a thumb drag, keep consuming drag/up events.
-                if let Some(drag) = self.scrollbar_drag {
-                    match m.kind {
-                        crossterm::event::MouseEventKind::Drag(MouseButton::Left) => match drag {
-                            ScrollbarDrag::Vertical { grab_offset } => {
-                                let Some(vbar) = scrollbars.vbar else {
-                                    self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
-                                };
-                                if vbar.height == 0 {
-                                    return ViewEventResult::consumed();
-                                }
-
-                                let layout = scrollbar_layout_1d(
-                                    vbar.height,
-                                    self.viewport_size.1,
-                                    self.content_size.1,
-                                    self.scroll.y,
-                                    self.scroll_config.arrows,
-                                );
-                                if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
-                                }
-
-                                let pos = local_y
-                                    .saturating_sub(vbar.y)
-                                    .min(vbar.height.saturating_sub(1));
-                                let pos_in_track = pos
-                                    .saturating_sub(layout.track_start)
-                                    .min(layout.track_len.saturating_sub(1));
-
-                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
-                                let new_thumb_start =
-                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
-                                let new_off = scroll_offset_from_thumb_start(
-                                    layout.track_len,
-                                    self.viewport_size.1,
-                                    self.content_size.1,
-                                    new_thumb_start,
-                                );
-                                let _ = self.scroll_to_clamped(self.scroll.x, new_off);
+            // If we started a thumb drag, keep consuming drag/up events.
+            if let Some(drag) = self.scrollbar_drag {
+                match m.kind {
+                    crossterm::event::MouseEventKind::Drag(MouseButton::Left) => match drag {
+                        ScrollbarDrag::Vertical { grab_offset } => {
+                            let Some(vbar) = scrollbars.vbar else {
+                                self.scrollbar_drag = None;
+                                return ViewEventResult::consumed();
+                            };
+                            if vbar.height == 0 {
                                 return ViewEventResult::consumed();
                             }
-                            ScrollbarDrag::Horizontal { grab_offset } => {
-                                let Some(hbar) = scrollbars.hbar else {
-                                    self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
-                                };
-                                if hbar.width == 0 {
-                                    return ViewEventResult::consumed();
-                                }
 
-                                let layout = scrollbar_layout_1d(
-                                    hbar.width,
-                                    self.viewport_size.0,
-                                    self.content_size.0,
-                                    self.scroll.x,
-                                    self.scroll_config.arrows,
-                                );
-                                if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
-                                }
-
-                                let pos = local_x
-                                    .saturating_sub(hbar.x)
-                                    .min(hbar.width.saturating_sub(1));
-                                let pos_in_track = pos
-                                    .saturating_sub(layout.track_start)
-                                    .min(layout.track_len.saturating_sub(1));
-
-                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
-                                let new_thumb_start =
-                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
-                                let new_off = scroll_offset_from_thumb_start(
-                                    layout.track_len,
-                                    self.viewport_size.0,
-                                    self.content_size.0,
-                                    new_thumb_start,
-                                );
-                                let _ = self.scroll_to_clamped(new_off, self.scroll.y);
+                            let layout = scrollbar_layout_1d(
+                                vbar.height,
+                                self.viewport_size.1,
+                                self.content_size.1,
+                                self.scroll.y,
+                                self.scroll_config.arrows,
+                            );
+                            if layout.track_len == 0 {
                                 return ViewEventResult::consumed();
                             }
-                        },
-                        crossterm::event::MouseEventKind::Up(MouseButton::Left) => {
-                            self.scrollbar_drag = None;
+
+                            let pos = local_y
+                                .saturating_sub(vbar.y)
+                                .min(vbar.height.saturating_sub(1));
+                            let pos_in_track = pos
+                                .saturating_sub(layout.track_start)
+                                .min(layout.track_len.saturating_sub(1));
+
+                            let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                            let new_thumb_start =
+                                pos_in_track.saturating_sub(grab_offset).min(max_start);
+                            let new_off = scroll_offset_from_thumb_start(
+                                layout.track_len,
+                                self.viewport_size.1,
+                                self.content_size.1,
+                                new_thumb_start,
+                            );
+                            let _ = self.scroll_to_clamped(self.scroll.x, new_off);
                             return ViewEventResult::consumed();
                         }
-                        _ => {}
+                        ScrollbarDrag::Horizontal { grab_offset } => {
+                            let Some(hbar) = scrollbars.hbar else {
+                                self.scrollbar_drag = None;
+                                return ViewEventResult::consumed();
+                            };
+                            if hbar.width == 0 {
+                                return ViewEventResult::consumed();
+                            }
+
+                            let layout = scrollbar_layout_1d(
+                                hbar.width,
+                                self.viewport_size.0,
+                                self.content_size.0,
+                                self.scroll.x,
+                                self.scroll_config.arrows,
+                            );
+                            if layout.track_len == 0 {
+                                return ViewEventResult::consumed();
+                            }
+
+                            let pos = local_x
+                                .saturating_sub(hbar.x)
+                                .min(hbar.width.saturating_sub(1));
+                            let pos_in_track = pos
+                                .saturating_sub(layout.track_start)
+                                .min(layout.track_len.saturating_sub(1));
+
+                            let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                            let new_thumb_start =
+                                pos_in_track.saturating_sub(grab_offset).min(max_start);
+                            let new_off = scroll_offset_from_thumb_start(
+                                layout.track_len,
+                                self.viewport_size.0,
+                                self.content_size.0,
+                                new_thumb_start,
+                            );
+                            let _ = self.scroll_to_clamped(new_off, self.scroll.y);
+                            return ViewEventResult::consumed();
+                        }
+                    },
+                    crossterm::event::MouseEventKind::Up(MouseButton::Left) => {
+                        self.scrollbar_drag = None;
+                        return ViewEventResult::consumed();
+                    }
+                    _ => {}
+                }
+            }
+
+            if let crossterm::event::MouseEventKind::Down(MouseButton::Left) = m.kind {
+                if let Some(vbar) = scrollbars.vbar
+                    && contains(vbar, local_x, local_y)
+                    && vbar.height > 0
+                {
+                    let pos = local_y.saturating_sub(vbar.y);
+                    let layout = scrollbar_layout_1d(
+                        vbar.height,
+                        self.viewport_size.1,
+                        self.content_size.1,
+                        self.scroll.y,
+                        self.scroll_config.arrows,
+                    );
+                    match scrollbar_hit_test(layout, pos) {
+                        ScrollbarHit::ArrowDec => {
+                            let _ = self.scroll_by(0, -1);
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::ArrowInc => {
+                            let _ = self.scroll_by(0, 1);
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::Thumb { grab_offset } => {
+                            self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::TrackDec => {
+                            let _ = self.scroll_by(0, -(self.viewport_size.1 as i16));
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::TrackInc => {
+                            let _ = self.scroll_by(0, self.viewport_size.1 as i16);
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::None => {}
                     }
                 }
 
-                if let crossterm::event::MouseEventKind::Down(MouseButton::Left) = m.kind {
-                    if let Some(vbar) = scrollbars.vbar
-                        && contains(vbar, local_x, local_y)
-                        && vbar.height > 0
-                    {
-                        let pos = local_y.saturating_sub(vbar.y);
-                        let layout = scrollbar_layout_1d(
-                            vbar.height,
-                            self.viewport_size.1,
-                            self.content_size.1,
-                            self.scroll.y,
-                            self.scroll_config.arrows,
-                        );
-                        match scrollbar_hit_test(layout, pos) {
-                            ScrollbarHit::ArrowDec => {
-                                let _ = self.scroll_by(0, -1);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::ArrowInc => {
-                                let _ = self.scroll_by(0, 1);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::Thumb { grab_offset } => {
-                                self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::TrackDec => {
-                                let _ = self.scroll_by(0, -(self.viewport_size.1 as i16));
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::TrackInc => {
-                                let _ = self.scroll_by(0, self.viewport_size.1 as i16);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::None => {}
+                if let Some(hbar) = scrollbars.hbar
+                    && contains(hbar, local_x, local_y)
+                    && hbar.width > 0
+                {
+                    let pos = local_x.saturating_sub(hbar.x);
+                    let layout = scrollbar_layout_1d(
+                        hbar.width,
+                        self.viewport_size.0,
+                        self.content_size.0,
+                        self.scroll.x,
+                        self.scroll_config.arrows,
+                    );
+                    match scrollbar_hit_test(layout, pos) {
+                        ScrollbarHit::ArrowDec => {
+                            let _ = self.scroll_by(-1, 0);
+                            return ViewEventResult::consumed();
                         }
-                    }
-
-                    if let Some(hbar) = scrollbars.hbar
-                        && contains(hbar, local_x, local_y)
-                        && hbar.width > 0
-                    {
-                        let pos = local_x.saturating_sub(hbar.x);
-                        let layout = scrollbar_layout_1d(
-                            hbar.width,
-                            self.viewport_size.0,
-                            self.content_size.0,
-                            self.scroll.x,
-                            self.scroll_config.arrows,
-                        );
-                        match scrollbar_hit_test(layout, pos) {
-                            ScrollbarHit::ArrowDec => {
-                                let _ = self.scroll_by(-1, 0);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::ArrowInc => {
-                                let _ = self.scroll_by(1, 0);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::Thumb { grab_offset } => {
-                                self.scrollbar_drag =
-                                    Some(ScrollbarDrag::Horizontal { grab_offset });
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::TrackDec => {
-                                let _ = self.scroll_by(-(self.viewport_size.0 as i16), 0);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::TrackInc => {
-                                let _ = self.scroll_by(self.viewport_size.0 as i16, 0);
-                                return ViewEventResult::consumed();
-                            }
-                            ScrollbarHit::None => {}
+                        ScrollbarHit::ArrowInc => {
+                            let _ = self.scroll_by(1, 0);
+                            return ViewEventResult::consumed();
                         }
+                        ScrollbarHit::Thumb { grab_offset } => {
+                            self.scrollbar_drag = Some(ScrollbarDrag::Horizontal { grab_offset });
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::TrackDec => {
+                            let _ = self.scroll_by(-(self.viewport_size.0 as i16), 0);
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::TrackInc => {
+                            let _ = self.scroll_by(self.viewport_size.0 as i16, 0);
+                            return ViewEventResult::consumed();
+                        }
+                        ScrollbarHit::None => {}
                     }
                 }
             }

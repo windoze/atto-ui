@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::widgets::{Block, Borders};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -287,11 +287,7 @@ impl WindowManager {
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .border_type(if is_focused {
-                        BorderType::Double
-                    } else {
-                        BorderType::Plain
-                    });
+                    .border_set(theme.border_set(is_focused));
                 frame.render_widget(block, rect);
                 draw_titlebar(
                     frame.buffer_mut(),
@@ -299,6 +295,7 @@ impl WindowManager {
                     &window.title,
                     title_style,
                     &window.decorations,
+                    theme,
                 );
             }
 
@@ -1111,33 +1108,33 @@ fn draw_window_border_scrollbars(
     let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
 
     let thumb_style = theme.window_bg.patch(theme.scrollbar_thumb);
+    let arrow_style = theme.window_bg.patch(theme.scrollbar_arrow);
 
-    const THUMB: &str = "█";
-    const ARROW_UP: &str = "▲";
-    const ARROW_DOWN: &str = "▼";
-    const ARROW_LEFT: &str = "◄";
-    const ARROW_RIGHT: &str = "►";
+    let thumb = theme.glyph("scrollbar-thumb").unwrap_or("█");
+    let arrow_up = theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+    let arrow_down = theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+    let arrow_left = theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+    let arrow_right = theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
     // Vertical scrollbar on the right border (excluding corners).
     if show_v {
         let layout = scrollbar_layout_1d(inner.height, viewport_h, content_h, scroll_y, cfg.arrows);
         let x = rect.x.saturating_add(rect.width).saturating_sub(1);
         for i in 0..inner.height {
-            let symbol = if layout.has_arrows && i == 0 {
-                Some(ARROW_UP)
+            let (symbol, style) = if layout.has_arrows && i == 0 {
+                (arrow_up, arrow_style)
             } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                Some(ARROW_DOWN)
+                (arrow_down, arrow_style)
             } else if i >= layout.thumb_start
                 && i < layout.thumb_start.saturating_add(layout.thumb_len)
             {
-                Some(THUMB)
+                (thumb, thumb_style)
             } else {
-                None
+                continue;
             };
-            let Some(symbol) = symbol else { continue };
             if let Some(cell) = buf.cell_mut((x, inner.y.saturating_add(i))) {
                 cell.set_symbol(symbol);
-                cell.set_style(thumb_style);
+                cell.set_style(style);
             }
         }
     }
@@ -1147,21 +1144,20 @@ fn draw_window_border_scrollbars(
         let layout = scrollbar_layout_1d(inner.width, viewport_w, content_w, scroll_x, cfg.arrows);
         let y = rect.y.saturating_add(rect.height).saturating_sub(1);
         for i in 0..inner.width {
-            let symbol = if layout.has_arrows && i == 0 {
-                Some(ARROW_LEFT)
+            let (symbol, style) = if layout.has_arrows && i == 0 {
+                (arrow_left, arrow_style)
             } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                Some(ARROW_RIGHT)
+                (arrow_right, arrow_style)
             } else if i >= layout.thumb_start
                 && i < layout.thumb_start.saturating_add(layout.thumb_len)
             {
-                Some(THUMB)
+                (thumb, thumb_style)
             } else {
-                None
+                continue;
             };
-            let Some(symbol) = symbol else { continue };
             if let Some(cell) = buf.cell_mut((inner.x.saturating_add(i), y)) {
                 cell.set_symbol(symbol);
-                cell.set_style(thumb_style);
+                cell.set_style(style);
             }
         }
     }
@@ -1173,6 +1169,7 @@ fn draw_titlebar(
     title: &str,
     style: Style,
     deco: &super::WindowDecorations,
+    theme: &Theme,
 ) {
     if rect.width < 3 {
         return;
@@ -1221,9 +1218,9 @@ fn draw_titlebar(
             continue;
         }
         let symbol = match region {
-            HitRegion::MinimizeButton => "−",
-            HitRegion::MaximizeButton => "□",
-            HitRegion::CloseButton => "×",
+            HitRegion::MinimizeButton => theme.glyph("minimize-button").unwrap_or("−"),
+            HitRegion::MaximizeButton => theme.glyph("maximize-button").unwrap_or("□"),
+            HitRegion::CloseButton => theme.glyph("close-button").unwrap_or("×"),
             _ => "?",
         };
         if let Some(cell) = buf.cell_mut((col, rect.y)) {

@@ -12,6 +12,7 @@ use super::{Control, ControlOutcome, FormAction};
 pub struct Button {
     label: String,
     focused: bool,
+    enabled: bool,
 }
 
 impl Button {
@@ -19,16 +20,33 @@ impl Button {
         Self {
             label: label.into(),
             focused: false,
+            enabled: true,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 }
 
 impl Control for Button {
+    fn is_focusable(&self) -> bool {
+        self.enabled
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         match event {
             Event::Mouse(m) => {
                 use crossterm::event::MouseButton;
@@ -53,12 +71,17 @@ impl Control for Button {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let style = if self.focused {
+        let style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
         };
-        let block = Block::default().borders(Borders::ALL).border_style(style);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(style)
+            .border_set(theme.border_set(false));
         let text = Line::styled(format!(" {} ", self.label), style);
         let p = Paragraph::new(text).block(block);
         frame.render_widget(p, area);

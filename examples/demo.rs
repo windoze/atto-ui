@@ -16,7 +16,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
-use chatty::theme::Theme;
+use chatty::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
 use chatty::views::{
     Align, Anchor, AnchorPlacement, ControlView, EdgeInsets, Grid, HBox, LayoutParams,
@@ -75,8 +75,11 @@ impl DialogView {
             Box::new(Label::new("Chatty demo (Turbo Vision-inspired).")),
             Box::new(Label::new("")),
             Box::new(Label::new("Keys:")),
-            Box::new(Label::new("  F10 menu   Ctrl+W window mode   F2 theme")),
+            Box::new(Label::new(
+                "  F10 menu   Ctrl+W window mode   F2 cycle theme",
+            )),
             Box::new(Label::new("  n new win  a about/modal        t tooltip")),
+            Box::new(Label::new("  d widget states demo (disabled controls)")),
             Box::new(Label::new("  v layout demo (view hierarchy)")),
             Box::new(Label::new("  s scroll demo (viewport + scrollbars)")),
             Box::new(Label::new(
@@ -135,7 +138,7 @@ impl WidgetsView {
                         "Delta".into(),
                     ],
                 )
-                .with_height(6),
+                .with_height(4),
             ),
             Box::new(
                 TableView::new(
@@ -147,7 +150,7 @@ impl WidgetsView {
                         vec!["cn".into(), "你好👋".into()],
                     ],
                 )
-                .with_height(6),
+                .with_height(4),
             ),
             Box::new(Button::new("OK")),
         ];
@@ -195,6 +198,90 @@ impl View for WidgetsView {
                 },
             );
         }
+    }
+}
+
+struct DisabledWidgetsView {
+    form: Form,
+}
+
+impl DisabledWidgetsView {
+    fn new() -> Self {
+        let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
+            Box::new(Label::new(
+                "Disabled widgets (not focusable/clickable; Esc closes)",
+            )),
+            Box::new(
+                TextBox::new("Text (disabled)")
+                    .with_text("read-only")
+                    .with_enabled(false),
+            ),
+            Box::new(Checkbox::new("Enable feature (disabled)", true).with_enabled(false)),
+            Box::new(
+                RadioGroup::new(
+                    "Mode (disabled)",
+                    vec!["Normal".into(), "Insert".into(), "Visual".into()],
+                    1,
+                )
+                .with_enabled(false),
+            ),
+            Box::new(
+                ListBox::new(
+                    "List (disabled)",
+                    vec![
+                        "Alpha".into(),
+                        "Beta".into(),
+                        "Gamma".into(),
+                        "Delta".into(),
+                    ],
+                )
+                .with_height(4)
+                .with_enabled(false),
+            ),
+            Box::new(
+                TableView::new(
+                    "Table (disabled)",
+                    vec!["Key".into(), "Value".into()],
+                    vec![
+                        vec!["lang".into(), "Rust".into()],
+                        vec!["jp".into(), "こんにちは".into()],
+                        vec!["cn".into(), "你好👋".into()],
+                    ],
+                )
+                .with_height(4)
+                .with_enabled(false),
+            ),
+            Box::new(Button::new("OK (disabled)").with_enabled(false)),
+            Box::new(Label::new(
+                "Tip: focus another window to see inactive state.",
+            )),
+        ];
+        Self {
+            form: Form::new(controls),
+        }
+    }
+}
+
+impl View for DisabledWidgetsView {
+    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return ViewEventResult::close_window();
+        }
+
+        let (outcome, _) = self.form.handle_event(event);
+        match outcome {
+            ControlOutcome::Consumed => ViewEventResult::consumed(),
+            ControlOutcome::Ignored => ViewEventResult::ignored(),
+        }
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
     }
 }
 
@@ -546,6 +633,122 @@ fn build_virtual_scroll_demo_view() -> ScrollView {
         .with_padding(EdgeInsets::all(1))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoTheme {
+    Dark,
+    DarkUnicode,
+    DarkAscii,
+    DarkHighContrast,
+    Light,
+}
+
+impl DemoTheme {
+    const fn label(self) -> &'static str {
+        match self {
+            DemoTheme::Dark => "Dark",
+            DemoTheme::DarkUnicode => "Dark + Unicode",
+            DemoTheme::DarkAscii => "Dark + ASCII",
+            DemoTheme::DarkHighContrast => "Dark + High Contrast",
+            DemoTheme::Light => "Light",
+        }
+    }
+
+    const fn next(self) -> Self {
+        match self {
+            DemoTheme::Dark => DemoTheme::DarkUnicode,
+            DemoTheme::DarkUnicode => DemoTheme::DarkAscii,
+            DemoTheme::DarkAscii => DemoTheme::DarkHighContrast,
+            DemoTheme::DarkHighContrast => DemoTheme::Light,
+            DemoTheme::Light => DemoTheme::Dark,
+        }
+    }
+}
+
+fn apply_demo_theme(desktop: &mut Desktop, theme: DemoTheme) -> Result<()> {
+    let (base, overlay) = match theme {
+        DemoTheme::Dark => (Theme::dark(), None),
+        DemoTheme::Light => (Theme::light(), None),
+        DemoTheme::DarkUnicode => (Theme::dark(), Some(THEME_OVERLAY_UNICODE)),
+        DemoTheme::DarkAscii => (Theme::dark(), Some(THEME_OVERLAY_ASCII)),
+        DemoTheme::DarkHighContrast => (Theme::dark(), Some(THEME_OVERLAY_HIGH_CONTRAST)),
+    };
+
+    desktop.theme = base;
+    if let Some(overlay) = overlay {
+        let cfg = ThemeConfig::from_str(overlay, ThemeConfigFormat::Yaml)?;
+        desktop.theme.apply_config_overlay(&cfg)?;
+    }
+
+    Ok(())
+}
+
+fn update_notes_title(desktop: &mut Desktop, notes_window_id: WindowId, theme: DemoTheme) {
+    if let Some(w) = desktop.wm.window_mut(notes_window_id) {
+        w.title = format!("Notes (Theme: {})", theme.label());
+    }
+}
+
+const THEME_OVERLAY_UNICODE: &str = r##"
+glyphs:
+  checkbox-unchecked: "☐"
+  checkbox-checked: "☑"
+  radio-unselected: "◯"
+  radio-selected: "◉"
+  close-button: "✕"
+  minimize-button: "−"
+"##;
+
+const THEME_OVERLAY_ASCII: &str = r##"
+glyphs:
+  h-border: "-"
+  v-border: "|"
+  top-left-corner: "+"
+  top-right-corner: "+"
+  bottom-left-corner: "+"
+  bottom-right-corner: "+"
+  active-h-border: "="
+  active-v-border: "!"
+  active-top-left-corner: "*"
+  active-top-right-corner: "*"
+  active-bottom-left-corner: "*"
+  active-bottom-right-corner: "*"
+  scrollbar-track: "."
+  scrollbar-thumb: "#"
+  close-button: "X"
+  minimize-button: "−"
+  maximize-button: "O"
+"##;
+
+const THEME_OVERLAY_HIGH_CONTRAST: &str = r##"
+colors:
+  desktop: { bg: "#000000", fg: "#FFFFFF" }
+  desktop-dim: { bg: "#000000", fg: "#808080" }
+
+  window-bg: { bg: "#000000", fg: "#FFFFFF" }
+  inactive-window-border: { fg: "#808080" }
+  active-window-border: { fg: "#FFFF00" }
+  inactive-window-title: { fg: "#FFFFFF" }
+  active-window-title: { fg: "#FFFF00" }
+
+  menu-bar: { bg: "#000000", fg: "#FFFFFF" }
+  menu-bar-active: { bg: "#FFFF00", fg: "#000000" }
+  menu-item: { bg: "#000000", fg: "#FFFFFF" }
+  menu-item-selected: { bg: "#FFFF00", fg: "#000000" }
+  selection: { bg: "#00FFFF", fg: "#000000" }
+
+  widget-normal: { fg: "#FFFFFF" }
+  widget-focused: { bg: "#FFFF00", fg: "#000000" }
+  widget-disabled: { fg: "#666666" }
+  widget-accent: { fg: "#00FFFF" }
+
+  scrollbar-thumb: { fg: "#FFFF00" }
+  scrollbar-arrow: { fg: "#FFFF00" }
+styles:
+  active-window-border: ["bold"]
+  widget-focused: ["bold"]
+  selection: ["bold"]
+"##;
+
 fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -562,7 +765,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut is_dark = true;
+    let mut demo_theme = DemoTheme::Dark;
     let menu = build_menu();
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
@@ -601,11 +804,12 @@ fn main() -> Result<()> {
     ));
     let mut scroll_demo_window_id: Option<WindowId> = None;
     let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
+    let mut widget_states_demo_window_id: Option<WindowId> = None;
 
     let log_id = desktop.add_window(
         Window::new(
             WindowKind::Floating,
-            "Notes",
+            format!("Notes (Theme: {})", demo_theme.label()),
             Rect {
                 x: work.x.saturating_add(43),
                 y: work.y.saturating_add(16),
@@ -615,11 +819,11 @@ fn main() -> Result<()> {
             Box::new(TextView::new(vec![
                 "Mouse: click to focus; drag title bar; drag corners to resize".into(),
                 "Ctrl+W: window mode (move/resize/min/max/close)".into(),
-                "F2: toggle theme".into(),
+                "F2: cycle theme (built-in + overlays)".into(),
                 "Paste: bracketed paste into textbox".into(),
-                "V: focus/open layout demo".into(),
-                "S: focus/open scroll demo".into(),
-                "Z: focus/open virtual scroll demo".into(),
+                "D: widget states demo (disabled)".into(),
+                "V: layout demo (view hierarchy)".into(),
+                "S/Z: scroll / virtual scroll demos".into(),
             ])),
         ),
         screen,
@@ -629,11 +833,12 @@ fn main() -> Result<()> {
     let res = run(
         &mut terminal,
         &mut desktop,
-        &mut is_dark,
+        &mut demo_theme,
         log_id,
         &mut layout_demo_window_id,
         &mut scroll_demo_window_id,
         &mut virtual_scroll_demo_window_id,
+        &mut widget_states_demo_window_id,
         &mut tooltip,
     );
 
@@ -659,6 +864,9 @@ fn build_menu() -> MenuBar {
                     "Theme",
                     vec![
                         MenuItem::command("Dark", "theme.dark"),
+                        MenuItem::command("Dark + Unicode", "theme.dark_unicode"),
+                        MenuItem::command("Dark + ASCII", "theme.dark_ascii"),
+                        MenuItem::command("Dark + High Contrast", "theme.dark_high_contrast"),
                         MenuItem::command("Light", "theme.light"),
                     ],
                 ),
@@ -669,6 +877,7 @@ fn build_menu() -> MenuBar {
             "Window",
             vec![
                 MenuItem::command("Next", "window.next").shortcut("F6"),
+                MenuItem::command("Widget states demo", "window.states_demo").shortcut("d"),
                 MenuItem::command("Layout demo", "window.layout_demo").shortcut("v"),
                 MenuItem::command("Scroll demo", "window.scroll_demo").shortcut("s"),
                 MenuItem::command("Virtual scroll demo", "window.virtual_scroll_demo")
@@ -688,11 +897,12 @@ fn build_menu() -> MenuBar {
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     desktop: &mut Desktop,
-    is_dark: &mut bool,
+    demo_theme: &mut DemoTheme,
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
     scroll_demo_window_id: &mut Option<WindowId>,
     virtual_scroll_demo_window_id: &mut Option<WindowId>,
+    widget_states_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
@@ -749,6 +959,9 @@ fn run(
                 "window.virtual_scroll_demo" => {
                     open_virtual_scroll_demo(desktop, screen, virtual_scroll_demo_window_id)?;
                 }
+                "window.states_demo" => {
+                    open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
+                }
                 "window.min" => desktop.wm.minimize_focused(),
                 "window.max" => {
                     let screen: Rect = terminal.size()?.into();
@@ -762,12 +975,29 @@ fn run(
                 }
                 "help.about" => open_about_modal(desktop, screen)?,
                 "theme.dark" => {
-                    *is_dark = true;
-                    desktop.theme = Theme::dark();
+                    *demo_theme = DemoTheme::Dark;
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
                 }
                 "theme.light" => {
-                    *is_dark = false;
-                    desktop.theme = Theme::light();
+                    *demo_theme = DemoTheme::Light;
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
+                }
+                "theme.dark_unicode" => {
+                    *demo_theme = DemoTheme::DarkUnicode;
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
+                }
+                "theme.dark_ascii" => {
+                    *demo_theme = DemoTheme::DarkAscii;
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
+                }
+                "theme.dark_high_contrast" => {
+                    *demo_theme = DemoTheme::DarkHighContrast;
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
                 }
                 _ => {
                     // Unknown commands are ignored.
@@ -787,12 +1017,9 @@ fn run(
             match (code, modifiers) {
                 (KeyCode::Char('q'), KeyModifiers::NONE) => break,
                 (KeyCode::F(2), _) => {
-                    *is_dark = !*is_dark;
-                    desktop.theme = if *is_dark {
-                        Theme::dark()
-                    } else {
-                        Theme::light()
-                    };
+                    *demo_theme = demo_theme.next();
+                    apply_demo_theme(desktop, *demo_theme)?;
+                    update_notes_title(desktop, notes_window_id, *demo_theme);
                 }
                 (KeyCode::Char('n'), KeyModifiers::NONE) => {
                     next_float += 1;
@@ -820,6 +1047,9 @@ fn run(
                 }
                 (KeyCode::Char('t'), KeyModifiers::NONE) => {
                     open_tooltip(desktop, screen, tooltip)?;
+                }
+                (KeyCode::Char('d'), KeyModifiers::NONE) => {
+                    open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
                 }
                 (KeyCode::Char('v'), KeyModifiers::NONE) => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
@@ -961,6 +1191,42 @@ fn open_virtual_scroll_demo(
         screen,
     );
     *virtual_scroll_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_widget_states_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    widget_states_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *widget_states_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 56.min(work.width.saturating_sub(2)).max(24);
+    let h = 18.min(work.height.saturating_sub(2)).max(10);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Widget States",
+            rect,
+            Box::new(DisabledWidgetsView::new()),
+        ),
+        screen,
+    );
+    *widget_states_demo_window_id = Some(id);
     Ok(())
 }
 

@@ -364,7 +364,8 @@ impl MenuBar {
             );
             let block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme.menu_item.patch(theme.window_border));
+                .border_style(theme.menu_item.patch(theme.window_border))
+                .border_set(theme.border_set(false));
             frame.render_widget(block, rect);
 
             let inner = Rect {

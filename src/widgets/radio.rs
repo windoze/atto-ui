@@ -15,6 +15,7 @@ pub struct RadioGroup {
     options: Vec<String>,
     selected: usize,
     focused: bool,
+    enabled: bool,
     area: Option<Rect>,
 }
 
@@ -26,8 +27,14 @@ impl RadioGroup {
             options,
             selected: selected.min(options_len.saturating_sub(1)),
             focused: false,
+            enabled: true,
             area: None,
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
     }
 
     pub fn selected_index(&self) -> usize {
@@ -36,6 +43,14 @@ impl RadioGroup {
 }
 
 impl Control for RadioGroup {
+    fn is_focusable(&self) -> bool {
+        self.enabled && !self.options.is_empty()
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
     }
@@ -45,6 +60,9 @@ impl Control for RadioGroup {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        if !self.enabled {
+            return (ControlOutcome::Ignored, FormAction::None);
+        }
         if self.options.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
@@ -96,7 +114,9 @@ impl Control for RadioGroup {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let title_style = if self.focused {
+        let title_style = if !self.enabled {
+            theme.widget.disabled
+        } else if self.focused {
             theme.widget.accent
         } else {
             theme.widget.dim
@@ -116,8 +136,14 @@ impl Control for RadioGroup {
                 break;
             }
             let is_sel = idx == self.selected;
-            let mark = if is_sel { "*" } else { " " };
-            let style: Style = if self.focused && is_sel {
+            let mark = if is_sel {
+                theme.glyph("radio-selected").unwrap_or("(*)")
+            } else {
+                theme.glyph("radio-unselected").unwrap_or("( )")
+            };
+            let style: Style = if !self.enabled {
+                theme.widget.disabled
+            } else if self.focused && is_sel {
                 theme.widget.focused
             } else if is_sel {
                 theme.widget.accent
@@ -125,7 +151,7 @@ impl Control for RadioGroup {
                 theme.widget.normal
             };
             frame.render_widget(
-                Paragraph::new(Line::styled(format!("({mark}) {opt}"), style)),
+                Paragraph::new(Line::styled(format!("{mark} {opt}"), style)),
                 Rect {
                     x: area.x,
                     y,
