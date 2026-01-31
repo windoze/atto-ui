@@ -975,6 +975,68 @@ border), not part of the scrollable content area.
 
 ---
 
+## Milestone 9 — Virtual Scrolling (Delegate-Driven Content)
+
+This milestone adds a **virtual scrolling** abstraction so large scrollable content (e.g. 10k+
+rows) can be rendered without constructing a `ViewNode` per row.
+
+### US-9.1: ScrollView With Virtualized Content Delegate
+
+**As a** developer
+**I want** a scrollable view that delegates content rendering to a virtualized content provider
+**So that** I can efficiently render large datasets while keeping consistent scrollbar behavior
+
+**Design Summary:**
+
+- Introduce a generic `ScrollView` that owns scroll state (`ScrollOffset`, `ScrollConfig`, viewport
+  size, content size) and is responsible for:
+  - scrollbar visibility + layout
+  - keyboard/mouse-wheel scrolling behavior
+  - scrollbar hit-testing (arrows/track/thumb) when scrollbars are hosted by the view
+- Delegate the **content area** (excluding borders and scrollbars, and after padding) to a
+  user-provided `ScrollContent` implementation that:
+  - draws only the visible region based on the current scroll offset (virtualization)
+  - receives all events that occur in the content area (mouse) and all non-mouse events (keys/paste)
+  - receives “scrollbar positioning” notifications (computed content rect + bar rects + thumb layout)
+  - can update the scroll host reactively/proactively (e.g., set content size, scroll to an offset)
+
+**Acceptance Criteria:**
+
+- [x] `ScrollView` supports both vertical and horizontal scrolling
+- [x] Content delegate receives a content rect that excludes borders + scrollbars (and padding)
+- [x] Content delegate can report/update virtual content size independent of rendered cells
+- [x] Scrollbars reflect the virtual content size and current scroll offset
+- [x] Scrollbars follow the existing hosting rules:
+  - window border hosts scrollbars for the root view (corners reserved for resize)
+  - `BorderView` hosts scrollbars on its border lines for scrollable inner views
+  - borderless scrollbars remain on right/bottom edges and do not overlap the content rect
+- [x] US-8.6 arrow buttons work with virtual scrolling (click arrows scroll by 1 row/col)
+
+**Implementation Plan:**
+
+1. Add `src/views/scroll_view.rs`:
+   - `ScrollView` implements `View` and owns scroll state
+   - `ScrollContent` trait for delegate-driven rendering + event handling
+   - `ScrollViewHost` handle passed to the delegate so it can update content size/scroll offset
+   - Public “scrollbar positioning” payloads for external user code (bar rects + thumb layout)
+
+2. Integrate hosting + geometry:
+   - When `ctx.scrollbar_host == View`, reserve right/bottom cells for scrollbars (content rect excludes them)
+   - When `ctx.scrollbar_host == Window`, do not reserve/draw scrollbars (hosted externally), but keep scroll metadata updated
+   - Clamp scroll offsets whenever content size or viewport changes
+
+3. Add deterministic demo target for PTY:
+   - `src/bin/snapshot_virtual_scroll_app.rs` rendering ~1000 virtual lines via `ScrollView`
+   - Content renders based on `(scroll_x, scroll_y)` without building child nodes
+
+4. Tests:
+   - PTY: wheel + arrow keys scrolls virtual content (`wait_for_text` line numbers)
+   - PTY: drag scrollbar thumb to end reaches last virtual line
+   - PTY: click scrollbar arrow buttons scroll by one row/col
+   - Unit: content rect excludes scrollbar cells in self-hosted mode
+
+---
+
 ## Integration and Testing Strategy for M6-M8
 
 ### Unit Tests

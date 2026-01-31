@@ -10,6 +10,7 @@ use crossterm::terminal::{
 use crossterm::{cursor, style};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
@@ -18,7 +19,8 @@ use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
 use chatty::theme::Theme;
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
 use chatty::views::{
-    Align, Anchor, AnchorPlacement, ControlView, EdgeInsets, Grid, HBox, LayoutParams, Size, VBox,
+    Align, Anchor, AnchorPlacement, ControlView, EdgeInsets, Grid, HBox, LayoutParams,
+    ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost, Size, VBox,
 };
 use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
@@ -77,6 +79,9 @@ impl DialogView {
             Box::new(Label::new("  n new win  a about/modal        t tooltip")),
             Box::new(Label::new("  v layout demo (view hierarchy)")),
             Box::new(Label::new("  s scroll demo (viewport + scrollbars)")),
+            Box::new(Label::new(
+                "  z virtual scroll demo (delegate-driven content)",
+            )),
             Box::new(Label::new("")),
             Box::new(Button::new("Close (Enter)")),
         ];
@@ -410,6 +415,137 @@ fn build_scroll_demo_view() -> VBox {
     root
 }
 
+#[derive(Clone, Debug)]
+struct VirtualScrollContentView {
+    rows: u16,
+    cols: u16,
+}
+
+impl VirtualScrollContentView {
+    const HEADER: &'static str = "Virtual scrolling demo: wheel/drag/arrow buttons, Esc closes";
+
+    fn new(rows: u16, cols: u16) -> Self {
+        Self { rows, cols }
+    }
+
+    fn content_height(&self) -> u16 {
+        // Row 0 is a header.
+        1u16.saturating_add(self.rows)
+    }
+
+    fn content_width(&self) -> u16 {
+        // Row string format: "0000:" + cols * (" " + "[col-00]") = 5 + cols * 9.
+        let row_width = 5u16.saturating_add(self.cols.saturating_mul(9));
+        let header_width = Self::HEADER.len().min(u16::MAX as usize) as u16;
+        row_width.max(header_width)
+    }
+
+    fn line_for_row(&self, row: u16) -> String {
+        if row == 0 {
+            return Self::HEADER.to_string();
+        }
+
+        let idx = row - 1;
+        let mut s = format!("{idx:04}:");
+        for c in 0..self.cols {
+            s.push(' ');
+            s.push_str(&format!("[col-{c:02}]"));
+        }
+        s
+    }
+
+    fn draw_line(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        style: Style,
+        dy: u16,
+        row: Option<u16>,
+        scroll_x: u16,
+    ) {
+        let buf = frame.buffer_mut();
+        let y = area.y.saturating_add(dy);
+
+        for dx in 0..area.width {
+            buf[(area.x.saturating_add(dx), y)]
+                .set_symbol(" ")
+                .set_style(style);
+        }
+
+        let Some(row) = row else {
+            return;
+        };
+
+        let line = self.line_for_row(row);
+        let start = scroll_x as usize;
+        let visible = if start < line.len() {
+            &line[start..]
+        } else {
+            ""
+        };
+        buf.set_stringn(area.x, y, visible, area.width as usize, style);
+    }
+}
+
+impl ScrollContent for VirtualScrollContentView {
+    fn content_size(
+        &mut self,
+        _viewport: (u16, u16),
+        _ctx: ScrollContentContext<'_>,
+    ) -> (u16, u16) {
+        (self.content_width(), self.content_height())
+    }
+
+    fn handle_event(
+        &mut self,
+        event: &Event,
+        _ctx: ScrollContentContext<'_>,
+        _host: &mut ScrollViewHost<'_>,
+    ) -> ViewEventResult {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return ViewEventResult::close_window();
+        }
+        ViewEventResult::ignored()
+    }
+
+    fn draw(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ScrollContentContext<'_>,
+        _host: &mut ScrollViewHost<'_>,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let style = if ctx.view.is_focused {
+            ctx.view.theme.widget.focused
+        } else {
+            ctx.view.theme.widget.normal
+        };
+
+        let scroll = ctx.info.scroll_offset;
+        let content_h = self.content_height();
+
+        for dy in 0..area.height {
+            let row = scroll.y.saturating_add(dy);
+            let row = (row < content_h).then_some(row);
+            self.draw_line(frame, area, style, dy, row, scroll.x);
+        }
+    }
+}
+
+fn build_virtual_scroll_demo_view() -> ScrollView {
+    ScrollView::new(Box::new(VirtualScrollContentView::new(10_000, 40)))
+        .with_padding(EdgeInsets::all(1))
+}
+
 fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -464,6 +600,7 @@ fn main() -> Result<()> {
         screen,
     ));
     let mut scroll_demo_window_id: Option<WindowId> = None;
+    let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
 
     let log_id = desktop.add_window(
         Window::new(
@@ -473,7 +610,7 @@ fn main() -> Result<()> {
                 x: work.x.saturating_add(43),
                 y: work.y.saturating_add(16),
                 width: 36,
-                height: 6,
+                height: 7,
             },
             Box::new(TextView::new(vec![
                 "Mouse: click to focus; drag title bar; drag corners to resize".into(),
@@ -482,6 +619,7 @@ fn main() -> Result<()> {
                 "Paste: bracketed paste into textbox".into(),
                 "V: focus/open layout demo".into(),
                 "S: focus/open scroll demo".into(),
+                "Z: focus/open virtual scroll demo".into(),
             ])),
         ),
         screen,
@@ -495,6 +633,7 @@ fn main() -> Result<()> {
         log_id,
         &mut layout_demo_window_id,
         &mut scroll_demo_window_id,
+        &mut virtual_scroll_demo_window_id,
         &mut tooltip,
     );
 
@@ -532,6 +671,8 @@ fn build_menu() -> MenuBar {
                 MenuItem::command("Next", "window.next").shortcut("F6"),
                 MenuItem::command("Layout demo", "window.layout_demo").shortcut("v"),
                 MenuItem::command("Scroll demo", "window.scroll_demo").shortcut("s"),
+                MenuItem::command("Virtual scroll demo", "window.virtual_scroll_demo")
+                    .shortcut("z"),
                 MenuItem::command("Minimize", "window.min").shortcut("m"),
                 MenuItem::command("Maximize", "window.max").shortcut("x"),
                 MenuItem::command("Close", "window.close").shortcut("c"),
@@ -551,6 +692,7 @@ fn run(
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
     scroll_demo_window_id: &mut Option<WindowId>,
+    virtual_scroll_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
@@ -603,6 +745,9 @@ fn run(
                 }
                 "window.scroll_demo" => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
+                }
+                "window.virtual_scroll_demo" => {
+                    open_virtual_scroll_demo(desktop, screen, virtual_scroll_demo_window_id)?;
                 }
                 "window.min" => desktop.wm.minimize_focused(),
                 "window.max" => {
@@ -681,6 +826,9 @@ fn run(
                 }
                 (KeyCode::Char('s'), KeyModifiers::NONE) => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
+                }
+                (KeyCode::Char('z'), KeyModifiers::NONE) => {
+                    open_virtual_scroll_demo(desktop, screen, virtual_scroll_demo_window_id)?;
                 }
                 _ => {}
             }
@@ -779,6 +927,40 @@ fn open_scroll_demo(
         screen,
     );
     *scroll_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_virtual_scroll_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    virtual_scroll_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *virtual_scroll_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 56.min(work.width.saturating_sub(2)).max(20);
+    let h = 16.min(work.height.saturating_sub(2)).max(8);
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Virtual Scroll",
+            Rect {
+                x: work.x.saturating_add(6),
+                y: work.y.saturating_add(3),
+                width: w,
+                height: h,
+            },
+            Box::new(build_virtual_scroll_demo_view()),
+        ),
+        screen,
+    );
+    *virtual_scroll_demo_window_id = Some(id);
     Ok(())
 }
 

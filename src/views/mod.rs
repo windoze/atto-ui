@@ -10,6 +10,7 @@ mod grid;
 mod layout;
 mod node;
 mod scroll;
+mod scroll_view;
 mod vbox;
 
 pub use border::BorderView;
@@ -18,6 +19,10 @@ pub use grid::Grid;
 pub use layout::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
 pub use node::{ViewId, ViewNode};
 pub use scroll::{ScrollConfig, ScrollOffset, ScrollbarVisibility};
+pub use scroll_view::{
+    ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost, ScrollViewInfo,
+    ScrollViewScrollbars, ScrollbarLayout, ScrollbarPlacement,
+};
 
 pub(crate) use scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
