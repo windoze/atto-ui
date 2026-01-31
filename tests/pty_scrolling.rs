@@ -88,13 +88,15 @@ fn pty_scrollbar_track_click_pages() {
     host.wait_for_text("000: line for scrolling", Duration::from_secs(2))
         .expect("initial content visible");
 
-    // Click the vertical scrollbar track near its bottom.
-    host.click(50, 15).expect("click vbar track");
+    // Click the vertical scrollbar track on the window's right border near its bottom.
+    // For an 80x24 PTY the window is at (2,3) with width 50, so the right border is x=51.
+    // The bottom-most bar cell is an arrow button; click one row above to hit the track.
+    host.click(51, 14).expect("click vbar track");
     host.wait_for_text("009: line for scrolling", Duration::from_secs(2))
         .expect("track click paged down");
 
-    // Clicking near the top should page up.
-    host.click(50, 4).expect("click vbar near top");
+    // Clicking near the top (below the up arrow) should page up.
+    host.click(51, 5).expect("click vbar near top");
     host.wait_for_text("000: line for scrolling", Duration::from_secs(2))
         .expect("track click paged up");
 
@@ -110,10 +112,38 @@ fn pty_scrollbar_thumb_drag_scrolls_to_end() {
     host.wait_for_text("000: line for scrolling", Duration::from_secs(2))
         .expect("initial content visible");
 
-    // Drag the thumb from the top of the track to the bottom.
-    host.drag_left(50, 4, 50, 15).expect("drag thumb down");
+    // Drag the thumb on the window's right border from near the top to near the bottom.
+    host.drag_left(51, 5, 51, 14).expect("drag thumb down");
     host.wait_for_text("079: line for scrolling", Duration::from_secs(2))
         .expect("dragged to bottom");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_scrollbar_arrow_buttons_scroll_by_one_line() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_scroll_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Scroll test:", Duration::from_secs(2))
+        .expect("initial header visible");
+
+    assert_text_absent_for(&host, "009: line for scrolling", Duration::from_millis(200));
+
+    // Click the down-arrow at the bottom of the vertical scrollbar on the window's right border.
+    // For an 80x24 PTY the window is at (2,3) with width 50 and height 14:
+    // right border x = 2 + 50 - 1 = 51, bottom arrow y = 3 + 14 - 2 = 15.
+    host.click(51, 15).expect("click vbar down arrow");
+    host.wait_for_text("009: line for scrolling", Duration::from_secs(2))
+        .expect("down arrow scrolls by one line");
+    assert_text_absent_for(&host, "Scroll test:", Duration::from_millis(200));
+
+    // Click the up-arrow at the top of the vertical scrollbar to return to the top.
+    // Up arrow is the first bar cell: y = window.y + 1 = 4.
+    host.click(51, 4).expect("click vbar up arrow");
+    host.wait_for_text("Scroll test:", Duration::from_secs(2))
+        .expect("up arrow scrolls back by one line");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

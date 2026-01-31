@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::views::{ViewId, ViewNode};
+use crate::views::{ScrollConfig, ViewId, ViewNode};
 use crate::wm::WindowId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,6 +18,27 @@ pub struct ViewContext<'a> {
     pub theme: &'a Theme,
     pub window_id: WindowId,
     pub is_focused: bool,
+    pub scrollbar_host: ScrollbarHost,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollbarHost {
+    /// The view should render and handle its own scrollbars.
+    #[default]
+    View,
+    /// Scrollbars are rendered/handled by the window chrome for the root view.
+    ///
+    /// Child views should treat this as [`ScrollbarHost::View`] so nested scrollables keep working.
+    Window,
+}
+
+impl ScrollbarHost {
+    pub const fn for_child(self) -> Self {
+        match self {
+            ScrollbarHost::View => ScrollbarHost::View,
+            ScrollbarHost::Window => ScrollbarHost::View,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -112,6 +133,22 @@ pub trait View: Send {
     /// Default: `(0, 0)`.
     fn scroll_offset(&self) -> (u16, u16) {
         (0, 0)
+    }
+
+    /// Visible viewport size (width, height) used for scrollbar math.
+    ///
+    /// Scrollable views should return the size of their visible content area (after padding).
+    ///
+    /// Default: `(0, 0)` (unknown / not scrollable).
+    fn viewport_size(&self) -> (u16, u16) {
+        (0, 0)
+    }
+
+    /// Scrollbar configuration for scrollable views.
+    ///
+    /// Default: `ScrollConfig::default()`.
+    fn scroll_config(&self) -> ScrollConfig {
+        ScrollConfig::default()
     }
 
     /// Sets the scroll offset. Scrollable views should clamp to a valid range.

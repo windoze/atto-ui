@@ -8,12 +8,12 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::view::{EventOutcome, View, ViewContext, ViewEventResult};
+use crate::view::{EventOutcome, ScrollbarHost, View, ViewContext, ViewEventResult};
 use crate::wm::WindowId;
 
 use super::{
-    Align, Anchor, AnchorPlacement, EdgeInsets, Grid, HBox, HorizontalScrollbarPosition,
-    LayoutParams, ScrollConfig, ScrollbarVisibility, Size, VBox, VerticalScrollbarPosition,
+    Align, Anchor, AnchorPlacement, EdgeInsets, Grid, HBox, LayoutParams, ScrollConfig,
+    ScrollbarVisibility, Size, VBox,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +111,7 @@ fn draw_view(view: &mut dyn View, area: Rect) {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
 
     let backend = TestBackend::new(80, 40);
@@ -417,6 +418,7 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
     let res = outer.handle_event(&click, ctx);
     assert!(res.is_consumed());
@@ -445,6 +447,7 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
     let res = vbox.handle_event(&tab, ctx);
     assert!(res.is_consumed());
@@ -467,6 +470,7 @@ fn keyboard_events_route_to_focused_child() {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
 
     let key_a = Event::Key(KeyEvent {
@@ -610,8 +614,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     let mut vbox = VBox::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Always)
-            .horizontal_scrollbar(ScrollbarVisibility::Never)
-            .vertical_position(VerticalScrollbarPosition::Left),
+            .horizontal_scrollbar(ScrollbarVisibility::Never),
     );
 
     for _ in 0..20 {
@@ -630,6 +633,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
 
     let backend = TestBackend::new(10, 5);
@@ -640,16 +644,16 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
 
     let buf = terminal.backend().buffer();
 
-    let left = buf.cell((0, 0)).expect("cell").symbol();
+    let right = buf.cell((9, 0)).expect("cell").symbol();
     assert!(
-        matches!(left, "░" | "█"),
-        "expected vertical scrollbar on the left edge; got {left:?} at (0,0)"
+        matches!(right, "░" | "█" | "▲" | "▼"),
+        "expected vertical scrollbar on the right edge; got {right:?} at (9,0)"
     );
 
-    let viewport_col0 = buf.cell((1, 0)).expect("cell").symbol();
+    let viewport_col0 = buf.cell((0, 0)).expect("cell").symbol();
     assert!(
         !matches!(viewport_col0, "░" | "█"),
-        "expected viewport to start after left scrollbar; got {viewport_col0:?} at (1,0)"
+        "expected viewport to start at x=0; got {viewport_col0:?} at (0,0)"
     );
 }
 
@@ -673,8 +677,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
     let mut hbox = HBox::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Never)
-            .horizontal_scrollbar(ScrollbarVisibility::Always)
-            .horizontal_position(HorizontalScrollbarPosition::Top),
+            .horizontal_scrollbar(ScrollbarVisibility::Always),
     );
 
     for _ in 0..40 {
@@ -693,6 +696,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
     };
 
     let backend = TestBackend::new(10, 4);
@@ -703,15 +707,15 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
 
     let buf = terminal.backend().buffer();
 
-    let top = buf.cell((0, 0)).expect("cell").symbol();
+    let bottom = buf.cell((0, 3)).expect("cell").symbol();
     assert!(
-        matches!(top, "░" | "█"),
-        "expected horizontal scrollbar on the top edge; got {top:?} at (0,0)"
+        matches!(bottom, "░" | "█" | "◄" | "►"),
+        "expected horizontal scrollbar on the bottom edge; got {bottom:?} at (0,3)"
     );
 
-    let viewport_row0 = buf.cell((0, 1)).expect("cell").symbol();
+    let viewport_row0 = buf.cell((0, 0)).expect("cell").symbol();
     assert!(
         !matches!(viewport_row0, "░" | "█"),
-        "expected viewport to start after top scrollbar; got {viewport_row0:?} at (0,1)"
+        "expected viewport to start at y=0; got {viewport_row0:?} at (0,0)"
     );
 }

@@ -904,23 +904,74 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **Acceptance Criteria:**
 
-- [ ] Vertical scrollbars render `▲` at top and `▼` at bottom (if enabled)
-- [ ] Horizontal scrollbars render `◄` at left and `►` at right (if enabled)
-- [ ] Clicking arrow buttons scrolls content by one line/column
-- [ ] Arrow buttons are styled to match theme
-- [ ] Arrow buttons are optional and can be disabled
+- [x] Vertical scrollbars render `▲` at top and `▼` at bottom (if enabled)
+- [x] Horizontal scrollbars render `◄` at left and `►` at right (if enabled)
+- [x] Clicking arrow buttons scrolls content by one line/column
+- [x] Arrow buttons are styled to match theme
+- [x] Arrow buttons are optional and can be disabled
 
 **Tests:**
 
-- PTY: click scrollbar up arrow → content scrolls up by one line
-- PTY: click scrollbar down arrow → content scrolls down by one line
-- Unit: scrollbar with arrows disabled → track spans full height
+- PTY: click scrollbar arrows scroll by one line (`tests/pty_scrolling.rs`, `tests/pty_horizontal_scrolling.rs`)
+- Unit: scrollbar layout reserves arrow cells (`src/views/scroll.rs`)
 
 **Notes:**
 
 - Arrow buttons reduce available track length for thumb
 - May want auto-repeat when arrow button is held down
 - This is a lower priority enhancement; can be deferred to future milestone
+
+---
+
+## Design Refactor — Borders + Border-Mounted Scrollbars
+
+This refactor updates the UI model so scrollbars are **chrome** (mounted to the view/window
+border), not part of the scrollable content area.
+
+### Goals
+
+- **Optional borders for all views:** views may draw a border (or no border) without needing
+  window chrome.
+- **Scrollable views own content + viewport:** a scrollable view has a virtual content area that
+  may be larger than its viewport; scrolling adjusts the viewport into that content.
+- **Scrollbars live on the border/edge:**
+  - With a border: scrollbars are drawn on the **right/bottom border lines**.
+  - Without a border: scrollbars are drawn on the **right/bottom edges** (current “track/thumb”
+    look).
+  - When drawn on borders, the **border line characters remain the track background**.
+- **Scrollable windows follow the same rule:** window scrollbars are drawn on the window’s
+  right/bottom borders and never overwrite window corners (reserved for resize).
+
+### Implementation Plan
+
+1. **API extensions**
+   - Add a generic `BorderView` wrapper so *any* `View` can be rendered with an optional border.
+   - Extend `View` with read-only scroll metadata needed by window chrome:
+     - `viewport_size()` (visible content area size)
+     - `scroll_config()` (visibility modes, thickness, arrows enabled)
+
+2. **Scrollbar primitives**
+   - Centralize scrollbar math for:
+     - arrow buttons (US-8.6)
+     - track/thumb layout with arrows
+     - mapping between thumb position ↔ scroll offset
+
+3. **Scrollable view refactor**
+   - Update scrollable containers (`VBox`, `HBox`, `Grid`) so scrollbars render on:
+     - right/bottom border lines when border is enabled
+     - right/bottom edges when border is disabled
+   - Keep existing keyboard + wheel scrolling behavior.
+   - Add arrow button mouse interactions (US-8.6).
+
+4. **Scrollable window refactor**
+   - Draw scrollbars on the window border using the hosted view’s scroll metadata.
+   - Handle mouse interactions on window scrollbars (arrows, track paging, thumb dragging).
+   - Ensure corners are never overwritten so all 4 corners remain usable for resize.
+
+5. **Tests**
+   - Update PTY scrolling tests to the new geometry (window-border scrollbars).
+   - Add PTY coverage for arrow button clicks.
+   - Add unit coverage ensuring window border corners remain intact while scrollbars render.
 
 ---
 

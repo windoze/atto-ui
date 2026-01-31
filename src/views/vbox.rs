@@ -8,12 +8,11 @@ use crate::view::{View, ViewContext, ViewEventResult};
 
 use super::layout::{add_signed, apply_padding};
 use super::scroll::{
-    ScrollbarDrag, Scrollbars, clamp_scroll_offset, max_scroll_offset,
-    scroll_offset_from_thumb_start, scrollbar_thumb, should_show_scrollbar,
+    ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset, max_scroll_offset,
+    scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
 };
 use super::{
-    Align, Anchor, EdgeInsets, HorizontalScrollbarPosition, LayoutParams, ScrollConfig,
-    ScrollOffset, Size, VerticalScrollbarPosition, ViewId, ViewNode,
+    Align, Anchor, EdgeInsets, LayoutParams, ScrollConfig, ScrollOffset, Size, ViewId, ViewNode,
 };
 
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
@@ -556,6 +555,14 @@ impl View for VBox {
         (self.scroll.x, self.scroll.y)
     }
 
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport_size
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll_config
+    }
+
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
         let _ = self.scroll_to_clamped(x, y);
     }
@@ -712,20 +719,29 @@ impl View for VBox {
                                 if vbar.height == 0 {
                                     return ViewEventResult::consumed();
                                 }
-                                let pos = local_y
-                                    .saturating_sub(vbar.y)
-                                    .min(vbar.height.saturating_sub(1));
-                                let thumb = scrollbar_thumb(
+                                let layout = scrollbar_layout_1d(
                                     vbar.height,
                                     scrollbars.content.height,
                                     self.content_size.1,
                                     self.scroll.y,
+                                    self.scroll_config.arrows,
                                 );
-                                let max_start = vbar.height.saturating_sub(thumb.len);
+                                if layout.track_len == 0 {
+                                    return ViewEventResult::consumed();
+                                }
+
+                                let pos = local_y
+                                    .saturating_sub(vbar.y)
+                                    .min(vbar.height.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
                                 let new_thumb_start =
-                                    pos.saturating_sub(grab_offset).min(max_start);
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
                                 let new_off = scroll_offset_from_thumb_start(
-                                    vbar.height,
+                                    layout.track_len,
                                     scrollbars.content.height,
                                     self.content_size.1,
                                     new_thumb_start,
@@ -741,20 +757,29 @@ impl View for VBox {
                                 if hbar.width == 0 {
                                     return ViewEventResult::consumed();
                                 }
-                                let pos = local_x
-                                    .saturating_sub(hbar.x)
-                                    .min(hbar.width.saturating_sub(1));
-                                let thumb = scrollbar_thumb(
+                                let layout = scrollbar_layout_1d(
                                     hbar.width,
                                     scrollbars.content.width,
                                     self.content_size.0,
                                     self.scroll.x,
+                                    self.scroll_config.arrows,
                                 );
-                                let max_start = hbar.width.saturating_sub(thumb.len);
+                                if layout.track_len == 0 {
+                                    return ViewEventResult::consumed();
+                                }
+
+                                let pos = local_x
+                                    .saturating_sub(hbar.x)
+                                    .min(hbar.width.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
                                 let new_thumb_start =
-                                    pos.saturating_sub(grab_offset).min(max_start);
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
                                 let new_off = scroll_offset_from_thumb_start(
-                                    hbar.width,
+                                    layout.track_len,
                                     scrollbars.content.width,
                                     self.content_size.0,
                                     new_thumb_start,
@@ -777,26 +802,38 @@ impl View for VBox {
                         && vbar.height > 0
                     {
                         let pos = local_y.saturating_sub(vbar.y);
-                        let thumb = scrollbar_thumb(
+                        let layout = scrollbar_layout_1d(
                             vbar.height,
                             scrollbars.content.height,
                             self.content_size.1,
                             self.scroll.y,
+                            self.scroll_config.arrows,
                         );
-                        if pos >= thumb.start && pos < thumb.start.saturating_add(thumb.len) {
-                            self.scrollbar_drag = Some(ScrollbarDrag::Vertical {
-                                grab_offset: pos.saturating_sub(thumb.start),
-                            });
-                            return ViewEventResult::consumed();
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                let _ = self.scroll_by(0, -1);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                let _ = self.scroll_by(0, 1);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackDec => {
+                                let page = scrollbars.content.height as i16;
+                                let _ = self.scroll_by(0, -(page));
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackInc => {
+                                let page = scrollbars.content.height as i16;
+                                let _ = self.scroll_by(0, page);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::None => {}
                         }
-
-                        let page = scrollbars.content.height as i16;
-                        if pos < thumb.start {
-                            let _ = self.scroll_by(0, -(page));
-                        } else {
-                            let _ = self.scroll_by(0, page);
-                        }
-                        return ViewEventResult::consumed();
                     }
 
                     if let Some(hbar) = scrollbars.hbar
@@ -804,26 +841,39 @@ impl View for VBox {
                         && hbar.width > 0
                     {
                         let pos = local_x.saturating_sub(hbar.x);
-                        let thumb = scrollbar_thumb(
+                        let layout = scrollbar_layout_1d(
                             hbar.width,
                             scrollbars.content.width,
                             self.content_size.0,
                             self.scroll.x,
+                            self.scroll_config.arrows,
                         );
-                        if pos >= thumb.start && pos < thumb.start.saturating_add(thumb.len) {
-                            self.scrollbar_drag = Some(ScrollbarDrag::Horizontal {
-                                grab_offset: pos.saturating_sub(thumb.start),
-                            });
-                            return ViewEventResult::consumed();
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                let _ = self.scroll_by(-1, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                let _ = self.scroll_by(1, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.scrollbar_drag =
+                                    Some(ScrollbarDrag::Horizontal { grab_offset });
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackDec => {
+                                let page = scrollbars.content.width as i16;
+                                let _ = self.scroll_by(-(page), 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackInc => {
+                                let page = scrollbars.content.width as i16;
+                                let _ = self.scroll_by(page, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::None => {}
                         }
-
-                        let page = scrollbars.content.width as i16;
-                        if pos < thumb.start {
-                            let _ = self.scroll_by(-(page), 0);
-                        } else {
-                            let _ = self.scroll_by(page, 0);
-                        }
-                        return ViewEventResult::consumed();
                     }
                 }
             }
@@ -878,6 +928,7 @@ impl View for VBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
 
             let res = self.children[child_idx]
@@ -904,6 +955,7 @@ impl View for VBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {
@@ -925,45 +977,54 @@ impl View for VBox {
         let mut show_h = false;
 
         if self.scrollable {
-            for _ in 0..2 {
-                inner = apply_padding(viewport_outer, self.padding);
+            if matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+                for _ in 0..2 {
+                    inner = apply_padding(viewport_outer, self.padding);
+                    self.viewport_size = (inner.width, inner.height);
+                    self.content_size = self.layout_children((inner.width, inner.height));
+
+                    let new_show_v = should_show_scrollbar(
+                        self.scroll_config.vertical_scrollbar,
+                        self.content_size.1,
+                        self.viewport_size.1,
+                    );
+                    let new_show_h = should_show_scrollbar(
+                        self.scroll_config.horizontal_scrollbar,
+                        self.content_size.0,
+                        self.viewport_size.0,
+                    );
+
+                    if new_show_v == show_v && new_show_h == show_h {
+                        break;
+                    }
+
+                    show_v = new_show_v;
+                    show_h = new_show_h;
+
+                    let v_thick = if show_v { thickness } else { 0 };
+                    let h_thick = if show_h { thickness } else { 0 };
+                    viewport_outer = Rect {
+                        x: area.x,
+                        y: area.y,
+                        width: area.width.saturating_sub(v_thick),
+                        height: area.height.saturating_sub(h_thick),
+                    };
+                }
+            } else {
+                viewport_outer = area;
+                inner = apply_padding(area, self.padding);
                 self.viewport_size = (inner.width, inner.height);
                 self.content_size = self.layout_children((inner.width, inner.height));
-
-                let new_show_v = should_show_scrollbar(
+                show_v = should_show_scrollbar(
                     self.scroll_config.vertical_scrollbar,
                     self.content_size.1,
                     self.viewport_size.1,
                 );
-                let new_show_h = should_show_scrollbar(
+                show_h = should_show_scrollbar(
                     self.scroll_config.horizontal_scrollbar,
                     self.content_size.0,
                     self.viewport_size.0,
                 );
-
-                if new_show_v == show_v && new_show_h == show_h {
-                    break;
-                }
-
-                show_v = new_show_v;
-                show_h = new_show_h;
-
-                let v_thick = if show_v { thickness } else { 0 };
-                let h_thick = if show_h { thickness } else { 0 };
-                let viewport_x = match self.scroll_config.vertical_position {
-                    VerticalScrollbarPosition::Left => area.x.saturating_add(v_thick),
-                    VerticalScrollbarPosition::Right => area.x,
-                };
-                let viewport_y = match self.scroll_config.horizontal_position {
-                    HorizontalScrollbarPosition::Top => area.y.saturating_add(h_thick),
-                    HorizontalScrollbarPosition::Bottom => area.y,
-                };
-                viewport_outer = Rect {
-                    x: viewport_x,
-                    y: viewport_y,
-                    width: area.width.saturating_sub(v_thick),
-                    height: area.height.saturating_sub(h_thick),
-                };
             }
         } else {
             inner = apply_padding(area, self.padding);
@@ -973,7 +1034,7 @@ impl View for VBox {
 
         self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
 
-        if self.scrollable {
+        if self.scrollable && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
             let viewport_local = Rect {
                 x: viewport_outer.x.saturating_sub(area.x),
                 y: viewport_outer.y.saturating_sub(area.y),
@@ -981,27 +1042,15 @@ impl View for VBox {
                 height: viewport_outer.height,
             };
             let content_local = apply_padding(viewport_local, self.padding);
-            let vbar_x = match self.scroll_config.vertical_position {
-                VerticalScrollbarPosition::Left => 0,
-                VerticalScrollbarPosition::Right => {
-                    viewport_local.x.saturating_add(viewport_local.width)
-                }
-            };
             let vbar = show_v.then_some(Rect {
-                x: vbar_x,
+                x: viewport_local.x.saturating_add(viewport_local.width),
                 y: viewport_local.y,
                 width: thickness,
                 height: viewport_local.height,
             });
-            let hbar_y = match self.scroll_config.horizontal_position {
-                HorizontalScrollbarPosition::Top => 0,
-                HorizontalScrollbarPosition::Bottom => {
-                    viewport_local.y.saturating_add(viewport_local.height)
-                }
-            };
             let hbar = show_h.then_some(Rect {
                 x: viewport_local.x,
-                y: hbar_y,
+                y: viewport_local.y.saturating_add(viewport_local.height),
                 width: viewport_local.width,
                 height: thickness,
             });
@@ -1048,6 +1097,7 @@ impl View for VBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }
@@ -1073,6 +1123,7 @@ impl View for VBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }
@@ -1087,21 +1138,31 @@ impl View for VBox {
 
         const TRACK: &str = "░";
         const THUMB: &str = "█";
+        const ARROW_UP: &str = "▲";
+        const ARROW_DOWN: &str = "▼";
+        const ARROW_LEFT: &str = "◄";
+        const ARROW_RIGHT: &str = "►";
 
         if let Some(vbar) = scrollbars.vbar {
-            let track_len = vbar.height;
-            let thumb = scrollbar_thumb(track_len, viewport.1, self.content_size.1, scroll.y);
+            let layout = scrollbar_layout_1d(
+                vbar.height,
+                viewport.1,
+                self.content_size.1,
+                scroll.y,
+                self.scroll_config.arrows,
+            );
 
             for dy in 0..vbar.height {
-                let symbol = if dy >= thumb.start && dy < thumb.start.saturating_add(thumb.len) {
-                    THUMB
+                let (symbol, style) = if layout.has_arrows && dy == 0 {
+                    (ARROW_UP, thumb_style)
+                } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                    (ARROW_DOWN, thumb_style)
+                } else if dy >= layout.thumb_start
+                    && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (THUMB, thumb_style)
                 } else {
-                    TRACK
-                };
-                let style = if symbol == THUMB {
-                    thumb_style
-                } else {
-                    track_style
+                    (TRACK, track_style)
                 };
                 for dx in 0..vbar.width {
                     buf[(
@@ -1115,19 +1176,25 @@ impl View for VBox {
         }
 
         if let Some(hbar) = scrollbars.hbar {
-            let track_len = hbar.width;
-            let thumb = scrollbar_thumb(track_len, viewport.0, self.content_size.0, scroll.x);
+            let layout = scrollbar_layout_1d(
+                hbar.width,
+                viewport.0,
+                self.content_size.0,
+                scroll.x,
+                self.scroll_config.arrows,
+            );
 
             for dx in 0..hbar.width {
-                let symbol = if dx >= thumb.start && dx < thumb.start.saturating_add(thumb.len) {
-                    THUMB
+                let (symbol, style) = if layout.has_arrows && dx == 0 {
+                    (ARROW_LEFT, thumb_style)
+                } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
+                    (ARROW_RIGHT, thumb_style)
+                } else if dx >= layout.thumb_start
+                    && dx < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (THUMB, thumb_style)
                 } else {
-                    TRACK
-                };
-                let style = if symbol == THUMB {
-                    thumb_style
-                } else {
-                    track_style
+                    (TRACK, track_style)
                 };
                 for dy in 0..hbar.height {
                     buf[(
@@ -1583,6 +1650,14 @@ impl View for HBox {
         (self.scroll.x, self.scroll.y)
     }
 
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport_size
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll_config
+    }
+
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
         let _ = self.scroll_to_clamped(x, y);
     }
@@ -1738,20 +1813,29 @@ impl View for HBox {
                                 if vbar.height == 0 {
                                     return ViewEventResult::consumed();
                                 }
-                                let pos = local_y
-                                    .saturating_sub(vbar.y)
-                                    .min(vbar.height.saturating_sub(1));
-                                let thumb = scrollbar_thumb(
+                                let layout = scrollbar_layout_1d(
                                     vbar.height,
                                     scrollbars.content.height,
                                     self.content_size.1,
                                     self.scroll.y,
+                                    self.scroll_config.arrows,
                                 );
-                                let max_start = vbar.height.saturating_sub(thumb.len);
+                                if layout.track_len == 0 {
+                                    return ViewEventResult::consumed();
+                                }
+
+                                let pos = local_y
+                                    .saturating_sub(vbar.y)
+                                    .min(vbar.height.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
                                 let new_thumb_start =
-                                    pos.saturating_sub(grab_offset).min(max_start);
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
                                 let new_off = scroll_offset_from_thumb_start(
-                                    vbar.height,
+                                    layout.track_len,
                                     scrollbars.content.height,
                                     self.content_size.1,
                                     new_thumb_start,
@@ -1767,20 +1851,29 @@ impl View for HBox {
                                 if hbar.width == 0 {
                                     return ViewEventResult::consumed();
                                 }
-                                let pos = local_x
-                                    .saturating_sub(hbar.x)
-                                    .min(hbar.width.saturating_sub(1));
-                                let thumb = scrollbar_thumb(
+                                let layout = scrollbar_layout_1d(
                                     hbar.width,
                                     scrollbars.content.width,
                                     self.content_size.0,
                                     self.scroll.x,
+                                    self.scroll_config.arrows,
                                 );
-                                let max_start = hbar.width.saturating_sub(thumb.len);
+                                if layout.track_len == 0 {
+                                    return ViewEventResult::consumed();
+                                }
+
+                                let pos = local_x
+                                    .saturating_sub(hbar.x)
+                                    .min(hbar.width.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
                                 let new_thumb_start =
-                                    pos.saturating_sub(grab_offset).min(max_start);
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
                                 let new_off = scroll_offset_from_thumb_start(
-                                    hbar.width,
+                                    layout.track_len,
                                     scrollbars.content.width,
                                     self.content_size.0,
                                     new_thumb_start,
@@ -1803,26 +1896,38 @@ impl View for HBox {
                         && vbar.height > 0
                     {
                         let pos = local_y.saturating_sub(vbar.y);
-                        let thumb = scrollbar_thumb(
+                        let layout = scrollbar_layout_1d(
                             vbar.height,
                             scrollbars.content.height,
                             self.content_size.1,
                             self.scroll.y,
+                            self.scroll_config.arrows,
                         );
-                        if pos >= thumb.start && pos < thumb.start.saturating_add(thumb.len) {
-                            self.scrollbar_drag = Some(ScrollbarDrag::Vertical {
-                                grab_offset: pos.saturating_sub(thumb.start),
-                            });
-                            return ViewEventResult::consumed();
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                let _ = self.scroll_by(0, -1);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                let _ = self.scroll_by(0, 1);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackDec => {
+                                let page = scrollbars.content.height as i16;
+                                let _ = self.scroll_by(0, -(page));
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackInc => {
+                                let page = scrollbars.content.height as i16;
+                                let _ = self.scroll_by(0, page);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::None => {}
                         }
-
-                        let page = scrollbars.content.height as i16;
-                        if pos < thumb.start {
-                            let _ = self.scroll_by(0, -(page));
-                        } else {
-                            let _ = self.scroll_by(0, page);
-                        }
-                        return ViewEventResult::consumed();
                     }
 
                     if let Some(hbar) = scrollbars.hbar
@@ -1830,26 +1935,39 @@ impl View for HBox {
                         && hbar.width > 0
                     {
                         let pos = local_x.saturating_sub(hbar.x);
-                        let thumb = scrollbar_thumb(
+                        let layout = scrollbar_layout_1d(
                             hbar.width,
                             scrollbars.content.width,
                             self.content_size.0,
                             self.scroll.x,
+                            self.scroll_config.arrows,
                         );
-                        if pos >= thumb.start && pos < thumb.start.saturating_add(thumb.len) {
-                            self.scrollbar_drag = Some(ScrollbarDrag::Horizontal {
-                                grab_offset: pos.saturating_sub(thumb.start),
-                            });
-                            return ViewEventResult::consumed();
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                let _ = self.scroll_by(-1, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                let _ = self.scroll_by(1, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.scrollbar_drag =
+                                    Some(ScrollbarDrag::Horizontal { grab_offset });
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackDec => {
+                                let page = scrollbars.content.width as i16;
+                                let _ = self.scroll_by(-(page), 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::TrackInc => {
+                                let page = scrollbars.content.width as i16;
+                                let _ = self.scroll_by(page, 0);
+                                return ViewEventResult::consumed();
+                            }
+                            ScrollbarHit::None => {}
                         }
-
-                        let page = scrollbars.content.width as i16;
-                        if pos < thumb.start {
-                            let _ = self.scroll_by(-(page), 0);
-                        } else {
-                            let _ = self.scroll_by(page, 0);
-                        }
-                        return ViewEventResult::consumed();
                     }
                 }
             }
@@ -1904,6 +2022,7 @@ impl View for HBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
 
             let res = self.children[child_idx]
@@ -1929,6 +2048,7 @@ impl View for HBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {
@@ -1950,45 +2070,54 @@ impl View for HBox {
         let mut show_h = false;
 
         if self.scrollable {
-            for _ in 0..2 {
-                inner = apply_padding(viewport_outer, self.padding);
+            if matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+                for _ in 0..2 {
+                    inner = apply_padding(viewport_outer, self.padding);
+                    self.viewport_size = (inner.width, inner.height);
+                    self.content_size = self.layout_children((inner.width, inner.height));
+
+                    let new_show_v = should_show_scrollbar(
+                        self.scroll_config.vertical_scrollbar,
+                        self.content_size.1,
+                        self.viewport_size.1,
+                    );
+                    let new_show_h = should_show_scrollbar(
+                        self.scroll_config.horizontal_scrollbar,
+                        self.content_size.0,
+                        self.viewport_size.0,
+                    );
+
+                    if new_show_v == show_v && new_show_h == show_h {
+                        break;
+                    }
+
+                    show_v = new_show_v;
+                    show_h = new_show_h;
+
+                    let v_thick = if show_v { thickness } else { 0 };
+                    let h_thick = if show_h { thickness } else { 0 };
+                    viewport_outer = Rect {
+                        x: area.x,
+                        y: area.y,
+                        width: area.width.saturating_sub(v_thick),
+                        height: area.height.saturating_sub(h_thick),
+                    };
+                }
+            } else {
+                viewport_outer = area;
+                inner = apply_padding(area, self.padding);
                 self.viewport_size = (inner.width, inner.height);
                 self.content_size = self.layout_children((inner.width, inner.height));
-
-                let new_show_v = should_show_scrollbar(
+                show_v = should_show_scrollbar(
                     self.scroll_config.vertical_scrollbar,
                     self.content_size.1,
                     self.viewport_size.1,
                 );
-                let new_show_h = should_show_scrollbar(
+                show_h = should_show_scrollbar(
                     self.scroll_config.horizontal_scrollbar,
                     self.content_size.0,
                     self.viewport_size.0,
                 );
-
-                if new_show_v == show_v && new_show_h == show_h {
-                    break;
-                }
-
-                show_v = new_show_v;
-                show_h = new_show_h;
-
-                let v_thick = if show_v { thickness } else { 0 };
-                let h_thick = if show_h { thickness } else { 0 };
-                let viewport_x = match self.scroll_config.vertical_position {
-                    VerticalScrollbarPosition::Left => area.x.saturating_add(v_thick),
-                    VerticalScrollbarPosition::Right => area.x,
-                };
-                let viewport_y = match self.scroll_config.horizontal_position {
-                    HorizontalScrollbarPosition::Top => area.y.saturating_add(h_thick),
-                    HorizontalScrollbarPosition::Bottom => area.y,
-                };
-                viewport_outer = Rect {
-                    x: viewport_x,
-                    y: viewport_y,
-                    width: area.width.saturating_sub(v_thick),
-                    height: area.height.saturating_sub(h_thick),
-                };
             }
         } else {
             inner = apply_padding(area, self.padding);
@@ -1998,7 +2127,7 @@ impl View for HBox {
 
         self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
 
-        if self.scrollable {
+        if self.scrollable && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
             let viewport_local = Rect {
                 x: viewport_outer.x.saturating_sub(area.x),
                 y: viewport_outer.y.saturating_sub(area.y),
@@ -2006,27 +2135,15 @@ impl View for HBox {
                 height: viewport_outer.height,
             };
             let content_local = apply_padding(viewport_local, self.padding);
-            let vbar_x = match self.scroll_config.vertical_position {
-                VerticalScrollbarPosition::Left => 0,
-                VerticalScrollbarPosition::Right => {
-                    viewport_local.x.saturating_add(viewport_local.width)
-                }
-            };
             let vbar = show_v.then_some(Rect {
-                x: vbar_x,
+                x: viewport_local.x.saturating_add(viewport_local.width),
                 y: viewport_local.y,
                 width: thickness,
                 height: viewport_local.height,
             });
-            let hbar_y = match self.scroll_config.horizontal_position {
-                HorizontalScrollbarPosition::Top => 0,
-                HorizontalScrollbarPosition::Bottom => {
-                    viewport_local.y.saturating_add(viewport_local.height)
-                }
-            };
             let hbar = show_h.then_some(Rect {
                 x: viewport_local.x,
-                y: hbar_y,
+                y: viewport_local.y.saturating_add(viewport_local.height),
                 width: viewport_local.width,
                 height: thickness,
             });
@@ -2073,6 +2190,7 @@ impl View for HBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }
@@ -2098,6 +2216,7 @@ impl View for HBox {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }
@@ -2112,15 +2231,32 @@ impl View for HBox {
 
         const TRACK: &str = "░";
         const THUMB: &str = "█";
+        const ARROW_UP: &str = "▲";
+        const ARROW_DOWN: &str = "▼";
+        const ARROW_LEFT: &str = "◄";
+        const ARROW_RIGHT: &str = "►";
 
         if let Some(vbar) = scrollbars.vbar {
-            let track_len = vbar.height;
-            let thumb = scrollbar_thumb(track_len, viewport.1, self.content_size.1, scroll.y);
+            let layout = scrollbar_layout_1d(
+                vbar.height,
+                viewport.1,
+                self.content_size.1,
+                scroll.y,
+                self.scroll_config.arrows,
+            );
 
             for dy in 0..vbar.height {
-                let on_thumb = dy >= thumb.start && dy < thumb.start.saturating_add(thumb.len);
-                let symbol = if on_thumb { THUMB } else { TRACK };
-                let style = if on_thumb { thumb_style } else { track_style };
+                let (symbol, style) = if layout.has_arrows && dy == 0 {
+                    (ARROW_UP, thumb_style)
+                } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                    (ARROW_DOWN, thumb_style)
+                } else if dy >= layout.thumb_start
+                    && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (THUMB, thumb_style)
+                } else {
+                    (TRACK, track_style)
+                };
                 for dx in 0..vbar.width {
                     buf[(
                         area.x.saturating_add(vbar.x).saturating_add(dx),
@@ -2133,13 +2269,26 @@ impl View for HBox {
         }
 
         if let Some(hbar) = scrollbars.hbar {
-            let track_len = hbar.width;
-            let thumb = scrollbar_thumb(track_len, viewport.0, self.content_size.0, scroll.x);
+            let layout = scrollbar_layout_1d(
+                hbar.width,
+                viewport.0,
+                self.content_size.0,
+                scroll.x,
+                self.scroll_config.arrows,
+            );
 
             for dx in 0..hbar.width {
-                let on_thumb = dx >= thumb.start && dx < thumb.start.saturating_add(thumb.len);
-                let symbol = if on_thumb { THUMB } else { TRACK };
-                let style = if on_thumb { thumb_style } else { track_style };
+                let (symbol, style) = if layout.has_arrows && dx == 0 {
+                    (ARROW_LEFT, thumb_style)
+                } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
+                    (ARROW_RIGHT, thumb_style)
+                } else if dx >= layout.thumb_start
+                    && dx < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (THUMB, thumb_style)
+                } else {
+                    (TRACK, track_style)
+                };
                 for dy in 0..hbar.height {
                     buf[(
                         area.x.saturating_add(hbar.x).saturating_add(dx),

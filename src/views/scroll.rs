@@ -23,8 +23,8 @@ pub struct ScrollConfig {
     pub vertical_scrollbar: ScrollbarVisibility,
     pub horizontal_scrollbar: ScrollbarVisibility,
 
-    pub vertical_position: VerticalScrollbarPosition,
-    pub horizontal_position: HorizontalScrollbarPosition,
+    /// Whether scrollbars include arrow buttons at the ends.
+    pub arrows: bool,
 }
 
 impl ScrollConfig {
@@ -48,13 +48,8 @@ impl ScrollConfig {
         self
     }
 
-    pub const fn vertical_position(mut self, pos: VerticalScrollbarPosition) -> Self {
-        self.vertical_position = pos;
-        self
-    }
-
-    pub const fn horizontal_position(mut self, pos: HorizontalScrollbarPosition) -> Self {
-        self.horizontal_position = pos;
+    pub const fn arrows(mut self, enabled: bool) -> Self {
+        self.arrows = enabled;
         self
     }
 }
@@ -66,8 +61,7 @@ impl Default for ScrollConfig {
             scrollbar_thickness: 1,
             vertical_scrollbar: ScrollbarVisibility::Auto,
             horizontal_scrollbar: ScrollbarVisibility::Auto,
-            vertical_position: VerticalScrollbarPosition::Right,
-            horizontal_position: HorizontalScrollbarPosition::Bottom,
+            arrows: true,
         }
     }
 }
@@ -78,20 +72,6 @@ pub enum ScrollbarVisibility {
     #[default]
     Auto,
     Never,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum VerticalScrollbarPosition {
-    Left,
-    #[default]
-    Right,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum HorizontalScrollbarPosition {
-    Top,
-    #[default]
-    Bottom,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -201,6 +181,103 @@ pub(crate) fn scrollbar_thumb(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScrollbarLayout1D {
+    /// Total bar length (cells along the scrolling axis).
+    pub bar_len: u16,
+    /// Whether arrow buttons are present.
+    pub has_arrows: bool,
+    /// Track start offset within the bar.
+    pub track_start: u16,
+    /// Track length in cells (excludes arrow buttons).
+    pub track_len: u16,
+    /// Thumb start within the bar (absolute bar coordinates).
+    pub thumb_start: u16,
+    /// Thumb length in cells.
+    pub thumb_len: u16,
+}
+
+pub(crate) fn scrollbar_layout_1d(
+    bar_len: u16,
+    viewport_len: u16,
+    content_len: u16,
+    offset: u16,
+    arrows: bool,
+) -> ScrollbarLayout1D {
+    if bar_len == 0 {
+        return ScrollbarLayout1D::default();
+    }
+
+    let has_arrows = arrows && bar_len >= 2;
+    let track_start: u16 = if has_arrows { 1 } else { 0 };
+    let track_len = if has_arrows {
+        bar_len.saturating_sub(2)
+    } else {
+        bar_len
+    };
+
+    let thumb = scrollbar_thumb(track_len, viewport_len, content_len, offset);
+    let thumb_start = track_start.saturating_add(thumb.start);
+
+    ScrollbarLayout1D {
+        bar_len,
+        has_arrows,
+        track_start,
+        track_len,
+        thumb_start,
+        thumb_len: thumb.len,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollbarHit {
+    ArrowDec,
+    ArrowInc,
+    TrackDec,
+    TrackInc,
+    Thumb { grab_offset: u16 },
+    None,
+}
+
+pub(crate) fn scrollbar_hit_test(layout: ScrollbarLayout1D, pos: u16) -> ScrollbarHit {
+    if layout.bar_len == 0 || pos >= layout.bar_len {
+        return ScrollbarHit::None;
+    }
+
+    if layout.has_arrows {
+        if pos == 0 {
+            return ScrollbarHit::ArrowDec;
+        }
+        if pos == layout.bar_len.saturating_sub(1) {
+            return ScrollbarHit::ArrowInc;
+        }
+    }
+
+    if layout.track_len == 0 {
+        return ScrollbarHit::None;
+    }
+
+    if pos < layout.track_start || pos >= layout.track_start.saturating_add(layout.track_len) {
+        return ScrollbarHit::None;
+    }
+
+    let rel = pos.saturating_sub(layout.track_start);
+    let thumb_start_rel = layout.thumb_start.saturating_sub(layout.track_start);
+    let thumb_end_rel = thumb_start_rel.saturating_add(layout.thumb_len);
+
+    if rel >= thumb_start_rel && rel < thumb_end_rel {
+        return ScrollbarHit::Thumb {
+            grab_offset: rel.saturating_sub(thumb_start_rel),
+        };
+    }
+
+    if rel < thumb_start_rel {
+        ScrollbarHit::TrackDec
+    } else {
+        ScrollbarHit::TrackInc
+    }
+}
+
 pub(crate) fn scroll_offset_from_thumb_start(
     track_len: u16,
     viewport_len: u16,
@@ -290,5 +367,33 @@ mod tests {
         assert!(!should_show_scrollbar(ScrollbarVisibility::Never, 100, 10));
         assert!(!should_show_scrollbar(ScrollbarVisibility::Auto, 10, 10));
         assert!(should_show_scrollbar(ScrollbarVisibility::Auto, 11, 10));
+    }
+
+    #[test]
+    fn scrollbar_layout_reserves_arrow_buttons() {
+        let layout = scrollbar_layout_1d(10, 10, 100, 0, true);
+        assert!(layout.has_arrows);
+        assert_eq!(layout.track_start, 1);
+        assert_eq!(layout.track_len, 8);
+
+        let layout_no_arrows = scrollbar_layout_1d(10, 10, 100, 0, false);
+        assert!(!layout_no_arrows.has_arrows);
+        assert_eq!(layout_no_arrows.track_start, 0);
+        assert_eq!(layout_no_arrows.track_len, 10);
+    }
+
+    #[test]
+    fn scrollbar_hit_test_detects_arrows_and_thumb() {
+        // Track 8, content 100, viewport 10 => thumb len 1.
+        let layout = scrollbar_layout_1d(10, 10, 100, 0, true);
+        assert_eq!(scrollbar_hit_test(layout, 0), ScrollbarHit::ArrowDec);
+        assert_eq!(scrollbar_hit_test(layout, 9), ScrollbarHit::ArrowInc);
+
+        // At top, thumb starts at track_start (pos=1).
+        assert_eq!(
+            scrollbar_hit_test(layout, 1),
+            ScrollbarHit::Thumb { grab_offset: 0 }
+        );
+        assert_eq!(scrollbar_hit_test(layout, 2), ScrollbarHit::TrackInc);
     }
 }

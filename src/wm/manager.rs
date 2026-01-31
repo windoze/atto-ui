@@ -8,7 +8,11 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
-use crate::view::{ViewContext, ViewEventResult};
+use crate::view::{ScrollbarHost, ViewContext, ViewEventResult};
+use crate::views::{
+    ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
+    scrollbar_layout_1d, should_show_scrollbar,
+};
 
 use super::{Window, WindowId, WindowKind, WindowState};
 
@@ -42,6 +46,9 @@ enum DragKind {
         start_rect: Rect,
         corner: ResizeCorner,
     },
+    Scrollbar {
+        drag: ScrollbarDrag,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +64,8 @@ enum HitRegion {
     MaximizeButton,
     CloseButton,
     ResizeHandle(ResizeCorner),
+    VScrollbar,
+    HScrollbar,
     Body,
 }
 
@@ -298,8 +307,23 @@ impl WindowManager {
                 theme,
                 window_id: window.id,
                 is_focused,
+                scrollbar_host: if window.decorations.border {
+                    ScrollbarHost::Window
+                } else {
+                    ScrollbarHost::View
+                },
             };
             window.view.draw(frame, inner, ctx);
+
+            if window.decorations.border {
+                draw_window_border_scrollbars(
+                    frame.buffer_mut(),
+                    rect,
+                    inner,
+                    window.view.as_ref(),
+                    theme,
+                );
+            }
         }
     }
 
@@ -312,11 +336,6 @@ impl WindowManager {
         let id = self.focused()?;
         let idx = self.windows.iter().position(|w| w.id == id)?;
         let is_focused = true;
-        let ctx = ViewContext {
-            theme,
-            window_id: id,
-            is_focused,
-        };
         let action = {
             let w = &mut self.windows[idx];
             if w.state == WindowState::Minimized {
@@ -335,6 +354,16 @@ impl WindowManager {
                     return Some((id, ViewEventResult::ignored()));
                 }
             }
+            let ctx = ViewContext {
+                theme,
+                window_id: id,
+                is_focused,
+                scrollbar_host: if w.decorations.border {
+                    ScrollbarHost::Window
+                } else {
+                    ScrollbarHost::View
+                },
+            };
             w.view.handle_event(event, ctx)
         };
         Some((id, action))
@@ -442,6 +471,115 @@ impl WindowManager {
                             });
                         }
                     }
+                    HitRegion::VScrollbar => {
+                        let Some(w) = self.window_mut(window_id) else {
+                            return action;
+                        };
+                        let inner = w.inner_rect();
+                        if inner.height == 0 {
+                            return action;
+                        }
+
+                        let cfg = w.view.scroll_config();
+                        let (_content_w, content_h) = w.view.content_size();
+                        let (_viewport_w, viewport_h) = w.view.viewport_size();
+                        let (scroll_x, scroll_y) = w.view.scroll_offset();
+
+                        // `hit_test` only returns VScrollbar when it should be visible, but
+                        // recompute bar_len defensively.
+                        let bar_len = inner.height;
+                        let pos = m.row.saturating_sub(inner.y).min(bar_len.saturating_sub(1));
+                        let layout = scrollbar_layout_1d(
+                            bar_len, viewport_h, content_h, scroll_y, cfg.arrows,
+                        );
+
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                w.view
+                                    .set_scroll_offset(scroll_x, scroll_y.saturating_sub(1));
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                w.view
+                                    .set_scroll_offset(scroll_x, scroll_y.saturating_add(1));
+                            }
+                            ScrollbarHit::TrackDec => {
+                                w.view.set_scroll_offset(
+                                    scroll_x,
+                                    scroll_y.saturating_sub(viewport_h),
+                                );
+                            }
+                            ScrollbarHit::TrackInc => {
+                                w.view.set_scroll_offset(
+                                    scroll_x,
+                                    scroll_y.saturating_add(viewport_h),
+                                );
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.drag = Some(DragState {
+                                    window_id,
+                                    kind: DragKind::Scrollbar {
+                                        drag: ScrollbarDrag::Vertical { grab_offset },
+                                    },
+                                });
+                            }
+                            ScrollbarHit::None => {}
+                        }
+                    }
+                    HitRegion::HScrollbar => {
+                        let Some(w) = self.window_mut(window_id) else {
+                            return action;
+                        };
+                        let inner = w.inner_rect();
+                        if inner.width == 0 {
+                            return action;
+                        }
+
+                        let cfg = w.view.scroll_config();
+                        let (content_w, _content_h) = w.view.content_size();
+                        let (viewport_w, _viewport_h) = w.view.viewport_size();
+                        let (scroll_x, scroll_y) = w.view.scroll_offset();
+
+                        let bar_len = inner.width;
+                        let pos = m
+                            .column
+                            .saturating_sub(inner.x)
+                            .min(bar_len.saturating_sub(1));
+                        let layout = scrollbar_layout_1d(
+                            bar_len, viewport_w, content_w, scroll_x, cfg.arrows,
+                        );
+
+                        match scrollbar_hit_test(layout, pos) {
+                            ScrollbarHit::ArrowDec => {
+                                w.view
+                                    .set_scroll_offset(scroll_x.saturating_sub(1), scroll_y);
+                            }
+                            ScrollbarHit::ArrowInc => {
+                                w.view
+                                    .set_scroll_offset(scroll_x.saturating_add(1), scroll_y);
+                            }
+                            ScrollbarHit::TrackDec => {
+                                w.view.set_scroll_offset(
+                                    scroll_x.saturating_sub(viewport_w),
+                                    scroll_y,
+                                );
+                            }
+                            ScrollbarHit::TrackInc => {
+                                w.view.set_scroll_offset(
+                                    scroll_x.saturating_add(viewport_w),
+                                    scroll_y,
+                                );
+                            }
+                            ScrollbarHit::Thumb { grab_offset } => {
+                                self.drag = Some(DragState {
+                                    window_id,
+                                    kind: DragKind::Scrollbar {
+                                        drag: ScrollbarDrag::Horizontal { grab_offset },
+                                    },
+                                });
+                            }
+                            ScrollbarHit::None => {}
+                        }
+                    }
                     HitRegion::Body => {}
                 }
 
@@ -473,6 +611,89 @@ impl WindowManager {
                         w.rect = resize_rect_from_corner(
                             start_rect, corner, m.column, m.row, bounds, w.min_size,
                         );
+                    }
+                    DragKind::Scrollbar { drag } => {
+                        if !w.decorations.border {
+                            return WindowManagerAction::default();
+                        }
+
+                        let cfg = w.view.scroll_config();
+                        let (content_w, content_h) = w.view.content_size();
+                        let (viewport_w, viewport_h) = w.view.viewport_size();
+                        let (scroll_x, scroll_y) = w.view.scroll_offset();
+
+                        let inner = w.inner_rect();
+
+                        match drag {
+                            ScrollbarDrag::Vertical { grab_offset } => {
+                                if inner.height == 0 {
+                                    return WindowManagerAction::default();
+                                }
+                                let layout = scrollbar_layout_1d(
+                                    inner.height,
+                                    viewport_h,
+                                    content_h,
+                                    scroll_y,
+                                    cfg.arrows,
+                                );
+                                if layout.track_len == 0 {
+                                    return WindowManagerAction::default();
+                                }
+
+                                let pos = m
+                                    .row
+                                    .saturating_sub(inner.y)
+                                    .min(inner.height.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                                let new_thumb_start =
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
+                                let new_off = scroll_offset_from_thumb_start(
+                                    layout.track_len,
+                                    viewport_h,
+                                    content_h,
+                                    new_thumb_start,
+                                );
+                                w.view.set_scroll_offset(scroll_x, new_off);
+                            }
+                            ScrollbarDrag::Horizontal { grab_offset } => {
+                                if inner.width == 0 {
+                                    return WindowManagerAction::default();
+                                }
+                                let layout = scrollbar_layout_1d(
+                                    inner.width,
+                                    viewport_w,
+                                    content_w,
+                                    scroll_x,
+                                    cfg.arrows,
+                                );
+                                if layout.track_len == 0 {
+                                    return WindowManagerAction::default();
+                                }
+
+                                let pos = m
+                                    .column
+                                    .saturating_sub(inner.x)
+                                    .min(inner.width.saturating_sub(1));
+                                let pos_in_track = pos
+                                    .saturating_sub(layout.track_start)
+                                    .min(layout.track_len.saturating_sub(1));
+
+                                let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                                let new_thumb_start =
+                                    pos_in_track.saturating_sub(grab_offset).min(max_start);
+                                let new_off = scroll_offset_from_thumb_start(
+                                    layout.track_len,
+                                    viewport_w,
+                                    content_w,
+                                    new_thumb_start,
+                                );
+                                w.view.set_scroll_offset(new_off, scroll_y);
+                            }
+                        }
                     }
                 }
                 WindowManagerAction {
@@ -621,6 +842,38 @@ impl WindowManager {
                     window_id: w.id,
                     region: HitRegion::TitleBar,
                 });
+            }
+
+            if w.decorations.border
+                && w.view.is_scrollable()
+                && w.rect.width > 1
+                && w.rect.height > 1
+            {
+                let cfg = w.view.scroll_config();
+                let (content_w, content_h) = w.view.content_size();
+                let (viewport_w, viewport_h) = w.view.viewport_size();
+
+                let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+                let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+
+                let left = w.rect.x;
+                let top = w.rect.y;
+                let right = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
+                let bottom = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
+
+                // Scrollbars occupy the right/bottom border lines (excluding the corners).
+                if show_v && x == right && y > top && y < bottom {
+                    return Some(HitTest {
+                        window_id: w.id,
+                        region: HitRegion::VScrollbar,
+                    });
+                }
+                if show_h && y == bottom && x > left && x < right {
+                    return Some(HitTest {
+                        window_id: w.id,
+                        region: HitRegion::HScrollbar,
+                    });
+                }
             }
 
             return Some(HitTest {
@@ -835,6 +1088,85 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
     }
 }
 
+fn draw_window_border_scrollbars(
+    buf: &mut Buffer,
+    rect: Rect,
+    inner: Rect,
+    view: &dyn crate::view::View,
+    theme: &Theme,
+) {
+    if rect.width < 3 || rect.height < 3 || inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    if !view.is_scrollable() {
+        return;
+    }
+
+    let cfg = view.scroll_config();
+    let (content_w, content_h) = view.content_size();
+    let (viewport_w, viewport_h) = view.viewport_size();
+    let (scroll_x, scroll_y) = view.scroll_offset();
+
+    let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+    let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+
+    let thumb_style = theme.window_bg.patch(theme.scrollbar_thumb);
+
+    const THUMB: &str = "█";
+    const ARROW_UP: &str = "▲";
+    const ARROW_DOWN: &str = "▼";
+    const ARROW_LEFT: &str = "◄";
+    const ARROW_RIGHT: &str = "►";
+
+    // Vertical scrollbar on the right border (excluding corners).
+    if show_v {
+        let layout = scrollbar_layout_1d(inner.height, viewport_h, content_h, scroll_y, cfg.arrows);
+        let x = rect.x.saturating_add(rect.width).saturating_sub(1);
+        for i in 0..inner.height {
+            let symbol = if layout.has_arrows && i == 0 {
+                Some(ARROW_UP)
+            } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
+                Some(ARROW_DOWN)
+            } else if i >= layout.thumb_start
+                && i < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                Some(THUMB)
+            } else {
+                None
+            };
+            let Some(symbol) = symbol else { continue };
+            if let Some(cell) = buf.cell_mut((x, inner.y.saturating_add(i))) {
+                cell.set_symbol(symbol);
+                cell.set_style(thumb_style);
+            }
+        }
+    }
+
+    // Horizontal scrollbar on the bottom border (excluding corners).
+    if show_h {
+        let layout = scrollbar_layout_1d(inner.width, viewport_w, content_w, scroll_x, cfg.arrows);
+        let y = rect.y.saturating_add(rect.height).saturating_sub(1);
+        for i in 0..inner.width {
+            let symbol = if layout.has_arrows && i == 0 {
+                Some(ARROW_LEFT)
+            } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
+                Some(ARROW_RIGHT)
+            } else if i >= layout.thumb_start
+                && i < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                Some(THUMB)
+            } else {
+                None
+            };
+            let Some(symbol) = symbol else { continue };
+            if let Some(cell) = buf.cell_mut((inner.x.saturating_add(i), y)) {
+                cell.set_symbol(symbol);
+                cell.set_style(thumb_style);
+            }
+        }
+    }
+}
+
 fn draw_titlebar(
     buf: &mut Buffer,
     rect: Rect,
@@ -923,6 +1255,7 @@ mod tests {
     use super::{WindowManager, draw_shadow};
     use crate::theme::Theme;
     use crate::view::{View, ViewContext, ViewEventResult};
+    use crate::views::{ScrollConfig, ScrollbarVisibility};
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Frame;
@@ -1026,6 +1359,110 @@ mod tests {
         assert_eq!(wm.focused(), Some(modal_id));
         wm.focus_next();
         assert_eq!(wm.focused(), Some(modal_id));
+    }
+
+    #[test]
+    fn window_scrollbars_do_not_overwrite_resize_corners() {
+        #[derive(Default)]
+        struct ScrollableDummyView {
+            viewport: (u16, u16),
+        }
+
+        impl View for ScrollableDummyView {
+            fn is_scrollable(&self) -> bool {
+                true
+            }
+
+            fn content_size(&self) -> (u16, u16) {
+                (200, 200)
+            }
+
+            fn scroll_offset(&self) -> (u16, u16) {
+                (0, 0)
+            }
+
+            fn viewport_size(&self) -> (u16, u16) {
+                self.viewport
+            }
+
+            fn scroll_config(&self) -> ScrollConfig {
+                ScrollConfig::default()
+                    .vertical_scrollbar(ScrollbarVisibility::Always)
+                    .horizontal_scrollbar(ScrollbarVisibility::Always)
+            }
+
+            fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+                self.viewport = (area.width, area.height);
+            }
+        }
+
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let rect = Rect {
+            x: 2,
+            y: 2,
+            width: 20,
+            height: 8,
+        };
+
+        let mut wm = WindowManager::new();
+        wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Scroll",
+                rect,
+                Box::new(ScrollableDummyView::default()),
+            ),
+            bounds,
+        );
+
+        let theme = Theme::dark();
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let buf = terminal.backend().buffer();
+
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        assert_eq!(
+            buf.cell((left, top)).expect("top-left").symbol(),
+            "╔",
+            "top-left corner should remain a resize handle"
+        );
+        assert_eq!(
+            buf.cell((right, top)).expect("top-right").symbol(),
+            "╗",
+            "top-right corner should remain a resize handle"
+        );
+        assert_eq!(
+            buf.cell((left, bottom)).expect("bottom-left").symbol(),
+            "╚",
+            "bottom-left corner should remain a resize handle"
+        );
+        assert_eq!(
+            buf.cell((right, bottom)).expect("bottom-right").symbol(),
+            "╝",
+            "bottom-right corner should remain a resize handle"
+        );
+
+        // Sanity: scrollbar arrows are drawn adjacent to the corners, not on them.
+        assert_eq!(buf.cell((right, top + 1)).expect("vbar up").symbol(), "▲");
+        assert_eq!(
+            buf.cell((left + 1, bottom)).expect("hbar left").symbol(),
+            "◄"
+        );
+        assert_eq!(
+            buf.cell((right - 1, bottom)).expect("hbar right").symbol(),
+            "►"
+        );
     }
 
     #[test]
