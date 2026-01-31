@@ -121,7 +121,7 @@ impl View for WidgetsView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        self.form.draw(frame, area, ctx.theme);
+        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
     }
 }
 

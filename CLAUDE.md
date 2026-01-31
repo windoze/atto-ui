@@ -57,6 +57,16 @@ cargo fmt
 - 支持窗口状态: Normal, Minimized, Maximized
 - 处理窗口拖动、调整大小、最小化/最大化/关闭等操作
 
+### 2.5. Views/Layout 层 (`src/views/`)
+在 View trait 和 Window Manager 之间,提供布局容器和滚动支持:
+- **`layout.rs`**: 布局约束和对齐系统 (固定大小、权重分配、内容自适应)
+- **`vbox.rs`**: 垂直布局容器 (从上到下排列子视图)
+- **`grid.rs`**: 网格布局容器 (行列网格排列)
+- **`scroll.rs`**: 滚动视图,支持大于可视区域的内容,包含滚动条渲染和交互
+- **`node.rs`**: 视图层次节点,支持嵌套视图和事件路由
+- 支持 padding、margin、对齐等布局属性
+- 支持键盘、鼠标滚轮和滚动条拖动交互
+
 ### 3. App 层 (`src/app/`)
 - **`desktop.rs`**: `Desktop` 是最高层容器,组合了 MenuBar + WindowManager + StatusBar
 - **`menu.rs`**: `MenuBar` 提供顶部菜单栏,支持嵌套菜单和键盘快捷键
@@ -86,14 +96,19 @@ cargo fmt
    - 使用 `vt100` 解析器捕获屏幕缓冲区
    - 提供 `PtyTestHost` API 来启动应用、发送输入、验证输出
 
-2. **Test Binary** (`src/bin/snapshot_app.rs`):
-   - 一个完整的测试应用,展示各种窗口和组件
-   - 被集成测试调用,运行在 PTY 中
+2. **Test Binary** (`src/bin/`):
+   - `snapshot_app.rs` - 主测试应用,展示各种窗口和组件
+   - `snapshot_scroll_app.rs` - 垂直滚动测试应用
+   - `snapshot_hscroll_app.rs` - 水平滚动测试应用
+   - 这些测试应用被集成测试调用,运行在 PTY 中
 
 3. **Integration Tests** (`tests/`):
    - `pty_desktop.rs` - 测试桌面、菜单、窗口管理
    - `pty_modal.rs` - 测试模态对话框
    - `pty_mouse_support.rs` - 测试鼠标交互
+   - `pty_scrolling.rs` - 测试垂直滚动功能
+   - `pty_horizontal_scrolling.rs` - 测试水平滚动功能
+   - `pty_view_hierarchy.rs` - 测试视图层次和布局容器
 
 测试模式:
 ```rust
@@ -129,6 +144,16 @@ assert!(screen.contains("Expected"));
 4. 完成任务后更新 `IMPLEMENTATION_PLAN.md`
 5. 使用有意义的提交信息提交变更
 
+### 当前实现状态
+
+根据 `IMPLEMENTATION_PLAN.md`,当前已完成的里程碑:
+- **M0-M5**: 核心框架、窗口系统、渲染、菜单栏、状态栏、组件库、PTY 测试框架 (已完成)
+- **M6**: 视图层次和布局管理 (VBox、Grid、padding/margin、对齐、锚点定位) (已完成)
+- **M7**: 视口和滚动支持 (键盘滚动、鼠标滚轮、程序化滚动) (已完成)
+- **M8**: 滚动条 (渲染、拖动、点击轨道、样式配置、窗口角落保留) (已完成)
+
+查看 `IMPLEMENTATION_PLAN.md` 了解详细的功能清单和未来计划。
+
 ## 代码约定
 
 - 项目使用 `#![forbid(unsafe_code)]`,严禁使用 unsafe 代码
@@ -137,6 +162,9 @@ assert!(screen.contains("Expected"));
 - 使用 Crossterm 处理终端 I/O 和事件
 - 使用 Ratatui 作为底层渲染引擎
 - 鼠标坐标使用 0-based (与 Crossterm 的 `MouseEvent` 一致)
+- 布局坐标系统使用父视图相对坐标 (不是绝对屏幕坐标)
+- 滚动容器使用 0-based 偏移量表示滚动位置
+- 布局权重使用 `f32` 类型,表示相对比例 (如 1.0, 2.0 表示 1:2 的空间分配)
 
 ## 关键依赖
 

@@ -87,7 +87,7 @@ impl Form {
         control.handle_event(event)
     }
 
-    pub fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    pub fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme, window_focused: bool) {
         self.layout.clear();
         self.layout.resize(self.controls.len(), None);
 
@@ -102,7 +102,8 @@ impl Form {
             };
             self.layout[idx] = Some(r);
             control.set_area(r);
-            control.set_focused(self.focused == Some(idx));
+            // Only set control as focused if both window is focused AND control has focus in form
+            control.set_focused(window_focused && self.focused == Some(idx));
             control.draw(frame, r, theme);
             y = y.saturating_add(h);
             if y >= area.y.saturating_add(area.height) {
