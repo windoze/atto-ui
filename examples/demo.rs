@@ -894,6 +894,7 @@ fn build_menu() -> MenuBar {
     ])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     desktop: &mut Desktop,
