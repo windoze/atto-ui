@@ -616,7 +616,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
 
     for _ in 0..20 {
         vbox.add_child_with_layout(
-            Box::new(BlankLineView::default()),
+            Box::new(BlankLineView),
             LayoutParams {
                 height: Size::Content,
                 width: Size::Content,
@@ -679,7 +679,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
 
     for _ in 0..40 {
         hbox.add_child_with_layout(
-            Box::new(BlankCellView::default()),
+            Box::new(BlankCellView),
             LayoutParams {
                 height: Size::Content,
                 width: Size::Content,
