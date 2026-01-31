@@ -76,6 +76,7 @@ impl DialogView {
             Box::new(Label::new("  F10 menu   Ctrl+W window mode   F2 theme")),
             Box::new(Label::new("  n new win  a about/modal        t tooltip")),
             Box::new(Label::new("  v layout demo (view hierarchy)")),
+            Box::new(Label::new("  s scroll demo (viewport + scrollbars)")),
             Box::new(Label::new("")),
             Box::new(Button::new("Close (Enter)")),
         ];
@@ -358,6 +359,57 @@ fn build_layout_demo_view() -> VBox {
     root
 }
 
+fn build_scroll_demo_view() -> VBox {
+    let mut root = VBox::new()
+        .with_padding(EdgeInsets::all(1))
+        .with_spacing(1)
+        .with_scrollable(true);
+
+    root.add_child_with_layout(
+        Box::new(IntrinsicLabelView::new(
+            "M7/M8 scrolling demo: ↑↓ PgUp/PgDn Home/End, wheel, drag scrollbar thumb",
+        )),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    // Horizontal scrolling demo (inside its own scrollable HBox).
+    let mut wide_row = HBox::new().with_spacing(1).with_scrollable(true);
+    for i in 0..24 {
+        wide_row.add_child_with_layout(
+            Box::new(IntrinsicLabelView::new(format!("[col-{i:02}]"))),
+            LayoutParams {
+                width: Size::Content,
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    root.add_child_with_layout(
+        Box::new(wide_row),
+        LayoutParams {
+            height: Size::Fixed(3),
+            ..LayoutParams::default()
+        },
+    );
+
+    for i in 0..120u16 {
+        root.add_child_with_layout(
+            Box::new(IntrinsicLabelView::new(format!(
+                "{i:03}: The quick brown fox jumps over the lazy dog."
+            ))),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    root
+}
+
 fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -411,6 +463,7 @@ fn main() -> Result<()> {
         ),
         screen,
     ));
+    let mut scroll_demo_window_id: Option<WindowId> = None;
 
     let log_id = desktop.add_window(
         Window::new(
@@ -428,6 +481,7 @@ fn main() -> Result<()> {
                 "F2: toggle theme".into(),
                 "Paste: bracketed paste into textbox".into(),
                 "V: focus/open layout demo".into(),
+                "S: focus/open scroll demo".into(),
             ])),
         ),
         screen,
@@ -440,6 +494,7 @@ fn main() -> Result<()> {
         &mut is_dark,
         log_id,
         &mut layout_demo_window_id,
+        &mut scroll_demo_window_id,
         &mut tooltip,
     );
 
@@ -476,6 +531,7 @@ fn build_menu() -> MenuBar {
             vec![
                 MenuItem::command("Next", "window.next").shortcut("F6"),
                 MenuItem::command("Layout demo", "window.layout_demo").shortcut("v"),
+                MenuItem::command("Scroll demo", "window.scroll_demo").shortcut("s"),
                 MenuItem::command("Minimize", "window.min").shortcut("m"),
                 MenuItem::command("Maximize", "window.max").shortcut("x"),
                 MenuItem::command("Close", "window.close").shortcut("c"),
@@ -494,6 +550,7 @@ fn run(
     is_dark: &mut bool,
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
+    scroll_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
@@ -543,6 +600,9 @@ fn run(
                 "window.next" => desktop.wm.focus_next(),
                 "window.layout_demo" => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
+                }
+                "window.scroll_demo" => {
+                    open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
                 }
                 "window.min" => desktop.wm.minimize_focused(),
                 "window.max" => {
@@ -619,6 +679,9 @@ fn run(
                 (KeyCode::Char('v'), KeyModifiers::NONE) => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
                 }
+                (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                    open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
+                }
                 _ => {}
             }
         }
@@ -684,6 +747,38 @@ fn open_layout_demo(
         screen,
     );
     *layout_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_scroll_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    scroll_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *scroll_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Scroll",
+            Rect {
+                x: work.x.saturating_add(3),
+                y: work.y.saturating_add(4),
+                width: 44,
+                height: 14,
+            },
+            Box::new(build_scroll_demo_view()),
+        ),
+        screen,
+    );
+    *scroll_demo_window_id = Some(id);
     Ok(())
 }
 

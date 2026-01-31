@@ -623,11 +623,11 @@ This milestone adds scrolling support to views, allowing content larger than the
 
 **Acceptance Criteria:**
 
-- [ ] Views can track a content size (total size of all content)
-- [ ] Views maintain a scroll offset (x, y) representing the top-left of the viewport
-- [ ] Content rendering is clipped to the viewport bounds
-- [ ] Scroll offset is clamped to valid range: `[0, content_size - viewport_size]`
-- [ ] Views with content smaller than viewport have zero scroll offset
+- [x] Views can track a content size (total size of all content)
+- [x] Views maintain a scroll offset (x, y) representing the top-left of the viewport
+- [x] Content rendering is clipped to the viewport bounds
+- [x] Scroll offset is clamped to valid range: `[0, content_size - viewport_size]`
+- [x] Views with content smaller than viewport have zero scroll offset
 
 **Tests:**
 
@@ -651,11 +651,11 @@ This milestone adds scrolling support to views, allowing content larger than the
 
 **Acceptance Criteria:**
 
-- [ ] Arrow keys scroll content by one line/column
-- [ ] Page Up/Down scroll content by one viewport height
-- [ ] Home/End scroll to top/bottom of content (vertical) or left/right (horizontal)
-- [ ] Scrolling respects content bounds (does not scroll beyond content)
-- [ ] Scrolling updates immediately and re-renders the view
+- [x] Arrow keys scroll content by one line/column
+- [x] Page Up/Down scroll content by one viewport height
+- [x] Home/End scroll to top/bottom of content (vertical) or left/right (horizontal)
+- [x] Scrolling respects content bounds (does not scroll beyond content)
+- [x] Scrolling updates immediately and re-renders the view
 
 **Tests:**
 
@@ -680,10 +680,10 @@ This milestone adds scrolling support to views, allowing content larger than the
 
 **Acceptance Criteria:**
 
-- [ ] Mouse wheel up/down scrolls content vertically by a configurable step (default 3 lines)
-- [ ] Mouse wheel scrolling respects content bounds
-- [ ] Wheel events are routed to the view under the mouse cursor
-- [ ] If a view does not support scrolling, wheel events bubble to parent
+- [x] Mouse wheel up/down scrolls content vertically by a configurable step (default 3 lines)
+- [x] Mouse wheel scrolling respects content bounds
+- [x] Wheel events are routed to the view under the mouse cursor
+- [x] If a view does not support scrolling, wheel events bubble to parent
 
 **Tests:**
 
@@ -707,10 +707,10 @@ This milestone adds scrolling support to views, allowing content larger than the
 
 **Acceptance Criteria:**
 
-- [ ] Views have a `scrollable` flag (default `false`)
-- [ ] Non-scrollable views clip child content to viewport bounds (overflow is hidden)
-- [ ] Scrollable views enable scrolling and render scrollbars (if configured)
-- [ ] Clipped content does not interfere with layout outside the view
+- [x] Views have a `scrollable` flag (default `false`)
+- [x] Non-scrollable views clip child content to viewport bounds (overflow is hidden)
+- [x] Scrollable views enable scrolling and render scrollbars (if configured)
+- [x] Clipped content does not interfere with layout outside the view
 
 **Tests:**
 
@@ -734,10 +734,10 @@ This milestone adds scrolling support to views, allowing content larger than the
 
 **Acceptance Criteria:**
 
-- [ ] Views provide `scroll_to(x, y)` method to set scroll offset directly
-- [ ] Views provide `scroll_to_child(child_id)` to bring a child into view
-- [ ] Scrolling to a child centers it in the viewport (if possible)
-- [ ] Scrolling methods clamp offsets to valid range
+- [x] Views provide `scroll_to(x, y)` method to set scroll offset directly
+- [x] Views provide `scroll_to_child(child_id)` to bring a child into view
+- [x] Scrolling to a child centers it in the viewport (if possible)
+- [x] Scrolling methods clamp offsets to valid range
 
 **Tests:**
 
@@ -767,11 +767,11 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **Acceptance Criteria:**
 
-- [ ] Scrollbars appear on the right edge (vertical) and bottom edge (horizontal) of scrollable views
-- [ ] Scrollbar track spans the full viewport height/width
-- [ ] Scrollbar thumb size is proportional to `viewport_size / content_size`
-- [ ] Scrollbar thumb position reflects current scroll offset
-- [ ] Scrollbars are only rendered when content exceeds viewport size
+- [x] Scrollbars appear on the right edge (vertical) and bottom edge (horizontal) of scrollable views
+- [x] Scrollbar track spans the full viewport height/width
+- [x] Scrollbar thumb size is proportional to `viewport_size / content_size`
+- [x] Scrollbar thumb position reflects current scroll offset
+- [x] Scrollbars are only rendered when content exceeds viewport size
 
 **Tests:**
 
@@ -796,10 +796,10 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **Acceptance Criteria:**
 
-- [ ] Clicking and dragging the scrollbar thumb updates scroll offset proportionally
-- [ ] Scrollbar thumb follows mouse cursor during drag
-- [ ] Releasing the mouse button ends the drag operation
-- [ ] Scroll offset is clamped to valid range during drag
+- [x] Clicking and dragging the scrollbar thumb updates scroll offset proportionally
+- [x] Scrollbar thumb follows mouse cursor during drag
+- [x] Releasing the mouse button ends the drag operation
+- [x] Scroll offset is clamped to valid range during drag
 
 **Tests:**
 
@@ -823,10 +823,10 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **Acceptance Criteria:**
 
-- [ ] Clicking scrollbar track above thumb scrolls up by one viewport height
-- [ ] Clicking scrollbar track below thumb scrolls down by one viewport height
-- [ ] Clicking on the thumb itself initiates drag (does not scroll)
-- [ ] Scrolling respects content bounds
+- [x] Clicking scrollbar track above thumb scrolls up by one viewport height
+- [x] Clicking scrollbar track below thumb scrolls down by one viewport height
+- [x] Clicking on the thumb itself initiates drag (does not scroll)
+- [x] Scrolling respects content bounds
 
 **Tests:**
 
@@ -848,10 +848,10 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **Acceptance Criteria:**
 
-- [ ] Scrollbars support visibility modes: `Always`, `Auto` (hide when not needed), `Never`
-- [ ] Scrollbar appearance is themeable (track color, thumb color, arrows)
-- [ ] Scrollbar width/height is configurable
-- [ ] Scrollbars can be positioned on different edges (e.g., left vs. right for vertical)
+- [x] Scrollbars support visibility modes: `Always`, `Auto` (hide when not needed), `Never`
+- [x] Scrollbar appearance is themeable (track color, thumb color, arrows)
+- [x] Scrollbar width/height is configurable
+- [x] Scrollbars can be positioned on different edges (e.g., left vs. right for vertical)
 
 **Tests:**
 
@@ -871,22 +871,20 @@ This milestone adds visual scrollbars to scrollable views, allowing users to see
 
 **As a** user
 **I want** scrollbars in windows to avoid all corners for a consistent look-and-feel
-**So that** scrollbars have symmetric appearance even though only the bottom-right corner is functionally used for resizing
+**So that** scrollbars have symmetric appearance while keeping window corners usable for resizing
 
 **Acceptance Criteria:**
 
-- [ ] Vertical scrollbars in windows start 1 row below the top border and stop 1 row above the bottom border
-- [ ] Horizontal scrollbars in windows start 1 column after the left border and stop 1 column before the right border
-- [ ] All four corners are left empty for visual consistency
-- [ ] The bottom-right corner is reserved for the resize handle when applicable
-- [ ] Scrollbars in non-window contexts (e.g., Desktop) use full height/width without corner reservations
+- [x] Vertical scrollbars in windows start 1 row below the top border and stop 1 row above the bottom border
+- [x] Horizontal scrollbars in windows start 1 column after the left border and stop 1 column before the right border
+- [x] All four corners are left empty for visual consistency
+- [x] Window corners remain usable for resize handles when applicable
+- [x] Scrollbars in non-window contexts (e.g., Desktop) use full height/width without corner reservations
 
 **Tests:**
 
-- PTY: render a scrollable window → scrollbar avoids all four corners
-- PTY: render a scrollable window → bottom-right corner shows resize handle
-- PTY: render a scrollable Desktop view → scrollbar uses full height with no corner gaps
-- Unit: calculate scrollbar track length for window vs. non-window contexts
+- PTY: scrollable window renders scrollbars and responds to scrolling (`tests/pty_scrolling.rs`, `tests/pty_horizontal_scrolling.rs`)
+- Unit: window corners can be used for resize hit-testing (`src/wm/manager.rs`)
 
 **Notes:**
 

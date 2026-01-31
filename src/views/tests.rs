@@ -11,7 +11,10 @@ use crate::theme::Theme;
 use crate::view::{EventOutcome, View, ViewContext, ViewEventResult};
 use crate::wm::WindowId;
 
-use super::{Align, Anchor, AnchorPlacement, EdgeInsets, Grid, HBox, LayoutParams, Size, VBox};
+use super::{
+    Align, Anchor, AnchorPlacement, EdgeInsets, Grid, HBox, HorizontalScrollbarPosition,
+    LayoutParams, ScrollConfig, ScrollbarVisibility, Size, VBox, VerticalScrollbarPosition,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecordedEvent {
@@ -585,4 +588,130 @@ fn grid_layout_columns_and_row_heights() {
     assert_eq!(children[3].bounds().y, 3);
     assert_eq!(children[4].bounds().y, 3);
     assert_eq!(children[4].bounds().height, 4);
+}
+
+#[test]
+fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
+    #[derive(Default)]
+    struct BlankLineView;
+
+    impl View for BlankLineView {
+        fn desired_width(&self) -> Option<u16> {
+            Some(1)
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            Some(1)
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut vbox = VBox::new().with_scrollable(true).with_scroll_config(
+        ScrollConfig::default()
+            .vertical_scrollbar(ScrollbarVisibility::Always)
+            .horizontal_scrollbar(ScrollbarVisibility::Never)
+            .vertical_position(VerticalScrollbarPosition::Left),
+    );
+
+    for _ in 0..20 {
+        vbox.add_child_with_layout(
+            Box::new(BlankLineView::default()),
+            LayoutParams {
+                height: Size::Content,
+                width: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    let theme = Theme::dark();
+    let ctx = ViewContext {
+        theme: &theme,
+        window_id: WindowId(1),
+        is_focused: true,
+    };
+
+    let backend = TestBackend::new(10, 5);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|f| vbox.draw(f, Rect::new(0, 0, 10, 5), ctx))
+        .expect("draw");
+
+    let buf = terminal.backend().buffer();
+
+    let left = buf.cell((0, 0)).expect("cell").symbol();
+    assert!(
+        matches!(left, "░" | "█"),
+        "expected vertical scrollbar on the left edge; got {left:?} at (0,0)"
+    );
+
+    let viewport_col0 = buf.cell((1, 0)).expect("cell").symbol();
+    assert!(
+        !matches!(viewport_col0, "░" | "█"),
+        "expected viewport to start after left scrollbar; got {viewport_col0:?} at (1,0)"
+    );
+}
+
+#[test]
+fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
+    #[derive(Default)]
+    struct BlankCellView;
+
+    impl View for BlankCellView {
+        fn desired_width(&self) -> Option<u16> {
+            Some(2)
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            Some(1)
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut hbox = HBox::new().with_scrollable(true).with_scroll_config(
+        ScrollConfig::default()
+            .vertical_scrollbar(ScrollbarVisibility::Never)
+            .horizontal_scrollbar(ScrollbarVisibility::Always)
+            .horizontal_position(HorizontalScrollbarPosition::Top),
+    );
+
+    for _ in 0..40 {
+        hbox.add_child_with_layout(
+            Box::new(BlankCellView::default()),
+            LayoutParams {
+                height: Size::Content,
+                width: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    let theme = Theme::dark();
+    let ctx = ViewContext {
+        theme: &theme,
+        window_id: WindowId(1),
+        is_focused: true,
+    };
+
+    let backend = TestBackend::new(10, 4);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|f| hbox.draw(f, Rect::new(0, 0, 10, 4), ctx))
+        .expect("draw");
+
+    let buf = terminal.backend().buffer();
+
+    let top = buf.cell((0, 0)).expect("cell").symbol();
+    assert!(
+        matches!(top, "░" | "█"),
+        "expected horizontal scrollbar on the top edge; got {top:?} at (0,0)"
+    );
+
+    let viewport_row0 = buf.cell((0, 1)).expect("cell").symbol();
+    assert!(
+        !matches!(viewport_row0, "░" | "█"),
+        "expected viewport to start after top scrollbar; got {viewport_row0:?} at (0,1)"
+    );
 }

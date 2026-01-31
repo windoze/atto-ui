@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::views::ViewNode;
+use crate::views::{ViewId, ViewNode};
 use crate::wm::WindowId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,6 +92,42 @@ pub trait View: Send {
     fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         ViewEventResult::ignored()
     }
+
+    /// Returns whether this view supports scroll offsets and scrollbars.
+    ///
+    /// Default: `false` (non-scrollable, overflow is clipped by the parent).
+    fn is_scrollable(&self) -> bool {
+        false
+    }
+
+    /// Total content size of the view (may be larger than its viewport).
+    ///
+    /// Default: `(0, 0)` (unknown / not scrollable).
+    fn content_size(&self) -> (u16, u16) {
+        (0, 0)
+    }
+
+    /// Current scroll offset into the content (top-left of the viewport).
+    ///
+    /// Default: `(0, 0)`.
+    fn scroll_offset(&self) -> (u16, u16) {
+        (0, 0)
+    }
+
+    /// Sets the scroll offset. Scrollable views should clamp to a valid range.
+    ///
+    /// Default: no-op.
+    fn set_scroll_offset(&mut self, _x: u16, _y: u16) {}
+
+    /// Convenience method to scroll directly to an offset.
+    fn scroll_to(&mut self, x: u16, y: u16) {
+        self.set_scroll_offset(x, y);
+    }
+
+    /// Scrolls so the given child view is visible (and ideally centered), if supported.
+    ///
+    /// Default: no-op.
+    fn scroll_to_child(&mut self, _child_id: ViewId) {}
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>);
 }

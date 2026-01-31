@@ -78,15 +78,7 @@ pub fn apply_padding(area: Rect, padding: EdgeInsets) -> Rect {
     }
 }
 
-pub fn apply_padding_local(size: (u16, u16), padding: EdgeInsets) -> (u16, u16) {
-    let (w, h) = size;
-    let w = w.saturating_sub(padding.left.saturating_add(padding.right));
-    let h = h.saturating_sub(padding.top.saturating_add(padding.bottom));
-    (w, h)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Align {
     #[default]
     Start,
@@ -95,8 +87,7 @@ pub enum Align {
     Stretch,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Size {
     #[default]
     Fill,
@@ -105,8 +96,7 @@ pub enum Size {
     Content,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Anchor {
     #[default]
     TopLeft,

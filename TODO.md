@@ -18,11 +18,13 @@
 ## Missing Features and Improvements
 
 - [x] Focused window should have double-line border
-- [x] Window should be resizable by mouse dragging the bottom right corner
+- [x] Window should be resizable by mouse dragging any corner (all 4 corners)
 - [x] Window closing hooks, the user should be able to register a callback that is called when the user tries to close the window, e.g., to pop up a "Are you sure?" dialog.
 - [x] Dropdown menus should also have drop shadows
 - [x] Menu item in the menu bar should also have an optional keyboard shortcut, e.g. "Alt+F" to open the "File" menu.
 - [x] Menu items in drop down menus should have an optional keyboard shortcuts, e.g., when the "File" menu is open, pressing "N" should trigger the "New File" action.
+- [ ] Hide cursor unless the focused view requests it. Currently the cursor is always visible, it should be hidden when not needed.
+- [ ] Scroll bars for windows should placed on window's right and bottom boarders, not inside the content area, but do not overlap the window corners.
 
 ## Mouse Support
 
@@ -45,7 +47,7 @@ Mouse support is implemented in layered slices so routing stays deterministic an
   - clicks do not fall through to underlying windows/views
 - The window manager then hit-tests window chrome:
   - title bar drag moves windows
-  - bottom-right corner drag resizes windows
+  - corner drag resizes windows (all 4 corners)
   - buttons (min/max/close) consume the click
   - body clicks focus/raise a window first, then dispatch to the focused view
 

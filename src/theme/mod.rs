@@ -20,6 +20,9 @@ pub struct Theme {
     pub window_bg: Style,
     pub window_shadow: Style,
 
+    pub scrollbar_track: Style,
+    pub scrollbar_thumb: Style,
+
     pub menu_bar: Style,
     pub menu_bar_active: Style,
     pub menu_item: Style,
@@ -49,6 +52,11 @@ impl Theme {
                 .add_modifier(Modifier::BOLD),
             window_bg: Style::default().bg(Color::Rgb(16, 16, 16)).fg(Color::Gray),
             window_shadow: Style::default().bg(Color::Rgb(8, 8, 8)),
+
+            scrollbar_track: Style::default().fg(Color::DarkGray),
+            scrollbar_thumb: Style::default()
+                .fg(Color::LightBlue)
+                .add_modifier(Modifier::BOLD),
 
             menu_bar: Style::default().bg(Color::Rgb(24, 24, 24)).fg(Color::Gray),
             menu_bar_active: Style::default()
@@ -97,6 +105,11 @@ impl Theme {
                 .bg(Color::Rgb(250, 250, 250))
                 .fg(Color::Black),
             window_shadow: Style::default().bg(Color::Rgb(210, 210, 210)),
+
+            scrollbar_track: Style::default().fg(Color::DarkGray),
+            scrollbar_thumb: Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
 
             menu_bar: Style::default()
                 .bg(Color::Rgb(240, 240, 240))

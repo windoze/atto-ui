@@ -8,12 +8,17 @@ mod control_view;
 mod grid;
 mod layout;
 mod node;
+mod scroll;
 mod vbox;
 
 pub use control_view::ControlView;
 pub use grid::Grid;
 pub use layout::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
 pub use node::{ViewId, ViewNode};
+pub use scroll::{
+    HorizontalScrollbarPosition, ScrollConfig, ScrollOffset, ScrollbarVisibility,
+    VerticalScrollbarPosition,
+};
 pub use vbox::{HBox, VBox};
 
 #[cfg(test)]
