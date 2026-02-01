@@ -3,6 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
+use crate::reactive::Binding;
 use crate::view::{ScrollbarHost, View, ViewContext, ViewEventResult};
 
 use super::scroll::{
@@ -52,7 +53,7 @@ fn inset(area: Rect, n: u16) -> Rect {
 /// This is the generic mechanism behind “all views can have optional borders”.
 pub struct BorderView {
     inner: Box<dyn View>,
-    border: bool,
+    border: Binding<bool>,
     last_area: Option<Rect>,
     scrollbar_drag: Option<ScrollbarDrag>,
 }
@@ -61,14 +62,14 @@ impl BorderView {
     pub fn new(inner: Box<dyn View>) -> Self {
         Self {
             inner,
-            border: true,
+            border: true.into(),
             last_area: None,
             scrollbar_drag: None,
         }
     }
 
-    pub fn with_border(mut self, border: bool) -> Self {
-        self.border = border;
+    pub fn with_border(mut self, border: impl Into<Binding<bool>>) -> Self {
+        self.border = border.into();
         self
     }
 }
@@ -80,12 +81,12 @@ impl View for BorderView {
 
     fn desired_width(&self) -> Option<u16> {
         let w = self.inner.desired_width()?;
-        Some(w.saturating_add(if self.border { 2 } else { 0 }))
+        Some(w.saturating_add(if self.border.get() { 2 } else { 0 }))
     }
 
     fn desired_height(&self) -> Option<u16> {
         let h = self.inner.desired_height()?;
-        Some(h.saturating_add(if self.border { 2 } else { 0 }))
+        Some(h.saturating_add(if self.border.get() { 2 } else { 0 }))
     }
 
     fn is_scrollable(&self) -> bool {
@@ -117,7 +118,8 @@ impl View for BorderView {
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
-        let host_scrollbars = self.border
+        let border = self.border.get();
+        let host_scrollbars = border
             && matches!(ctx.scrollbar_host, ScrollbarHost::View)
             && self.inner.is_scrollable();
         let inner_ctx = ViewContext {
@@ -145,7 +147,7 @@ impl View for BorderView {
                 width: area.width,
                 height: area.height,
             };
-            let inner_local = if self.border {
+            let inner_local = if border {
                 inset(local_area, 1)
             } else {
                 local_area
@@ -370,9 +372,11 @@ impl View for BorderView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
         self.last_area = Some(area);
 
-        let inner_area = if self.border { inset(area, 1) } else { area };
+        let border = self.border.get();
 
-        if self.border && area.width > 0 && area.height > 0 {
+        let inner_area = if border { inset(area, 1) } else { area };
+
+        if border && area.width > 0 && area.height > 0 {
             let border_style = ctx.theme.window_bg.patch(if ctx.is_focused {
                 ctx.theme.window_border_focused
             } else {
@@ -389,7 +393,7 @@ impl View for BorderView {
             return;
         }
 
-        let host_scrollbars = self.border
+        let host_scrollbars = border
             && matches!(ctx.scrollbar_host, ScrollbarHost::View)
             && self.inner.is_scrollable();
         let inner_ctx = ViewContext {

@@ -4,69 +4,85 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
-use crate::reactive::PropertyBinding;
+use crate::reactive::Binding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct TableView {
-    title: String,
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
+    title: Binding<String>,
+    headers: Binding<Vec<String>>,
+    rows: Binding<Vec<Vec<String>>>,
     state: TableState,
     focused: bool,
-    enabled: bool,
-    selection: PropertyBinding<usize>,
-    height: u16,
+    enabled: Binding<bool>,
+    selection: Binding<usize>,
+    height: Binding<u16>,
     area: Option<Rect>,
 }
 
 impl TableView {
     pub fn new(
-        title: impl Into<String>,
-        headers: Vec<String>,
-        rows: Vec<Vec<String>>,
-        selection: PropertyBinding<usize>,
+        title: impl Into<Binding<String>>,
+        headers: impl Into<Binding<Vec<String>>>,
+        rows: impl Into<Binding<Vec<Vec<String>>>>,
+        selection: Binding<usize>,
     ) -> Self {
         let mut state = TableState::default();
-        if !rows.is_empty() && selection.get() < rows.len() {
-            state.select(Some(selection.get()));
-        } else if !rows.is_empty() {
-            selection.set(0);
-            state.select(Some(0));
+        let rows = rows.into();
+        let row_count = rows.get().len();
+        if row_count > 0 {
+            let selected = selection.get().min(row_count.saturating_sub(1));
+            selection.set(selected);
+            state.select(Some(selected));
         }
         Self {
             title: title.into(),
-            headers,
+            headers: headers.into(),
             rows,
             state,
             focused: false,
-            enabled: true,
+            enabled: true.into(),
             selection,
-            height: 8,
+            height: 8.into(),
             area: None,
         }
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
+    pub fn title(mut self, title: impl Into<Binding<String>>) -> Self {
+        self.title = title.into();
         self
     }
 
-    pub fn with_height(mut self, height: u16) -> Self {
-        self.height = height.max(3);
+    pub fn headers(mut self, headers: impl Into<Binding<Vec<String>>>) -> Self {
+        self.headers = headers.into();
+        self
+    }
+
+    pub fn rows(mut self, rows: impl Into<Binding<Vec<Vec<String>>>>) -> Self {
+        self.rows = rows.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Binding<u16>>) -> Self {
+        self.height = height.into();
         self
     }
 }
 
 impl Control for TableView {
     fn is_focusable(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -78,18 +94,19 @@ impl Control for TableView {
     }
 
     fn desired_height(&self) -> u16 {
-        self.height
+        self.height.get().max(3)
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        if !self.enabled {
+        if !self.enabled.get() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
-        if self.rows.is_empty() {
+        let rows = self.rows.get();
+        if rows.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
         let ext = self.selection.get();
-        if ext < self.rows.len() {
+        if ext < rows.len() {
             self.state.select(Some(ext));
         }
         let sel = self.state.selected().unwrap_or(0);
@@ -120,7 +137,7 @@ impl Control for TableView {
                     return (ControlOutcome::Ignored, FormAction::None);
                 }
                 let row = m.row.saturating_sub(data_y) as usize;
-                if row < self.rows.len() {
+                if row < rows.len() {
                     self.state.select(Some(row));
                     self.selection.set(row);
                     return (ControlOutcome::Consumed, FormAction::Changed);
@@ -129,17 +146,13 @@ impl Control for TableView {
             }
             Event::Key(KeyEvent { code, .. }) => match code {
                 KeyCode::Up => {
-                    let next = if sel == 0 {
-                        self.rows.len() - 1
-                    } else {
-                        sel - 1
-                    };
+                    let next = if sel == 0 { rows.len() - 1 } else { sel - 1 };
                     self.state.select(Some(next));
                     self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
                 }
                 KeyCode::Down => {
-                    let next = (sel + 1) % self.rows.len();
+                    let next = (sel + 1) % rows.len();
                     self.state.select(Some(next));
                     self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
@@ -151,52 +164,57 @@ impl Control for TableView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        if !self.rows.is_empty() {
+        let rows = self.rows.get();
+        let headers = self.headers.get();
+        if !rows.is_empty() {
             let ext = self.selection.get();
-            if ext < self.rows.len() {
+            if ext < rows.len() {
                 self.state.select(Some(ext));
+            } else {
+                self.state.select(Some(0));
+                self.selection.set(0);
             }
         }
-        let base_style: Style = if !self.enabled {
+        let enabled = self.enabled.get();
+        let base_style: Style = if !enabled {
             theme.widget.disabled
         } else if self.focused {
             theme.widget.focused
         } else {
             theme.widget.normal
         };
-        let highlight_style = if self.enabled {
+        let highlight_style = if enabled {
             theme.selection
         } else {
             theme.selection.patch(theme.widget.disabled)
         };
 
-        let widths = if self.headers.is_empty() {
+        let widths = if headers.is_empty() {
             vec![Constraint::Percentage(100)]
         } else {
-            let pct = (100 / self.headers.len().max(1)) as u16;
-            self.headers
+            let pct = (100 / headers.len().max(1)) as u16;
+            headers
                 .iter()
                 .map(|_| Constraint::Percentage(pct.max(1)))
                 .collect()
         };
 
-        let header_style = if self.enabled {
+        let header_style = if enabled {
             theme.widget.accent
         } else {
             theme.widget.disabled
         };
-        let header = Row::new(self.headers.iter().cloned().map(Cell::from)).style(header_style);
-        let rows = self
-            .rows
+        let header = Row::new(headers.iter().cloned().map(Cell::from)).style(header_style);
+        let data_rows = rows
             .iter()
             .map(|r| Row::new(r.iter().cloned().map(Cell::from)));
-        let table = Table::new(rows, widths)
+        let table = Table::new(data_rows, widths)
             .header(header)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_set(theme.border_set(false))
-                    .title(self.title.clone()),
+                    .title(self.title.get()),
             )
             .row_highlight_style(highlight_style)
             .style(base_style);

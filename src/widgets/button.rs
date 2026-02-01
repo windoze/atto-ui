@@ -6,25 +6,26 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::reactive::Binding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone)]
 pub struct Button {
-    label: String,
+    label: Binding<String>,
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
     focused: bool,
-    enabled: bool,
+    enabled: Binding<bool>,
 }
 
 impl Button {
-    pub fn new(label: impl Into<String>) -> Self {
+    pub fn new(label: impl Into<Binding<String>>) -> Self {
         Self {
             label: label.into(),
             on_click: None,
             focused: false,
-            enabled: true,
+            enabled: true.into(),
         }
     }
 
@@ -36,8 +37,13 @@ impl Button {
         self
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
+    pub fn label(mut self, label: impl Into<Binding<String>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
         self
     }
 
@@ -50,11 +56,11 @@ impl Button {
 
 impl Control for Button {
     fn is_focusable(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -62,7 +68,7 @@ impl Control for Button {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        if !self.enabled {
+        if !self.enabled.get() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
         match event {
@@ -93,7 +99,8 @@ impl Control for Button {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let style = if !self.enabled {
+        let enabled = self.enabled.get();
+        let style = if !enabled {
             theme.widget.disabled
         } else if self.focused {
             theme.widget.focused
@@ -104,7 +111,7 @@ impl Control for Button {
             .borders(Borders::ALL)
             .border_style(style)
             .border_set(theme.border_set(false));
-        let text = Line::styled(format!(" {} ", self.label), style);
+        let text = Line::styled(format!(" {} ", self.label.get()), style);
         let p = Paragraph::new(text).block(block);
         frame.render_widget(p, area);
     }

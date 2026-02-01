@@ -4,42 +4,47 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::reactive::PropertyBinding;
+use crate::reactive::Binding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct Checkbox {
-    label: String,
-    binding: PropertyBinding<bool>,
+    label: Binding<String>,
+    binding: Binding<bool>,
     focused: bool,
-    enabled: bool,
+    enabled: Binding<bool>,
 }
 
 impl Checkbox {
-    pub fn new(label: impl Into<String>, binding: PropertyBinding<bool>) -> Self {
+    pub fn new(label: impl Into<Binding<String>>, binding: Binding<bool>) -> Self {
         Self {
             label: label.into(),
             binding,
             focused: false,
-            enabled: true,
+            enabled: true.into(),
         }
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
+    pub fn label(mut self, label: impl Into<Binding<String>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
         self
     }
 }
 
 impl Control for Checkbox {
     fn is_focusable(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -47,7 +52,7 @@ impl Control for Checkbox {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        if !self.enabled {
+        if !self.enabled.get() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
         match event {
@@ -74,7 +79,8 @@ impl Control for Checkbox {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let style = if !self.enabled {
+        let enabled = self.enabled.get();
+        let style = if !enabled {
             theme.widget.disabled
         } else if self.focused {
             theme.widget.focused
@@ -86,7 +92,7 @@ impl Control for Checkbox {
         } else {
             theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
         };
-        let text = format!("{mark} {}", self.label);
+        let text = format!("{mark} {}", self.label.get());
         frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
     }
 }

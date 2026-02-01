@@ -21,13 +21,14 @@ pub fn derive_reactive(input: TokenStream) -> TokenStream {
 /// SwiftUI-ish declarative builder DSL.
 ///
 /// Currently supports a `Container { Child(args...) Child2(args...) }` form with optional chained
-/// modifiers:
+/// modifiers on both the root container and any child node:
 ///
 /// ```ignore
 /// view_builder! {
 ///   VStack {
 ///     Text("Hello")
-///     Text("World")
+///     Text("World").fg(Color::Green)
+///     Button("OK").on_click(|| println!("clicked"))
 ///   }
 ///   .spacing(1)
 ///   .padding(2)

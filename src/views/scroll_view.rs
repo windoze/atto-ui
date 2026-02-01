@@ -2,6 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, Mous
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use crate::reactive::Binding;
 use crate::view::{ScrollbarHost, View, ViewContext, ViewEventResult};
 
 use super::layout::{EdgeInsets, add_signed, apply_padding};
@@ -121,13 +122,13 @@ pub trait ScrollContent: Send {
     /// Called after the outer scroll view computes scrollbar geometry.
     ///
     /// This is the primary mechanism for "scrollbar positioning events".
-    fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, _host: &mut ScrollViewHost<'_>) {}
+    fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, _host: &mut ScrollViewHost) {}
 
     fn handle_event(
         &mut self,
         _event: &Event,
         _ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost<'_>,
+        _host: &mut ScrollViewHost,
     ) -> ViewEventResult {
         ViewEventResult::ignored()
     }
@@ -140,64 +141,73 @@ pub trait ScrollContent: Send {
         frame: &mut Frame<'_>,
         area: Rect,
         ctx: ScrollContentContext<'_>,
-        host: &mut ScrollViewHost<'_>,
+        host: &mut ScrollViewHost,
     );
 }
 
-pub struct ScrollViewHost<'a> {
-    scroll: &'a mut ScrollOffset,
-    content_size: &'a mut (u16, u16),
-    viewport_size: &'a mut (u16, u16),
+pub struct ScrollViewHost {
+    scroll: Binding<ScrollOffset>,
+    content_size: Binding<(u16, u16)>,
+    viewport_size: Binding<(u16, u16)>,
 }
 
-impl<'a> ScrollViewHost<'a> {
+impl ScrollViewHost {
     pub fn scroll_offset(&self) -> ScrollOffset {
-        *self.scroll
+        self.scroll.get()
     }
 
     pub fn viewport_size(&self) -> (u16, u16) {
-        *self.viewport_size
+        self.viewport_size.get()
     }
 
     pub fn content_size(&self) -> (u16, u16) {
-        *self.content_size
+        self.content_size.get()
     }
 
     pub fn set_content_size(&mut self, size: (u16, u16)) {
-        *self.content_size = size;
+        self.content_size.set(size);
         self.clamp_scroll();
     }
 
     pub fn set_scroll_offset(&mut self, x: u16, y: u16) {
-        *self.scroll = clamp_scroll_offset(
-            *self.content_size,
-            *self.viewport_size,
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        self.scroll.set(clamp_scroll_offset(
+            content_size,
+            viewport_size,
             ScrollOffset { x, y },
-        );
+        ));
     }
 
     pub fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
+        let scroll = self.scroll.get();
         let desired = ScrollOffset {
-            x: add_signed(self.scroll.x, dx),
-            y: add_signed(self.scroll.y, dy),
+            x: add_signed(scroll.x, dx),
+            y: add_signed(scroll.y, dy),
         };
-        let clamped = clamp_scroll_offset(*self.content_size, *self.viewport_size, desired);
-        let changed = clamped != *self.scroll;
-        *self.scroll = clamped;
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        let clamped = clamp_scroll_offset(content_size, viewport_size, desired);
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
     fn clamp_scroll(&mut self) {
-        *self.scroll = clamp_scroll_offset(*self.content_size, *self.viewport_size, *self.scroll);
+        let scroll = self.scroll.get();
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        self.scroll
+            .set(clamp_scroll_offset(content_size, viewport_size, scroll));
     }
 }
 
 pub struct ScrollView {
-    padding: EdgeInsets,
-    scroll: ScrollOffset,
-    content_size: (u16, u16),
-    viewport_size: (u16, u16),
-    scroll_config: ScrollConfig,
+    padding: Binding<EdgeInsets>,
+    scroll: Binding<ScrollOffset>,
+    content_size: Binding<(u16, u16)>,
+    viewport_size: Binding<(u16, u16)>,
+    scroll_config: Binding<ScrollConfig>,
     scrollbars: Option<Scrollbars>,
     scrollbar_drag: Option<ScrollbarDrag>,
     last_area: Option<Rect>,
@@ -207,11 +217,11 @@ pub struct ScrollView {
 impl ScrollView {
     pub fn new(content: Box<dyn ScrollContent>) -> Self {
         Self {
-            padding: EdgeInsets::ZERO,
-            scroll: ScrollOffset::ZERO,
-            content_size: (0, 0),
-            viewport_size: (0, 0),
-            scroll_config: ScrollConfig::default(),
+            padding: EdgeInsets::ZERO.into(),
+            scroll: ScrollOffset::ZERO.into(),
+            content_size: (0, 0).into(),
+            viewport_size: (0, 0).into(),
+            scroll_config: ScrollConfig::default().into(),
             scrollbars: None,
             scrollbar_drag: None,
             last_area: None,
@@ -219,28 +229,33 @@ impl ScrollView {
         }
     }
 
-    pub fn with_padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+    pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+        self.padding = padding.into();
         self
     }
 
-    pub fn with_scroll_config(mut self, config: ScrollConfig) -> Self {
-        self.scroll_config = config;
+    pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+        self.scroll_config = config.into();
         self
     }
 
     fn info(&self, scrollbar_host: ScrollbarHost) -> ScrollViewInfo {
         ScrollViewInfo {
-            scroll_offset: self.scroll,
-            viewport_size: self.viewport_size,
-            content_size: self.content_size,
+            scroll_offset: self.scroll.get(),
+            viewport_size: self.viewport_size.get(),
+            content_size: self.content_size.get(),
             scrollbar_host,
             scrollbars: self.scrollbars_info(scrollbar_host),
         }
     }
 
     fn scrollbars_info(&self, scrollbar_host: ScrollbarHost) -> ScrollViewScrollbars {
-        let thickness = self.scroll_config.scrollbar_thickness.max(1);
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let viewport_size = self.viewport_size.get();
+        let content_size = self.content_size.get();
+        let scroll = self.scroll.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
         let scrollbars = if let Some(scrollbars) = self.scrollbars {
             scrollbars
         } else if let Some(area) = self.last_area {
@@ -252,7 +267,7 @@ impl ScrollView {
             };
             Scrollbars {
                 viewport,
-                content: apply_padding(viewport, self.padding),
+                content: apply_padding(viewport, padding),
                 vbar: None,
                 hbar: None,
                 thickness,
@@ -267,10 +282,10 @@ impl ScrollView {
             .map(|area| {
                 let layout = scrollbar_layout_1d(
                     area.height,
-                    self.viewport_size.1,
-                    self.content_size.1,
-                    self.scroll.y,
-                    self.scroll_config.arrows,
+                    viewport_size.1,
+                    content_size.1,
+                    scroll.y,
+                    cfg.arrows,
                 );
                 ScrollbarPlacement {
                     area,
@@ -283,10 +298,10 @@ impl ScrollView {
             .map(|area| {
                 let layout = scrollbar_layout_1d(
                     area.width,
-                    self.viewport_size.0,
-                    self.content_size.0,
-                    self.scroll.x,
-                    self.scroll_config.arrows,
+                    viewport_size.0,
+                    content_size.0,
+                    scroll.x,
+                    cfg.arrows,
                 );
                 ScrollbarPlacement {
                     area,
@@ -304,33 +319,42 @@ impl ScrollView {
     }
 
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
+        let scroll = self.scroll.get();
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
         let desired = ScrollOffset {
-            x: add_signed(self.scroll.x, dx),
-            y: add_signed(self.scroll.y, dy),
+            x: add_signed(scroll.x, dx),
+            y: add_signed(scroll.y, dy),
         };
-        let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let clamped = clamp_scroll_offset(content_size, viewport_size, desired);
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
     fn scroll_to_clamped(&mut self, x: u16, y: u16) -> bool {
         let desired = ScrollOffset { x, y };
-        let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let scroll = self.scroll.get();
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        let clamped = clamp_scroll_offset(content_size, viewport_size, desired);
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
     fn handle_event_bubble(&mut self, event: &Event) -> ViewEventResult {
+        let cfg = self.scroll_config.get();
+        let viewport_size = self.viewport_size.get();
+        let content_size = self.content_size.get();
         match event {
             Event::Key(KeyEvent { code, kind, .. }) => {
                 if matches!(kind, KeyEventKind::Release) {
                     return ViewEventResult::ignored();
                 }
 
-                let viewport_h = self.viewport_size.1;
-                let max = max_scroll_offset(self.content_size, self.viewport_size);
+                let viewport_h = viewport_size.1;
+                let max = max_scroll_offset(content_size, viewport_size);
 
                 let changed = match code {
                     KeyCode::Up => self.scroll_by(0, -1),
@@ -358,7 +382,7 @@ impl ScrollView {
                     return ViewEventResult::ignored();
                 }
 
-                let step = self.scroll_config.wheel_step as i16;
+                let step = cfg.wheel_step as i16;
                 let changed = match m.kind {
                     crossterm::event::MouseEventKind::ScrollUp => self.scroll_by(0, -step),
                     crossterm::event::MouseEventKind::ScrollDown => self.scroll_by(0, step),
@@ -386,6 +410,11 @@ impl ScrollView {
             return;
         }
 
+        let cfg = self.scroll_config.get();
+        let viewport_size = self.viewport_size.get();
+        let content_size = self.content_size.get();
+        let scroll = self.scroll.get();
+
         let track_style = ctx.theme.scrollbar_track;
         let thumb_style = ctx.theme.scrollbar_thumb;
         let arrow_style = ctx.theme.scrollbar_arrow;
@@ -401,10 +430,10 @@ impl ScrollView {
         if let Some(vbar) = scrollbars.vbar {
             let layout = scrollbar_layout_1d(
                 vbar.height,
-                self.viewport_size.1,
-                self.content_size.1,
-                self.scroll.y,
-                self.scroll_config.arrows,
+                viewport_size.1,
+                content_size.1,
+                scroll.y,
+                cfg.arrows,
             );
 
             for dy in 0..vbar.height {
@@ -433,10 +462,10 @@ impl ScrollView {
         if let Some(hbar) = scrollbars.hbar {
             let layout = scrollbar_layout_1d(
                 hbar.width,
-                self.viewport_size.0,
-                self.content_size.0,
-                self.scroll.x,
-                self.scroll_config.arrows,
+                viewport_size.0,
+                content_size.0,
+                scroll.x,
+                cfg.arrows,
             );
 
             for dx in 0..hbar.width {
@@ -490,12 +519,12 @@ impl View for ScrollView {
 
     fn desired_width(&self) -> Option<u16> {
         let w = self.content.desired_width()?;
-        Some(w.saturating_add(self.padding.sum_horizontal()))
+        Some(w.saturating_add(self.padding.get().sum_horizontal()))
     }
 
     fn desired_height(&self) -> Option<u16> {
         let h = self.content.desired_height()?;
-        Some(h.saturating_add(self.padding.sum_vertical()))
+        Some(h.saturating_add(self.padding.get().sum_vertical()))
     }
 
     fn is_scrollable(&self) -> bool {
@@ -503,19 +532,20 @@ impl View for ScrollView {
     }
 
     fn content_size(&self) -> (u16, u16) {
-        self.content_size
+        self.content_size.get()
     }
 
     fn viewport_size(&self) -> (u16, u16) {
-        self.viewport_size
+        self.viewport_size.get()
     }
 
     fn scroll_config(&self) -> ScrollConfig {
-        self.scroll_config
+        self.scroll_config.get()
     }
 
     fn scroll_offset(&self) -> (u16, u16) {
-        (self.scroll.x, self.scroll.y)
+        let scroll = self.scroll.get();
+        (scroll.x, scroll.y)
     }
 
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
@@ -523,6 +553,13 @@ impl View for ScrollView {
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let viewport_size = self.viewport_size.get();
+        let content_size = self.content_size.get();
+        let scroll = self.scroll.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
+
         let info = self.info(ctx.scrollbar_host);
         let content_ctx = ScrollContentContext {
             view: ViewContext {
@@ -554,10 +591,10 @@ impl View for ScrollView {
                 };
                 Scrollbars {
                     viewport,
-                    content: apply_padding(viewport, self.padding),
+                    content: apply_padding(viewport, padding),
                     vbar: None,
                     hbar: None,
-                    thickness: self.scroll_config.scrollbar_thickness.max(1),
+                    thickness,
                 }
             });
 
@@ -576,10 +613,10 @@ impl View for ScrollView {
 
                             let layout = scrollbar_layout_1d(
                                 vbar.height,
-                                self.viewport_size.1,
-                                self.content_size.1,
-                                self.scroll.y,
-                                self.scroll_config.arrows,
+                                viewport_size.1,
+                                content_size.1,
+                                scroll.y,
+                                cfg.arrows,
                             );
                             if layout.track_len == 0 {
                                 return ViewEventResult::consumed();
@@ -597,11 +634,12 @@ impl View for ScrollView {
                                 pos_in_track.saturating_sub(grab_offset).min(max_start);
                             let new_off = scroll_offset_from_thumb_start(
                                 layout.track_len,
-                                self.viewport_size.1,
-                                self.content_size.1,
+                                viewport_size.1,
+                                content_size.1,
                                 new_thumb_start,
                             );
-                            let _ = self.scroll_to_clamped(self.scroll.x, new_off);
+                            let x = self.scroll.get().x;
+                            let _ = self.scroll_to_clamped(x, new_off);
                             return ViewEventResult::consumed();
                         }
                         ScrollbarDrag::Horizontal { grab_offset } => {
@@ -615,10 +653,10 @@ impl View for ScrollView {
 
                             let layout = scrollbar_layout_1d(
                                 hbar.width,
-                                self.viewport_size.0,
-                                self.content_size.0,
-                                self.scroll.x,
-                                self.scroll_config.arrows,
+                                viewport_size.0,
+                                content_size.0,
+                                scroll.x,
+                                cfg.arrows,
                             );
                             if layout.track_len == 0 {
                                 return ViewEventResult::consumed();
@@ -636,11 +674,12 @@ impl View for ScrollView {
                                 pos_in_track.saturating_sub(grab_offset).min(max_start);
                             let new_off = scroll_offset_from_thumb_start(
                                 layout.track_len,
-                                self.viewport_size.0,
-                                self.content_size.0,
+                                viewport_size.0,
+                                content_size.0,
                                 new_thumb_start,
                             );
-                            let _ = self.scroll_to_clamped(new_off, self.scroll.y);
+                            let y = self.scroll.get().y;
+                            let _ = self.scroll_to_clamped(new_off, y);
                             return ViewEventResult::consumed();
                         }
                     },
@@ -660,10 +699,10 @@ impl View for ScrollView {
                     let pos = local_y.saturating_sub(vbar.y);
                     let layout = scrollbar_layout_1d(
                         vbar.height,
-                        self.viewport_size.1,
-                        self.content_size.1,
-                        self.scroll.y,
-                        self.scroll_config.arrows,
+                        viewport_size.1,
+                        content_size.1,
+                        scroll.y,
+                        cfg.arrows,
                     );
                     match scrollbar_hit_test(layout, pos) {
                         ScrollbarHit::ArrowDec => {
@@ -679,11 +718,11 @@ impl View for ScrollView {
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::TrackDec => {
-                            let _ = self.scroll_by(0, -(self.viewport_size.1 as i16));
+                            let _ = self.scroll_by(0, -(viewport_size.1 as i16));
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::TrackInc => {
-                            let _ = self.scroll_by(0, self.viewport_size.1 as i16);
+                            let _ = self.scroll_by(0, viewport_size.1 as i16);
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::None => {}
@@ -697,10 +736,10 @@ impl View for ScrollView {
                     let pos = local_x.saturating_sub(hbar.x);
                     let layout = scrollbar_layout_1d(
                         hbar.width,
-                        self.viewport_size.0,
-                        self.content_size.0,
-                        self.scroll.x,
-                        self.scroll_config.arrows,
+                        viewport_size.0,
+                        content_size.0,
+                        scroll.x,
+                        cfg.arrows,
                     );
                     match scrollbar_hit_test(layout, pos) {
                         ScrollbarHit::ArrowDec => {
@@ -716,11 +755,11 @@ impl View for ScrollView {
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::TrackDec => {
-                            let _ = self.scroll_by(-(self.viewport_size.0 as i16), 0);
+                            let _ = self.scroll_by(-(viewport_size.0 as i16), 0);
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::TrackInc => {
-                            let _ = self.scroll_by(self.viewport_size.0 as i16, 0);
+                            let _ = self.scroll_by(viewport_size.0 as i16, 0);
                             return ViewEventResult::consumed();
                         }
                         ScrollbarHit::None => {}
@@ -747,10 +786,10 @@ impl View for ScrollView {
                 };
                 Scrollbars {
                     viewport,
-                    content: apply_padding(viewport, self.padding),
+                    content: apply_padding(viewport, padding),
                     vbar: None,
                     hbar: None,
-                    thickness: self.scroll_config.scrollbar_thickness.max(1),
+                    thickness,
                 }
             });
 
@@ -763,9 +802,9 @@ impl View for ScrollView {
                 });
 
                 let mut host = ScrollViewHost {
-                    scroll: &mut self.scroll,
-                    content_size: &mut self.content_size,
-                    viewport_size: &mut self.viewport_size,
+                    scroll: self.scroll.clone(),
+                    content_size: self.content_size.clone(),
+                    viewport_size: self.viewport_size.clone(),
                 };
                 self.content.on_scrollbars(content_ctx, &mut host);
                 let res = self
@@ -777,9 +816,9 @@ impl View for ScrollView {
             }
         } else {
             let mut host = ScrollViewHost {
-                scroll: &mut self.scroll,
-                content_size: &mut self.content_size,
-                viewport_size: &mut self.viewport_size,
+                scroll: self.scroll.clone(),
+                content_size: self.content_size.clone(),
+                viewport_size: self.viewport_size.clone(),
             };
             self.content.on_scrollbars(content_ctx, &mut host);
             let res = self.content.handle_event(event, content_ctx, &mut host);
@@ -794,7 +833,9 @@ impl View for ScrollView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
         self.last_area = Some(area);
 
-        let thickness = self.scroll_config.scrollbar_thickness.max(1);
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
 
         let mut viewport_outer = area;
         let mut show_v = false;
@@ -806,8 +847,8 @@ impl View for ScrollView {
             // Two-pass solve: scrollbar visibility affects viewport size (which can affect
             // content size for virtualized content).
             for _ in 0..2 {
-                let inner = apply_padding(viewport_outer, self.padding);
-                self.viewport_size = (inner.width, inner.height);
+                let inner = apply_padding(viewport_outer, padding);
+                self.viewport_size.set((inner.width, inner.height));
 
                 let info = self.info(ctx.scrollbar_host);
                 let content_ctx = ScrollContentContext {
@@ -819,18 +860,18 @@ impl View for ScrollView {
                     },
                     info,
                 };
-                let new_content_size = self.content.content_size(self.viewport_size, content_ctx);
-                self.content_size = new_content_size;
+                let viewport_size = self.viewport_size.get();
+                let new_content_size = self.content.content_size(viewport_size, content_ctx);
+                self.content_size.set(new_content_size);
 
-                let new_show_v = should_show_scrollbar(
-                    self.scroll_config.vertical_scrollbar,
-                    self.content_size.1,
-                    self.viewport_size.1,
-                );
+                let viewport_size = self.viewport_size.get();
+                let content_size = self.content_size.get();
+                let new_show_v =
+                    should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
                 let new_show_h = should_show_scrollbar(
-                    self.scroll_config.horizontal_scrollbar,
-                    self.content_size.0,
-                    self.viewport_size.0,
+                    cfg.horizontal_scrollbar,
+                    content_size.0,
+                    viewport_size.0,
                 );
 
                 if new_show_v == show_v && new_show_h == show_h {
@@ -850,8 +891,8 @@ impl View for ScrollView {
                 };
             }
         } else {
-            let inner = apply_padding(area, self.padding);
-            self.viewport_size = (inner.width, inner.height);
+            let inner = apply_padding(area, padding);
+            self.viewport_size.set((inner.width, inner.height));
 
             let info = self.info(ctx.scrollbar_host);
             let content_ctx = ScrollContentContext {
@@ -863,21 +904,22 @@ impl View for ScrollView {
                 },
                 info,
             };
-            self.content_size = self.content.content_size(self.viewport_size, content_ctx);
+            let viewport_size = self.viewport_size.get();
+            self.content_size
+                .set(self.content.content_size(viewport_size, content_ctx));
 
-            show_v = should_show_scrollbar(
-                self.scroll_config.vertical_scrollbar,
-                self.content_size.1,
-                self.viewport_size.1,
-            );
-            show_h = should_show_scrollbar(
-                self.scroll_config.horizontal_scrollbar,
-                self.content_size.0,
-                self.viewport_size.0,
-            );
+            let viewport_size = self.viewport_size.get();
+            let content_size = self.content_size.get();
+            show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
+            show_h =
+                should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
         }
 
-        self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        let scroll = self.scroll.get();
+        self.scroll
+            .set(clamp_scroll_offset(content_size, viewport_size, scroll));
 
         if matches!(ctx.scrollbar_host, ScrollbarHost::View) {
             let viewport_local = Rect {
@@ -886,7 +928,7 @@ impl View for ScrollView {
                 width: viewport_outer.width,
                 height: viewport_outer.height,
             };
-            let content_local = apply_padding(viewport_local, self.padding);
+            let content_local = apply_padding(viewport_local, padding);
             let vbar = show_v.then_some(Rect {
                 x: viewport_local.x.saturating_add(viewport_local.width),
                 y: viewport_local.y,
@@ -926,17 +968,21 @@ impl View for ScrollView {
             info,
         };
         let mut host = ScrollViewHost {
-            scroll: &mut self.scroll,
-            content_size: &mut self.content_size,
-            viewport_size: &mut self.viewport_size,
+            scroll: self.scroll.clone(),
+            content_size: self.content_size.clone(),
+            viewport_size: self.viewport_size.clone(),
         };
         self.content.on_scrollbars(content_ctx, &mut host);
 
         // Clamp again in case the delegate updated content size or scroll offset.
-        self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
+        let content_size = self.content_size.get();
+        let viewport_size = self.viewport_size.get();
+        let scroll = self.scroll.get();
+        self.scroll
+            .set(clamp_scroll_offset(content_size, viewport_size, scroll));
 
         // Draw the content viewport (after padding, excluding scrollbars).
-        let content_area = apply_padding(viewport_outer, self.padding);
+        let content_area = apply_padding(viewport_outer, padding);
         if content_area.width > 0 && content_area.height > 0 {
             let info = self.info(ctx.scrollbar_host);
             let content_ctx = ScrollContentContext {
@@ -949,9 +995,9 @@ impl View for ScrollView {
                 info,
             };
             let mut host = ScrollViewHost {
-                scroll: &mut self.scroll,
-                content_size: &mut self.content_size,
-                viewport_size: &mut self.viewport_size,
+                scroll: self.scroll.clone(),
+                content_size: self.content_size.clone(),
+                viewport_size: self.viewport_size.clone(),
             };
             self.content
                 .draw(frame, content_area, content_ctx, &mut host);
@@ -997,7 +1043,7 @@ mod tests {
             _frame: &mut Frame<'_>,
             area: Rect,
             _ctx: ScrollContentContext<'_>,
-            _host: &mut ScrollViewHost<'_>,
+            _host: &mut ScrollViewHost,
         ) {
             *self.last_area.lock().expect("lock") = Some(area);
         }

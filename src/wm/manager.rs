@@ -109,7 +109,8 @@ impl WindowManager {
         self.next_id += 1;
         let id = WindowId(self.next_id);
         window.id = id;
-        window.rect = normalize_rect(window.rect, bounds, window.min_size);
+        let rect = normalize_rect(window.rect.get(), bounds, window.min_size.get());
+        window.rect.set(rect);
 
         if window.kind == WindowKind::Modal {
             // Ensure modals are always on top and focused.
@@ -181,7 +182,7 @@ impl WindowManager {
         let ids: Vec<WindowId> = self
             .windows
             .iter()
-            .filter(|w| w.kind.is_focusable() && w.state != WindowState::Minimized)
+            .filter(|w| w.kind.is_focusable() && w.state.get() != WindowState::Minimized)
             .map(|w| w.id)
             .collect();
         if ids.is_empty() {
@@ -215,7 +216,7 @@ impl WindowManager {
     pub fn minimize_focused(&mut self) {
         let Some(id) = self.focused() else { return };
         if let Some(w) = self.window_mut(id) {
-            w.state = WindowState::Minimized;
+            w.state.set(WindowState::Minimized);
         }
         self.focused = self.topmost_focusable_id();
     }
@@ -223,9 +224,9 @@ impl WindowManager {
     pub fn restore_focused(&mut self) {
         let Some(id) = self.focused() else { return };
         if let Some(w) = self.window_mut(id)
-            && w.state == WindowState::Minimized
+            && w.state.get() == WindowState::Minimized
         {
-            w.state = WindowState::Normal;
+            w.state.set(WindowState::Normal);
         }
     }
 
@@ -251,21 +252,23 @@ impl WindowManager {
         }
 
         for window in self.windows.iter_mut() {
-            if window.state == WindowState::Minimized {
+            let state = window.state.get();
+            if state == WindowState::Minimized {
                 continue;
             }
 
-            let rect = match window.state {
+            let rect = match state {
                 WindowState::Maximized => bounds,
-                _ => normalize_rect(window.rect, bounds, window.min_size),
+                _ => normalize_rect(window.rect.get(), bounds, window.min_size.get()),
             };
-            window.rect = rect;
+            window.rect.set(rect);
 
             if modal.is_some() && Some(window.id) != modal {
                 // Block non-modal windows visually by dimming their chrome.
             }
 
-            if window.decorations.shadow {
+            let decorations = window.decorations.get();
+            if decorations.shadow {
                 draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);
             }
 
@@ -283,7 +286,8 @@ impl WindowManager {
                 theme.window_title
             });
 
-            if window.decorations.border {
+            if decorations.border {
+                let title = window.title.get();
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
@@ -292,9 +296,9 @@ impl WindowManager {
                 draw_titlebar(
                     frame.buffer_mut(),
                     rect,
-                    &window.title,
+                    &title,
                     title_style,
-                    &window.decorations,
+                    &decorations,
                     theme,
                 );
             }
@@ -304,7 +308,7 @@ impl WindowManager {
                 theme,
                 window_id: window.id,
                 is_focused,
-                scrollbar_host: if window.decorations.border {
+                scrollbar_host: if decorations.border {
                     ScrollbarHost::Window
                 } else {
                     ScrollbarHost::View
@@ -312,7 +316,7 @@ impl WindowManager {
             };
             window.view.draw(frame, inner, ctx);
 
-            if window.decorations.border {
+            if decorations.border {
                 draw_window_border_scrollbars(
                     frame.buffer_mut(),
                     rect,
@@ -335,14 +339,16 @@ impl WindowManager {
         let is_focused = true;
         let action = {
             let w = &mut self.windows[idx];
-            if w.state == WindowState::Minimized {
+            let state = w.state.get();
+            if state == WindowState::Minimized {
                 return None;
             }
             // Ensure rect stays clamped before passing input.
-            w.rect = match w.state {
+            let rect = match state {
                 WindowState::Maximized => bounds,
-                _ => normalize_rect(w.rect, bounds, w.min_size),
+                _ => normalize_rect(w.rect.get(), bounds, w.min_size.get()),
             };
+            w.rect.set(rect);
             if let Event::Mouse(m) = event {
                 // Views render inside the inner rect; clicks on window chrome/borders should not
                 // be delivered to the view layer.
@@ -355,7 +361,7 @@ impl WindowManager {
                 theme,
                 window_id: id,
                 is_focused,
-                scrollbar_host: if w.decorations.border {
+                scrollbar_host: if w.decorations.get().border {
                     ScrollbarHost::Window
                 } else {
                     ScrollbarHost::View
@@ -374,7 +380,7 @@ impl WindowManager {
         self.windows
             .iter()
             .rev()
-            .find(|w| w.kind.is_focusable() && w.state != WindowState::Minimized)
+            .find(|w| w.kind.is_focusable() && w.state.get() != WindowState::Minimized)
             .map(|w| w.id)
     }
 
@@ -382,7 +388,7 @@ impl WindowManager {
         self.windows
             .iter()
             .rev()
-            .find(|w| w.kind.is_modal() && w.state != WindowState::Minimized)
+            .find(|w| w.kind.is_modal() && w.state.get() != WindowState::Minimized)
             .map(|w| w.id)
     }
 
@@ -418,8 +424,8 @@ impl WindowManager {
                 match hit.region {
                     HitRegion::CloseButton => {
                         if let Some(w) = self.window_mut(window_id)
-                            && w.closable
-                            && w.decorations.buttons.close
+                            && w.closable.get()
+                            && w.decorations.get().buttons.close
                         {
                             action.close = Some(window_id);
                         }
@@ -428,40 +434,41 @@ impl WindowManager {
                         let can_maximize = self
                             .windows
                             .iter()
-                            .any(|w| w.id == window_id && w.decorations.buttons.maximize);
+                            .any(|w| w.id == window_id && w.decorations.get().buttons.maximize);
                         if can_maximize {
                             self.toggle_maximize(window_id, bounds);
                         }
                     }
                     HitRegion::MinimizeButton => {
                         if let Some(w) = self.window_mut(window_id)
-                            && w.decorations.buttons.minimize
+                            && w.decorations.get().buttons.minimize
                         {
-                            w.state = WindowState::Minimized;
+                            w.state.set(WindowState::Minimized);
                             self.focused = self.topmost_focusable_id();
                         }
                     }
                     HitRegion::TitleBar => {
                         if let Some(w) = self.window_mut(window_id)
-                            && w.movable
-                            && w.state != WindowState::Maximized
+                            && w.movable.get()
+                            && w.state.get() != WindowState::Maximized
                         {
+                            let rect = w.rect.get();
                             self.drag = Some(DragState {
                                 window_id,
                                 kind: DragKind::Move {
-                                    offset_x: m.column.saturating_sub(w.rect.x),
-                                    offset_y: m.row.saturating_sub(w.rect.y),
+                                    offset_x: m.column.saturating_sub(rect.x),
+                                    offset_y: m.row.saturating_sub(rect.y),
                                 },
                             });
                         }
                     }
                     HitRegion::ResizeHandle(corner) => {
                         if let Some(w) = self.window_mut(window_id)
-                            && w.resizable
-                            && w.state != WindowState::Maximized
+                            && w.resizable.get()
+                            && w.state.get() != WindowState::Maximized
                         {
-                            let start_rect = normalize_rect(w.rect, bounds, w.min_size);
-                            w.rect = start_rect;
+                            let start_rect = normalize_rect(w.rect.get(), bounds, w.min_size.get());
+                            w.rect.set(start_rect);
                             self.drag = Some(DragState {
                                 window_id,
                                 kind: DragKind::Resize { start_rect, corner },
@@ -592,25 +599,31 @@ impl WindowManager {
                 };
                 match drag.kind {
                     DragKind::Move { offset_x, offset_y } => {
-                        if !w.movable || w.state == WindowState::Maximized {
+                        if !w.movable.get() || w.state.get() == WindowState::Maximized {
                             return WindowManagerAction::default();
                         }
                         let new_x = m.column.saturating_sub(offset_x);
                         let new_y = m.row.saturating_sub(offset_y);
-                        w.rect.x = new_x;
-                        w.rect.y = new_y;
-                        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+                        let mut rect = w.rect.get();
+                        rect.x = new_x;
+                        rect.y = new_y;
+                        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
                     }
                     DragKind::Resize { start_rect, corner } => {
-                        if !w.resizable || w.state == WindowState::Maximized {
+                        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
                             return WindowManagerAction::default();
                         }
-                        w.rect = resize_rect_from_corner(
-                            start_rect, corner, m.column, m.row, bounds, w.min_size,
-                        );
+                        w.rect.set(resize_rect_from_corner(
+                            start_rect,
+                            corner,
+                            m.column,
+                            m.row,
+                            bounds,
+                            w.min_size.get(),
+                        ));
                     }
                     DragKind::Scrollbar { drag } => {
-                        if !w.decorations.border {
+                        if !w.decorations.get().border {
                             return WindowManagerAction::default();
                         }
 
@@ -786,23 +799,26 @@ impl WindowManager {
         };
 
         for w in iter {
-            if w.state == WindowState::Minimized {
+            let state = w.state.get();
+            if state == WindowState::Minimized {
                 continue;
             }
-            if !contains(w.rect, x, y) {
+            let rect = w.rect.get();
+            if !contains(rect, x, y) {
                 continue;
             }
+            let decorations = w.decorations.get();
 
-            if w.decorations.border
-                && w.resizable
-                && w.state != WindowState::Maximized
-                && w.rect.width >= 2
-                && w.rect.height >= 2
+            if decorations.border
+                && w.resizable.get()
+                && state != WindowState::Maximized
+                && rect.width >= 2
+                && rect.height >= 2
             {
-                let left = w.rect.x;
-                let top = w.rect.y;
-                let right = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
-                let bottom = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
+                let left = rect.x;
+                let top = rect.y;
+                let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+                let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
 
                 let corner = if x == left && y == top {
                     Some(ResizeCorner::TopLeft)
@@ -841,11 +857,7 @@ impl WindowManager {
                 });
             }
 
-            if w.decorations.border
-                && w.view.is_scrollable()
-                && w.rect.width > 1
-                && w.rect.height > 1
-            {
+            if decorations.border && w.view.is_scrollable() && rect.width > 1 && rect.height > 1 {
                 let cfg = w.view.scroll_config();
                 let (content_w, content_h) = w.view.content_size();
                 let (viewport_w, viewport_h) = w.view.viewport_size();
@@ -853,10 +865,10 @@ impl WindowManager {
                 let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
                 let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
 
-                let left = w.rect.x;
-                let top = w.rect.y;
-                let right = w.rect.x.saturating_add(w.rect.width).saturating_sub(1);
-                let bottom = w.rect.y.saturating_add(w.rect.height).saturating_sub(1);
+                let left = rect.x;
+                let top = rect.y;
+                let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+                let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
 
                 // Scrollbars occupy the right/bottom border lines (excluding the corners).
                 if show_v && x == right && y > top && y < bottom {
@@ -883,40 +895,40 @@ impl WindowManager {
 
     fn move_window(&mut self, id: WindowId, dx: i16, dy: i16, bounds: Rect) {
         let Some(w) = self.window_mut(id) else { return };
-        if !w.movable || w.state == WindowState::Maximized {
+        if !w.movable.get() || w.state.get() == WindowState::Maximized {
             return;
         }
-        w.rect.x = add_signed(w.rect.x, dx);
-        w.rect.y = add_signed(w.rect.y, dy);
-        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+        let mut rect = w.rect.get();
+        rect.x = add_signed(rect.x, dx);
+        rect.y = add_signed(rect.y, dy);
+        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
     }
 
     fn resize_window(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
         let Some(w) = self.window_mut(id) else { return };
-        if !w.resizable || w.state == WindowState::Maximized {
+        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
             return;
         }
-        let (min_w, min_h) = w.min_size;
-        let new_w = add_signed(w.rect.width, dw).max(min_w);
-        let new_h = add_signed(w.rect.height, dh).max(min_h);
-        w.rect.width = new_w;
-        w.rect.height = new_h;
-        w.rect = normalize_rect(w.rect, bounds, w.min_size);
+        let (min_w, min_h) = w.min_size.get();
+        let mut rect = w.rect.get();
+        rect.width = add_signed(rect.width, dw).max(min_w);
+        rect.height = add_signed(rect.height, dh).max(min_h);
+        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
     }
 
     fn toggle_maximize(&mut self, id: WindowId, bounds: Rect) {
         let Some(w) = self.window_mut(id) else { return };
-        match w.state {
+        match w.state.get() {
             WindowState::Maximized => {
-                w.state = WindowState::Normal;
+                w.state.set(WindowState::Normal);
                 if let Some(r) = w.restore_rect.take() {
-                    w.rect = normalize_rect(r, bounds, w.min_size);
+                    w.rect.set(normalize_rect(r, bounds, w.min_size.get()));
                 }
             }
             WindowState::Normal => {
-                w.restore_rect = Some(w.rect);
-                w.state = WindowState::Maximized;
-                w.rect = bounds;
+                w.restore_rect = Some(w.rect.get());
+                w.state.set(WindowState::Maximized);
+                w.rect.set(bounds);
             }
             WindowState::Minimized => {}
         }
@@ -1231,17 +1243,19 @@ fn draw_titlebar(
 }
 
 fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> {
-    if y != w.rect.y || w.rect.width < 3 {
+    let rect = w.rect.get();
+    let deco = w.decorations.get();
+    if y != rect.y || rect.width < 3 {
         return None;
     }
-    let inner_right = w.rect.x.saturating_add(w.rect.width).saturating_sub(2);
-    if w.decorations.buttons.close && x == inner_right {
+    let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
+    if deco.buttons.close && x == inner_right {
         return Some(HitRegion::CloseButton);
     }
-    if w.decorations.buttons.maximize && x == inner_right.saturating_sub(2) {
+    if deco.buttons.maximize && x == inner_right.saturating_sub(2) {
         return Some(HitRegion::MaximizeButton);
     }
-    if w.decorations.buttons.minimize && x == inner_right.saturating_sub(4) {
+    if deco.buttons.minimize && x == inner_right.saturating_sub(4) {
         return Some(HitRegion::MinimizeButton);
     }
     None
@@ -1556,7 +1570,7 @@ mod tests {
             );
 
             let w = wm.window_mut(id).expect("window");
-            assert_eq!(w.rect, expected, "case {label}");
+            assert_eq!(w.rect.get(), expected, "case {label}");
         }
     }
 
@@ -1655,23 +1669,23 @@ mod tests {
         let target = (5, 3);
 
         let mut wm = WindowManager::new();
-        let mut underlay = Window::new(
+        let underlay = Window::new(
             WindowKind::Normal,
             "Underlay",
             Rect::new(1, 1, 20, 7),
             Box::new(UnderlayView { target }),
         );
-        underlay.decorations.shadow = false;
+        underlay.decorations.update(|d| d.shadow = false);
         wm.add_window(underlay, bounds);
 
         let overlay_rect = Rect::new(5, 3, 20, 6);
-        let mut overlay = Window::new(
+        let overlay = Window::new(
             WindowKind::Normal,
             "Overlay",
             overlay_rect,
             Box::new(OverlayView),
         );
-        overlay.decorations.shadow = false;
+        overlay.decorations.update(|d| d.shadow = false);
         wm.add_window(overlay, bounds);
 
         let backend = TestBackend::new(bounds.width, bounds.height);

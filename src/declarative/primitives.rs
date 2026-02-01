@@ -83,6 +83,59 @@ impl DeclarativeView for Text {
     }
 }
 
+/// Dynamic text view (constructed from a closure).
+///
+/// This exists primarily to make `Text::from_fn` usable from the `view_builder!` macro, which
+/// expects a `Type::new(...)` constructor form.
+#[derive(Clone)]
+pub struct TextFn {
+    inner: Text,
+}
+
+impl TextFn {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn() -> String + Send + Sync + 'static,
+    {
+        Self {
+            inner: Text::from_fn(f),
+        }
+    }
+
+    pub fn style(mut self, style: Style) -> Self {
+        self.inner = self.inner.style(style);
+        self
+    }
+
+    pub fn fg(mut self, color: Color) -> Self {
+        self.inner = self.inner.fg(color);
+        self
+    }
+
+    pub fn bg(mut self, color: Color) -> Self {
+        self.inner = self.inner.bg(color);
+        self
+    }
+}
+
+impl DeclarativeView for TextFn {
+    fn body(&self) -> Box<dyn DeclarativeView> {
+        self.inner.body()
+    }
+
+    fn render(&self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+        self.inner.render(frame, area, ctx);
+    }
+
+    fn build_view(&self) -> Box<dyn View> {
+        self.inner.build_view()
+    }
+
+    fn is_primitive(&self) -> bool {
+        self.inner.is_primitive()
+    }
+}
+
 #[derive(Clone)]
 struct TextImperativeView {
     content: TextContent,

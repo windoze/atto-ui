@@ -73,7 +73,7 @@ pub fn derive_reactive_impl(input: TokenStream) -> TokenStream {
     let bindings = reactive_fields.iter().map(|(field_name, inner_ty)| {
         let fn_name = format_ident!("{field_name}_binding");
         quote! {
-            pub fn #fn_name(&self) -> ::chatty::reactive::PropertyBinding<#inner_ty> {
+            pub fn #fn_name(&self) -> ::chatty::reactive::Binding<#inner_ty> {
                 self.#field_name.binding()
             }
         }

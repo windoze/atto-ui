@@ -15,6 +15,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use chatty::reactive::EventQueue;
 use chatty::theme::Theme;
 use chatty::view::{View, ViewContext, ViewEventResult};
 use chatty::views::{EdgeInsets, LayoutParams, Size, VBox};
@@ -100,9 +101,16 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
+    let actions: EventQueue<()> = EventQueue::new();
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
-        vec![MenuItem::command("Quit", "app.quit").shortcut("q")],
+        vec![
+            MenuItem::action("Quit", {
+                let actions = actions.clone();
+                move || actions.push(())
+            })
+            .shortcut("q"),
+        ],
     )]);
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
@@ -133,7 +141,7 @@ fn main() -> Result<()> {
         let ev = event::read()?;
 
         let screen: Rect = terminal.size()?.into();
-        let res = desktop.handle_event(&ev, screen);
+        let _res = desktop.handle_event(&ev, screen);
 
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
@@ -146,9 +154,7 @@ fn main() -> Result<()> {
             break;
         }
 
-        if let chatty::app::DesktopAction::MenuCommand(cmd) = res.action
-            && cmd == "app.quit"
-        {
+        if actions.pop().is_some() {
             break;
         }
     }

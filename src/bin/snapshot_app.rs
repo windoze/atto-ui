@@ -17,7 +17,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::reactive::Property;
+use chatty::reactive::{EventQueue, Property};
 use chatty::theme::Theme;
 use chatty::view::{View, ViewContext, ViewEventResult};
 use chatty::views::{ControlView, EdgeInsets, HBox, LayoutParams, Size, VBox};
@@ -25,6 +25,14 @@ use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
 use chatty::wm::{Window, WindowKind};
+
+#[derive(Clone, Debug)]
+enum SnapshotAppAction {
+    Quit,
+    OpenAbout,
+    SetThemeDark,
+    SetThemeLight,
+}
 
 #[derive(Default)]
 struct LogView {
@@ -97,7 +105,7 @@ impl WidgetsView {
                     ],
                     list_selection.binding(),
                 )
-                .with_height(5),
+                .height(5u16),
             ),
             Box::new(
                 TableView::new(
@@ -110,7 +118,7 @@ impl WidgetsView {
                     ],
                     table_selection.binding(),
                 )
-                .with_height(6),
+                .height(6u16),
             ),
             Box::new(Button::new("OK")),
         ];
@@ -215,6 +223,8 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
+    let actions: EventQueue<SnapshotAppAction> = EventQueue::new();
+
     let theme_state = Arc::new(AtomicBool::new(true));
     let mut is_dark = true;
     let menu = MenuBar::new(vec![
@@ -224,16 +234,34 @@ fn main() -> Result<()> {
                 MenuItem::submenu(
                     "Theme",
                     vec![
-                        MenuItem::command("Dark", "theme.dark").shortcut("d"),
-                        MenuItem::command("Light", "theme.light").shortcut("l"),
+                        MenuItem::action("Dark", {
+                            let actions = actions.clone();
+                            move || actions.push(SnapshotAppAction::SetThemeDark)
+                        })
+                        .shortcut("d"),
+                        MenuItem::action("Light", {
+                            let actions = actions.clone();
+                            move || actions.push(SnapshotAppAction::SetThemeLight)
+                        })
+                        .shortcut("l"),
                     ],
                 ),
-                MenuItem::command("Quit", "app.quit").shortcut("q"),
+                MenuItem::action("Quit", {
+                    let actions = actions.clone();
+                    move || actions.push(SnapshotAppAction::Quit)
+                })
+                .shortcut("q"),
             ],
         ),
         MenuSpec::new(
             "Help",
-            vec![MenuItem::command("About", "help.about").shortcut("a")],
+            vec![
+                MenuItem::action("About", {
+                    let actions = actions.clone();
+                    move || actions.push(SnapshotAppAction::OpenAbout)
+                })
+                .shortcut("a"),
+            ],
         ),
     ]);
     let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -285,7 +313,13 @@ fn main() -> Result<()> {
     );
     desktop.wm.focus(widgets_id);
 
-    let res = run(&mut terminal, &mut desktop, &mut is_dark, &theme_state);
+    let res = run(
+        &mut terminal,
+        &mut desktop,
+        &actions,
+        &mut is_dark,
+        &theme_state,
+    );
 
     disable_raw_mode()?;
     execute!(
@@ -302,6 +336,7 @@ fn main() -> Result<()> {
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     desktop: &mut Desktop,
+    actions: &EventQueue<SnapshotAppAction>,
     is_dark: &mut bool,
     theme_state: &Arc<AtomicBool>,
 ) -> Result<()> {
@@ -337,22 +372,23 @@ fn run(
         let screen: Rect = terminal.size()?.into();
         let result = desktop.handle_event(&ev, screen);
 
-        match result.action {
-            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "app.quit" => break,
-            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "help.about" => {
-                open_about_modal(desktop, screen);
+        for action in actions.drain() {
+            match action {
+                SnapshotAppAction::Quit => return Ok(()),
+                SnapshotAppAction::OpenAbout => {
+                    open_about_modal(desktop, screen);
+                }
+                SnapshotAppAction::SetThemeDark => {
+                    *is_dark = true;
+                    theme_state.store(true, Ordering::SeqCst);
+                    desktop.theme = Theme::dark();
+                }
+                SnapshotAppAction::SetThemeLight => {
+                    *is_dark = false;
+                    theme_state.store(false, Ordering::SeqCst);
+                    desktop.theme = Theme::light();
+                }
             }
-            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "theme.dark" => {
-                *is_dark = true;
-                theme_state.store(true, Ordering::SeqCst);
-                desktop.theme = Theme::dark();
-            }
-            chatty::app::DesktopAction::MenuCommand(cmd) if cmd == "theme.light" => {
-                *is_dark = false;
-                theme_state.store(false, Ordering::SeqCst);
-                desktop.theme = Theme::light();
-            }
-            _ => {}
         }
 
         // Application-level shortcuts: only run if the event was not handled by the view/window/desktop.

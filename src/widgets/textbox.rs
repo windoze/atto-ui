@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::reactive::PropertyBinding;
+use crate::reactive::Binding;
 use crate::text::TextBuffer;
 use crate::theme::Theme;
 
@@ -14,42 +14,47 @@ use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct TextBox {
-    title: String,
+    title: Binding<String>,
     buffer: TextBuffer,
-    binding: PropertyBinding<String>,
+    binding: Binding<String>,
     focused: bool,
-    enabled: bool,
+    enabled: Binding<bool>,
     scroll: u16,
     area: Option<Rect>,
 }
 
 impl TextBox {
-    pub fn new(title: impl Into<String>, binding: PropertyBinding<String>) -> Self {
+    pub fn new(title: impl Into<Binding<String>>, binding: Binding<String>) -> Self {
         let initial = binding.get();
         Self {
             title: title.into(),
             buffer: TextBuffer::with_text(initial),
             binding,
             focused: false,
-            enabled: true,
+            enabled: true.into(),
             scroll: 0,
             area: None,
         }
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
+    pub fn title(mut self, title: impl Into<Binding<String>>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
         self
     }
 }
 
 impl Control for TextBox {
     fn is_focusable(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -65,7 +70,7 @@ impl Control for TextBox {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        if !self.enabled {
+        if !self.enabled.get() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
         match event {
@@ -167,7 +172,8 @@ impl Control for TextBox {
         if external != self.buffer.text() {
             self.buffer.set_text(external);
         }
-        let style = if !self.enabled {
+        let enabled = self.enabled.get();
+        let style = if !enabled {
             theme.widget.disabled
         } else if self.focused {
             theme.widget.focused
@@ -178,7 +184,7 @@ impl Control for TextBox {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_set(theme.border_set(false))
-            .title(self.title.clone());
+            .title(self.title.get());
         frame.render_widget(block.border_style(style), area);
 
         let inner = Rect {

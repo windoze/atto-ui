@@ -6,7 +6,9 @@
 mod dirty;
 mod observable;
 mod property;
+mod queue;
 
 pub use dirty::DirtyFlag;
 pub use observable::Observable;
-pub use property::{Property, PropertyBinding};
+pub use property::{Binding, Property};
+pub use queue::EventQueue;

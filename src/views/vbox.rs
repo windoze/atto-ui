@@ -4,6 +4,7 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use crate::reactive::Binding;
 use crate::view::{View, ViewContext, ViewEventResult};
 
 use super::layout::{add_signed, apply_padding};
@@ -136,15 +137,15 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
 pub struct VBox {
     id: ViewId,
     children: Vec<ViewNode>,
-    padding: EdgeInsets,
-    spacing: u16,
+    padding: Binding<EdgeInsets>,
+    spacing: Binding<u16>,
     focused: Option<ViewId>,
     last_area: Option<Rect>,
-    scrollable: bool,
-    scroll: ScrollOffset,
+    scrollable: Binding<bool>,
+    scroll: Binding<ScrollOffset>,
     content_size: (u16, u16),
     viewport_size: (u16, u16),
-    scroll_config: ScrollConfig,
+    scroll_config: Binding<ScrollConfig>,
     scrollbars: Option<Scrollbars>,
     scrollbar_drag: Option<ScrollbarDrag>,
 }
@@ -160,15 +161,15 @@ impl VBox {
         Self {
             id: ViewId::next(),
             children: Vec::new(),
-            padding: EdgeInsets::ZERO,
-            spacing: 0,
+            padding: EdgeInsets::ZERO.into(),
+            spacing: 0u16.into(),
             focused: None,
             last_area: None,
-            scrollable: false,
-            scroll: ScrollOffset::ZERO,
+            scrollable: false.into(),
+            scroll: ScrollOffset::ZERO.into(),
             content_size: (0, 0),
             viewport_size: (0, 0),
-            scroll_config: ScrollConfig::default(),
+            scroll_config: ScrollConfig::default().into(),
             scrollbars: None,
             scrollbar_drag: None,
         }
@@ -178,26 +179,26 @@ impl VBox {
         self.id
     }
 
-    pub fn with_padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+    pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+        self.padding = padding.into();
         self
     }
 
-    pub fn with_spacing(mut self, spacing: u16) -> Self {
-        self.spacing = spacing;
+    pub fn with_spacing(mut self, spacing: impl Into<Binding<u16>>) -> Self {
+        self.spacing = spacing.into();
         self
     }
 
-    pub fn with_scrollable(mut self, scrollable: bool) -> Self {
-        self.scrollable = scrollable;
-        if !scrollable {
-            self.scroll = ScrollOffset::ZERO;
+    pub fn with_scrollable(mut self, scrollable: impl Into<Binding<bool>>) -> Self {
+        self.scrollable = scrollable.into();
+        if !self.scrollable.get() {
+            self.scroll.set(ScrollOffset::ZERO);
         }
         self
     }
 
-    pub fn with_scroll_config(mut self, config: ScrollConfig) -> Self {
-        self.scroll_config = config;
+    pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+        self.scroll_config = config.into();
         self
     }
 
@@ -300,28 +301,30 @@ impl VBox {
     }
 
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return false;
         }
 
+        let scroll = self.scroll.get();
         let desired = ScrollOffset {
-            x: add_signed(self.scroll.x, dx),
-            y: add_signed(self.scroll.y, dy),
+            x: add_signed(scroll.x, dx),
+            y: add_signed(scroll.y, dy),
         };
         let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
     fn scroll_to_clamped(&mut self, x: u16, y: u16) -> bool {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return false;
         }
+        let scroll = self.scroll.get();
         let desired = ScrollOffset { x, y };
         let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
@@ -360,8 +363,9 @@ impl VBox {
             }
         }
 
-        let content_x = viewport_x.saturating_add(self.scroll.x);
-        let content_y = viewport_y.saturating_add(self.scroll.y);
+        let scroll = self.scroll.get();
+        let content_x = viewport_x.saturating_add(scroll.x);
+        let content_y = viewport_y.saturating_add(scroll.y);
 
         for child in self
             .children
@@ -369,7 +373,7 @@ impl VBox {
             .rev()
             .filter(|c| c.layout.anchor.is_none())
         {
-            if !Self::bounds_fully_visible(child.bounds(), self.scroll, viewport) {
+            if !Self::bounds_fully_visible(child.bounds(), scroll, viewport) {
                 continue;
             }
             if contains(child.bounds(), content_x, content_y) {
@@ -381,7 +385,8 @@ impl VBox {
 
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
-        let spacing = self.spacing;
+        let spacing = self.spacing.get();
+        let scrollable = self.scrollable.get();
 
         #[derive(Clone, Copy, Debug)]
         enum HeightSpec {
@@ -493,7 +498,7 @@ impl VBox {
             let margin = child.layout.margin;
             cursor_y = cursor_y.saturating_add(margin.top);
 
-            if !self.scrollable && cursor_y >= content_h {
+            if !scrollable && cursor_y >= content_h {
                 child.set_bounds(Rect::default());
                 continue;
             }
@@ -504,7 +509,7 @@ impl VBox {
                 None => 0,
             };
 
-            let h = if self.scrollable {
+            let h = if scrollable {
                 slot_h
             } else {
                 let max_h = content_h.saturating_sub(cursor_y);
@@ -544,7 +549,7 @@ impl View for VBox {
     }
 
     fn is_scrollable(&self) -> bool {
-        self.scrollable
+        self.scrollable.get()
     }
 
     fn content_size(&self) -> (u16, u16) {
@@ -552,7 +557,8 @@ impl View for VBox {
     }
 
     fn scroll_offset(&self) -> (u16, u16) {
-        (self.scroll.x, self.scroll.y)
+        let scroll = self.scroll.get();
+        (scroll.x, scroll.y)
     }
 
     fn viewport_size(&self) -> (u16, u16) {
@@ -560,7 +566,7 @@ impl View for VBox {
     }
 
     fn scroll_config(&self) -> ScrollConfig {
-        self.scroll_config
+        self.scroll_config.get()
     }
 
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
@@ -618,10 +624,11 @@ impl View for VBox {
     }
 
     fn handle_event_bubble(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return ViewEventResult::ignored();
         }
 
+        let cfg = self.scroll_config.get();
         match event {
             Event::Key(KeyEvent { code, kind, .. }) => {
                 if matches!(kind, KeyEventKind::Release) {
@@ -657,7 +664,7 @@ impl View for VBox {
                     return ViewEventResult::ignored();
                 }
 
-                let step = self.scroll_config.wheel_step as i16;
+                let step = cfg.wheel_step as i16;
                 let changed = match m.kind {
                     MouseEventKind::ScrollUp => self.scroll_by(0, -step),
                     MouseEventKind::ScrollDown => self.scroll_by(0, step),
@@ -690,7 +697,11 @@ impl View for VBox {
                 return self.handle_event_bubble(event, ctx);
             };
 
-            let scrollbars = self.scrollbars.unwrap_or_else(|| {
+            let cfg = self.scroll_config.get();
+            let padding = self.padding.get();
+            let scrollbars = if let Some(scrollbars) = self.scrollbars {
+                scrollbars
+            } else {
                 let viewport = Rect {
                     x: 0,
                     y: 0,
@@ -699,16 +710,17 @@ impl View for VBox {
                 };
                 Scrollbars {
                     viewport,
-                    content: apply_padding(viewport, self.padding),
+                    content: apply_padding(viewport, padding),
                     vbar: None,
                     hbar: None,
-                    thickness: self.scroll_config.scrollbar_thickness.max(1),
+                    thickness: cfg.scrollbar_thickness.max(1),
                 }
-            });
+            };
 
-            if self.scrollable {
+            if self.scrollable.get() {
                 // If we started a thumb drag, keep consuming drag/up events.
                 if let Some(drag) = self.scrollbar_drag {
+                    let scroll = self.scroll.get();
                     match m.kind {
                         MouseEventKind::Drag(MouseButton::Left) => match drag {
                             ScrollbarDrag::Vertical { grab_offset } => {
@@ -723,8 +735,8 @@ impl View for VBox {
                                     vbar.height,
                                     scrollbars.content.height,
                                     self.content_size.1,
-                                    self.scroll.y,
-                                    self.scroll_config.arrows,
+                                    scroll.y,
+                                    cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
                                     return ViewEventResult::consumed();
@@ -746,7 +758,7 @@ impl View for VBox {
                                     self.content_size.1,
                                     new_thumb_start,
                                 );
-                                let _ = self.scroll_to_clamped(self.scroll.x, new_off);
+                                let _ = self.scroll_to_clamped(scroll.x, new_off);
                                 return ViewEventResult::consumed();
                             }
                             ScrollbarDrag::Horizontal { grab_offset } => {
@@ -761,8 +773,8 @@ impl View for VBox {
                                     hbar.width,
                                     scrollbars.content.width,
                                     self.content_size.0,
-                                    self.scroll.x,
-                                    self.scroll_config.arrows,
+                                    scroll.x,
+                                    cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
                                     return ViewEventResult::consumed();
@@ -784,7 +796,7 @@ impl View for VBox {
                                     self.content_size.0,
                                     new_thumb_start,
                                 );
-                                let _ = self.scroll_to_clamped(new_off, self.scroll.y);
+                                let _ = self.scroll_to_clamped(new_off, scroll.y);
                                 return ViewEventResult::consumed();
                             }
                         },
@@ -797,6 +809,7 @@ impl View for VBox {
                 }
 
                 if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                    let scroll = self.scroll.get();
                     if let Some(vbar) = scrollbars.vbar
                         && contains(vbar, local_x, local_y)
                         && vbar.height > 0
@@ -806,8 +819,8 @@ impl View for VBox {
                             vbar.height,
                             scrollbars.content.height,
                             self.content_size.1,
-                            self.scroll.y,
-                            self.scroll_config.arrows,
+                            scroll.y,
+                            cfg.arrows,
                         );
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
@@ -845,8 +858,8 @@ impl View for VBox {
                             hbar.width,
                             scrollbars.content.width,
                             self.content_size.0,
-                            self.scroll.x,
-                            self.scroll_config.arrows,
+                            scroll.x,
+                            cfg.arrows,
                         );
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
@@ -897,15 +910,16 @@ impl View for VBox {
 
             let child_bounds = self.children[child_idx].bounds();
             let is_anchored = self.children[child_idx].layout.anchor.is_some();
+            let scroll = self.scroll.get();
             let point_x = if is_anchored {
                 content_x
             } else {
-                content_x.saturating_add(self.scroll.x)
+                content_x.saturating_add(scroll.x)
             };
             let point_y = if is_anchored {
                 content_y
             } else {
-                content_y.saturating_add(self.scroll.y)
+                content_y.saturating_add(scroll.y)
             };
             let child_x = point_x.saturating_sub(child_bounds.x);
             let child_y = point_y.saturating_sub(child_bounds.y);
@@ -969,27 +983,29 @@ impl View for VBox {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
         self.last_area = Some(area);
 
-        let thickness = self.scroll_config.scrollbar_thickness.max(1);
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
 
         let mut viewport_outer = area;
-        let mut inner = apply_padding(viewport_outer, self.padding);
+        let mut inner = apply_padding(viewport_outer, padding);
         let mut show_v = false;
         let mut show_h = false;
 
-        if self.scrollable {
+        if self.scrollable.get() {
             if matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
                 for _ in 0..2 {
-                    inner = apply_padding(viewport_outer, self.padding);
+                    inner = apply_padding(viewport_outer, padding);
                     self.viewport_size = (inner.width, inner.height);
                     self.content_size = self.layout_children((inner.width, inner.height));
 
                     let new_show_v = should_show_scrollbar(
-                        self.scroll_config.vertical_scrollbar,
+                        cfg.vertical_scrollbar,
                         self.content_size.1,
                         self.viewport_size.1,
                     );
                     let new_show_h = should_show_scrollbar(
-                        self.scroll_config.horizontal_scrollbar,
+                        cfg.horizontal_scrollbar,
                         self.content_size.0,
                         self.viewport_size.0,
                     );
@@ -1012,36 +1028,41 @@ impl View for VBox {
                 }
             } else {
                 viewport_outer = area;
-                inner = apply_padding(area, self.padding);
+                inner = apply_padding(area, padding);
                 self.viewport_size = (inner.width, inner.height);
                 self.content_size = self.layout_children((inner.width, inner.height));
                 show_v = should_show_scrollbar(
-                    self.scroll_config.vertical_scrollbar,
+                    cfg.vertical_scrollbar,
                     self.content_size.1,
                     self.viewport_size.1,
                 );
                 show_h = should_show_scrollbar(
-                    self.scroll_config.horizontal_scrollbar,
+                    cfg.horizontal_scrollbar,
                     self.content_size.0,
                     self.viewport_size.0,
                 );
             }
         } else {
-            inner = apply_padding(area, self.padding);
+            inner = apply_padding(area, padding);
             self.viewport_size = (inner.width, inner.height);
             self.content_size = self.layout_children((inner.width, inner.height));
         }
 
-        self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
+        let scroll = self.scroll.get();
+        self.scroll.set(clamp_scroll_offset(
+            self.content_size,
+            self.viewport_size,
+            scroll,
+        ));
 
-        if self.scrollable && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+        if self.scrollable.get() && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
             let viewport_local = Rect {
                 x: viewport_outer.x.saturating_sub(area.x),
                 y: viewport_outer.y.saturating_sub(area.y),
                 width: viewport_outer.width,
                 height: viewport_outer.height,
             };
-            let content_local = apply_padding(viewport_local, self.padding);
+            let content_local = apply_padding(viewport_local, padding);
             let vbar = show_v.then_some(Rect {
                 x: viewport_local.x.saturating_add(viewport_local.width),
                 y: viewport_local.y,
@@ -1069,8 +1090,8 @@ impl View for VBox {
             self.scrollbar_drag = None;
         }
 
-        let scrollable = self.scrollable;
-        let scroll = self.scroll;
+        let scrollable = self.scrollable.get();
+        let scroll = self.scroll.get();
         let viewport = self.viewport_size;
 
         for child in self
@@ -1150,7 +1171,7 @@ impl View for VBox {
                 viewport.1,
                 self.content_size.1,
                 scroll.y,
-                self.scroll_config.arrows,
+                cfg.arrows,
             );
 
             for dy in 0..vbar.height {
@@ -1182,7 +1203,7 @@ impl View for VBox {
                 viewport.0,
                 self.content_size.0,
                 scroll.x,
-                self.scroll_config.arrows,
+                cfg.arrows,
             );
 
             for dx in 0..hbar.width {
@@ -1232,15 +1253,15 @@ impl View for VBox {
 pub struct HBox {
     id: ViewId,
     children: Vec<ViewNode>,
-    padding: EdgeInsets,
-    spacing: u16,
+    padding: Binding<EdgeInsets>,
+    spacing: Binding<u16>,
     focused: Option<ViewId>,
     last_area: Option<Rect>,
-    scrollable: bool,
-    scroll: ScrollOffset,
+    scrollable: Binding<bool>,
+    scroll: Binding<ScrollOffset>,
     content_size: (u16, u16),
     viewport_size: (u16, u16),
-    scroll_config: ScrollConfig,
+    scroll_config: Binding<ScrollConfig>,
     scrollbars: Option<Scrollbars>,
     scrollbar_drag: Option<ScrollbarDrag>,
 }
@@ -1256,15 +1277,15 @@ impl HBox {
         Self {
             id: ViewId::next(),
             children: Vec::new(),
-            padding: EdgeInsets::ZERO,
-            spacing: 0,
+            padding: EdgeInsets::ZERO.into(),
+            spacing: 0u16.into(),
             focused: None,
             last_area: None,
-            scrollable: false,
-            scroll: ScrollOffset::ZERO,
+            scrollable: false.into(),
+            scroll: ScrollOffset::ZERO.into(),
             content_size: (0, 0),
             viewport_size: (0, 0),
-            scroll_config: ScrollConfig::default(),
+            scroll_config: ScrollConfig::default().into(),
             scrollbars: None,
             scrollbar_drag: None,
         }
@@ -1274,26 +1295,26 @@ impl HBox {
         self.id
     }
 
-    pub fn with_padding(mut self, padding: EdgeInsets) -> Self {
-        self.padding = padding;
+    pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+        self.padding = padding.into();
         self
     }
 
-    pub fn with_spacing(mut self, spacing: u16) -> Self {
-        self.spacing = spacing;
+    pub fn with_spacing(mut self, spacing: impl Into<Binding<u16>>) -> Self {
+        self.spacing = spacing.into();
         self
     }
 
-    pub fn with_scrollable(mut self, scrollable: bool) -> Self {
-        self.scrollable = scrollable;
-        if !scrollable {
-            self.scroll = ScrollOffset::ZERO;
+    pub fn with_scrollable(mut self, scrollable: impl Into<Binding<bool>>) -> Self {
+        self.scrollable = scrollable.into();
+        if !self.scrollable.get() {
+            self.scroll.set(ScrollOffset::ZERO);
         }
         self
     }
 
-    pub fn with_scroll_config(mut self, config: ScrollConfig) -> Self {
-        self.scroll_config = config;
+    pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+        self.scroll_config = config.into();
         self
     }
 
@@ -1396,28 +1417,30 @@ impl HBox {
     }
 
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return false;
         }
 
+        let scroll = self.scroll.get();
         let desired = ScrollOffset {
-            x: add_signed(self.scroll.x, dx),
-            y: add_signed(self.scroll.y, dy),
+            x: add_signed(scroll.x, dx),
+            y: add_signed(scroll.y, dy),
         };
         let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
     fn scroll_to_clamped(&mut self, x: u16, y: u16) -> bool {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return false;
         }
+        let scroll = self.scroll.get();
         let desired = ScrollOffset { x, y };
         let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != self.scroll;
-        self.scroll = clamped;
+        let changed = clamped != scroll;
+        self.scroll.set(clamped);
         changed
     }
 
@@ -1455,8 +1478,9 @@ impl HBox {
             }
         }
 
-        let content_x = viewport_x.saturating_add(self.scroll.x);
-        let content_y = viewport_y.saturating_add(self.scroll.y);
+        let scroll = self.scroll.get();
+        let content_x = viewport_x.saturating_add(scroll.x);
+        let content_y = viewport_y.saturating_add(scroll.y);
 
         for child in self
             .children
@@ -1464,7 +1488,7 @@ impl HBox {
             .rev()
             .filter(|c| c.layout.anchor.is_none())
         {
-            if !Self::bounds_fully_visible(child.bounds(), self.scroll, viewport) {
+            if !Self::bounds_fully_visible(child.bounds(), scroll, viewport) {
                 continue;
             }
             if contains(child.bounds(), content_x, content_y) {
@@ -1476,7 +1500,8 @@ impl HBox {
 
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
-        let spacing = self.spacing;
+        let spacing = self.spacing.get();
+        let scrollable = self.scrollable.get();
 
         #[derive(Clone, Copy, Debug)]
         enum WidthSpec {
@@ -1589,7 +1614,7 @@ impl HBox {
             let margin = child.layout.margin;
             cursor_x = cursor_x.saturating_add(margin.left);
 
-            if !self.scrollable && cursor_x >= content_w {
+            if !scrollable && cursor_x >= content_w {
                 child.set_bounds(Rect::default());
                 continue;
             }
@@ -1600,7 +1625,7 @@ impl HBox {
                 None => 0,
             };
 
-            let w = if self.scrollable {
+            let w = if scrollable {
                 slot_w
             } else {
                 let max_w = content_w.saturating_sub(cursor_x);
@@ -1640,7 +1665,7 @@ impl View for HBox {
     }
 
     fn is_scrollable(&self) -> bool {
-        self.scrollable
+        self.scrollable.get()
     }
 
     fn content_size(&self) -> (u16, u16) {
@@ -1648,7 +1673,8 @@ impl View for HBox {
     }
 
     fn scroll_offset(&self) -> (u16, u16) {
-        (self.scroll.x, self.scroll.y)
+        let scroll = self.scroll.get();
+        (scroll.x, scroll.y)
     }
 
     fn viewport_size(&self) -> (u16, u16) {
@@ -1656,7 +1682,7 @@ impl View for HBox {
     }
 
     fn scroll_config(&self) -> ScrollConfig {
-        self.scroll_config
+        self.scroll_config.get()
     }
 
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
@@ -1714,10 +1740,11 @@ impl View for HBox {
     }
 
     fn handle_event_bubble(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        if !self.scrollable {
+        if !self.scrollable.get() {
             return ViewEventResult::ignored();
         }
 
+        let cfg = self.scroll_config.get();
         match event {
             Event::Key(KeyEvent { code, kind, .. }) => {
                 if matches!(kind, KeyEventKind::Release) {
@@ -1753,7 +1780,7 @@ impl View for HBox {
                     return ViewEventResult::ignored();
                 }
 
-                let step = self.scroll_config.wheel_step as i16;
+                let step = cfg.wheel_step as i16;
                 let changed = match m.kind {
                     MouseEventKind::ScrollUp => self.scroll_by(0, -step),
                     MouseEventKind::ScrollDown => self.scroll_by(0, step),
@@ -1786,7 +1813,11 @@ impl View for HBox {
                 return self.handle_event_bubble(event, ctx);
             };
 
-            let scrollbars = self.scrollbars.unwrap_or_else(|| {
+            let cfg = self.scroll_config.get();
+            let padding = self.padding.get();
+            let scrollbars = if let Some(scrollbars) = self.scrollbars {
+                scrollbars
+            } else {
                 let viewport = Rect {
                     x: 0,
                     y: 0,
@@ -1795,15 +1826,16 @@ impl View for HBox {
                 };
                 Scrollbars {
                     viewport,
-                    content: apply_padding(viewport, self.padding),
+                    content: apply_padding(viewport, padding),
                     vbar: None,
                     hbar: None,
-                    thickness: self.scroll_config.scrollbar_thickness.max(1),
+                    thickness: cfg.scrollbar_thickness.max(1),
                 }
-            });
+            };
 
-            if self.scrollable {
+            if self.scrollable.get() {
                 if let Some(drag) = self.scrollbar_drag {
+                    let scroll = self.scroll.get();
                     match m.kind {
                         MouseEventKind::Drag(MouseButton::Left) => match drag {
                             ScrollbarDrag::Vertical { grab_offset } => {
@@ -1818,8 +1850,8 @@ impl View for HBox {
                                     vbar.height,
                                     scrollbars.content.height,
                                     self.content_size.1,
-                                    self.scroll.y,
-                                    self.scroll_config.arrows,
+                                    scroll.y,
+                                    cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
                                     return ViewEventResult::consumed();
@@ -1841,7 +1873,7 @@ impl View for HBox {
                                     self.content_size.1,
                                     new_thumb_start,
                                 );
-                                let _ = self.scroll_to_clamped(self.scroll.x, new_off);
+                                let _ = self.scroll_to_clamped(scroll.x, new_off);
                                 return ViewEventResult::consumed();
                             }
                             ScrollbarDrag::Horizontal { grab_offset } => {
@@ -1856,8 +1888,8 @@ impl View for HBox {
                                     hbar.width,
                                     scrollbars.content.width,
                                     self.content_size.0,
-                                    self.scroll.x,
-                                    self.scroll_config.arrows,
+                                    scroll.x,
+                                    cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
                                     return ViewEventResult::consumed();
@@ -1879,7 +1911,7 @@ impl View for HBox {
                                     self.content_size.0,
                                     new_thumb_start,
                                 );
-                                let _ = self.scroll_to_clamped(new_off, self.scroll.y);
+                                let _ = self.scroll_to_clamped(new_off, scroll.y);
                                 return ViewEventResult::consumed();
                             }
                         },
@@ -1892,6 +1924,7 @@ impl View for HBox {
                 }
 
                 if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                    let scroll = self.scroll.get();
                     if let Some(vbar) = scrollbars.vbar
                         && contains(vbar, local_x, local_y)
                         && vbar.height > 0
@@ -1901,8 +1934,8 @@ impl View for HBox {
                             vbar.height,
                             scrollbars.content.height,
                             self.content_size.1,
-                            self.scroll.y,
-                            self.scroll_config.arrows,
+                            scroll.y,
+                            cfg.arrows,
                         );
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
@@ -1940,8 +1973,8 @@ impl View for HBox {
                             hbar.width,
                             scrollbars.content.width,
                             self.content_size.0,
-                            self.scroll.x,
-                            self.scroll_config.arrows,
+                            scroll.x,
+                            cfg.arrows,
                         );
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
@@ -1992,15 +2025,16 @@ impl View for HBox {
 
             let child_bounds = self.children[child_idx].bounds();
             let is_anchored = self.children[child_idx].layout.anchor.is_some();
+            let scroll = self.scroll.get();
             let point_x = if is_anchored {
                 content_x
             } else {
-                content_x.saturating_add(self.scroll.x)
+                content_x.saturating_add(scroll.x)
             };
             let point_y = if is_anchored {
                 content_y
             } else {
-                content_y.saturating_add(self.scroll.y)
+                content_y.saturating_add(scroll.y)
             };
             let child_x = point_x.saturating_sub(child_bounds.x);
             let child_y = point_y.saturating_sub(child_bounds.y);
@@ -2063,27 +2097,29 @@ impl View for HBox {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
         self.last_area = Some(area);
 
-        let thickness = self.scroll_config.scrollbar_thickness.max(1);
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
 
         let mut viewport_outer = area;
-        let mut inner = apply_padding(viewport_outer, self.padding);
+        let mut inner = apply_padding(viewport_outer, padding);
         let mut show_v = false;
         let mut show_h = false;
 
-        if self.scrollable {
+        if self.scrollable.get() {
             if matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
                 for _ in 0..2 {
-                    inner = apply_padding(viewport_outer, self.padding);
+                    inner = apply_padding(viewport_outer, padding);
                     self.viewport_size = (inner.width, inner.height);
                     self.content_size = self.layout_children((inner.width, inner.height));
 
                     let new_show_v = should_show_scrollbar(
-                        self.scroll_config.vertical_scrollbar,
+                        cfg.vertical_scrollbar,
                         self.content_size.1,
                         self.viewport_size.1,
                     );
                     let new_show_h = should_show_scrollbar(
-                        self.scroll_config.horizontal_scrollbar,
+                        cfg.horizontal_scrollbar,
                         self.content_size.0,
                         self.viewport_size.0,
                     );
@@ -2106,36 +2142,41 @@ impl View for HBox {
                 }
             } else {
                 viewport_outer = area;
-                inner = apply_padding(area, self.padding);
+                inner = apply_padding(area, padding);
                 self.viewport_size = (inner.width, inner.height);
                 self.content_size = self.layout_children((inner.width, inner.height));
                 show_v = should_show_scrollbar(
-                    self.scroll_config.vertical_scrollbar,
+                    cfg.vertical_scrollbar,
                     self.content_size.1,
                     self.viewport_size.1,
                 );
                 show_h = should_show_scrollbar(
-                    self.scroll_config.horizontal_scrollbar,
+                    cfg.horizontal_scrollbar,
                     self.content_size.0,
                     self.viewport_size.0,
                 );
             }
         } else {
-            inner = apply_padding(area, self.padding);
+            inner = apply_padding(area, padding);
             self.viewport_size = (inner.width, inner.height);
             self.content_size = self.layout_children((inner.width, inner.height));
         }
 
-        self.scroll = clamp_scroll_offset(self.content_size, self.viewport_size, self.scroll);
+        let scroll = self.scroll.get();
+        self.scroll.set(clamp_scroll_offset(
+            self.content_size,
+            self.viewport_size,
+            scroll,
+        ));
 
-        if self.scrollable && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+        if self.scrollable.get() && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
             let viewport_local = Rect {
                 x: viewport_outer.x.saturating_sub(area.x),
                 y: viewport_outer.y.saturating_sub(area.y),
                 width: viewport_outer.width,
                 height: viewport_outer.height,
             };
-            let content_local = apply_padding(viewport_local, self.padding);
+            let content_local = apply_padding(viewport_local, padding);
             let vbar = show_v.then_some(Rect {
                 x: viewport_local.x.saturating_add(viewport_local.width),
                 y: viewport_local.y,
@@ -2163,8 +2204,8 @@ impl View for HBox {
             self.scrollbar_drag = None;
         }
 
-        let scrollable = self.scrollable;
-        let scroll = self.scroll;
+        let scrollable = self.scrollable.get();
+        let scroll = self.scroll.get();
         let viewport = self.viewport_size;
 
         for child in self
@@ -2244,7 +2285,7 @@ impl View for HBox {
                 viewport.1,
                 self.content_size.1,
                 scroll.y,
-                self.scroll_config.arrows,
+                cfg.arrows,
             );
 
             for dy in 0..vbar.height {
@@ -2276,7 +2317,7 @@ impl View for HBox {
                 viewport.0,
                 self.content_size.0,
                 scroll.x,
-                self.scroll_config.arrows,
+                cfg.arrows,
             );
 
             for dx in 0..hbar.width {

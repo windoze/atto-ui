@@ -33,3 +33,25 @@ fn view_builder_macro_supports_nesting() {
 
     assert!(!view.is_primitive());
 }
+
+#[test]
+fn view_builder_macro_supports_child_modifiers() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_button = Arc::clone(&calls);
+    let calls_for_text = Arc::clone(&calls);
+
+    let view = view_builder! {
+        VStack {
+            Button("Click").on_click(move || {
+                calls_for_button.fetch_add(1, Ordering::SeqCst);
+            })
+            TextFn(move || format!("calls={}", calls_for_text.load(Ordering::SeqCst)))
+        }
+        .spacing(1)
+    };
+
+    assert!(!view.is_primitive());
+}

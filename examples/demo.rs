@@ -15,9 +15,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{DeclarativeView, Text as DText, VStack, ViewAdapter};
-use chatty::reactive::Property;
+use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use chatty::declarative::{DeclarativeView, ViewAdapter};
+use chatty::reactive::{EventQueue, Property};
 use chatty::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
 use chatty::views::{
@@ -28,6 +28,7 @@ use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
 use chatty::wm::{Window, WindowId, WindowKind, WindowState};
+use chatty_macros::{Reactive, view_builder};
 
 #[derive(Default)]
 struct TextView {
@@ -113,14 +114,21 @@ impl View for DialogView {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Reactive)]
 struct WidgetsModel {
+    #[reactive]
     text: Property<String>,
+    #[reactive]
     enable_feature: Property<bool>,
+    #[reactive]
     mode: Property<usize>,
+    #[reactive]
     list_selection: Property<usize>,
+    #[reactive]
     table_selection: Property<usize>,
+    #[reactive]
     click_count: Property<u32>,
+    #[reactive]
     last_msg: Property<String>,
 }
 
@@ -162,76 +170,61 @@ impl DeclarativeView for WidgetsView {
         let click_count = model.click_count.clone();
         let last_msg = model.last_msg.clone();
 
-        Box::new(
-            VStack::new()
-                .child(DText::new("Try mouse drag on title bar; click × to close."))
-                .child(DText::new("Try bracketed paste into textbox: 你好👋 / 👩‍💻"))
-                .child(TextBox::new("Text", model.text.binding()))
-                .child(Checkbox::new(
-                    "Enable feature",
-                    model.enable_feature.binding(),
-                ))
-                .child(RadioGroup::new(
+        Box::new(view_builder! {
+            VStack {
+                Text("Try mouse drag on title bar; click × to close.")
+                Text("Try bracketed paste into textbox: 你好👋 / 👩‍💻")
+                TextBox("Text", model.text_binding())
+                Checkbox("Enable feature", model.enable_feature_binding())
+                RadioGroup(
                     "Mode",
                     vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                    model.mode.binding(),
-                ))
-                .child(
-                    ListBox::new(
-                        "List",
-                        vec![
-                            "Alpha".into(),
-                            "Beta".into(),
-                            "Gamma".into(),
-                            "Delta".into(),
-                        ],
-                        model.list_selection.binding(),
-                    )
-                    .with_height(4),
+                    model.mode_binding(),
                 )
-                .child(
-                    TableView::new(
-                        "Table",
-                        vec!["Key".into(), "Value".into()],
-                        vec![
-                            vec!["lang".into(), "Rust".into()],
-                            vec!["jp".into(), "こんにちは".into()],
-                            vec!["cn".into(), "你好👋".into()],
-                        ],
-                        model.table_selection.binding(),
-                    )
-                    .with_height(4),
+                ListBox(
+                    "List",
+                    vec!["Alpha".into(), "Beta".into(), "Gamma".into(), "Delta".into()],
+                    model.list_selection_binding(),
                 )
-                .child(Button::new("Count++").on_click(move || {
+                .height(4u16)
+                TableView(
+                    "Table",
+                    vec!["Key".into(), "Value".into()],
+                    vec![
+                        vec!["lang".into(), "Rust".into()],
+                        vec!["jp".into(), "こんにちは".into()],
+                        vec!["cn".into(), "你好👋".into()],
+                    ],
+                    model.table_selection_binding(),
+                )
+                .height(4u16)
+                Button("Count+ +").on_click(move || {
                     click_count.update(|c| *c = c.saturating_add(1));
-                }))
-                .child(Button::new("OK").on_click(move || {
+                })
+                Button("OK").on_click(move || {
                     last_msg.set("Submitted!".to_string());
-                }))
-                .child(DText::from_fn(move || {
+                })
+                TextFn(move || {
                     let status = format!(
                         "count={}  checked={}  mode={}  list={}  table={}  text={}",
-                        model.click_count.get(),
-                        if model.enable_feature.get() {
-                            "on"
-                        } else {
-                            "off"
-                        },
-                        model.mode.get(),
-                        model.list_selection.get(),
-                        model.table_selection.get(),
-                        model.text.get(),
+                        model.get_click_count(),
+                        if model.get_enable_feature() { "on" } else { "off" },
+                        model.get_mode(),
+                        model.get_list_selection(),
+                        model.get_table_selection(),
+                        model.get_text(),
                     );
-                    let msg = model.last_msg.get();
+                    let msg = model.get_last_msg();
                     if msg.is_empty() {
                         status
                     } else {
                         format!("{status}  |  {msg}")
                     }
-                }))
-                .spacing(1)
-                .padding(1),
-        )
+                })
+            }
+            .spacing(1)
+            .padding(1)
+        })
     }
 }
 
@@ -251,10 +244,9 @@ impl DisabledWidgetsView {
             Box::new(Label::new(
                 "Disabled widgets (not focusable/clickable; Esc closes)",
             )),
-            Box::new(TextBox::new("Text (disabled)", text.binding()).with_enabled(false)),
+            Box::new(TextBox::new("Text (disabled)", text.binding()).enabled(false)),
             Box::new(
-                Checkbox::new("Enable feature (disabled)", enable_feature.binding())
-                    .with_enabled(false),
+                Checkbox::new("Enable feature (disabled)", enable_feature.binding()).enabled(false),
             ),
             Box::new(
                 RadioGroup::new(
@@ -262,7 +254,7 @@ impl DisabledWidgetsView {
                     vec!["Normal".into(), "Insert".into(), "Visual".into()],
                     mode.binding(),
                 )
-                .with_enabled(false),
+                .enabled(false),
             ),
             Box::new(
                 ListBox::new(
@@ -275,8 +267,8 @@ impl DisabledWidgetsView {
                     ],
                     list_selection.binding(),
                 )
-                .with_height(4)
-                .with_enabled(false),
+                .height(4u16)
+                .enabled(false),
             ),
             Box::new(
                 TableView::new(
@@ -289,10 +281,10 @@ impl DisabledWidgetsView {
                     ],
                     table_selection.binding(),
                 )
-                .with_height(4)
-                .with_enabled(false),
+                .height(4u16)
+                .enabled(false),
             ),
-            Box::new(Button::new("OK (disabled)").with_enabled(false)),
+            Box::new(Button::new("OK (disabled)").enabled(false)),
             Box::new(Label::new(
                 "Tip: focus another window to see inactive state.",
             )),
@@ -633,7 +625,7 @@ impl ScrollContent for VirtualScrollContentView {
         &mut self,
         event: &Event,
         _ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost<'_>,
+        _host: &mut ScrollViewHost,
     ) -> ViewEventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
@@ -651,7 +643,7 @@ impl ScrollContent for VirtualScrollContentView {
         frame: &mut Frame<'_>,
         area: Rect,
         ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost<'_>,
+        _host: &mut ScrollViewHost,
     ) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -710,6 +702,22 @@ impl DemoTheme {
     }
 }
 
+#[derive(Clone, Debug)]
+enum DemoAction {
+    Quit,
+    NewWindow,
+    FocusNext,
+    OpenLayoutDemo,
+    OpenScrollDemo,
+    OpenVirtualScrollDemo,
+    OpenWidgetStatesDemo,
+    MinimizeFocused,
+    ToggleMaximizeFocused,
+    CloseFocused,
+    OpenAboutModal,
+    SetTheme(DemoTheme),
+}
+
 fn apply_demo_theme(desktop: &mut Desktop, theme: DemoTheme) -> Result<()> {
     let (base, overlay) = match theme {
         DemoTheme::Dark => (Theme::dark(), None),
@@ -730,7 +738,7 @@ fn apply_demo_theme(desktop: &mut Desktop, theme: DemoTheme) -> Result<()> {
 
 fn update_notes_title(desktop: &mut Desktop, notes_window_id: WindowId, theme: DemoTheme) {
     if let Some(w) = desktop.wm.window_mut(notes_window_id) {
-        w.title = format!("Notes (Theme: {})", theme.label());
+        w.title.set(format!("Notes (Theme: {})", theme.label()));
     }
 }
 
@@ -812,7 +820,8 @@ fn main() -> Result<()> {
     terminal.clear()?;
 
     let mut demo_theme = DemoTheme::Dark;
-    let menu = build_menu();
+    let actions: EventQueue<DemoAction> = EventQueue::new();
+    let menu = build_menu(actions.clone());
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
     let screen: Rect = terminal.size()?.into();
@@ -880,6 +889,7 @@ fn main() -> Result<()> {
         &mut terminal,
         &mut desktop,
         &mut demo_theme,
+        &actions,
         log_id,
         &mut layout_demo_window_id,
         &mut scroll_demo_window_id,
@@ -900,42 +910,102 @@ fn main() -> Result<()> {
     res
 }
 
-fn build_menu() -> MenuBar {
+fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
     MenuBar::new(vec![
         MenuSpec::new(
             "File",
             vec![
-                MenuItem::command("New window", "window.new").shortcut("n"),
+                MenuItem::action("New window", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::NewWindow)
+                })
+                .shortcut("n"),
                 MenuItem::submenu(
                     "Theme",
                     vec![
-                        MenuItem::command("Dark", "theme.dark"),
-                        MenuItem::command("Dark + Unicode", "theme.dark_unicode"),
-                        MenuItem::command("Dark + ASCII", "theme.dark_ascii"),
-                        MenuItem::command("Dark + High Contrast", "theme.dark_high_contrast"),
-                        MenuItem::command("Light", "theme.light"),
+                        MenuItem::action("Dark", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::Dark))
+                        }),
+                        MenuItem::action("Dark + Unicode", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::DarkUnicode))
+                        }),
+                        MenuItem::action("Dark + ASCII", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::DarkAscii))
+                        }),
+                        MenuItem::action("Dark + High Contrast", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::DarkHighContrast))
+                        }),
+                        MenuItem::action("Light", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::Light))
+                        }),
                     ],
                 ),
-                MenuItem::command("Quit", "app.quit").shortcut("q"),
+                MenuItem::action("Quit", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::Quit)
+                })
+                .shortcut("q"),
             ],
         ),
         MenuSpec::new(
             "Window",
             vec![
-                MenuItem::command("Next", "window.next").shortcut("F6"),
-                MenuItem::command("Widget states demo", "window.states_demo").shortcut("d"),
-                MenuItem::command("Layout demo", "window.layout_demo").shortcut("v"),
-                MenuItem::command("Scroll demo", "window.scroll_demo").shortcut("s"),
-                MenuItem::command("Virtual scroll demo", "window.virtual_scroll_demo")
-                    .shortcut("z"),
-                MenuItem::command("Minimize", "window.min").shortcut("m"),
-                MenuItem::command("Maximize", "window.max").shortcut("x"),
-                MenuItem::command("Close", "window.close").shortcut("c"),
+                MenuItem::action("Next", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::FocusNext)
+                })
+                .shortcut("F6"),
+                MenuItem::action("Widget states demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenWidgetStatesDemo)
+                })
+                .shortcut("d"),
+                MenuItem::action("Layout demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenLayoutDemo)
+                })
+                .shortcut("v"),
+                MenuItem::action("Scroll demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenScrollDemo)
+                })
+                .shortcut("s"),
+                MenuItem::action("Virtual scroll demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenVirtualScrollDemo)
+                })
+                .shortcut("z"),
+                MenuItem::action("Minimize", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::MinimizeFocused)
+                })
+                .shortcut("m"),
+                MenuItem::action("Maximize", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::ToggleMaximizeFocused)
+                })
+                .shortcut("x"),
+                MenuItem::action("Close", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::CloseFocused)
+                })
+                .shortcut("c"),
             ],
         ),
         MenuSpec::new(
             "Help",
-            vec![MenuItem::command("About", "help.about").shortcut("a")],
+            vec![
+                MenuItem::action("About", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenAboutModal)
+                })
+                .shortcut("a"),
+            ],
         ),
     ])
 }
@@ -945,6 +1015,7 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     desktop: &mut Desktop,
     demo_theme: &mut DemoTheme,
+    actions: &EventQueue<DemoAction>,
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
     scroll_demo_window_id: &mut Option<WindowId>,
@@ -974,10 +1045,10 @@ fn run(
         let screen: Rect = terminal.size()?.into();
         let result = desktop.handle_event(&ev, screen);
 
-        if let DesktopAction::MenuCommand(cmd) = result.action {
-            match cmd.as_str() {
-                "app.quit" => break,
-                "window.new" => {
+        for action in actions.drain() {
+            match action {
+                DemoAction::Quit => break,
+                DemoAction::NewWindow => {
                     next_float += 1;
                     let screen: Rect = terminal.size()?.into();
                     let title = format!("Floating {next_float}");
@@ -996,58 +1067,35 @@ fn run(
                         screen,
                     );
                 }
-                "window.next" => desktop.wm.focus_next(),
-                "window.layout_demo" => {
+                DemoAction::FocusNext => desktop.wm.focus_next(),
+                DemoAction::OpenLayoutDemo => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
                 }
-                "window.scroll_demo" => {
+                DemoAction::OpenScrollDemo => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
                 }
-                "window.virtual_scroll_demo" => {
+                DemoAction::OpenVirtualScrollDemo => {
                     open_virtual_scroll_demo(desktop, screen, virtual_scroll_demo_window_id)?;
                 }
-                "window.states_demo" => {
+                DemoAction::OpenWidgetStatesDemo => {
                     open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
                 }
-                "window.min" => desktop.wm.minimize_focused(),
-                "window.max" => {
+                DemoAction::MinimizeFocused => desktop.wm.minimize_focused(),
+                DemoAction::ToggleMaximizeFocused => {
                     let screen: Rect = terminal.size()?.into();
                     let work = Desktop::layout(screen).work_area;
                     desktop.wm.toggle_maximize_focused(work);
                 }
-                "window.close" => {
+                DemoAction::CloseFocused => {
                     if let Some(id) = desktop.wm.focused() {
-                        desktop.wm.close(id);
+                        desktop.wm.request_close(id);
                     }
                 }
-                "help.about" => open_about_modal(desktop, screen)?,
-                "theme.dark" => {
-                    *demo_theme = DemoTheme::Dark;
+                DemoAction::OpenAboutModal => open_about_modal(desktop, screen)?,
+                DemoAction::SetTheme(theme) => {
+                    *demo_theme = theme;
                     apply_demo_theme(desktop, *demo_theme)?;
                     update_notes_title(desktop, notes_window_id, *demo_theme);
-                }
-                "theme.light" => {
-                    *demo_theme = DemoTheme::Light;
-                    apply_demo_theme(desktop, *demo_theme)?;
-                    update_notes_title(desktop, notes_window_id, *demo_theme);
-                }
-                "theme.dark_unicode" => {
-                    *demo_theme = DemoTheme::DarkUnicode;
-                    apply_demo_theme(desktop, *demo_theme)?;
-                    update_notes_title(desktop, notes_window_id, *demo_theme);
-                }
-                "theme.dark_ascii" => {
-                    *demo_theme = DemoTheme::DarkAscii;
-                    apply_demo_theme(desktop, *demo_theme)?;
-                    update_notes_title(desktop, notes_window_id, *demo_theme);
-                }
-                "theme.dark_high_contrast" => {
-                    *demo_theme = DemoTheme::DarkHighContrast;
-                    apply_demo_theme(desktop, *demo_theme)?;
-                    update_notes_title(desktop, notes_window_id, *demo_theme);
-                }
-                _ => {
-                    // Unknown commands are ignored.
                 }
             }
         }
@@ -1113,9 +1161,9 @@ fn run(
 
         // Keep the Notes window from being minimized as a small demo nicety.
         if let Some(w) = desktop.wm.window_mut(notes_window_id)
-            && w.state == WindowState::Minimized
+            && w.state.get() == WindowState::Minimized
         {
-            w.state = WindowState::Normal;
+            w.state.set(WindowState::Normal);
         }
     }
     Ok(())
@@ -1289,7 +1337,8 @@ fn open_tooltip(
     let work = Desktop::layout(screen).work_area;
     let (x, y) = if let Some(focused) = desktop.wm.focused() {
         if let Some(w) = desktop.wm.windows().iter().find(|w| w.id == focused) {
-            (w.rect.x.saturating_add(2), w.rect.y.saturating_add(2))
+            let rect = w.rect.get();
+            (rect.x.saturating_add(2), rect.y.saturating_add(2))
         } else {
             (work.x + 2, work.y + 2)
         }
@@ -1313,8 +1362,8 @@ fn open_tooltip(
         screen,
     );
     if let Some(w) = desktop.wm.window_mut(id) {
-        w.decorations.shadow = false;
-        w.closable = false;
+        w.decorations.update(|d| d.shadow = false);
+        w.closable.set(false);
     }
     *tooltip = Some((id, Instant::now() + Duration::from_millis(1200)));
     Ok(())

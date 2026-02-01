@@ -5,42 +5,55 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::reactive::PropertyBinding;
+use crate::reactive::Binding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct RadioGroup {
-    label: String,
-    options: Vec<String>,
-    binding: PropertyBinding<usize>,
+    label: Binding<String>,
+    options: Binding<Vec<String>>,
+    binding: Binding<usize>,
     focused: bool,
-    enabled: bool,
+    enabled: Binding<bool>,
     area: Option<Rect>,
 }
 
 impl RadioGroup {
     pub fn new(
-        label: impl Into<String>,
-        options: Vec<String>,
-        binding: PropertyBinding<usize>,
+        label: impl Into<Binding<String>>,
+        options: impl Into<Binding<Vec<String>>>,
+        binding: Binding<usize>,
     ) -> Self {
-        let options_len = options.len();
-        let selected = binding.get().min(options_len.saturating_sub(1));
-        binding.set(selected);
+        let options = options.into();
+        let options_len = options.get().len();
+        if options_len > 0 {
+            let selected = binding.get().min(options_len.saturating_sub(1));
+            binding.set(selected);
+        }
         Self {
             label: label.into(),
             options,
             binding,
             focused: false,
-            enabled: true,
+            enabled: true.into(),
             area: None,
         }
     }
 
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
+    pub fn label(mut self, label: impl Into<Binding<String>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn options(mut self, options: impl Into<Binding<Vec<String>>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
         self
     }
 
@@ -51,11 +64,11 @@ impl RadioGroup {
 
 impl Control for RadioGroup {
     fn is_focusable(&self) -> bool {
-        self.enabled && !self.options.is_empty()
+        self.enabled.get() && !self.options.get().is_empty()
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.get()
     }
 
     fn set_focused(&mut self, focused: bool) {
@@ -67,13 +80,14 @@ impl Control for RadioGroup {
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        if !self.enabled {
+        if !self.enabled.get() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
-        if self.options.is_empty() {
+        let options = self.options.get();
+        if options.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
-        let mut selected = self.binding.get().min(self.options.len().saturating_sub(1));
+        let mut selected = self.binding.get().min(options.len().saturating_sub(1));
         self.binding.set(selected);
         match event {
             Event::Mouse(m) => {
@@ -88,12 +102,11 @@ impl Control for RadioGroup {
                 };
 
                 let options_y = area.y.saturating_add(1);
-                if m.row < options_y || m.row >= options_y.saturating_add(self.options.len() as u16)
-                {
+                if m.row < options_y || m.row >= options_y.saturating_add(options.len() as u16) {
                     return (ControlOutcome::Ignored, FormAction::None);
                 }
                 let idx = m.row.saturating_sub(options_y) as usize;
-                if idx < self.options.len() {
+                if idx < options.len() {
                     selected = idx;
                     self.binding.set(selected);
                     return (ControlOutcome::Consumed, FormAction::Changed);
@@ -101,7 +114,7 @@ impl Control for RadioGroup {
                 (ControlOutcome::Ignored, FormAction::None)
             }
             Event::Key(KeyEvent { code, .. }) => {
-                let len = self.options.len();
+                let len = options.len();
                 match code {
                     KeyCode::Up => {
                         selected = if selected == 0 { len - 1 } else { selected - 1 };
@@ -121,11 +134,13 @@ impl Control for RadioGroup {
     }
 
     fn desired_height(&self) -> u16 {
-        (self.options.len() as u16).saturating_add(1)
+        (self.options.get().len() as u16).saturating_add(1)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
-        let title_style = if !self.enabled {
+        let enabled = self.enabled.get();
+        let options = self.options.get();
+        let title_style = if !enabled {
             theme.widget.disabled
         } else if self.focused {
             theme.widget.accent
@@ -133,7 +148,7 @@ impl Control for RadioGroup {
             theme.widget.dim
         };
         frame.render_widget(
-            Paragraph::new(Line::styled(self.label.clone(), title_style)),
+            Paragraph::new(Line::styled(self.label.get(), title_style)),
             Rect {
                 x: area.x,
                 y: area.y,
@@ -142,8 +157,11 @@ impl Control for RadioGroup {
             },
         );
         let mut y = area.y.saturating_add(1);
-        let selected = self.binding.get().min(self.options.len().saturating_sub(1));
-        for (idx, opt) in self.options.iter().enumerate() {
+        if options.is_empty() {
+            return;
+        }
+        let selected = self.binding.get().min(options.len().saturating_sub(1));
+        for (idx, opt) in options.iter().enumerate() {
             if y >= area.y.saturating_add(area.height) {
                 break;
             }
@@ -153,7 +171,7 @@ impl Control for RadioGroup {
             } else {
                 theme.glyph("radio-unselected").unwrap_or("( )")
             };
-            let style: Style = if !self.enabled {
+            let style: Style = if !enabled {
                 theme.widget.disabled
             } else if self.focused && is_sel {
                 theme.widget.focused

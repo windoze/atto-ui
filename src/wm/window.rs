@@ -1,15 +1,10 @@
 use ratatui::layout::Rect;
 
+use crate::reactive::Binding;
 use crate::view::View;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
-
-impl Default for WindowId {
-    fn default() -> Self {
-        Self(0)
-    }
-}
 
 pub type WindowCloseHook = Box<dyn FnMut(WindowId) -> bool + Send>;
 
@@ -38,14 +33,14 @@ pub enum WindowState {
     Maximized,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowDecorations {
     pub border: bool,
     pub shadow: bool,
     pub buttons: WindowButtons,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowButtons {
     pub minimize: bool,
     pub maximize: bool,
@@ -75,15 +70,15 @@ impl Default for WindowDecorations {
 pub struct Window {
     pub id: WindowId,
     pub kind: WindowKind,
-    pub title: String,
-    pub rect: Rect,
-    pub state: WindowState,
-    pub decorations: WindowDecorations,
+    pub title: Binding<String>,
+    pub rect: Binding<Rect>,
+    pub state: Binding<WindowState>,
+    pub decorations: Binding<WindowDecorations>,
     pub view: Box<dyn View>,
-    pub min_size: (u16, u16),
-    pub movable: bool,
-    pub resizable: bool,
-    pub closable: bool,
+    pub min_size: Binding<(u16, u16)>,
+    pub movable: Binding<bool>,
+    pub resizable: Binding<bool>,
+    pub closable: Binding<bool>,
     close_hook: Option<WindowCloseHook>,
     pub(crate) restore_rect: Option<Rect>,
 }
@@ -91,29 +86,29 @@ pub struct Window {
 impl Window {
     pub fn new(
         kind: WindowKind,
-        title: impl Into<String>,
-        rect: Rect,
+        title: impl Into<Binding<String>>,
+        rect: impl Into<Binding<Rect>>,
         view: Box<dyn View>,
     ) -> Self {
         Self {
             id: WindowId(0),
             kind,
             title: title.into(),
-            rect,
-            state: WindowState::Normal,
-            decorations: WindowDecorations::default(),
+            rect: rect.into(),
+            state: WindowState::Normal.into(),
+            decorations: WindowDecorations::default().into(),
             view,
-            min_size: (12, 5),
-            movable: !kind.is_modal(),
-            resizable: !kind.is_modal(),
-            closable: true,
+            min_size: (12, 5).into(),
+            movable: (!kind.is_modal()).into(),
+            resizable: (!kind.is_modal()).into(),
+            closable: true.into(),
             close_hook: None,
             restore_rect: None,
         }
     }
 
-    pub fn with_decorations(mut self, decorations: WindowDecorations) -> Self {
-        self.decorations = decorations;
+    pub fn with_decorations(mut self, decorations: impl Into<Binding<WindowDecorations>>) -> Self {
+        self.decorations = decorations.into();
         self
     }
 
@@ -126,15 +121,17 @@ impl Window {
     }
 
     pub fn with_min_size(mut self, width: u16, height: u16) -> Self {
-        self.min_size = (width, height);
+        self.min_size = (width, height).into();
         self
     }
 
     pub fn inner_rect(&self) -> Rect {
-        if !self.decorations.border {
-            return self.rect;
+        let decorations = self.decorations.get();
+        let rect = self.rect.get();
+        if !decorations.border {
+            return rect;
         }
-        let mut inner = self.rect;
+        let mut inner = rect;
         if inner.width >= 2 {
             inner.x += 1;
             inner.width -= 2;
@@ -151,16 +148,18 @@ impl Window {
     }
 
     pub fn titlebar_rect(&self) -> Option<Rect> {
-        if !self.decorations.border {
+        let decorations = self.decorations.get();
+        let rect = self.rect.get();
+        if !decorations.border {
             return None;
         }
-        if self.rect.height < 1 {
+        if rect.height < 1 {
             return None;
         }
         Some(Rect {
-            x: self.rect.x,
-            y: self.rect.y,
-            width: self.rect.width,
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
             height: 1,
         })
     }

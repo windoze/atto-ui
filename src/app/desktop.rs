@@ -21,7 +21,6 @@ pub enum DesktopMode {
 #[derive(Clone, Debug)]
 pub enum DesktopAction {
     None,
-    MenuCommand(String),
     CloseWindow(WindowId),
 }
 
@@ -43,13 +42,6 @@ impl DesktopEventResult {
         Self {
             outcome: EventOutcome::Consumed,
             action: DesktopAction::None,
-        }
-    }
-
-    pub fn menu_command(cmd: String) -> Self {
-        Self {
-            outcome: EventOutcome::Consumed,
-            action: DesktopAction::MenuCommand(cmd),
         }
     }
 
@@ -162,11 +154,6 @@ impl Desktop {
                         self.menu.deactivate();
                         return DesktopEventResult::consumed();
                     }
-                    MenuAction::Command(cmd) => {
-                        self.mode = DesktopMode::Normal;
-                        self.menu.deactivate();
-                        return DesktopEventResult::menu_command(cmd);
-                    }
                 }
             }
         }
@@ -186,11 +173,6 @@ impl Desktop {
                     self.mode = DesktopMode::Normal;
                     self.menu.deactivate();
                     DesktopAction::None
-                }
-                MenuAction::Command(cmd) => {
-                    self.mode = DesktopMode::Normal;
-                    self.menu.deactivate();
-                    DesktopAction::MenuCommand(cmd)
                 }
             };
             return DesktopEventResult {

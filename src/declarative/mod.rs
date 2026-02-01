@@ -12,7 +12,7 @@ mod view_adapter;
 mod vstack;
 mod widget_controls;
 
-pub use primitives::{Divider, Spacer, Text};
+pub use primitives::{Divider, Spacer, Text, TextFn};
 pub use view::{DeclarativeView, EmptyView};
 pub use view_adapter::ViewAdapter;
 pub use vstack::VStack;

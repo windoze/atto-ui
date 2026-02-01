@@ -9,58 +9,84 @@ use ratatui::widgets::{Block, Borders, Clear};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::reactive::Binding;
 use crate::theme::Theme;
 
 use super::status::Fill;
 
-#[derive(Clone, Debug)]
+pub type MenuCallback = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Clone)]
 pub struct MenuItem {
-    pub label: String,
-    pub shortcut: Option<String>,
-    pub command: Option<String>,
-    pub enabled: bool,
+    pub label: Binding<String>,
+    pub shortcut: Binding<Option<String>>,
+    pub enabled: Binding<bool>,
+    pub on_activate: Option<MenuCallback>,
     pub submenu: Vec<MenuItem>,
 }
 
 impl MenuItem {
-    pub fn command(label: impl Into<String>, command: impl Into<String>) -> Self {
+    pub fn action<F>(label: impl Into<Binding<String>>, on_activate: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
         Self {
             label: label.into(),
-            shortcut: None,
-            command: Some(command.into()),
-            enabled: true,
+            shortcut: None.into(),
+            enabled: true.into(),
+            on_activate: Some(std::sync::Arc::new(on_activate)),
             submenu: Vec::new(),
         }
     }
 
-    pub fn submenu(label: impl Into<String>, submenu: Vec<MenuItem>) -> Self {
+    pub fn submenu(label: impl Into<Binding<String>>, submenu: Vec<MenuItem>) -> Self {
         Self {
             label: label.into(),
-            shortcut: None,
-            command: None,
-            enabled: true,
+            shortcut: None.into(),
+            enabled: true.into(),
+            on_activate: None,
             submenu,
         }
     }
 
-    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
-        self.shortcut = Some(shortcut.into());
+    pub fn label(mut self, label: impl Into<Binding<String>>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn shortcut(self, shortcut: impl Into<String>) -> Self {
+        self.shortcut.set(Some(shortcut.into()));
+        self
+    }
+
+    pub fn shortcut_binding(mut self, shortcut: impl Into<Binding<Option<String>>>) -> Self {
+        self.shortcut = shortcut.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
         self
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MenuSpec {
-    pub title: String,
+    pub title: Binding<String>,
     pub items: Vec<MenuItem>,
 }
 
 impl MenuSpec {
-    pub fn new(title: impl Into<String>, items: Vec<MenuItem>) -> Self {
+    pub fn new(title: impl Into<Binding<String>>, items: Vec<MenuItem>) -> Self {
         Self {
             title: title.into(),
             items,
         }
+    }
+
+    pub fn title(mut self, title: impl Into<Binding<String>>) -> Self {
+        self.title = title.into();
+        self
     }
 }
 
@@ -74,11 +100,10 @@ struct MenuState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     None,
-    Command(String),
     Closed,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct MenuBar {
     menus: Vec<MenuSpec>,
     state: MenuState,
@@ -158,9 +183,9 @@ impl MenuBar {
                 if self.open_selected_submenu() {
                     return MenuAction::None;
                 }
-                if let Some(cmd) = self.selected_command() {
+                if self.activate_selected_item() {
                     self.deactivate();
-                    return MenuAction::Command(cmd);
+                    return MenuAction::Closed;
                 }
                 MenuAction::None
             }
@@ -219,7 +244,8 @@ impl MenuBar {
                 depth: usize,
                 row: usize,
                 has_submenu: bool,
-                command: Option<String>,
+                on_activate: Option<MenuCallback>,
+                enabled: bool,
             },
         }
 
@@ -255,22 +281,24 @@ impl MenuBar {
                 continue;
             }
 
-            let (has_submenu, command) = {
+            let (has_submenu, enabled, on_activate) = {
                 let item = &items[row];
                 let has_submenu = !item.submenu.is_empty();
-                let command = if item.enabled {
-                    item.command.clone()
+                let enabled = item.enabled.get();
+                let on_activate = if enabled {
+                    item.on_activate.clone()
                 } else {
                     None
                 };
-                (has_submenu, command)
+                (has_submenu, enabled, on_activate)
             };
 
             hit = Some(DropdownHit::Item {
                 depth,
                 row,
                 has_submenu,
-                command,
+                on_activate,
+                enabled,
             });
         }
 
@@ -280,7 +308,8 @@ impl MenuBar {
                 depth,
                 row,
                 has_submenu,
-                command,
+                on_activate,
+                enabled,
             }) => {
                 self.state.stack.truncate(depth.saturating_add(1));
                 if self.state.stack.len() < depth.saturating_add(1) {
@@ -293,9 +322,12 @@ impl MenuBar {
                     return MenuAction::None;
                 }
 
-                if let Some(cmd) = command {
+                if enabled {
+                    if let Some(cb) = on_activate {
+                        cb();
+                    }
                     self.deactivate();
-                    return MenuAction::Command(cmd);
+                    return MenuAction::Closed;
                 }
 
                 return MenuAction::None;
@@ -321,7 +353,7 @@ impl MenuBar {
             } else {
                 theme.menu_bar
             };
-            let label = format!(" {} ", menu.title);
+            let label = format!(" {} ", menu.title.get());
             let w = UnicodeWidthStr::width(label.as_str()) as u16;
             draw_text(frame.buffer_mut(), x, area.y, &label, style);
             x = x.saturating_add(w).saturating_add(1);
@@ -458,12 +490,21 @@ impl MenuBar {
         items.get(idx)
     }
 
-    fn selected_command(&self) -> Option<String> {
-        let item = self.selected_item()?;
-        if !item.enabled {
-            return None;
+    fn activate_selected_item(&self) -> bool {
+        let Some(item) = self.selected_item() else {
+            return false;
+        };
+        if !item.enabled.get() {
+            return false;
         }
-        item.command.clone()
+        if !item.submenu.is_empty() {
+            return false;
+        }
+        if let Some(cb) = &item.on_activate {
+            cb();
+            return true;
+        }
+        false
     }
 
     pub fn activate_menu(&mut self, menu_index: usize) {
@@ -476,6 +517,7 @@ impl MenuBar {
         let target = c.to_ascii_lowercase();
         self.menus.iter().position(|menu| {
             menu.title
+                .get()
                 .trim_start()
                 .chars()
                 .next()
@@ -494,17 +536,18 @@ impl MenuBar {
         let target = c.to_ascii_lowercase();
         let depth = self.state.stack.len().saturating_sub(1);
 
-        let (hit_idx, has_submenu, command) = {
+        let (hit_idx, has_submenu, on_activate, enabled) = {
             let Some(items) = self.selected_items() else {
                 return MenuAction::None;
             };
 
-            let mut hit: Option<(usize, bool, Option<String>)> = None;
+            let mut hit: Option<(usize, bool, Option<MenuCallback>, bool)> = None;
             for (idx, item) in items.iter().enumerate() {
-                if !item.enabled {
+                let enabled = item.enabled.get();
+                if !enabled {
                     continue;
                 }
-                let Some(sc) = &item.shortcut else {
+                let Some(sc) = item.shortcut.get() else {
                     continue;
                 };
                 if sc.chars().count() != 1 {
@@ -514,15 +557,20 @@ impl MenuBar {
                     continue;
                 };
                 if sc_char.to_ascii_lowercase() == target {
-                    hit = Some((idx, !item.submenu.is_empty(), item.command.clone()));
+                    hit = Some((
+                        idx,
+                        !item.submenu.is_empty(),
+                        item.on_activate.clone(),
+                        enabled,
+                    ));
                     break;
                 }
             }
 
-            let Some((idx, has_submenu, command)) = hit else {
+            let Some((idx, has_submenu, on_activate, enabled)) = hit else {
                 return MenuAction::None;
             };
-            (idx, has_submenu, command)
+            (idx, has_submenu, on_activate, enabled)
         };
 
         if depth < self.state.stack.len() {
@@ -536,9 +584,12 @@ impl MenuBar {
             return MenuAction::None;
         }
 
-        if let Some(cmd) = command {
+        if enabled {
+            if let Some(cb) = on_activate {
+                cb();
+            }
             self.deactivate();
-            return MenuAction::Command(cmd);
+            return MenuAction::Closed;
         }
 
         MenuAction::None
@@ -580,7 +631,7 @@ impl MenuBar {
     fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {
         let mut cur_x = menu_bar_area.x;
         for (idx, menu) in self.menus.iter().enumerate() {
-            let label = format!(" {} ", menu.title);
+            let label = format!(" {} ", menu.title.get());
             let w = UnicodeWidthStr::width(label.as_str()) as u16;
             let start = cur_x;
             let end = cur_x.saturating_add(w);
@@ -603,8 +654,9 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
 fn dropdown_size(items: &[MenuItem]) -> (u16, u16) {
     let mut w: usize = 8;
     for item in items {
-        let mut row_w = UnicodeWidthStr::width(item.label.as_str());
-        if let Some(sc) = &item.shortcut {
+        let label = item.label.get();
+        let mut row_w = UnicodeWidthStr::width(label.as_str());
+        if let Some(sc) = item.shortcut.get() {
             row_w += 2 + UnicodeWidthStr::width(sc.as_str());
         }
         if !item.submenu.is_empty() {
@@ -623,7 +675,7 @@ fn menu_title_x(menus: &[MenuSpec], start_x: u16, menu_index: usize) -> u16 {
         if idx == menu_index {
             return x;
         }
-        let label = format!(" {} ", menu.title);
+        let label = format!(" {} ", menu.title.get());
         x = x.saturating_add(UnicodeWidthStr::width(label.as_str()) as u16 + 1);
     }
     x
@@ -642,21 +694,24 @@ fn draw_menu_items(
         }
         let y = area.y + row as u16;
         let is_selected = row == selected;
-        let style = if is_selected {
+        let mut style = if is_selected {
             theme.menu_item_selected
         } else {
             theme.menu_item
         };
+        if !item.enabled.get() {
+            style = style.patch(theme.widget.disabled);
+        }
         fill_line(buf, area.x, y, area.width, style);
 
-        let label = &item.label;
-        draw_text(buf, area.x, y, label, style);
+        let label = item.label.get();
+        draw_text(buf, area.x, y, &label, style);
 
-        if let Some(sc) = &item.shortcut {
+        if let Some(sc) = item.shortcut.get() {
             let sc_w = UnicodeWidthStr::width(sc.as_str()) as u16;
             if sc_w + 1 < area.width {
                 let x = area.x + area.width - sc_w - 1;
-                draw_text(buf, x, y, sc, style);
+                draw_text(buf, x, y, &sc, style);
             }
         }
 

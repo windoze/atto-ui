@@ -51,8 +51,8 @@ impl<T: Clone + PartialEq> Property<T> {
         self.dirty_flag.mark_clean();
     }
 
-    pub fn binding(&self) -> PropertyBinding<T> {
-        PropertyBinding {
+    pub fn binding(&self) -> Binding<T> {
+        Binding {
             value: self.value.clone(),
             dirty_flag: self.dirty_flag.clone(),
         }
@@ -70,12 +70,16 @@ impl<T> Clone for Property<T> {
 
 /// A two-way binding to a [`Property`].
 #[derive(Debug)]
-pub struct PropertyBinding<T> {
+pub struct Binding<T> {
     value: Arc<RwLock<T>>,
     dirty_flag: DirtyFlag,
 }
 
-impl<T: Clone + PartialEq> PropertyBinding<T> {
+impl<T: Clone + PartialEq> Binding<T> {
+    pub fn new(initial: T) -> Self {
+        Property::new(initial).binding()
+    }
+
     pub fn get(&self) -> T {
         self.value.read().clone()
     }
@@ -87,6 +91,14 @@ impl<T: Clone + PartialEq> PropertyBinding<T> {
             drop(guard);
             self.dirty_flag.mark_dirty();
         }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty_flag.is_dirty()
+    }
+
+    pub fn mark_clean(&self) {
+        self.dirty_flag.mark_clean();
     }
 
     pub fn update<F>(&self, f: F)
@@ -101,12 +113,24 @@ impl<T: Clone + PartialEq> PropertyBinding<T> {
     }
 }
 
-impl<T> Clone for PropertyBinding<T> {
+impl<T> Clone for Binding<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
             dirty_flag: self.dirty_flag.clone(),
         }
+    }
+}
+
+impl<T: Clone + PartialEq> From<T> for Binding<T> {
+    fn from(value: T) -> Self {
+        Binding::new(value)
+    }
+}
+
+impl From<&str> for Binding<String> {
+    fn from(value: &str) -> Self {
+        Binding::new(value.to_string())
     }
 }
 
