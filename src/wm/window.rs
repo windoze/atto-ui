@@ -5,6 +5,12 @@ use crate::view::View;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
 
+impl Default for WindowId {
+    fn default() -> Self {
+        Self(0)
+    }
+}
+
 pub type WindowCloseHook = Box<dyn FnMut(WindowId) -> bool + Send>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

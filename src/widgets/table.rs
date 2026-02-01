@@ -4,6 +4,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
+use crate::reactive::PropertyBinding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
@@ -16,14 +17,23 @@ pub struct TableView {
     state: TableState,
     focused: bool,
     enabled: bool,
+    selection: PropertyBinding<usize>,
     height: u16,
     area: Option<Rect>,
 }
 
 impl TableView {
-    pub fn new(title: impl Into<String>, headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+        selection: PropertyBinding<usize>,
+    ) -> Self {
         let mut state = TableState::default();
-        if !rows.is_empty() {
+        if !rows.is_empty() && selection.get() < rows.len() {
+            state.select(Some(selection.get()));
+        } else if !rows.is_empty() {
+            selection.set(0);
             state.select(Some(0));
         }
         Self {
@@ -33,6 +43,7 @@ impl TableView {
             state,
             focused: false,
             enabled: true,
+            selection,
             height: 8,
             area: None,
         }
@@ -77,6 +88,10 @@ impl Control for TableView {
         if self.rows.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
+        let ext = self.selection.get();
+        if ext < self.rows.len() {
+            self.state.select(Some(ext));
+        }
         let sel = self.state.selected().unwrap_or(0);
         match event {
             Event::Mouse(m) => {
@@ -107,6 +122,7 @@ impl Control for TableView {
                 let row = m.row.saturating_sub(data_y) as usize;
                 if row < self.rows.len() {
                     self.state.select(Some(row));
+                    self.selection.set(row);
                     return (ControlOutcome::Consumed, FormAction::Changed);
                 }
                 (ControlOutcome::Ignored, FormAction::None)
@@ -119,11 +135,13 @@ impl Control for TableView {
                         sel - 1
                     };
                     self.state.select(Some(next));
+                    self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
                 }
                 KeyCode::Down => {
                     let next = (sel + 1) % self.rows.len();
                     self.state.select(Some(next));
+                    self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
                 }
                 _ => (ControlOutcome::Ignored, FormAction::None),
@@ -133,6 +151,12 @@ impl Control for TableView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        if !self.rows.is_empty() {
+            let ext = self.selection.get();
+            if ext < self.rows.len() {
+                self.state.select(Some(ext));
+            }
+        }
         let base_style: Style = if !self.enabled {
             theme.widget.disabled
         } else if self.focused {

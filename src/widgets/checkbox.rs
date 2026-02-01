@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::reactive::PropertyBinding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
@@ -11,16 +12,16 @@ use super::{Control, ControlOutcome, FormAction};
 #[derive(Clone, Debug)]
 pub struct Checkbox {
     label: String,
-    checked: bool,
+    binding: PropertyBinding<bool>,
     focused: bool,
     enabled: bool,
 }
 
 impl Checkbox {
-    pub fn new(label: impl Into<String>, checked: bool) -> Self {
+    pub fn new(label: impl Into<String>, binding: PropertyBinding<bool>) -> Self {
         Self {
             label: label.into(),
-            checked,
+            binding,
             focused: false,
             enabled: true,
         }
@@ -29,10 +30,6 @@ impl Checkbox {
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
-    }
-
-    pub fn checked(&self) -> bool {
-        self.checked
     }
 }
 
@@ -59,7 +56,7 @@ impl Control for Checkbox {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
-                    self.checked = !self.checked;
+                    self.binding.update(|v| *v = !*v);
                     return (ControlOutcome::Consumed, FormAction::Changed);
                 }
                 (ControlOutcome::Ignored, FormAction::None)
@@ -68,7 +65,7 @@ impl Control for Checkbox {
                 code: KeyCode::Char(' ') | KeyCode::Enter,
                 ..
             }) => {
-                self.checked = !self.checked;
+                self.binding.update(|v| *v = !*v);
                 (ControlOutcome::Consumed, FormAction::Changed)
             }
             Event::Key(KeyEvent { .. }) => (ControlOutcome::Ignored, FormAction::None),
@@ -84,7 +81,7 @@ impl Control for Checkbox {
         } else {
             theme.widget.normal
         };
-        let mark = if self.checked {
+        let mark = if self.binding.get() {
             theme.glyph("checkbox-checked").unwrap_or("[x]")
         } else {
             theme.glyph("checkbox-unchecked").unwrap_or("[ ]")

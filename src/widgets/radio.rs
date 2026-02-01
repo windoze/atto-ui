@@ -5,6 +5,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::reactive::PropertyBinding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
@@ -13,19 +14,25 @@ use super::{Control, ControlOutcome, FormAction};
 pub struct RadioGroup {
     label: String,
     options: Vec<String>,
-    selected: usize,
+    binding: PropertyBinding<usize>,
     focused: bool,
     enabled: bool,
     area: Option<Rect>,
 }
 
 impl RadioGroup {
-    pub fn new(label: impl Into<String>, options: Vec<String>, selected: usize) -> Self {
+    pub fn new(
+        label: impl Into<String>,
+        options: Vec<String>,
+        binding: PropertyBinding<usize>,
+    ) -> Self {
         let options_len = options.len();
+        let selected = binding.get().min(options_len.saturating_sub(1));
+        binding.set(selected);
         Self {
             label: label.into(),
             options,
-            selected: selected.min(options_len.saturating_sub(1)),
+            binding,
             focused: false,
             enabled: true,
             area: None,
@@ -38,7 +45,7 @@ impl RadioGroup {
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected
+        self.binding.get()
     }
 }
 
@@ -66,6 +73,8 @@ impl Control for RadioGroup {
         if self.options.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
         }
+        let mut selected = self.binding.get().min(self.options.len().saturating_sub(1));
+        self.binding.set(selected);
         match event {
             Event::Mouse(m) => {
                 use crossterm::event::MouseButton;
@@ -85,26 +94,28 @@ impl Control for RadioGroup {
                 }
                 let idx = m.row.saturating_sub(options_y) as usize;
                 if idx < self.options.len() {
-                    self.selected = idx;
+                    selected = idx;
+                    self.binding.set(selected);
                     return (ControlOutcome::Consumed, FormAction::Changed);
                 }
                 (ControlOutcome::Ignored, FormAction::None)
             }
-            Event::Key(KeyEvent { code, .. }) => match code {
-                KeyCode::Up => {
-                    if self.selected == 0 {
-                        self.selected = self.options.len() - 1;
-                    } else {
-                        self.selected -= 1;
+            Event::Key(KeyEvent { code, .. }) => {
+                let len = self.options.len();
+                match code {
+                    KeyCode::Up => {
+                        selected = if selected == 0 { len - 1 } else { selected - 1 };
+                        self.binding.set(selected);
+                        (ControlOutcome::Consumed, FormAction::Changed)
                     }
-                    (ControlOutcome::Consumed, FormAction::Changed)
+                    KeyCode::Down => {
+                        selected = (selected + 1) % len;
+                        self.binding.set(selected);
+                        (ControlOutcome::Consumed, FormAction::Changed)
+                    }
+                    _ => (ControlOutcome::Ignored, FormAction::None),
                 }
-                KeyCode::Down => {
-                    self.selected = (self.selected + 1) % self.options.len();
-                    (ControlOutcome::Consumed, FormAction::Changed)
-                }
-                _ => (ControlOutcome::Ignored, FormAction::None),
-            },
+            }
             _ => (ControlOutcome::Ignored, FormAction::None),
         }
     }
@@ -131,11 +142,12 @@ impl Control for RadioGroup {
             },
         );
         let mut y = area.y.saturating_add(1);
+        let selected = self.binding.get().min(self.options.len().saturating_sub(1));
         for (idx, opt) in self.options.iter().enumerate() {
             if y >= area.y.saturating_add(area.height) {
                 break;
             }
-            let is_sel = idx == self.selected;
+            let is_sel = idx == selected;
             let mark = if is_sel {
                 theme.glyph("radio-selected").unwrap_or("(*)")
             } else {

@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
+use crate::reactive::PropertyBinding;
 use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
@@ -15,14 +16,22 @@ pub struct ListBox {
     state: ListState,
     focused: bool,
     enabled: bool,
+    selection: PropertyBinding<usize>,
     height: u16,
     area: Option<Rect>,
 }
 
 impl ListBox {
-    pub fn new(title: impl Into<String>, items: Vec<String>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        items: Vec<String>,
+        selection: PropertyBinding<usize>,
+    ) -> Self {
         let mut state = ListState::default();
-        if !items.is_empty() {
+        if !items.is_empty() && selection.get() < items.len() {
+            state.select(Some(selection.get()));
+        } else if !items.is_empty() {
+            selection.set(0);
             state.select(Some(0));
         }
         Self {
@@ -31,6 +40,7 @@ impl ListBox {
             state,
             focused: false,
             enabled: true,
+            selection,
             height: 7,
             area: None,
         }
@@ -47,7 +57,10 @@ impl ListBox {
     }
 
     pub fn selected(&self) -> Option<usize> {
-        self.state.selected()
+        self.state.selected().or_else(|| {
+            (!self.items.is_empty() && self.selection.get() < self.items.len())
+                .then_some(self.selection.get())
+        })
     }
 }
 
@@ -74,6 +87,11 @@ impl Control for ListBox {
         }
         if self.items.is_empty() {
             return (ControlOutcome::Ignored, FormAction::None);
+        }
+        // Sync from external selection.
+        let ext = self.selection.get();
+        if ext < self.items.len() {
+            self.state.select(Some(ext));
         }
         let sel = self.state.selected().unwrap_or(0);
         match event {
@@ -102,6 +120,7 @@ impl Control for ListBox {
                 let row = m.row.saturating_sub(inner.y) as usize;
                 if row < self.items.len() {
                     self.state.select(Some(row));
+                    self.selection.set(row);
                     return (ControlOutcome::Consumed, FormAction::Changed);
                 }
                 (ControlOutcome::Ignored, FormAction::None)
@@ -114,11 +133,13 @@ impl Control for ListBox {
                         sel.saturating_sub(1)
                     };
                     self.state.select(Some(next));
+                    self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
                 }
                 KeyCode::Down => {
                     let next = (sel + 1) % self.items.len();
                     self.state.select(Some(next));
+                    self.selection.set(next);
                     (ControlOutcome::Consumed, FormAction::Changed)
                 }
                 _ => (ControlOutcome::Ignored, FormAction::None),
@@ -132,6 +153,12 @@ impl Control for ListBox {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+        if !self.items.is_empty() {
+            let ext = self.selection.get();
+            if ext < self.items.len() {
+                self.state.select(Some(ext));
+            }
+        }
         let style = if !self.enabled {
             theme.widget.disabled
         } else if self.focused {

@@ -23,12 +23,12 @@ pub use scroll_view::{
     ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost, ScrollViewInfo,
     ScrollViewScrollbars, ScrollbarLayout, ScrollbarPlacement,
 };
+pub use vbox::{HBox, VBox};
 
 pub(crate) use scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
     scrollbar_layout_1d, should_show_scrollbar,
 };
-pub use vbox::{HBox, VBox};
 
 #[cfg(test)]
 mod tests;

@@ -16,6 +16,8 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
+use chatty::declarative::{DeclarativeView, Text as DText, VStack, ViewAdapter};
+use chatty::reactive::Property;
 use chatty::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
 use chatty::views::{
@@ -111,93 +113,125 @@ impl View for DialogView {
     }
 }
 
+#[derive(Clone)]
+struct WidgetsModel {
+    text: Property<String>,
+    enable_feature: Property<bool>,
+    mode: Property<usize>,
+    list_selection: Property<usize>,
+    table_selection: Property<usize>,
+    click_count: Property<u32>,
+    last_msg: Property<String>,
+}
+
+impl WidgetsModel {
+    fn new() -> Self {
+        let text = Property::new("hello".to_string());
+        let enable_feature = Property::new(true);
+        let mode = Property::new(0usize);
+        let list_selection = Property::new(0usize);
+        let table_selection = Property::new(0usize);
+        let click_count = Property::new(0u32);
+        Self {
+            text,
+            enable_feature,
+            mode,
+            list_selection,
+            table_selection,
+            click_count,
+            last_msg: Property::new(String::new()),
+        }
+    }
+}
+
 struct WidgetsView {
-    form: Form,
-    last_msg: String,
+    model: WidgetsModel,
 }
 
 impl WidgetsView {
     fn new() -> Self {
-        let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
-            Box::new(Label::new("Try mouse drag on title bar; click × to close.")),
-            Box::new(Label::new("Try bracketed paste into textbox: 你好👋 / 👩‍💻")),
-            Box::new(TextBox::new("Text").with_text("hello")),
-            Box::new(Checkbox::new("Enable feature", true)),
-            Box::new(RadioGroup::new(
-                "Mode",
-                vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                0,
-            )),
-            Box::new(
-                ListBox::new(
-                    "List",
-                    vec![
-                        "Alpha".into(),
-                        "Beta".into(),
-                        "Gamma".into(),
-                        "Delta".into(),
-                    ],
-                )
-                .with_height(4),
-            ),
-            Box::new(
-                TableView::new(
-                    "Table",
-                    vec!["Key".into(), "Value".into()],
-                    vec![
-                        vec!["lang".into(), "Rust".into()],
-                        vec!["jp".into(), "こんにちは".into()],
-                        vec!["cn".into(), "你好👋".into()],
-                    ],
-                )
-                .with_height(4),
-            ),
-            Box::new(Button::new("OK")),
-        ];
         Self {
-            form: Form::new(controls),
-            last_msg: String::new(),
+            model: WidgetsModel::new(),
         }
     }
 }
 
-impl View for WidgetsView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) = event
-            && modifiers.contains(KeyModifiers::CONTROL)
-        {
-            return ViewEventResult::close_window();
-        }
+impl DeclarativeView for WidgetsView {
+    fn body(&self) -> Box<dyn DeclarativeView> {
+        let model = self.model.clone();
+        let click_count = model.click_count.clone();
+        let last_msg = model.last_msg.clone();
 
-        let (outcome, action) = self.form.handle_event(event);
-        if action == chatty::widgets::FormAction::Submitted {
-            self.last_msg = "Submitted!".to_string();
-        }
-        match outcome {
-            ControlOutcome::Consumed => ViewEventResult::consumed(),
-            ControlOutcome::Ignored => ViewEventResult::ignored(),
-        }
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
-        if !self.last_msg.is_empty() && area.height >= 1 {
-            let y = area.y + area.height - 1;
-            frame.render_widget(
-                Paragraph::new(Line::styled(self.last_msg.clone(), ctx.theme.widget.accent)),
-                Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                },
-            );
-        }
+        Box::new(
+            VStack::new()
+                .child(DText::new("Try mouse drag on title bar; click × to close."))
+                .child(DText::new("Try bracketed paste into textbox: 你好👋 / 👩‍💻"))
+                .child(TextBox::new("Text", model.text.binding()))
+                .child(Checkbox::new(
+                    "Enable feature",
+                    model.enable_feature.binding(),
+                ))
+                .child(RadioGroup::new(
+                    "Mode",
+                    vec!["Normal".into(), "Insert".into(), "Visual".into()],
+                    model.mode.binding(),
+                ))
+                .child(
+                    ListBox::new(
+                        "List",
+                        vec![
+                            "Alpha".into(),
+                            "Beta".into(),
+                            "Gamma".into(),
+                            "Delta".into(),
+                        ],
+                        model.list_selection.binding(),
+                    )
+                    .with_height(4),
+                )
+                .child(
+                    TableView::new(
+                        "Table",
+                        vec!["Key".into(), "Value".into()],
+                        vec![
+                            vec!["lang".into(), "Rust".into()],
+                            vec!["jp".into(), "こんにちは".into()],
+                            vec!["cn".into(), "你好👋".into()],
+                        ],
+                        model.table_selection.binding(),
+                    )
+                    .with_height(4),
+                )
+                .child(Button::new("Count++").on_click(move || {
+                    click_count.update(|c| *c = c.saturating_add(1));
+                }))
+                .child(Button::new("OK").on_click(move || {
+                    last_msg.set("Submitted!".to_string());
+                }))
+                .child(DText::from_fn(move || {
+                    let status = format!(
+                        "count={}  checked={}  mode={}  list={}  table={}  text={}",
+                        model.click_count.get(),
+                        if model.enable_feature.get() {
+                            "on"
+                        } else {
+                            "off"
+                        },
+                        model.mode.get(),
+                        model.list_selection.get(),
+                        model.table_selection.get(),
+                        model.text.get(),
+                    );
+                    let msg = model.last_msg.get();
+                    if msg.is_empty() {
+                        status
+                    } else {
+                        format!("{status}  |  {msg}")
+                    }
+                }))
+                .spacing(1)
+                .padding(1),
+        )
     }
 }
 
@@ -207,21 +241,26 @@ struct DisabledWidgetsView {
 
 impl DisabledWidgetsView {
     fn new() -> Self {
+        let text = Property::new("read-only".to_string());
+        let enable_feature = Property::new(true);
+        let mode = Property::new(1usize);
+        let list_selection = Property::new(0usize);
+        let table_selection = Property::new(0usize);
+
         let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
             Box::new(Label::new(
                 "Disabled widgets (not focusable/clickable; Esc closes)",
             )),
+            Box::new(TextBox::new("Text (disabled)", text.binding()).with_enabled(false)),
             Box::new(
-                TextBox::new("Text (disabled)")
-                    .with_text("read-only")
+                Checkbox::new("Enable feature (disabled)", enable_feature.binding())
                     .with_enabled(false),
             ),
-            Box::new(Checkbox::new("Enable feature (disabled)", true).with_enabled(false)),
             Box::new(
                 RadioGroup::new(
                     "Mode (disabled)",
                     vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                    1,
+                    mode.binding(),
                 )
                 .with_enabled(false),
             ),
@@ -234,6 +273,7 @@ impl DisabledWidgetsView {
                         "Gamma".into(),
                         "Delta".into(),
                     ],
+                    list_selection.binding(),
                 )
                 .with_height(4)
                 .with_enabled(false),
@@ -247,6 +287,7 @@ impl DisabledWidgetsView {
                         vec!["jp".into(), "こんにちは".into()],
                         vec!["cn".into(), "你好👋".into()],
                     ],
+                    table_selection.binding(),
                 )
                 .with_height(4)
                 .with_enabled(false),
@@ -423,17 +464,22 @@ fn build_layout_demo_view() -> VBox {
         },
     );
     grid.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Checkbox::new("Centered", false)))),
+        Box::new(ControlView::new(Box::new(Checkbox::new(
+            "Centered",
+            Property::new(false).binding(),
+        )))),
         LayoutParams {
             align_y: Align::Center,
             ..LayoutParams::default()
         },
     );
     grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
-        "Row 2A", false,
+        "Row 2A",
+        Property::new(false).binding(),
     )))));
     grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
-        "Row 2B", false,
+        "Row 2B",
+        Property::new(false).binding(),
     )))));
 
     root.add_child_with_layout(
@@ -782,7 +828,7 @@ fn main() -> Result<()> {
                 width: 40,
                 height: work.height.saturating_sub(1),
             },
-            Box::new(WidgetsView::new()),
+            Box::new(ViewAdapter::new(WidgetsView::new())),
         ),
         screen,
     );

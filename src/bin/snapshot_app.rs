@@ -17,6 +17,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use chatty::reactive::Property;
 use chatty::theme::Theme;
 use chatty::view::{View, ViewContext, ViewEventResult};
 use chatty::views::{ControlView, EdgeInsets, HBox, LayoutParams, Size, VBox};
@@ -68,16 +69,22 @@ struct WidgetsView {
 
 impl WidgetsView {
     fn new() -> Self {
+        let text = Property::new("hello".to_string());
+        let enable_feature = Property::new(true);
+        let mode = Property::new(0usize);
+        let list_selection = Property::new(0usize);
+        let table_selection = Property::new(0usize);
+
         let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
             Box::new(Label::new(
                 "Paste Unicode into the textbox (bracketed paste).",
             )),
-            Box::new(TextBox::new("Text").with_text("hello")),
-            Box::new(Checkbox::new("Enable feature", true)),
+            Box::new(TextBox::new("Text", text.binding())),
+            Box::new(Checkbox::new("Enable feature", enable_feature.binding())),
             Box::new(RadioGroup::new(
                 "Mode",
                 vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                0,
+                mode.binding(),
             )),
             Box::new(
                 ListBox::new(
@@ -88,6 +95,7 @@ impl WidgetsView {
                         "Gamma".into(),
                         "Delta".into(),
                     ],
+                    list_selection.binding(),
                 )
                 .with_height(5),
             ),
@@ -100,6 +108,7 @@ impl WidgetsView {
                         vec!["hello".into(), "こんにちは".into()],
                         vec!["wide".into(), "你好👋".into()],
                     ],
+                    table_selection.binding(),
                 )
                 .with_height(6),
             ),
@@ -142,7 +151,7 @@ fn view_hierarchy_demo() -> VBox {
     row.add_child_with_layout(
         Box::new(ControlView::new(Box::new(Checkbox::new(
             "Nested checkbox",
-            false,
+            Property::new(false).binding(),
         )))),
         LayoutParams {
             width: Size::Fixed(20),

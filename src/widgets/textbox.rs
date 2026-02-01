@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::reactive::PropertyBinding;
 use crate::text::TextBuffer;
 use crate::theme::Theme;
 
@@ -15,6 +16,7 @@ use super::{Control, ControlOutcome, FormAction};
 pub struct TextBox {
     title: String,
     buffer: TextBuffer,
+    binding: PropertyBinding<String>,
     focused: bool,
     enabled: bool,
     scroll: u16,
@@ -22,10 +24,12 @@ pub struct TextBox {
 }
 
 impl TextBox {
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(title: impl Into<String>, binding: PropertyBinding<String>) -> Self {
+        let initial = binding.get();
         Self {
             title: title.into(),
-            buffer: TextBuffer::new(),
+            buffer: TextBuffer::with_text(initial),
+            binding,
             focused: false,
             enabled: true,
             scroll: 0,
@@ -36,15 +40,6 @@ impl TextBox {
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
-    }
-
-    pub fn with_text(mut self, text: impl Into<String>) -> Self {
-        self.buffer.set_text(text);
-        self
-    }
-
-    pub fn text(&self) -> &str {
-        self.buffer.text()
     }
 }
 
@@ -109,6 +104,7 @@ impl Control for TextBox {
             }
             Event::Paste(s) => {
                 self.buffer.insert_str(s);
+                self.binding.set(self.buffer.text().to_string());
                 (ControlOutcome::Consumed, FormAction::Changed)
             }
             Event::Key(KeyEvent {
@@ -118,14 +114,17 @@ impl Control for TextBox {
                 match code {
                     KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
                         self.buffer.set_text("");
+                        self.binding.set(String::new());
                         (ControlOutcome::Consumed, FormAction::Changed)
                     }
                     KeyCode::Backspace => {
                         self.buffer.backspace();
+                        self.binding.set(self.buffer.text().to_string());
                         (ControlOutcome::Consumed, FormAction::Changed)
                     }
                     KeyCode::Delete => {
                         self.buffer.delete();
+                        self.binding.set(self.buffer.text().to_string());
                         (ControlOutcome::Consumed, FormAction::Changed)
                     }
                     KeyCode::Left => {
@@ -150,6 +149,7 @@ impl Control for TextBox {
                             && !mods.contains(KeyModifiers::ALT) =>
                     {
                         self.buffer.insert_char(*c);
+                        self.binding.set(self.buffer.text().to_string());
                         (ControlOutcome::Consumed, FormAction::Changed)
                     }
                     _ => (ControlOutcome::Ignored, FormAction::None),
@@ -162,6 +162,10 @@ impl Control for TextBox {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.height == 0 || area.width == 0 {
             return;
+        }
+        let external = self.binding.get();
+        if external != self.buffer.text() {
+            self.buffer.set_text(external);
         }
         let style = if !self.enabled {
             theme.widget.disabled

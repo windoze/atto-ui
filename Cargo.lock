@@ -130,14 +130,26 @@ name = "chatty"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chatty-macros",
  "chatty-test-host",
  "crossterm 0.28.1",
+ "once_cell",
+ "parking_lot",
  "ratatui",
  "serde",
  "serde_json",
  "serde_yaml",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "chatty-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,9 +10,10 @@ use crate::theme::Theme;
 
 use super::{Control, ControlOutcome, FormAction};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Button {
     label: String,
+    on_click: Option<Arc<dyn Fn() + Send + Sync>>,
     focused: bool,
     enabled: bool,
 }
@@ -19,14 +22,29 @@ impl Button {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            on_click: None,
             focused: false,
             enabled: true,
         }
     }
 
+    pub fn on_click<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.on_click = Some(Arc::new(callback));
+        self
+    }
+
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+
+    fn trigger(&self) {
+        if let Some(cb) = &self.on_click {
+            cb();
+        }
     }
 }
 
@@ -53,6 +71,7 @@ impl Control for Button {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    self.trigger();
                     return (ControlOutcome::Consumed, FormAction::Submitted);
                 }
                 (ControlOutcome::Ignored, FormAction::None)
@@ -60,7 +79,10 @@ impl Control for Button {
             Event::Key(KeyEvent {
                 code: KeyCode::Enter | KeyCode::Char(' '),
                 ..
-            }) => (ControlOutcome::Consumed, FormAction::Submitted),
+            }) => {
+                self.trigger();
+                (ControlOutcome::Consumed, FormAction::Submitted)
+            }
             Event::Key(KeyEvent { .. }) => (ControlOutcome::Ignored, FormAction::None),
             _ => (ControlOutcome::Ignored, FormAction::None),
         }

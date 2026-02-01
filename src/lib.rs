@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod cache;
+pub mod declarative;
+pub mod reactive;
 pub mod text;
 pub mod theme;
 pub mod view;
