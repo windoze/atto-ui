@@ -6,9 +6,11 @@
 //! The declarative layer can also be bridged into Chatty's imperative window/view manager
 //! by calling [`DeclarativeView::build_view`], which produces a `Box<dyn crate::view::View>`.
 
+mod for_each;
 mod grid;
 mod grid_view;
 mod hstack;
+mod identifiable;
 mod primitives;
 mod stack_view;
 mod view;
@@ -16,6 +18,8 @@ mod view_adapter;
 mod vstack;
 mod widget_controls;
 
+pub use for_each::{ForEach, ForEachIdentifiable};
+pub use identifiable::Identifiable;
 pub use grid::Grid;
 pub use hstack::HStack;
 pub use primitives::{Divider, Spacer, Text, TextFn};
