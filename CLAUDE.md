@@ -7,10 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Chatty 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal User Interface) 应用框架,受 Turbo Vision 启发。它提供了完整的窗口管理系统、菜单栏、状态栏以及常用组件库。
 
 ### 项目规模
-- **源代码文件**: 52 个 Rust 源文件
-- **代码行数**: 约 39,000 行
-- **主要模块**: 核心库 35 文件,测试二进制 4 个,集成测试 7 个,示例应用 1 个
+- **源代码文件**: 54 个 Rust 源文件
+- **代码行数**: 约 18,300 行 (不含注释和空行)
+  - 主库: ~15,400 行
+  - 测试: ~1,100 行
+  - 示例: ~1,800 行
+- **主要模块**: 核心库 50 文件,测试二进制 4 个,集成测试 11 个,示例应用 1 个
 - **测试框架**: 独立的 PTY 测试工具 crate
+- **工作区 Crates**: chatty-test-host (测试框架), chatty-macros (过程宏)
 
 ## 常用命令
 
@@ -51,6 +55,43 @@ cargo fmt
 
 项目采用分层架构,从底层到高层:
 
+```
+┌─────────────────────────────────────────────────┐
+│   应用层 (App Layer)                            │
+│   Desktop / MenuBar / StatusBar                │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   窗口管理层 (Window Manager)                    │
+│   WindowManager / Window                       │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   声明式层 (Declarative Layer)                  │
+│   VStack/HStack/Grid (SwiftUI 风格)            │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   视图层次/布局层 (Views/Layout Layer)           │
+│   ScrollView / BorderView / ControlView        │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   控件层 (Widgets)                              │
+│   Button / TextBox / Checkbox / ListBox ...    │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   核心 View Trait                               │
+│   渲染 + 事件处理 + 滚动支持                      │
+└─────────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────────┐
+│   支持模块                                       │
+│   Theme / Text / Reactive / Cache              │
+└─────────────────────────────────────────────────┘
+```
+
 ### 1. View 层 (`src/view.rs`)
 - 最底层的抽象,提供基本的渲染和输入处理接口
 - 定义了 `View` trait,所有可渲染的组件都实现此 trait
@@ -76,8 +117,6 @@ cargo fmt
   - `Anchor` - 锚点定位 (TopLeft/Center/BottomRight 等 9 种)
   - `LayoutParams` - 视图布局参数
 - **`node.rs`**: 视图层次节点,支持嵌套视图和事件路由
-- **`vbox.rs`**: 垂直/水平布局容器 (`VBox`/`HBox`,从上到下或从左到右排列子视图)
-- **`grid.rs`**: 网格布局容器 (行列网格排列)
 - **`scroll.rs`**: 滚动配置和工具函数
   - `ScrollConfig` - 滚动配置 (滚动条可见性、箭头、滚轮步长)
   - `ScrollbarVisibility` - 可见性策略 (Always/Auto/Never)
@@ -95,12 +134,29 @@ cargo fmt
 - 支持 padding、margin、对齐、锚点定位等布局属性
 - 支持键盘、鼠标滚轮和滚动条拖动交互
 
-### 3. App 层 (`src/app/`)
+### 3. Declarative 层 (`src/declarative/`)
+SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
+- **`view.rs`**: `DeclarativeView` trait - 声明式视图接口
+- **`primitives.rs`**: 基础组件
+  - `Text` - 文本元素
+  - `Divider` - 分隔线
+  - `Spacer` - 空白占位符
+- **`vstack.rs`**: `VStack` - 声明式垂直堆栈布局 (SwiftUI 风格)
+- **`hstack.rs`**: `HStack` - 声明式水平堆栈布局 (SwiftUI 风格)
+- **`grid.rs`**: `Grid` - 声明式网格布局
+- **`stack_view.rs`**: `StackView` - 堆栈布局的实现层 (2300+ 行)
+- **`grid_view.rs`**: `GridView` - 网格布局的实现层 (1200+ 行)
+- **`view_adapter.rs`**: `ViewAdapter` - 适配器模式实现
+- **`widget_controls.rs`**: 控件集成 - 将控件集成到声明式 API
+- 支持构建器模式: `.padding()`, `.alignment()`, `.frame()` 等
+- 从声明式代码自动生成命令式 `View` 实现
+
+### 4. App 层 (`src/app/`)
 - **`desktop.rs`**: `Desktop` 是最高层容器,组合了 MenuBar + WindowManager + StatusBar
 - **`menu.rs`**: `MenuBar` 提供顶部菜单栏,支持嵌套菜单和键盘快捷键
 - **`status.rs`**: `StatusBar` 提供底部状态栏,支持动态内容
 
-### 4. Widgets (`src/widgets/`)
+### 5. Widgets (`src/widgets/`)
 标准 UI 组件,都实现了 `Control` trait (通过 `ControlView` 适配为 `View`):
 - **`primitives.rs`**: 表单控件基础接口
   - `Control` trait - 表单控件接口 (焦点、事件处理、渲染)
@@ -118,12 +174,25 @@ cargo fmt
 - **`list.rs`**: `ListBox` - 列表框 (上下箭头选择,鼠标点击)
 - **`table.rs`**: `TableView` - 表格视图 (表头 + 数据行)
 
-### 5. 支持模块
+### 6. 支持模块
 - **`text/`**: 文本缓冲区和 Unicode 处理
   - `buffer.rs` - `TextBuffer` 基于 grapheme cluster 的文本编辑缓冲区
 - **`theme/`**: 主题和样式系统
   - `mod.rs` - `Theme` 主题定义 (深色/浅色主题,字形映射,样式表)
   - `config.rs` - `ThemeConfig` 主题配置文件格式 (支持 JSON/YAML)
+  - `tests.rs` - 主题测试
+- **`reactive/`**: 反应式状态管理系统
+  - `property.rs` - `Property<T>` 和 `Binding<T>` 反应式属性
+  - `observable.rs` - `Observable` 可观察对象
+  - `dirty.rs` - `DirtyFlag` 脏标记系统
+  - `queue.rs` - `EventQueue` 事件队列
+- **`cache/`**: 缓存和增量渲染
+  - `buffer.rs` - `VirtualBuffer` 虚拟缓冲区
+  - `diff.rs` - 增量差异计算
+  - `scheduler.rs` - 渲染调度器
+- **`macros/`**: 过程宏支持 (`crates/chatty-macros/`)
+  - `reactive.rs` - `#[reactive]` 宏 - 自动生成反应式属性
+  - `view_builder.rs` - `#[view_builder]` 宏 - 视图构建助手
 
 ## 测试策略
 
@@ -141,7 +210,7 @@ cargo fmt
    - `snapshot_virtual_scroll_app.rs` - 虚拟滚动测试应用 (测试委托驱动的内容渲染)
    - 这些测试应用被集成测试调用,运行在 PTY 中
 
-3. **Integration Tests** (`tests/`):
+3. **Integration Tests** (`tests/`, 11 个测试文件):
    - `pty_desktop.rs` - 测试桌面、菜单、窗口管理
    - `pty_modal.rs` - 测试模态对话框
    - `pty_mouse_support.rs` - 测试鼠标交互
@@ -149,6 +218,10 @@ cargo fmt
    - `pty_horizontal_scrolling.rs` - 测试水平滚动功能
    - `pty_virtual_scrolling.rs` - 测试虚拟滚动功能 (委托驱动的大规模数据渲染)
    - `pty_view_hierarchy.rs` - 测试视图层次和布局容器
+   - `declarative_primitives.rs` - 测试声明式基础组件 (Text, Divider, Spacer)
+   - `declarative_vstack.rs` - 测试声明式 VStack 布局
+   - `macro_reactive.rs` - 测试反应式宏 (#[reactive])
+   - `macro_view_builder.rs` - 测试视图构建宏 (#[view_builder])
 
 测试模式:
 ```rust
@@ -188,15 +261,61 @@ assert!(screen.contains("Expected"));
 
 根据 `IMPLEMENTATION_PLAN.md`,当前已完成的里程碑:
 - **M0-M5**: 核心框架、窗口系统、渲染、菜单栏、状态栏、组件库、PTY 测试框架 (已完成)
-- **M6**: 视图层次和布局管理 (VBox/HBox、Grid、padding/margin、对齐、锚点定位) (已完成)
+- **M6**: 视图层次和布局管理 (布局容器、padding/margin、对齐、锚点定位) (已完成,现已迁移到声明式 API)
 - **M7**: 视口和滚动支持 (键盘滚动、鼠标滚轮、程序化滚动) (已完成)
 - **M8**: 滚动条 (渲染、拖动、点击轨道、箭头按钮、样式配置、边框挂载、窗口角落保留) (已完成)
 - **M9**: 虚拟滚动 (委托驱动的内容渲染,支持大规模数据集) (已完成)
+- **M10**: 主题文件 + 命名令牌 (从 JSON/YAML 加载主题,支持字形/样式/颜色的用户定义键) (已完成)
+- **声明式/反应式系统**: SwiftUI 风格声明式 API (VStack/HStack/Grid)、反应式属性系统、过程宏支持 (进行中)
 
-**未来计划**:
-- **M10**: 主题文件 + 命名令牌 (从 JSON/YAML 加载主题,支持字形/样式/颜色的用户定义键) (计划中)
+**当前正在开发**:
+- 声明式 API 的完善和优化
+- 反应式状态管理的集成
+- 增量渲染和缓存系统
 
-查看 `IMPLEMENTATION_PLAN.md` 了解详细的功能清单和未来计划。
+查看 `IMPLEMENTATION_PLAN.md` 和 `SWIFTUI_STYLE_REFACTOR.md` 了解详细的功能清单和未来计划。
+
+## 声明式 API (SwiftUI 风格)
+
+项目使用 SwiftUI 风格的声明式 API 构建 UI。
+
+**注意**: 早期版本曾有命令式 API (VBox/HBox/Grid),现已完全移除并迁移到声明式 API。
+
+### 声明式构建方式
+使用 `VStack`、`HStack`、`Grid` 等声明式构建器,代码简洁清晰:
+
+```rust
+VStack::new()
+    .padding(EdgeInsets::all(1))
+    .children(vec![
+        Text::new("Hello").into(),
+        Text::new("World").into(),
+    ])
+    .build()
+```
+
+**声明式 API 的优势**:
+- 更简洁的代码,减少样板代码
+- 链式调用,更符合现代 UI 框架风格
+- 自动处理布局参数和类型转换
+- 与 SwiftUI/Jetpack Compose 等现代框架理念一致
+
+**声明式组件**:
+- `VStack` / `HStack` - 垂直/水平堆栈布局
+- `Grid` - 网格布局
+- `Text` - 文本元素
+- `Divider` - 分隔线
+- `Spacer` - 空白占位符
+
+## 反应式状态管理
+
+项目提供了反应式状态管理系统,支持自动 UI 更新:
+
+- `Property<T>` - 反应式属性,值变化时自动通知观察者
+- `Binding<T>` - 双向绑定,连接数据模型和 UI 组件
+- `Observable` - 可观察对象协议
+- `DirtyFlag` - 脏标记系统,跟踪需要重新渲染的部分
+- `#[reactive]` 宏 - 自动为结构体生成反应式属性
 
 ## 代码约定
 
@@ -209,6 +328,7 @@ assert!(screen.contains("Expected"));
 - 布局坐标系统使用父视图相对坐标 (不是绝对屏幕坐标)
 - 滚动容器使用 0-based 偏移量表示滚动位置
 - 布局权重使用 `f32` 类型,表示相对比例 (如 1.0, 2.0 表示 1:2 的空间分配)
+- **使用声明式 API** (VStack/HStack/Grid) 构建所有 UI 组件
 
 ## 关键依赖
 
@@ -219,11 +339,15 @@ assert!(screen.contains("Expected"));
 - `unicode-width` (0.2) - Unicode 字符宽度计算
 - `anyhow` (1) - 错误处理
 - `serde`, `serde_json`, `serde_yaml` - 主题配置序列化支持
+- `once_cell` (1) - 延迟初始化
+- `parking_lot` (0.12) - 同步原语
 
 ### 开发/测试依赖
-- `chatty-test-host` - 自定义 PTY 测试框架
+- `chatty-test-host` - 自定义 PTY 测试框架 (工作区 crate)
   - `portable-pty` - PTY 创建
   - `vt100` - VT100 终端模拟器
+- `chatty-macros` - 过程宏库 (工作区 crate)
+  - `proc-macro2`, `quote`, `syn` - 过程宏基础
 
 ## 示例应用
 
@@ -246,7 +370,7 @@ assert!(screen.contains("Expected"));
 - 禁用状态控件演示
 
 **布局演示窗口**:
-- VBox/HBox 垂直/水平布局
+- VStack/HStack 垂直/水平堆栈布局
 - Grid 网格布局
 - 锚点定位演示 (9 种锚点)
 - Padding/Margin 演示
@@ -261,6 +385,11 @@ assert!(screen.contains("Expected"));
 - 委托驱动的内容渲染
 - 高效的虚拟滚动
 
+**声明式 UI 演示** (如已实现):
+- VStack/HStack 堆栈布局示例
+- Grid 网格布局示例
+- 声明式构建器模式演示
+
 **键盘快捷键**:
 - `F10` - 激活菜单
 - `Ctrl+W` - 进入窗口管理模式
@@ -273,3 +402,47 @@ assert!(screen.contains("Expected"));
 - `v` - 布局演示
 - `s` - 滚动演示
 - `z` - 虚拟滚动演示
+
+## 技术亮点
+
+### 1. 完全类型安全
+- 使用 Rust 的类型系统确保编译时安全
+- 没有使用 unsafe 代码 (`#![forbid(unsafe_code)]`)
+- 泛型和 trait 实现灵活的抽象
+
+### 2. 高性能渲染
+- 虚拟滚动支持数千行数据的流畅渲染
+- 增量差异计算减少不必要的重绘
+- 脏标记系统精确追踪需要更新的区域
+- 渲染调度器优化渲染时机
+
+### 3. Unicode 完整支持
+- 基于 grapheme cluster 的文本处理
+- 正确处理宽字符 (CJK 字符、emoji 等)
+- 支持复杂的 Unicode 组合字符
+
+### 4. 确定性测试
+- 基于 PTY 的集成测试框架
+- 屏幕缓冲区快照测试
+- 模拟键盘、鼠标、粘贴等所有交互
+- 11 个综合集成测试套件
+
+### 5. 现代 UI 范式
+- SwiftUI 风格的声明式 API
+- 反应式状态管理
+- 过程宏简化常见模式
+- 纯声明式编程风格,无需手动管理视图层次
+
+### 6. 灵活的主题系统
+- 深色/浅色主题内置支持
+- 命名令牌系统 (字形、样式、颜色)
+- JSON/YAML 主题文件加载
+- 运行时主题切换
+
+## 文档资源
+
+- **IMPLEMENTATION_PLAN.md** - 详细的开发里程碑和功能规划
+- **SWIFTUI_STYLE_REFACTOR.md** - SwiftUI 风格重构设计文档
+- **TODO.md** - 当前待办任务和已知问题
+- **README.md** - 项目概述和快速开始
+- **AGENTS.md** - 代理工具使用说明

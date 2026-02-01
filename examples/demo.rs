@@ -169,23 +169,34 @@ impl DeclarativeView for WidgetsView {
         let click_count = model.click_count.clone();
         let last_msg = model.last_msg.clone();
 
-        Box::new(view_builder! {
+        let labels = view_builder! {
             VStack {
                 Text("Try mouse drag on title bar; click × to close.")
                 Text("Try bracketed paste into textbox: 你好👋 / 👩‍💻")
-                TextBox("Text", model.text_binding())
-                Checkbox("Enable feature", model.enable_feature_binding())
-                RadioGroup(
-                    "Mode",
-                    vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                    model.mode_binding(),
-                )
+            }
+            .spacing(0)
+        };
+
+        let widgets = view_builder! {
+            HStack {
+                VStack {
+                    TextBox("Text", model.text_binding())
+                    Checkbox("Enable feature", model.enable_feature_binding())
+                    RadioGroup(
+                        "Mode",
+                        vec!["Normal".into(), "Insert".into(), "Visual".into()],
+                        model.mode_binding(),
+                    )
+                }
+                .spacing(1)
+
                 ListBox(
                     "List",
                     vec!["Alpha".into(), "Beta".into(), "Gamma".into(), "Delta".into()],
                     model.list_selection_binding(),
                 )
-                .height(4u16)
+                .height(u16::MAX)
+
                 TableView(
                     "Table",
                     vec!["Key".into(), "Value".into()],
@@ -196,34 +207,75 @@ impl DeclarativeView for WidgetsView {
                     ],
                     model.table_selection_binding(),
                 )
-                .height(4u16)
-                Button("Count+ +").on_click(move || {
+                .height(u16::MAX)
+            }
+            .spacing(1)
+        };
+
+        let buttons = view_builder! {
+            HStack {
+                Button("Count").on_click(move || {
                     click_count.update(|c| *c = c.saturating_add(1));
                 })
+                Spacer()
                 Button("OK").on_click(move || {
                     last_msg.set("Submitted!".to_string());
                 })
-                TextFn(move || {
-                    let status = format!(
-                        "count={}  checked={}  mode={}  list={}  table={}  text={}",
-                        model.get_click_count(),
-                        if model.get_enable_feature() { "on" } else { "off" },
-                        model.get_mode(),
-                        model.get_list_selection(),
-                        model.get_table_selection(),
-                        model.get_text(),
-                    );
-                    let msg = model.get_last_msg();
-                    if msg.is_empty() {
-                        status
-                    } else {
-                        format!("{status}  |  {msg}")
-                    }
-                })
             }
             .spacing(1)
-            .padding(1)
-        })
+        };
+
+        let states = view_builder! { TextFn(move || {
+            let status = format!(
+                "States: count={}  checked={}  mode={}  list={}  table={}  text={}",
+                model.get_click_count(),
+                if model.get_enable_feature() { "on" } else { "off" },
+                model.get_mode(),
+                model.get_list_selection(),
+                model.get_table_selection(),
+                model.get_text(),
+            );
+            let msg = model.get_last_msg();
+            if msg.is_empty() {
+                status
+            } else {
+                format!("{status}  |  {msg}")
+            }
+        }) };
+
+        Box::new(
+            VStack::new()
+                .child_with_layout(
+                    labels,
+                    LayoutParams {
+                        height: Size::Fixed(2),
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    widgets,
+                    LayoutParams {
+                        height: Size::Fill,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    buttons,
+                    LayoutParams {
+                        height: Size::Fixed(3),
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    states,
+                    LayoutParams {
+                        height: Size::Fixed(1),
+                        ..LayoutParams::default()
+                    },
+                )
+                .spacing(1)
+                .padding(1),
+        )
     }
 }
 
