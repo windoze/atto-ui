@@ -9,12 +9,12 @@ use ratatui::layout::Rect;
 
 use crate::theme::Theme;
 use crate::view::{EventOutcome, ScrollbarHost, View, ViewContext, ViewEventResult};
+use crate::views::{ScrollConfig, ScrollbarVisibility};
 use crate::wm::WindowId;
 
-use super::{
-    Align, Anchor, AnchorPlacement, EdgeInsets, Grid, HBox, LayoutParams, ScrollConfig,
-    ScrollbarVisibility, Size, VBox,
-};
+use super::grid_view::GridView;
+use super::stack_view::{HStackView, VStackView};
+use super::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecordedEvent {
@@ -120,72 +120,75 @@ fn draw_view(view: &mut dyn View, area: Rect) {
 }
 
 #[test]
-fn view_hierarchy_add_remove_and_query_children() {
-    let mut vbox = VBox::new();
-    let vbox_id = vbox.id();
+fn view_hierarchy_sets_parent_ids_for_children() {
+    let mut vstack = VStackView::new();
 
     let ev1 = Arc::new(Mutex::new(Vec::new()));
-    let id1 = vbox.add_child(Box::new(RecordingView::new(Arc::clone(&ev1))));
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&ev1))),
+        LayoutParams::default(),
+    );
 
     let ev2 = Arc::new(Mutex::new(Vec::new()));
-    let id2 = vbox.add_child(Box::new(
-        RecordingView::new(Arc::clone(&ev2)).with_focusable(false),
-    ));
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&ev2)).with_focusable(false)),
+        LayoutParams::default(),
+    );
 
-    assert_eq!(vbox.child_count(), 2);
-    assert_eq!(vbox.child(id1).expect("child 1").parent, Some(vbox_id));
-    assert_eq!(vbox.child(id2).expect("child 2").parent, Some(vbox_id));
+    let children = vstack.children();
+    assert_eq!(children.len(), 2);
 
-    let removed = vbox.remove_child(id1).expect("remove child");
-    assert_eq!(removed.parent, Some(vbox_id));
-    assert_eq!(vbox.child_count(), 1);
-    assert!(vbox.child(id1).is_none());
+    let vstack_id = children[0].parent.expect("parent id");
+    assert_ne!(children[0].id, vstack_id);
+    assert_eq!(children[1].parent, Some(vstack_id));
 }
 
 #[test]
 fn nested_hierarchy_preserves_parent_ids() {
-    let mut inner = VBox::new();
-    let inner_id = inner.id();
+    let mut inner = VStackView::new();
     let leaf_events = Arc::new(Mutex::new(Vec::new()));
-    let leaf_id = inner.add_child(Box::new(RecordingView::new(Arc::clone(&leaf_events))));
+    inner.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&leaf_events))),
+        LayoutParams::default(),
+    );
+    let leaf_id = inner.children()[0].id;
+    let inner_id = inner.children()[0].parent.expect("inner id");
 
-    let mut outer = VBox::new();
-    let outer_id = outer.id();
-    let inner_node_id = outer.add_child(Box::new(inner));
+    let mut outer = VStackView::new();
+    outer.add_child_with_layout(Box::new(inner), LayoutParams::default());
+    let outer_children = outer.children();
+    assert_eq!(outer_children.len(), 1);
 
-    assert_eq!(
-        outer.child(inner_node_id).expect("inner node").parent,
-        Some(outer_id)
+    let outer_id = outer_children[0].parent.expect("outer id");
+    assert_ne!(
+        outer_id, inner_id,
+        "expected nested containers to have distinct ids"
     );
 
-    let inner_children = outer
-        .child(inner_node_id)
-        .expect("inner node")
-        .view
-        .children();
+    let inner_children = outer_children[0].view.children();
     assert_eq!(inner_children.len(), 1);
     assert_eq!(inner_children[0].id, leaf_id);
     assert_eq!(inner_children[0].parent, Some(inner_id));
 }
 
 #[test]
-fn vbox_layout_fixed_heights() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_layout_fixed_heights() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(5),
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(10),
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(5),
@@ -193,9 +196,9 @@ fn vbox_layout_fixed_heights() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 40, 20));
+    draw_view(&mut vstack, Rect::new(0, 0, 40, 20));
 
-    let children = vbox.children();
+    let children = vstack.children();
     assert_eq!(children.len(), 3);
     assert_eq!(children[0].bounds(), Rect::new(0, 0, 40, 5));
     assert_eq!(children[1].bounds(), Rect::new(0, 5, 40, 10));
@@ -203,16 +206,16 @@ fn vbox_layout_fixed_heights() {
 }
 
 #[test]
-fn vbox_layout_weighted_split() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_layout_weighted_split() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Weight(1),
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Weight(2),
@@ -220,23 +223,23 @@ fn vbox_layout_weighted_split() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 30));
-    let children = vbox.children();
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 30));
+    let children = vstack.children();
     assert_eq!(children[0].bounds(), Rect::new(0, 0, 20, 10));
     assert_eq!(children[1].bounds(), Rect::new(0, 10, 20, 20));
 }
 
 #[test]
-fn vbox_layout_clamps_overflow() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_layout_clamps_overflow() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(6),
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(6),
@@ -244,34 +247,35 @@ fn vbox_layout_clamps_overflow() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 10, 10));
-    let children = vbox.children();
+    draw_view(&mut vstack, Rect::new(0, 0, 10, 10));
+    let children = vstack.children();
     assert_eq!(children[0].bounds(), Rect::new(0, 0, 10, 6));
     assert_eq!(children[1].bounds(), Rect::new(0, 6, 10, 4));
 }
 
 #[test]
-fn vbox_padding_reduces_content_area() {
-    let mut vbox = VBox::new().with_padding(EdgeInsets::all(2));
-    vbox.add_child(Box::new(RecordingView::new(Arc::new(Mutex::new(
-        Vec::new(),
-    )))));
+fn vstack_padding_reduces_content_area() {
+    let mut vstack = VStackView::new().with_padding(EdgeInsets::all(2));
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
+        LayoutParams::default(),
+    );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 10));
-    let child = &vbox.children()[0];
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 10));
+    let child = &vstack.children()[0];
     assert_eq!(child.bounds(), Rect::new(0, 0, 16, 6));
 }
 
 #[test]
-fn vbox_margins_reserve_space_around_child() {
-    let mut vbox = VBox::new();
+fn vstack_margins_reserve_space_around_child() {
+    let mut vstack = VStackView::new();
     let margin = EdgeInsets {
         top: 1,
         right: 1,
         bottom: 1,
         left: 1,
     };
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(2),
@@ -279,7 +283,7 @@ fn vbox_margins_reserve_space_around_child() {
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(2),
@@ -288,17 +292,17 @@ fn vbox_margins_reserve_space_around_child() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 10));
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 10));
 
-    let children = vbox.children();
+    let children = vstack.children();
     assert_eq!(children[0].bounds(), Rect::new(1, 1, 18, 2));
     assert_eq!(children[1].bounds(), Rect::new(1, 5, 18, 2));
 }
 
 #[test]
-fn vbox_alignment_centers_child_in_slot() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_alignment_centers_child_in_slot() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
                 .with_desired_width(Some(4))
@@ -312,16 +316,16 @@ fn vbox_alignment_centers_child_in_slot() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 5));
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 5));
 
-    let child = &vbox.children()[0];
+    let child = &vstack.children()[0];
     assert_eq!(child.bounds(), Rect::new(8, 0, 4, 1));
 }
 
 #[test]
-fn vbox_anchor_positions_overlay_and_does_not_affect_flow() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_anchor_positions_overlay_and_does_not_affect_flow() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
                 .with_desired_width(Some(3))
@@ -338,7 +342,7 @@ fn vbox_anchor_positions_overlay_and_does_not_affect_flow() {
             ..LayoutParams::default()
         },
     );
-    vbox.add_child_with_layout(
+    vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             height: Size::Fixed(5),
@@ -346,9 +350,9 @@ fn vbox_anchor_positions_overlay_and_does_not_affect_flow() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 10));
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 10));
 
-    let children = vbox.children();
+    let children = vstack.children();
     assert_eq!(children.len(), 2);
 
     // Anchored overlays do not affect the flow child layout.
@@ -359,9 +363,9 @@ fn vbox_anchor_positions_overlay_and_does_not_affect_flow() {
 }
 
 #[test]
-fn vbox_anchor_repositions_on_resize() {
-    let mut vbox = VBox::new();
-    vbox.add_child_with_layout(
+fn vstack_anchor_repositions_on_resize() {
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
                 .with_desired_width(Some(3))
@@ -379,11 +383,11 @@ fn vbox_anchor_repositions_on_resize() {
         },
     );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 20, 5));
-    assert_eq!(vbox.children()[0].bounds(), Rect::new(17, 0, 3, 2));
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 5));
+    assert_eq!(vstack.children()[0].bounds(), Rect::new(17, 0, 3, 2));
 
-    draw_view(&mut vbox, Rect::new(0, 0, 30, 5));
-    assert_eq!(vbox.children()[0].bounds(), Rect::new(27, 0, 3, 2));
+    draw_view(&mut vstack, Rect::new(0, 0, 30, 5));
+    assert_eq!(vstack.children()[0].bounds(), Rect::new(27, 0, 3, 2));
 }
 
 #[test]
@@ -391,10 +395,10 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
     let leaf_events = Arc::new(Mutex::new(Vec::new()));
     let leaf = RecordingView::new(Arc::clone(&leaf_events)).with_outcome(EventOutcome::Consumed);
 
-    let mut inner = VBox::new();
-    inner.add_child(Box::new(leaf));
+    let mut inner = VStackView::new();
+    inner.add_child_with_layout(Box::new(leaf), LayoutParams::default());
 
-    let mut outer = VBox::new().with_padding(EdgeInsets::all(1));
+    let mut outer = VStackView::new().with_padding(EdgeInsets::all(1));
     outer.add_child_with_layout(
         Box::new(inner),
         LayoutParams {
@@ -430,10 +434,13 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
 #[test]
 fn capture_phase_consumes_tab_before_children_receive_it() {
     let events = Arc::new(Mutex::new(Vec::new()));
-    let mut vbox = VBox::new();
-    vbox.add_child(Box::new(RecordingView::new(Arc::clone(&events))));
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&events))),
+        LayoutParams::default(),
+    );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 10, 5));
+    draw_view(&mut vstack, Rect::new(0, 0, 10, 5));
 
     let tab = Event::Key(KeyEvent {
         code: KeyCode::Tab,
@@ -449,7 +456,7 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
     };
-    let res = vbox.handle_event(&tab, ctx);
+    let res = vstack.handle_event(&tab, ctx);
     assert!(res.is_consumed());
     assert!(events.lock().expect("events lock").is_empty());
 }
@@ -459,11 +466,17 @@ fn keyboard_events_route_to_focused_child() {
     let a = Arc::new(Mutex::new(Vec::new()));
     let b = Arc::new(Mutex::new(Vec::new()));
 
-    let mut vbox = VBox::new();
-    vbox.add_child(Box::new(RecordingView::new(Arc::clone(&a))));
-    vbox.add_child(Box::new(RecordingView::new(Arc::clone(&b))));
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&a))),
+        LayoutParams::default(),
+    );
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&b))),
+        LayoutParams::default(),
+    );
 
-    draw_view(&mut vbox, Rect::new(0, 0, 10, 5));
+    draw_view(&mut vstack, Rect::new(0, 0, 10, 5));
 
     let theme = Theme::dark();
     let ctx = ViewContext {
@@ -479,7 +492,7 @@ fn keyboard_events_route_to_focused_child() {
         kind: KeyEventKind::Press,
         state: crossterm::event::KeyEventState::NONE,
     });
-    assert!(vbox.handle_event(&key_a, ctx).is_consumed());
+    assert!(vstack.handle_event(&key_a, ctx).is_consumed());
 
     let tab = Event::Key(KeyEvent {
         code: KeyCode::Tab,
@@ -487,7 +500,7 @@ fn keyboard_events_route_to_focused_child() {
         kind: KeyEventKind::Press,
         state: crossterm::event::KeyEventState::NONE,
     });
-    assert!(vbox.handle_event(&tab, ctx).is_consumed());
+    assert!(vstack.handle_event(&tab, ctx).is_consumed());
 
     let key_b = Event::Key(KeyEvent {
         code: KeyCode::Char('b'),
@@ -495,7 +508,7 @@ fn keyboard_events_route_to_focused_child() {
         kind: KeyEventKind::Press,
         state: crossterm::event::KeyEventState::NONE,
     });
-    assert!(vbox.handle_event(&key_b, ctx).is_consumed());
+    assert!(vstack.handle_event(&key_b, ctx).is_consumed());
 
     let rec_a = a.lock().expect("events lock").clone();
     let rec_b = b.lock().expect("events lock").clone();
@@ -505,23 +518,23 @@ fn keyboard_events_route_to_focused_child() {
 }
 
 #[test]
-fn hbox_layout_fixed_widths() {
-    let mut hbox = HBox::new();
-    hbox.add_child_with_layout(
+fn hstack_layout_fixed_widths() {
+    let mut hstack = HStackView::new();
+    hstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             width: Size::Fixed(10),
             ..LayoutParams::default()
         },
     );
-    hbox.add_child_with_layout(
+    hstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             width: Size::Fixed(20),
             ..LayoutParams::default()
         },
     );
-    hbox.add_child_with_layout(
+    hstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
             width: Size::Fixed(10),
@@ -529,8 +542,8 @@ fn hbox_layout_fixed_widths() {
         },
     );
 
-    draw_view(&mut hbox, Rect::new(0, 0, 40, 5));
-    let children = hbox.children();
+    draw_view(&mut hstack, Rect::new(0, 0, 40, 5));
+    let children = hstack.children();
     assert_eq!(children.len(), 3);
     assert_eq!(children[0].bounds(), Rect::new(0, 0, 10, 5));
     assert_eq!(children[1].bounds(), Rect::new(10, 0, 20, 5));
@@ -539,7 +552,7 @@ fn hbox_layout_fixed_widths() {
 
 #[test]
 fn grid_layout_columns_and_row_heights() {
-    let mut grid = Grid::new(3);
+    let mut grid = GridView::new().with_columns(3usize);
     grid.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new()))).with_desired_height(Some(1))),
         LayoutParams {
@@ -611,14 +624,14 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
     }
 
-    let mut vbox = VBox::new().with_scrollable(true).with_scroll_config(
+    let mut vstack = VStackView::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Always)
             .horizontal_scrollbar(ScrollbarVisibility::Never),
     );
 
     for _ in 0..20 {
-        vbox.add_child_with_layout(
+        vstack.add_child_with_layout(
             Box::new(BlankLineView),
             LayoutParams {
                 height: Size::Content,
@@ -639,7 +652,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     let backend = TestBackend::new(10, 5);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal
-        .draw(|f| vbox.draw(f, Rect::new(0, 0, 10, 5), ctx))
+        .draw(|f| vstack.draw(f, Rect::new(0, 0, 10, 5), ctx))
         .expect("draw");
 
     let buf = terminal.backend().buffer();
@@ -674,14 +687,14 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
     }
 
-    let mut hbox = HBox::new().with_scrollable(true).with_scroll_config(
+    let mut hstack = HStackView::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Never)
             .horizontal_scrollbar(ScrollbarVisibility::Always),
     );
 
     for _ in 0..40 {
-        hbox.add_child_with_layout(
+        hstack.add_child_with_layout(
             Box::new(BlankCellView),
             LayoutParams {
                 height: Size::Content,
@@ -702,7 +715,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
     let backend = TestBackend::new(10, 4);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal
-        .draw(|f| hbox.draw(f, Rect::new(0, 0, 10, 4), ctx))
+        .draw(|f| hstack.draw(f, Rect::new(0, 0, 10, 4), ctx))
         .expect("draw");
 
     let buf = terminal.backend().buffer();

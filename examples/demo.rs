@@ -11,19 +11,18 @@ use crossterm::{cursor, style};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{DeclarativeView, ViewAdapter};
+use chatty::declarative::{
+    Align, Anchor, AnchorPlacement, DeclarativeView, EdgeInsets, Grid, HStack, LayoutParams, Size,
+    VStack, ViewAdapter,
+};
 use chatty::reactive::{EventQueue, Property};
 use chatty::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
-use chatty::views::{
-    Align, Anchor, AnchorPlacement, ControlView, EdgeInsets, Grid, HBox, LayoutParams,
-    ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost, Size, VBox,
-};
+use chatty::views::{ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
 use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
@@ -338,206 +337,154 @@ impl View for TooltipView {
     }
 }
 
-#[derive(Clone, Debug)]
-struct IntrinsicLabelView {
-    text: String,
-}
-
-impl IntrinsicLabelView {
-    fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
-    }
-}
-
-impl View for IntrinsicLabelView {
-    fn desired_width(&self) -> Option<u16> {
-        Some(self.text.len().min(u16::MAX as usize) as u16)
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let style = ctx.theme.widget.accent;
-        frame.render_widget(Paragraph::new(Line::styled(self.text.clone(), style)), area);
-    }
-}
-
-fn build_layout_demo_view() -> VBox {
-    let mut root = VBox::new().with_padding(EdgeInsets::all(1)).with_spacing(1);
-
-    // Anchor demo: this badge sticks to the top-right of the view content area.
-    root.add_child_with_layout(
-        Box::new(IntrinsicLabelView::new("[ANCHOR]")),
-        LayoutParams {
-            width: Size::Content,
-            height: Size::Content,
-            anchor: Some(AnchorPlacement {
-                anchor: Anchor::TopRight,
-                offset_x: 0,
-                offset_y: 0,
-            }),
-            ..LayoutParams::default()
-        },
-    );
-
-    // Margin demo: reserve some space on the right so the anchored badge doesn't overlap.
-    root.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Label::new(
-            "M6 layout demo (resize window)",
-        )))),
-        LayoutParams {
-            height: Size::Content,
-            margin: EdgeInsets {
-                right: 10,
-                ..EdgeInsets::ZERO
+fn build_layout_demo_view() -> Box<dyn View> {
+    let toolbar = HStack::new()
+        .spacing(1)
+        .child_with_layout(
+            Label::new("Content"),
+            LayoutParams {
+                width: Size::Content,
+                height: Size::Content,
+                align_y: Align::Center,
+                margin: EdgeInsets {
+                    left: 1,
+                    right: 1,
+                    ..EdgeInsets::ZERO
+                },
+                ..LayoutParams::default()
             },
-            ..LayoutParams::default()
-        },
-    );
-
-    // HBox demo:
-    // - left: content-based sizing (intrinsic width)
-    // - middle/right: weighted sizing (1:2 split)
-    // - vertical alignment: the badge is centered within the 3-row toolbar
-    let mut toolbar = HBox::new().with_spacing(1);
-    toolbar.add_child_with_layout(
-        Box::new(IntrinsicLabelView::new("Content")),
-        LayoutParams {
-            width: Size::Content,
-            height: Size::Content,
-            align_y: Align::Center,
-            margin: EdgeInsets {
-                left: 1,
-                right: 1,
-                ..EdgeInsets::ZERO
+        )
+        .child_with_layout(
+            Button::new("W1"),
+            LayoutParams {
+                width: Size::Weight(1),
+                ..LayoutParams::default()
             },
-            ..LayoutParams::default()
-        },
-    );
-    toolbar.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Button::new("W1")))),
-        LayoutParams {
-            width: Size::Weight(1),
-            ..LayoutParams::default()
-        },
-    );
-    toolbar.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Button::new("W2")))),
-        LayoutParams {
-            width: Size::Weight(2),
-            ..LayoutParams::default()
-        },
-    );
-
-    root.add_child_with_layout(
-        Box::new(toolbar),
-        LayoutParams {
-            height: Size::Fixed(3),
-            ..LayoutParams::default()
-        },
-    );
-
-    // Grid demo:
-    // - 2 columns with equal widths
-    // - row height is tallest child in the row (Button is 3 rows tall)
-    // - checkbox is vertically centered in that tall row
-    let mut grid = Grid::new(2).with_row_gap(1).with_column_gap(2);
-    grid.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Button::new("Tall")))),
-        LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    );
-    grid.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Checkbox::new(
-            "Centered",
-            Property::new(false).binding(),
-        )))),
-        LayoutParams {
-            align_y: Align::Center,
-            ..LayoutParams::default()
-        },
-    );
-    grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
-        "Row 2A",
-        Property::new(false).binding(),
-    )))));
-    grid.add_child(Box::new(ControlView::new(Box::new(Checkbox::new(
-        "Row 2B",
-        Property::new(false).binding(),
-    )))));
-
-    root.add_child_with_layout(
-        Box::new(grid),
-        LayoutParams {
-            height: Size::Fixed(5),
-            margin: EdgeInsets {
-                left: 2,
-                ..EdgeInsets::ZERO
+        )
+        .child_with_layout(
+            Button::new("W2"),
+            LayoutParams {
+                width: Size::Weight(2),
+                ..LayoutParams::default()
             },
-            ..LayoutParams::default()
-        },
-    );
+        );
 
-    root
+    let grid = Grid::new()
+        .columns(2usize)
+        .row_gap(1u16)
+        .column_gap(2u16)
+        .child_with_layout(
+            Button::new("Tall"),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Checkbox::new("Centered", Property::new(false).binding()),
+            LayoutParams {
+                align_y: Align::Center,
+                ..LayoutParams::default()
+            },
+        )
+        .child(Checkbox::new("Row 2A", Property::new(false).binding()))
+        .child(Checkbox::new("Row 2B", Property::new(false).binding()));
+
+    VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(1)
+        .child_with_layout(
+            Label::new("[ANCHOR]"),
+            LayoutParams {
+                width: Size::Content,
+                height: Size::Content,
+                anchor: Some(AnchorPlacement {
+                    anchor: Anchor::TopRight,
+                    offset_x: 0,
+                    offset_y: 0,
+                }),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Label::new("M6 layout demo (resize window)"),
+            LayoutParams {
+                height: Size::Content,
+                margin: EdgeInsets {
+                    right: 10,
+                    ..EdgeInsets::ZERO
+                },
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            toolbar,
+            LayoutParams {
+                height: Size::Fixed(3),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            grid,
+            LayoutParams {
+                height: Size::Fixed(5),
+                margin: EdgeInsets {
+                    left: 2,
+                    ..EdgeInsets::ZERO
+                },
+                ..LayoutParams::default()
+            },
+        )
+        .build_view()
 }
 
-fn build_scroll_demo_view() -> VBox {
-    let mut root = VBox::new()
-        .with_padding(EdgeInsets::all(1))
-        .with_spacing(1)
-        .with_scrollable(true);
-
-    root.add_child_with_layout(
-        Box::new(IntrinsicLabelView::new(
-            "M7/M8 scrolling demo: ↑↓ PgUp/PgDn Home/End, wheel, drag scrollbar thumb",
-        )),
-        LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    );
-
-    // Horizontal scrolling demo (inside its own scrollable HBox).
-    let mut wide_row = HBox::new().with_spacing(1).with_scrollable(true);
-    for i in 0..24 {
-        wide_row.add_child_with_layout(
-            Box::new(IntrinsicLabelView::new(format!("[col-{i:02}]"))),
+fn build_scroll_demo_view() -> Box<dyn View> {
+    let wide_row = (0..24).fold(HStack::new().spacing(1).scrollable(true), |row, i| {
+        row.child_with_layout(
+            Label::new(format!("[col-{i:02}]")),
             LayoutParams {
                 width: Size::Content,
                 height: Size::Content,
                 ..LayoutParams::default()
             },
-        );
-    }
-    root.add_child_with_layout(
-        Box::new(wide_row),
-        LayoutParams {
-            height: Size::Fixed(3),
-            ..LayoutParams::default()
+        )
+    });
+
+    let root = (0..120u16).fold(
+        VStack::new()
+            .padding_insets(EdgeInsets::all(1))
+            .spacing(1)
+            .scrollable(true)
+            .child_with_layout(
+                Label::new(
+                    "M7/M8 scrolling demo: ↑↓ PgUp/PgDn Home/End, wheel, drag scrollbar thumb",
+                ),
+                LayoutParams {
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                wide_row,
+                LayoutParams {
+                    height: Size::Fixed(3),
+                    ..LayoutParams::default()
+                },
+            ),
+        |v, i| {
+            v.child_with_layout(
+                Label::new(format!(
+                    "{i:03}: The quick brown fox jumps over the lazy dog."
+                )),
+                LayoutParams {
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
+            )
         },
     );
 
-    for i in 0..120u16 {
-        root.add_child_with_layout(
-            Box::new(IntrinsicLabelView::new(format!(
-                "{i:03}: The quick brown fox jumps over the lazy dog."
-            ))),
-            LayoutParams {
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
-    }
-
-    root
+    root.build_view()
 }
 
 #[derive(Clone, Debug)]
@@ -853,7 +800,7 @@ fn main() -> Result<()> {
                 width: 36,
                 height: 15,
             },
-            Box::new(build_layout_demo_view()),
+            build_layout_demo_view(),
         ),
         screen,
     ));
@@ -1215,7 +1162,7 @@ fn open_layout_demo(
                 width: 36,
                 height: 15,
             },
-            Box::new(build_layout_demo_view()),
+            build_layout_demo_view(),
         ),
         screen,
     );
@@ -1247,7 +1194,7 @@ fn open_scroll_demo(
                 width: 44,
                 height: 14,
             },
-            Box::new(build_scroll_demo_view()),
+            build_scroll_demo_view(),
         ),
         screen,
     );

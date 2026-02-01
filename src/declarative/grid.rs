@@ -5,7 +5,7 @@ use crate::reactive::Binding;
 use crate::view::{View, ViewContext};
 use crate::views::{EdgeInsets, LayoutParams, ScrollConfig};
 
-use super::stack_view::VStackView;
+use super::grid_view::GridView;
 use super::view::{DeclarativeView, EmptyView};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,33 +18,42 @@ struct ChildSpec {
     layout: ChildLayout,
 }
 
-/// Vertical stack container (SwiftUI-style `VStack`).
+/// Grid container (SwiftUI-style `Grid`).
 ///
-/// This is a declarative builder. At runtime, it builds an internal `View` implementation that
-/// performs the full Chatty layout + event routing behavior (focus, scrolling, anchors, etc).
-pub struct VStack {
+/// - Children are placed in row-major order.
+/// - Column count is configurable via [`Grid::columns`].
+pub struct Grid {
     children: Vec<ChildSpec>,
-    spacing: Binding<u16>,
+    columns: Binding<usize>,
     padding: Binding<EdgeInsets>,
+    row_gap: Binding<u16>,
+    column_gap: Binding<u16>,
     scrollable: Binding<bool>,
     scroll_config: Binding<ScrollConfig>,
 }
 
-impl Default for VStack {
+impl Default for Grid {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VStack {
+impl Grid {
     pub fn new() -> Self {
         Self {
             children: Vec::new(),
-            spacing: 0u16.into(),
+            columns: 1usize.into(),
             padding: EdgeInsets::ZERO.into(),
+            row_gap: 0u16.into(),
+            column_gap: 0u16.into(),
             scrollable: false.into(),
             scroll_config: ScrollConfig::default().into(),
         }
+    }
+
+    pub fn columns(mut self, columns: impl Into<Binding<usize>>) -> Self {
+        self.columns = columns.into();
+        self
     }
 
     pub fn child(mut self, view: impl DeclarativeView + 'static) -> Self {
@@ -67,11 +76,6 @@ impl VStack {
         self
     }
 
-    pub fn spacing(mut self, spacing: impl Into<Binding<u16>>) -> Self {
-        self.spacing = spacing.into();
-        self
-    }
-
     pub fn padding(mut self, padding: u16) -> Self {
         self.padding = EdgeInsets::all(padding).into();
         self
@@ -79,6 +83,16 @@ impl VStack {
 
     pub fn padding_insets(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
         self.padding = padding.into();
+        self
+    }
+
+    pub fn row_gap(mut self, gap: impl Into<Binding<u16>>) -> Self {
+        self.row_gap = gap.into();
+        self
+    }
+
+    pub fn column_gap(mut self, gap: impl Into<Binding<u16>>) -> Self {
+        self.column_gap = gap.into();
         self
     }
 
@@ -93,7 +107,7 @@ impl VStack {
     }
 }
 
-impl DeclarativeView for VStack {
+impl DeclarativeView for Grid {
     fn body(&self) -> Box<dyn DeclarativeView> {
         Box::new(EmptyView)
     }
@@ -104,50 +118,50 @@ impl DeclarativeView for VStack {
         }
 
         let padding = self.padding.get();
-        let spacing = self.spacing.get();
+        let cols = self.columns.get().max(1);
 
         let content_area = apply_padding(area, padding);
         if content_area.width == 0 || content_area.height == 0 {
             return;
         }
 
+        // Minimal render implementation: show one row per child, similar to `VStack`.
+        // Real layout behavior is implemented by the imperative view produced in `build_view()`.
         let mut y = content_area.y;
-        let bottom = content_area.y.saturating_add(content_area.height);
-
         for (idx, child) in self.children.iter().enumerate() {
-            if y >= bottom {
+            if y >= content_area.y.saturating_add(content_area.height) {
                 break;
             }
 
-            let height_left = bottom.saturating_sub(y);
+            let col = idx % cols;
+            let x = content_area.x.saturating_add(col as u16);
             let child_area = Rect {
-                x: content_area.x,
+                x,
                 y,
-                width: content_area.width,
-                height: 1.min(height_left),
+                width: 1.min(content_area.width),
+                height: 1,
             };
-
             child.view.render(frame, child_area, ctx);
-
-            y = y.saturating_add(child_area.height);
-            if idx + 1 < self.children.len() {
-                y = y.saturating_add(spacing);
+            if col + 1 == cols {
+                y = y.saturating_add(1);
             }
         }
     }
 
     fn build_view(&self) -> Box<dyn View> {
-        let mut vstack = VStackView::new()
+        let mut grid = GridView::new()
+            .with_columns(self.columns.clone())
             .with_padding(self.padding.clone())
-            .with_spacing(self.spacing.clone())
+            .with_row_gap(self.row_gap.clone())
+            .with_column_gap(self.column_gap.clone())
             .with_scrollable(self.scrollable.clone())
             .with_scroll_config(self.scroll_config.clone());
 
         for child in &self.children {
-            vstack.add_child_with_layout(child.view.build_view(), child.layout.layout);
+            grid.add_child_with_layout(child.view.build_view(), child.layout.layout);
         }
 
-        Box::new(vstack)
+        Box::new(grid)
     }
 }
 

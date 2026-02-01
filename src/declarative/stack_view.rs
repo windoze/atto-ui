@@ -7,12 +7,12 @@ use ratatui::layout::Rect;
 use crate::reactive::Binding;
 use crate::view::{View, ViewContext, ViewEventResult};
 
-use super::layout::{add_signed, apply_padding};
-use super::scroll::{
+use crate::views::layout::{add_signed, apply_padding};
+use crate::views::scroll::{
     ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset, max_scroll_offset,
     scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
 };
-use super::{
+use crate::views::{
     Align, Anchor, EdgeInsets, LayoutParams, ScrollConfig, ScrollOffset, Size, ViewId, ViewNode,
 };
 
@@ -134,7 +134,7 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
     (w, h)
 }
 
-pub struct VBox {
+pub(super) struct VStackView {
     id: ViewId,
     children: Vec<ViewNode>,
     padding: Binding<EdgeInsets>,
@@ -150,13 +150,13 @@ pub struct VBox {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl Default for VBox {
+impl Default for VStackView {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VBox {
+impl VStackView {
     pub fn new() -> Self {
         Self {
             id: ViewId::next(),
@@ -173,10 +173,6 @@ impl VBox {
             scrollbars: None,
             scrollbar_drag: None,
         }
-    }
-
-    pub fn id(&self) -> ViewId {
-        self.id
     }
 
     pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
@@ -202,14 +198,6 @@ impl VBox {
         self
     }
 
-    pub fn child_count(&self) -> usize {
-        self.children.len()
-    }
-
-    pub fn add_child(&mut self, view: Box<dyn View>) -> ViewId {
-        self.add_child_with_layout(view, LayoutParams::default())
-    }
-
     pub fn add_child_with_layout(&mut self, view: Box<dyn View>, layout: LayoutParams) -> ViewId {
         let mut node = ViewNode::new(view).with_layout(layout);
         node.parent = Some(self.id);
@@ -219,23 +207,6 @@ impl VBox {
         }
         self.children.push(node);
         id
-    }
-
-    pub fn remove_child(&mut self, id: ViewId) -> Option<ViewNode> {
-        let idx = self.children.iter().position(|c| c.id == id)?;
-        let removed = self.children.remove(idx);
-        if self.focused == Some(id) {
-            self.focused = self.first_focusable_child();
-        }
-        Some(removed)
-    }
-
-    pub fn child(&self, id: ViewId) -> Option<&ViewNode> {
-        self.children.iter().find(|c| c.id == id)
-    }
-
-    pub fn child_mut(&mut self, id: ViewId) -> Option<&mut ViewNode> {
-        self.children.iter_mut().find(|c| c.id == id)
     }
 
     fn first_focusable_child(&self) -> Option<ViewId> {
@@ -535,7 +506,7 @@ impl VBox {
     }
 }
 
-impl View for VBox {
+impl View for VStackView {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }
@@ -1250,7 +1221,7 @@ impl View for VBox {
     }
 }
 
-pub struct HBox {
+pub(super) struct HStackView {
     id: ViewId,
     children: Vec<ViewNode>,
     padding: Binding<EdgeInsets>,
@@ -1266,13 +1237,13 @@ pub struct HBox {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl Default for HBox {
+impl Default for HStackView {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl HBox {
+impl HStackView {
     pub fn new() -> Self {
         Self {
             id: ViewId::next(),
@@ -1289,10 +1260,6 @@ impl HBox {
             scrollbars: None,
             scrollbar_drag: None,
         }
-    }
-
-    pub fn id(&self) -> ViewId {
-        self.id
     }
 
     pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
@@ -1318,14 +1285,6 @@ impl HBox {
         self
     }
 
-    pub fn child_count(&self) -> usize {
-        self.children.len()
-    }
-
-    pub fn add_child(&mut self, view: Box<dyn View>) -> ViewId {
-        self.add_child_with_layout(view, LayoutParams::default())
-    }
-
     pub fn add_child_with_layout(&mut self, view: Box<dyn View>, layout: LayoutParams) -> ViewId {
         let mut node = ViewNode::new(view).with_layout(layout);
         node.parent = Some(self.id);
@@ -1335,23 +1294,6 @@ impl HBox {
         }
         self.children.push(node);
         id
-    }
-
-    pub fn remove_child(&mut self, id: ViewId) -> Option<ViewNode> {
-        let idx = self.children.iter().position(|c| c.id == id)?;
-        let removed = self.children.remove(idx);
-        if self.focused == Some(id) {
-            self.focused = self.first_focusable_child();
-        }
-        Some(removed)
-    }
-
-    pub fn child(&self, id: ViewId) -> Option<&ViewNode> {
-        self.children.iter().find(|c| c.id == id)
-    }
-
-    pub fn child_mut(&mut self, id: ViewId) -> Option<&mut ViewNode> {
-        self.children.iter_mut().find(|c| c.id == id)
     }
 
     fn first_focusable_child(&self) -> Option<ViewId> {
@@ -1651,7 +1593,7 @@ impl HBox {
     }
 }
 
-impl View for HBox {
+impl View for HStackView {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }

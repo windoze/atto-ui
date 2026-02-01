@@ -5,7 +5,7 @@ use crate::reactive::Binding;
 use crate::view::{View, ViewContext};
 use crate::views::{EdgeInsets, LayoutParams, ScrollConfig};
 
-use super::stack_view::VStackView;
+use super::stack_view::HStackView;
 use super::view::{DeclarativeView, EmptyView};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,11 +18,8 @@ struct ChildSpec {
     layout: ChildLayout,
 }
 
-/// Vertical stack container (SwiftUI-style `VStack`).
-///
-/// This is a declarative builder. At runtime, it builds an internal `View` implementation that
-/// performs the full Chatty layout + event routing behavior (focus, scrolling, anchors, etc).
-pub struct VStack {
+/// Horizontal stack container (SwiftUI-style `HStack`).
+pub struct HStack {
     children: Vec<ChildSpec>,
     spacing: Binding<u16>,
     padding: Binding<EdgeInsets>,
@@ -30,13 +27,13 @@ pub struct VStack {
     scroll_config: Binding<ScrollConfig>,
 }
 
-impl Default for VStack {
+impl Default for HStack {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VStack {
+impl HStack {
     pub fn new() -> Self {
         Self {
             children: Vec::new(),
@@ -93,7 +90,7 @@ impl VStack {
     }
 }
 
-impl DeclarativeView for VStack {
+impl DeclarativeView for HStack {
     fn body(&self) -> Box<dyn DeclarativeView> {
         Box::new(EmptyView)
     }
@@ -111,43 +108,43 @@ impl DeclarativeView for VStack {
             return;
         }
 
-        let mut y = content_area.y;
-        let bottom = content_area.y.saturating_add(content_area.height);
+        let mut x = content_area.x;
+        let right = content_area.x.saturating_add(content_area.width);
 
         for (idx, child) in self.children.iter().enumerate() {
-            if y >= bottom {
+            if x >= right {
                 break;
             }
 
-            let height_left = bottom.saturating_sub(y);
+            let width_left = right.saturating_sub(x);
             let child_area = Rect {
-                x: content_area.x,
-                y,
-                width: content_area.width,
-                height: 1.min(height_left),
+                x,
+                y: content_area.y,
+                width: 1.min(width_left),
+                height: content_area.height,
             };
 
             child.view.render(frame, child_area, ctx);
 
-            y = y.saturating_add(child_area.height);
+            x = x.saturating_add(child_area.width);
             if idx + 1 < self.children.len() {
-                y = y.saturating_add(spacing);
+                x = x.saturating_add(spacing);
             }
         }
     }
 
     fn build_view(&self) -> Box<dyn View> {
-        let mut vstack = VStackView::new()
+        let mut hstack = HStackView::new()
             .with_padding(self.padding.clone())
             .with_spacing(self.spacing.clone())
             .with_scrollable(self.scrollable.clone())
             .with_scroll_config(self.scroll_config.clone());
 
         for child in &self.children {
-            vstack.add_child_with_layout(child.view.build_view(), child.layout.layout);
+            hstack.add_child_with_layout(child.view.build_view(), child.layout.layout);
         }
 
-        Box::new(vstack)
+        Box::new(hstack)
     }
 }
 

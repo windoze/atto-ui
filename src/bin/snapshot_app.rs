@@ -17,10 +17,10 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use chatty::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, VStack};
 use chatty::reactive::{EventQueue, Property};
 use chatty::theme::Theme;
 use chatty::view::{View, ViewContext, ViewEventResult};
-use chatty::views::{ControlView, EdgeInsets, HBox, LayoutParams, Size, VBox};
 use chatty::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
@@ -142,43 +142,36 @@ impl View for WidgetsView {
     }
 }
 
-fn view_hierarchy_demo() -> VBox {
-    let mut root = VBox::new().with_padding(EdgeInsets::all(1)).with_spacing(1);
+fn view_hierarchy_demo() -> Box<dyn View> {
+    let row = HStack::new()
+        .spacing(2)
+        .child_with_layout(
+            Checkbox::new("Nested checkbox", Property::new(false).binding()),
+            LayoutParams {
+                width: Size::Fixed(20),
+                ..LayoutParams::default()
+            },
+        )
+        .child(Label::new("click to toggle"));
 
-    root.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Label::new(
-            "View hierarchy demo (VBox + HBox + ControlView)",
-        )))),
-        LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    );
-
-    let mut row = HBox::new().with_spacing(2);
-    row.add_child_with_layout(
-        Box::new(ControlView::new(Box::new(Checkbox::new(
-            "Nested checkbox",
-            Property::new(false).binding(),
-        )))),
-        LayoutParams {
-            width: Size::Fixed(20),
-            ..LayoutParams::default()
-        },
-    );
-    row.add_child(Box::new(ControlView::new(Box::new(Label::new(
-        "click to toggle",
-    )))));
-
-    root.add_child_with_layout(
-        Box::new(row),
-        LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    );
-
-    root
+    VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(1)
+        .child_with_layout(
+            Label::new("View hierarchy demo (VStack + HStack)"),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            row,
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .build_view()
 }
 
 #[derive(Default)]
@@ -307,7 +300,7 @@ fn main() -> Result<()> {
                 width: 30,
                 height: 8,
             },
-            Box::new(view_hierarchy_demo()),
+            view_hierarchy_demo(),
         ),
         screen,
     );

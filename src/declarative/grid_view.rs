@@ -7,12 +7,12 @@ use ratatui::layout::Rect;
 use crate::reactive::Binding;
 use crate::view::{View, ViewContext, ViewEventResult};
 
-use super::layout::{add_signed, apply_padding};
-use super::scroll::{
+use crate::views::layout::{add_signed, apply_padding};
+use crate::views::scroll::{
     ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset, max_scroll_offset,
     scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
 };
-use super::{
+use crate::views::{
     Align, Anchor, EdgeInsets, LayoutParams, ScrollConfig, ScrollOffset, Size, ViewId, ViewNode,
 };
 
@@ -134,7 +134,7 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
     (w, h)
 }
 
-pub struct Grid {
+pub(super) struct GridView {
     id: ViewId,
     children: Vec<ViewNode>,
     columns: Binding<usize>,
@@ -152,12 +152,12 @@ pub struct Grid {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl Grid {
-    pub fn new(columns: usize) -> Self {
+impl GridView {
+    pub fn new() -> Self {
         Self {
             id: ViewId::next(),
             children: Vec::new(),
-            columns: columns.max(1).into(),
+            columns: 1usize.into(),
             padding: EdgeInsets::ZERO.into(),
             row_gap: 0u16.into(),
             column_gap: 0u16.into(),
@@ -171,10 +171,6 @@ impl Grid {
             scrollbars: None,
             scrollbar_drag: None,
         }
-    }
-
-    pub fn id(&self) -> ViewId {
-        self.id
     }
 
     pub fn with_columns(mut self, columns: impl Into<Binding<usize>>) -> Self {
@@ -210,14 +206,6 @@ impl Grid {
         self
     }
 
-    pub fn child_count(&self) -> usize {
-        self.children.len()
-    }
-
-    pub fn add_child(&mut self, view: Box<dyn View>) -> ViewId {
-        self.add_child_with_layout(view, LayoutParams::default())
-    }
-
     pub fn add_child_with_layout(&mut self, view: Box<dyn View>, layout: LayoutParams) -> ViewId {
         let mut node = ViewNode::new(view).with_layout(layout);
         node.parent = Some(self.id);
@@ -227,23 +215,6 @@ impl Grid {
         }
         self.children.push(node);
         id
-    }
-
-    pub fn remove_child(&mut self, id: ViewId) -> Option<ViewNode> {
-        let idx = self.children.iter().position(|c| c.id == id)?;
-        let removed = self.children.remove(idx);
-        if self.focused == Some(id) {
-            self.focused = self.first_focusable_child();
-        }
-        Some(removed)
-    }
-
-    pub fn child(&self, id: ViewId) -> Option<&ViewNode> {
-        self.children.iter().find(|c| c.id == id)
-    }
-
-    pub fn child_mut(&mut self, id: ViewId) -> Option<&mut ViewNode> {
-        self.children.iter_mut().find(|c| c.id == id)
     }
 
     fn first_focusable_child(&self) -> Option<ViewId> {
@@ -542,7 +513,7 @@ impl Grid {
     }
 }
 
-impl View for Grid {
+impl View for GridView {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }
