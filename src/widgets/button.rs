@@ -55,6 +55,14 @@ impl Button {
 }
 
 impl Control for Button {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        3
+    }
+
     fn is_focusable(&self) -> bool {
         self.enabled.get()
     }

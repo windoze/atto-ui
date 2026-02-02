@@ -86,6 +86,27 @@ pub trait View: Send {
         false
     }
 
+    /// Minimum width required for this view to be usable.
+    ///
+    /// This is used by layout containers (and optionally windows) to avoid rendering focusable
+    /// widgets in partially-clipped states where they cannot be interacted with reliably.
+    ///
+    /// Default: `0` (no minimum).
+    fn min_width(&self) -> u16 {
+        0
+    }
+
+    /// Minimum height required for this view to be usable.
+    ///
+    /// Default: `0` (no minimum).
+    fn min_height(&self) -> u16 {
+        0
+    }
+
+    fn min_size(&self) -> (u16, u16) {
+        (self.min_width(), self.min_height())
+    }
+
     fn desired_width(&self) -> Option<u16> {
         None
     }

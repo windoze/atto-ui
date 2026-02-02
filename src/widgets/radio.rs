@@ -63,6 +63,15 @@ impl RadioGroup {
 }
 
 impl Control for RadioGroup {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        // Title row + at least one option row (if any options exist).
+        if self.options.get().is_empty() { 1 } else { 2 }
+    }
+
     fn is_focusable(&self) -> bool {
         self.enabled.get() && !self.options.get().is_empty()
     }

@@ -79,6 +79,24 @@ impl View for BorderView {
         self.inner.is_focusable()
     }
 
+    fn min_width(&self) -> u16 {
+        let inner = self.inner.min_width();
+        if self.border.get() {
+            inner.saturating_add(2).max(3)
+        } else {
+            inner
+        }
+    }
+
+    fn min_height(&self) -> u16 {
+        let inner = self.inner.min_height();
+        if self.border.get() {
+            inner.saturating_add(2).max(3)
+        } else {
+            inner
+        }
+    }
+
     fn desired_width(&self) -> Option<u16> {
         let w = self.inner.desired_width()?;
         Some(w.saturating_add(if self.border.get() { 2 } else { 0 }))

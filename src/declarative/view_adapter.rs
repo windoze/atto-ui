@@ -32,6 +32,14 @@ impl View for ViewAdapter {
         self.inner.is_focusable()
     }
 
+    fn min_width(&self) -> u16 {
+        self.inner.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.inner.min_height()
+    }
+
     fn desired_width(&self) -> Option<u16> {
         self.inner.desired_width()
     }

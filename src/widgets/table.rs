@@ -77,6 +77,15 @@ impl TableView {
 }
 
 impl Control for TableView {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        // Table needs borders + header + at least one data row to be usable.
+        4
+    }
+
     fn is_focusable(&self) -> bool {
         self.enabled.get()
     }

@@ -77,6 +77,14 @@ impl ListBox {
 }
 
 impl Control for ListBox {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        3
+    }
+
     fn is_focusable(&self) -> bool {
         self.enabled.get()
     }

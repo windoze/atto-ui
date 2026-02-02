@@ -77,6 +77,7 @@ We should define a structure like:
 ```
 Above is just an example structure, the actual design may differ. The key point is, controls or user app can also defines their own glyphs/styles/colors with custom names, so the theme can also applied to user-defined widgets.
 App can load all glyphs, styles, and colors from a JSON/YAML file into a `Theme` struct and apply to the whole app, or use default built-in theme if no file is provided.
+Make a plan first, then update the IMPLEMENTATION_PLAN.md accordingly, then start implementation.
 
 ## Virtual Scrolling
 

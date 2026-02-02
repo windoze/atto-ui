@@ -6,15 +6,22 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::reactive::Binding;
+use crate::reactive::{Binding, DirtyObserver};
 use crate::view::{View, ViewContext};
-use crate::views::{EdgeInsets, LayoutParams, ScrollConfig};
+use crate::views::{EdgeInsets, LayoutParams, ScrollConfig, Size, ViewNode};
 
 use super::identifiable::Identifiable;
 use super::stack_view::VStackView;
 use super::view::{DeclarativeView, EmptyView};
 
 pub type BuilderFn<T, V> = dyn Fn(&T, usize) -> V + Send + Sync;
+
+fn default_foreach_item_layout() -> LayoutParams {
+    LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    }
+}
 
 /// ForEach 容器 - 根据数据列表动态生成子视图
 ///
@@ -353,17 +360,23 @@ where
     }
 
     fn build_view(&self) -> Box<dyn View> {
-        Box::new(ForEachIdentifiableView {
+        let vstack = VStackView::new()
+            .with_padding(self.padding.clone())
+            .with_spacing(self.spacing.clone())
+            .with_scrollable(self.scrollable.clone())
+            .with_scroll_config(self.scroll_config.clone());
+
+        let mut view = ForEachIdentifiableView {
             data: self.data.clone(),
             builder: self.builder.clone(),
-            spacing: self.spacing.clone(),
-            padding: self.padding.clone(),
-            scrollable: self.scrollable.clone(),
-            scroll_config: self.scroll_config.clone(),
-            cached_views: HashMap::new(),
+            cached_view: Box::new(vstack),
+            cached_items: HashMap::new(),
             cached_ids: Vec::new(),
+            data_observer: self.data.dirty_observer(),
             _phantom: PhantomData,
-        })
+        };
+        view.reconcile_children();
+        Box::new(view)
     }
 }
 
@@ -433,16 +446,21 @@ where
     }
 
     fn build_view(&self) -> Box<dyn View> {
-        Box::new(ForEachView {
+        let vstack = VStackView::new()
+            .with_padding(self.padding.clone())
+            .with_spacing(self.spacing.clone())
+            .with_scrollable(self.scrollable.clone())
+            .with_scroll_config(self.scroll_config.clone());
+
+        let mut view = ForEachView {
             data: self.data.clone(),
             builder: self.builder.clone(),
-            spacing: self.spacing.clone(),
-            padding: self.padding.clone(),
-            scrollable: self.scrollable.clone(),
-            scroll_config: self.scroll_config.clone(),
-            cached_view: None,
+            cached_view: Box::new(vstack),
+            data_observer: self.data.dirty_observer(),
             _phantom: PhantomData,
-        })
+        };
+        view.rebuild_children();
+        Box::new(view)
     }
 }
 
@@ -456,11 +474,8 @@ where
 {
     data: Binding<Vec<T>>,
     builder: Arc<BuilderFn<T, V>>,
-    spacing: Binding<u16>,
-    padding: Binding<EdgeInsets>,
-    scrollable: Binding<bool>,
-    scroll_config: Binding<ScrollConfig>,
-    cached_view: Option<Box<VStackView>>,
+    cached_view: Box<VStackView>,
+    data_observer: DirtyObserver,
     _phantom: PhantomData<V>,
 }
 
@@ -469,22 +484,16 @@ where
     T: Clone + PartialEq + Send + Sync + 'static,
     V: DeclarativeView + 'static,
 {
-    fn rebuild(&mut self) {
+    fn rebuild_children(&mut self) {
         let items = self.data.get();
 
-        let mut vstack = VStackView::new()
-            .with_padding(self.padding.clone())
-            .with_spacing(self.spacing.clone())
-            .with_scrollable(self.scrollable.clone())
-            .with_scroll_config(self.scroll_config.clone());
-
+        let mut children = Vec::with_capacity(items.len());
         for (idx, item) in items.iter().enumerate() {
-            let child_view = (self.builder)(item, idx);
-            vstack.add_child_with_layout(child_view.build_view(), LayoutParams::default());
+            let child_view = (self.builder)(item, idx).build_view();
+            children.push(ViewNode::new(child_view).with_layout(default_foreach_item_layout()));
         }
 
-        self.cached_view = Some(Box::new(vstack));
-        self.data.mark_clean();
+        self.cached_view.replace_children(children);
     }
 }
 
@@ -493,37 +502,72 @@ where
     T: Clone + PartialEq + Send + Sync + 'static,
     V: DeclarativeView + 'static,
 {
+    fn desired_width(&self) -> Option<u16> {
+        self.cached_view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.cached_view.desired_height()
+    }
+
+    fn children(&self) -> &[ViewNode] {
+        self.cached_view.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ViewNode>> {
+        self.cached_view.children_mut()
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.cached_view.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.cached_view.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.cached_view.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.cached_view.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.cached_view.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.cached_view.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: crate::views::ViewId) {
+        self.cached_view.scroll_to_child(child_id);
+    }
+
     fn handle_event(
         &mut self,
         event: &crossterm::event::Event,
         ctx: ViewContext<'_>,
     ) -> crate::view::ViewEventResult {
-        // 如果数据变化，重新构建
-        if self.data.is_dirty() || self.cached_view.is_none() {
-            self.rebuild();
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.rebuild_children();
         }
 
-        if let Some(ref mut view) = self.cached_view {
-            view.handle_event(event, ctx)
-        } else {
-            crate::view::ViewEventResult::ignored()
-        }
+        self.cached_view.handle_event(event, ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        // 如果数据变化，重新构建
-        if self.data.is_dirty() || self.cached_view.is_none() {
-            self.rebuild();
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.rebuild_children();
         }
 
-        if let Some(ref mut view) = self.cached_view {
-            view.draw(frame, area, ctx);
-        }
+        self.cached_view.draw(frame, area, ctx);
     }
 
     fn is_focusable(&self) -> bool {
-        // ForEach 本身可能包含可聚焦的子元素
-        true
+        self.cached_view.is_focusable()
     }
 }
 
@@ -542,14 +586,10 @@ where
 {
     data: Binding<Vec<T>>,
     builder: Arc<BuilderFn<T, V>>,
-    spacing: Binding<u16>,
-    padding: Binding<EdgeInsets>,
-    scrollable: Binding<bool>,
-    scroll_config: Binding<ScrollConfig>,
-    /// 缓存：ID -> 构建的 View
-    cached_views: HashMap<T::Id, Box<dyn View>>,
-    /// 上一次的 ID 列表（用于检测顺序变化）
+    cached_view: Box<VStackView>,
+    cached_items: HashMap<T::Id, T>,
     cached_ids: Vec<T::Id>,
+    data_observer: DirtyObserver,
     _phantom: PhantomData<V>,
 }
 
@@ -559,54 +599,59 @@ where
     T::Id: Hash + Eq + Send + Sync,
     V: DeclarativeView + 'static,
 {
-    /// 增量重建：只更新变化的部分
-    fn rebuild_incremental(&mut self) {
+    fn reconcile_children(&mut self) {
         let items = self.data.get();
-        let new_ids: Vec<T::Id> = items.iter().map(|item| item.id()).collect();
 
-        // 1. 移除不再存在的元素
-        self.cached_views.retain(|id, _| new_ids.contains(id));
+        let old_ids = std::mem::take(&mut self.cached_ids);
+        let old_children = {
+            let children = self
+                .cached_view
+                .children_mut()
+                .expect("VStackView should expose children_mut");
+            std::mem::take(children)
+        };
 
-        // 2. 为新元素或修改的元素创建/更新视图
+        let mut old_by_id: HashMap<T::Id, ViewNode> = HashMap::with_capacity(old_children.len());
+        if old_ids.len() == old_children.len() {
+            for (id, node) in old_ids.into_iter().zip(old_children) {
+                old_by_id.insert(id, node);
+            }
+        }
+
+        let old_cached_items = std::mem::take(&mut self.cached_items);
+        let mut new_cached_items = HashMap::with_capacity(items.len());
+        let mut new_children = Vec::with_capacity(items.len());
+        let mut new_ids = Vec::with_capacity(items.len());
+
         for (idx, item) in items.iter().enumerate() {
             let id = item.id();
+            let node = match old_by_id.remove(&id) {
+                Some(mut node) => {
+                    // Ensure the default layout is correct even for views created before this logic existed.
+                    node.layout = default_foreach_item_layout();
 
-            // 检查是否需要重建（新元素或内容变化）
-            let needs_rebuild = !self.cached_views.contains_key(&id);
+                    let needs_rebuild = old_cached_items
+                        .get(&id)
+                        .map_or(true, |old_item| old_item != item);
+                    if needs_rebuild {
+                        node.view = (self.builder)(item, idx).build_view();
+                    }
+                    node
+                }
+                None => {
+                    let child_view = (self.builder)(item, idx).build_view();
+                    ViewNode::new(child_view).with_layout(default_foreach_item_layout())
+                }
+            };
 
-            if needs_rebuild {
-                let child_view = (self.builder)(item, idx);
-                self.cached_views.insert(id, child_view.build_view());
-            }
+            new_cached_items.insert(id.clone(), item.clone());
+            new_ids.push(id);
+            new_children.push(node);
         }
 
-        // 3. 更新 ID 列表
+        self.cached_items = new_cached_items;
         self.cached_ids = new_ids;
-        self.data.mark_clean();
-    }
-
-    /// 构建最终的 VStackView（使用缓存的视图）
-    fn build_vstack(&self) -> Box<VStackView> {
-        let items = self.data.get();
-
-        let mut vstack = VStackView::new()
-            .with_padding(self.padding.clone())
-            .with_spacing(self.spacing.clone())
-            .with_scrollable(self.scrollable.clone())
-            .with_scroll_config(self.scroll_config.clone());
-
-        for item in items.iter() {
-            let id = item.id();
-            if let Some(_view) = self.cached_views.get(&id) {
-                // 注意：这里有个问题，VStackView::add_child_with_layout 需要 Box<dyn View>
-                // 但我们不能移动 HashMap 中的值。我们需要重新构建。
-                // 这个方法的实现需要改进，暂时使用简单重建
-                let child_view = (self.builder)(item, 0);
-                vstack.add_child_with_layout(child_view.build_view(), LayoutParams::default());
-            }
-        }
-
-        Box::new(vstack)
+        self.cached_view.replace_children(new_children);
     }
 }
 
@@ -616,34 +661,72 @@ where
     T::Id: Hash + Eq + Send + Sync,
     V: DeclarativeView + 'static,
 {
+    fn desired_width(&self) -> Option<u16> {
+        self.cached_view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.cached_view.desired_height()
+    }
+
+    fn children(&self) -> &[ViewNode] {
+        self.cached_view.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ViewNode>> {
+        self.cached_view.children_mut()
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.cached_view.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.cached_view.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.cached_view.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.cached_view.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.cached_view.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.cached_view.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: crate::views::ViewId) {
+        self.cached_view.scroll_to_child(child_id);
+    }
+
     fn handle_event(
         &mut self,
         event: &crossterm::event::Event,
         ctx: ViewContext<'_>,
     ) -> crate::view::ViewEventResult {
-        // 如果数据变化，增量重建
-        if self.data.is_dirty() {
-            self.rebuild_incremental();
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.reconcile_children();
         }
 
-        // 构建临时 VStackView 处理事件
-        let mut vstack = self.build_vstack();
-        vstack.handle_event(event, ctx)
+        self.cached_view.handle_event(event, ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        // 如果数据变化，增量重建
-        if self.data.is_dirty() {
-            self.rebuild_incremental();
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.reconcile_children();
         }
 
-        // 构建临时 VStackView 进行渲染
-        let mut vstack = self.build_vstack();
-        vstack.draw(frame, area, ctx);
+        self.cached_view.draw(frame, area, ctx);
     }
 
     fn is_focusable(&self) -> bool {
-        true
+        self.cached_view.is_focusable()
     }
 }
 
@@ -670,6 +753,28 @@ mod tests {
     use super::*;
     use crate::declarative::Text;
     use crate::reactive::Property;
+    use crate::theme::Theme;
+    use crate::view::ScrollbarHost;
+    use crate::wm::WindowId;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn draw_imperative(view: &mut dyn View, area: Rect, scrollbar_host: ScrollbarHost) {
+        let theme = Theme::dark();
+        let ctx = ViewContext {
+            theme: &theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host,
+        };
+
+        let backend = TestBackend::new(area.width.max(1), area.height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+    }
 
     #[test]
     fn test_foreach_empty_list() {
@@ -768,5 +873,218 @@ mod tests {
         // 验证可以创建优化的 ForEach
         let children = for_each.build_children();
         assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn foreach_scroll_metrics_reflect_content_rows() {
+        let data = Property::new((0..20).map(|i| format!("Item {i}")).collect::<Vec<_>>());
+        let for_each = ForEach::new(data.binding(), |item, idx| {
+            Text::new(format!("{idx}: {item}"))
+        })
+        .scrollable(true);
+
+        let mut view = for_each.build_view();
+        draw_imperative(&mut *view, Rect::new(0, 0, 20, 5), ScrollbarHost::Window);
+
+        assert!(view.is_scrollable(), "expected ForEach to be scrollable");
+        assert!(
+            !view.is_focusable(),
+            "Text rows are not focusable, so ForEach should not be focusable"
+        );
+
+        let (_content_w, content_h) = view.content_size();
+        let (_viewport_w, viewport_h) = view.viewport_size();
+        assert!(
+            content_h > viewport_h,
+            "expected content height ({content_h}) to exceed viewport height ({viewport_h})"
+        );
+    }
+
+    #[test]
+    fn foreach_multiple_views_share_binding_without_missing_updates() {
+        let data = Property::new(vec!["A".to_string()]);
+        let binding = data.binding();
+
+        let for_each_1 =
+            ForEach::new(binding.clone(), |item, _| Text::new(item.clone())).scrollable(true);
+        let for_each_2 = ForEach::new(binding, |item, _| Text::new(item.clone())).scrollable(true);
+
+        let mut view1 = for_each_1.build_view();
+        let mut view2 = for_each_2.build_view();
+
+        draw_imperative(&mut *view1, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+        draw_imperative(&mut *view2, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+
+        data.set(vec!["A".to_string(), "B".to_string()]);
+
+        // If one view clears a shared dirty flag, the other view would miss the update.
+        draw_imperative(&mut *view1, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+        draw_imperative(&mut *view2, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+
+        assert_eq!(view1.children().len(), 2);
+        assert_eq!(view2.children().len(), 2);
+    }
+
+    #[test]
+    fn foreach_with_id_reuses_child_views_across_draws_and_reorder() {
+        #[derive(Clone, PartialEq)]
+        struct Item {
+            id: usize,
+            value: String,
+        }
+
+        impl Identifiable for Item {
+            type Id = usize;
+
+            fn id(&self) -> Self::Id {
+                self.id
+            }
+        }
+
+        let build_count = Arc::new(AtomicUsize::new(0));
+        let build_count_for_builder = Arc::clone(&build_count);
+
+        let data = Property::new(vec![
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B".to_string(),
+            },
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+        ]);
+
+        let list = ForEach::new(data.binding(), move |item, _idx| {
+            build_count_for_builder.fetch_add(1, Ordering::Relaxed);
+            Text::new(item.value.clone())
+        })
+        .scrollable(true)
+        .with_id();
+
+        let mut view = list.build_view();
+        assert_eq!(
+            build_count.load(Ordering::Relaxed),
+            3,
+            "initial build should create one view per item"
+        );
+
+        draw_imperative(&mut *view, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+        draw_imperative(&mut *view, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+
+        assert_eq!(
+            build_count.load(Ordering::Relaxed),
+            3,
+            "drawing without data changes should not rebuild children"
+        );
+
+        let before_ids: Vec<_> = view.children().iter().map(|c| c.id).collect();
+
+        // Reorder items (same IDs, same content).
+        data.set(vec![
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B".to_string(),
+            },
+        ]);
+        draw_imperative(&mut *view, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+
+        assert_eq!(
+            build_count.load(Ordering::Relaxed),
+            3,
+            "reordering should reuse existing child views"
+        );
+
+        let after_ids: Vec<_> = view.children().iter().map(|c| c.id).collect();
+        assert_ne!(before_ids, after_ids, "expected child order to change");
+
+        let mut before_sorted = before_ids.clone();
+        before_sorted.sort_by_key(|id| id.0);
+        let mut after_sorted = after_ids.clone();
+        after_sorted.sort_by_key(|id| id.0);
+        assert_eq!(
+            before_sorted, after_sorted,
+            "expected child view identities to be preserved across reorder"
+        );
+    }
+
+    #[test]
+    fn foreach_with_id_rebuilds_only_changed_items() {
+        #[derive(Clone, PartialEq)]
+        struct Item {
+            id: usize,
+            value: String,
+        }
+
+        impl Identifiable for Item {
+            type Id = usize;
+
+            fn id(&self) -> Self::Id {
+                self.id
+            }
+        }
+
+        let build_count = Arc::new(AtomicUsize::new(0));
+        let build_count_for_builder = Arc::clone(&build_count);
+
+        let data = Property::new(vec![
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B".to_string(),
+            },
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+        ]);
+
+        let list = ForEach::new(data.binding(), move |item, _idx| {
+            build_count_for_builder.fetch_add(1, Ordering::Relaxed);
+            Text::new(item.value.clone())
+        })
+        .with_id();
+
+        let mut view = list.build_view();
+        assert_eq!(build_count.load(Ordering::Relaxed), 3);
+
+        // Change only one item.
+        data.set(vec![
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B (changed)".to_string(),
+            },
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+        ]);
+
+        draw_imperative(&mut *view, Rect::new(0, 0, 10, 3), ScrollbarHost::View);
+
+        assert_eq!(
+            build_count.load(Ordering::Relaxed),
+            4,
+            "expected only the changed item to be rebuilt"
+        );
     }
 }

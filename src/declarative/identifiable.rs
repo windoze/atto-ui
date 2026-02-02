@@ -141,9 +141,12 @@ mod tests {
             }
         }
 
-        let tuple = (123usize, User {
-            name: "Alice".to_string(),
-        });
+        let tuple = (
+            123usize,
+            User {
+                name: "Alice".to_string(),
+            },
+        );
         assert_eq!(tuple.id(), 123);
     }
 }

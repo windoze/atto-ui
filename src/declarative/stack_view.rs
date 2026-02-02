@@ -209,6 +209,27 @@ impl VStackView {
         id
     }
 
+    pub fn replace_children(&mut self, mut children: Vec<ViewNode>) {
+        for child in children.iter_mut() {
+            child.parent = Some(self.id);
+        }
+
+        self.children = children;
+
+        let focused_valid = self.focused.is_some_and(|id| {
+            self.children
+                .iter()
+                .any(|child| child.id == id && child.view.is_focusable())
+        });
+
+        if !focused_valid {
+            self.focused = self.first_focusable_child();
+        }
+
+        // Any in-progress scrollbar drag is no longer valid after restructuring children.
+        self.scrollbar_drag = None;
+    }
+
     fn first_focusable_child(&self) -> Option<ViewId> {
         self.children
             .iter()
@@ -354,6 +375,38 @@ impl VStackView {
         None
     }
 
+    fn desired_height_flow(&self) -> u16 {
+        let spacing = self.spacing.get();
+        let padding = self.padding.get();
+
+        let mut total: u16 = padding.top.saturating_add(padding.bottom);
+        let mut first_flow = true;
+
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            if !first_flow {
+                total = total.saturating_add(spacing);
+            }
+            first_flow = false;
+
+            let margin = child.layout.margin;
+            total = total
+                .saturating_add(margin.top)
+                .saturating_add(margin.bottom);
+
+            let min_h = child.view.min_height();
+            let h = match child.layout.height {
+                Size::Fixed(h) => h,
+                Size::Content => child.view.desired_height().unwrap_or(1),
+                Size::Fill | Size::Weight(_) => min_h,
+            }
+            .max(min_h);
+
+            total = total.saturating_add(h);
+        }
+
+        total
+    }
+
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
         let spacing = self.spacing.get();
@@ -362,7 +415,7 @@ impl VStackView {
         #[derive(Clone, Copy, Debug)]
         enum HeightSpec {
             Fixed(u16),
-            Weight(u16),
+            Weight { weight: u16, min: u16 },
         }
 
         let mut specs: Vec<Option<HeightSpec>> = vec![None; self.children.len()];
@@ -382,15 +435,28 @@ impl VStackView {
                 .saturating_add(margin.top)
                 .saturating_add(margin.bottom);
 
+            let min_h = child.view.min_height();
             let h = match child.layout.height {
-                Size::Fixed(h) => HeightSpec::Fixed(h),
-                Size::Content => HeightSpec::Fixed(child.view.desired_height().unwrap_or(1)),
-                Size::Weight(w) => HeightSpec::Weight(w.max(1)),
-                Size::Fill => HeightSpec::Weight(1),
+                Size::Fixed(h) => HeightSpec::Fixed(h.max(min_h)),
+                Size::Content => {
+                    let desired = child.view.desired_height().unwrap_or(1);
+                    HeightSpec::Fixed(desired.max(min_h))
+                }
+                Size::Weight(w) => HeightSpec::Weight {
+                    weight: w.max(1),
+                    min: min_h,
+                },
+                Size::Fill => HeightSpec::Weight {
+                    weight: 1,
+                    min: min_h,
+                },
             };
             match h {
                 HeightSpec::Fixed(v) => fixed_total = fixed_total.saturating_add(v),
-                HeightSpec::Weight(w) => weight_total = weight_total.saturating_add(w),
+                HeightSpec::Weight { weight, min } => {
+                    fixed_total = fixed_total.saturating_add(min);
+                    weight_total = weight_total.saturating_add(weight);
+                }
             }
             specs[idx] = Some(h);
         }
@@ -409,7 +475,7 @@ impl VStackView {
         if weight_total > 0 && remaining > 0 {
             let mut used: u16 = 0;
             for (idx, spec) in specs.iter().enumerate() {
-                let Some(HeightSpec::Weight(w)) = spec else {
+                let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
                     continue;
                 };
                 let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
@@ -425,7 +491,7 @@ impl VStackView {
                     if remaining == 0 {
                         break;
                     }
-                    if matches!(spec, Some(HeightSpec::Weight(_))) {
+                    if matches!(spec, Some(HeightSpec::Weight { .. })) {
                         allocated[idx] = allocated[idx].saturating_add(1);
                         remaining = remaining.saturating_sub(1);
                     }
@@ -435,6 +501,7 @@ impl VStackView {
 
         let mut cursor_y: u16 = 0;
         let mut first_flow = true;
+        let mut out_of_space = false;
 
         for (idx, child) in self.children.iter_mut().enumerate() {
             if let Some(anchor) = child.layout.anchor {
@@ -451,9 +518,15 @@ impl VStackView {
                 }
                 .min(content_h);
 
+                let (min_w, min_h) = child.view.min_size();
+                if content_w < min_w || content_h < min_h {
+                    child.set_bounds(Rect::default());
+                    continue;
+                }
+
                 child.set_bounds(position_anchored(
                     viewport_size,
-                    (desired_w, desired_h),
+                    (desired_w.max(min_w), desired_h.max(min_h)),
                     anchor.anchor,
                     anchor.offset_x,
                     anchor.offset_y,
@@ -474,20 +547,41 @@ impl VStackView {
                 continue;
             }
 
+            if out_of_space {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
             let slot_h = match specs[idx] {
                 Some(HeightSpec::Fixed(h)) => h,
-                Some(HeightSpec::Weight(_)) => allocated[idx],
+                Some(HeightSpec::Weight { min, .. }) => min.saturating_add(allocated[idx]),
                 None => 0,
             };
+
+            let max_h = content_h.saturating_sub(cursor_y);
+            let available_w = content_w.saturating_sub(margin.left.saturating_add(margin.right));
+            let min_w = child.view.min_width();
+            let required_w = match child.layout.width {
+                Size::Fixed(w) => w.max(min_w),
+                Size::Content => child.view.desired_width().unwrap_or(1).max(min_w),
+                Size::Fill | Size::Weight(_) => min_w,
+            };
+            if available_w < required_w {
+                child.set_bounds(Rect::default());
+                continue;
+            }
 
             let h = if scrollable {
                 slot_h
             } else {
-                let max_h = content_h.saturating_sub(cursor_y);
-                slot_h.min(max_h)
+                slot_h.min(max_h.saturating_sub(margin.bottom))
             };
+            if h == 0 {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
 
-            let available_w = content_w.saturating_sub(margin.left.saturating_add(margin.right));
             let slot = Rect {
                 x: margin.left,
                 y: cursor_y,
@@ -509,6 +603,10 @@ impl VStackView {
 impl View for VStackView {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.desired_height_flow())
     }
 
     fn children(&self) -> &[ViewNode] {
@@ -1440,6 +1538,31 @@ impl HStackView {
         None
     }
 
+    fn desired_height_flow(&self) -> u16 {
+        let padding = self.padding.get();
+
+        let mut max_child: u16 = 0;
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            let margin = child.layout.margin;
+
+            let min_h = child.view.min_height();
+            let h = match child.layout.height {
+                Size::Fixed(h) => h,
+                Size::Content => child.view.desired_height().unwrap_or(1),
+                Size::Fill | Size::Weight(_) => min_h,
+            }
+            .max(min_h);
+
+            let h = h.saturating_add(margin.top).saturating_add(margin.bottom);
+            max_child = max_child.max(h);
+        }
+
+        padding
+            .top
+            .saturating_add(padding.bottom)
+            .saturating_add(max_child)
+    }
+
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
         let spacing = self.spacing.get();
@@ -1596,6 +1719,10 @@ impl HStackView {
 impl View for HStackView {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.desired_height_flow())
     }
 
     fn children(&self) -> &[ViewNode] {

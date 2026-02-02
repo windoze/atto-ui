@@ -608,6 +608,168 @@ fn grid_layout_columns_and_row_heights() {
 }
 
 #[test]
+fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children() {
+    #[derive(Default)]
+    struct MinHeightView {
+        min_h: u16,
+        desired_h: Option<u16>,
+    }
+
+    impl View for MinHeightView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut vstack = VStackView::new()
+        .with_padding(EdgeInsets {
+            top: 2,
+            right: 0,
+            bottom: 3,
+            left: 0,
+        })
+        .with_spacing(1u16);
+
+    vstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 0,
+            desired_h: Some(1),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            margin: EdgeInsets {
+                top: 1,
+                bottom: 2,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+
+    // Fixed height < min height should contribute min height.
+    vstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 6,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Fixed(4),
+            ..LayoutParams::default()
+        },
+    );
+
+    // Fill should contribute only min height when asked for desired height.
+    vstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 2,
+            desired_h: Some(999),
+        }),
+        LayoutParams {
+            height: Size::Fill,
+            margin: EdgeInsets {
+                top: 1,
+                bottom: 1,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+
+    // Anchored children should not affect the flow desired size.
+    vstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 50,
+            desired_h: Some(50),
+        }),
+        LayoutParams {
+            height: Size::Fixed(50),
+            anchor: Some(AnchorPlacement {
+                anchor: Anchor::TopLeft,
+                offset_x: 0,
+                offset_y: 0,
+            }),
+            ..LayoutParams::default()
+        },
+    );
+
+    // Expected:
+    // padding: top+bottom = 5
+    // child1: margin 3 + height 1 = 4
+    // spacing: 1
+    // child2: fixed 4 -> min 6 = 6
+    // spacing: 1
+    // child3: margin 2 + min 2 = 4
+    // total = 5 + 4 + 1 + 6 + 1 + 4 = 21
+    assert_eq!(vstack.desired_height(), Some(21));
+}
+
+#[test]
+fn hstack_desired_height_is_max_child_height_plus_padding() {
+    #[derive(Default)]
+    struct MinHeightView {
+        min_h: u16,
+        desired_h: Option<u16>,
+    }
+
+    impl View for MinHeightView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut hstack = HStackView::new().with_padding(EdgeInsets {
+        top: 1,
+        right: 0,
+        bottom: 1,
+        left: 0,
+    });
+
+    hstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 3,
+            desired_h: Some(2),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    hstack.add_child_with_layout(
+        Box::new(MinHeightView {
+            min_h: 1,
+            desired_h: Some(1),
+        }),
+        LayoutParams {
+            height: Size::Fixed(5),
+            margin: EdgeInsets {
+                top: 1,
+                ..EdgeInsets::ZERO
+            },
+            ..LayoutParams::default()
+        },
+    );
+
+    // child1: max(desired=2, min=3) = 3
+    // child2: fixed 5 + margin top 1 = 6
+    // max = 6
+    // padding = 2
+    assert_eq!(hstack.desired_height(), Some(8));
+}
+
+#[test]
 fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     #[derive(Default)]
     struct BlankLineView;

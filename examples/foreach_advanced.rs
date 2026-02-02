@@ -13,7 +13,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use chatty::app::{Desktop, MenuBar};
-use chatty::declarative::{DeclarativeView, Divider, ForEach, Identifiable, LayoutParams, Size, Text, VStack};
+use chatty::declarative::{
+    DeclarativeView, Divider, ForEach, Identifiable, LayoutParams, Size, Text, VStack,
+};
 use chatty::reactive::{EventQueue, Property};
 use chatty::theme::Theme;
 use chatty::view::View;
@@ -25,7 +27,7 @@ use chatty_macros::view_builder;
 struct TodoItem {
     id: usize,
     text: String,
-    completed: Property<bool>,  // 每个项目有自己的状态
+    completed: Property<bool>, // 每个项目有自己的状态
 }
 
 impl TodoItem {
@@ -101,7 +103,7 @@ fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
         }
     })
     .spacing(0)
-    .with_id();  // 启用基于 ID 的增量更新优化
+    .with_id(); // 启用基于 ID 的增量更新优化
 
     VStack::new()
         .padding(1)
@@ -125,10 +127,7 @@ fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
 }
 
 /// 构建用户列表窗口（展示回调模式）
-fn build_user_window(
-    users: Property<Vec<User>>,
-    click_log: Property<String>,
-) -> Box<dyn View> {
+fn build_user_window(users: Property<Vec<User>>, click_log: Property<String>) -> Box<dyn View> {
     let log_for_foreach = click_log.clone();
     let log_for_text = click_log.clone();
 
@@ -162,7 +161,7 @@ fn build_user_window(
         }
     })
     .spacing(0)
-    .with_id();  // 启用基于 ID 的增量更新优化
+    .with_id(); // 启用基于 ID 的增量更新优化
 
     let footer = view_builder! {
         TextFn(move || log_for_text.get())

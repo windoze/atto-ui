@@ -19,5 +19,42 @@ unicode-width = "0.2"
 chatty-macros = { path = "crates/chatty-macros" }
 chatty-test-host = { path = "crates/chatty-test-host" }
 
+# Demo binaries (teaching materials under `demos/`)
+[[bin]]
+name = "demo-01-hello-world"
+path = "demos/01-hello-world/main.rs"
+
+[[bin]]
+name = "demo-02-window-management"
+path = "demos/02-window-management/main.rs"
+
+[[bin]]
+name = "demo-03-event-handling"
+path = "demos/03-event-handling/main.rs"
+
+[[bin]]
+name = "demo-04-menu-creation"
+path = "demos/04-menu-creation/main.rs"
+
+[[bin]]
+name = "demo-05-basic-controls"
+path = "demos/05-basic-controls/main.rs"
+
+[[bin]]
+name = "demo-06-data-binding"
+path = "demos/06-data-binding/main.rs"
+
+[[bin]]
+name = "demo-07-layout-management"
+path = "demos/07-layout-management/main.rs"
+
+[[bin]]
+name = "demo-08-foreach-demo"
+path = "demos/08-foreach-demo/main.rs"
+
+[[bin]]
+name = "demo-09-custom-components"
+path = "demos/09-custom-components/main.rs"
+
 [workspace]
 members = ["crates/chatty-test-host", "crates/chatty-macros"]

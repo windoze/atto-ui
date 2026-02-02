@@ -39,6 +39,14 @@ impl Checkbox {
 }
 
 impl Control for Checkbox {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
     fn is_focusable(&self) -> bool {
         self.enabled.get()
     }

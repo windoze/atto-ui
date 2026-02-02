@@ -21,6 +21,14 @@ impl View for ControlView {
         self.control.is_focusable()
     }
 
+    fn min_width(&self) -> u16 {
+        self.control.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.control.min_height()
+    }
+
     fn desired_height(&self) -> Option<u16> {
         Some(self.control.desired_height())
     }

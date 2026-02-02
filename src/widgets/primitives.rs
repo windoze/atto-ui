@@ -24,6 +24,27 @@ pub trait Control: Send {
         true
     }
 
+    /// Minimum width required for this control to be usable.
+    ///
+    /// This is used by layout containers to avoid allocating a partially-clipped rect to
+    /// interactive widgets (e.g. a `TextBox` whose borders consume the entire height).
+    ///
+    /// Default: `1`.
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    /// Minimum height required for this control to be usable.
+    ///
+    /// Default: `1`.
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn min_size(&self) -> (u16, u16) {
+        (self.min_width(), self.min_height())
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

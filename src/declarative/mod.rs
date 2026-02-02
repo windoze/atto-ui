@@ -19,9 +19,9 @@ mod vstack;
 mod widget_controls;
 
 pub use for_each::{ForEach, ForEachIdentifiable};
-pub use identifiable::Identifiable;
 pub use grid::Grid;
 pub use hstack::HStack;
+pub use identifiable::Identifiable;
 pub use primitives::{Divider, Spacer, Text, TextFn};
 pub use view::{DeclarativeView, EmptyView};
 pub use view_adapter::ViewAdapter;
