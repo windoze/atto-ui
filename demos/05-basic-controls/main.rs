@@ -1,27 +1,18 @@
 // Demo: 05-basic-controls
 // 演示所有基础控件的使用方法
 
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, MenuBar};
+use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
 use chatty::declarative::{
     DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Text, TextFn, VStack,
     ViewAdapter,
 };
 use chatty::reactive::Property;
 use chatty::theme::Theme;
-use chatty::view::EventOutcome;
 use chatty::widgets::{Button, Checkbox, ListBox, RadioGroup, TableView, TextBox};
 use chatty::wm::{Window, WindowKind};
 
@@ -331,121 +322,61 @@ impl DeclarativeView for StatusView {
 }
 
 fn main() -> Result<()> {
-    // 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        event::EnableBracketedPaste,
-    )?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(50))
+        .mouse_capture(true)
+        .bracketed_paste(true)
+        .cursor(CursorMode::Show);
 
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    run_crossterm_desktop_simple(config, |screen| {
+        let state = AppState::new();
 
-    // 创建应用状态
-    let state = AppState::new();
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
 
-    // 创建桌面
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(Theme::dark(), menu);
+        let work = Desktop::layout(screen).work_area;
 
-    let screen: Rect = terminal.size()?.into();
-    let work = Desktop::layout(screen).work_area;
+        let left_window = Window::new(
+            WindowKind::Normal,
+            "控件演示 - 左侧",
+            Rect {
+                x: work.x.saturating_add(2),
+                y: work.y.saturating_add(1),
+                width: 45,
+                height: work.height.saturating_sub(5),
+            },
+            Box::new(ViewAdapter::new(LeftPanelView::new(state.clone()))),
+        );
+        let left_id = desktop.add_window(left_window, screen);
 
-    // 添加左侧窗口
-    let left_window = Window::new(
-        WindowKind::Normal,
-        "控件演示 - 左侧",
-        Rect {
-            x: work.x.saturating_add(2),
-            y: work.y.saturating_add(1),
-            width: 45,
-            height: work.height.saturating_sub(5),
-        },
-        Box::new(ViewAdapter::new(LeftPanelView::new(state.clone()))),
-    );
-    let left_id = desktop.add_window(left_window, screen);
+        let right_window = Window::new(
+            WindowKind::Normal,
+            "控件演示 - 右侧",
+            Rect {
+                x: work.x.saturating_add(48),
+                y: work.y.saturating_add(1),
+                width: 45,
+                height: work.height.saturating_sub(5),
+            },
+            Box::new(ViewAdapter::new(RightPanelView::new(state.clone()))),
+        );
+        desktop.add_window(right_window, screen);
 
-    // 添加右侧窗口
-    let right_window = Window::new(
-        WindowKind::Normal,
-        "控件演示 - 右侧",
-        Rect {
-            x: work.x.saturating_add(48),
-            y: work.y.saturating_add(1),
-            width: 45,
-            height: work.height.saturating_sub(5),
-        },
-        Box::new(ViewAdapter::new(RightPanelView::new(state.clone()))),
-    );
-    desktop.add_window(right_window, screen);
+        let status_window = Window::new(
+            WindowKind::Floating,
+            "状态栏",
+            Rect {
+                x: work.x.saturating_add(2),
+                y: work.y.saturating_add(work.height).saturating_sub(3),
+                width: work.width.saturating_sub(4),
+                height: 3,
+            },
+            Box::new(ViewAdapter::new(StatusView::new(state.clone()))),
+        );
+        desktop.add_window(status_window, screen);
 
-    // 添加状态栏窗口
-    let status_window = Window::new(
-        WindowKind::Floating,
-        "状态栏",
-        Rect {
-            x: work.x.saturating_add(2),
-            y: work.y.saturating_add(work.height).saturating_sub(3),
-            width: work.width.saturating_sub(4),
-            height: 3,
-        },
-        Box::new(ViewAdapter::new(StatusView::new(state.clone()))),
-    );
-    desktop.add_window(status_window, screen);
+        desktop.wm.focus(left_id);
 
-    // 聚焦左侧窗口
-    desktop.wm.focus(left_id);
-
-    // 运行主循环
-    run(&mut terminal, &mut desktop)?;
-
-    // 清理终端
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        event::DisableBracketedPaste,
-    )?;
-    terminal.show_cursor()?;
-
-    Ok(())
-}
-
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desktop) -> Result<()> {
-    loop {
-        terminal.draw(|f| desktop.draw(f))?;
-
-        if !event::poll(Duration::from_millis(50))? {
-            continue;
-        }
-
-        let ev = event::read()?;
-        let screen: Rect = terminal.size()?.into();
-        let result = desktop.handle_event(&ev, screen);
-
-        // 检查退出键
-        if result.outcome == EventOutcome::Ignored
-            && let Event::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            }) = ev
-            {
-                match (code, modifiers) {
-                    (KeyCode::Char('q'), KeyModifiers::NONE)
-                    | (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-    }
-
-    Ok(())
+        Ok(desktop)
+    })
 }

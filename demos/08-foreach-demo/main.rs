@@ -1,27 +1,18 @@
 // Demo: 08-foreach-demo
 // 演示 ForEach：动态增删、稳定 ID 复用、滚动/滚动条、以及与 TextBox 的配合。
 
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, DesktopAction, MenuBar};
+use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
 use chatty::declarative::{
     Align, DeclarativeView, Divider, EdgeInsets, ForEach, HStack, Identifiable, LayoutParams, Size,
     Spacer, Text, TextFn, VStack, ViewAdapter,
 };
 use chatty::reactive::Property;
 use chatty::theme::Theme;
-use chatty::view::EventOutcome;
 use chatty::widgets::{Button, Checkbox, TextBox};
 use chatty::wm::{Window, WindowKind};
 
@@ -310,126 +301,65 @@ impl DeclarativeView for ListView {
 }
 
 fn main() -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        event::EnableBracketedPaste,
-    )?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(50))
+        .mouse_capture(true)
+        .bracketed_paste(true)
+        .cursor(CursorMode::Show);
 
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    run_crossterm_desktop_simple(config, |screen| {
+        let model = TodoModel::new();
 
-    let model = TodoModel::new();
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
 
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(Theme::dark(), menu);
+        let work = Desktop::layout(screen).work_area;
 
-    let screen: Rect = terminal.size()?.into();
-    let work = Desktop::layout(screen).work_area;
+        let controls_h = 12u16.min(work.height.saturating_sub(4).max(8));
+        let gutter = 1u16;
 
-    let controls_h = 12u16.min(work.height.saturating_sub(4).max(8));
-    let gutter = 1u16;
+        let controls_rect = Rect {
+            x: work.x.saturating_add(2),
+            y: work.y.saturating_add(1),
+            width: work.width.saturating_sub(4).max(20),
+            height: controls_h,
+        };
 
-    let controls_rect = Rect {
-        x: work.x.saturating_add(2),
-        y: work.y.saturating_add(1),
-        width: work.width.saturating_sub(4).max(20),
-        height: controls_h,
-    };
+        let list_rect = Rect {
+            x: work.x.saturating_add(2),
+            y: controls_rect
+                .y
+                .saturating_add(controls_rect.height)
+                .saturating_add(gutter),
+            width: work.width.saturating_sub(4).max(20),
+            height: work
+                .height
+                .saturating_sub(controls_rect.height)
+                .saturating_sub(gutter)
+                .saturating_sub(2)
+                .max(8),
+        };
 
-    let list_rect = Rect {
-        x: work.x.saturating_add(2),
-        y: controls_rect
-            .y
-            .saturating_add(controls_rect.height)
-            .saturating_add(gutter),
-        width: work.width.saturating_sub(4).max(20),
-        height: work
-            .height
-            .saturating_sub(controls_rect.height)
-            .saturating_sub(gutter)
-            .saturating_sub(2)
-            .max(8),
-    };
+        let controls_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "ForEach - Controls",
+                controls_rect,
+                Box::new(ViewAdapter::new(ControlsView::new(model.clone()))),
+            ),
+            screen,
+        );
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "ForEach - List (scrollable)",
+                list_rect,
+                Box::new(ViewAdapter::new(ListView::new(model.clone()))),
+            ),
+            screen,
+        );
+        desktop.wm.focus(controls_id);
 
-    let controls_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "ForEach - Controls",
-            controls_rect,
-            Box::new(ViewAdapter::new(ControlsView::new(model.clone()))),
-        ),
-        screen,
-    );
-    desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "ForEach - List (scrollable)",
-            list_rect,
-            Box::new(ViewAdapter::new(ListView::new(model.clone()))),
-        ),
-        screen,
-    );
-    desktop.wm.focus(controls_id);
-
-    let res = run(&mut terminal, &mut desktop);
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        event::DisableBracketedPaste,
-    )?;
-    terminal.show_cursor()?;
-
-    res
-}
-
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desktop) -> Result<()> {
-    loop {
-        terminal.draw(|f| desktop.draw(f))?;
-
-        if !event::poll(Duration::from_millis(50))? {
-            continue;
-        }
-
-        let ev = event::read()?;
-        let screen: Rect = terminal.size()?.into();
-        let result = desktop.handle_event(&ev, screen);
-
-        if let DesktopAction::CloseWindow(id) = result.action {
-            desktop.wm.close(id);
-        }
-
-        if should_quit(&ev, result.outcome) {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
+        Ok(desktop)
+    })
 }

@@ -79,3 +79,60 @@ These tests lock in the “`Size::Content` works for stacks” behavior without 
 - Nested `VStack` sections laid out with `Size::Content` render at their natural height instead of collapsing to 1 row.
 - No behavior change for stacks that are laid out with `Size::Fill`/`Size::Fixed` unless callers opt into `Size::Content`.
 
+---
+
+# Window Chrome Feature Plan: Fixed-Size Windows + Border Styles
+
+## Problem
+
+We need a few missing window-chrome features:
+
+- **Fixed-size vs resizable windows**: the window manager already uses `Window.resizable` to gate resize handles, but
+  the titlebar still shows **minimize/maximize buttons** even when the window cannot resize.
+- **Border styles**: window decorations currently model `border` as a boolean, but we need three border modes:
+  - `Normal` (current behavior)
+  - `Thin` (always single-line border glyphs, even when focused)
+  - `None/Borderless` (no border/titlebar chrome)
+
+## Goals
+
+- Add an explicit border style model to windows without changing default visuals (`Normal` stays the default).
+- Treat `resizable = false` as “fixed size”: automatically hide minimize + maximize buttons and disable those actions.
+- Keep borderless windows behaving like the existing `border = false` path (no chrome, view uses full rect, view-hosted scrollbars).
+- Add a small set of unit tests to lock in behavior for thin borders and fixed-size button hiding.
+
+## Plan
+
+### 1) Introduce a `WindowBorderStyle` enum
+
+- Add `WindowBorderStyle::{Normal, Thin, Borderless}` in `src/wm/window.rs`.
+- Change `WindowDecorations.border: bool` to `WindowDecorations.border: WindowBorderStyle`.
+- Update `Window::inner_rect()` and `Window::titlebar_rect()` to treat `Borderless` as “no chrome”.
+- Re-export the new type from `src/wm/mod.rs` and `src/lib.rs`.
+
+### 2) Update window manager drawing to respect border style
+
+- When drawing window chrome in `src/wm/manager.rs`:
+  - `Normal`: use `theme.border_set(is_focused)` (existing behavior).
+  - `Thin`: use `theme.border_set(false)` (single-line glyphs), but keep focused border *style*.
+  - `Borderless`: skip border/titlebar rendering.
+- Keep scrollbar host selection consistent:
+  - With border (normal/thin): `ScrollbarHost::Window`
+  - Borderless: `ScrollbarHost::View`
+
+### 3) Hide min/max when `resizable == false` (“fixed size”)
+
+- Compute “effective titlebar buttons” from `(decorations.buttons, window.resizable)`:
+  - If `!window.resizable.get()`: force `{ minimize: false, maximize: false }`
+- Use the effective buttons for:
+  - `draw_titlebar(...)`
+  - `hit_test_buttons(...)`
+  - mouse handlers for min/max clicks
+  - keyboard shortcuts (`m` minimize, `x` maximize)
+
+### 4) Tests + validation
+
+- Add unit tests in `src/wm/manager.rs` to verify:
+  - Thin border draws single-line glyphs even when focused.
+  - Fixed-size windows do not respond to minimize/maximize shortcuts (and don’t render those buttons).
+- Run `cargo fmt` and `cargo test`.

@@ -56,5 +56,9 @@ path = "demos/08-foreach-demo/main.rs"
 name = "demo-09-custom-components"
 path = "demos/09-custom-components/main.rs"
 
+[[bin]]
+name = "demo-10-file-dialog"
+path = "demos/10-file-dialog/main.rs"
+
 [workspace]
 members = ["crates/chatty-test-host", "crates/chatty-macros"]

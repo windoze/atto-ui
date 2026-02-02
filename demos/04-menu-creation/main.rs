@@ -1,18 +1,14 @@
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::Event;
+use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
+use chatty::app::{
+    AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
+    run_crossterm_desktop,
+};
 use chatty::reactive::{EventQueue, Property};
 use chatty::theme::Theme;
 use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
@@ -354,113 +350,47 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
 }
 
 fn main() -> Result<()> {
-    // 1. 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Hide
-    )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_capture(true)
+        .cursor(CursorMode::Hide);
 
-    // 2. 创建事件队列和菜单
     let actions: EventQueue<AppAction> = EventQueue::new();
     let menu = build_menu(actions.clone());
-
-    // 3. 创建主题和桌面
-    let theme = Theme::dark();
-    let mut desktop = Desktop::new(theme, menu);
-
-    // 4. 创建主窗口
     let status_view = StatusView::new();
+    let status_view_build = status_view.clone();
+    let status_view_tick = status_view.clone();
 
-    let window = Window::new(
-        WindowKind::Normal,
-        "Menu Creation Demo",
-        Rect {
-            x: 5,
-            y: 3,
-            width: 65,
-            height: 28,
+    run_crossterm_desktop(
+        config,
+        move |screen| {
+            let theme = Theme::dark();
+            let mut desktop = Desktop::new(theme, menu);
+
+            let window = Window::new(
+                WindowKind::Normal,
+                "Menu Creation Demo",
+                Rect {
+                    x: 5,
+                    y: 3,
+                    width: 65,
+                    height: 28,
+                },
+                Box::new(status_view_build),
+            );
+            desktop.add_window(window, screen);
+
+            Ok(desktop)
         },
-        Box::new(status_view.clone()),
-    );
-
-    let screen: Rect = terminal.size()?.into();
-    desktop.add_window(window, screen);
-
-    // 5. 主事件循环
-    'main: loop {
-        // 处理动作队列
-        for action in actions.drain() {
-            match action {
-                AppAction::Quit => break 'main,
-                _ => {
-                    status_view.handle_action(action.clone());
+        move |_desktop, _screen| {
+            for action in actions.drain() {
+                match action {
+                    AppAction::Quit => return Ok(AppControl::Exit),
+                    other => status_view_tick.handle_action(other),
                 }
             }
-        }
-
-        // 渲染界面
-        terminal.draw(|f| {
-            desktop.draw(f);
-        })?;
-
-        // 轮询事件
-        if event::poll(Duration::from_millis(16))? {
-            let ev = event::read()?;
-            let screen: Rect = terminal.size()?.into();
-
-            // 让 desktop 处理事件（包括菜单）
-            let result = desktop.handle_event(&ev, screen);
-            if let DesktopAction::CloseWindow(id) = result.action {
-                desktop.wm.close(id);
-            }
-
-            // 检查退出条件
-            if should_quit(&ev, result.outcome) {
-                break;
-            }
-        }
-    }
-
-    // 6. 清理并恢复终端
-    cleanup_terminal(&mut terminal)?;
-    Ok(())
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI (e.g. typing in a TextBox).
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
-}
-
-fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        cursor::Show
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
+            Ok(AppControl::Continue)
+        },
+        |_desktop, _event, _screen, _result| Ok(AppControl::Continue),
+    )
 }

@@ -1,18 +1,12 @@
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, DesktopAction, MenuBar};
+use chatty::app::{
+    AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
+};
 use chatty::declarative::{
     Align, Anchor, AnchorPlacement, DeclarativeView, Divider, EdgeInsets, Grid, HStack,
     LayoutParams, Size, Spacer, Text, VStack,
@@ -465,259 +459,188 @@ fn build_spacing_demo_view() -> Box<dyn View> {
 }
 
 fn main() -> Result<()> {
-    // 1. 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Hide
-    )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_capture(true)
+        .cursor(CursorMode::Hide);
 
-    // 2. 创建主题和桌面
-    let theme = Theme::dark();
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(theme, menu);
+    run_crossterm_desktop(
+        config,
+        |screen| {
+            let theme = Theme::dark();
+            let menu = MenuBar::new(vec![]);
+            let mut desktop = Desktop::new(theme, menu);
 
-    let screen: Rect = terminal.size()?.into();
-    let work = Desktop::layout(screen).work_area;
+            let work = Desktop::layout(screen).work_area;
 
-    // 3. 创建演示窗口
-    // VStack 演示
-    let vstack_window = Window::new(
-        WindowKind::Normal,
-        "VStack Demo",
-        Rect {
-            x: work.x + 2,
-            y: work.y + 1,
-            width: 55,
-            height: 18,
+            let vstack_window = Window::new(
+                WindowKind::Normal,
+                "VStack Demo",
+                Rect {
+                    x: work.x + 2,
+                    y: work.y + 1,
+                    width: 55,
+                    height: 18,
+                },
+                build_vstack_demo_view(),
+            );
+            desktop.add_window(vstack_window, screen);
+
+            let hstack_window = Window::new(
+                WindowKind::Normal,
+                "HStack Demo",
+                Rect {
+                    x: work.x + 59,
+                    y: work.y + 1,
+                    width: 55,
+                    height: 18,
+                },
+                build_hstack_demo_view(),
+            );
+            desktop.add_window(hstack_window, screen);
+
+            let grid_window = Window::new(
+                WindowKind::Normal,
+                "Grid Demo",
+                Rect {
+                    x: work.x + 2,
+                    y: work.y + 20,
+                    width: 55,
+                    height: 20,
+                },
+                build_grid_demo_view(),
+            );
+            desktop.add_window(grid_window, screen);
+
+            let alignment_window = Window::new(
+                WindowKind::Normal,
+                "Alignment & Anchor",
+                Rect {
+                    x: work.x + 59,
+                    y: work.y + 20,
+                    width: 55,
+                    height: 20,
+                },
+                build_alignment_demo_view(),
+            );
+            desktop.add_window(alignment_window, screen);
+
+            Ok(desktop)
         },
-        build_vstack_demo_view(),
-    );
-    desktop.add_window(vstack_window, screen);
-
-    // HStack 演示
-    let hstack_window = Window::new(
-        WindowKind::Normal,
-        "HStack Demo",
-        Rect {
-            x: work.x + 59,
-            y: work.y + 1,
-            width: 55,
-            height: 18,
-        },
-        build_hstack_demo_view(),
-    );
-    desktop.add_window(hstack_window, screen);
-
-    // Grid 演示
-    let grid_window = Window::new(
-        WindowKind::Normal,
-        "Grid Demo",
-        Rect {
-            x: work.x + 2,
-            y: work.y + 20,
-            width: 55,
-            height: 20,
-        },
-        build_grid_demo_view(),
-    );
-    desktop.add_window(grid_window, screen);
-
-    // 对齐和锚点演示
-    let alignment_window = Window::new(
-        WindowKind::Normal,
-        "Alignment & Anchor",
-        Rect {
-            x: work.x + 59,
-            y: work.y + 20,
-            width: 55,
-            height: 20,
-        },
-        build_alignment_demo_view(),
-    );
-    desktop.add_window(alignment_window, screen);
-
-    // 4. 主事件循环
-    loop {
-        // 渲染界面
-        terminal.draw(|f| {
-            desktop.draw(f);
-        })?;
-
-        // 轮询事件
-        if event::poll(Duration::from_millis(16))? {
-            let ev = event::read()?;
-            let screen: Rect = terminal.size()?.into();
-
-            // 让 desktop 处理事件
-            let result = desktop.handle_event(&ev, screen);
-
-            // 处理 desktop 返回的动作
-            if let DesktopAction::CloseWindow(id) = result.action {
-                desktop.wm.close(id);
+        |_desktop, _screen| Ok(AppControl::Continue),
+        |desktop, ev, screen, result| {
+            if result.outcome != EventOutcome::Ignored {
+                return Ok(AppControl::Continue);
             }
 
-            // 检查退出条件
-            if should_quit(&ev, result.outcome) {
-                break;
-            }
+            let Event::Key(KeyEvent {
+                code,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            }) = ev
+            else {
+                return Ok(AppControl::Continue);
+            };
 
-            // 处理应用级别的快捷键
-            if result.outcome == EventOutcome::Ignored
-                && let Event::Key(KeyEvent {
-                    code,
-                    modifiers: KeyModifiers::NONE,
-                    kind: KeyEventKind::Press,
-                    ..
-                }) = ev
-            {
-                let work = Desktop::layout(screen).work_area;
-                match code {
-                    KeyCode::Char('v') => {
-                        // 打开/聚焦 VStack 演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "VStack Demo",
-                            Rect {
-                                x: work.x + 2,
-                                y: work.y + 1,
-                                width: 55,
-                                height: 18,
-                            },
-                            build_vstack_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('h') => {
-                        // 打开/聚焦 HStack 演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "HStack Demo",
-                            Rect {
-                                x: work.x + 59,
-                                y: work.y + 1,
-                                width: 55,
-                                height: 18,
-                            },
-                            build_hstack_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('g') => {
-                        // 打开/聚焦 Grid 演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "Grid Demo",
-                            Rect {
-                                x: work.x + 2,
-                                y: work.y + 20,
-                                width: 55,
-                                height: 20,
-                            },
-                            build_grid_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('a') => {
-                        // 打开/聚焦 对齐演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "Alignment & Anchor",
-                            Rect {
-                                x: work.x + 59,
-                                y: work.y + 20,
-                                width: 55,
-                                height: 20,
-                            },
-                            build_alignment_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('s') => {
-                        // 打开尺寸约束演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "Size Constraints",
-                            Rect {
-                                x: work.x + 10,
-                                y: work.y + 5,
-                                width: 60,
-                                height: 25,
-                            },
-                            build_size_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('p') => {
-                        // 打开 Padding/Margin 演示
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            "Padding & Margin",
-                            Rect {
-                                x: work.x + 15,
-                                y: work.y + 7,
-                                width: 55,
-                                height: 20,
-                            },
-                            build_spacing_demo_view(),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('c') => {
-                        // 关闭当前聚焦的窗口
-                        if let Some(id) = desktop.wm.focused() {
-                            desktop.wm.request_close(id);
-                        }
-                    }
-                    KeyCode::Tab => {
-                        // 切换到下一个窗口
-                        desktop.wm.focus_next();
-                    }
-                    _ => {}
+            let work = Desktop::layout(screen).work_area;
+            match *code {
+                KeyCode::Char('v') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "VStack Demo",
+                        Rect {
+                            x: work.x + 2,
+                            y: work.y + 1,
+                            width: 55,
+                            height: 18,
+                        },
+                        build_vstack_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
                 }
+                KeyCode::Char('h') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "HStack Demo",
+                        Rect {
+                            x: work.x + 59,
+                            y: work.y + 1,
+                            width: 55,
+                            height: 18,
+                        },
+                        build_hstack_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('g') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "Grid Demo",
+                        Rect {
+                            x: work.x + 2,
+                            y: work.y + 20,
+                            width: 55,
+                            height: 20,
+                        },
+                        build_grid_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('a') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "Alignment & Anchor",
+                        Rect {
+                            x: work.x + 59,
+                            y: work.y + 20,
+                            width: 55,
+                            height: 20,
+                        },
+                        build_alignment_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('s') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "Size Constraints",
+                        Rect {
+                            x: work.x + 10,
+                            y: work.y + 5,
+                            width: 60,
+                            height: 25,
+                        },
+                        build_size_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('p') => {
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        "Padding & Margin",
+                        Rect {
+                            x: work.x + 15,
+                            y: work.y + 7,
+                            width: 55,
+                            height: 20,
+                        },
+                        build_spacing_demo_view(),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('c') => {
+                    if let Some(id) = desktop.wm.focused() {
+                        desktop.wm.request_close(id);
+                    }
+                }
+                KeyCode::Tab => {
+                    desktop.wm.focus_next();
+                }
+                _ => {}
             }
-        }
-    }
 
-    // 5. 清理并恢复终端
-    cleanup_terminal(&mut terminal)?;
-    Ok(())
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
-}
-
-fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        cursor::Show
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
+            Ok(AppControl::Continue)
+        },
+    )
 }

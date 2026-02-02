@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use parking_lot::Mutex;
 
@@ -7,6 +8,43 @@ use parking_lot::Mutex;
 ///
 /// This is useful for wiring reactive callbacks (buttons, menu items, etc.) into a run loop
 /// without relying on stringly-typed command dispatch.
+///
+/// ## Usage
+///
+/// For synchronous usage (existing code), use the VecDeque-based implementation:
+/// ```rust
+/// use chatty::reactive::EventQueue;
+///
+/// let queue = EventQueue::new();
+/// queue.push(1u8);
+/// for action in queue.drain() {
+///     assert_eq!(action, 1u8);
+/// }
+/// ```
+///
+/// For asynchronous usage (background tasks), use the channel-based implementation:
+/// ```rust,no_run
+/// use std::sync::mpsc::RecvTimeoutError;
+/// use std::time::Duration;
+///
+/// use chatty::reactive::EventQueue;
+///
+/// let (sender, receiver) = EventQueue::<String>::channel();
+///
+/// // Clone sender for background tasks
+/// std::thread::spawn(move || {
+///     sender.send("work_done".to_string()).ok();
+/// });
+///
+/// // In main loop
+/// match receiver.recv_timeout(Duration::from_millis(50)) {
+///     Ok(action) => {
+///         drop(action);
+///     }
+///     Err(RecvTimeoutError::Timeout) => { /* no action, continue */ }
+///     Err(RecvTimeoutError::Disconnected) => {}
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct EventQueue<T> {
     inner: Arc<Mutex<VecDeque<T>>>,
@@ -17,6 +55,18 @@ impl<T> EventQueue<T> {
         Self {
             inner: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    /// Creates a channel-based event queue for async background tasks.
+    ///
+    /// Returns `(sender, receiver)` where:
+    /// - `sender` can be cloned and sent to background threads
+    /// - `receiver` should be used in the main event loop with `recv_timeout()`
+    ///
+    /// This is the recommended approach for handling background tasks that need to
+    /// notify the main UI thread.
+    pub fn channel() -> (mpsc::Sender<T>, mpsc::Receiver<T>) {
+        mpsc::channel()
     }
 
     pub fn push(&self, value: T) {
@@ -45,4 +95,16 @@ impl<T> Default for EventQueue<T> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Helper to drain all pending messages from a channel without blocking.
+///
+/// This is useful in the main event loop to process all queued actions at once.
+#[allow(dead_code)]
+pub fn drain_channel<T>(receiver: &mpsc::Receiver<T>) -> Vec<T> {
+    let mut out = Vec::new();
+    while let Ok(value) = receiver.try_recv() {
+        out.push(value);
+    }
+    out
 }

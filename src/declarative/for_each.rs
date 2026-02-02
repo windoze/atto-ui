@@ -630,8 +630,7 @@ where
                     // Ensure the default layout is correct even for views created before this logic existed.
                     node.layout = default_foreach_item_layout();
 
-                    let needs_rebuild = old_cached_items
-                        .get(&id) != Some(item);
+                    let needs_rebuild = old_cached_items.get(&id) != Some(item);
                     if needs_rebuild {
                         node.view = (self.builder)(item, idx).build_view();
                     }

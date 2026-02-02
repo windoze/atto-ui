@@ -33,9 +33,25 @@ pub enum WindowState {
     Maximized,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowBorderStyle {
+    #[default]
+    Normal,
+    /// Always use a single-line border set, even when the window is focused.
+    Thin,
+    /// No window chrome (no border, no titlebar).
+    Borderless,
+}
+
+impl WindowBorderStyle {
+    pub fn has_border(self) -> bool {
+        !matches!(self, Self::Borderless)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowDecorations {
-    pub border: bool,
+    pub border: WindowBorderStyle,
     pub shadow: bool,
     pub buttons: WindowButtons,
 }
@@ -60,7 +76,7 @@ impl Default for WindowButtons {
 impl Default for WindowDecorations {
     fn default() -> Self {
         Self {
-            border: true,
+            border: WindowBorderStyle::Normal,
             shadow: true,
             buttons: WindowButtons::default(),
         }
@@ -128,7 +144,7 @@ impl Window {
     pub fn inner_rect(&self) -> Rect {
         let decorations = self.decorations.get();
         let rect = self.rect.get();
-        if !decorations.border {
+        if !decorations.border.has_border() {
             return rect;
         }
         let mut inner = rect;
@@ -150,7 +166,7 @@ impl Window {
     pub fn titlebar_rect(&self) -> Option<Rect> {
         let decorations = self.decorations.get();
         let rect = self.rect.get();
-        if !decorations.border {
+        if !decorations.border.has_border() {
             return None;
         }
         if rect.height < 1 {

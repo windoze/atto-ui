@@ -14,7 +14,7 @@ use crate::views::{
     scrollbar_layout_1d, should_show_scrollbar,
 };
 
-use super::{Window, WindowId, WindowKind, WindowState};
+use super::{Window, WindowBorderStyle, WindowButtons, WindowId, WindowKind, WindowState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowManagerInputMode {
@@ -210,11 +210,21 @@ impl WindowManager {
 
     pub fn toggle_maximize_focused(&mut self, bounds: Rect) {
         let Some(id) = self.focused() else { return };
-        self.toggle_maximize(id, bounds);
+        let can_toggle = self
+            .windows
+            .iter()
+            .any(|w| w.id == id && can_toggle_maximize(w));
+        if can_toggle {
+            self.toggle_maximize(id, bounds);
+        }
     }
 
     pub fn minimize_focused(&mut self) {
         let Some(id) = self.focused() else { return };
+        let can_minimize = self.windows.iter().any(|w| w.id == id && can_minimize(w));
+        if !can_minimize {
+            return;
+        }
         if let Some(w) = self.window_mut(id) {
             w.state.set(WindowState::Minimized);
         }
@@ -286,19 +296,25 @@ impl WindowManager {
                 theme.window_title
             });
 
-            if decorations.border {
+            if decorations.border.has_border() {
                 let title = window.title.get();
+                let border_set = match decorations.border {
+                    WindowBorderStyle::Normal => theme.border_set(is_focused),
+                    WindowBorderStyle::Thin => theme.border_set(false),
+                    WindowBorderStyle::Borderless => theme.border_set(false),
+                };
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(border_style)
-                    .border_set(theme.border_set(is_focused));
+                    .border_set(border_set);
                 frame.render_widget(block, rect);
+                let buttons = effective_titlebar_buttons(window, &decorations);
                 draw_titlebar(
                     frame.buffer_mut(),
                     rect,
                     &title,
                     title_style,
-                    &decorations,
+                    &buttons,
                     theme,
                 );
             }
@@ -308,7 +324,7 @@ impl WindowManager {
                 theme,
                 window_id: window.id,
                 is_focused,
-                scrollbar_host: if decorations.border {
+                scrollbar_host: if decorations.border.has_border() {
                     ScrollbarHost::Window
                 } else {
                     ScrollbarHost::View
@@ -316,7 +332,7 @@ impl WindowManager {
             };
             window.view.draw(frame, inner, ctx);
 
-            if decorations.border {
+            if decorations.border.has_border() {
                 draw_window_border_scrollbars(
                     frame.buffer_mut(),
                     rect,
@@ -361,7 +377,7 @@ impl WindowManager {
                 theme,
                 window_id: id,
                 is_focused,
-                scrollbar_host: if w.decorations.get().border {
+                scrollbar_host: if w.decorations.get().border.has_border() {
                     ScrollbarHost::Window
                 } else {
                     ScrollbarHost::View
@@ -434,16 +450,20 @@ impl WindowManager {
                         let can_maximize = self
                             .windows
                             .iter()
-                            .any(|w| w.id == window_id && w.decorations.get().buttons.maximize);
+                            .any(|w| w.id == window_id && can_toggle_maximize(w));
                         if can_maximize {
                             self.toggle_maximize(window_id, bounds);
                         }
                     }
                     HitRegion::MinimizeButton => {
-                        if let Some(w) = self.window_mut(window_id)
-                            && w.decorations.get().buttons.minimize
-                        {
-                            w.state.set(WindowState::Minimized);
+                        let minimized = match self.window_mut(window_id) {
+                            Some(w) if can_minimize(w) => {
+                                w.state.set(WindowState::Minimized);
+                                true
+                            }
+                            _ => false,
+                        };
+                        if minimized {
                             self.focused = self.topmost_focusable_id();
                         }
                     }
@@ -623,7 +643,7 @@ impl WindowManager {
                         ));
                     }
                     DragKind::Scrollbar { drag } => {
-                        if !w.decorations.get().border {
+                        if !w.decorations.get().border.has_border() {
                             return WindowManagerAction::default();
                         }
 
@@ -809,7 +829,7 @@ impl WindowManager {
             }
             let decorations = w.decorations.get();
 
-            if decorations.border
+            if decorations.border.has_border()
                 && w.resizable.get()
                 && state != WindowState::Maximized
                 && rect.width >= 2
@@ -857,7 +877,11 @@ impl WindowManager {
                 });
             }
 
-            if decorations.border && w.view.is_scrollable() && rect.width > 1 && rect.height > 1 {
+            if decorations.border.has_border()
+                && w.view.is_scrollable()
+                && rect.width > 1
+                && rect.height > 1
+            {
                 let cfg = w.view.scroll_config();
                 let (content_w, content_h) = w.view.content_size();
                 let (viewport_w, viewport_h) = w.view.viewport_size();
@@ -1180,7 +1204,7 @@ fn draw_titlebar(
     rect: Rect,
     title: &str,
     style: Style,
-    deco: &super::WindowDecorations,
+    buttons: &WindowButtons,
     theme: &Theme,
 ) {
     if rect.width < 3 {
@@ -1192,13 +1216,13 @@ fn draw_titlebar(
 
     // Buttons (right side).
     let mut button_cols = Vec::new();
-    if deco.buttons.minimize {
+    if buttons.minimize {
         button_cols.push((HitRegion::MinimizeButton, inner_right.saturating_sub(4)));
     }
-    if deco.buttons.maximize {
+    if buttons.maximize {
         button_cols.push((HitRegion::MaximizeButton, inner_right.saturating_sub(2)));
     }
-    if deco.buttons.close {
+    if buttons.close {
         button_cols.push((HitRegion::CloseButton, inner_right));
     }
 
@@ -1245,20 +1269,45 @@ fn draw_titlebar(
 fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> {
     let rect = w.rect.get();
     let deco = w.decorations.get();
+    let buttons = effective_titlebar_buttons(w, &deco);
     if y != rect.y || rect.width < 3 {
         return None;
     }
     let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
-    if deco.buttons.close && x == inner_right {
+    if buttons.close && x == inner_right {
         return Some(HitRegion::CloseButton);
     }
-    if deco.buttons.maximize && x == inner_right.saturating_sub(2) {
+    if buttons.maximize && x == inner_right.saturating_sub(2) {
         return Some(HitRegion::MaximizeButton);
     }
-    if deco.buttons.minimize && x == inner_right.saturating_sub(4) {
+    if buttons.minimize && x == inner_right.saturating_sub(4) {
         return Some(HitRegion::MinimizeButton);
     }
     None
+}
+
+fn effective_titlebar_buttons(w: &Window, deco: &super::WindowDecorations) -> WindowButtons {
+    let mut buttons = deco.buttons.clone();
+    if !w.resizable.get() {
+        buttons.minimize = false;
+        buttons.maximize = false;
+    }
+    buttons
+}
+
+fn can_toggle_maximize(w: &Window) -> bool {
+    let decorations = w.decorations.get();
+    let state = w.state.get();
+    if state == WindowState::Maximized {
+        // Always allow restoring from maximized, even if the window later becomes fixed-size.
+        return true;
+    }
+    effective_titlebar_buttons(w, &decorations).maximize
+}
+
+fn can_minimize(w: &Window) -> bool {
+    let decorations = w.decorations.get();
+    effective_titlebar_buttons(w, &decorations).minimize
 }
 
 #[cfg(test)]
@@ -1267,7 +1316,7 @@ mod tests {
     use crate::theme::Theme;
     use crate::view::{View, ViewContext, ViewEventResult};
     use crate::views::{ScrollConfig, ScrollbarVisibility};
-    use crate::wm::{Window, WindowKind};
+    use crate::wm::{Window, WindowBorderStyle, WindowKind};
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Frame;
     use ratatui::Terminal;
@@ -1702,6 +1751,82 @@ mod tests {
             cell.symbol(),
             "X",
             "expected overlapping window to clear underlay content (including border)"
+        );
+    }
+
+    #[test]
+    fn thin_border_uses_single_line_glyphs_even_when_focused() {
+        let theme = Theme::dark();
+        let bounds = Rect::new(0, 0, 40, 15);
+        let rect = Rect::new(2, 2, 16, 7);
+
+        let mut wm = WindowManager::new();
+        let w = Window::new(WindowKind::Normal, "Thin", rect, Box::new(DummyView));
+        w.decorations.update(|d| d.border = WindowBorderStyle::Thin);
+        wm.add_window(w, bounds);
+
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let buf = terminal.backend().buffer();
+
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        assert_eq!(buf.cell((left, top)).expect("tl").symbol(), "┌");
+        assert_eq!(buf.cell((right, top)).expect("tr").symbol(), "┐");
+        assert_eq!(buf.cell((left, bottom)).expect("bl").symbol(), "└");
+        assert_eq!(buf.cell((right, bottom)).expect("br").symbol(), "┘");
+    }
+
+    #[test]
+    fn fixed_size_windows_hide_and_disable_minimize_maximize() {
+        let theme = Theme::dark();
+        let bounds = Rect::new(0, 0, 40, 15);
+        let rect = Rect::new(2, 2, 18, 7);
+
+        let mut wm = WindowManager::new();
+        let w = Window::new(WindowKind::Normal, "Fixed", rect, Box::new(DummyView));
+        w.resizable.set(false);
+        let id = wm.add_window(w, bounds);
+
+        wm.toggle_maximize_focused(bounds);
+        wm.minimize_focused();
+        let state = wm.window_mut(id).expect("window").state.get();
+        assert_eq!(
+            state,
+            crate::wm::WindowState::Normal,
+            "expected fixed-size window to ignore maximize/minimize actions"
+        );
+
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let buf = terminal.backend().buffer();
+        let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
+
+        assert_eq!(
+            buf.cell((inner_right, rect.y)).expect("close btn").symbol(),
+            "×",
+            "expected close button to still be visible"
+        );
+        assert_eq!(
+            buf.cell((inner_right.saturating_sub(2), rect.y))
+                .expect("maximize slot")
+                .symbol(),
+            "═",
+            "expected maximize button to be hidden for fixed-size windows"
+        );
+        assert_eq!(
+            buf.cell((inner_right.saturating_sub(4), rect.y))
+                .expect("minimize slot")
+                .symbol(),
+            "═",
+            "expected minimize button to be hidden for fixed-size windows"
         );
     }
 }

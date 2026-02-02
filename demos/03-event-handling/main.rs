@@ -1,21 +1,13 @@
-use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::cursor;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
 };
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::backend::CrosstermBackend;
+use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar};
+use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
 use chatty::theme::Theme;
 use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
 use chatty::wm::{Window, WindowKind};
@@ -200,16 +192,17 @@ impl InteractiveView {
 impl View for InteractiveView {
     fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         if let Event::Mouse(mouse) = event
-            && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                self.click_count += 1;
-                self.last_click_pos = Some((mouse.column, mouse.row));
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            self.click_count += 1;
+            self.last_click_pos = Some((mouse.column, mouse.row));
 
-                // 消费此事件，阻止传播
-                return ViewEventResult {
-                    outcome: EventOutcome::Consumed,
-                    action: ViewAction::None,
-                };
-            }
+            // 消费此事件，阻止传播
+            return ViewEventResult {
+                outcome: EventOutcome::Consumed,
+                action: ViewAction::None,
+            };
+        }
 
         ViewEventResult::ignored()
     }
@@ -268,107 +261,42 @@ impl View for InteractiveView {
 }
 
 fn main() -> Result<()> {
-    // 1. 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Hide
-    )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_capture(true)
+        .cursor(CursorMode::Hide);
 
-    // 2. 创建主题和桌面
-    let theme = Theme::dark();
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(theme, menu);
+    run_crossterm_desktop_simple(config, |screen| {
+        let theme = Theme::dark();
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(theme, menu);
 
-    // 3. 创建事件日志窗口
-    let event_log_window = Window::new(
-        WindowKind::Normal,
-        "Event Log (Press 'c' to clear)",
-        Rect {
-            x: 5,
-            y: 3,
-            width: 55,
-            height: 20,
-        },
-        Box::new(EventLogView::new()),
-    );
-    desktop.add_window(event_log_window, terminal.size()?.into());
+        let event_log_window = Window::new(
+            WindowKind::Normal,
+            "Event Log (Press 'c' to clear)",
+            Rect {
+                x: 5,
+                y: 3,
+                width: 55,
+                height: 20,
+            },
+            Box::new(EventLogView::new()),
+        );
+        desktop.add_window(event_log_window, screen);
 
-    // 4. 创建交互式演示窗口
-    let interactive_window = Window::new(
-        WindowKind::Normal,
-        "Interactive Area (Click me!)",
-        Rect {
-            x: 62,
-            y: 3,
-            width: 40,
-            height: 15,
-        },
-        Box::new(InteractiveView::new()),
-    );
-    desktop.add_window(interactive_window, terminal.size()?.into());
+        let interactive_window = Window::new(
+            WindowKind::Normal,
+            "Interactive Area (Click me!)",
+            Rect {
+                x: 62,
+                y: 3,
+                width: 40,
+                height: 15,
+            },
+            Box::new(InteractiveView::new()),
+        );
+        desktop.add_window(interactive_window, screen);
 
-    // 5. 主事件循环
-    loop {
-        // 渲染界面
-        terminal.draw(|f| {
-            desktop.draw(f);
-        })?;
-
-        // 轮询事件
-        if event::poll(Duration::from_millis(16))? {
-            let ev = event::read()?;
-            let screen: Rect = terminal.size()?.into();
-
-            // 让 desktop 处理事件
-            let result = desktop.handle_event(&ev, screen);
-
-            // 检查退出条件
-            if should_quit(&ev, result.outcome) {
-                break;
-            }
-        }
-    }
-
-    // 6. 清理并恢复终端
-    cleanup_terminal(&mut terminal)?;
-    Ok(())
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
-}
-
-fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        cursor::Show
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
+        Ok(desktop)
+    })
 }

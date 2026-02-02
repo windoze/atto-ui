@@ -1,28 +1,19 @@
 // Demo: 09-custom-components
 // 演示如何用声明式 + 反应式 API 封装可复用组件（含：bindings / callbacks / disabled state）。
 
-use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, DesktopAction, MenuBar};
+use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
 use chatty::declarative::{
     Align, DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer, Text, TextFn,
     VStack, ViewAdapter,
 };
 use chatty::reactive::{Binding, Property};
 use chatty::theme::Theme;
-use chatty::view::EventOutcome;
 use chatty::widgets::{Button, Checkbox, TextBox};
 use chatty::wm::{Window, WindowKind};
 
@@ -410,120 +401,59 @@ impl DeclarativeView for PreviewView {
 }
 
 fn main() -> Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        event::EnableBracketedPaste,
-    )?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(50))
+        .mouse_capture(true)
+        .bracketed_paste(true)
+        .cursor(CursorMode::Show);
 
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    run_crossterm_desktop_simple(config, |screen| {
+        let model = DemoModel::new();
 
-    let model = DemoModel::new();
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
 
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(Theme::dark(), menu);
+        let work = Desktop::layout(screen).work_area;
+        let gutter = 2;
+        let half = work.width / 2;
 
-    let screen: Rect = terminal.size()?.into();
-    let work = Desktop::layout(screen).work_area;
-    let gutter = 2;
-    let half = work.width / 2;
+        let left = Rect {
+            x: work.x.saturating_add(gutter),
+            y: work.y.saturating_add(1),
+            width: half.saturating_sub(gutter.saturating_add(1)).max(30),
+            height: work.height.saturating_sub(2).max(12),
+        };
+        let right = Rect {
+            x: work.x.saturating_add(half).saturating_add(1),
+            y: work.y.saturating_add(1),
+            width: work
+                .width
+                .saturating_sub(half)
+                .saturating_sub(gutter.saturating_add(1))
+                .max(30),
+            height: work.height.saturating_sub(2).max(12),
+        };
 
-    let left = Rect {
-        x: work.x.saturating_add(gutter),
-        y: work.y.saturating_add(1),
-        width: half.saturating_sub(gutter.saturating_add(1)).max(30),
-        height: work.height.saturating_sub(2).max(12),
-    };
-    let right = Rect {
-        x: work.x.saturating_add(half).saturating_add(1),
-        y: work.y.saturating_add(1),
-        width: work
-            .width
-            .saturating_sub(half)
-            .saturating_sub(gutter.saturating_add(1))
-            .max(30),
-        height: work.height.saturating_sub(2).max(12),
-    };
+        let components_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Custom Components",
+                left,
+                Box::new(ViewAdapter::new(ComponentsView::new(model.clone()))),
+            ),
+            screen,
+        );
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Preview",
+                right,
+                Box::new(ViewAdapter::new(PreviewView::new(model.clone()))),
+            ),
+            screen,
+        );
+        desktop.wm.focus(components_id);
 
-    let components_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Custom Components",
-            left,
-            Box::new(ViewAdapter::new(ComponentsView::new(model.clone()))),
-        ),
-        screen,
-    );
-    desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Preview",
-            right,
-            Box::new(ViewAdapter::new(PreviewView::new(model.clone()))),
-        ),
-        screen,
-    );
-    desktop.wm.focus(components_id);
-
-    let res = run(&mut terminal, &mut desktop);
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        event::DisableBracketedPaste,
-    )?;
-    terminal.show_cursor()?;
-
-    res
-}
-
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desktop) -> Result<()> {
-    loop {
-        terminal.draw(|f| desktop.draw(f))?;
-
-        if !event::poll(Duration::from_millis(50))? {
-            continue;
-        }
-
-        let ev = event::read()?;
-        let screen: Rect = terminal.size()?.into();
-        let result = desktop.handle_event(&ev, screen);
-
-        if let DesktopAction::CloseWindow(id) = result.action {
-            desktop.wm.close(id);
-        }
-
-        if should_quit(&ev, result.outcome) {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
+        Ok(desktop)
+    })
 }

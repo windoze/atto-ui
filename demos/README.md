@@ -67,6 +67,13 @@ cargo run --bin demo-08-foreach-demo
 cargo run --bin demo-09-custom-components
 ```
 
+### 10. [File Dialog](./10-file-dialog/)
+学习如何使用 `FileDialog` 创建 Open/Save 文件对话框，并在模态窗口中返回选择结果。
+
+```bash
+cargo run --bin demo-10-file-dialog
+```
+
 ## 学习路径
 
 ### 初学者路径

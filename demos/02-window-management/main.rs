@@ -1,18 +1,15 @@
-use std::io;
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, DesktopAction, MenuBar};
+use chatty::app::{
+    AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
+};
 use chatty::theme::Theme;
 use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
 use chatty::wm::{Window, WindowKind};
@@ -74,146 +71,119 @@ impl View for WindowInfoView {
 }
 
 fn main() -> Result<()> {
-    // 1. 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        event::EnableMouseCapture,
-        cursor::Hide
-    )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_capture(true)
+        .cursor(CursorMode::Hide);
 
-    // 2. 创建主题和桌面
-    let theme = Theme::dark();
-    let menu = MenuBar::new(vec![]);
-    let mut desktop = Desktop::new(theme, menu);
+    let window_counter = Rc::new(Cell::new(0usize));
+    let window_counter_build = Rc::clone(&window_counter);
+    let window_counter_events = Rc::clone(&window_counter);
 
-    // 3. 创建初始窗口
-    let mut window_counter = 0;
+    run_crossterm_desktop(
+        config,
+        move |screen| {
+            let theme = Theme::dark();
+            let menu = MenuBar::new(vec![]);
+            let mut desktop = Desktop::new(theme, menu);
 
-    let window = Window::new(
-        WindowKind::Normal,
-        format!("Window #{}", window_counter),
-        Rect {
-            x: 5,
-            y: 3,
-            width: 45,
-            height: 18,
+            let n = window_counter_build.get();
+            let window = Window::new(
+                WindowKind::Normal,
+                format!("Window #{}", n),
+                Rect {
+                    x: 5,
+                    y: 3,
+                    width: 45,
+                    height: 18,
+                },
+                Box::new(WindowInfoView::new("Normal", n)),
+            );
+            desktop.add_window(window, screen);
+            window_counter_build.set(n + 1);
+
+            Ok(desktop)
         },
-        Box::new(WindowInfoView::new("Normal", window_counter)),
-    );
-    desktop.add_window(window, terminal.size()?.into());
-    window_counter += 1;
-
-    // 4. 主事件循环
-    loop {
-        // 渲染界面
-        terminal.draw(|f| {
-            desktop.draw(f);
-        })?;
-
-        // 轮询事件
-        if event::poll(Duration::from_millis(16))? {
-            let ev = event::read()?;
-            let screen: Rect = terminal.size()?.into();
-
-            // 让 desktop 处理事件
-            let result = desktop.handle_event(&ev, screen);
-
-            // 处理 desktop 返回的动作
-            if let DesktopAction::CloseWindow(id) = result.action {
-                desktop.wm.close(id);
+        |_desktop, _screen| Ok(AppControl::Continue),
+        move |desktop, ev, screen, result| {
+            if result.outcome != EventOutcome::Ignored {
+                return Ok(AppControl::Continue);
             }
 
-            // 检查退出条件
-            if should_quit(&ev, result.outcome) {
-                break;
-            }
+            let Event::Key(KeyEvent {
+                code,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            }) = ev
+            else {
+                return Ok(AppControl::Continue);
+            };
 
-            // 处理应用级别的快捷键
-            if result.outcome == EventOutcome::Ignored
-                && let Event::Key(KeyEvent {
-                    code,
-                    modifiers: KeyModifiers::NONE,
-                    kind: KeyEventKind::Press,
-                    ..
-                }) = ev
-            {
-                match code {
-                    KeyCode::Char('n') => {
-                        // 创建新的普通窗口
-                        let window = Window::new(
-                            WindowKind::Normal,
-                            format!("Window #{}", window_counter),
-                            Rect {
-                                x: 10 + (window_counter as u16 % 10) * 2,
-                                y: 5 + (window_counter as u16 % 5),
-                                width: 45,
-                                height: 18,
-                            },
-                            Box::new(WindowInfoView::new("Normal", window_counter)),
-                        );
-                        desktop.add_window(window, screen);
-                        window_counter += 1;
-                    }
-                    KeyCode::Char('f') => {
-                        // 创建浮动窗口
-                        let window = Window::new(
-                            WindowKind::Floating,
-                            format!("Floating #{}", window_counter),
-                            Rect {
-                                x: 15 + (window_counter as u16 % 8) * 2,
-                                y: 7 + (window_counter as u16 % 4),
-                                width: 35,
-                                height: 12,
-                            },
-                            Box::new(WindowInfoView::new("Floating", window_counter)),
-                        );
-                        desktop.add_window(window, screen);
-                        window_counter += 1;
-                    }
-                    KeyCode::Char('m') => {
-                        // 创建模态对话框
-                        let work_area = Desktop::layout(screen).work_area;
-                        let dialog_width = 40;
-                        let dialog_height = 10;
-                        let window = Window::new(
-                            WindowKind::Modal,
-                            "Modal Dialog",
-                            Rect {
-                                x: work_area.x + (work_area.width.saturating_sub(dialog_width)) / 2,
-                                y: work_area.y
-                                    + (work_area.height.saturating_sub(dialog_height)) / 2,
-                                width: dialog_width,
-                                height: dialog_height,
-                            },
-                            Box::new(ModalView),
-                        );
-                        desktop.add_window(window, screen);
-                    }
-                    KeyCode::Char('c') => {
-                        // 关闭当前聚焦的窗口
-                        if let Some(id) = desktop.wm.focused() {
-                            desktop.wm.request_close(id);
-                        }
-                    }
-                    KeyCode::Tab => {
-                        // 切换到下一个窗口
-                        desktop.wm.focus_next();
-                    }
-                    _ => {}
+            match *code {
+                KeyCode::Char('n') => {
+                    let n = window_counter_events.get();
+                    let window = Window::new(
+                        WindowKind::Normal,
+                        format!("Window #{}", n),
+                        Rect {
+                            x: 10 + (n as u16 % 10) * 2,
+                            y: 5 + (n as u16 % 5),
+                            width: 45,
+                            height: 18,
+                        },
+                        Box::new(WindowInfoView::new("Normal", n)),
+                    );
+                    desktop.add_window(window, screen);
+                    window_counter_events.set(n + 1);
                 }
+                KeyCode::Char('f') => {
+                    let n = window_counter_events.get();
+                    let window = Window::new(
+                        WindowKind::Floating,
+                        format!("Floating #{}", n),
+                        Rect {
+                            x: 15 + (n as u16 % 8) * 2,
+                            y: 7 + (n as u16 % 4),
+                            width: 35,
+                            height: 12,
+                        },
+                        Box::new(WindowInfoView::new("Floating", n)),
+                    );
+                    desktop.add_window(window, screen);
+                    window_counter_events.set(n + 1);
+                }
+                KeyCode::Char('m') => {
+                    let work_area = Desktop::layout(screen).work_area;
+                    let dialog_width = 40;
+                    let dialog_height = 10;
+                    let window = Window::new(
+                        WindowKind::Modal,
+                        "Modal Dialog",
+                        Rect {
+                            x: work_area.x + (work_area.width.saturating_sub(dialog_width)) / 2,
+                            y: work_area.y + (work_area.height.saturating_sub(dialog_height)) / 2,
+                            width: dialog_width,
+                            height: dialog_height,
+                        },
+                        Box::new(ModalView),
+                    );
+                    desktop.add_window(window, screen);
+                }
+                KeyCode::Char('c') => {
+                    if let Some(id) = desktop.wm.focused() {
+                        desktop.wm.request_close(id);
+                    }
+                }
+                KeyCode::Tab => {
+                    desktop.wm.focus_next();
+                }
+                _ => {}
             }
-        }
-    }
 
-    // 5. 清理并恢复终端
-    cleanup_terminal(&mut terminal)?;
-    Ok(())
+            Ok(AppControl::Continue)
+        },
+    )
 }
 
 /// 模态对话框视图
@@ -260,36 +230,4 @@ impl View for ModalView {
 
         frame.render_widget(paragraph, area);
     }
-}
-
-fn should_quit(event: &Event, outcome: EventOutcome) -> bool {
-    match event {
-        // Ctrl+Q always quits.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) if modifiers.contains(KeyModifiers::CONTROL) => true,
-        // 'q' quits only when the event was not consumed by the UI.
-        Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            ..
-        }) => outcome == EventOutcome::Ignored,
-        _ => false,
-    }
-}
-
-fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        event::DisableMouseCapture,
-        cursor::Show
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
 }
