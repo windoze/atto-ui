@@ -25,6 +25,13 @@ use chatty::view::EventOutcome;
 use chatty::widgets::{Button, Checkbox, ListBox, RadioGroup, TableView, TextBox};
 use chatty::wm::{Window, WindowKind};
 
+fn content_height() -> LayoutParams {
+    LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    }
+}
+
 /// 应用状态模型
 #[derive(Clone)]
 struct AppState {
@@ -92,9 +99,9 @@ impl DeclarativeView for LeftPanelView {
         // 标题和说明
         let header = VStack::new()
             .spacing(0)
-            .child(Text::new("基础控件演示 - 左侧面板"))
-            .child(Text::new("使用 Tab/Shift+Tab 切换焦点"))
-            .child(Divider::horizontal());
+            .child_with_layout(Text::new("基础控件演示 - 左侧面板"), content_height())
+            .child_with_layout(Text::new("使用 Tab/Shift+Tab 切换焦点"), content_height())
+            .child_with_layout(Divider::horizontal(), content_height());
 
         // Button 演示区域
         let click_count_display = state.click_count.clone();
@@ -102,8 +109,8 @@ impl DeclarativeView for LeftPanelView {
         let state_clone2 = state.clone();
         let button_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【按钮演示】"))
-            .child(
+            .child_with_layout(Text::new("【按钮演示】"), content_height())
+            .child_with_layout(
                 HStack::new()
                     .spacing(1)
                     .child(Button::new("计数 +1").on_click(move || {
@@ -116,83 +123,80 @@ impl DeclarativeView for LeftPanelView {
                     .child(Button::new("显示消息").on_click(move || {
                         status_message.set("按钮被点击了！".to_string());
                     })),
+                LayoutParams {
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
             )
-            .child(TextFn::new(move || {
-                format!("点击次数: {}", click_count_display.get())
-            }));
+            .child_with_layout(
+                TextFn::new(move || format!("点击次数: {}", click_count_display.get())),
+                content_height(),
+            );
 
         // TextBox 演示区域
         let textbox_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【文本输入框演示】"))
-            .child(TextBox::new("用户名", state_clone2.username.binding()))
-            .child(TextBox::new("密码", state.password.binding()))
-            .child(Text::new("支持: Unicode 输入、光标移动、鼠标定位、粘贴"));
+            .child_with_layout(Text::new("【文本输入框演示】"), content_height())
+            .child_with_layout(
+                TextBox::new("用户名", state_clone2.username.binding()),
+                content_height(),
+            )
+            .child_with_layout(
+                TextBox::new("密码", state.password.binding()),
+                content_height(),
+            )
+            .child_with_layout(
+                Text::new("支持: Unicode 输入、光标移动、鼠标定位、粘贴"),
+                content_height(),
+            );
 
         // Checkbox 演示区域
         let checkbox_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【复选框演示】"))
-            .child(Checkbox::new("接受服务条款", state.accept_terms.binding()))
-            .child(Checkbox::new(
-                "启用通知",
-                state.enable_notifications.binding(),
-            ))
-            .child(Checkbox::new("记住我", state.remember_me.binding()));
+            .child_with_layout(Text::new("【复选框演示】"), content_height())
+            .child_with_layout(
+                Checkbox::new("接受服务条款", state.accept_terms.binding()),
+                content_height(),
+            )
+            .child_with_layout(
+                Checkbox::new("启用通知", state.enable_notifications.binding()),
+                content_height(),
+            )
+            .child_with_layout(
+                Checkbox::new("记住我", state.remember_me.binding()),
+                content_height(),
+            );
 
         // RadioGroup 演示区域
         let radio_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【单选按钮演示】"))
-            .child(RadioGroup::new(
-                "主题",
-                vec!["深色".into(), "浅色".into(), "自动".into()],
-                state.theme_selection.binding(),
-            ))
-            .child(RadioGroup::new(
-                "语言",
-                vec!["中文".into(), "English".into(), "日本語".into()],
-                state.language_selection.binding(),
-            ));
+            .child_with_layout(Text::new("【单选按钮演示】"), content_height())
+            .child_with_layout(
+                RadioGroup::new(
+                    "主题",
+                    vec!["深色".into(), "浅色".into(), "自动".into()],
+                    state.theme_selection.binding(),
+                ),
+                content_height(),
+            )
+            .child_with_layout(
+                RadioGroup::new(
+                    "语言",
+                    vec!["中文".into(), "English".into(), "日本語".into()],
+                    state.language_selection.binding(),
+                ),
+                content_height(),
+            );
 
         // 组合所有区域
         Box::new(
             VStack::new()
-                .child_with_layout(
-                    header,
-                    LayoutParams {
-                        height: Size::Fixed(3),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    button_section,
-                    LayoutParams {
-                        height: Size::Fixed(6),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    textbox_section,
-                    LayoutParams {
-                        height: Size::Fixed(7),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    checkbox_section,
-                    LayoutParams {
-                        height: Size::Fixed(5),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    radio_section,
-                    LayoutParams {
-                        height: Size::Fill,
-                        ..LayoutParams::default()
-                    },
-                )
+                .scrollable(true)
+                .child_with_layout(header, content_height())
+                .child_with_layout(button_section, content_height())
+                .child_with_layout(textbox_section, content_height())
+                .child_with_layout(checkbox_section, content_height())
+                .child_with_layout(radio_section, content_height())
                 .spacing(1)
                 .padding(1),
         )
@@ -217,13 +221,13 @@ impl DeclarativeView for RightPanelView {
         // 标题
         let header = VStack::new()
             .spacing(0)
-            .child(Text::new("基础控件演示 - 右侧面板"))
-            .child(Divider::horizontal());
+            .child_with_layout(Text::new("基础控件演示 - 右侧面板"), content_height())
+            .child_with_layout(Divider::horizontal(), content_height());
 
         // ListBox 演示
         let list_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【列表框演示】"))
+            .child_with_layout(Text::new("【列表框演示】"), content_height())
             .child(
                 ListBox::new(
                     "选择水果",
@@ -243,7 +247,7 @@ impl DeclarativeView for RightPanelView {
         // TableView 演示
         let table_section = VStack::new()
             .spacing(1)
-            .child(Text::new("【表格视图演示】"))
+            .child_with_layout(Text::new("【表格视图演示】"), content_height())
             .child(
                 TableView::new(
                     "编程语言对比",
@@ -263,41 +267,18 @@ impl DeclarativeView for RightPanelView {
         // Label 和提示信息
         let info_section = VStack::new()
             .spacing(0)
-            .child(Text::new("【提示信息】"))
-            .child(Text::new("↑↓ - 在列表/表格中导航"))
-            .child(Text::new("鼠标点击 - 直接选择"))
-            .child(Text::new("Enter/Space - 激活按钮"));
+            .child_with_layout(Text::new("【提示信息】"), content_height())
+            .child_with_layout(Text::new("↑↓ - 在列表/表格中导航"), content_height())
+            .child_with_layout(Text::new("鼠标点击 - 直接选择"), content_height())
+            .child_with_layout(Text::new("Enter/Space - 激活按钮"), content_height());
 
         Box::new(
             VStack::new()
-                .child_with_layout(
-                    header,
-                    LayoutParams {
-                        height: Size::Fixed(2),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    list_section,
-                    LayoutParams {
-                        height: Size::Fixed(11),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    table_section,
-                    LayoutParams {
-                        height: Size::Fixed(12),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    info_section,
-                    LayoutParams {
-                        height: Size::Fill,
-                        ..LayoutParams::default()
-                    },
-                )
+                .scrollable(true)
+                .child_with_layout(header, content_height())
+                .child_with_layout(list_section, content_height())
+                .child_with_layout(table_section, content_height())
+                .child_with_layout(info_section, content_height())
                 .spacing(1)
                 .padding(1),
         )

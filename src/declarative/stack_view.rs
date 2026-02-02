@@ -559,6 +559,7 @@ impl VStackView {
             };
 
             let max_h = content_h.saturating_sub(cursor_y);
+            let available_h = max_h.saturating_sub(margin.bottom);
             let available_w = content_w.saturating_sub(margin.left.saturating_add(margin.right));
             let min_w = child.view.min_width();
             let required_w = match child.layout.width {
@@ -574,11 +575,15 @@ impl VStackView {
             let h = if scrollable {
                 slot_h
             } else {
-                slot_h.min(max_h.saturating_sub(margin.bottom))
+                slot_h.min(available_h)
             };
-            if h == 0 {
+            if !scrollable && slot_h > available_h && available_h == 0 {
                 child.set_bounds(Rect::default());
                 out_of_space = true;
+                continue;
+            }
+            if h == 0 {
+                child.set_bounds(Rect::default());
                 continue;
             }
 
