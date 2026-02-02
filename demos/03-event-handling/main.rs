@@ -199,8 +199,8 @@ impl InteractiveView {
 
 impl View for InteractiveView {
     fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        if let Event::Mouse(mouse) = event {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        if let Event::Mouse(mouse) = event
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 self.click_count += 1;
                 self.last_click_pos = Some((mouse.column, mouse.row));
 
@@ -210,7 +210,6 @@ impl View for InteractiveView {
                     action: ViewAction::None,
                 };
             }
-        }
 
         ViewEventResult::ignored()
     }

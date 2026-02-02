@@ -429,8 +429,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desk
         let result = desktop.handle_event(&ev, screen);
 
         // 检查退出键
-        if result.outcome == EventOutcome::Ignored {
-            if let Event::Key(KeyEvent {
+        if result.outcome == EventOutcome::Ignored
+            && let Event::Key(KeyEvent {
                 code,
                 modifiers,
                 kind: KeyEventKind::Press,
@@ -445,7 +445,6 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, desktop: &mut Desk
                     _ => {}
                 }
             }
-        }
     }
 
     Ok(())

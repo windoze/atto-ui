@@ -631,8 +631,7 @@ where
                     node.layout = default_foreach_item_layout();
 
                     let needs_rebuild = old_cached_items
-                        .get(&id)
-                        .map_or(true, |old_item| old_item != item);
+                        .get(&id) != Some(item);
                     if needs_rebuild {
                         node.view = (self.builder)(item, idx).build_view();
                     }
