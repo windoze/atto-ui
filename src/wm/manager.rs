@@ -109,7 +109,13 @@ impl WindowManager {
         self.next_id += 1;
         let id = WindowId(self.next_id);
         window.id = id;
-        let rect = normalize_rect(window.rect.get(), bounds, window.min_size.get());
+
+        let (min_w, min_h) = window.min_size.get();
+        let (view_min_w, view_min_h) = window.view.min_size();
+        let min_size = (min_w.max(view_min_w), min_h.max(view_min_h));
+        window.min_size.set(min_size);
+
+        let rect = normalize_rect(window.rect.get(), bounds, min_size);
         window.rect.set(rect);
 
         if window.kind == WindowKind::Modal {

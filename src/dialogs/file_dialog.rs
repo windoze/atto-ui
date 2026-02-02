@@ -6,10 +6,68 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use crate::declarative::{Divider, HStack, LayoutParams, Size, Spacer, VStack, ViewAdapter};
+use crate::declarative::{Align, Divider, HStack, LayoutParams, Size, VStack, ViewAdapter};
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::view::{View, ViewContext, ViewEventResult};
-use crate::widgets::{Button, Label, ListBox, TextBox};
+use crate::widgets::{Button, Control, ControlOutcome, FormAction, Label, ListBox, TextBox};
+
+#[derive(Clone)]
+struct FocusBindingControl<T> {
+    inner: T,
+    focused: Binding<bool>,
+}
+
+impl<T> FocusBindingControl<T> {
+    fn new(inner: T, focused: Binding<bool>) -> Self {
+        Self { inner, focused }
+    }
+}
+
+impl<T> Control for FocusBindingControl<T>
+where
+    T: Control + Clone + Send + 'static,
+{
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+
+    fn min_width(&self) -> u16 {
+        self.inner.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.inner.min_height()
+    }
+
+    fn min_size(&self) -> (u16, u16) {
+        self.inner.min_size()
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
+    }
+
+    fn set_focused(&mut self, focused: bool) {
+        self.focused.set(focused);
+        self.inner.set_focused(focused);
+    }
+
+    fn set_area(&mut self, area: Rect) {
+        self.inner.set_area(area);
+    }
+
+    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+        self.inner.handle_event(event)
+    }
+
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, theme: &crate::theme::Theme) {
+        self.inner.draw(frame, area, theme);
+    }
+
+    fn desired_height(&self) -> u16 {
+        self.inner.desired_height()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileDialogMode {
@@ -74,9 +132,14 @@ pub struct FileDialog {
     result: Binding<Option<PathBuf>>,
 
     current_dir: Property<PathBuf>,
-    entries: Property<Vec<Entry>>,
-    display_items: Property<Vec<String>>,
-    selection: Property<usize>,
+    dir_entries: Property<Vec<Entry>>,
+    dir_display_items: Property<Vec<String>>,
+    dir_selection: Property<usize>,
+
+    file_entries: Property<Vec<Entry>>,
+    file_display_items: Property<Vec<String>>,
+    file_selection: Property<usize>,
+
     file_name: Property<String>,
     submit_enabled: Property<bool>,
     location_text: Property<String>,
@@ -84,9 +147,13 @@ pub struct FileDialog {
 
     pending_action: Property<Option<PendingAction>>,
 
+    dir_list_focused: Binding<bool>,
+    file_list_focused: Binding<bool>,
+    file_name_focused: Binding<bool>,
+
     inner: ViewAdapter,
 
-    selection_observer: DirtyObserver,
+    file_selection_observer: DirtyObserver,
     file_name_observer: DirtyObserver,
 }
 
@@ -115,15 +182,24 @@ impl FileDialog {
         let initial_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         let current_dir = Property::new(initial_dir);
-        let entries: Property<Vec<Entry>> = Property::new(Vec::new());
-        let display_items: Property<Vec<String>> = Property::new(Vec::new());
-        let selection: Property<usize> = Property::new(0);
+        let dir_entries: Property<Vec<Entry>> = Property::new(Vec::new());
+        let dir_display_items: Property<Vec<String>> = Property::new(Vec::new());
+        let dir_selection: Property<usize> = Property::new(0);
+
+        let file_entries: Property<Vec<Entry>> = Property::new(Vec::new());
+        let file_display_items: Property<Vec<String>> = Property::new(Vec::new());
+        let file_selection: Property<usize> = Property::new(0);
+
         let file_name: Property<String> = Property::new(String::new());
         let submit_enabled: Property<bool> = Property::new(false);
         let location_text: Property<String> = Property::new(String::new());
         let help_text = Self::default_help_text();
         let status_text: Property<String> = Property::new(String::new());
         let pending_action: Property<Option<PendingAction>> = Property::new(None);
+
+        let dir_list_focused = Binding::new(false);
+        let file_list_focused = Binding::new(false);
+        let file_name_focused = Binding::new(false);
 
         let submit_label = match mode {
             FileDialogMode::OpenFile => "Open",
@@ -163,19 +239,71 @@ impl FileDialog {
                     ..LayoutParams::default()
                 },
             )
-            .child_with_layout(Divider::horizontal(), LayoutParams::default())
             .child_with_layout(
-                ListBox::new("Files", display_items.binding(), selection.binding()),
+                Divider::horizontal(),
                 LayoutParams {
-                    height: Size::Fill,
+                    height: Size::Content,
+                    align_x: Align::Stretch,
                     ..LayoutParams::default()
                 },
             )
-            .child_with_layout(Divider::horizontal(), LayoutParams::default())
             .child_with_layout(
-                TextBox::new("File name", file_name.binding()),
+                HStack::new()
+                    .spacing(0)
+                    .child_with_layout(
+                        FocusBindingControl::new(
+                            ListBox::new(
+                                "Directories",
+                                dir_display_items.binding(),
+                                dir_selection.binding(),
+                            ),
+                            dir_list_focused.clone(),
+                        ),
+                        LayoutParams {
+                            width: Size::Weight(1),
+                            height: Size::Fill,
+                            align_x: Align::Stretch,
+                            align_y: Align::Stretch,
+                            ..LayoutParams::default()
+                        },
+                    )
+                    .child_with_layout(
+                        Divider::vertical(),
+                        LayoutParams {
+                            width: Size::Content,
+                            height: Size::Fill,
+                            align_y: Align::Stretch,
+                            ..LayoutParams::default()
+                        },
+                    )
+                    .child_with_layout(
+                        FocusBindingControl::new(
+                            ListBox::new(
+                                "Files",
+                                file_display_items.binding(),
+                                file_selection.binding(),
+                            ),
+                            file_list_focused.clone(),
+                        ),
+                        LayoutParams {
+                            width: Size::Weight(2),
+                            height: Size::Fill,
+                            align_x: Align::Stretch,
+                            align_y: Align::Stretch,
+                            ..LayoutParams::default()
+                        },
+                    ),
+                LayoutParams {
+                    height: Size::Fill,
+                    align_y: Align::Stretch,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                Divider::horizontal(),
                 LayoutParams {
                     height: Size::Content,
+                    align_x: Align::Stretch,
                     ..LayoutParams::default()
                 },
             )
@@ -183,7 +311,10 @@ impl FileDialog {
                 HStack::new()
                     .spacing(1)
                     .child_with_layout(
-                        Spacer::new(),
+                        FocusBindingControl::new(
+                            TextBox::new("File name", file_name.binding()),
+                            file_name_focused.clone(),
+                        ),
                         LayoutParams {
                             width: Size::Weight(1),
                             ..LayoutParams::default()
@@ -213,23 +344,29 @@ impl FileDialog {
 
         let inner = ViewAdapter::new(root);
 
-        let selection_observer = selection.dirty_observer();
+        let file_selection_observer = file_selection.dirty_observer();
         let file_name_observer = file_name.dirty_observer();
 
         let mut dialog = Self {
             mode,
             result,
             current_dir,
-            entries,
-            display_items,
-            selection,
+            dir_entries,
+            dir_display_items,
+            dir_selection,
+            file_entries,
+            file_display_items,
+            file_selection,
             file_name,
             submit_enabled,
             location_text,
             status_text,
             pending_action,
+            dir_list_focused,
+            file_list_focused,
+            file_name_focused,
             inner,
-            selection_observer,
+            file_selection_observer,
             file_name_observer,
         };
         dialog.refresh_entries();
@@ -248,11 +385,29 @@ impl FileDialog {
 
         match list_dir_entries(&dir) {
             Ok(entries) => {
-                let display: Vec<String> = entries.iter().map(Entry::display_name).collect();
-                self.entries.set(entries);
-                self.display_items.set(display);
+                let dir_entries: Vec<Entry> = entries
+                    .iter()
+                    .filter(|e| matches!(e.kind, EntryKind::Parent | EntryKind::Directory))
+                    .cloned()
+                    .collect();
+                let file_entries: Vec<Entry> = entries
+                    .iter()
+                    .filter(|e| matches!(e.kind, EntryKind::File))
+                    .cloned()
+                    .collect();
+
+                let dir_display: Vec<String> =
+                    dir_entries.iter().map(Entry::display_name).collect();
+                let file_display: Vec<String> =
+                    file_entries.iter().map(Entry::display_name).collect();
+
+                self.dir_entries.set(dir_entries);
+                self.dir_display_items.set(dir_display);
+                self.file_entries.set(file_entries);
+                self.file_display_items.set(file_display);
                 self.status_text.set(String::new());
-                self.selection.set(0);
+                self.dir_selection.set(0);
+                self.file_selection.set(0);
             }
             Err(err) => {
                 self.status_text
@@ -263,11 +418,15 @@ impl FileDialog {
                     path: p.to_path_buf(),
                     kind: EntryKind::Parent,
                 });
-                let entries: Vec<Entry> = parent.into_iter().collect();
-                let display: Vec<String> = entries.iter().map(Entry::display_name).collect();
-                self.entries.set(entries);
-                self.display_items.set(display);
-                self.selection.set(0);
+                let dir_entries: Vec<Entry> = parent.into_iter().collect();
+                let dir_display: Vec<String> =
+                    dir_entries.iter().map(Entry::display_name).collect();
+                self.dir_entries.set(dir_entries);
+                self.dir_display_items.set(dir_display);
+                self.file_entries.set(Vec::new());
+                self.file_display_items.set(Vec::new());
+                self.dir_selection.set(0);
+                self.file_selection.set(0);
             }
         }
     }
@@ -277,9 +436,9 @@ impl FileDialog {
             .set(!self.file_name.get().trim().is_empty());
     }
 
-    fn sync_file_name_from_selection(&mut self) {
-        let idx = self.selection.get();
-        let entries = self.entries.get();
+    fn sync_file_name_from_file_selection(&mut self) {
+        let idx = self.file_selection.get();
+        let entries = self.file_entries.get();
         let Some(entry) = entries.get(idx) else {
             return;
         };
@@ -302,30 +461,38 @@ impl FileDialog {
         self.navigate_to(parent.to_path_buf());
     }
 
-    fn activate_selection(&mut self) -> Option<ViewEventResult> {
-        let idx = self.selection.get();
-        let entries = self.entries.get();
+    fn activate_dir_selection(&mut self) {
+        let idx = self.dir_selection.get();
+        let entries = self.dir_entries.get();
+        let Some(entry) = entries.get(idx) else {
+            return;
+        };
+
+        match entry.kind {
+            EntryKind::Parent | EntryKind::Directory => self.navigate_to(entry.path.clone()),
+            EntryKind::File => {}
+        }
+    }
+
+    fn activate_file_selection(&mut self) -> Option<ViewEventResult> {
+        let idx = self.file_selection.get();
+        let entries = self.file_entries.get();
         let Some(entry) = entries.get(idx) else {
             return None;
         };
 
-        match entry.kind {
-            EntryKind::Parent | EntryKind::Directory => {
-                self.navigate_to(entry.path.clone());
-                None
-            }
-            EntryKind::File => {
-                if let Some(name) = entry.file_name_string() {
-                    self.file_name.set(name);
-                    self.recompute_submit_enabled();
-                }
-                match self.mode {
-                    FileDialogMode::OpenFile => {
-                        self.submit().then_some(ViewEventResult::close_window())
-                    }
-                    FileDialogMode::SaveFile => None,
-                }
-            }
+        if entry.kind != EntryKind::File {
+            return None;
+        }
+
+        if let Some(name) = entry.file_name_string() {
+            self.file_name.set(name);
+            self.recompute_submit_enabled();
+        }
+
+        match self.mode {
+            FileDialogMode::OpenFile => self.submit().then_some(ViewEventResult::close_window()),
+            FileDialogMode::SaveFile => None,
         }
     }
 
@@ -374,7 +541,7 @@ impl View for FileDialog {
     }
 
     fn min_width(&self) -> u16 {
-        self.inner.min_width().max(24)
+        self.inner.min_width().max(44)
     }
 
     fn min_height(&self) -> u16 {
@@ -419,9 +586,12 @@ impl View for FileDialog {
 
         let inner_res = self.inner.handle_event(event, ctx);
 
-        // Selection changed (consumed by ListBox), but we still want to sync filename.
-        if self.selection.check_dirty(&mut self.selection_observer) {
-            self.sync_file_name_from_selection();
+        // File selection changed (consumed by ListBox), but we still want to sync filename.
+        if self
+            .file_selection
+            .check_dirty(&mut self.file_selection_observer)
+        {
+            self.sync_file_name_from_file_selection();
         }
 
         // File name changed (consumed by TextBox), but we still want to recompute enabled state.
@@ -443,8 +613,8 @@ impl View for FileDialog {
             }
         }
 
-        // If the inner view didn't consume the event, it is most likely coming from the file
-        // list (ListBox doesn't handle Enter/Backspace).
+        // If the inner view didn't consume the event, it is most likely coming from a ListBox
+        // (ListBox doesn't handle Enter/Backspace).
         if !inner_res.is_consumed() {
             if let Event::Key(KeyEvent {
                 code: KeyCode::Backspace,
@@ -452,7 +622,9 @@ impl View for FileDialog {
                 ..
             }) = event
             {
-                self.navigate_parent();
+                if self.dir_list_focused.get() || self.file_list_focused.get() {
+                    self.navigate_parent();
+                }
                 return ViewEventResult::consumed();
             }
 
@@ -462,8 +634,15 @@ impl View for FileDialog {
                 ..
             }) = event
             {
-                if let Some(res) = self.activate_selection() {
-                    return res;
+                if self.dir_list_focused.get() {
+                    self.activate_dir_selection();
+                    return ViewEventResult::consumed();
+                }
+                if self.file_list_focused.get() {
+                    if let Some(res) = self.activate_file_selection() {
+                        return res;
+                    }
+                    return ViewEventResult::consumed();
                 }
                 return ViewEventResult::consumed();
             }
@@ -476,10 +655,12 @@ impl View for FileDialog {
             ..
         }) = event
         {
-            if self.submit() {
-                return ViewEventResult::close_window();
+            if self.file_name_focused.get() {
+                if self.submit() {
+                    return ViewEventResult::close_window();
+                }
+                return ViewEventResult::consumed();
             }
-            return ViewEventResult::consumed();
         }
 
         inner_res
