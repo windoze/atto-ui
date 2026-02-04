@@ -17,6 +17,7 @@ pub struct RadioGroup {
     binding: Binding<usize>,
     focused: bool,
     enabled: Binding<bool>,
+    height: Option<Binding<u16>>,
     area: Option<Rect>,
 }
 
@@ -38,6 +39,7 @@ impl RadioGroup {
             binding,
             focused: false,
             enabled: true.into(),
+            height: None,
             area: None,
         }
     }
@@ -54,6 +56,11 @@ impl RadioGroup {
 
     pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Binding<u16>>) -> Self {
+        self.height = Some(height.into());
         self
     }
 
@@ -143,7 +150,16 @@ impl Control for RadioGroup {
     }
 
     fn desired_height(&self) -> u16 {
-        (self.options.get().len() as u16).saturating_add(1)
+        let options_len = self.options.get().len() as u16;
+        let min_height = if options_len == 0 { 1 } else { 2 };
+        let auto_height = options_len.saturating_add(1);
+        let desired_height = self
+            .height
+            .as_ref()
+            .map(|height| height.get())
+            .unwrap_or(auto_height);
+
+        desired_height.max(min_height)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
@@ -200,5 +216,45 @@ impl Control for RadioGroup {
             );
             y = y.saturating_add(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_height_fits_all_options() {
+        let selected = Binding::new(0usize);
+        let radio = RadioGroup::new(
+            "Mode",
+            vec!["Normal".into(), "Insert".into(), "Visual".into()],
+            selected,
+        );
+        assert_eq!(radio.desired_height(), 4);
+    }
+
+    #[test]
+    fn explicit_height_overrides_default() {
+        let selected = Binding::new(0usize);
+        let radio = RadioGroup::new(
+            "Mode",
+            vec!["Normal".into(), "Insert".into(), "Visual".into()],
+            selected,
+        )
+        .height(2u16);
+        assert_eq!(radio.desired_height(), 2);
+    }
+
+    #[test]
+    fn explicit_height_is_clamped_to_min_height() {
+        let selected = Binding::new(0usize);
+        let radio = RadioGroup::new(
+            "Mode",
+            vec!["Normal".into(), "Insert".into(), "Visual".into()],
+            selected,
+        )
+        .height(1u16);
+        assert_eq!(radio.desired_height(), 2);
     }
 }

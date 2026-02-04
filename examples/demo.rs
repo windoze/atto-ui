@@ -177,40 +177,85 @@ impl DeclarativeView for WidgetsView {
             .spacing(0)
         };
 
-        let widgets = view_builder! {
-            HStack {
-                VStack {
-                    TextBox("Text", model.text_binding())
-                    Checkbox("Enable feature 1", model.enable_feature_binding())
-                    Checkbox("Enable feature 2", model.enable_feature_binding())
-                    RadioGroup(
+        let widgets = {
+            let left_column = VStack::new()
+                .spacing(1)
+                .child_with_layout(
+                    TextBox::new("Text", model.text_binding()),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    Checkbox::new("Enable feature", model.enable_feature_binding()),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    RadioGroup::new(
                         "Mode",
                         vec!["Normal".into(), "Insert".into(), "Visual".into()],
                         model.mode_binding(),
-                    )
-                }
+                    ),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                );
+
+            HStack::new()
                 .spacing(1)
-
-                ListBox(
-                    "List",
-                    vec!["Alpha".into(), "Beta".into(), "Gamma".into(), "Delta".into()],
-                    model.list_selection_binding(),
+                .child_with_layout(
+                    left_column,
+                    LayoutParams {
+                        width: Size::Weight(1),
+                        height: Size::Fill,
+                        align_x: Align::Stretch,
+                        align_y: Align::Stretch,
+                        ..LayoutParams::default()
+                    },
                 )
-                .height(u16::MAX)
-
-                TableView(
-                    "Table",
-                    vec!["Key".into(), "Value".into()],
-                    vec![
-                        vec!["lang".into(), "Rust".into()],
-                        vec!["jp".into(), "こんにちは".into()],
-                        vec!["cn".into(), "你好👋".into()],
-                    ],
-                    model.table_selection_binding(),
+                .child_with_layout(
+                    ListBox::new(
+                        "List",
+                        vec![
+                            "Alpha".into(),
+                            "Beta".into(),
+                            "Gamma".into(),
+                            "Delta".into(),
+                        ],
+                        model.list_selection_binding(),
+                    ),
+                    LayoutParams {
+                        width: Size::Weight(1),
+                        height: Size::Fill,
+                        align_x: Align::Stretch,
+                        align_y: Align::Stretch,
+                        ..LayoutParams::default()
+                    },
                 )
-                .height(u16::MAX)
-            }
-            .spacing(1)
+                .child_with_layout(
+                    TableView::new(
+                        "Table",
+                        vec!["Key".into(), "Value".into()],
+                        vec![
+                            vec!["lang".into(), "Rust".into()],
+                            vec!["jp".into(), "こんにちは".into()],
+                            vec!["cn".into(), "你好👋".into()],
+                        ],
+                        model.table_selection_binding(),
+                    ),
+                    LayoutParams {
+                        width: Size::Weight(1),
+                        height: Size::Fill,
+                        align_x: Align::Stretch,
+                        align_y: Align::Stretch,
+                        ..LayoutParams::default()
+                    },
+                )
         };
 
         let buttons = view_builder! {
