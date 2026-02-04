@@ -482,9 +482,7 @@ impl FileDialog {
     fn activate_file_selection(&mut self) -> Option<ViewEventResult> {
         let idx = self.file_selection.get();
         let entries = self.file_entries.get();
-        let Some(entry) = entries.get(idx) else {
-            return None;
-        };
+        let entry = entries.get(idx)?;
 
         if entry.kind != EntryKind::File {
             return None;
@@ -659,14 +657,12 @@ impl View for FileDialog {
             kind: KeyEventKind::Press,
             ..
         }) = event
-        {
-            if self.file_name_focused.get() {
+            && self.file_name_focused.get() {
                 if self.submit() {
                     return ViewEventResult::close_window();
                 }
                 return ViewEventResult::consumed();
             }
-        }
 
         inner_res
     }
@@ -704,7 +700,7 @@ fn list_dir_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
         });
     }
 
-    entries.sort_by(|a, b| cmp_entries(a, b));
+    entries.sort_by(cmp_entries);
     out.extend(entries);
     Ok(out)
 }

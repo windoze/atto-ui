@@ -360,7 +360,7 @@ impl VStackView {
         }
 
         let focused = match self.focused {
-            Some(id) if focusable.iter().any(|x| *x == id) => id,
+            Some(id) if focusable.contains(&id) => id,
             _ => {
                 let id = match direction {
                     TabDirection::Next => focusable[0],
@@ -1611,7 +1611,7 @@ impl HStackView {
         }
 
         let focused = match self.focused {
-            Some(id) if focusable.iter().any(|x| *x == id) => id,
+            Some(id) if focusable.contains(&id) => id,
             _ => {
                 let id = match direction {
                     TabDirection::Next => focusable[0],
