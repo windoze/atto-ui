@@ -657,12 +657,13 @@ impl View for FileDialog {
             kind: KeyEventKind::Press,
             ..
         }) = event
-            && self.file_name_focused.get() {
-                if self.submit() {
-                    return ViewEventResult::close_window();
-                }
-                return ViewEventResult::consumed();
+            && self.file_name_focused.get()
+        {
+            if self.submit() {
+                return ViewEventResult::close_window();
             }
+            return ViewEventResult::consumed();
+        }
 
         inner_res
     }

@@ -14,7 +14,9 @@ use crate::views::{
     scrollbar_layout_1d, should_show_scrollbar,
 };
 
-use super::{Window, WindowBorderStyle, WindowButtons, WindowId, WindowKind, WindowState};
+use super::{
+    Window, WindowBorderStyle, WindowButtons, WindowId, WindowKind, WindowMinSizeMode, WindowState,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowManagerInputMode {
@@ -110,12 +112,9 @@ impl WindowManager {
         let id = WindowId(self.next_id);
         window.id = id;
 
-        let (min_w, min_h) = window.min_size.get();
-        let (view_min_w, view_min_h) = window.view.min_size();
-        let min_size = (min_w.max(view_min_w), min_h.max(view_min_h));
-        window.min_size.set(min_size);
+        let enforced_min_size = window_enforced_min_size(&window);
 
-        let rect = normalize_rect(window.rect.get(), bounds, min_size);
+        let rect = normalize_rect(window.rect.get(), bounds, enforced_min_size);
         window.rect.set(rect);
 
         if window.kind == WindowKind::Modal {
@@ -273,9 +272,10 @@ impl WindowManager {
                 continue;
             }
 
+            let enforced_min_size = window_enforced_min_size(window);
             let rect = match state {
                 WindowState::Maximized => bounds,
-                _ => normalize_rect(window.rect.get(), bounds, window.min_size.get()),
+                _ => normalize_rect(window.rect.get(), bounds, enforced_min_size),
             };
             window.rect.set(rect);
 
@@ -366,10 +366,12 @@ impl WindowManager {
             if state == WindowState::Minimized {
                 return None;
             }
+
+            let enforced_min_size = window_enforced_min_size(w);
             // Ensure rect stays clamped before passing input.
             let rect = match state {
                 WindowState::Maximized => bounds,
-                _ => normalize_rect(w.rect.get(), bounds, w.min_size.get()),
+                _ => normalize_rect(w.rect.get(), bounds, enforced_min_size),
             };
             w.rect.set(rect);
             if let Event::Mouse(m) = event {
@@ -495,7 +497,8 @@ impl WindowManager {
                             && w.resizable.get()
                             && w.state.get() != WindowState::Maximized
                         {
-                            let start_rect = normalize_rect(w.rect.get(), bounds, w.min_size.get());
+                            let start_rect =
+                                normalize_rect(w.rect.get(), bounds, window_enforced_min_size(w));
                             w.rect.set(start_rect);
                             self.drag = Some(DragState {
                                 window_id,
@@ -635,7 +638,8 @@ impl WindowManager {
                         let mut rect = w.rect.get();
                         rect.x = new_x;
                         rect.y = new_y;
-                        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
+                        w.rect
+                            .set(normalize_rect(rect, bounds, window_enforced_min_size(w)));
                     }
                     DragKind::Resize { start_rect, corner } => {
                         if !w.resizable.get() || w.state.get() == WindowState::Maximized {
@@ -647,7 +651,7 @@ impl WindowManager {
                             m.column,
                             m.row,
                             bounds,
-                            w.min_size.get(),
+                            window_enforced_min_size(w),
                         ));
                     }
                     DragKind::Scrollbar { drag } => {
@@ -933,7 +937,8 @@ impl WindowManager {
         let mut rect = w.rect.get();
         rect.x = add_signed(rect.x, dx);
         rect.y = add_signed(rect.y, dy);
-        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
+        w.rect
+            .set(normalize_rect(rect, bounds, window_enforced_min_size(w)));
     }
 
     fn resize_window(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
@@ -941,11 +946,12 @@ impl WindowManager {
         if !w.resizable.get() || w.state.get() == WindowState::Maximized {
             return;
         }
-        let (min_w, min_h) = w.min_size.get();
+        let enforced_min_size = window_enforced_min_size(w);
+        let (min_w, min_h) = enforced_min_size;
         let mut rect = w.rect.get();
         rect.width = add_signed(rect.width, dw).max(min_w);
         rect.height = add_signed(rect.height, dh).max(min_h);
-        w.rect.set(normalize_rect(rect, bounds, w.min_size.get()));
+        w.rect.set(normalize_rect(rect, bounds, enforced_min_size));
     }
 
     fn toggle_maximize(&mut self, id: WindowId, bounds: Rect) {
@@ -954,7 +960,8 @@ impl WindowManager {
             WindowState::Maximized => {
                 w.state.set(WindowState::Normal);
                 if let Some(r) = w.restore_rect.take() {
-                    w.rect.set(normalize_rect(r, bounds, w.min_size.get()));
+                    w.rect
+                        .set(normalize_rect(r, bounds, window_enforced_min_size(w)));
                 }
             }
             WindowState::Normal => {
@@ -979,6 +986,32 @@ fn add_signed(v: u16, dv: i16) -> u16 {
         v.saturating_sub(dv.wrapping_abs() as u16)
     } else {
         v.saturating_add(dv as u16)
+    }
+}
+
+fn window_effective_min_size(window: &Window) -> (u16, u16) {
+    let (base_w, base_h) = window.min_size.get();
+    let (view_min_w, view_min_h) = window.view.min_size();
+
+    // Views are drawn into the inner rect (excluding window chrome). If the window is bordered,
+    // add 1 cell on each side so the inner rect can still satisfy the view's minimum size.
+    let decorations = window.decorations.get();
+    let (chrome_w, chrome_h) = if decorations.border.has_border() {
+        (2u16, 2u16)
+    } else {
+        (0u16, 0u16)
+    };
+
+    let required_w = view_min_w.saturating_add(chrome_w);
+    let required_h = view_min_h.saturating_add(chrome_h);
+
+    (base_w.max(required_w), base_h.max(required_h))
+}
+
+fn window_enforced_min_size(window: &Window) -> (u16, u16) {
+    match window.min_size_mode.get() {
+        WindowMinSizeMode::Enforce => window_effective_min_size(window),
+        WindowMinSizeMode::Clip | WindowMinSizeMode::Scroll => (1, 1),
     }
 }
 
@@ -1332,8 +1365,11 @@ mod tests {
     use crate::theme::Theme;
     use crate::view::{View, ViewContext, ViewEventResult};
     use crate::views::{ScrollConfig, ScrollbarVisibility};
-    use crate::wm::{Window, WindowBorderStyle, WindowKind};
-    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
+        MouseEvent, MouseEventKind,
+    };
     use ratatui::Frame;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1349,6 +1385,212 @@ mod tests {
         fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
             ViewEventResult::ignored()
         }
+    }
+
+    struct MinSizeView {
+        min: (u16, u16),
+    }
+
+    impl View for MinSizeView {
+        fn min_width(&self) -> u16 {
+            self.min.0
+        }
+
+        fn min_height(&self) -> u16 {
+            self.min.1
+        }
+
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    #[test]
+    fn window_min_size_mode_enforce_clamps_to_content_min_size() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Enforce",
+                Rect::new(1, 1, 6, 4),
+                Box::new(MinSizeView { min: (30, 10) }),
+            ),
+            bounds,
+        );
+
+        let rect = wm.window_mut(id).expect("window").rect.get();
+        // Border chrome consumes 1 cell on each side; the inner rect must still satisfy the view's
+        // minimum size.
+        assert_eq!(rect.width, 32);
+        assert_eq!(rect.height, 12);
+    }
+
+    #[test]
+    fn window_min_size_mode_clip_allows_shrinking_below_content_min_size() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Clip",
+                Rect::new(1, 1, 6, 4),
+                Box::new(MinSizeView { min: (30, 10) }),
+            )
+            .with_min_size_mode(WindowMinSizeMode::Clip),
+            bounds,
+        );
+
+        let rect = wm.window_mut(id).expect("window").rect.get();
+        assert_eq!(rect.width, 6);
+        assert_eq!(rect.height, 4);
+    }
+
+    #[test]
+    fn window_min_size_mode_scroll_allows_shrinking_below_content_min_size() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Scroll",
+                Rect::new(1, 1, 6, 4),
+                Box::new(MinSizeView { min: (30, 10) }),
+            )
+            .with_min_size_mode(WindowMinSizeMode::Scroll),
+            bounds,
+        );
+
+        let rect = wm.window_mut(id).expect("window").rect.get();
+        assert_eq!(rect.width, 6);
+        assert_eq!(rect.height, 4);
+    }
+
+    #[test]
+    fn window_min_size_mode_scroll_renders_window_border_scrollbars_on_overflow() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let rect = Rect::new(2, 2, 10, 6);
+        let mut wm = WindowManager::new();
+        wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Scrollbars",
+                rect,
+                Box::new(MinSizeView { min: (30, 10) }),
+            )
+            .with_min_size_mode(WindowMinSizeMode::Scroll),
+            bounds,
+        );
+
+        let theme = Theme::dark();
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let buf = terminal.backend().buffer();
+
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        assert_eq!(buf.cell((right, top + 1)).expect("vbar up").symbol(), "▲");
+        assert_eq!(
+            buf.cell((right, bottom - 1)).expect("vbar down").symbol(),
+            "▼"
+        );
+        assert_eq!(
+            buf.cell((left + 1, bottom)).expect("hbar left").symbol(),
+            "◄"
+        );
+        assert_eq!(
+            buf.cell((right - 1, bottom)).expect("hbar right").symbol(),
+            "►"
+        );
+    }
+
+    #[test]
+    fn window_min_size_mode_clip_does_not_render_window_border_scrollbars_on_overflow() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let rect = Rect::new(2, 2, 10, 6);
+        let mut wm = WindowManager::new();
+        wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "NoScrollbars",
+                rect,
+                Box::new(MinSizeView { min: (30, 10) }),
+            )
+            .with_min_size_mode(WindowMinSizeMode::Clip),
+            bounds,
+        );
+
+        let theme = Theme::dark();
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let buf = terminal.backend().buffer();
+
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        assert_eq!(
+            buf.cell((right, top + 1)).expect("right border").symbol(),
+            "║"
+        );
+        assert_eq!(
+            buf.cell((right, bottom - 1))
+                .expect("right border below")
+                .symbol(),
+            "║"
+        );
+        assert_eq!(
+            buf.cell((left + 1, bottom))
+                .expect("bottom border left")
+                .symbol(),
+            "═"
+        );
+        assert_eq!(
+            buf.cell((right - 1, bottom))
+                .expect("bottom border right")
+                .symbol(),
+            "═"
+        );
+    }
+
+    #[test]
+    fn window_min_size_mode_scroll_consumes_arrow_keys_to_pan_when_overflowed() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let rect = Rect::new(2, 2, 10, 6);
+        let mut wm = WindowManager::new();
+        wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Pan",
+                rect,
+                Box::new(MinSizeView { min: (30, 10) }),
+            )
+            .with_min_size_mode(WindowMinSizeMode::Scroll),
+            bounds,
+        );
+
+        let theme = Theme::dark();
+        let backend = TestBackend::new(bounds.width, bounds.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+        let down = Event::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+
+        let (_id, res) = wm
+            .dispatch_to_focused_view(&down, bounds, &theme)
+            .expect("focused dispatch");
+        assert!(res.is_consumed());
     }
 
     #[test]

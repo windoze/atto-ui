@@ -502,6 +502,14 @@ where
     T: Clone + PartialEq + Send + Sync + 'static,
     V: DeclarativeView + 'static,
 {
+    fn min_width(&self) -> u16 {
+        self.cached_view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.cached_view.min_height()
+    }
+
     fn desired_width(&self) -> Option<u16> {
         self.cached_view.desired_width()
     }
@@ -659,6 +667,14 @@ where
     T::Id: Hash + Eq + Send + Sync,
     V: DeclarativeView + 'static,
 {
+    fn min_width(&self) -> u16 {
+        self.cached_view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.cached_view.min_height()
+    }
+
     fn desired_width(&self) -> Option<u16> {
         self.cached_view.desired_width()
     }

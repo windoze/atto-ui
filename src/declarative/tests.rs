@@ -855,6 +855,218 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
 }
 
 #[test]
+fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
+    #[derive(Default)]
+    struct SizedView {
+        min_h: u16,
+        desired_h: Option<u16>,
+    }
+
+    impl View for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut vstack = VStackView::new().with_spacing(1u16);
+    vstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    vstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    assert_eq!(
+        vstack.min_height(),
+        5,
+        "min height should be sum(mins)+spacing (2 + 1 + 2)"
+    );
+}
+
+#[test]
+fn vstack_layout_at_min_height_keeps_all_children_visible() {
+    #[derive(Default)]
+    struct SizedView {
+        min_h: u16,
+        desired_h: Option<u16>,
+    }
+
+    impl View for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut vstack = VStackView::new().with_spacing(1u16);
+    vstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    vstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    // Height equals min_height() so both children should still be laid out at min height.
+    draw_view(&mut vstack, Rect::new(0, 0, 20, 5));
+    let children = vstack.children();
+    assert_eq!(children.len(), 2);
+
+    assert_eq!(children[0].bounds().y, 0);
+    assert_eq!(children[0].bounds().height, 2);
+    assert_eq!(
+        children[1].bounds().y,
+        3,
+        "expected spacing row between children"
+    );
+    assert_eq!(children[1].bounds().height, 2);
+}
+
+#[test]
+fn hstack_layout_at_min_width_keeps_all_children_visible() {
+    #[derive(Default)]
+    struct SizedView {
+        min_w: u16,
+        desired_w: Option<u16>,
+    }
+
+    impl View for SizedView {
+        fn min_width(&self) -> u16 {
+            self.min_w
+        }
+
+        fn desired_width(&self) -> Option<u16> {
+            self.desired_w
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut hstack = HStackView::new().with_spacing(1u16);
+    hstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_w: 2,
+            desired_w: Some(10),
+        }),
+        LayoutParams {
+            width: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    hstack.add_child_with_layout(
+        Box::new(SizedView {
+            min_w: 2,
+            desired_w: Some(10),
+        }),
+        LayoutParams {
+            width: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    // Width equals sum(mins)+spacing => 2 + 1 + 2 = 5.
+    draw_view(&mut hstack, Rect::new(0, 0, 5, 3));
+    let children = hstack.children();
+    assert_eq!(children.len(), 2);
+
+    assert_eq!(children[0].bounds().x, 0);
+    assert_eq!(children[0].bounds().width, 2);
+    assert_eq!(children[1].bounds().x, 3);
+    assert_eq!(children[1].bounds().width, 2);
+}
+
+#[test]
+fn grid_layout_at_min_height_keeps_all_rows_visible() {
+    #[derive(Default)]
+    struct SizedView {
+        min_h: u16,
+        desired_h: Option<u16>,
+    }
+
+    impl View for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    }
+
+    let mut grid = GridView::new().with_columns(1usize).with_row_gap(1u16);
+    grid.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    grid.add_child_with_layout(
+        Box::new(SizedView {
+            min_h: 2,
+            desired_h: Some(10),
+        }),
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+
+    // Height equals sum(row mins)+gap => 2 + 1 + 2 = 5.
+    draw_view(&mut grid, Rect::new(0, 0, 20, 5));
+    let children = grid.children();
+    assert_eq!(children.len(), 2);
+
+    assert_eq!(children[0].bounds().y, 0);
+    assert_eq!(children[0].bounds().height, 2);
+    assert_eq!(children[1].bounds().y, 3);
+    assert_eq!(children[1].bounds().height, 2);
+}
+
+#[test]
 fn hstack_desired_height_is_max_child_height_plus_padding() {
     #[derive(Default)]
     struct MinHeightView {

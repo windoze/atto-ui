@@ -165,6 +165,8 @@ fn align_within(slot: Rect, desired: (u16, u16), align_x: Align, align_y: Align)
 }
 
 fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (u16, u16) {
+    let min_w = view.min_width();
+    let min_h = view.min_height();
     let w = match layout.width {
         Size::Fixed(w) => w,
         Size::Content => view.desired_width().unwrap_or(slot.width),
@@ -175,7 +177,7 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
         Size::Content => view.desired_height().unwrap_or(slot.height),
         Size::Fill | Size::Weight(_) => view.desired_height().unwrap_or(slot.height),
     };
-    (w, h)
+    (w.max(min_w), h.max(min_h))
 }
 
 pub(super) struct VStackView {
@@ -515,6 +517,85 @@ impl VStackView {
         total
     }
 
+    fn min_width_flow(&self) -> u16 {
+        let padding = self.padding.get();
+
+        let mut max_child: u16 = 0;
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            let margin = child.layout.margin;
+            let min_w = child.view.min_width();
+            let required_w = match child.layout.width {
+                Size::Fixed(w) => w.max(min_w),
+                Size::Content | Size::Fill | Size::Weight(_) => min_w,
+            };
+
+            let outer_w = margin
+                .left
+                .saturating_add(required_w)
+                .saturating_add(margin.right);
+            max_child = max_child.max(outer_w);
+        }
+
+        padding
+            .left
+            .saturating_add(padding.right)
+            .saturating_add(max_child)
+    }
+
+    fn min_height_flow(&self) -> u16 {
+        let spacing = self.spacing.get();
+        let padding = self.padding.get();
+        let scrollable = self.scrollable.get();
+
+        if scrollable {
+            let mut max_child: u16 = 0;
+            for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                let margin = child.layout.margin;
+                let min_h = child.view.min_height();
+                let required_h = match child.layout.height {
+                    Size::Fixed(h) => h.max(min_h),
+                    Size::Content | Size::Fill | Size::Weight(_) => min_h,
+                };
+
+                let outer_h = margin
+                    .top
+                    .saturating_add(required_h)
+                    .saturating_add(margin.bottom);
+                max_child = max_child.max(outer_h);
+            }
+
+            return padding
+                .top
+                .saturating_add(padding.bottom)
+                .saturating_add(max_child);
+        }
+
+        let mut total: u16 = padding.top.saturating_add(padding.bottom);
+        let mut first_flow = true;
+
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            if !first_flow {
+                total = total.saturating_add(spacing);
+            }
+            first_flow = false;
+
+            let margin = child.layout.margin;
+            total = total
+                .saturating_add(margin.top)
+                .saturating_add(margin.bottom);
+
+            let min_h = child.view.min_height();
+            let required_h = match child.layout.height {
+                Size::Fixed(h) => h.max(min_h),
+                Size::Content | Size::Fill | Size::Weight(_) => min_h,
+            };
+
+            total = total.saturating_add(required_h);
+        }
+
+        total
+    }
+
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
         let spacing = self.spacing.get();
@@ -522,14 +603,16 @@ impl VStackView {
 
         #[derive(Clone, Copy, Debug)]
         enum HeightSpec {
+            /// Fixed height (cannot shrink).
             Fixed(u16),
+            /// Content-sized height (can shrink down to `min` when constrained).
+            Content { min: u16, desired: u16 },
+            /// Flexible height (takes remaining space), with an enforced minimum.
             Weight { weight: u16, min: u16 },
         }
 
         let mut specs: Vec<Option<HeightSpec>> = vec![None; self.children.len()];
-        let mut fixed_total: u16 = 0;
         let mut margin_total: u16 = 0;
-        let mut weight_total: u16 = 0;
         let mut flow_count = 0usize;
 
         for (idx, child) in self.children.iter().enumerate() {
@@ -544,11 +627,14 @@ impl VStackView {
                 .saturating_add(margin.bottom);
 
             let min_h = child.view.min_height();
-            let h = match child.layout.height {
+            let spec = match child.layout.height {
                 Size::Fixed(h) => HeightSpec::Fixed(h.max(min_h)),
                 Size::Content => {
-                    let desired = child.view.desired_height().unwrap_or(1);
-                    HeightSpec::Fixed(desired.max(min_h))
+                    let desired = child.view.desired_height().unwrap_or(1).max(min_h);
+                    HeightSpec::Content {
+                        min: min_h,
+                        desired,
+                    }
                 }
                 Size::Weight(w) => HeightSpec::Weight {
                     weight: w.max(1),
@@ -559,14 +645,8 @@ impl VStackView {
                     min: min_h,
                 },
             };
-            match h {
-                HeightSpec::Fixed(v) => fixed_total = fixed_total.saturating_add(v),
-                HeightSpec::Weight { weight, min } => {
-                    fixed_total = fixed_total.saturating_add(min);
-                    weight_total = weight_total.saturating_add(weight);
-                }
-            }
-            specs[idx] = Some(h);
+
+            specs[idx] = Some(spec);
         }
 
         if flow_count >= 2 && spacing > 0 {
@@ -574,34 +654,129 @@ impl VStackView {
                 margin_total.saturating_add(spacing.saturating_mul(flow_count as u16 - 1));
         }
 
-        let available = content_h
-            .saturating_sub(margin_total)
-            .saturating_sub(fixed_total);
-        let mut remaining = available;
+        let mut allocations: Vec<u16> = vec![0; self.children.len()];
 
-        let mut allocated: Vec<u16> = vec![0; self.children.len()];
-        if weight_total > 0 && remaining > 0 {
-            let mut used: u16 = 0;
+        if scrollable {
+            let mut fixed_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+
             for (idx, spec) in specs.iter().enumerate() {
-                let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
+                let Some(spec) = spec else {
                     continue;
                 };
-                let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
-                    .min(u16::MAX as u32) as u16;
-                allocated[idx] = share;
-                used = used.saturating_add(share);
-            }
-            remaining = remaining.saturating_sub(used);
 
-            // Distribute any leftover 1-row remainders deterministically.
-            if remaining > 0 {
-                for (idx, spec) in specs.iter().enumerate() {
-                    if remaining == 0 {
-                        break;
+                match *spec {
+                    HeightSpec::Fixed(h) => {
+                        allocations[idx] = h;
+                        fixed_total = fixed_total.saturating_add(h);
                     }
-                    if matches!(spec, Some(HeightSpec::Weight { .. })) {
-                        allocated[idx] = allocated[idx].saturating_add(1);
-                        remaining = remaining.saturating_sub(1);
+                    HeightSpec::Content { desired, .. } => {
+                        allocations[idx] = desired;
+                        fixed_total = fixed_total.saturating_add(desired);
+                    }
+                    HeightSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        fixed_total = fixed_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available = content_h
+                .saturating_sub(margin_total)
+                .saturating_sub(fixed_total);
+            let mut remaining = available;
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+                remaining = remaining.saturating_sub(used);
+
+                // Distribute any leftover 1-row remainders deterministically.
+                if remaining > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(HeightSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            remaining = remaining.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut min_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+            let mut content_extras: Vec<(usize, u16)> = Vec::new();
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
+
+                match *spec {
+                    HeightSpec::Fixed(h) => {
+                        allocations[idx] = h;
+                        min_total = min_total.saturating_add(h);
+                    }
+                    HeightSpec::Content { min, desired } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        content_extras.push((idx, desired.saturating_sub(min)));
+                    }
+                    HeightSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available_for_children = content_h.saturating_sub(margin_total);
+            let mut remaining = available_for_children.saturating_sub(min_total);
+
+            // First, satisfy content views up to their desired size.
+            for (idx, needed) in content_extras {
+                if remaining == 0 {
+                    break;
+                }
+                let extra = needed.min(remaining);
+                allocations[idx] = allocations[idx].saturating_add(extra);
+                remaining = remaining.saturating_sub(extra);
+            }
+
+            // Then distribute any leftover space across weight/fill children.
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+
+                let mut leftover = remaining.saturating_sub(used);
+                if leftover > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if leftover == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(HeightSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            leftover = leftover.saturating_sub(1);
+                        }
                     }
                 }
             }
@@ -660,23 +835,21 @@ impl VStackView {
                 continue;
             }
 
-            let slot_h = match specs[idx] {
-                Some(HeightSpec::Fixed(h)) => h,
-                Some(HeightSpec::Weight { min, .. }) => min.saturating_add(allocated[idx]),
-                None => 0,
-            };
+            let slot_h = allocations[idx];
 
             let max_h = content_h.saturating_sub(cursor_y);
             let available_h = max_h.saturating_sub(margin.bottom);
             let available_w = content_w.saturating_sub(margin.left.saturating_add(margin.right));
             let min_w = child.view.min_width();
-            let required_w = match child.layout.width {
-                Size::Fixed(w) => w.max(min_w),
-                Size::Content => child.view.desired_width().unwrap_or(1).max(min_w),
-                Size::Fill | Size::Weight(_) => min_w,
-            };
-            if available_w < required_w {
+            if available_w < min_w {
                 child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let required_h = child.view.min_height();
+            if !scrollable && available_h < required_h {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
                 continue;
             }
 
@@ -685,11 +858,6 @@ impl VStackView {
             } else {
                 slot_h.min(available_h)
             };
-            if !scrollable && slot_h > available_h && available_h == 0 {
-                child.set_bounds(Rect::default());
-                out_of_space = true;
-                continue;
-            }
             if h == 0 {
                 child.set_bounds(Rect::default());
                 continue;
@@ -746,6 +914,14 @@ impl View for VStackView {
             let _ = self.children[child_idx].view.focus_last();
         }
         true
+    }
+
+    fn min_width(&self) -> u16 {
+        self.min_width_flow()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_height_flow()
     }
 
     fn desired_height(&self) -> Option<u16> {
@@ -1758,6 +1934,85 @@ impl HStackView {
             .saturating_add(max_child)
     }
 
+    fn min_width_flow(&self) -> u16 {
+        let padding = self.padding.get();
+        let spacing = self.spacing.get();
+        let scrollable = self.scrollable.get();
+
+        if scrollable {
+            let mut max_child: u16 = 0;
+            for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                let margin = child.layout.margin;
+                let min_w = child.view.min_width();
+                let required_w = match child.layout.width {
+                    Size::Fixed(w) => w.max(min_w),
+                    Size::Content | Size::Fill | Size::Weight(_) => min_w,
+                };
+                let outer_w = margin
+                    .left
+                    .saturating_add(required_w)
+                    .saturating_add(margin.right);
+                max_child = max_child.max(outer_w);
+            }
+
+            return padding
+                .left
+                .saturating_add(padding.right)
+                .saturating_add(max_child);
+        }
+
+        let mut total: u16 = padding.left.saturating_add(padding.right);
+        let mut first_flow = true;
+
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            if !first_flow {
+                total = total.saturating_add(spacing);
+            }
+            first_flow = false;
+
+            let margin = child.layout.margin;
+            total = total
+                .saturating_add(margin.left)
+                .saturating_add(margin.right);
+
+            let min_w = child.view.min_width();
+            let required_w = match child.layout.width {
+                Size::Fixed(w) => w.max(min_w),
+                Size::Content | Size::Fill | Size::Weight(_) => min_w,
+            };
+
+            total = total.saturating_add(required_w);
+        }
+
+        total
+    }
+
+    fn min_height_flow(&self) -> u16 {
+        let padding = self.padding.get();
+
+        let mut max_child: u16 = 0;
+        for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+            let margin = child.layout.margin;
+
+            let min_h = child.view.min_height();
+            let required_h = match child.layout.height {
+                Size::Fixed(h) => h.max(min_h),
+                Size::Content | Size::Fill | Size::Weight(_) => min_h,
+            };
+
+            let outer_h = margin
+                .top
+                .saturating_add(required_h)
+                .saturating_add(margin.bottom);
+            max_child = max_child.max(outer_h);
+        }
+
+        padding
+            .top
+            .saturating_add(padding.bottom)
+            .saturating_add(max_child)
+    }
+
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (content_w, content_h) = viewport_size;
         let spacing = self.spacing.get();
@@ -1765,14 +2020,16 @@ impl HStackView {
 
         #[derive(Clone, Copy, Debug)]
         enum WidthSpec {
+            /// Fixed width (cannot shrink).
             Fixed(u16),
-            Weight(u16),
+            /// Content-sized width (can shrink down to `min` when constrained).
+            Content { min: u16, desired: u16 },
+            /// Flexible width (takes remaining space), with an enforced minimum.
+            Weight { weight: u16, min: u16 },
         }
 
         let mut specs: Vec<Option<WidthSpec>> = vec![None; self.children.len()];
-        let mut fixed_total: u16 = 0;
         let mut margin_total: u16 = 0;
-        let mut weight_total: u16 = 0;
         let mut flow_count = 0usize;
 
         for (idx, child) in self.children.iter().enumerate() {
@@ -1786,17 +2043,27 @@ impl HStackView {
                 .saturating_add(margin.left)
                 .saturating_add(margin.right);
 
-            let w = match child.layout.width {
-                Size::Fixed(w) => WidthSpec::Fixed(w),
-                Size::Content => WidthSpec::Fixed(child.view.desired_width().unwrap_or(1)),
-                Size::Weight(w) => WidthSpec::Weight(w.max(1)),
-                Size::Fill => WidthSpec::Weight(1),
+            let min_w = child.view.min_width();
+            let spec = match child.layout.width {
+                Size::Fixed(w) => WidthSpec::Fixed(w.max(min_w)),
+                Size::Content => {
+                    let desired = child.view.desired_width().unwrap_or(1).max(min_w);
+                    WidthSpec::Content {
+                        min: min_w,
+                        desired,
+                    }
+                }
+                Size::Weight(w) => WidthSpec::Weight {
+                    weight: w.max(1),
+                    min: min_w,
+                },
+                Size::Fill => WidthSpec::Weight {
+                    weight: 1,
+                    min: min_w,
+                },
             };
-            match w {
-                WidthSpec::Fixed(v) => fixed_total = fixed_total.saturating_add(v),
-                WidthSpec::Weight(v) => weight_total = weight_total.saturating_add(v),
-            }
-            specs[idx] = Some(w);
+
+            specs[idx] = Some(spec);
         }
 
         if flow_count >= 2 && spacing > 0 {
@@ -1804,33 +2071,126 @@ impl HStackView {
                 margin_total.saturating_add(spacing.saturating_mul(flow_count as u16 - 1));
         }
 
-        let available = content_w
-            .saturating_sub(margin_total)
-            .saturating_sub(fixed_total);
-        let mut remaining = available;
+        let mut allocations: Vec<u16> = vec![0; self.children.len()];
 
-        let mut allocated: Vec<u16> = vec![0; self.children.len()];
-        if weight_total > 0 && remaining > 0 {
-            let mut used: u16 = 0;
+        if scrollable {
+            let mut fixed_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+
             for (idx, spec) in specs.iter().enumerate() {
-                let Some(WidthSpec::Weight(w)) = spec else {
+                let Some(spec) = spec else {
                     continue;
                 };
-                let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
-                    .min(u16::MAX as u32) as u16;
-                allocated[idx] = share;
-                used = used.saturating_add(share);
-            }
-            remaining = remaining.saturating_sub(used);
 
-            if remaining > 0 {
-                for (idx, spec) in specs.iter().enumerate() {
-                    if remaining == 0 {
-                        break;
+                match *spec {
+                    WidthSpec::Fixed(w) => {
+                        allocations[idx] = w;
+                        fixed_total = fixed_total.saturating_add(w);
                     }
-                    if matches!(spec, Some(WidthSpec::Weight(_))) {
-                        allocated[idx] = allocated[idx].saturating_add(1);
-                        remaining = remaining.saturating_sub(1);
+                    WidthSpec::Content { desired, .. } => {
+                        allocations[idx] = desired;
+                        fixed_total = fixed_total.saturating_add(desired);
+                    }
+                    WidthSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        fixed_total = fixed_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available = content_w
+                .saturating_sub(margin_total)
+                .saturating_sub(fixed_total);
+            let mut remaining = available;
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(WidthSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+                remaining = remaining.saturating_sub(used);
+
+                if remaining > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(WidthSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            remaining = remaining.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut min_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+            let mut content_extras: Vec<(usize, u16)> = Vec::new();
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
+
+                match *spec {
+                    WidthSpec::Fixed(w) => {
+                        allocations[idx] = w;
+                        min_total = min_total.saturating_add(w);
+                    }
+                    WidthSpec::Content { min, desired } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        content_extras.push((idx, desired.saturating_sub(min)));
+                    }
+                    WidthSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available_for_children = content_w.saturating_sub(margin_total);
+            let mut remaining = available_for_children.saturating_sub(min_total);
+
+            for (idx, needed) in content_extras {
+                if remaining == 0 {
+                    break;
+                }
+                let extra = needed.min(remaining);
+                allocations[idx] = allocations[idx].saturating_add(extra);
+                remaining = remaining.saturating_sub(extra);
+            }
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(WidthSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+
+                let mut leftover = remaining.saturating_sub(used);
+                if leftover > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if leftover == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(WidthSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            leftover = leftover.saturating_sub(1);
+                        }
                     }
                 }
             }
@@ -1838,6 +2198,7 @@ impl HStackView {
 
         let mut cursor_x: u16 = 0;
         let mut first_flow = true;
+        let mut out_of_space = false;
 
         for (idx, child) in self.children.iter_mut().enumerate() {
             if let Some(anchor) = child.layout.anchor {
@@ -1856,9 +2217,15 @@ impl HStackView {
                 }
                 .min(content_h);
 
+                let (min_w, min_h) = child.view.min_size();
+                if content_w < min_w || content_h < min_h {
+                    child.set_bounds(Rect::default());
+                    continue;
+                }
+
                 child.set_bounds(position_anchored(
                     viewport_size,
-                    (desired_w, desired_h),
+                    (desired_w.max(min_w), desired_h.max(min_h)),
                     anchor.anchor,
                     anchor.offset_x,
                     anchor.offset_y,
@@ -1879,20 +2246,44 @@ impl HStackView {
                 continue;
             }
 
-            let slot_w = match specs[idx] {
-                Some(WidthSpec::Fixed(w)) => w,
-                Some(WidthSpec::Weight(_)) => allocated[idx],
-                None => 0,
-            };
+            if out_of_space {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let slot_w = allocations[idx];
+
+            let max_w = content_w.saturating_sub(cursor_x);
+            let available_w = max_w.saturating_sub(margin.right);
+            let available_h = content_h.saturating_sub(margin.top.saturating_add(margin.bottom));
+
+            let required_w = child.view.min_width();
+            if !scrollable && available_w < required_w {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
+
+            let required_h = child.view.min_height();
 
             let w = if scrollable {
                 slot_w
             } else {
-                let max_w = content_w.saturating_sub(cursor_x);
-                slot_w.min(max_w)
+                slot_w.min(available_w)
             };
+            if w == 0 && required_w > 0 {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
 
-            let available_h = content_h.saturating_sub(margin.top.saturating_add(margin.bottom));
+            if available_h < required_h {
+                // Reserve horizontal space, but don't render an unusable child.
+                child.set_bounds(Rect::default());
+                cursor_x = cursor_x.saturating_add(w).saturating_add(margin.right);
+                continue;
+            }
+
             let slot = Rect {
                 x: cursor_x,
                 y: margin.top,
@@ -1944,6 +2335,14 @@ impl View for HStackView {
             let _ = self.children[child_idx].view.focus_last();
         }
         true
+    }
+
+    fn min_width(&self) -> u16 {
+        self.min_width_flow()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_height_flow()
     }
 
     fn desired_height(&self) -> Option<u16> {

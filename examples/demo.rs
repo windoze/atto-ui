@@ -228,7 +228,8 @@ impl DeclarativeView for WidgetsView {
                             "Delta".into(),
                         ],
                         model.list_selection_binding(),
-                    ),
+                    )
+                    .with_min_height(5),
                     LayoutParams {
                         width: Size::Weight(1),
                         height: Size::Fill,
@@ -247,7 +248,8 @@ impl DeclarativeView for WidgetsView {
                             vec!["cn".into(), "你好👋".into()],
                         ],
                         model.table_selection_binding(),
-                    ),
+                    )
+                    .with_min_height(5),
                     LayoutParams {
                         width: Size::Weight(1),
                         height: Size::Fill,

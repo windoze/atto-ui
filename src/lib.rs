@@ -14,5 +14,5 @@ pub mod wm;
 
 pub use wm::{
     Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
-    WindowManager, WindowState,
+    WindowManager, WindowMinSizeMode, WindowState,
 };

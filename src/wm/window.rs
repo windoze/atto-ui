@@ -1,5 +1,6 @@
 use ratatui::layout::Rect;
 
+use super::min_size_view::WindowMinSizeView;
 use crate::reactive::Binding;
 use crate::view::View;
 
@@ -49,6 +50,17 @@ impl WindowBorderStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowMinSizeMode {
+    /// Enforce the window's minimum size constraint during resize (default behavior).
+    #[default]
+    Enforce,
+    /// Allow resizing below the minimum size; content is clipped.
+    Clip,
+    /// Allow resizing below the minimum size; content can be accessed via scrollbars.
+    Scroll,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowDecorations {
     pub border: WindowBorderStyle,
@@ -92,6 +104,7 @@ pub struct Window {
     pub decorations: Binding<WindowDecorations>,
     pub view: Box<dyn View>,
     pub min_size: Binding<(u16, u16)>,
+    pub min_size_mode: Binding<WindowMinSizeMode>,
     pub movable: Binding<bool>,
     pub resizable: Binding<bool>,
     pub closable: Binding<bool>,
@@ -106,6 +119,9 @@ impl Window {
         rect: impl Into<Binding<Rect>>,
         view: Box<dyn View>,
     ) -> Self {
+        let min_size_mode: Binding<WindowMinSizeMode> = WindowMinSizeMode::Enforce.into();
+        let view = Box::new(WindowMinSizeView::new(view, min_size_mode.clone()));
+
         Self {
             id: WindowId(0),
             kind,
@@ -115,6 +131,7 @@ impl Window {
             decorations: WindowDecorations::default().into(),
             view,
             min_size: (12, 5).into(),
+            min_size_mode,
             movable: (!matches!(kind, WindowKind::Modal | WindowKind::Tooltip)).into(),
             resizable: (!matches!(kind, WindowKind::Tooltip)).into(),
             closable: true.into(),
@@ -138,6 +155,11 @@ impl Window {
 
     pub fn with_min_size(mut self, width: u16, height: u16) -> Self {
         self.min_size = (width, height).into();
+        self
+    }
+
+    pub fn with_min_size_mode(self, mode: WindowMinSizeMode) -> Self {
+        self.min_size_mode.set(mode);
         self
     }
 

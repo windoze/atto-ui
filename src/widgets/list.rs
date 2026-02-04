@@ -19,6 +19,7 @@ pub struct ListBox {
     selection: Binding<usize>,
     height: Binding<u16>,
     area: Option<Rect>,
+    min_size: (u16, u16),
 }
 
 impl ListBox {
@@ -44,6 +45,7 @@ impl ListBox {
             selection,
             height: 7.into(),
             area: None,
+            min_size: (3, 3), // Minimum size to render borders and one item.
         }
     }
 
@@ -74,15 +76,30 @@ impl ListBox {
                 .then_some(self.selection.get())
         })
     }
+
+    pub fn with_min_height(mut self, height: u16) -> Self {
+        self.min_size.1 = height;
+        self
+    }
+
+    pub fn with_min_width(mut self, width: u16) -> Self {
+        self.min_size.0 = width;
+        self
+    }
+
+    pub fn with_min_size(mut self, width: u16, height: u16) -> Self {
+        self.min_size = (width, height);
+        self
+    }
 }
 
 impl Control for ListBox {
     fn min_width(&self) -> u16 {
-        3
+        self.min_size.0
     }
 
     fn min_height(&self) -> u16 {
-        3
+        self.min_size.1
     }
 
     fn is_focusable(&self) -> bool {
@@ -170,7 +187,7 @@ impl Control for ListBox {
     }
 
     fn desired_height(&self) -> u16 {
-        self.height.get().max(3)
+        self.height.get().max(self.min_size.1)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {

@@ -165,6 +165,8 @@ fn align_within(slot: Rect, desired: (u16, u16), align_x: Align, align_y: Align)
 }
 
 fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (u16, u16) {
+    let min_w = view.min_width();
+    let min_h = view.min_height();
     let w = match layout.width {
         Size::Fixed(w) => w,
         Size::Content => view.desired_width().unwrap_or(slot.width),
@@ -175,7 +177,7 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
         Size::Content => view.desired_height().unwrap_or(slot.height),
         Size::Fill | Size::Weight(_) => view.desired_height().unwrap_or(slot.height),
     };
-    (w, h)
+    (w.max(min_w), h.max(min_h))
 }
 
 pub(super) struct GridView {
@@ -471,22 +473,114 @@ impl GridView {
     }
 
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
-        let (content_w, content_h) = viewport_size;
+        let (viewport_w, viewport_h) = viewport_size;
 
         let columns = self.columns.get().max(1);
         let col_gap = self.column_gap.get();
         let row_gap = self.row_gap.get();
         let scrollable = self.scrollable.get();
 
-        let gap_total = col_gap.saturating_mul(columns.saturating_sub(1) as u16);
-        let usable_w = content_w.saturating_sub(gap_total);
-        let base_w = usable_w / columns as u16;
-        let remainder = usable_w % columns as u16;
+        let mut col_mins: Vec<u16> = vec![0; columns];
+        let mut row_mins: Vec<u16> = Vec::new();
+        let mut row_desired: Vec<u16> = Vec::new();
+        let mut flow_rows: Vec<Vec<usize>> = Vec::new();
 
-        let mut col_widths = vec![base_w; columns];
-        for w in col_widths.iter_mut().take(remainder as usize) {
-            *w = w.saturating_add(1);
+        for (idx, child) in self.children.iter().enumerate() {
+            if child.layout.anchor.is_some() {
+                continue;
+            }
+            let row = idx / columns;
+            let col = idx % columns;
+            while flow_rows.len() <= row {
+                flow_rows.push(Vec::new());
+                row_mins.push(0);
+                row_desired.push(0);
+            }
+            flow_rows[row].push(idx);
+
+            let margin = child.layout.margin;
+
+            let min_w = child.view.min_width();
+            let required_w = match child.layout.width {
+                Size::Fixed(w) => w.max(min_w),
+                Size::Content | Size::Fill | Size::Weight(_) => min_w,
+            };
+            let outer_min_w = margin
+                .left
+                .saturating_add(required_w)
+                .saturating_add(margin.right);
+            if let Some(slot) = col_mins.get_mut(col) {
+                *slot = (*slot).max(outer_min_w);
+            }
+
+            let min_h = child.view.min_height();
+            let required_min_h = match child.layout.height {
+                Size::Fixed(h) => h.max(min_h),
+                Size::Content | Size::Fill | Size::Weight(_) => min_h,
+            };
+            let outer_min_h = margin
+                .top
+                .saturating_add(required_min_h)
+                .saturating_add(margin.bottom);
+            row_mins[row] = row_mins[row].max(outer_min_h);
+
+            let desired_h = match child.layout.height {
+                Size::Fixed(h) => h.max(min_h),
+                Size::Content => child.view.desired_height().unwrap_or(1).max(min_h),
+                Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1).max(min_h),
+            };
+            let outer_desired_h = margin
+                .top
+                .saturating_add(desired_h)
+                .saturating_add(margin.bottom);
+            row_desired[row] = row_desired[row].max(outer_desired_h);
         }
+
+        let gap_total_w = if columns >= 2 {
+            col_gap.saturating_mul(columns as u16 - 1)
+        } else {
+            0
+        };
+        let cols_min_sum: u16 = col_mins
+            .iter()
+            .copied()
+            .fold(0, |acc, w| acc.saturating_add(w));
+        let min_content_w = cols_min_sum.saturating_add(gap_total_w);
+        let content_w = if scrollable {
+            viewport_w.max(min_content_w)
+        } else {
+            viewport_w
+        };
+
+        let col_widths: Vec<u16> = if !scrollable && viewport_w < min_content_w {
+            // When not scrollable, never emit x coordinates outside the viewport.
+            // This fallback keeps the grid inside the viewport even if constraints are violated.
+            let usable_w = viewport_w.saturating_sub(gap_total_w);
+            let base = usable_w / columns as u16;
+            let remainder = usable_w % columns as u16;
+
+            let mut widths = vec![base; columns];
+            for w in widths.iter_mut().take(remainder as usize) {
+                *w = w.saturating_add(1);
+            }
+            widths
+        } else {
+            let mut widths = col_mins;
+            if columns > 0 {
+                let extra = content_w.saturating_sub(min_content_w);
+                if extra > 0 {
+                    let share = extra / columns as u16;
+                    let remainder = extra % columns as u16;
+                    for (idx, w) in widths.iter_mut().enumerate() {
+                        *w = w.saturating_add(share);
+                        if idx < remainder as usize {
+                            *w = w.saturating_add(1);
+                        }
+                    }
+                }
+            }
+            widths
+        };
 
         let mut col_xs = vec![0u16; columns];
         let mut x = 0u16;
@@ -495,48 +589,38 @@ impl GridView {
             x = x.saturating_add(*w).saturating_add(col_gap);
         }
 
-        let mut row_heights: Vec<u16> = Vec::new();
-        let mut flow_rows: Vec<Vec<usize>> = Vec::new();
+        let rows = row_desired.len();
+        let gap_total_h = if rows >= 2 {
+            row_gap.saturating_mul(rows as u16 - 1)
+        } else {
+            0
+        };
 
-        // First pass: compute row heights from children.
-        for (idx, child) in self.children.iter().enumerate() {
-            if child.layout.anchor.is_some() {
-                continue;
-            }
-            let row = idx / columns;
-            while flow_rows.len() <= row {
-                flow_rows.push(Vec::new());
-                row_heights.push(0);
-            }
-            flow_rows[row].push(idx);
+        let row_heights: Vec<u16> = if scrollable {
+            row_desired
+        } else {
+            let mut heights = row_mins;
+            let available_for_rows = viewport_h.saturating_sub(gap_total_h);
+            let min_sum: u16 = heights
+                .iter()
+                .copied()
+                .fold(0, |acc, h| acc.saturating_add(h));
+            let mut remaining = available_for_rows.saturating_sub(min_sum);
 
-            let margin = child.layout.margin;
-            let desired_h = match child.layout.height {
-                Size::Fixed(h) => h,
-                Size::Content => child.view.desired_height().unwrap_or(1),
-                Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1),
-            };
-            let outer_h = margin
-                .top
-                .saturating_add(desired_h)
-                .saturating_add(margin.bottom);
-
-            row_heights[row] = row_heights[row].max(outer_h);
-        }
-
-        // Account for row gaps.
-        if !scrollable && row_heights.len() >= 2 && row_gap > 0 {
-            let gap_total = row_gap.saturating_mul(row_heights.len() as u16 - 1);
-            // Clamp: if gaps consume all height, zero everything.
-            if gap_total >= content_h {
-                for child in self.children.iter_mut() {
-                    child.set_bounds(Rect::default());
+            for row in 0..rows {
+                if remaining == 0 {
+                    break;
                 }
-                return (content_w, 0);
+                let need = row_desired[row].saturating_sub(heights[row]);
+                let extra = need.min(remaining);
+                heights[row] = heights[row].saturating_add(extra);
+                remaining = remaining.saturating_sub(extra);
             }
-        }
 
-        let mut row_ys: Vec<u16> = vec![0; row_heights.len()];
+            heights
+        };
+
+        let mut row_ys: Vec<u16> = vec![0; rows];
         let mut y = 0u16;
         for (row, h) in row_heights.iter().enumerate() {
             row_ys[row] = y;
@@ -547,16 +631,15 @@ impl GridView {
             child.set_bounds(Rect::default());
         }
 
-        // Second pass: assign bounds.
         for (row, indices) in flow_rows.iter().enumerate() {
             let y0 = row_ys[row];
-            if !scrollable && y0 >= content_h {
+            if !scrollable && y0 >= viewport_h {
                 continue;
             }
             let row_h = if scrollable {
                 row_heights[row]
             } else {
-                row_heights[row].min(content_h.saturating_sub(y0))
+                row_heights[row].min(viewport_h.saturating_sub(y0))
             };
 
             for &idx in indices {
@@ -572,6 +655,22 @@ impl GridView {
                 let slot_w = cell_w.saturating_sub(margin.left.saturating_add(margin.right));
                 let slot_h = row_h.saturating_sub(margin.top.saturating_add(margin.bottom));
 
+                let min_w = child.view.min_width();
+                let min_h = child.view.min_height();
+                let required_w = match child.layout.width {
+                    Size::Fixed(w) => w.max(min_w),
+                    Size::Content | Size::Fill | Size::Weight(_) => min_w,
+                };
+                let required_h = match child.layout.height {
+                    Size::Fixed(h) => h.max(min_h),
+                    Size::Content | Size::Fill | Size::Weight(_) => min_h,
+                };
+
+                if slot_w < required_w || slot_h < required_h {
+                    child.set_bounds(Rect::default());
+                    continue;
+                }
+
                 let slot = Rect {
                     x: slot_x,
                     y: slot_y,
@@ -586,33 +685,39 @@ impl GridView {
             }
         }
 
-        // Anchored children (overlay).
         for child in self.children.iter_mut() {
             let Some(anchor) = child.layout.anchor else {
                 continue;
             };
             let desired_w = match child.layout.width {
                 Size::Fixed(w) => w,
-                Size::Content => child.view.desired_width().unwrap_or(content_w),
-                Size::Fill | Size::Weight(_) => child.view.desired_width().unwrap_or(content_w),
+                Size::Content => child.view.desired_width().unwrap_or(viewport_w),
+                Size::Fill | Size::Weight(_) => child.view.desired_width().unwrap_or(viewport_w),
             }
-            .min(content_w);
+            .min(viewport_w);
             let desired_h = match child.layout.height {
                 Size::Fixed(h) => h,
                 Size::Content => child.view.desired_height().unwrap_or(1),
                 Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1),
             }
-            .min(content_h);
+            .min(viewport_h);
+
+            let (min_w, min_h) = child.view.min_size();
+            if viewport_w < min_w || viewport_h < min_h {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
             child.set_bounds(position_anchored(
                 viewport_size,
-                (desired_w, desired_h),
+                (desired_w.max(min_w), desired_h.max(min_h)),
                 anchor.anchor,
                 anchor.offset_x,
                 anchor.offset_y,
             ));
         }
 
-        let total_h = match row_heights.len() {
+        let total_h = match rows {
             0 => 0,
             n => row_ys[n - 1].saturating_add(row_heights[n - 1]),
         };
@@ -654,6 +759,96 @@ impl View for GridView {
             let _ = self.children[child_idx].view.focus_last();
         }
         true
+    }
+
+    fn min_width(&self) -> u16 {
+        let columns = self.columns.get().max(1);
+        let padding = self.padding.get();
+        let col_gap = self.column_gap.get();
+
+        let mut col_mins: Vec<u16> = vec![0; columns];
+        for (idx, child) in self.children.iter().enumerate() {
+            if child.layout.anchor.is_some() {
+                continue;
+            }
+            let col = idx % columns;
+            let margin = child.layout.margin;
+
+            let min_w = child.view.min_width();
+            let required_w = match child.layout.width {
+                Size::Fixed(w) => w.max(min_w),
+                Size::Content | Size::Fill | Size::Weight(_) => min_w,
+            };
+
+            let outer_w = margin
+                .left
+                .saturating_add(required_w)
+                .saturating_add(margin.right);
+            if let Some(slot) = col_mins.get_mut(col) {
+                *slot = (*slot).max(outer_w);
+            }
+        }
+
+        let mut total: u16 = padding.left.saturating_add(padding.right);
+        if columns >= 2 {
+            total = total.saturating_add(col_gap.saturating_mul(columns as u16 - 1));
+        }
+        for w in col_mins {
+            total = total.saturating_add(w);
+        }
+        total
+    }
+
+    fn min_height(&self) -> u16 {
+        let columns = self.columns.get().max(1);
+        let padding = self.padding.get();
+        let row_gap = self.row_gap.get();
+        let scrollable = self.scrollable.get();
+
+        let mut row_mins: Vec<u16> = Vec::new();
+        for (idx, child) in self.children.iter().enumerate() {
+            if child.layout.anchor.is_some() {
+                continue;
+            }
+            let row = idx / columns;
+            if row_mins.len() <= row {
+                row_mins.resize(row.saturating_add(1), 0);
+            }
+
+            let margin = child.layout.margin;
+
+            let min_h = child.view.min_height();
+            let required_h = match child.layout.height {
+                Size::Fixed(h) => h.max(min_h),
+                Size::Content | Size::Fill | Size::Weight(_) => min_h,
+            };
+
+            let outer_h = margin
+                .top
+                .saturating_add(required_h)
+                .saturating_add(margin.bottom);
+            row_mins[row] = row_mins[row].max(outer_h);
+        }
+
+        let Some(first) = row_mins.first().copied() else {
+            return padding.top.saturating_add(padding.bottom);
+        };
+
+        let rows = row_mins.len();
+        let mut rows_total: u16 = if scrollable {
+            row_mins.into_iter().max().unwrap_or(first)
+        } else {
+            row_mins.into_iter().fold(0, |acc, h| acc.saturating_add(h))
+        };
+
+        if !scrollable && rows >= 2 {
+            rows_total = rows_total.saturating_add(row_gap.saturating_mul(rows as u16 - 1));
+        }
+
+        padding
+            .top
+            .saturating_add(padding.bottom)
+            .saturating_add(rows_total)
     }
 
     fn children(&self) -> &[ViewNode] {

@@ -20,6 +20,7 @@ pub struct TableView {
     selection: Binding<usize>,
     height: Binding<u16>,
     area: Option<Rect>,
+    min_size: (u16, u16),
 }
 
 impl TableView {
@@ -47,6 +48,7 @@ impl TableView {
             selection,
             height: 8.into(),
             area: None,
+            min_size: (3, 4), // Minimum size to render borders, header, and one row.
         }
     }
 
@@ -74,16 +76,30 @@ impl TableView {
         self.height = height.into();
         self
     }
+
+    pub fn with_min_width(mut self, width: u16) -> Self {
+        self.min_size.0 = width;
+        self
+    }
+
+    pub fn with_min_height(mut self, height: u16) -> Self {
+        self.min_size.1 = height;
+        self
+    }
+
+    pub fn with_min_size(mut self, width: u16, height: u16) -> Self {
+        self.min_size = (width, height);
+        self
+    }
 }
 
 impl Control for TableView {
     fn min_width(&self) -> u16 {
-        3
+        self.min_size.0
     }
 
     fn min_height(&self) -> u16 {
-        // Table needs borders + header + at least one data row to be usable.
-        4
+        self.min_size.1
     }
 
     fn is_focusable(&self) -> bool {
@@ -103,7 +119,7 @@ impl Control for TableView {
     }
 
     fn desired_height(&self) -> u16 {
-        self.height.get().max(3)
+        self.height.get().max(self.min_size.1)
     }
 
     fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
