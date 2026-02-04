@@ -1,6 +1,8 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
 use crate::theme::Theme;
@@ -324,6 +326,54 @@ impl Desktop {
             .unwrap_or_else(|| "Focus: none".to_string());
         self.status.set_right(focused);
         self.status.draw(frame, layout.status_bar, &self.theme);
+
+        // ratatui's buffer diff assumes buffers are "well-formed": a multi-width glyph is
+        // followed only by blank cells. When layered UI elements (e.g., window borders) overwrite
+        // the trailing cell of a wide glyph, the buffer becomes ill-formed and ratatui may skip
+        // emitting updates for the overwritten cell(s). Normalize the final frame buffer to
+        // ensure wide glyphs never straddle non-blank cells.
+        sanitize_wide_glyph_overlaps(frame.buffer_mut());
+    }
+}
+
+fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
+    let w = buf.area.width as usize;
+    let h = buf.area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    for y in 0..h {
+        let row_start = y * w;
+        for x in 0..w {
+            let idx = row_start + x;
+            let symbol = buf.content[idx].symbol();
+            let glyph_w = UnicodeWidthStr::width(symbol).max(1);
+            if glyph_w <= 1 {
+                continue;
+            }
+
+            let mut trailing_cells_blank = true;
+            for k in 1..glyph_w {
+                let nx = x + k;
+                if nx >= w {
+                    trailing_cells_blank = false;
+                    break;
+                }
+                let nidx = row_start + nx;
+                if buf.content[nidx].symbol() != " " {
+                    trailing_cells_blank = false;
+                    break;
+                }
+            }
+
+            if trailing_cells_blank {
+                continue;
+            }
+
+            // Hide the wide glyph completely by clearing its starting cell while preserving style.
+            buf.content[idx].set_symbol(" ").set_skip(false);
+        }
     }
 }
 

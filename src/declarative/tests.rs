@@ -8,7 +8,7 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::view::{EventOutcome, ScrollbarHost, View, ViewContext, ViewEventResult};
+use crate::view::{EventOutcome, ScrollbarHost, TabMode, View, ViewContext, ViewEventResult};
 use crate::views::{ScrollConfig, ScrollbarVisibility};
 use crate::wm::WindowId;
 
@@ -112,6 +112,7 @@ fn draw_view(view: &mut dyn View, area: Rect) {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
 
     let backend = TestBackend::new(80, 40);
@@ -423,6 +424,7 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
     let res = outer.handle_event(&click, ctx);
     assert!(res.is_consumed());
@@ -455,6 +457,7 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
     let res = vstack.handle_event(&tab, ctx);
     assert!(res.is_consumed());
@@ -484,6 +487,7 @@ fn keyboard_events_route_to_focused_child() {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
 
     let key_a = Event::Key(KeyEvent {
@@ -515,6 +519,147 @@ fn keyboard_events_route_to_focused_child() {
 
     assert_eq!(rec_a, vec![RecordedEvent::Key(KeyCode::Char('a'))]);
     assert_eq!(rec_b, vec![RecordedEvent::Key(KeyCode::Char('b'))]);
+}
+
+#[test]
+fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
+    let a = Arc::new(Mutex::new(Vec::new()));
+    let b = Arc::new(Mutex::new(Vec::new()));
+    let c = Arc::new(Mutex::new(Vec::new()));
+
+    let mut inner = HStackView::new();
+    inner.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&a))),
+        LayoutParams::default(),
+    );
+    inner.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&b))),
+        LayoutParams::default(),
+    );
+
+    let mut root = VStackView::new();
+    root.add_child_with_layout(Box::new(inner), LayoutParams::default());
+    root.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&c))),
+        LayoutParams::default(),
+    );
+
+    draw_view(&mut root, Rect::new(0, 0, 20, 5));
+
+    let theme = Theme::dark();
+    let ctx = ViewContext {
+        theme: &theme,
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
+    };
+
+    let key_1 = Event::Key(KeyEvent {
+        code: KeyCode::Char('1'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(root.handle_event(&key_1, ctx).is_consumed());
+
+    let tab = Event::Key(KeyEvent {
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(root.handle_event(&tab, ctx).is_consumed());
+
+    let key_2 = Event::Key(KeyEvent {
+        code: KeyCode::Char('2'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(root.handle_event(&key_2, ctx).is_consumed());
+
+    assert!(root.handle_event(&tab, ctx).is_consumed());
+
+    let key_3 = Event::Key(KeyEvent {
+        code: KeyCode::Char('3'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(root.handle_event(&key_3, ctx).is_consumed());
+
+    let rec_a = a.lock().expect("events lock").clone();
+    let rec_b = b.lock().expect("events lock").clone();
+    let rec_c = c.lock().expect("events lock").clone();
+
+    assert_eq!(rec_a, vec![RecordedEvent::Key(KeyCode::Char('1'))]);
+    assert_eq!(rec_b, vec![RecordedEvent::Key(KeyCode::Char('2'))]);
+    assert_eq!(rec_c, vec![RecordedEvent::Key(KeyCode::Char('3'))]);
+}
+
+#[test]
+fn tab_traversal_respects_tab_index_over_insertion_order() {
+    let a = Arc::new(Mutex::new(Vec::new()));
+    let b = Arc::new(Mutex::new(Vec::new()));
+    let c = Arc::new(Mutex::new(Vec::new()));
+
+    let mut vstack = VStackView::new();
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&a))),
+        LayoutParams {
+            tab_index: Some(0),
+            ..LayoutParams::default()
+        },
+    );
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&b))),
+        LayoutParams {
+            tab_index: Some(2),
+            ..LayoutParams::default()
+        },
+    );
+    vstack.add_child_with_layout(
+        Box::new(RecordingView::new(Arc::clone(&c))),
+        LayoutParams {
+            tab_index: Some(1),
+            ..LayoutParams::default()
+        },
+    );
+
+    draw_view(&mut vstack, Rect::new(0, 0, 10, 5));
+
+    let theme = Theme::dark();
+    let ctx = ViewContext {
+        theme: &theme,
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
+    };
+
+    let tab = Event::Key(KeyEvent {
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(vstack.handle_event(&tab, ctx).is_consumed());
+
+    let key_c = Event::Key(KeyEvent {
+        code: KeyCode::Char('c'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(vstack.handle_event(&key_c, ctx).is_consumed());
+
+    assert!(a.lock().expect("events lock").is_empty());
+    assert!(b.lock().expect("events lock").is_empty());
+    assert_eq!(
+        c.lock().expect("events lock").clone(),
+        vec![RecordedEvent::Key(KeyCode::Char('c'))]
+    );
 }
 
 #[test]
@@ -809,6 +954,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
 
     let backend = TestBackend::new(10, 5);
@@ -872,6 +1018,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         window_id: WindowId(1),
         is_focused: true,
         scrollbar_host: ScrollbarHost::View,
+        tab_mode: TabMode::Cycle,
     };
 
     let backend = TestBackend::new(10, 4);

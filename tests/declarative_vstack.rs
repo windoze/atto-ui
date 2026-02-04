@@ -1,6 +1,6 @@
 use chatty::declarative::{DeclarativeView, Text, VStack};
 use chatty::theme::Theme;
-use chatty::view::{ScrollbarHost, ViewContext};
+use chatty::view::{ScrollbarHost, TabMode, ViewContext};
 use chatty::wm::WindowId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -27,6 +27,7 @@ fn declarative_vstack_layout_with_spacing() {
                 window_id: WindowId::default(),
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::default(),
+                tab_mode: TabMode::Cycle,
             };
 
             let view = VStack::new()
@@ -56,6 +57,7 @@ fn declarative_vstack_padding_moves_content_inward() {
                 window_id: WindowId::default(),
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::default(),
+                tab_mode: TabMode::Cycle,
             };
 
             let view = VStack::new().child(Text::new("Padded")).padding(2);

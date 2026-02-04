@@ -79,6 +79,14 @@ impl View for BorderView {
         self.inner.is_focusable()
     }
 
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+
     fn min_width(&self) -> u16 {
         let inner = self.inner.min_width();
         if self.border.get() {
@@ -149,6 +157,7 @@ impl View for BorderView {
             } else {
                 ctx.scrollbar_host
             },
+            tab_mode: ctx.tab_mode,
         };
 
         if let Event::Mouse(m) = event {
@@ -423,6 +432,7 @@ impl View for BorderView {
             } else {
                 ctx.scrollbar_host
             },
+            tab_mode: ctx.tab_mode,
         };
 
         self.inner.draw(frame, inner_area, inner_ctx);

@@ -19,6 +19,7 @@ pub struct ViewContext<'a> {
     pub window_id: WindowId,
     pub is_focused: bool,
     pub scrollbar_host: ScrollbarHost,
+    pub tab_mode: TabMode,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,6 +39,26 @@ impl ScrollbarHost {
             ScrollbarHost::View => ScrollbarHost::View,
             ScrollbarHost::Window => ScrollbarHost::View,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TabMode {
+    /// Tab key navigation should "bubble" out of the current container when it reaches the end.
+    ///
+    /// This is the default for nested containers so focus traversal can follow the visual tree
+    /// instead of getting trapped within a sub-layout.
+    #[default]
+    Bubble,
+    /// Tab key navigation should wrap around within this focus scope.
+    ///
+    /// This is typically used at the window root so `Tab` always stays within the window.
+    Cycle,
+}
+
+impl TabMode {
+    pub const fn for_child(self) -> Self {
+        TabMode::Bubble
     }
 }
 
@@ -84,6 +105,22 @@ impl ViewEventResult {
 pub trait View: Send {
     fn is_focusable(&self) -> bool {
         false
+    }
+
+    /// Focus the first focusable descendant in this view subtree.
+    ///
+    /// Container views should override this to set their internal focused child and recurse.
+    ///
+    /// Returns `true` if this view (or one of its descendants) is focusable.
+    fn focus_first(&mut self) -> bool {
+        self.is_focusable()
+    }
+
+    /// Focus the last focusable descendant in this view subtree.
+    ///
+    /// Returns `true` if this view (or one of its descendants) is focusable.
+    fn focus_last(&mut self) -> bool {
+        self.is_focusable()
     }
 
     /// Minimum width required for this view to be usable.

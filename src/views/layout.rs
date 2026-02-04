@@ -125,6 +125,12 @@ pub struct LayoutParams {
     pub align_x: Align,
     pub align_y: Align,
     pub anchor: Option<AnchorPlacement>,
+    /// Optional tab order override used by focusable container views when moving focus via
+    /// `Tab`/`Shift+Tab`.
+    ///
+    /// When set, children with a `tab_index` are ordered before children without one, and are
+    /// sorted ascending. Ties fall back to insertion order.
+    pub tab_index: Option<i32>,
 }
 
 pub fn add_signed(v: u16, dv: i16) -> u16 {

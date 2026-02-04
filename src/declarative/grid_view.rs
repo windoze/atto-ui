@@ -3,6 +3,7 @@ use crossterm::event::{
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use std::cmp::Ordering;
 
 use crate::reactive::Binding;
 use crate::view::{View, ViewContext, ViewEventResult};
@@ -15,6 +16,49 @@ use crate::views::scroll::{
 use crate::views::{
     Align, Anchor, EdgeInsets, LayoutParams, ScrollConfig, ScrollOffset, Size, ViewId, ViewNode,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabDirection {
+    Next,
+    Prev,
+}
+
+fn tab_direction_for_event(event: &Event) -> Option<TabDirection> {
+    match event {
+        Event::Key(KeyEvent {
+            code: KeyCode::Tab,
+            modifiers,
+            ..
+        }) => Some(if modifiers.contains(KeyModifiers::SHIFT) {
+            TabDirection::Prev
+        } else {
+            TabDirection::Next
+        }),
+        Event::Key(KeyEvent {
+            code: KeyCode::BackTab,
+            ..
+        }) => Some(TabDirection::Prev),
+        _ => None,
+    }
+}
+
+fn focusable_children_in_tab_order(children: &[ViewNode]) -> Vec<ViewId> {
+    let mut focusable: Vec<(Option<i32>, usize, ViewId)> = children
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.view.is_focusable())
+        .map(|(idx, c)| (c.layout.tab_index, idx, c.id))
+        .collect();
+
+    focusable.sort_by(|a, b| match (a.0, b.0) {
+        (Some(a_idx), Some(b_idx)) => a_idx.cmp(&b_idx).then_with(|| a.1.cmp(&b.1)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.1.cmp(&b.1),
+    });
+
+    focusable.into_iter().map(|(_, _, id)| id).collect()
+}
 
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
     rect.width > 0
@@ -218,65 +262,129 @@ impl GridView {
     }
 
     fn first_focusable_child(&self) -> Option<ViewId> {
-        self.children
-            .iter()
-            .find(|c| c.view.is_focusable())
-            .map(|c| c.id)
+        focusable_children_in_tab_order(&self.children)
+            .first()
+            .copied()
     }
 
-    fn focus_next(&mut self) {
-        if self.children.is_empty() {
-            self.focused = None;
-            return;
-        }
-
-        let focusable: Vec<ViewId> = self
-            .children
-            .iter()
-            .filter(|c| c.view.is_focusable())
-            .map(|c| c.id)
-            .collect();
+    fn move_focus(&mut self, direction: TabDirection, wrap: bool) -> bool {
+        let focusable = focusable_children_in_tab_order(&self.children);
         if focusable.is_empty() {
             self.focused = None;
-            return;
+            return false;
         }
 
-        let next = match self
+        let desired = match self
             .focused
             .and_then(|id| focusable.iter().position(|x| *x == id))
         {
-            Some(idx) => focusable[(idx + 1) % focusable.len()],
-            None => focusable[0],
+            Some(idx) => match direction {
+                TabDirection::Next => {
+                    if idx + 1 < focusable.len() {
+                        Some(focusable[idx + 1])
+                    } else if wrap {
+                        Some(focusable[0])
+                    } else {
+                        None
+                    }
+                }
+                TabDirection::Prev => {
+                    if idx > 0 {
+                        Some(focusable[idx - 1])
+                    } else if wrap {
+                        Some(focusable[focusable.len() - 1])
+                    } else {
+                        None
+                    }
+                }
+            },
+            None => Some(match direction {
+                TabDirection::Next => focusable[0],
+                TabDirection::Prev => focusable[focusable.len() - 1],
+            }),
         };
-        self.focused = Some(next);
+
+        let Some(id) = desired else {
+            return false;
+        };
+
+        self.focused = Some(id);
+        true
     }
 
-    fn focus_prev(&mut self) {
-        if self.children.is_empty() {
-            self.focused = None;
+    fn focus_focused_child_edge(&mut self, direction: TabDirection) {
+        let Some(child_id) = self.focused else {
             return;
+        };
+        let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) else {
+            return;
+        };
+
+        match direction {
+            TabDirection::Next => {
+                let _ = self.children[child_idx].view.focus_first();
+            }
+            TabDirection::Prev => {
+                let _ = self.children[child_idx].view.focus_last();
+            }
+        }
+    }
+
+    fn handle_tab_navigation(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+        let Some(direction) = tab_direction_for_event(event) else {
+            return ViewEventResult::ignored();
+        };
+
+        if !ctx.is_focused {
+            return ViewEventResult::ignored();
         }
 
-        let focusable: Vec<ViewId> = self
-            .children
-            .iter()
-            .filter(|c| c.view.is_focusable())
-            .map(|c| c.id)
-            .collect();
+        // If we don't have a focused child yet, initialize focus and stop.
+        let focusable = focusable_children_in_tab_order(&self.children);
         if focusable.is_empty() {
             self.focused = None;
-            return;
+            return ViewEventResult::ignored();
         }
 
-        let prev = match self
-            .focused
-            .and_then(|id| focusable.iter().position(|x| *x == id))
-        {
-            Some(0) => focusable[focusable.len() - 1],
-            Some(idx) => focusable[idx - 1],
-            None => focusable[0],
+        let focused = match self.focused {
+            Some(id) if focusable.iter().any(|x| *x == id) => id,
+            _ => {
+                let id = match direction {
+                    TabDirection::Next => focusable[0],
+                    TabDirection::Prev => focusable[focusable.len() - 1],
+                };
+                self.focused = Some(id);
+                self.focus_focused_child_edge(direction);
+                return ViewEventResult::consumed();
+            }
         };
-        self.focused = Some(prev);
+
+        // Give the currently focused child a chance to advance focus within its subtree.
+        if let Some(child_idx) = self.children.iter().position(|c| c.id == focused) {
+            let child_focused = ctx.is_focused && self.focused == Some(focused);
+            let child_ctx = ViewContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+
+            let res = self.children[child_idx]
+                .view
+                .handle_event_capture(event, child_ctx);
+            if res.is_consumed() {
+                return res;
+            }
+        }
+
+        let wrap = matches!(ctx.tab_mode, crate::view::TabMode::Cycle);
+        if self.move_focus(direction, wrap) {
+            self.focus_focused_child_edge(direction);
+            return ViewEventResult::consumed();
+        }
+
+        ViewEventResult::ignored()
     }
 
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
@@ -518,6 +626,36 @@ impl View for GridView {
         self.children.iter().any(|c| c.view.is_focusable())
     }
 
+    fn focus_first(&mut self) -> bool {
+        let Some(child_id) = focusable_children_in_tab_order(&self.children)
+            .first()
+            .copied()
+        else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(child_id);
+        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
+            let _ = self.children[child_idx].view.focus_first();
+        }
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        let focusable = focusable_children_in_tab_order(&self.children);
+        let Some(&child_id) = focusable.last() else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(child_id);
+        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
+            let _ = self.children[child_idx].view.focus_last();
+        }
+        true
+    }
+
     fn children(&self) -> &[ViewNode] {
         &self.children
     }
@@ -576,28 +714,12 @@ impl View for GridView {
         let _ = self.scroll_to_clamped(target_x, target_y);
     }
 
-    fn handle_event_capture(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Tab,
-            modifiers,
-            ..
-        }) = event
-        {
-            if modifiers.contains(KeyModifiers::SHIFT) {
-                self.focus_prev();
-            } else {
-                self.focus_next();
-            }
-            return ViewEventResult::consumed();
+    fn handle_event_capture(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+        let tab = self.handle_tab_navigation(event, ctx);
+        if tab.is_consumed() {
+            return tab;
         }
-        if let Event::Key(KeyEvent {
-            code: KeyCode::BackTab,
-            ..
-        }) = event
-        {
-            self.focus_prev();
-            return ViewEventResult::consumed();
-        }
+
         ViewEventResult::ignored()
     }
 
@@ -920,6 +1042,7 @@ impl View for GridView {
                 window_id: ctx.window_id,
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
             };
 
             let res = self.children[child_idx]
@@ -946,6 +1069,7 @@ impl View for GridView {
                 window_id: ctx.window_id,
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {
@@ -1095,6 +1219,7 @@ impl View for GridView {
                 window_id: ctx.window_id,
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }
@@ -1121,6 +1246,7 @@ impl View for GridView {
                 window_id: ctx.window_id,
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
             };
             child.view.draw(frame, abs, child_ctx);
         }

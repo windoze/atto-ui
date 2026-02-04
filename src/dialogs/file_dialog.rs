@@ -264,6 +264,7 @@ impl FileDialog {
                             height: Size::Fill,
                             align_x: Align::Stretch,
                             align_y: Align::Stretch,
+                            tab_index: Some(0),
                             ..LayoutParams::default()
                         },
                     )
@@ -290,6 +291,7 @@ impl FileDialog {
                             height: Size::Fill,
                             align_x: Align::Stretch,
                             align_y: Align::Stretch,
+                            tab_index: Some(1),
                             ..LayoutParams::default()
                         },
                     ),
@@ -317,6 +319,7 @@ impl FileDialog {
                         ),
                         LayoutParams {
                             width: Size::Weight(1),
+                            tab_index: Some(2),
                             ..LayoutParams::default()
                         },
                     )
@@ -324,6 +327,7 @@ impl FileDialog {
                         Button::new("Cancel").on_click(cancel_action),
                         LayoutParams {
                             width: Size::Fixed(12),
+                            tab_index: Some(3),
                             ..LayoutParams::default()
                         },
                     )
@@ -333,6 +337,7 @@ impl FileDialog {
                             .on_click(submit_action),
                         LayoutParams {
                             width: Size::Fixed(12),
+                            tab_index: Some(4),
                             ..LayoutParams::default()
                         },
                     ),
@@ -743,6 +748,13 @@ fn cmp_entries(a: &Entry, b: &Entry) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
+    use crate::view::{ScrollbarHost, TabMode, ViewContext};
+    use crate::wm::WindowId;
+    use crossterm::event::{KeyEventState, KeyModifiers};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
 
     fn make_temp_dir(prefix: &str) -> PathBuf {
         let mut dir = std::env::temp_dir();
@@ -779,6 +791,77 @@ mod tests {
         assert_eq!(names[2], "b_dir/");
         assert_eq!(names[3], "A_file.txt");
         assert_eq!(names[4], "z_file.txt");
+    }
+
+    fn draw_dialog(dialog: &mut FileDialog, area: Rect, ctx: ViewContext<'_>) {
+        let backend = TestBackend::new(area.width.max(1), area.height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| dialog.draw(f, area, ctx))
+            .expect("draw dialog");
+    }
+
+    #[test]
+    fn file_dialog_tab_order_dir_list_then_file_list_then_name_then_buttons() {
+        let root = make_temp_dir("tab-order");
+        let _cleanup = TempDirCleanup(root.clone());
+
+        fs::create_dir_all(root.join("subdir")).unwrap();
+        fs::write(root.join("file.txt"), "x").unwrap();
+
+        let result: Property<Option<PathBuf>> = Property::new(None);
+        let mut dialog = FileDialog::open_file(result.binding())
+            .initial_dir(root)
+            .initial_file_name("file.txt");
+
+        let theme = Theme::dark();
+        let ctx = ViewContext {
+            theme: &theme,
+            window_id: WindowId(1),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::View,
+            tab_mode: TabMode::Cycle,
+        };
+
+        let area = Rect::new(0, 0, 80, 24);
+        draw_dialog(&mut dialog, area, ctx);
+        assert!(dialog.dir_list_focused.get());
+        assert!(!dialog.file_list_focused.get());
+        assert!(!dialog.file_name_focused.get());
+
+        let tab = Event::Key(KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+
+        assert!(dialog.handle_event(&tab, ctx).is_consumed());
+        draw_dialog(&mut dialog, area, ctx);
+        assert!(!dialog.dir_list_focused.get());
+        assert!(dialog.file_list_focused.get());
+        assert!(!dialog.file_name_focused.get());
+
+        assert!(dialog.handle_event(&tab, ctx).is_consumed());
+        draw_dialog(&mut dialog, area, ctx);
+        assert!(!dialog.dir_list_focused.get());
+        assert!(!dialog.file_list_focused.get());
+        assert!(dialog.file_name_focused.get());
+
+        // Next tab should move focus into the button row (either Cancel or Submit).
+        assert!(dialog.handle_event(&tab, ctx).is_consumed());
+        draw_dialog(&mut dialog, area, ctx);
+        assert!(!dialog.dir_list_focused.get());
+        assert!(!dialog.file_list_focused.get());
+        assert!(!dialog.file_name_focused.get());
+
+        // Tab through the remaining button(s), then wrap back to the directory list.
+        assert!(dialog.handle_event(&tab, ctx).is_consumed());
+        draw_dialog(&mut dialog, area, ctx);
+
+        assert!(dialog.handle_event(&tab, ctx).is_consumed());
+        draw_dialog(&mut dialog, area, ctx);
+        assert!(dialog.dir_list_focused.get());
     }
 
     struct TempDirCleanup(PathBuf);

@@ -752,7 +752,7 @@ mod tests {
     use crate::declarative::Text;
     use crate::reactive::Property;
     use crate::theme::Theme;
-    use crate::view::ScrollbarHost;
+    use crate::view::{ScrollbarHost, TabMode};
     use crate::wm::WindowId;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -767,6 +767,7 @@ mod tests {
             window_id: WindowId::default(),
             is_focused: true,
             scrollbar_host,
+            tab_mode: TabMode::Cycle,
         };
 
         let backend = TestBackend::new(area.width.max(1), area.height.max(1));

@@ -1,6 +1,6 @@
 use chatty::declarative::{DeclarativeView, Divider, Text};
 use chatty::theme::Theme;
-use chatty::view::{ScrollbarHost, ViewContext};
+use chatty::view::{ScrollbarHost, TabMode, ViewContext};
 use chatty::wm::WindowId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -27,6 +27,7 @@ fn declarative_text_renders() {
                 window_id: WindowId::default(),
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::default(),
+                tab_mode: TabMode::Cycle,
             };
 
             let view = Text::new("Hello, World!");
@@ -50,6 +51,7 @@ fn declarative_divider_horizontal_renders() {
                 window_id: WindowId::default(),
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::default(),
+                tab_mode: TabMode::Cycle,
             };
 
             let view = Divider::horizontal();

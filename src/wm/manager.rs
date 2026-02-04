@@ -8,7 +8,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
-use crate::view::{ScrollbarHost, ViewContext, ViewEventResult};
+use crate::view::{ScrollbarHost, TabMode, ViewContext, ViewEventResult};
 use crate::views::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
     scrollbar_layout_1d, should_show_scrollbar,
@@ -335,6 +335,7 @@ impl WindowManager {
                 } else {
                     ScrollbarHost::View
                 },
+                tab_mode: TabMode::Cycle,
             };
             window.view.draw(frame, inner, ctx);
 
@@ -388,6 +389,7 @@ impl WindowManager {
                 } else {
                     ScrollbarHost::View
                 },
+                tab_mode: TabMode::Cycle,
             };
             w.view.handle_event(event, ctx)
         };
@@ -1241,7 +1243,9 @@ fn draw_titlebar(
         .saturating_sub(2);
 
     for g in title.graphemes(true) {
-        if cursor > reserved_right {
+        let w = (UnicodeWidthStr::width(g) as u16).max(1);
+        let end = cursor.saturating_add(w).saturating_sub(1);
+        if cursor > reserved_right || end > reserved_right {
             break;
         }
         let Some(cell) = buf.cell_mut((cursor, rect.y)) else {
@@ -1249,9 +1253,15 @@ fn draw_titlebar(
         };
         cell.set_style(style);
         cell.set_symbol(g);
-        cursor = cursor
-            .saturating_add(UnicodeWidthStr::width(g) as u16)
-            .max(cursor + 1);
+
+        // Keep ratatui's Buffer well-formed: wide graphemes must be followed by blank cells.
+        for dx in 1..w {
+            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), rect.y)) {
+                trailing.reset();
+            }
+        }
+
+        cursor = cursor.saturating_add(w);
     }
 
     // Draw buttons.

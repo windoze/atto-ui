@@ -32,6 +32,14 @@ impl View for ViewAdapter {
         self.inner.is_focusable()
     }
 
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+
     fn min_width(&self) -> u16 {
         self.inner.min_width()
     }

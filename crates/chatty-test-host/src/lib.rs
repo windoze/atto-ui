@@ -168,6 +168,19 @@ impl PtyTestHost {
         Ok(p.screen().contents().to_string())
     }
 
+    /// Returns the raw contents of the cell at `(x, y)` (0-based).
+    ///
+    /// This is more precise than scanning `screen_contents()` when wide characters are involved,
+    /// since `vt100::Screen::contents()` is sparse and omits trailing whitespace.
+    pub fn cell_contents(&self, x: u16, y: u16) -> Result<String> {
+        let p = self.parser.lock().map_err(|_| anyhow!("parser poisoned"))?;
+        let screen = p.screen();
+        let cell = screen
+            .cell(y, x)
+            .ok_or_else(|| anyhow!("cell ({x}, {y}) out of bounds"))?;
+        Ok(cell.contents().to_string())
+    }
+
     pub fn wait_for_text(&self, needle: &str, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {

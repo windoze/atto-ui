@@ -181,7 +181,8 @@ impl DeclarativeView for WidgetsView {
             HStack {
                 VStack {
                     TextBox("Text", model.text_binding())
-                    Checkbox("Enable feature", model.enable_feature_binding())
+                    Checkbox("Enable feature 1", model.enable_feature_binding())
+                    Checkbox("Enable feature 2", model.enable_feature_binding())
                     RadioGroup(
                         "Mode",
                         vec!["Normal".into(), "Insert".into(), "Visual".into()],
@@ -256,6 +257,7 @@ impl DeclarativeView for WidgetsView {
                     widgets,
                     LayoutParams {
                         height: Size::Fill,
+                        align_y: Align::Stretch,
                         ..LayoutParams::default()
                     },
                 )

@@ -567,6 +567,7 @@ impl View for ScrollView {
                 window_id: ctx.window_id,
                 is_focused: ctx.is_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode,
             },
             info,
         };
@@ -857,6 +858,7 @@ impl View for ScrollView {
                         window_id: ctx.window_id,
                         is_focused: ctx.is_focused,
                         scrollbar_host: child_scrollbar_host,
+                        tab_mode: ctx.tab_mode,
                     },
                     info,
                 };
@@ -901,6 +903,7 @@ impl View for ScrollView {
                     window_id: ctx.window_id,
                     is_focused: ctx.is_focused,
                     scrollbar_host: child_scrollbar_host,
+                    tab_mode: ctx.tab_mode,
                 },
                 info,
             };
@@ -964,6 +967,7 @@ impl View for ScrollView {
                 window_id: ctx.window_id,
                 is_focused: ctx.is_focused,
                 scrollbar_host: child_scrollbar_host,
+                tab_mode: ctx.tab_mode,
             },
             info,
         };
@@ -991,6 +995,7 @@ impl View for ScrollView {
                     window_id: ctx.window_id,
                     is_focused: ctx.is_focused,
                     scrollbar_host: child_scrollbar_host,
+                    tab_mode: ctx.tab_mode,
                 },
                 info,
             };
@@ -1015,7 +1020,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use crate::theme::Theme;
-    use crate::view::{ScrollbarHost, ViewContext};
+    use crate::view::{ScrollbarHost, TabMode, ViewContext};
     use crate::wm::WindowId;
 
     use super::*;
@@ -1067,6 +1072,7 @@ mod tests {
             window_id: WindowId(1),
             is_focused: true,
             scrollbar_host: ScrollbarHost::View,
+            tab_mode: TabMode::Cycle,
         };
 
         let backend = TestBackend::new(10, 10);

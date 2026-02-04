@@ -733,14 +733,30 @@ fn fill_line(buf: &mut Buffer, x: u16, y: u16, width: u16, style: Style) {
 
 fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
     let mut cx = x;
+    let buf_right = buf.area.x.saturating_add(buf.area.width);
     for g in text.graphemes(true) {
+        let w = (UnicodeWidthStr::width(g) as u16).max(1);
+        if cx >= buf_right {
+            break;
+        }
+        if cx.saturating_add(w) > buf_right {
+            break;
+        }
+
         let Some(cell) = buf.cell_mut((cx, y)) else {
             break;
         };
         cell.set_style(style);
         cell.set_symbol(g);
-        let w = UnicodeWidthStr::width(g) as u16;
-        cx = cx.saturating_add(w.max(1));
+
+        // Keep ratatui's Buffer well-formed: wide graphemes must be followed by blank cells.
+        for dx in 1..w {
+            if let Some(trailing) = buf.cell_mut((cx.saturating_add(dx), y)) {
+                trailing.reset();
+            }
+        }
+
+        cx = cx.saturating_add(w);
     }
 }
 
