@@ -7,7 +7,9 @@ use std::time::Duration;
 use anyhow::Result;
 use ratatui::layout::Rect;
 
-use atto_ui::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
+use atto_ui::app::{
+    CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
+};
 use atto_ui::declarative::{
     Align, DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer, Text, TextFn,
     VStack, ViewAdapter,

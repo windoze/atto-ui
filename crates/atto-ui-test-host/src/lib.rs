@@ -181,6 +181,24 @@ impl PtyTestHost {
         Ok(cell.contents().to_string())
     }
 
+    pub fn cell_fgcolor(&self, x: u16, y: u16) -> Result<vt100::Color> {
+        let p = self.parser.lock().map_err(|_| anyhow!("parser poisoned"))?;
+        let screen = p.screen();
+        let cell = screen
+            .cell(y, x)
+            .ok_or_else(|| anyhow!("cell ({x}, {y}) out of bounds"))?;
+        Ok(cell.fgcolor())
+    }
+
+    pub fn cell_bgcolor(&self, x: u16, y: u16) -> Result<vt100::Color> {
+        let p = self.parser.lock().map_err(|_| anyhow!("parser poisoned"))?;
+        let screen = p.screen();
+        let cell = screen
+            .cell(y, x)
+            .ok_or_else(|| anyhow!("cell ({x}, {y}) out of bounds"))?;
+        Ok(cell.bgcolor())
+    }
+
     pub fn wait_for_text(&self, needle: &str, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {

@@ -7,8 +7,7 @@ use crate::views::ScrollConfig;
 
 use super::keymap::EditorKeymap;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum EditorSyntaxConfig {
     #[default]
     None,
@@ -150,8 +149,7 @@ impl EditorLspConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum EditorLspMode {
     #[default]
     Disabled,

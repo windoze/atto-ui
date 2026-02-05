@@ -1,4 +1,5 @@
 use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+use editor_core::Position;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -28,6 +29,8 @@ impl LspHoverContents {
 pub struct HoverPopupModel {
     /// Desired popup rect in screen coordinates.
     pub rect: Rect,
+    /// The document position this popup is describing (used for suppression / re-show logic).
+    pub anchor: Position,
     pub contents: LspHoverContents,
 }
 
@@ -60,6 +63,7 @@ pub struct CompletionPopupModel {
 #[derive(Clone, Debug)]
 struct HoverPopupView {
     model: Binding<Option<HoverPopupModel>>,
+    dismissed: Binding<Option<Position>>,
     theme: Binding<EditorThemeSet>,
     language_id: Binding<String>,
     last_area: Option<Rect>,
@@ -68,11 +72,13 @@ struct HoverPopupView {
 impl HoverPopupView {
     fn new(
         model: Binding<Option<HoverPopupModel>>,
+        dismissed: Binding<Option<Position>>,
         theme: Binding<EditorThemeSet>,
         language_id: Binding<String>,
     ) -> Self {
         Self {
             model,
+            dismissed,
             theme,
             language_id,
             last_area: None,
@@ -96,6 +102,9 @@ impl View for HoverPopupView {
             })
         ) {
             // Clicking a hover tooltip should always dismiss it.
+            if let Some(model) = self.model.get() {
+                self.dismissed.set(Some(model.anchor));
+            }
             self.model.set(None);
             return ViewEventResult::consumed();
         }
@@ -295,6 +304,7 @@ pub struct EditorPopupWindows {
     hover_id: Option<WindowId>,
     completion_id: Option<WindowId>,
     hover: Binding<Option<HoverPopupModel>>,
+    hover_dismissed: Binding<Option<Position>>,
     completion: Binding<Option<CompletionPopupModel>>,
     theme: Binding<EditorThemeSet>,
     language_id: Binding<String>,
@@ -331,6 +341,7 @@ impl EditorPopupWindows {
             hover_id: None,
             completion_id: None,
             hover: handle.hover_popup.clone(),
+            hover_dismissed: handle.hover_popup_dismissed.clone(),
             completion: handle.completion_popup.clone(),
             theme: handle.theme.clone(),
             language_id: handle.language_id.clone(),
@@ -356,6 +367,7 @@ impl EditorPopupWindows {
                     model.rect,
                     Box::new(HoverPopupView::new(
                         self.hover.clone(),
+                        self.hover_dismissed.clone(),
                         self.theme.clone(),
                         self.language_id.clone(),
                     )),

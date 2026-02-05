@@ -5,7 +5,7 @@ use crossterm::event::{
 };
 use editor_core::{
     Command, CursorCommand, EditCommand, EditorStateManager, Position, Selection,
-    SelectionDirection, StyleCommand, ViewCommand, layout::char_width,
+    SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, layout::char_width,
 };
 use editor_core_highlight_simple::{RegexHighlightProcessor, SimpleIniStyles, SimpleJsonStyles};
 use editor_core_lsp::{LspContentChange, LspSession, locations_from_value};
@@ -39,15 +39,30 @@ pub enum EditorEvent {
 pub struct EditorViewHandle {
     pub events: EventQueue<EditorEvent>,
     pub hover_popup: crate::reactive::Binding<Option<HoverPopupModel>>,
+    pub hover_popup_dismissed: crate::reactive::Binding<Option<Position>>,
     pub completion_popup: crate::reactive::Binding<Option<CompletionPopupModel>>,
     pub theme: crate::reactive::Binding<EditorThemeSet>,
     pub language_id: crate::reactive::Binding<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HoverAnchor {
+    position: Position,
+    /// Anchor point in absolute screen coordinates (0-based).
+    screen: (u16, u16),
 }
 
 #[derive(Debug, Clone, Copy)]
 struct MouseDrag {
     anchor: Position,
     rect: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClickState {
+    at: Instant,
+    pos: Position,
+    count: u8,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -78,6 +93,7 @@ pub struct EditorView {
     // Outputs / host integration
     events: EventQueue<EditorEvent>,
     hover_popup: crate::reactive::Binding<Option<HoverPopupModel>>,
+    hover_popup_dismissed: crate::reactive::Binding<Option<Position>>,
     completion_popup: crate::reactive::Binding<Option<CompletionPopupModel>>,
 
     state_manager: EditorStateManager,
@@ -96,6 +112,8 @@ pub struct EditorView {
     // Mouse + selection
     mouse_drag: Option<MouseDrag>,
     rect_selection_mode: bool,
+    rect_selection_anchor: Option<Position>,
+    last_click: Option<ClickState>,
 
     // Undo grouping
     last_insert_time: Option<Instant>,
@@ -103,8 +121,10 @@ pub struct EditorView {
     // Hover scheduling (LSP)
     hover_due: Option<Instant>,
     hover_pending_request: Option<u64>,
-    hover_target_position: Option<Position>,
-    hover_requested_position: Option<Position>,
+    hover_anchor: Option<HoverAnchor>,
+    hover_target: Option<HoverAnchor>,
+    hover_requested: Option<HoverAnchor>,
+    hover_suppressed_position: Option<Position>,
 
     // Completion scheduling/state (LSP)
     completion_pending_request: Option<u64>,
@@ -126,11 +146,13 @@ impl EditorView {
         let theme = theme.into();
         let events = EventQueue::new();
         let hover_popup = crate::reactive::Binding::new(None);
+        let hover_popup_dismissed = crate::reactive::Binding::new(None);
         let completion_popup = crate::reactive::Binding::new(None);
 
         let handle = EditorViewHandle {
             events: events.clone(),
             hover_popup: hover_popup.clone(),
+            hover_popup_dismissed: hover_popup_dismissed.clone(),
             completion_popup: completion_popup.clone(),
             theme: theme.clone(),
             language_id: config.language_id.clone(),
@@ -144,6 +166,7 @@ impl EditorView {
             theme,
             events,
             hover_popup,
+            hover_popup_dismissed,
             completion_popup,
             state_manager: EditorStateManager::new(&initial, 1),
             last_area: None,
@@ -153,11 +176,15 @@ impl EditorView {
             lsp: None,
             mouse_drag: None,
             rect_selection_mode: false,
+            rect_selection_anchor: None,
+            last_click: None,
             last_insert_time: None,
             hover_due: None,
             hover_pending_request: None,
-            hover_target_position: None,
-            hover_requested_position: None,
+            hover_anchor: None,
+            hover_target: None,
+            hover_requested: None,
+            hover_suppressed_position: None,
             completion_pending_request: None,
             completion_requested_position: None,
             pending_goto: None,
@@ -165,7 +192,19 @@ impl EditorView {
         };
 
         view.configure_syntax_processor();
+        view.start_lsp_if_enabled();
         (view, handle)
+    }
+
+    fn start_lsp_if_enabled(&mut self) {
+        let EditorLspMode::Enabled(cfg) = self.config.lsp.get() else {
+            return;
+        };
+        self.start_lsp_session(cfg);
+    }
+
+    fn active_cursor_position(&self) -> Position {
+        self.state_manager.get_cursor_state().position
     }
 
     fn editor_theme(&self) -> EditorTheme {
@@ -253,8 +292,11 @@ impl EditorView {
         }
         self.hover_due = None;
         self.hover_pending_request = None;
-        self.hover_target_position = None;
-        self.hover_requested_position = None;
+        self.hover_anchor = None;
+        self.hover_target = None;
+        self.hover_requested = None;
+        self.hover_suppressed_position = None;
+        self.hover_popup_dismissed.set(None);
         self.completion_pending_request = None;
         self.completion_requested_position = None;
         self.pending_goto = None;
@@ -299,7 +341,7 @@ impl EditorView {
         }
 
         let editor = self.state_manager.editor();
-        let cursor_pos = editor.cursor_position();
+        let cursor_pos = self.active_cursor_position();
         let Some((cursor_visual_row, _)) =
             editor.logical_position_to_visual(cursor_pos.line, cursor_pos.column)
         else {
@@ -335,7 +377,7 @@ impl EditorView {
     }
 
     fn cursor_offset(&self) -> usize {
-        let pos = self.state_manager.editor().cursor_position();
+        let pos = self.active_cursor_position();
         self.state_manager
             .editor()
             .line_index
@@ -423,8 +465,56 @@ impl EditorView {
         }
         self.hover_due = None;
         self.hover_pending_request = None;
-        self.hover_target_position = None;
-        self.hover_requested_position = None;
+        self.hover_target = None;
+        self.hover_requested = None;
+    }
+
+    fn consume_hover_popup_dismissed(&mut self) {
+        let Some(pos) = self.hover_popup_dismissed.get() else {
+            return;
+        };
+        self.hover_popup_dismissed.set(None);
+
+        // Suppress re-showing at the same hover position until the mouse moves elsewhere.
+        self.hover_suppressed_position = Some(pos);
+        self.hover_due = None;
+        self.hover_pending_request = None;
+        self.hover_target = None;
+        self.hover_requested = None;
+    }
+
+    fn update_hover_anchor(&mut self, pos: Position, screen: (u16, u16)) {
+        if self.hover_suppressed_position.is_some_and(|p| p != pos) {
+            self.hover_suppressed_position = None;
+        }
+
+        let prev_pos = self.hover_anchor.map(|a| a.position);
+        self.hover_anchor = Some(HoverAnchor {
+            position: pos,
+            screen,
+        });
+
+        // When the hovered position changes, any visible tooltip and any in-flight request become
+        // stale. Don't treat this as an explicit dismissal: allow the tooltip to show again after
+        // the normal idle delay.
+        if prev_pos != Some(pos) {
+            if self.hover_popup.get().is_some() {
+                self.hover_popup.set(None);
+            }
+            self.hover_due = None;
+            self.hover_pending_request = None;
+            self.hover_target = None;
+            self.hover_requested = None;
+            return;
+        }
+
+        // Same token/position: keep the tooltip close to the mouse.
+        if let Some(mut popup) = self.hover_popup.get()
+            && popup.anchor == pos
+        {
+            popup.rect = self.hover_popup_rect_for_screen_point(screen, popup.contents.lines());
+            self.hover_popup.set(Some(popup));
+        }
     }
 
     fn backspace(&mut self) {
@@ -652,12 +742,42 @@ impl EditorView {
     }
 
     fn indent_or_tab(&mut self) {
-        let insert_spaces = self.config.indent.insert_spaces.get();
         let tab_width = self.config.indent.tab_width.get().max(1);
-        if insert_spaces {
-            self.insert_text(&" ".repeat(tab_width));
-        } else {
-            self.insert_text("\t");
+        let insert_spaces = self.config.indent.insert_spaces.get();
+
+        let _ = self.execute(Command::View(ViewCommand::SetTabWidth { width: tab_width }));
+        let _ = self.execute(Command::View(ViewCommand::SetTabKeyBehavior {
+            behavior: if insert_spaces {
+                TabKeyBehavior::Spaces
+            } else {
+                TabKeyBehavior::Tab
+            },
+        }));
+
+        // LSP sync: use full-document change since InsertTab can expand to a variable number of
+        // spaces (and also applies to multi-cursor / rectangular selections).
+        let full_lsp_change = self.lsp.as_ref().map(|lsp| {
+            let old_char_count = self.state_manager.editor().char_count();
+            lsp.full_document_change(&self.state_manager.editor().line_index, old_char_count, "")
+        });
+
+        let before_text = self.state_manager.editor().get_text();
+        if !self.execute(Command::Edit(EditCommand::InsertTab)) {
+            return;
+        }
+        let after_text = self.state_manager.editor().get_text();
+        if after_text == before_text {
+            return;
+        }
+        self.config.text.set(after_text.clone());
+
+        self.last_insert_time = Some(Instant::now());
+        self.maybe_apply_syntax_highlighting();
+        self.hide_hover_popup_only();
+
+        if let Some(mut change) = full_lsp_change {
+            change.text = after_text;
+            self.lsp_did_change(change);
         }
     }
 
@@ -677,31 +797,46 @@ impl EditorView {
     }
 
     fn toggle_fold_at_cursor(&mut self) {
-        let line = self.state_manager.editor().cursor_position().line;
+        let line = self.active_cursor_position().line;
         self.toggle_fold_at_line(line);
     }
 
     fn toggle_fold_at_line(&mut self, logical_line: usize) {
-        let regions = self
+        // LSP and syntax providers populate `folding_manager` with *possible* fold regions
+        // (`is_collapsed = false`). When the user folds/unfolds, we should toggle that region
+        // in-place rather than adding a duplicate folded region (which makes clicking the gutter
+        // marker unable to reliably unfold).
+        let mut regions = self
             .state_manager
             .editor()
             .folding_manager
             .regions()
             .to_vec();
-        let Some(region) = regions.iter().find(|r| r.start_line == logical_line) else {
+
+        // Match `editor_core::FoldingManager::toggle_region_starting_at_line`: among all regions
+        // starting at this line, choose the innermost one (smallest `end_line`).
+        let mut best_idx = None::<usize>;
+        let mut best_end = usize::MAX;
+        for (idx, region) in regions.iter().enumerate() {
+            if region.start_line != logical_line {
+                continue;
+            }
+            if region.end_line <= region.start_line {
+                continue;
+            }
+            if region.end_line < best_end {
+                best_end = region.end_line;
+                best_idx = Some(idx);
+            }
+        }
+
+        let Some(idx) = best_idx else {
             return;
         };
 
-        if region.is_collapsed {
-            let _ = self.execute(Command::Style(StyleCommand::Unfold {
-                start_line: region.start_line,
-            }));
-        } else {
-            let _ = self.execute(Command::Style(StyleCommand::Fold {
-                start_line: region.start_line,
-                end_line: region.end_line,
-            }));
-        }
+        regions[idx].is_collapsed = !regions[idx].is_collapsed;
+        self.state_manager.replace_folding_regions(regions, false);
+        self.adjust_scroll();
     }
 
     fn unfold_all(&mut self) {
@@ -714,6 +849,7 @@ impl EditorView {
 
     fn toggle_rect_selection(&mut self) {
         self.rect_selection_mode = !self.rect_selection_mode;
+        self.rect_selection_anchor = None;
         self.mouse_drag = None;
         self.last_insert_time = None;
     }
@@ -739,22 +875,87 @@ impl EditorView {
     }
 
     fn move_cursor(&mut self, delta_line: isize, delta_column: isize, extend: bool) {
+        // Clamp positive line movements to avoid `editor_core` rejecting out-of-bounds `MoveBy` /
+        // `ExtendSelection` targets (notably `PageDown` near EOF).
+        let line_count = self.state_manager.editor().line_index.line_count();
+        if line_count == 0 {
+            return;
+        }
+        let last_line = line_count.saturating_sub(1);
+
         if extend {
-            let editor = self.state_manager.editor();
-            let pos = editor.cursor_position();
-            let target = Position::new(
-                pos.line.saturating_add_signed(delta_line),
-                pos.column.saturating_add_signed(delta_column),
-            );
-            let _ = self.execute(Command::Cursor(CursorCommand::ExtendSelection {
-                to: target,
-            }));
+            let pos = self.active_cursor_position();
+            let target_line = if delta_line.is_negative() {
+                pos.line.saturating_sub((-delta_line) as usize)
+            } else {
+                pos.line.saturating_add(delta_line as usize).min(last_line)
+            };
+            let target_col = if delta_column.is_negative() {
+                pos.column.saturating_sub((-delta_column) as usize)
+            } else {
+                pos.column.saturating_add(delta_column as usize)
+            };
+            let target = Position::new(target_line, target_col);
+            if self.rect_selection_mode {
+                let anchor = self.rect_selection_anchor.unwrap_or(pos);
+                if self.rect_selection_anchor.is_none() {
+                    self.rect_selection_anchor = Some(anchor);
+                }
+                let _ = self.execute(Command::Cursor(CursorCommand::SetRectSelection {
+                    anchor,
+                    active: target,
+                }));
+            } else {
+                self.rect_selection_anchor = None;
+                let _ = self.execute(Command::Cursor(CursorCommand::ExtendSelection {
+                    to: target,
+                }));
+            }
         } else {
+            // If there is an active primary selection, collapse it first (VSCode-like).
+            let cursor_state = self.state_manager.get_cursor_state();
+            if let Some(primary) = cursor_state
+                .selections
+                .get(cursor_state.primary_selection_index)
+                && primary.start != primary.end
+            {
+                let (min_pos, max_pos) = if primary.start <= primary.end {
+                    (primary.start, primary.end)
+                } else {
+                    (primary.end, primary.start)
+                };
+
+                let collapse_to = if delta_line.is_negative() || delta_column.is_negative() {
+                    min_pos
+                } else {
+                    max_pos
+                };
+
+                let _ = self.execute(Command::Cursor(CursorCommand::MoveTo {
+                    line: collapse_to.line,
+                    column: collapse_to.column,
+                }));
+                let _ = self.execute(Command::Cursor(CursorCommand::ClearSelection));
+                self.rect_selection_anchor = None;
+                self.adjust_scroll();
+                self.hide_popups();
+                return;
+            }
+
+            let pos = self.active_cursor_position();
+            let max_down = last_line.saturating_sub(pos.line) as isize;
+            let delta_line = if delta_line.is_positive() {
+                delta_line.min(max_down)
+            } else {
+                delta_line
+            };
+
             let _ = self.execute(Command::Cursor(CursorCommand::MoveBy {
                 delta_line,
                 delta_column,
             }));
             let _ = self.execute(Command::Cursor(CursorCommand::ClearSelection));
+            self.rect_selection_anchor = None;
         }
         self.adjust_scroll();
         self.hide_popups();
@@ -762,7 +963,7 @@ impl EditorView {
 
     fn move_home_end(&mut self, end: bool, extend: bool) {
         let editor = self.state_manager.editor();
-        let pos = editor.cursor_position();
+        let pos = self.active_cursor_position();
         let line_text = editor
             .line_index
             .get_line_text(pos.line)
@@ -966,42 +1167,63 @@ impl EditorView {
             let error = resp.error;
 
             if let Some((pending_id, kind)) = self.pending_goto
-                && pending_id == id {
-                    let locs = result
-                        .as_ref()
-                        .map(locations_from_value)
-                        .unwrap_or_default();
-                    self.events.push(EditorEvent::LspGoto {
-                        kind,
-                        locations: locs,
-                    });
-                    self.pending_goto = None;
-                }
+                && pending_id == id
+            {
+                let locs = result
+                    .as_ref()
+                    .map(locations_from_value)
+                    .unwrap_or_default();
+                self.events.push(EditorEvent::LspGoto {
+                    kind,
+                    locations: locs,
+                });
+                self.pending_goto = None;
+            }
 
             if let Some(pending_id) = self.hover_pending_request
-                && pending_id == id && method.as_str() == "textDocument/hover" {
-                    self.hover_pending_request = None;
-                    self.hover_requested_position = None;
-                    if error.is_some() {
-                        self.hover_popup.set(None);
-                    }
-                    if let Some(result) = result.as_ref() {
-                        self.handle_lsp_hover_response(result);
-                    } else {
-                        self.hover_popup.set(None);
-                    }
+                && pending_id == id
+                && method.as_str() == "textDocument/hover"
+            {
+                self.hover_pending_request = None;
+                let requested = self.hover_requested.take();
+                if error.is_some() {
+                    self.hover_popup.set(None);
+                    continue;
                 }
 
-            if let Some(pending_id) = self.completion_pending_request
-                && pending_id == id && method.as_str() == "textDocument/completion" {
-                    self.completion_pending_request = None;
-                    self.completion_requested_position = None;
-                    if let Some(result) = result.as_ref() {
-                        self.handle_lsp_completion_response(result);
-                    } else {
-                        self.completion_popup.set(None);
-                    }
+                let Some(result) = result.as_ref() else {
+                    self.hover_popup.set(None);
+                    continue;
+                };
+
+                let anchor = requested.or(self.hover_anchor).or_else(|| {
+                    self.cursor_screen_position()
+                        .and_then(|p| p)
+                        .map(|p| HoverAnchor {
+                            position: self.active_cursor_position(),
+                            screen: p,
+                        })
+                });
+
+                if let Some(anchor) = anchor {
+                    self.handle_lsp_hover_response(result, anchor);
+                } else {
+                    self.hover_popup.set(None);
                 }
+            }
+
+            if let Some(pending_id) = self.completion_pending_request
+                && pending_id == id
+                && method.as_str() == "textDocument/completion"
+            {
+                self.completion_pending_request = None;
+                self.completion_requested_position = None;
+                if let Some(result) = result.as_ref() {
+                    self.handle_lsp_completion_response(result);
+                } else {
+                    self.completion_popup.set(None);
+                }
+            }
         }
     }
 
@@ -1144,15 +1366,11 @@ impl EditorView {
         }
     }
 
-    fn handle_lsp_hover_response(&mut self, value: &serde_json::Value) {
-        // Ignore stale responses.
-        if self
-            .hover_requested_position
-            .is_some_and(|p| p != self.state_manager.editor().cursor_position())
-        {
+    fn handle_lsp_hover_response(&mut self, value: &serde_json::Value, anchor: HoverAnchor) {
+        if self.completion_popup.get().is_some() {
             return;
         }
-        if self.completion_popup.get().is_some() {
+        if self.hover_suppressed_position == Some(anchor.position) {
             return;
         }
 
@@ -1170,13 +1388,11 @@ impl EditorView {
             }
         };
 
-        let Some(rect) = self.hover_popup_rect_for_cursor(text.as_slice()) else {
-            self.hover_popup.set(None);
-            return;
-        };
+        let rect = self.hover_popup_rect_for_screen_point(anchor.screen, text.as_slice());
 
         self.hover_popup.set(Some(HoverPopupModel {
             rect,
+            anchor: anchor.position,
             contents: super::popup::LspHoverContents::PlainText(text),
         }));
     }
@@ -1185,7 +1401,7 @@ impl EditorView {
         self.hide_hover_popup_only();
         if self
             .completion_requested_position
-            .is_some_and(|p| p != self.state_manager.editor().cursor_position())
+            .is_some_and(|p| p != self.active_cursor_position())
         {
             return;
         }
@@ -1243,18 +1459,18 @@ impl EditorView {
         }));
     }
 
-    fn hover_popup_rect_for_cursor(&self, lines: &[String]) -> Option<Rect> {
-        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
+    fn hover_popup_rect_for_screen_point(&self, screen: (u16, u16), lines: &[String]) -> Rect {
+        let (x, y) = screen;
         let max_line = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let width = (max_line + 2).clamp(10, 80) as u16;
         let height = (lines.len() + 2).clamp(3, 12) as u16;
 
-        Some(Rect {
-            x: cursor_x.saturating_add(1),
-            y: cursor_y.saturating_add(1),
+        Rect {
+            x: x.saturating_add(1),
+            y: y.saturating_add(1),
             width,
             height,
-        })
+        }
     }
 
     fn completion_popup_rect_for_cursor(&self, item_count: usize) -> Option<Rect> {
@@ -1277,7 +1493,7 @@ impl EditorView {
         }
 
         let editor = self.state_manager.editor();
-        let pos = editor.cursor_position();
+        let pos = self.active_cursor_position();
         let Some((cursor_visual_row, cursor_x_in_row)) =
             editor.logical_position_to_visual_allow_virtual(pos.line, pos.column)
         else {
@@ -1507,10 +1723,36 @@ impl EditorView {
                     self.completion_popup.set(None);
                     return true;
                 }
-                if self.hover_popup.get().is_some() {
+                if let Some(model) = self.hover_popup.get() {
+                    // Treat Esc dismissal as an explicit close: don't re-show at the same hover
+                    // position unless the mouse moves.
+                    self.hover_suppressed_position = Some(model.anchor);
                     self.hover_popup.set(None);
+                    self.hover_due = None;
+                    self.hover_pending_request = None;
+                    self.hover_target = None;
+                    self.hover_requested = None;
                     return true;
                 }
+
+                // No popups: Esc should clear selection (and multi-cursor) if present.
+                let cursor_state = self.state_manager.get_cursor_state();
+                let has_primary_selection = cursor_state
+                    .selections
+                    .get(cursor_state.primary_selection_index)
+                    .is_some_and(|s| s.start != s.end);
+                let has_secondary = !self
+                    .state_manager
+                    .editor()
+                    .secondary_selections()
+                    .is_empty();
+                if has_primary_selection || has_secondary {
+                    let _ = self.execute(Command::Cursor(CursorCommand::ClearSelection));
+                    let _ = self.execute(Command::Cursor(CursorCommand::ClearSecondarySelections));
+                    self.rect_selection_anchor = None;
+                    return true;
+                }
+
                 false
             }
 
@@ -1556,29 +1798,39 @@ impl EditorView {
         }
     }
 
-    fn request_hover_now(&mut self) {
+    fn request_hover_at_anchor(&mut self, anchor: HoverAnchor) {
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
-        let pos = self.state_manager.editor().cursor_position();
+        let pos = anchor.position;
         if let Ok(id) = lsp.request_hover(
             &self.state_manager.editor().line_index,
             pos.line,
             pos.column,
         ) {
             self.hover_pending_request = Some(id);
-            self.hover_requested_position = Some(pos);
+            self.hover_requested = Some(anchor);
         }
+    }
+
+    fn request_hover_now(&mut self) {
+        let Some(screen) = self.cursor_screen_position().and_then(|p| p) else {
+            return;
+        };
+        self.request_hover_at_anchor(HoverAnchor {
+            position: self.active_cursor_position(),
+            screen,
+        });
     }
 
     fn request_completion_now(&mut self) {
         if !self.config.completion.enabled.get() {
             return;
         }
+        let pos = self.active_cursor_position();
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
-        let pos = self.state_manager.editor().cursor_position();
         if let Ok(id) = lsp.request_completion(
             &self.state_manager.editor().line_index,
             pos.line,
@@ -1590,10 +1842,10 @@ impl EditorView {
     }
 
     fn request_goto(&mut self, kind: EditorLspGotoKind) {
+        let pos = self.active_cursor_position();
         let Some(lsp) = self.lsp.as_mut() else {
             return;
         };
-        let pos = self.state_manager.editor().cursor_position();
         let line_index = &self.state_manager.editor().line_index;
         let request = match kind {
             EditorLspGotoKind::Definition => {
@@ -1623,31 +1875,42 @@ impl EditorView {
         }
         if self.completion_pending_request.is_some() {
             self.hover_due = None;
-            self.hover_target_position = None;
+            self.hover_target = None;
             return;
         }
         if self.completion_popup.get().is_some() {
             self.hover_due = None;
-            self.hover_target_position = None;
+            self.hover_target = None;
             return;
         }
         if !self.config.hover.enabled.get() {
             self.hover_due = None;
-            self.hover_target_position = None;
+            self.hover_target = None;
             return;
         }
         if self.lsp.is_none() {
             self.hover_due = None;
-            self.hover_target_position = None;
+            self.hover_target = None;
             return;
         }
         if self.hover_pending_request.is_some() {
             return;
         }
 
+        let Some(anchor) = self.hover_anchor else {
+            self.hover_due = None;
+            self.hover_target = None;
+            return;
+        };
+        if self.hover_suppressed_position == Some(anchor.position) {
+            self.hover_due = None;
+            self.hover_target = None;
+            return;
+        }
+
         let delay = self.config.hover.delay.get();
         self.hover_due = Some(Instant::now() + delay);
-        self.hover_target_position = Some(self.state_manager.editor().cursor_position());
+        self.hover_target = Some(anchor);
     }
 
     fn maybe_fire_hover(&mut self) {
@@ -1665,22 +1928,31 @@ impl EditorView {
         }
         if self.hover_popup.get().is_some() {
             self.hover_due = None;
-            self.hover_target_position = None;
+            self.hover_target = None;
             return;
         }
         if self.completion_popup.get().is_some() {
             return;
         }
 
-        let pos = self.state_manager.editor().cursor_position();
-        if self.hover_target_position != Some(pos) {
+        let Some(target) = self.hover_target else {
+            self.hover_due = None;
+            return;
+        };
+
+        if self.hover_anchor.map(|a| a.position) != Some(target.position) {
             self.schedule_hover_after_delay();
+            return;
+        }
+        if self.hover_suppressed_position == Some(target.position) {
+            self.hover_due = None;
+            self.hover_target = None;
             return;
         }
 
         self.hover_due = None;
-        self.hover_target_position = None;
-        self.request_hover_now();
+        self.hover_target = None;
+        self.request_hover_at_anchor(target);
     }
 
     fn process_completion_accept(&mut self) {
@@ -1745,12 +2017,115 @@ impl EditorView {
         self.insert_text(item.label.as_str());
     }
 
+    fn click_count_for_position(&mut self, pos: Position) -> u8 {
+        let now = Instant::now();
+        let max_gap = Duration::from_millis(500);
+
+        let next = if let Some(prev) = self.last_click {
+            if now.duration_since(prev.at) <= max_gap && prev.pos == pos {
+                (prev.count.saturating_add(1)).min(3)
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        self.last_click = Some(ClickState {
+            at: now,
+            pos,
+            count: next,
+        });
+        next
+    }
+
+    fn set_primary_selection(&mut self, start: Position, end: Position) -> bool {
+        self.execute(Command::Cursor(CursorCommand::SetSelections {
+            selections: vec![Selection {
+                start,
+                end,
+                direction: SelectionDirection::Forward,
+            }],
+            primary_index: 0,
+        }))
+    }
+
+    fn select_word_at(&mut self, pos: Position) -> bool {
+        let line_text = self
+            .state_manager
+            .editor()
+            .line_index
+            .get_line_text(pos.line)
+            .unwrap_or_default();
+        let chars: Vec<char> = line_text.chars().collect();
+        if chars.is_empty() {
+            return false;
+        }
+
+        let line_len = chars.len();
+        let idx = pos.column.min(line_len.saturating_sub(1));
+
+        fn is_word_char(ch: char) -> bool {
+            ch.is_alphanumeric() || ch == '_'
+        }
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum CharClass {
+            Word,
+            Whitespace,
+            Other,
+        }
+
+        fn classify(ch: char) -> CharClass {
+            if is_word_char(ch) {
+                CharClass::Word
+            } else if ch.is_whitespace() {
+                CharClass::Whitespace
+            } else {
+                CharClass::Other
+            }
+        }
+
+        let cls = classify(chars[idx]);
+        let mut start = idx;
+        while start > 0 && classify(chars[start - 1]) == cls {
+            start -= 1;
+        }
+        let mut end = idx.saturating_add(1);
+        while end < line_len && classify(chars[end]) == cls {
+            end += 1;
+        }
+
+        self.set_primary_selection(Position::new(pos.line, start), Position::new(pos.line, end))
+    }
+
+    fn select_line_at(&mut self, logical_line: usize) -> bool {
+        let line_text = self
+            .state_manager
+            .editor()
+            .line_index
+            .get_line_text(logical_line)
+            .unwrap_or_default();
+        let line_char_len = line_text.chars().count();
+        self.set_primary_selection(
+            Position::new(logical_line, 0),
+            Position::new(logical_line, line_char_len),
+        )
+    }
+
     fn handle_mouse(&mut self, m: MouseEvent) -> ViewEventResult {
         let Some(area) = self.last_area else {
             return ViewEventResult::ignored();
         };
         let Some((local_x, local_y)) = mouse_coords_local_to_area(area, m) else {
             self.mouse_drag = None;
+            if self.hover_anchor.is_some() {
+                self.hover_anchor = None;
+            }
+            if self.hover_suppressed_position.is_some() {
+                self.hover_suppressed_position = None;
+            }
+            self.hide_hover_popup_only();
             return ViewEventResult::ignored();
         };
 
@@ -1794,30 +2169,73 @@ impl EditorView {
         // Only handle mouse events within the text area.
         if local_x < text_area.x || local_y < text_area.y {
             self.mouse_drag = None;
+            if matches!(m.kind, MouseEventKind::Moved) {
+                self.hover_anchor = None;
+                self.hover_suppressed_position = None;
+                self.hide_hover_popup_only();
+            }
             return ViewEventResult::ignored();
         }
         let x_in_text = local_x.saturating_sub(text_area.x);
         let y_in_text = local_y.saturating_sub(text_area.y);
         if x_in_text >= text_area.width || y_in_text >= text_area.height {
             self.mouse_drag = None;
+            if matches!(m.kind, MouseEventKind::Moved) {
+                self.hover_anchor = None;
+                self.hover_suppressed_position = None;
+                self.hide_hover_popup_only();
+            }
             return ViewEventResult::ignored();
         }
 
         match m.kind {
+            MouseEventKind::Moved => {
+                let pos = self.position_at_text_point(x_in_text, y_in_text);
+                let screen = (
+                    area.x.saturating_add(local_x),
+                    area.y.saturating_add(local_y),
+                );
+                self.update_hover_anchor(pos, screen);
+                ViewEventResult::ignored()
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.hide_popups();
                 let pos = self.position_at_text_point(x_in_text, y_in_text);
 
                 let is_shift = m.modifiers.contains(KeyModifiers::SHIFT);
                 let is_alt = m.modifiers.contains(KeyModifiers::ALT);
+                let is_ctrl = m.modifiers.contains(KeyModifiers::CONTROL);
+                let rect_drag = self.rect_selection_mode || (is_alt && is_shift);
 
-                if is_alt {
-                    self.add_secondary_cursor(pos);
-                } else if self.rect_selection_mode {
+                // Double/triple click selection only when no modifier-based mode is active.
+                let click_count = if !is_shift && !is_alt && !is_ctrl && !rect_drag {
+                    self.click_count_for_position(pos)
+                } else {
+                    self.last_click = None;
+                    1
+                };
+
+                if click_count == 2 {
+                    if self.select_word_at(pos) {
+                        self.adjust_scroll();
+                        self.mouse_drag = None;
+                        return ViewEventResult::consumed();
+                    }
+                } else if click_count >= 3 {
+                    if self.select_line_at(pos.line) {
+                        self.adjust_scroll();
+                        self.mouse_drag = None;
+                        return ViewEventResult::consumed();
+                    }
+                }
+
+                if rect_drag {
                     let _ = self.execute(Command::Cursor(CursorCommand::SetRectSelection {
                         anchor: pos,
                         active: pos,
                     }));
+                } else if is_alt || is_ctrl {
+                    self.add_secondary_cursor(pos);
                 } else if is_shift {
                     let _ =
                         self.execute(Command::Cursor(CursorCommand::ExtendSelection { to: pos }));
@@ -1831,10 +2249,14 @@ impl EditorView {
                 }
 
                 self.adjust_scroll();
-                self.mouse_drag = Some(MouseDrag {
-                    anchor: pos,
-                    rect: self.rect_selection_mode,
-                });
+                self.mouse_drag = if (is_alt || is_ctrl) && !rect_drag {
+                    None
+                } else {
+                    Some(MouseDrag {
+                        anchor: pos,
+                        rect: rect_drag,
+                    })
+                };
                 ViewEventResult::consumed()
             }
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -1864,11 +2286,23 @@ impl EditorView {
             MouseEventKind::ScrollUp => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
                 self.scroll_by_rows(-step);
+                let pos = self.position_at_text_point(x_in_text, y_in_text);
+                let screen = (
+                    area.x.saturating_add(local_x),
+                    area.y.saturating_add(local_y),
+                );
+                self.update_hover_anchor(pos, screen);
                 ViewEventResult::consumed()
             }
             MouseEventKind::ScrollDown => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
                 self.scroll_by_rows(step);
+                let pos = self.position_at_text_point(x_in_text, y_in_text);
+                let screen = (
+                    area.x.saturating_add(local_x),
+                    area.y.saturating_add(local_y),
+                );
+                self.update_hover_anchor(pos, screen);
                 ViewEventResult::consumed()
             }
             _ => ViewEventResult::ignored(),
@@ -1981,7 +2415,7 @@ impl EditorView {
         }
 
         let editor = self.state_manager.editor();
-        let cursor_line = editor.cursor_position().line;
+        let cursor_line = self.state_manager.get_cursor_state().position.line;
         let scroll_top = self.state_manager.get_viewport_state().scroll_top;
 
         let line_count = editor.line_index.line_count().max(1);
@@ -2177,10 +2611,9 @@ impl EditorView {
 
         frame.render_widget(Paragraph::new(display_lines).style(theme.text), area);
 
-        if focused
-            && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
-                frame.set_cursor_position((cursor_x, cursor_y));
-            }
+        if focused && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> ViewEventResult {
@@ -2346,8 +2779,28 @@ impl View for EditorView {
             return ViewEventResult::ignored();
         }
 
-        // Any interaction should dismiss hover immediately.
-        self.hide_hover_popup_only();
+        // Hover popup can be dismissed from its own tooltip window; reflect that here.
+        self.consume_hover_popup_dismissed();
+
+        // Keyboard input and clicks should dismiss hover immediately, but mouse movement should
+        // allow the hover tooltip to track the pointer. Esc is special-cased so the popup close
+        // path can set suppression state.
+        let preserve_hover = matches!(
+            event,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                ..
+            })
+        ) || matches!(
+            event,
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                ..
+            })
+        );
+        if !preserve_hover {
+            self.hide_hover_popup_only();
+        }
 
         // Apply completion accept queued by mouse (from tooltip popup window).
         self.process_completion_accept();
@@ -2376,6 +2829,9 @@ impl View for EditorView {
             self.configure_syntax_processor();
         }
         self.maybe_start_or_stop_lsp();
+
+        // Hover popup can be dismissed from its own tooltip window; reflect that here.
+        self.consume_hover_popup_dismissed();
 
         // Poll LSP + hover timers.
         self.maybe_poll_lsp();
@@ -2445,6 +2901,83 @@ fn style_for_sublime_scope(theme: &EditorTheme, scope: &str) -> Option<Style> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_view_applies_simple_json_highlighting_on_new() {
+        let text: crate::reactive::Binding<String> =
+            r#"{"s": "hello", "n": 42}"#.to_string().into();
+        let cfg = EditorConfig::new(text);
+        cfg.syntax.set(EditorSyntaxConfig::SimpleJson);
+
+        let theme: crate::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+        let (view, _handle) = EditorView::new(cfg, theme);
+
+        // 'h' in "hello" is at column 7 in the sample.
+        let offset = view
+            .state_manager
+            .editor()
+            .line_index
+            .position_to_char_offset(0, 7);
+        let styles = view.state_manager.get_styles_at(offset);
+
+        assert!(
+            styles.contains(&editor_core_highlight_simple::SIMPLE_STYLE_STRING),
+            "expected SIMPLE_STYLE_STRING at \"hello\"; got {styles:?}"
+        );
+    }
+
+    #[test]
+    fn editor_view_renders_simple_json_highlight_as_green_cells() {
+        let text: crate::reactive::Binding<String> = ["tab:ab", r#"{"s": "hello", "n": 42}"#, ""]
+            .join("\n")
+            .into();
+
+        let cfg = EditorConfig::new(text);
+        cfg.syntax.set(EditorSyntaxConfig::SimpleJson);
+
+        let theme: crate::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+        let (mut view, _handle) = EditorView::new(cfg, theme);
+
+        let backend = ratatui::backend::TestBackend::new(80, 10);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+
+        let app_theme = crate::theme::Theme::dark();
+        let ctx = crate::view::ViewContext {
+            theme: &app_theme,
+            window_id: crate::wm::WindowId(1),
+            is_focused: true,
+            scrollbar_host: crate::view::ScrollbarHost::View,
+            tab_mode: crate::view::TabMode::Cycle,
+        };
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 80, 10);
+                view.draw(f, area, ctx);
+            })
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+
+        // JSON line is the second document line; with default gutter enabled the text starts at
+        // x=6. 'h' in "hello" is at column 7 in the JSON line.
+        let x = 6 + 7;
+        let y = 1;
+        let cell = buf.cell((x as u16, y as u16));
+        assert!(cell.is_some(), "expected buffer cell at ({x}, {y})");
+        let cell = cell.unwrap();
+        assert_eq!(cell.symbol(), "h", "expected to sample the 'h' in hello");
+        assert_eq!(
+            cell.style().fg,
+            Some(ratatui::style::Color::Green),
+            "expected syntax-highlighted string cell to be green"
+        );
+    }
 }
 
 fn hover_contents_to_plain_text(contents: &serde_json::Value) -> Option<Vec<String>> {

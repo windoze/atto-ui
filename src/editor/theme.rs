@@ -140,6 +140,34 @@ impl EditorTheme {
                 .add_modifier(Modifier::ITALIC),
         );
 
+        // A small out-of-the-box Sublime scope theme. This intentionally uses broad prefix keys
+        // (e.g. "comment", "string") because `EditorView` applies hierarchical fallback
+        // (`comment.line` -> `comment`) when resolving scopes.
+        let mut sublime_scopes = HashMap::<String, Style>::new();
+        sublime_scopes.insert(
+            "comment".to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        );
+        sublime_scopes.insert("string".to_string(), Style::default().fg(Color::Green));
+        sublime_scopes.insert(
+            "constant.numeric".to_string(),
+            Style::default().fg(Color::Yellow),
+        );
+        sublime_scopes.insert("keyword".to_string(), Style::default().fg(Color::LightBlue));
+        sublime_scopes.insert("storage".to_string(), Style::default().fg(Color::LightBlue));
+        sublime_scopes.insert(
+            "entity.name.function".to_string(),
+            Style::default().fg(Color::Cyan),
+        );
+        sublime_scopes.insert(
+            "entity.name.type".to_string(),
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
         Self {
             text,
             background,
@@ -153,7 +181,7 @@ impl EditorTheme {
             unknown_scope: Style::default().fg(Color::White),
             unknown_style_id: Style::default().fg(Color::White),
             style_ids,
-            sublime_scopes: HashMap::new(),
+            sublime_scopes,
             semantic_tokens: SemanticTokenTheme::dark_default(),
         }
     }
