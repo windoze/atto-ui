@@ -8,7 +8,7 @@ use crate::app::status::Fill;
 use crate::theme::Theme;
 use crate::view::EventOutcome;
 use crate::view::ViewAction;
-use crate::wm::{Window, WindowId, WindowManager, WindowManagerInputMode};
+use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode};
 
 use super::menu::{MenuAction, MenuBar};
 use super::status::StatusBar;
@@ -228,6 +228,26 @@ impl Desktop {
 
         // Mouse events need to hit-test and potentially change focus before dispatching to the view,
         // so we dispatch them after the WindowManager.
+        if input_mode == WindowManagerInputMode::Normal
+            && !view_dispatched
+            && let Event::Mouse(m) = event
+            && let Some(target_id) = self.wm.window_at(m.column, m.row)
+            && self.wm.window_kind(target_id) == Some(WindowKind::Tooltip)
+            && let Some((id, res)) =
+                self.wm
+                    .dispatch_to_window_view(target_id, event, layout.work_area, &self.theme)
+        {
+            if res.action == ViewAction::CloseWindow {
+                if self.wm.request_close(id) {
+                    return DesktopEventResult::close_window(id);
+                }
+                return DesktopEventResult::consumed();
+            }
+            if res.is_consumed() {
+                return DesktopEventResult::consumed();
+            }
+        }
+
         if input_mode == WindowManagerInputMode::Normal
             && !view_dispatched
             && let Some((id, res)) =

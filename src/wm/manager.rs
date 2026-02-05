@@ -358,8 +358,18 @@ impl WindowManager {
         theme: &Theme,
     ) -> Option<(WindowId, ViewEventResult)> {
         let id = self.focused()?;
+        self.dispatch_to_window_view(id, event, bounds, theme)
+    }
+
+    pub fn dispatch_to_window_view(
+        &mut self,
+        id: WindowId,
+        event: &Event,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> Option<(WindowId, ViewEventResult)> {
         let idx = self.windows.iter().position(|w| w.id == id)?;
-        let is_focused = true;
+        let is_focused = self.focused() == Some(id);
         let action = {
             let w = &mut self.windows[idx];
             let state = w.state.get();
@@ -396,6 +406,15 @@ impl WindowManager {
             w.view.handle_event(event, ctx)
         };
         Some((id, action))
+    }
+
+    pub fn window_at(&self, x: u16, y: u16) -> Option<WindowId> {
+        let modal = self.active_modal_id();
+        self.hit_test(x, y, modal).map(|hit| hit.window_id)
+    }
+
+    pub fn window_kind(&self, id: WindowId) -> Option<WindowKind> {
+        self.windows.iter().find(|w| w.id == id).map(|w| w.kind)
     }
 
     pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
