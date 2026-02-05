@@ -10,6 +10,7 @@
 mod border;
 mod control_view;
 pub(crate) mod layout;
+mod markdown_viewer;
 mod node;
 pub(crate) mod scroll;
 mod scroll_view;
@@ -17,6 +18,7 @@ mod scroll_view;
 pub use border::BorderView;
 pub use control_view::ControlView;
 pub use layout::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
+pub use markdown_viewer::MarkdownViewer;
 pub use node::{ViewId, ViewNode};
 pub use scroll::{ScrollConfig, ScrollOffset, ScrollbarVisibility};
 pub use scroll_view::{

@@ -21,6 +21,7 @@ use atto_ui::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Si
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::views::{MarkdownViewer, ScrollbarVisibility};
 use atto_ui::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
@@ -142,6 +143,153 @@ impl View for WidgetsView {
     }
 }
 
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: crossterm::event::MouseEvent) -> Option<(u16, u16)> {
+    if contains(area, m.column, m.row) {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    // Nested containers may forward mouse coordinates already relative to this view.
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
+}
+
+struct MarkdownDemoView {
+    viewer: MarkdownViewer,
+    clicked: Property<String>,
+    last_area: Option<Rect>,
+}
+
+impl MarkdownDemoView {
+    fn new() -> Self {
+        const MARKDOWN: &str = r#"# Markdown Viewer
+
+## Inline
+
+This is **bold**, *italic*, and ~~strikethrough~~.
+
+> A blockquote with a [link](https://example.com/docs).
+
+## Lists
+
+- Unordered item one
+- Unordered item two
+1. Ordered item one
+2. Ordered item two
+
+## Code
+
+```rust
+let very_long_line = "SCROLL_RIGHT_TO_SEE_END_ABCDEFGHIJKLMNOPQRSTUVWXYZ_CODE_END_98765";
+println!("{very_long_line}");
+```
+
+## Table
+
+| Column A | Column B |
+|----------|----------|
+| short    | value    |
+| long     | TABLE_SCROLL_RIGHT_TO_SEE_END_ABCDEFGHIJKLMNOPQRSTUVWXYZ_TABLE_END_98765 |
+"#;
+
+        let clicked = Property::new("(none)".to_string());
+        let clicked_for_cb = clicked.clone();
+
+        let viewer = MarkdownViewer::new_with_width(MARKDOWN, 72u16)
+            .vertical_scrollbar(ScrollbarVisibility::Always)
+            .code_block_max_height(6u16)
+            .table_max_height(7u16)
+            .on_link_click(move |url| clicked_for_cb.set(url));
+
+        Self {
+            viewer,
+            clicked,
+            last_area: None,
+        }
+    }
+}
+
+impl View for MarkdownDemoView {
+    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+        let child_ctx = ViewContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: ctx.scrollbar_host.for_child(),
+            tab_mode: ctx.tab_mode.for_child(),
+        };
+
+        if let Event::Mouse(m) = event {
+            let Some(area) = self.last_area else {
+                return ViewEventResult::ignored();
+            };
+            let Some((_local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                return ViewEventResult::ignored();
+            };
+
+            // Bottom row is the "Clicked:" label.
+            let viewer_h = area.height.saturating_sub(1);
+            if local_y >= viewer_h {
+                return ViewEventResult::ignored();
+            }
+            return self.viewer.handle_event(event, child_ctx);
+        }
+
+        self.viewer.handle_event(event, child_ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let viewer_h = area.height.saturating_sub(1);
+        let viewer_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: viewer_h,
+        };
+        let label_area = Rect {
+            x: area.x,
+            y: area.y.saturating_add(viewer_h),
+            width: area.width,
+            height: 1,
+        };
+
+        let child_ctx = ViewContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: ctx.scrollbar_host.for_child(),
+            tab_mode: ctx.tab_mode.for_child(),
+        };
+
+        self.viewer.draw(frame, viewer_area, child_ctx);
+
+        let clicked = self.clicked.get();
+        frame.render_widget(
+            Paragraph::new(Line::styled(format!("Clicked: {clicked}"), ctx.theme.widget.normal)),
+            label_area,
+        );
+    }
+}
+
 fn view_hierarchy_demo() -> Box<dyn View> {
     let row = HStack::new()
         .spacing(2)
@@ -202,6 +350,9 @@ impl View for AboutView {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let markdown_demo = args.iter().any(|a| a == "--markdown");
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -261,50 +412,71 @@ fn main() -> Result<()> {
 
     // Create windows after we know the screen bounds.
     let screen: Rect = terminal.size()?.into();
-    let widgets_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Widgets",
-            Rect {
-                x: 2,
-                y: 2,
-                width: 42,
-                height: 20,
-            },
-            Box::new(WidgetsView::new()),
-        ),
-        screen,
-    );
-    let _log_id = desktop.add_window(
-        Window::new(
-            WindowKind::Floating,
-            "Log",
-            Rect {
-                x: 46,
-                y: 4,
-                width: 30,
-                height: 10,
-            },
-            Box::new(LogView::new(Arc::clone(&theme_state))),
-        ),
-        screen,
-    );
 
-    let _views_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Views",
-            Rect {
-                x: 46,
-                y: 14,
-                width: 30,
-                height: 8,
-            },
-            view_hierarchy_demo(),
-        ),
-        screen,
-    );
-    desktop.wm.focus(widgets_id);
+    if markdown_demo {
+        let w = 76.min(screen.width.saturating_sub(4)).max(30);
+        let h = 20.min(screen.height.saturating_sub(4)).max(8);
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Markdown",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: w,
+                    height: h,
+                },
+                Box::new(MarkdownDemoView::new()),
+            ),
+            screen,
+        );
+        desktop.wm.focus(id);
+    } else {
+        let widgets_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Widgets",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 42,
+                    height: 20,
+                },
+                Box::new(WidgetsView::new()),
+            ),
+            screen,
+        );
+        let _log_id = desktop.add_window(
+            Window::new(
+                WindowKind::Floating,
+                "Log",
+                Rect {
+                    x: 46,
+                    y: 4,
+                    width: 30,
+                    height: 10,
+                },
+                Box::new(LogView::new(Arc::clone(&theme_state))),
+            ),
+            screen,
+        );
+
+        let _views_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Views",
+                Rect {
+                    x: 46,
+                    y: 14,
+                    width: 30,
+                    height: 8,
+                },
+                view_hierarchy_demo(),
+            ),
+            screen,
+        );
+        desktop.wm.focus(widgets_id);
+    }
 
     let res = run(
         &mut terminal,

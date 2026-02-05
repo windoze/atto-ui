@@ -121,11 +121,30 @@ impl PtyTestHost {
         self.wheel_event(64, x, y)
     }
 
+    /// Sends a mouse wheel scroll event with Shift held using xterm SGR mouse encoding.
+    ///
+    /// Many terminals map Shift+wheel to horizontal scroll; Crossterm also exposes this via the
+    /// `modifiers` field on `MouseEvent`.
+    ///
+    /// Coordinates are **0-based** to match Crossterm's `MouseEvent` positions.
+    pub fn wheel_up_shift(&mut self, x: u16, y: u16) -> Result<()> {
+        // xterm encodes Shift as bit 2 (value 4) in the "button" parameter.
+        self.wheel_event(64 + 4, x, y)
+    }
+
     /// Sends a mouse wheel scroll event using xterm SGR mouse encoding.
     ///
     /// Coordinates are **0-based** to match Crossterm's `MouseEvent` positions.
     pub fn wheel_down(&mut self, x: u16, y: u16) -> Result<()> {
         self.wheel_event(65, x, y)
+    }
+
+    /// Sends a mouse wheel scroll event with Shift held using xterm SGR mouse encoding.
+    ///
+    /// Coordinates are **0-based** to match Crossterm's `MouseEvent` positions.
+    pub fn wheel_down_shift(&mut self, x: u16, y: u16) -> Result<()> {
+        // xterm encodes Shift as bit 2 (value 4) in the "button" parameter.
+        self.wheel_event(65 + 4, x, y)
     }
 
     pub fn wheel_left(&mut self, x: u16, y: u16) -> Result<()> {

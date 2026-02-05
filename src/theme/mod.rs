@@ -318,6 +318,81 @@ impl Theme {
             .insert("widget-disabled".into(), self.widget.disabled);
         self.named_styles
             .insert("widget-accent".into(), self.widget.accent);
+
+        // Markdown viewer styles.
+        //
+        // These are accessed via `Theme::named_style(...)` so themes can override them without
+        // extending the typed `Theme` struct.
+        self.named_styles
+            .insert("markdown-base".into(), self.window_bg);
+        self.named_styles
+            .insert("markdown-text".into(), self.widget.normal);
+        self.named_styles
+            .insert("markdown-marker".into(), self.widget.dim);
+        self.named_styles
+            .insert("markdown-list-marker".into(), self.widget.dim);
+        self.named_styles.insert(
+            "markdown-blockquote".into(),
+            self.widget.dim.add_modifier(Modifier::ITALIC),
+        );
+
+        self.named_styles
+            .insert("markdown-heading-1".into(), self.widget.focused);
+        self.named_styles.insert(
+            "markdown-heading-2".into(),
+            self.widget.accent.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("markdown-heading-3".into(), self.widget.accent);
+        self.named_styles.insert(
+            "markdown-heading-4".into(),
+            self.widget.normal.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles.insert(
+            "markdown-heading-5".into(),
+            self.widget.dim.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("markdown-heading-6".into(), self.widget.dim);
+
+        self.named_styles.insert(
+            "markdown-strong".into(),
+            Style::default().add_modifier(Modifier::BOLD),
+        );
+        self.named_styles.insert(
+            "markdown-emphasis".into(),
+            Style::default().add_modifier(Modifier::ITALIC),
+        );
+        self.named_styles.insert(
+            "markdown-strikethrough".into(),
+            Style::default().add_modifier(Modifier::CROSSED_OUT),
+        );
+        self.named_styles.insert(
+            "markdown-code-inline".into(),
+            Style::default().add_modifier(Modifier::REVERSED),
+        );
+
+        self.named_styles.insert(
+            "markdown-link".into(),
+            self.widget.accent.add_modifier(Modifier::UNDERLINED),
+        );
+        self.named_styles
+            .insert("markdown-link-url".into(), self.widget.dim);
+
+        // Use a subtle background for block-level code.
+        self.named_styles
+            .insert("markdown-code-block".into(), self.window_shadow);
+        self.named_styles
+            .insert("markdown-code-border".into(), self.window_border);
+
+        self.named_styles
+            .insert("markdown-table-border".into(), self.window_border);
+        self.named_styles.insert(
+            "markdown-table-header".into(),
+            self.widget.accent.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("markdown-table-cell".into(), self.widget.normal);
     }
 
     fn refresh_typed_fields_from_named_styles(&mut self) {

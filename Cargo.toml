@@ -18,6 +18,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+pulldown-cmark = "0.10"
 
 [dev-dependencies]
 atto-ui-macros = { path = "crates/atto-ui-macros" }
