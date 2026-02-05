@@ -5,7 +5,9 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
+use atto_ui::app::{
+    CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
+};
 use atto_ui::theme::Theme;
 use atto_ui::view::{View, ViewContext, ViewEventResult};
 use atto_ui::wm::{Window, WindowKind};
