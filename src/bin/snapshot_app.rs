@@ -16,15 +16,15 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, VStack};
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::view::{View, ViewContext, ViewEventResult};
-use chatty::widgets::{
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, VStack};
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
-use chatty::wm::{Window, WindowKind};
+use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
 enum SnapshotAppAction {
@@ -83,7 +83,7 @@ impl WidgetsView {
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
 
-        let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
+        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
             Box::new(Label::new(
                 "Paste Unicode into the textbox (bracketed paste).",
             )),
@@ -385,7 +385,7 @@ fn run(
         }
 
         // Application-level shortcuts: only run if the event was not handled by the view/window/desktop.
-        if result.outcome == chatty::view::EventOutcome::Ignored
+        if result.outcome == atto_ui::view::EventOutcome::Ignored
             && let Event::Key(KeyEvent {
                 code,
                 kind: KeyEventKind::Press,

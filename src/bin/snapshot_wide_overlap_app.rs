@@ -12,10 +12,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar};
-use chatty::theme::Theme;
-use chatty::view::{View, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar};
+use atto_ui::theme::Theme;
+use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 
 /// Background window content that draws two wide glyphs:
 /// - `好` is fully visible (sanity check)

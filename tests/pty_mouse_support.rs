@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chatty_test_host::PtyTestHost;
+use atto_ui_test_host::PtyTestHost;
 use unicode_width::UnicodeWidthStr;
 
 fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {

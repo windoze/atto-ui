@@ -14,20 +14,20 @@ use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::declarative::{
     Align, Anchor, AnchorPlacement, DeclarativeView, EdgeInsets, Grid, HStack, LayoutParams, Size,
     VStack, ViewAdapter,
 };
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use chatty::view::{EventOutcome, View, ViewContext, ViewEventResult};
-use chatty::views::{ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
-use chatty::widgets::{
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
+use atto_ui::view::{EventOutcome, View, ViewContext, ViewEventResult};
+use atto_ui::views::{ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
+use atto_ui::widgets::{
     Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
 };
-use chatty::wm::{Window, WindowId, WindowKind, WindowState};
-use chatty_macros::{Reactive, view_builder};
+use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
+use atto_ui_macros::{Reactive, view_builder};
 
 #[derive(Default)]
 struct TextView {
@@ -73,7 +73,7 @@ struct DialogView {
 
 impl DialogView {
     fn about() -> Self {
-        let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
+        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
             Box::new(Label::new("Chatty demo (Turbo Vision-inspired).")),
             Box::new(Label::new("")),
             Box::new(Label::new("Keys:")),
@@ -99,7 +99,7 @@ impl DialogView {
 impl View for DialogView {
     fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         let (outcome, action) = self.form.handle_event(event);
-        if action == chatty::widgets::FormAction::Submitted {
+        if action == atto_ui::widgets::FormAction::Submitted {
             return ViewEventResult::close_window();
         }
         match outcome {
@@ -340,7 +340,7 @@ impl DisabledWidgetsView {
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
 
-        let controls: Vec<Box<dyn chatty::widgets::Control>> = vec![
+        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
             Box::new(Label::new(
                 "Disabled widgets (not focusable/clickable; Esc closes)",
             )),

@@ -1,4 +1,4 @@
-use chatty_test_host::PtyTestHost;
+use atto_ui_test_host::PtyTestHost;
 use std::time::Duration;
 
 #[test]

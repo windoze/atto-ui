@@ -4,18 +4,18 @@ use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 
-use chatty::app::{
+use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use chatty::declarative::{
+use atto_ui::declarative::{
     Align, Anchor, AnchorPlacement, DeclarativeView, Divider, EdgeInsets, Grid, HStack,
     LayoutParams, Size, Spacer, Text, VStack,
 };
-use chatty::reactive::Property;
-use chatty::theme::Theme;
-use chatty::view::{EventOutcome, View};
-use chatty::widgets::{Button, Checkbox, Label};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::reactive::Property;
+use atto_ui::theme::Theme;
+use atto_ui::view::{EventOutcome, View};
+use atto_ui::widgets::{Button, Checkbox, Label};
+use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
     LayoutParams {

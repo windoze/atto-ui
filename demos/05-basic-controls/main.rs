@@ -6,15 +6,15 @@ use std::time::Duration;
 use anyhow::Result;
 use ratatui::layout::Rect;
 
-use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
-use chatty::declarative::{
+use atto_ui::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
+use atto_ui::declarative::{
     DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Text, TextFn, VStack,
     ViewAdapter,
 };
-use chatty::reactive::Property;
-use chatty::theme::Theme;
-use chatty::widgets::{Button, Checkbox, ListBox, RadioGroup, TableView, TextBox};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::reactive::Property;
+use atto_ui::theme::Theme;
+use atto_ui::widgets::{Button, Checkbox, ListBox, RadioGroup, TableView, TextBox};
+use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
     LayoutParams {

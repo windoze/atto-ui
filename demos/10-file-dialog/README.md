@@ -1,6 +1,6 @@
 # Demo: 10-file-dialog
 
-演示如何使用 `chatty::dialogs::FileDialog` 打开/保存文件。
+演示如何使用 `atto_ui::dialogs::FileDialog` 打开/保存文件。
 
 ## 运行
 

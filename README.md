@@ -30,3 +30,28 @@ Then you should follow the implementation plan to develop the library incrementa
 After each task or milestone is completed, update the `IMPLEMENTATION_PLAN.md` file to reflect the progress made and any changes to the plan, git commit the changes with meaningful commit messages.
 
 At the end, you should create a sample TUI application that demonstrates the capabilities of the library, showcasing multi-window management, various window types, customizable decorations, menubars, status bars, input handling, theming, and common widgets. Save this sample application in the `examples/` directory of the project.
+
+
+---
+
+
+Create an editor component with the `editor-core` and related crates at `../editor-core`, with support of syntax highlighting, folding, and LSP integration.
+The editor-core and related crates should be imported from crates.io registry, not from local path. But you can refer to the local path `../editor-core` for a full copy of the source code.
+If should also:
+- Support keyboard and mouse interactions.
+- Support basic editing features such as, undo/redo, copy/paste, rect-selection/multi-cursor.
+- Shortcuts should be configurable.
+- Can toggle line numbers.
+- Can toggle folding markers.
+- Can configure scrollbars visibility.
+- Can configure tab size and spaces/tabs usage.
+- Support LSP functions:
+    - Style and folding
+    - Hover, delay should be configurable, hover popup should use a non-modal popup window without drop shadow, and with proper z-order. Make sure they can exceed the editor boundaries if needed. They also should be hidden/closed when the editor loses focus or any other interaction happens
+    - Completions, with a popup window similar to hover, but should support keyboard and mouse selection.
+    - Goto functions should be supported by providing callbacks to the host application, as the target may not be in the editor.
+- Has a separated theme support, **do not integrate with built-in themes.** Because LSP may introduce unknown scopes and token types, the theme should be per-language basis, and should be able to define styles for unknown scopes and token types.
+
+All configurations should be data bindings so they are changeable at runtime.
+
+You can refer to `../editor-core/crates/tui-editor` for a basic TUI example of using `editor-core`, which doesn't have mouse interaction yet but has many other features.

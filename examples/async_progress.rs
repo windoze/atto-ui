@@ -20,11 +20,11 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar};
-use chatty::reactive::Property;
-use chatty::theme::Theme;
-use chatty::view::{View, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar};
+use atto_ui::reactive::Property;
+use atto_ui::theme::Theme;
+use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
 enum AppAction {

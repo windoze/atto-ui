@@ -12,12 +12,12 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{DeclarativeView, EdgeInsets, ForEach, Text};
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::view::View;
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::declarative::{DeclarativeView, EdgeInsets, ForEach, Text};
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::view::View;
+use atto_ui::wm::{Window, WindowKind};
 
 fn build_scroll_test_view() -> Box<dyn View> {
     let mut rows = Vec::with_capacity(1 + 80);

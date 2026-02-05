@@ -7,10 +7,10 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
-use chatty::theme::Theme;
-use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
+use atto_ui::theme::Theme;
+use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;

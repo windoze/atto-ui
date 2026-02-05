@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 ///
 /// For synchronous usage (existing code), use the VecDeque-based implementation:
 /// ```rust
-/// use chatty::reactive::EventQueue;
+/// use atto_ui::reactive::EventQueue;
 ///
 /// let queue = EventQueue::new();
 /// queue.push(1u8);
@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 /// use std::sync::mpsc::RecvTimeoutError;
 /// use std::time::Duration;
 ///
-/// use chatty::reactive::EventQueue;
+/// use atto_ui::reactive::EventQueue;
 ///
 /// let (sender, receiver) = EventQueue::<String>::channel();
 ///

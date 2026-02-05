@@ -8,7 +8,7 @@ use proc_macro::TokenStream;
 mod reactive;
 mod view_builder;
 
-/// Generates convenience accessors around `chatty::reactive::Property<_>` fields.
+/// Generates convenience accessors around `atto_ui::reactive::Property<_>` fields.
 ///
 /// Notes:
 /// - Due to Rust's macro system, this derive does **not** transform field types. Fields marked

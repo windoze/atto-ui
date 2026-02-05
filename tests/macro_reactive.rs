@@ -1,5 +1,5 @@
-use chatty::reactive::Property;
-use chatty_macros::Reactive;
+use atto_ui::reactive::Property;
+use atto_ui_macros::Reactive;
 
 #[derive(Reactive)]
 struct TestViewModel {

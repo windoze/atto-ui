@@ -760,7 +760,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         dir.push(format!(
-            "chatty-file-dialog-tests-{prefix}-{}-{}",
+            "atto-ui-file-dialog-tests-{prefix}-{}-{}",
             std::process::id(),
             nanos
         ));

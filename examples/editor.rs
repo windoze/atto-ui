@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use ratatui::layout::Rect;
 
-use chatty::app::{
+use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use chatty::editor::{
+use atto_ui::editor::{
     EditorConfig, EditorLspConfig, EditorLspMode, EditorPopupWindows, EditorThemeSet, EditorView,
 };
-use chatty::reactive::Binding;
-use chatty::wm::{Window, WindowKind};
+use atto_ui::reactive::Binding;
+use atto_ui::wm::{Window, WindowKind};
 
 fn guess_language_id(path: &Path) -> String {
     let ext = path
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     let initial_text = if let Some(path) = file_path.as_ref() {
         fs::read_to_string(path).unwrap_or_default()
     } else {
-        "chatty editor demo\n\n- type to edit\n- Ctrl+Space: LSP completion (if enabled)\n- F12: go to definition (if enabled)\n".to_string()
+        "atto-ui editor demo\n\n- type to edit\n- Ctrl+Space: LSP completion (if enabled)\n- F12: go to definition (if enabled)\n".to_string()
     };
 
     let text: Binding<String> = initial_text.into();
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
     run_crossterm_desktop(
         app_cfg,
         move |screen: Rect| {
-            let mut desktop = Desktop::new(chatty::theme::Theme::dark(), MenuBar::new(vec![]));
+            let mut desktop = Desktop::new(atto_ui::theme::Theme::dark(), MenuBar::new(vec![]));
             let work = Desktop::layout(screen).work_area;
 
             desktop.add_window(
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
 
             // Drain goto results (host callback hook).
             for ev in editor_events.drain() {
-                let chatty::editor::EditorEvent::LspGoto { kind: _, locations } = ev;
+                let atto_ui::editor::EditorEvent::LspGoto { kind: _, locations } = ev;
                 // For the demo, just open a tooltip window with the first target.
                 if let Some(loc) = locations.first() {
                     let _ = loc;

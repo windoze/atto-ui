@@ -5,14 +5,14 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use chatty::app::{
+use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     run_crossterm_desktop,
 };
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;

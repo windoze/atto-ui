@@ -39,6 +39,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui-macros",
+ "atto-ui-test-host",
+ "crossterm 0.28.1",
+ "editor-core",
+ "editor-core-highlight-simple",
+ "editor-core-lsp",
+ "editor-core-sublime",
+ "once_cell",
+ "parking_lot",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "atto-ui-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "atto-ui-test-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "portable-pty",
+ "vt100",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -163,46 +203,6 @@ name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
-
-[[package]]
-name = "chatty"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chatty-macros",
- "chatty-test-host",
- "crossterm 0.28.1",
- "editor-core",
- "editor-core-highlight-simple",
- "editor-core-lsp",
- "editor-core-sublime",
- "once_cell",
- "parking_lot",
- "ratatui",
- "serde",
- "serde_json",
- "serde_yaml",
- "unicode-segmentation",
- "unicode-width",
-]
-
-[[package]]
-name = "chatty-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "chatty-test-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "portable-pty",
- "vt100",
-]
 
 [[package]]
 name = "clang-sys"

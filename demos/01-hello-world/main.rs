@@ -5,10 +5,10 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use chatty::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
-use chatty::theme::Theme;
-use chatty::view::{View, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple};
+use atto_ui::theme::Theme;
+use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 

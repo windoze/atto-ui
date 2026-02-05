@@ -1,7 +1,7 @@
-use chatty::declarative::{DeclarativeView, Text, VStack};
-use chatty::theme::Theme;
-use chatty::view::{ScrollbarHost, TabMode, ViewContext};
-use chatty::wm::WindowId;
+use atto_ui::declarative::{DeclarativeView, Text, VStack};
+use atto_ui::theme::Theme;
+use atto_ui::view::{ScrollbarHost, TabMode, ViewContext};
+use atto_ui::wm::WindowId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;

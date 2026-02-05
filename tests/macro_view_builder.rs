@@ -1,5 +1,5 @@
-use chatty::declarative::DeclarativeView;
-use chatty_macros::view_builder;
+use atto_ui::declarative::DeclarativeView;
+use atto_ui_macros::view_builder;
 
 #[test]
 fn view_builder_macro_builds_vstack() {

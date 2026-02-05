@@ -1,5 +1,5 @@
 [package]
-name = "chatty"
+name = "atto-ui"
 version = "0.1.0"
 edition = "2024"
 
@@ -20,8 +20,8 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 
 [dev-dependencies]
-chatty-macros = { path = "crates/chatty-macros" }
-chatty-test-host = { path = "crates/chatty-test-host" }
+atto-ui-macros = { path = "crates/atto-ui-macros" }
+atto-ui-test-host = { path = "crates/atto-ui-test-host" }
 
 # Demo binaries (teaching materials under `demos/`)
 [[bin]]
@@ -65,4 +65,4 @@ name = "demo-10-file-dialog"
 path = "demos/10-file-dialog/main.rs"
 
 [workspace]
-members = ["crates/chatty-test-host", "crates/chatty-macros"]
+members = ["crates/atto-ui-test-host", "crates/atto-ui-macros"]

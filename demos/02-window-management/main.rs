@@ -7,12 +7,12 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use chatty::app::{
+use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use chatty::theme::Theme;
-use chatty::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::theme::Theme;
+use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
+use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -35,7 +35,7 @@ impl WindowInfoView {
 impl View for WindowInfoView {
     fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
         ViewEventResult {
-            outcome: chatty::view::EventOutcome::Ignored,
+            outcome: atto_ui::view::EventOutcome::Ignored,
             action: ViewAction::None,
         }
     }
@@ -199,7 +199,7 @@ impl View for ModalView {
         }) = event
         {
             return ViewEventResult {
-                outcome: chatty::view::EventOutcome::Consumed,
+                outcome: atto_ui::view::EventOutcome::Consumed,
                 action: ViewAction::CloseWindow,
             };
         }

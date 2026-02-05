@@ -12,15 +12,15 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, MenuBar};
-use chatty::declarative::{
+use atto_ui::app::{Desktop, MenuBar};
+use atto_ui::declarative::{
     DeclarativeView, Divider, ForEach, Identifiable, LayoutParams, Size, Text, VStack,
 };
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::view::View;
-use chatty::wm::{Window, WindowKind};
-use chatty_macros::view_builder;
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::view::View;
+use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::view_builder;
 
 /// 待办事项数据结构（带独立状态）
 #[derive(Clone)]

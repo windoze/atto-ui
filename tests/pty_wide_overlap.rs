@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use chatty_test_host::PtyTestHost;
+use atto_ui_test_host::PtyTestHost;
 
 #[test]
 fn pty_window_border_hides_overlapped_wide_glyph() {

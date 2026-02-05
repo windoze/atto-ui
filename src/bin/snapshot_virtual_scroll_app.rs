@@ -13,11 +13,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::{Frame, Terminal};
 
-use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::reactive::EventQueue;
-use chatty::theme::Theme;
-use chatty::views::{EdgeInsets, ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::reactive::EventQueue;
+use atto_ui::theme::Theme;
+use atto_ui::views::{EdgeInsets, ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
+use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
 struct VirtualGridContent {

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Chatty 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal User Interface) 应用框架,受 Turbo Vision 启发。它提供了完整的窗口管理系统、菜单栏、状态栏以及常用组件库。
+Atto UI 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal User Interface) 应用框架,受 Turbo Vision 启发。它提供了完整的窗口管理系统、菜单栏、状态栏以及常用组件库。
 
 ### 项目规模
 - **源代码文件**: 54 个 Rust 源文件
@@ -14,7 +14,7 @@ Chatty 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal Us
   - 示例: ~1,800 行
 - **主要模块**: 核心库 50 文件,测试二进制 4 个,集成测试 11 个,示例应用 1 个
 - **测试框架**: 独立的 PTY 测试工具 crate
-- **工作区 Crates**: chatty-test-host (测试框架), chatty-macros (过程宏)
+- **工作区 Crates**: atto-ui-test-host (测试框架), atto-ui-macros (过程宏)
 
 ## 常用命令
 
@@ -190,7 +190,7 @@ SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
   - `buffer.rs` - `VirtualBuffer` 虚拟缓冲区
   - `diff.rs` - 增量差异计算
   - `scheduler.rs` - 渲染调度器
-- **`macros/`**: 过程宏支持 (`crates/chatty-macros/`)
+- **`macros/`**: 过程宏支持 (`crates/atto-ui-macros/`)
   - `reactive.rs` - `#[reactive]` 宏 - 自动生成反应式属性
   - `view_builder.rs` - `#[view_builder]` 宏 - 视图构建助手
 
@@ -198,7 +198,7 @@ SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
 
 项目使用独特的 PTY 测试方法:
 
-1. **Test Host** (`crates/chatty-test-host/`):
+1. **Test Host** (`crates/atto-ui-test-host/`):
    - 使用 `portable-pty` 创建伪终端
    - 使用 `vt100` 解析器捕获屏幕缓冲区
    - 提供 `PtyTestHost` API 来启动应用、发送输入、验证输出
@@ -343,10 +343,10 @@ VStack::new()
 - `parking_lot` (0.12) - 同步原语
 
 ### 开发/测试依赖
-- `chatty-test-host` - 自定义 PTY 测试框架 (工作区 crate)
+- `atto-ui-test-host` - 自定义 PTY 测试框架 (工作区 crate)
   - `portable-pty` - PTY 创建
   - `vt100` - VT100 终端模拟器
-- `chatty-macros` - 过程宏库 (工作区 crate)
+- `atto-ui-macros` - 过程宏库 (工作区 crate)
   - `proc-macro2`, `quote`, `syn` - 过程宏基础
 
 ## 示例应用

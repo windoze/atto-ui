@@ -31,8 +31,8 @@ fn default_foreach_item_layout() -> LayoutParams {
 /// # 基础用法
 ///
 /// ```rust,no_run
-/// use chatty::declarative::{ForEach, Text};
-/// use chatty::reactive::Property;
+/// use atto_ui::declarative::{ForEach, Text};
+/// use atto_ui::reactive::Property;
 ///
 /// let items = Property::new(vec!["Apple", "Banana", "Cherry"]);
 ///
@@ -46,8 +46,8 @@ fn default_foreach_item_layout() -> LayoutParams {
 /// 数据结构可以包含反应式属性，直接绑定到控件：
 ///
 /// ```rust,no_run
-/// use chatty::declarative::{ForEach, HStack, Checkbox, Text};
-/// use chatty::reactive::Property;
+/// use atto_ui::declarative::{ForEach, HStack, Checkbox, Text};
+/// use atto_ui::reactive::Property;
 ///
 /// #[derive(Clone)]
 /// struct TodoItem {
@@ -78,8 +78,8 @@ fn default_foreach_item_layout() -> LayoutParams {
 /// 使用闭包捕获传递元素上下文到回调：
 ///
 /// ```rust,no_run
-/// use chatty::declarative::{ForEach, Button};
-/// use chatty::reactive::Property;
+/// use atto_ui::declarative::{ForEach, Button};
+/// use atto_ui::reactive::Property;
 /// use std::sync::Arc;
 ///
 /// #[derive(Clone, PartialEq)]
@@ -129,8 +129,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// use chatty::declarative::{ForEach, Text};
-    /// use chatty::reactive::Property;
+    /// use atto_ui::declarative::{ForEach, Text};
+    /// use atto_ui::reactive::Property;
     ///
     /// let items = Property::new(vec!["Apple", "Banana", "Cherry"]);
     ///
@@ -157,8 +157,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// # use chatty::declarative::{ForEach, Text};
-    /// # use chatty::reactive::Property;
+    /// # use atto_ui::declarative::{ForEach, Text};
+    /// # use atto_ui::reactive::Property;
     /// # let items = Property::new(vec!["A", "B"]);
     /// let list = ForEach::new(items.binding(), |item, _| Text::new(*item))
     ///     .spacing(1);
@@ -172,8 +172,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// # use chatty::declarative::{ForEach, Text};
-    /// # use chatty::reactive::Property;
+    /// # use atto_ui::declarative::{ForEach, Text};
+    /// # use atto_ui::reactive::Property;
     /// # let items = Property::new(vec!["A", "B"]);
     /// let list = ForEach::new(items.binding(), |item, _| Text::new(*item))
     ///     .padding(2);
@@ -187,8 +187,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// # use chatty::declarative::{ForEach, Text, EdgeInsets};
-    /// # use chatty::reactive::Property;
+    /// # use atto_ui::declarative::{ForEach, Text, EdgeInsets};
+    /// # use atto_ui::reactive::Property;
     /// # let items = Property::new(vec!["A", "B"]);
     /// let list = ForEach::new(items.binding(), |item, _| Text::new(*item))
     ///     .padding_insets(EdgeInsets::symmetric(1, 2));
@@ -202,8 +202,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// # use chatty::declarative::{ForEach, Text};
-    /// # use chatty::reactive::Property;
+    /// # use atto_ui::declarative::{ForEach, Text};
+    /// # use atto_ui::reactive::Property;
     /// # let items = Property::new(vec!["A", "B"]);
     /// let list = ForEach::new(items.binding(), |item, _| Text::new(*item))
     ///     .scrollable(true);
@@ -217,9 +217,9 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// # use chatty::declarative::{ForEach, Text};
-    /// # use chatty::reactive::Property;
-    /// # use chatty::views::ScrollConfig;
+    /// # use atto_ui::declarative::{ForEach, Text};
+    /// # use atto_ui::reactive::Property;
+    /// # use atto_ui::views::ScrollConfig;
     /// # let items = Property::new(vec!["A", "B"]);
     /// let list = ForEach::new(items.binding(), |item, _| Text::new(*item))
     ///     .scrollable(true)
@@ -247,8 +247,8 @@ where
     ///
     /// # 示例
     /// ```rust,no_run
-    /// use chatty::declarative::{ForEach, Text, Identifiable};
-    /// use chatty::reactive::Property;
+    /// use atto_ui::declarative::{ForEach, Text, Identifiable};
+    /// use atto_ui::reactive::Property;
     ///
     /// #[derive(Clone, PartialEq)]
     /// struct User {

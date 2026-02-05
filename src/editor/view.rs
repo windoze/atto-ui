@@ -1118,7 +1118,7 @@ impl EditorView {
                     "references": { "dynamicRegistration": false },
                 },
             },
-            "clientInfo": { "name": "chatty editor" },
+            "clientInfo": { "name": "atto-ui editor" },
         });
 
         let start = editor_core_lsp::LspSessionStartOptions {

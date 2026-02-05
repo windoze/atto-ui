@@ -12,12 +12,12 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use chatty::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, Text};
-use chatty::reactive::EventQueue;
-use chatty::theme::Theme;
-use chatty::view::View;
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, Text};
+use atto_ui::reactive::EventQueue;
+use atto_ui::theme::Theme;
+use atto_ui::view::View;
+use atto_ui::wm::{Window, WindowKind};
 
 fn build_hscroll_test_view() -> Box<dyn View> {
     let root = (0..40u16).fold(

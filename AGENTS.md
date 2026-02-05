@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- `src/` — main `chatty` library crate
+- `src/` — main `atto-ui` library crate
   - `src/app/` — desktop chrome (menubar/status bar) + app orchestration
   - `src/wm/` — window model + window manager (focus/z-order/move/resize)
   - `src/widgets/` — built-in widgets (`TextBox`, `Button`, `ListBox`, etc.)
@@ -10,7 +10,7 @@
   - `src/theme/` — theming/styling
   - `src/view.rs` — `View` trait for window content
 - `src/bin/snapshot_app.rs` — deterministic test target used by PTY tests
-- `crates/chatty-test-host/` — PTY runner + `vt100` screen parser for integration tests
+- `crates/atto-ui-test-host/` — PTY runner + `vt100` screen parser for integration tests
 - `tests/` — end-to-end/PTY integration tests
 - `examples/demo.rs` — interactive demo showcasing multi-window behavior
 
@@ -32,7 +32,7 @@
 ## Testing Guidelines
 
 - Unit tests live next to code (`#[cfg(test)]`).
-- UI behavior should be validated via PTY tests using `chatty_test_host::PtyTestHost`.
+- UI behavior should be validated via PTY tests using `atto_ui_test_host::PtyTestHost`.
 - Use fixed terminal sizes, deterministic input scripts, and `wait_for_text(...)` instead of ad-hoc sleeps.
 
 ## Commit & Pull Request Guidelines

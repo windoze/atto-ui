@@ -12,12 +12,12 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use chatty::app::{Desktop, MenuBar};
-use chatty::declarative::{DeclarativeView, Divider, ForEach, Text, VStack};
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::view::View;
-use chatty::wm::{Window, WindowKind};
+use atto_ui::app::{Desktop, MenuBar};
+use atto_ui::declarative::{DeclarativeView, Divider, ForEach, Text, VStack};
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::view::View;
+use atto_ui::wm::{Window, WindowKind};
 
 fn build_fruit_list(fruits: Property<Vec<String>>) -> Box<dyn View> {
     VStack::new()

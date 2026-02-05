@@ -7,15 +7,15 @@ use std::time::Duration;
 use anyhow::Result;
 use ratatui::layout::Rect;
 
-use chatty::app::{
+use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use chatty::declarative::{DeclarativeView, LayoutParams, Size, TextFn, VStack, ViewAdapter};
-use chatty::dialogs::FileDialog;
-use chatty::reactive::{EventQueue, Property};
-use chatty::theme::Theme;
-use chatty::widgets::Button;
-use chatty::wm::{Window, WindowKind};
+use atto_ui::declarative::{DeclarativeView, LayoutParams, Size, TextFn, VStack, ViewAdapter};
+use atto_ui::dialogs::FileDialog;
+use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::theme::Theme;
+use atto_ui::widgets::Button;
+use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DemoAction {

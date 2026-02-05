@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chatty_test_host::PtyTestHost;
+use atto_ui_test_host::PtyTestHost;
 
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
