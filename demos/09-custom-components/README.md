@@ -2,9 +2,9 @@
 
 ## 目标
 
-演示如何用“声明式 + 反应式”方式封装可复用组件：
+演示如何用“组合式 + 反应式”方式封装可复用组件：
 
-- 组件是普通 Rust `struct`（实现 `DeclarativeView`）
+- 组件是普通 Rust `struct`（返回/组合 `Component`）
 - 组件可以接收 **bindings**（父组件持有状态，子组件读写）
 - 组件可以暴露 **callbacks**（子组件把事件回传给父组件）
 - 组件可以支持 **disabled** 状态（并展示主题中的 Disabled 样式）

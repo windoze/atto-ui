@@ -13,12 +13,11 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{Desktop, MenuBar};
-use atto_ui::declarative::{
-    DeclarativeView, Divider, ForEach, Identifiable, LayoutParams, Size, Text, VStack,
+use atto_ui::composable::{
+    Component, Divider, ForEach, Identifiable, LayoutParams, Size, Text, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::view::View;
 use atto_ui::wm::{Window, WindowKind};
 use atto_ui_macros::view_builder;
 
@@ -84,7 +83,7 @@ impl Identifiable for User {
 }
 
 /// 构建 TodoList 窗口（展示状态绑定）
-fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
+fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn Component> {
     let header = view_builder! {
         VStack {
             Text("Todo List - State Binding Demo")
@@ -105,29 +104,30 @@ fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
     .spacing(0)
     .with_id(); // 启用基于 ID 的增量更新优化
 
-    VStack::new()
-        .padding(1)
-        .spacing(0)
-        .child_with_layout(
-            header,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            Divider::horizontal(),
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child(todo_list)
-        .build_view()
+    Box::new(
+        VStack::new()
+            .padding(1)
+            .spacing(0)
+            .child_with_layout(
+                header,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                Divider::horizontal(),
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child(todo_list),
+    )
 }
 
 /// 构建用户列表窗口（展示回调模式）
-fn build_user_window(users: Property<Vec<User>>, click_log: Property<String>) -> Box<dyn View> {
+fn build_user_window(users: Property<Vec<User>>, click_log: Property<String>) -> Box<dyn Component> {
     let log_for_foreach = click_log.clone();
     let log_for_text = click_log.clone();
 
@@ -167,43 +167,44 @@ fn build_user_window(users: Property<Vec<User>>, click_log: Property<String>) ->
         TextFn(move || log_for_text.get())
     };
 
-    VStack::new()
-        .padding(1)
-        .spacing(0)
-        .child_with_layout(
-            header,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            Divider::horizontal(),
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child(user_list)
-        .child_with_layout(
-            Divider::horizontal(),
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            footer,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .build_view()
+    Box::new(
+        VStack::new()
+            .padding(1)
+            .spacing(0)
+            .child_with_layout(
+                header,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                Divider::horizontal(),
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child(user_list)
+            .child_with_layout(
+                Divider::horizontal(),
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                footer,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            ),
+    )
 }
 
 /// 构建统计信息窗口（展示反应式计算）
-fn build_stats_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
+fn build_stats_window(todos: Property<Vec<TodoItem>>) -> Box<dyn Component> {
     let stats = view_builder! {
         VStack {
             Text("Statistics - Reactive Computed")
@@ -250,52 +251,53 @@ fn build_stats_window(todos: Property<Vec<TodoItem>>) -> Box<dyn View> {
         }
     });
 
-    VStack::new()
-        .padding(1)
-        .spacing(0)
-        .child_with_layout(
-            stats,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            Divider::horizontal(),
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            total_text,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            completed_text,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            pending_text,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .child_with_layout(
-            progress_text,
-            LayoutParams {
-                height: Size::Content,
-                ..Default::default()
-            },
-        )
-        .build_view()
+    Box::new(
+        VStack::new()
+            .padding(1)
+            .spacing(0)
+            .child_with_layout(
+                stats,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                Divider::horizontal(),
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                total_text,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                completed_text,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                pending_text,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            )
+            .child_with_layout(
+                progress_text,
+                LayoutParams {
+                    height: Size::Content,
+                    ..Default::default()
+                },
+            ),
+    )
 }
 
 fn main() -> Result<()> {

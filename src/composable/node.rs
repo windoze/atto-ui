@@ -2,33 +2,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ratatui::layout::Rect;
 
-use crate::view::View;
-
-use super::LayoutParams;
+use super::component::Component;
+use super::layout::LayoutParams;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ViewId(pub(crate) u64);
+pub struct ComponentId(pub(crate) u64);
 
-static NEXT_VIEW_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_COMPONENT_ID: AtomicU64 = AtomicU64::new(1);
 
-impl ViewId {
+impl ComponentId {
     pub fn next() -> Self {
-        Self(NEXT_VIEW_ID.fetch_add(1, Ordering::Relaxed))
+        Self(NEXT_COMPONENT_ID.fetch_add(1, Ordering::Relaxed))
     }
 }
 
-pub struct ViewNode {
-    pub id: ViewId,
-    pub parent: Option<ViewId>,
-    pub view: Box<dyn View>,
+pub struct ComponentNode {
+    pub id: ComponentId,
+    pub parent: Option<ComponentId>,
+    pub view: Box<dyn Component>,
     pub layout: LayoutParams,
     bounds: Rect,
 }
 
-impl ViewNode {
-    pub fn new(view: Box<dyn View>) -> Self {
+impl ComponentNode {
+    pub fn new(view: Box<dyn Component>) -> Self {
         Self {
-            id: ViewId::next(),
+            id: ComponentId::next(),
             parent: None,
             view,
             layout: LayoutParams::default(),

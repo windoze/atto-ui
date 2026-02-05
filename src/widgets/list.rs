@@ -4,21 +4,18 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
-use crate::theme::Theme;
-
-use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct ListBox {
     title: Binding<String>,
     items: Binding<Vec<String>>,
     state: ListState,
-    focused: bool,
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
-    area: Option<Rect>,
+    last_area: Option<Rect>,
     min_size: (u16, u16),
 }
 
@@ -40,11 +37,10 @@ impl ListBox {
             title: title.into(),
             items,
             state,
-            focused: false,
             enabled: true.into(),
             selection,
             height: 7.into(),
-            area: None,
+            last_area: None,
             min_size: (3, 3), // Minimum size to render borders and one item.
         }
     }
@@ -93,7 +89,7 @@ impl ListBox {
     }
 }
 
-impl Control for ListBox {
+impl Component for ListBox {
     fn min_width(&self) -> u16 {
         self.min_size.0
     }
@@ -106,25 +102,13 @@ impl Control for ListBox {
         self.enabled.get()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.get()
-    }
-
-    fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    fn set_area(&mut self, area: Rect) {
-        self.area = Some(area);
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         let items = self.items.get();
         if items.is_empty() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         // Sync from external selection.
         let ext = self.selection.get();
@@ -138,10 +122,10 @@ impl Control for ListBox {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
-                let Some(area) = self.area else {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
                 };
                 let inner = Rect {
                     x: area.x.saturating_add(1),
@@ -150,18 +134,18 @@ impl Control for ListBox {
                     height: area.height.saturating_sub(2),
                 };
                 if inner.width == 0 || inner.height == 0 {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
                 if m.row < inner.y || m.row >= inner.y.saturating_add(inner.height) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
                 let row = m.row.saturating_sub(inner.y) as usize;
                 if row < items.len() {
                     self.state.select(Some(row));
                     self.selection.set(row);
-                    return (ControlOutcome::Consumed, FormAction::Changed);
+                    return EventResult::changed();
                 }
-                (ControlOutcome::Ignored, FormAction::None)
+                EventResult::ignored()
             }
             Event::Key(KeyEvent { code, .. }) => match code {
                 KeyCode::Up => {
@@ -172,25 +156,26 @@ impl Control for ListBox {
                     };
                     self.state.select(Some(next));
                     self.selection.set(next);
-                    (ControlOutcome::Consumed, FormAction::Changed)
+                    EventResult::changed()
                 }
                 KeyCode::Down => {
                     let next = (sel + 1) % items.len();
                     self.state.select(Some(next));
                     self.selection.set(next);
-                    (ControlOutcome::Consumed, FormAction::Changed)
+                    EventResult::changed()
                 }
-                _ => (ControlOutcome::Ignored, FormAction::None),
+                _ => EventResult::ignored(),
             },
-            _ => (ControlOutcome::Ignored, FormAction::None),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn desired_height(&self) -> u16 {
-        self.height.get().max(self.min_size.1)
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.height.get().max(self.min_size.1))
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         let items = self.items.get();
         if !items.is_empty() {
             let ext = self.selection.get();
@@ -203,16 +188,16 @@ impl Control for ListBox {
         }
         let enabled = self.enabled.get();
         let style = if !enabled {
-            theme.widget.disabled
-        } else if self.focused {
-            theme.widget.focused
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
         } else {
-            theme.widget.normal
+            ctx.theme.widget.normal
         };
         let highlight_style = if enabled {
-            theme.selection
+            ctx.theme.selection
         } else {
-            theme.selection.patch(theme.widget.disabled)
+            ctx.theme.selection.patch(ctx.theme.widget.disabled)
         };
         let items: Vec<ListItem> = items
             .iter()
@@ -222,7 +207,7 @@ impl Control for ListBox {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(theme.border_set(false))
+                    .border_set(ctx.theme.border_set(false))
                     .title(self.title.get()),
             )
             .highlight_style(highlight_style)

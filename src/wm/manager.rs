@@ -8,8 +8,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
-use crate::view::{ScrollbarHost, TabMode, ViewContext, ViewEventResult};
-use crate::views::{
+use crate::composable::{ComponentContext, EventResult, ScrollbarHost, TabMode};
+use crate::composable::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
     scrollbar_layout_1d, should_show_scrollbar,
 };
@@ -326,14 +326,14 @@ impl WindowManager {
             }
 
             let inner = window.inner_rect();
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme,
                 window_id: window.id,
                 is_focused,
                 scrollbar_host: if decorations.border.has_border() {
                     ScrollbarHost::Window
                 } else {
-                    ScrollbarHost::View
+                    ScrollbarHost::Component
                 },
                 tab_mode: TabMode::Cycle,
             };
@@ -356,7 +356,7 @@ impl WindowManager {
         event: &Event,
         bounds: Rect,
         theme: &Theme,
-    ) -> Option<(WindowId, ViewEventResult)> {
+    ) -> Option<(WindowId, EventResult)> {
         let id = self.focused()?;
         self.dispatch_to_window_view(id, event, bounds, theme)
     }
@@ -367,7 +367,7 @@ impl WindowManager {
         event: &Event,
         bounds: Rect,
         theme: &Theme,
-    ) -> Option<(WindowId, ViewEventResult)> {
+    ) -> Option<(WindowId, EventResult)> {
         let idx = self.windows.iter().position(|w| w.id == id)?;
         let is_focused = self.focused() == Some(id);
         let action = {
@@ -389,17 +389,17 @@ impl WindowManager {
                 // be delivered to the view layer.
                 let inner = w.inner_rect();
                 if !contains(inner, m.column, m.row) {
-                    return Some((id, ViewEventResult::ignored()));
+                    return Some((id, EventResult::ignored()));
                 }
             }
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme,
                 window_id: id,
                 is_focused,
                 scrollbar_host: if w.decorations.get().border.has_border() {
                     ScrollbarHost::Window
                 } else {
-                    ScrollbarHost::View
+                    ScrollbarHost::Component
                 },
                 tab_mode: TabMode::Cycle,
             };
@@ -1185,7 +1185,7 @@ fn draw_window_border_scrollbars(
     buf: &mut Buffer,
     rect: Rect,
     inner: Rect,
-    view: &dyn crate::view::View,
+    view: &dyn crate::composable::Component,
     theme: &Theme,
 ) {
     if rect.width < 3 || rect.height < 3 || inner.width == 0 || inner.height == 0 {
@@ -1382,8 +1382,7 @@ fn can_minimize(w: &Window) -> bool {
 mod tests {
     use super::{WindowManager, draw_shadow};
     use crate::theme::Theme;
-    use crate::view::{View, ViewContext, ViewEventResult};
-    use crate::views::{ScrollConfig, ScrollbarVisibility};
+    use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig, ScrollbarVisibility};
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
@@ -1399,10 +1398,10 @@ mod tests {
     #[derive(Default)]
     struct DummyView;
 
-    impl View for DummyView {
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
-        fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-            ViewEventResult::ignored()
+    impl Component for DummyView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            EventResult::ignored()
         }
     }
 
@@ -1410,7 +1409,7 @@ mod tests {
         min: (u16, u16),
     }
 
-    impl View for MinSizeView {
+    impl Component for MinSizeView {
         fn min_width(&self) -> u16 {
             self.min.0
         }
@@ -1419,7 +1418,7 @@ mod tests {
             self.min.1
         }
 
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
     #[test]
@@ -1705,7 +1704,7 @@ mod tests {
             viewport: (u16, u16),
         }
 
-        impl View for ScrollableDummyView {
+        impl Component for ScrollableDummyView {
             fn is_scrollable(&self) -> bool {
                 true
             }
@@ -1728,7 +1727,7 @@ mod tests {
                     .horizontal_scrollbar(ScrollbarVisibility::Always)
             }
 
-            fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+            fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
                 self.viewport = (area.width, area.height);
             }
         }
@@ -1961,12 +1960,12 @@ mod tests {
             target: (u16, u16),
         }
 
-        impl View for UnderlayView {
-            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-                ViewEventResult::ignored()
+        impl Component for UnderlayView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+                EventResult::ignored()
             }
 
-            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
                 let (x, y) = self.target;
                 if x >= area.x
                     && x < area.x.saturating_add(area.width)
@@ -1982,12 +1981,12 @@ mod tests {
         #[derive(Default)]
         struct OverlayView;
 
-        impl View for OverlayView {
-            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-                ViewEventResult::ignored()
+        impl Component for OverlayView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+                EventResult::ignored()
             }
 
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
 
         let theme = Theme::dark();

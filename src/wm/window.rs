@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 
 use super::min_size_view::WindowMinSizeView;
 use crate::reactive::Binding;
-use crate::view::View;
+use crate::composable::Component;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
@@ -102,7 +102,7 @@ pub struct Window {
     pub rect: Binding<Rect>,
     pub state: Binding<WindowState>,
     pub decorations: Binding<WindowDecorations>,
-    pub view: Box<dyn View>,
+    pub view: Box<dyn Component>,
     pub min_size: Binding<(u16, u16)>,
     pub min_size_mode: Binding<WindowMinSizeMode>,
     pub movable: Binding<bool>,
@@ -117,7 +117,7 @@ impl Window {
         kind: WindowKind,
         title: impl Into<Binding<String>>,
         rect: impl Into<Binding<Rect>>,
-        view: Box<dyn View>,
+        view: Box<dyn Component>,
     ) -> Self {
         let min_size_mode: Binding<WindowMinSizeMode> = WindowMinSizeMode::Enforce.into();
         let view = Box::new(WindowMinSizeView::new(view, min_size_mode.clone()));

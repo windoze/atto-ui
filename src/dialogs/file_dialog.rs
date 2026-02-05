@@ -6,29 +6,36 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use crate::declarative::{Align, Divider, HStack, LayoutParams, Size, VStack, ViewAdapter};
+use crate::composable::{Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack, LayoutParams, Size, VStack};
 use crate::reactive::{Binding, DirtyObserver, Property};
-use crate::view::{View, ViewContext, ViewEventResult};
-use crate::widgets::{Button, Control, ControlOutcome, FormAction, Label, ListBox, TextBox};
+use crate::widgets::{Button, Label, ListBox, TextBox};
 
 #[derive(Clone)]
-struct FocusBindingControl<T> {
+struct FocusBindingComponent<T> {
     inner: T,
     focused: Binding<bool>,
 }
 
-impl<T> FocusBindingControl<T> {
+impl<T> FocusBindingComponent<T> {
     fn new(inner: T, focused: Binding<bool>) -> Self {
         Self { inner, focused }
     }
 }
 
-impl<T> Control for FocusBindingControl<T>
+impl<T> Component for FocusBindingComponent<T>
 where
-    T: Control + Clone + Send + 'static,
+    T: Component + Clone + Send + 'static,
 {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
     }
 
     fn min_width(&self) -> u16 {
@@ -39,33 +46,69 @@ where
         self.inner.min_height()
     }
 
-    fn min_size(&self) -> (u16, u16) {
-        self.inner.min_size()
+    fn desired_width(&self) -> Option<u16> {
+        self.inner.desired_width()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.inner.is_enabled()
-    }
-
-    fn set_focused(&mut self, focused: bool) {
-        self.focused.set(focused);
-        self.inner.set_focused(focused);
-    }
-
-    fn set_area(&mut self, area: Rect) {
-        self.inner.set_area(area);
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
-        self.inner.handle_event(event)
-    }
-
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, theme: &crate::theme::Theme) {
-        self.inner.draw(frame, area, theme);
-    }
-
-    fn desired_height(&self) -> u16 {
+    fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.inner.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.inner.children_mut()
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let res = self.inner.handle_event(event, ctx);
+        if self.focused.get() != ctx.is_focused {
+            self.focused.set(ctx.is_focused);
+        }
+        res
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.inner.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.inner.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.inner.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.inner.viewport_size()
+    }
+
+    fn scroll_config(&self) -> crate::composable::ScrollConfig {
+        self.inner.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.inner.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
+        self.inner.scroll_to_child(child_id);
+    }
+
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.focused.set(ctx.is_focused);
+        self.inner.draw(frame, area, ctx);
     }
 }
 
@@ -151,7 +194,7 @@ pub struct FileDialog {
     file_list_focused: Binding<bool>,
     file_name_focused: Binding<bool>,
 
-    inner: ViewAdapter,
+    inner: Box<dyn Component>,
 
     file_selection_observer: DirtyObserver,
     file_name_observer: DirtyObserver,
@@ -251,7 +294,7 @@ impl FileDialog {
                 HStack::new()
                     .spacing(0)
                     .child_with_layout(
-                        FocusBindingControl::new(
+                        FocusBindingComponent::new(
                             ListBox::new(
                                 "Directories",
                                 dir_display_items.binding(),
@@ -278,7 +321,7 @@ impl FileDialog {
                         },
                     )
                     .child_with_layout(
-                        FocusBindingControl::new(
+                        FocusBindingComponent::new(
                             ListBox::new(
                                 "Files",
                                 file_display_items.binding(),
@@ -313,7 +356,7 @@ impl FileDialog {
                 HStack::new()
                     .spacing(1)
                     .child_with_layout(
-                        FocusBindingControl::new(
+                        FocusBindingComponent::new(
                             TextBox::new("File name", file_name.binding()),
                             file_name_focused.clone(),
                         ),
@@ -347,7 +390,7 @@ impl FileDialog {
                 },
             );
 
-        let inner = ViewAdapter::new(root);
+        let inner: Box<dyn Component> = Box::new(root);
 
         let file_selection_observer = file_selection.dirty_observer();
         let file_name_observer = file_name.dirty_observer();
@@ -479,7 +522,7 @@ impl FileDialog {
         }
     }
 
-    fn activate_file_selection(&mut self) -> Option<ViewEventResult> {
+    fn activate_file_selection(&mut self) -> Option<EventResult> {
         let idx = self.file_selection.get();
         let entries = self.file_entries.get();
         let entry = entries.get(idx)?;
@@ -494,7 +537,7 @@ impl FileDialog {
         }
 
         match self.mode {
-            FileDialogMode::OpenFile => self.submit().then_some(ViewEventResult::close_window()),
+            FileDialogMode::OpenFile => self.submit().then_some(EventResult::close_window()),
             FileDialogMode::SaveFile => None,
         }
     }
@@ -538,7 +581,7 @@ impl FileDialog {
     }
 }
 
-impl View for FileDialog {
+impl Component for FileDialog {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
     }
@@ -559,23 +602,23 @@ impl View for FileDialog {
         self.inner.desired_height()
     }
 
-    fn children(&self) -> &[crate::views::ViewNode] {
+    fn children(&self) -> &[ComponentNode] {
         self.inner.children()
     }
 
-    fn children_mut(&mut self) -> Option<&mut Vec<crate::views::ViewNode>> {
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         self.inner.children_mut()
     }
 
-    fn handle_event_capture(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.inner.handle_event_capture(event, ctx)
     }
 
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.inner.handle_event_bubble(event, ctx)
     }
 
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         // Esc cancels regardless of focus.
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
@@ -584,7 +627,7 @@ impl View for FileDialog {
         }) = event
         {
             self.pending_action.set(None);
-            return ViewEventResult::close_window();
+            return EventResult::close_window();
         }
 
         let inner_res = self.inner.handle_event(event, ctx);
@@ -606,12 +649,12 @@ impl View for FileDialog {
         if let Some(pending) = self.pending_action.get() {
             self.pending_action.set(None);
             match pending {
-                PendingAction::Cancel => return ViewEventResult::close_window(),
+                PendingAction::Cancel => return EventResult::close_window(),
                 PendingAction::Submit => {
                     if self.submit() {
-                        return ViewEventResult::close_window();
+                        return EventResult::close_window();
                     }
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
             }
         }
@@ -628,7 +671,7 @@ impl View for FileDialog {
                 if self.dir_list_focused.get() || self.file_list_focused.get() {
                     self.navigate_parent();
                 }
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
 
             if let Event::Key(KeyEvent {
@@ -639,15 +682,15 @@ impl View for FileDialog {
             {
                 if self.dir_list_focused.get() {
                     self.activate_dir_selection();
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 if self.file_list_focused.get() {
                     if let Some(res) = self.activate_file_selection() {
                         return res;
                     }
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
         }
 
@@ -660,15 +703,15 @@ impl View for FileDialog {
             && self.file_name_focused.get()
         {
             if self.submit() {
-                return ViewEventResult::close_window();
+                return EventResult::close_window();
             }
-            return ViewEventResult::consumed();
+            return EventResult::consumed();
         }
 
         inner_res
     }
 
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.inner.draw(frame, area, ctx);
     }
 }
@@ -746,7 +789,7 @@ fn cmp_entries(a: &Entry, b: &Entry) -> Ordering {
 mod tests {
     use super::*;
     use crate::theme::Theme;
-    use crate::view::{ScrollbarHost, TabMode, ViewContext};
+    use crate::composable::{ComponentContext, ScrollbarHost, TabMode};
     use crate::wm::WindowId;
     use crossterm::event::{KeyEventState, KeyModifiers};
     use ratatui::Terminal;
@@ -790,7 +833,7 @@ mod tests {
         assert_eq!(names[4], "z_file.txt");
     }
 
-    fn draw_dialog(dialog: &mut FileDialog, area: Rect, ctx: ViewContext<'_>) {
+    fn draw_dialog(dialog: &mut FileDialog, area: Rect, ctx: ComponentContext<'_>) {
         let backend = TestBackend::new(area.width.max(1), area.height.max(1));
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal
@@ -812,11 +855,11 @@ mod tests {
             .initial_file_name("file.txt");
 
         let theme = Theme::dark();
-        let ctx = ViewContext {
+        let ctx = ComponentContext {
             theme: &theme,
             window_id: WindowId(1),
             is_focused: true,
-            scrollbar_host: ScrollbarHost::View,
+            scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
         };
 

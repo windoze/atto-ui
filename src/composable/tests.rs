@@ -8,13 +8,13 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::view::{EventOutcome, ScrollbarHost, TabMode, View, ViewContext, ViewEventResult};
-use crate::views::{ScrollConfig, ScrollbarVisibility};
 use crate::wm::WindowId;
 
-use super::grid_view::GridView;
-use super::stack_view::{HStackView, VStackView};
-use super::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
+use super::{
+    Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, EdgeInsets,
+    EventOutcome, EventResult, Grid, HStack, LayoutParams, ScrollConfig, ScrollbarHost,
+    ScrollbarVisibility, Size, TabMode, VStack,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecordedEvent {
@@ -63,7 +63,7 @@ impl RecordingView {
     }
 }
 
-impl View for RecordingView {
+impl Component for RecordingView {
     fn is_focusable(&self) -> bool {
         self.focusable
     }
@@ -76,7 +76,7 @@ impl View for RecordingView {
         self.desired_height
     }
 
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         match event {
             Event::Key(KeyEvent { code, .. }) => {
                 self.events
@@ -96,22 +96,22 @@ impl View for RecordingView {
             _ => {}
         }
 
-        ViewEventResult {
+        EventResult {
             outcome: self.outcome,
-            action: crate::view::ViewAction::None,
+            action: ComponentAction::None,
         }
     }
 
-    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
 
-fn draw_view(view: &mut dyn View, area: Rect) {
+fn draw_view(view: &mut dyn Component, area: Rect) {
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -122,7 +122,7 @@ fn draw_view(view: &mut dyn View, area: Rect) {
 
 #[test]
 fn view_hierarchy_sets_parent_ids_for_children() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
 
     let ev1 = Arc::new(Mutex::new(Vec::new()));
     vstack.add_child_with_layout(
@@ -146,7 +146,7 @@ fn view_hierarchy_sets_parent_ids_for_children() {
 
 #[test]
 fn nested_hierarchy_preserves_parent_ids() {
-    let mut inner = VStackView::new();
+    let mut inner = VStack::new();
     let leaf_events = Arc::new(Mutex::new(Vec::new()));
     inner.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&leaf_events))),
@@ -155,7 +155,7 @@ fn nested_hierarchy_preserves_parent_ids() {
     let leaf_id = inner.children()[0].id;
     let inner_id = inner.children()[0].parent.expect("inner id");
 
-    let mut outer = VStackView::new();
+    let mut outer = VStack::new();
     outer.add_child_with_layout(Box::new(inner), LayoutParams::default());
     let outer_children = outer.children();
     assert_eq!(outer_children.len(), 1);
@@ -174,7 +174,7 @@ fn nested_hierarchy_preserves_parent_ids() {
 
 #[test]
 fn vstack_layout_fixed_heights() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
@@ -208,7 +208,7 @@ fn vstack_layout_fixed_heights() {
 
 #[test]
 fn vstack_layout_weighted_split() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
@@ -232,7 +232,7 @@ fn vstack_layout_weighted_split() {
 
 #[test]
 fn vstack_layout_clamps_overflow() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
@@ -256,7 +256,7 @@ fn vstack_layout_clamps_overflow() {
 
 #[test]
 fn vstack_padding_reduces_content_area() {
-    let mut vstack = VStackView::new().with_padding(EdgeInsets::all(2));
+    let mut vstack = VStack::new().with_padding(EdgeInsets::all(2));
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams::default(),
@@ -269,7 +269,7 @@ fn vstack_padding_reduces_content_area() {
 
 #[test]
 fn vstack_margins_reserve_space_around_child() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     let margin = EdgeInsets {
         top: 1,
         right: 1,
@@ -302,7 +302,7 @@ fn vstack_margins_reserve_space_around_child() {
 
 #[test]
 fn vstack_alignment_centers_child_in_slot() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
@@ -325,7 +325,7 @@ fn vstack_alignment_centers_child_in_slot() {
 
 #[test]
 fn vstack_anchor_positions_overlay_and_does_not_affect_flow() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
@@ -365,7 +365,7 @@ fn vstack_anchor_positions_overlay_and_does_not_affect_flow() {
 
 #[test]
 fn vstack_anchor_repositions_on_resize() {
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(
             RecordingView::new(Arc::new(Mutex::new(Vec::new())))
@@ -396,10 +396,10 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
     let leaf_events = Arc::new(Mutex::new(Vec::new()));
     let leaf = RecordingView::new(Arc::clone(&leaf_events)).with_outcome(EventOutcome::Consumed);
 
-    let mut inner = VStackView::new();
+    let mut inner = VStack::new();
     inner.add_child_with_layout(Box::new(leaf), LayoutParams::default());
 
-    let mut outer = VStackView::new().with_padding(EdgeInsets::all(1));
+    let mut outer = VStack::new().with_padding(EdgeInsets::all(1));
     outer.add_child_with_layout(
         Box::new(inner),
         LayoutParams {
@@ -419,11 +419,11 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
     });
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
     let res = outer.handle_event(&click, ctx);
@@ -436,7 +436,7 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
 #[test]
 fn capture_phase_consumes_tab_before_children_receive_it() {
     let events = Arc::new(Mutex::new(Vec::new()));
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&events))),
         LayoutParams::default(),
@@ -452,11 +452,11 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
     });
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
     let res = vstack.handle_event(&tab, ctx);
@@ -469,7 +469,7 @@ fn keyboard_events_route_to_focused_child() {
     let a = Arc::new(Mutex::new(Vec::new()));
     let b = Arc::new(Mutex::new(Vec::new()));
 
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&a))),
         LayoutParams::default(),
@@ -482,11 +482,11 @@ fn keyboard_events_route_to_focused_child() {
     draw_view(&mut vstack, Rect::new(0, 0, 10, 5));
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -527,7 +527,7 @@ fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
     let b = Arc::new(Mutex::new(Vec::new()));
     let c = Arc::new(Mutex::new(Vec::new()));
 
-    let mut inner = HStackView::new();
+    let mut inner = HStack::new();
     inner.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&a))),
         LayoutParams::default(),
@@ -537,7 +537,7 @@ fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
         LayoutParams::default(),
     );
 
-    let mut root = VStackView::new();
+    let mut root = VStack::new();
     root.add_child_with_layout(Box::new(inner), LayoutParams::default());
     root.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&c))),
@@ -547,11 +547,11 @@ fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
     draw_view(&mut root, Rect::new(0, 0, 20, 5));
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -604,7 +604,7 @@ fn tab_traversal_respects_tab_index_over_insertion_order() {
     let b = Arc::new(Mutex::new(Vec::new()));
     let c = Arc::new(Mutex::new(Vec::new()));
 
-    let mut vstack = VStackView::new();
+    let mut vstack = VStack::new();
     vstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::clone(&a))),
         LayoutParams {
@@ -630,11 +630,11 @@ fn tab_traversal_respects_tab_index_over_insertion_order() {
     draw_view(&mut vstack, Rect::new(0, 0, 10, 5));
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -664,7 +664,7 @@ fn tab_traversal_respects_tab_index_over_insertion_order() {
 
 #[test]
 fn hstack_layout_fixed_widths() {
-    let mut hstack = HStackView::new();
+    let mut hstack = HStack::new();
     hstack.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
         LayoutParams {
@@ -697,7 +697,7 @@ fn hstack_layout_fixed_widths() {
 
 #[test]
 fn grid_layout_columns_and_row_heights() {
-    let mut grid = GridView::new().with_columns(3usize);
+    let mut grid = Grid::new().with_columns(3usize);
     grid.add_child_with_layout(
         Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new()))).with_desired_height(Some(1))),
         LayoutParams {
@@ -760,7 +760,7 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
         desired_h: Option<u16>,
     }
 
-    impl View for MinHeightView {
+    impl Component for MinHeightView {
         fn min_height(&self) -> u16 {
             self.min_h
         }
@@ -769,10 +769,10 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut vstack = VStackView::new()
+    let mut vstack = VStack::new()
         .with_padding(EdgeInsets {
             top: 2,
             right: 0,
@@ -862,7 +862,7 @@ fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
         desired_h: Option<u16>,
     }
 
-    impl View for SizedView {
+    impl Component for SizedView {
         fn min_height(&self) -> u16 {
             self.min_h
         }
@@ -871,10 +871,10 @@ fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut vstack = VStackView::new().with_spacing(1u16);
+    let mut vstack = VStack::new().with_spacing(1u16);
     vstack.add_child_with_layout(
         Box::new(SizedView {
             min_h: 2,
@@ -911,7 +911,7 @@ fn vstack_layout_at_min_height_keeps_all_children_visible() {
         desired_h: Option<u16>,
     }
 
-    impl View for SizedView {
+    impl Component for SizedView {
         fn min_height(&self) -> u16 {
             self.min_h
         }
@@ -920,10 +920,10 @@ fn vstack_layout_at_min_height_keeps_all_children_visible() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut vstack = VStackView::new().with_spacing(1u16);
+    let mut vstack = VStack::new().with_spacing(1u16);
     vstack.add_child_with_layout(
         Box::new(SizedView {
             min_h: 2,
@@ -968,7 +968,7 @@ fn hstack_layout_at_min_width_keeps_all_children_visible() {
         desired_w: Option<u16>,
     }
 
-    impl View for SizedView {
+    impl Component for SizedView {
         fn min_width(&self) -> u16 {
             self.min_w
         }
@@ -977,10 +977,10 @@ fn hstack_layout_at_min_width_keeps_all_children_visible() {
             self.desired_w
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut hstack = HStackView::new().with_spacing(1u16);
+    let mut hstack = HStack::new().with_spacing(1u16);
     hstack.add_child_with_layout(
         Box::new(SizedView {
             min_w: 2,
@@ -1021,7 +1021,7 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
         desired_h: Option<u16>,
     }
 
-    impl View for SizedView {
+    impl Component for SizedView {
         fn min_height(&self) -> u16 {
             self.min_h
         }
@@ -1030,10 +1030,10 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut grid = GridView::new().with_columns(1usize).with_row_gap(1u16);
+    let mut grid = Grid::new().with_columns(1usize).with_row_gap(1u16);
     grid.add_child_with_layout(
         Box::new(SizedView {
             min_h: 2,
@@ -1074,7 +1074,7 @@ fn hstack_desired_height_is_max_child_height_plus_padding() {
         desired_h: Option<u16>,
     }
 
-    impl View for MinHeightView {
+    impl Component for MinHeightView {
         fn min_height(&self) -> u16 {
             self.min_h
         }
@@ -1083,10 +1083,10 @@ fn hstack_desired_height_is_max_child_height_plus_padding() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut hstack = HStackView::new().with_padding(EdgeInsets {
+    let mut hstack = HStack::new().with_padding(EdgeInsets {
         top: 1,
         right: 0,
         bottom: 1,
@@ -1131,7 +1131,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     #[derive(Default)]
     struct BlankLineView;
 
-    impl View for BlankLineView {
+    impl Component for BlankLineView {
         fn desired_width(&self) -> Option<u16> {
             Some(1)
         }
@@ -1140,10 +1140,10 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
             Some(1)
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut vstack = VStackView::new().with_scrollable(true).with_scroll_config(
+    let mut vstack = VStack::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Always)
             .horizontal_scrollbar(ScrollbarVisibility::Never),
@@ -1161,11 +1161,11 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     }
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -1195,7 +1195,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
     #[derive(Default)]
     struct BlankCellView;
 
-    impl View for BlankCellView {
+    impl Component for BlankCellView {
         fn desired_width(&self) -> Option<u16> {
             Some(2)
         }
@@ -1204,10 +1204,10 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
             Some(1)
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
-    let mut hstack = HStackView::new().with_scrollable(true).with_scroll_config(
+    let mut hstack = HStack::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
             .vertical_scrollbar(ScrollbarVisibility::Never)
             .horizontal_scrollbar(ScrollbarVisibility::Always),
@@ -1225,11 +1225,11 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
     }
 
     let theme = Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &theme,
         window_id: WindowId(1),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 

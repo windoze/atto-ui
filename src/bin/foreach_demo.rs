@@ -13,25 +13,25 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{Desktop, MenuBar};
-use atto_ui::declarative::{DeclarativeView, Divider, ForEach, Text, VStack};
+use atto_ui::composable::{Component, Divider, ForEach, Text, VStack};
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::view::View;
 use atto_ui::wm::{Window, WindowKind};
 
-fn build_fruit_list(fruits: Property<Vec<String>>) -> Box<dyn View> {
-    VStack::new()
-        .padding(1)
-        .spacing(0)
-        .child(Text::new("Fruit List (Simple ForEach)"))
-        .child(Divider::horizontal())
-        .child(
-            ForEach::new(fruits.binding(), |fruit, idx| {
-                Text::new(format!("{idx}. {fruit}"))
-            })
-            .spacing(0),
-        )
-        .build_view()
+fn build_fruit_list(fruits: Property<Vec<String>>) -> Box<dyn Component> {
+    Box::new(
+        VStack::new()
+            .padding(1)
+            .spacing(0)
+            .child(Text::new("Fruit List (Simple ForEach)"))
+            .child(Divider::horizontal())
+            .child(
+                ForEach::new(fruits.binding(), |fruit, idx| {
+                    Text::new(format!("{idx}. {fruit}"))
+                })
+                .spacing(0),
+            ),
+    )
 }
 
 fn main() -> Result<()> {

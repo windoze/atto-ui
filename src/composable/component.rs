@@ -3,7 +3,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::theme::Theme;
-use crate::views::{ScrollConfig, ViewId, ViewNode};
+use super::node::{ComponentId, ComponentNode};
+use super::scroll::ScrollConfig;
 use crate::wm::WindowId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,7 +15,7 @@ pub enum EventOutcome {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ViewContext<'a> {
+pub struct ComponentContext<'a> {
     pub theme: &'a Theme,
     pub window_id: WindowId,
     pub is_focused: bool,
@@ -24,20 +25,20 @@ pub struct ViewContext<'a> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScrollbarHost {
-    /// The view should render and handle its own scrollbars.
+    /// The component should render and handle its own scrollbars.
     #[default]
-    View,
+    Component,
     /// Scrollbars are rendered/handled by the window chrome for the root view.
     ///
-    /// Child views should treat this as [`ScrollbarHost::View`] so nested scrollables keep working.
+    /// Child components should treat this as [`ScrollbarHost::Component`] so nested scrollables keep working.
     Window,
 }
 
 impl ScrollbarHost {
     pub const fn for_child(self) -> Self {
         match self {
-            ScrollbarHost::View => ScrollbarHost::View,
-            ScrollbarHost::Window => ScrollbarHost::View,
+            ScrollbarHost::Component => ScrollbarHost::Component,
+            ScrollbarHost::Window => ScrollbarHost::Component,
         }
     }
 }
@@ -63,46 +64,63 @@ impl TabMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ViewAction {
+pub enum ComponentAction {
     #[default]
     None,
     CloseWindow,
+    Changed,
+    Submitted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ViewEventResult {
+pub struct EventResult {
     pub outcome: EventOutcome,
-    pub action: ViewAction,
+    pub action: ComponentAction,
 }
 
-impl ViewEventResult {
+impl EventResult {
     pub const fn ignored() -> Self {
         Self {
             outcome: EventOutcome::Ignored,
-            action: ViewAction::None,
+            action: ComponentAction::None,
         }
     }
 
     pub const fn consumed() -> Self {
         Self {
             outcome: EventOutcome::Consumed,
-            action: ViewAction::None,
+            action: ComponentAction::None,
         }
     }
 
     pub const fn close_window() -> Self {
         Self {
             outcome: EventOutcome::Consumed,
-            action: ViewAction::CloseWindow,
+            action: ComponentAction::CloseWindow,
+        }
+    }
+
+    pub const fn changed() -> Self {
+        Self {
+            outcome: EventOutcome::Consumed,
+            action: ComponentAction::Changed,
+        }
+    }
+
+    pub const fn submitted() -> Self {
+        Self {
+            outcome: EventOutcome::Consumed,
+            action: ComponentAction::Submitted,
         }
     }
 
     pub const fn is_consumed(self) -> bool {
-        matches!(self.outcome, EventOutcome::Consumed) || !matches!(self.action, ViewAction::None)
+        matches!(self.outcome, EventOutcome::Consumed)
+            || !matches!(self.action, ComponentAction::None)
     }
 }
 
-pub trait View: Send {
+pub trait Component: Send {
     fn is_focusable(&self) -> bool {
         false
     }
@@ -152,24 +170,32 @@ pub trait View: Send {
         None
     }
 
-    fn children(&self) -> &[ViewNode] {
+    fn children(&self) -> &[ComponentNode] {
         &[]
     }
 
-    fn children_mut(&mut self) -> Option<&mut Vec<ViewNode>> {
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         None
     }
 
-    fn handle_event_capture(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event_capture(
+        &mut self,
+        _event: &Event,
+        _ctx: ComponentContext<'_>,
+    ) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn handle_event_bubble(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event_bubble(
+        &mut self,
+        _event: &Event,
+        _ctx: ComponentContext<'_>,
+    ) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
     /// Returns whether this view supports scroll offsets and scrollbars.
@@ -222,7 +248,7 @@ pub trait View: Send {
     /// Scrolls so the given child view is visible (and ideally centered), if supported.
     ///
     /// Default: no-op.
-    fn scroll_to_child(&mut self, _child_id: ViewId) {}
+    fn scroll_to_child(&mut self, _child_id: ComponentId) {}
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>);
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>);
 }

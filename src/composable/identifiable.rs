@@ -8,7 +8,7 @@ use std::hash::Hash;
 /// # 示例
 ///
 /// ```rust
-/// use atto_ui::declarative::Identifiable;
+/// use atto_ui::composable::Identifiable;
 ///
 /// struct User {
 ///     id: usize,

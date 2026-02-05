@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use atto_ui::declarative::{DeclarativeView, LayoutParams, Size, TextFn, VStack, ViewAdapter};
+use atto_ui::composable::{Component, LayoutParams, Size, TextFn, VStack};
 use atto_ui::dialogs::FileDialog;
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
@@ -41,62 +41,49 @@ impl DemoModel {
     }
 }
 
-#[derive(Clone)]
-struct MainView {
-    model: DemoModel,
-}
+fn build_main_view(model: DemoModel) -> Box<dyn Component> {
+    let actions = model.actions.clone();
+    let last_open = model.last_open.clone();
+    let last_save = model.last_save.clone();
 
-impl MainView {
-    fn new(model: DemoModel) -> Self {
-        Self { model }
-    }
-}
+    let open_button = Button::new("Open File...").on_click({
+        let actions = actions.clone();
+        move || actions.push(DemoAction::OpenDialog)
+    });
+    let save_button = Button::new("Save File...").on_click({
+        let actions = actions.clone();
+        move || actions.push(DemoAction::SaveDialog)
+    });
+    let clear_button = Button::new("Clear").on_click(move || actions.push(DemoAction::Clear));
 
-impl DeclarativeView for MainView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let actions = self.model.actions.clone();
-        let last_open = self.model.last_open.clone();
-        let last_save = self.model.last_save.clone();
-
-        let open_button = Button::new("Open File...").on_click({
-            let actions = actions.clone();
-            move || actions.push(DemoAction::OpenDialog)
-        });
-        let save_button = Button::new("Save File...").on_click({
-            let actions = actions.clone();
-            move || actions.push(DemoAction::SaveDialog)
-        });
-        let clear_button = Button::new("Clear").on_click(move || actions.push(DemoAction::Clear));
-
-        Box::new(
-            VStack::new()
-                .spacing(1)
-                .padding(1)
-                .child_with_layout(open_button, LayoutParams::default())
-                .child_with_layout(save_button, LayoutParams::default())
-                .child_with_layout(clear_button, LayoutParams::default())
-                .child_with_layout(
-                    TextFn::new(move || match last_open.get() {
-                        Some(p) => format!("Last open: {}", p.display()),
-                        None => "Last open: <none>".to_string(),
-                    }),
-                    LayoutParams {
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    TextFn::new(move || match last_save.get() {
-                        Some(p) => format!("Last save: {}", p.display()),
-                        None => "Last save: <none>".to_string(),
-                    }),
-                    LayoutParams {
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                ),
+    let root = VStack::new()
+        .spacing(1)
+        .padding(1)
+        .child_with_layout(open_button, LayoutParams::default())
+        .child_with_layout(save_button, LayoutParams::default())
+        .child_with_layout(clear_button, LayoutParams::default())
+        .child_with_layout(
+            TextFn::new(move || match last_open.get() {
+                Some(p) => format!("Last open: {}", p.display()),
+                None => "Last open: <none>".to_string(),
+            }),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
         )
-    }
+        .child_with_layout(
+            TextFn::new(move || match last_save.get() {
+                Some(p) => format!("Last save: {}", p.display()),
+                None => "Last save: <none>".to_string(),
+            }),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+
+    Box::new(root)
 }
 
 fn centered_rect(work: Rect, width: u16, height: u16) -> Rect {
@@ -139,7 +126,7 @@ fn main() -> Result<()> {
                         WindowKind::Normal,
                         "FileDialog Demo",
                         rect,
-                        Box::new(ViewAdapter::new(MainView::new(model))),
+                        build_main_view(model),
                     ),
                     screen,
                 );

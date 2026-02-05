@@ -1,7 +1,7 @@
 //! Procedural macros for Chatty.
 //!
 //! This crate is intentionally small: it provides optional ergonomics on top of Chatty's
-//! imperative API without being required for the core library to function.
+//! composable component API without being required for the core library to function.
 
 use proc_macro::TokenStream;
 
@@ -18,7 +18,7 @@ pub fn derive_reactive(input: TokenStream) -> TokenStream {
     reactive::derive_reactive_impl(input)
 }
 
-/// SwiftUI-ish declarative builder DSL.
+/// SwiftUI-ish composable builder DSL.
 ///
 /// Currently supports a `Container { Child(args...) Child2(args...) }` form with optional chained
 /// modifiers on both the root container and any child node:

@@ -9,13 +9,12 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::declarative::{
-    DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Text, TextFn, VStack,
-    ViewAdapter,
+use atto_ui::composable::{
+    Button, Checkbox, Component, Divider, EdgeInsets, HStack, LayoutParams, ListBox, RadioGroup,
+    Size, TableView, Text, TextBox, TextFn, VStack,
 };
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{Button, Checkbox, ListBox, RadioGroup, TableView, TextBox};
 use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
@@ -72,255 +71,210 @@ impl AppState {
     }
 }
 
-/// 左侧窗口：Button、TextBox、Checkbox、RadioGroup 演示
-struct LeftPanelView {
-    state: AppState,
-}
+fn build_left_panel(state: AppState) -> Box<dyn Component> {
+    let click_count = state.click_count.clone();
+    let click_count_display = state.click_count.clone();
+    let status_message = state.status_message.clone();
+    let state_clone1 = state.clone();
+    let state_clone2 = state.clone();
 
-impl LeftPanelView {
-    fn new(state: AppState) -> Self {
-        Self { state }
-    }
-}
+    // 标题和说明
+    let header = VStack::new()
+        .spacing(0)
+        .child_with_layout(Text::new("基础控件演示 - 左侧面板"), content_height())
+        .child_with_layout(Text::new("使用 Tab/Shift+Tab 切换焦点"), content_height())
+        .child_with_layout(Divider::horizontal(), content_height());
 
-impl DeclarativeView for LeftPanelView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let state = self.state.clone();
-        let click_count = state.click_count.clone();
-        let status_message = state.status_message.clone();
-
-        // 标题和说明
-        let header = VStack::new()
-            .spacing(0)
-            .child_with_layout(Text::new("基础控件演示 - 左侧面板"), content_height())
-            .child_with_layout(Text::new("使用 Tab/Shift+Tab 切换焦点"), content_height())
-            .child_with_layout(Divider::horizontal(), content_height());
-
-        // Button 演示区域
-        let click_count_display = state.click_count.clone();
-        let state_clone1 = state.clone();
-        let state_clone2 = state.clone();
-        let button_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【按钮演示】"), content_height())
-            .child_with_layout(
-                HStack::new()
-                    .spacing(1)
-                    .child(Button::new("计数 +1").on_click(move || {
-                        click_count.update(|c| *c = c.saturating_add(1));
-                    }))
-                    .child(Button::new("重置计数").on_click(move || {
-                        state_clone1.click_count.set(0);
-                        state_clone1.status_message.set("计数已重置".to_string());
-                    }))
-                    .child(Button::new("显示消息").on_click(move || {
-                        status_message.set("按钮被点击了！".to_string());
-                    })),
-                LayoutParams {
-                    height: Size::Content,
-                    ..LayoutParams::default()
-                },
-            )
-            .child_with_layout(
-                TextFn::new(move || format!("点击次数: {}", click_count_display.get())),
-                content_height(),
-            );
-
-        // TextBox 演示区域
-        let textbox_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【文本输入框演示】"), content_height())
-            .child_with_layout(
-                TextBox::new("用户名", state_clone2.username.binding()),
-                content_height(),
-            )
-            .child_with_layout(
-                TextBox::new("密码", state.password.binding()),
-                content_height(),
-            )
-            .child_with_layout(
-                Text::new("支持: Unicode 输入、光标移动、鼠标定位、粘贴"),
-                content_height(),
-            );
-
-        // Checkbox 演示区域
-        let checkbox_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【复选框演示】"), content_height())
-            .child_with_layout(
-                Checkbox::new("接受服务条款", state.accept_terms.binding()),
-                content_height(),
-            )
-            .child_with_layout(
-                Checkbox::new("启用通知", state.enable_notifications.binding()),
-                content_height(),
-            )
-            .child_with_layout(
-                Checkbox::new("记住我", state.remember_me.binding()),
-                content_height(),
-            );
-
-        // RadioGroup 演示区域
-        let radio_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【单选按钮演示】"), content_height())
-            .child_with_layout(
-                RadioGroup::new(
-                    "主题",
-                    vec!["深色".into(), "浅色".into(), "自动".into()],
-                    state.theme_selection.binding(),
-                ),
-                content_height(),
-            )
-            .child_with_layout(
-                RadioGroup::new(
-                    "语言",
-                    vec!["中文".into(), "English".into(), "日本語".into()],
-                    state.language_selection.binding(),
-                ),
-                content_height(),
-            );
-
-        // 组合所有区域
-        Box::new(
-            VStack::new()
-                .scrollable(true)
-                .child_with_layout(header, content_height())
-                .child_with_layout(button_section, content_height())
-                .child_with_layout(textbox_section, content_height())
-                .child_with_layout(checkbox_section, content_height())
-                .child_with_layout(radio_section, content_height())
+    // Button 演示区域
+    let button_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【按钮演示】"), content_height())
+        .child_with_layout(
+            HStack::new()
                 .spacing(1)
-                .padding(1),
-        )
-    }
-}
-
-/// 右侧窗口：ListBox、TableView、Label 演示
-struct RightPanelView {
-    state: AppState,
-}
-
-impl RightPanelView {
-    fn new(state: AppState) -> Self {
-        Self { state }
-    }
-}
-
-impl DeclarativeView for RightPanelView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let state = self.state.clone();
-
-        // 标题
-        let header = VStack::new()
-            .spacing(0)
-            .child_with_layout(Text::new("基础控件演示 - 右侧面板"), content_height())
-            .child_with_layout(Divider::horizontal(), content_height());
-
-        // ListBox 演示
-        let list_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【列表框演示】"), content_height())
-            .child(
-                ListBox::new(
-                    "选择水果",
-                    vec![
-                        "苹果 🍎".into(),
-                        "香蕉 🍌".into(),
-                        "橙子 🍊".into(),
-                        "葡萄 🍇".into(),
-                        "西瓜 🍉".into(),
-                        "草莓 🍓".into(),
-                    ],
-                    state.fruit_selection.binding(),
-                )
-                .height(8u16),
-            );
-
-        // TableView 演示
-        let table_section = VStack::new()
-            .spacing(1)
-            .child_with_layout(Text::new("【表格视图演示】"), content_height())
-            .child(
-                TableView::new(
-                    "编程语言对比",
-                    vec!["语言".into(), "类型".into(), "特性".into()],
-                    vec![
-                        vec!["Rust".into(), "系统".into(), "内存安全".into()],
-                        vec!["Python".into(), "脚本".into(), "简单易学".into()],
-                        vec!["JavaScript".into(), "Web".into(), "无处不在".into()],
-                        vec!["Go".into(), "系统".into(), "并发优秀".into()],
-                        vec!["C++".into(), "系统".into(), "性能极致".into()],
-                    ],
-                    state.table_selection.binding(),
-                )
-                .height(9u16),
-            );
-
-        // Label 和提示信息
-        let info_section = VStack::new()
-            .spacing(0)
-            .child_with_layout(Text::new("【提示信息】"), content_height())
-            .child_with_layout(Text::new("↑↓ - 在列表/表格中导航"), content_height())
-            .child_with_layout(Text::new("鼠标点击 - 直接选择"), content_height())
-            .child_with_layout(Text::new("Enter/Space - 激活按钮"), content_height());
-
-        Box::new(
-            VStack::new()
-                .scrollable(true)
-                .child_with_layout(header, content_height())
-                .child_with_layout(list_section, content_height())
-                .child_with_layout(table_section, content_height())
-                .child_with_layout(info_section, content_height())
-                .spacing(1)
-                .padding(1),
-        )
-    }
-}
-
-/// 状态栏窗口：显示当前状态信息
-struct StatusView {
-    state: AppState,
-}
-
-impl StatusView {
-    fn new(state: AppState) -> Self {
-        Self { state }
-    }
-}
-
-impl DeclarativeView for StatusView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let state = self.state.clone();
-
-        Box::new(
-            VStack::new()
-                .padding_insets(EdgeInsets {
-                    left: 1,
-                    right: 1,
-                    top: 0,
-                    bottom: 0,
-                })
-                .child(TextFn::new(move || {
-                    format!(
-                        "状态: {} | 用户: {} | 复选: [{}{}{}] | 主题: {} | 语言: {} | 水果: #{} | 表格: #{}",
-                        state.status_message.get(),
-                        if state.username.get().is_empty() {
-                            "<未输入>".to_string()
-                        } else {
-                            state.username.get()
-                        },
-                        if state.accept_terms.get() { "✓" } else { " " },
-                        if state.enable_notifications.get() { "✓" } else { " " },
-                        if state.remember_me.get() { "✓" } else { " " },
-                        state.theme_selection.get(),
-                        state.language_selection.get(),
-                        state.fruit_selection.get(),
-                        state.table_selection.get(),
-                    )
+                .child(Button::new("计数 +1").on_click(move || {
+                    click_count.update(|c| *c = c.saturating_add(1));
+                }))
+                .child(Button::new("重置计数").on_click(move || {
+                    state_clone1.click_count.set(0);
+                    state_clone1.status_message.set("计数已重置".to_string());
+                }))
+                .child(Button::new("显示消息").on_click(move || {
+                    status_message.set("按钮被点击了！".to_string());
                 })),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
         )
-    }
+        .child_with_layout(
+            TextFn::new(move || format!("点击次数: {}", click_count_display.get())),
+            content_height(),
+        );
+
+    // TextBox 演示区域
+    let textbox_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【文本输入框演示】"), content_height())
+        .child_with_layout(
+            TextBox::new("用户名", state_clone2.username.binding()),
+            content_height(),
+        )
+        .child_with_layout(
+            TextBox::new("密码", state.password.binding()),
+            content_height(),
+        )
+        .child_with_layout(
+            Text::new("支持: Unicode 输入、光标移动、鼠标定位、粘贴"),
+            content_height(),
+        );
+
+    // Checkbox 演示区域
+    let checkbox_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【复选框演示】"), content_height())
+        .child_with_layout(
+            Checkbox::new("接受服务条款", state.accept_terms.binding()),
+            content_height(),
+        )
+        .child_with_layout(
+            Checkbox::new("启用通知", state.enable_notifications.binding()),
+            content_height(),
+        )
+        .child_with_layout(
+            Checkbox::new("记住我", state.remember_me.binding()),
+            content_height(),
+        );
+
+    // RadioGroup 演示区域
+    let radio_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【单选按钮演示】"), content_height())
+        .child_with_layout(
+            RadioGroup::new(
+                "主题",
+                vec!["深色".into(), "浅色".into(), "自动".into()],
+                state.theme_selection.binding(),
+            ),
+            content_height(),
+        )
+        .child_with_layout(
+            RadioGroup::new(
+                "语言",
+                vec!["中文".into(), "English".into(), "日本語".into()],
+                state.language_selection.binding(),
+            ),
+            content_height(),
+        );
+
+    let root = VStack::new()
+        .scrollable(true)
+        .child_with_layout(header, content_height())
+        .child_with_layout(button_section, content_height())
+        .child_with_layout(textbox_section, content_height())
+        .child_with_layout(checkbox_section, content_height())
+        .child_with_layout(radio_section, content_height())
+        .spacing(1)
+        .padding(1);
+
+    Box::new(root)
+}
+
+fn build_right_panel(state: AppState) -> Box<dyn Component> {
+    // 标题
+    let header = VStack::new()
+        .spacing(0)
+        .child_with_layout(Text::new("基础控件演示 - 右侧面板"), content_height())
+        .child_with_layout(Divider::horizontal(), content_height());
+
+    // ListBox 演示
+    let list_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【列表框演示】"), content_height())
+        .child(
+            ListBox::new(
+                "选择水果",
+                vec![
+                    "苹果 🍎".into(),
+                    "香蕉 🍌".into(),
+                    "橙子 🍊".into(),
+                    "葡萄 🍇".into(),
+                    "西瓜 🍉".into(),
+                    "草莓 🍓".into(),
+                ],
+                state.fruit_selection.binding(),
+            )
+            .height(8u16),
+        );
+
+    // TableView 演示
+    let table_section = VStack::new()
+        .spacing(1)
+        .child_with_layout(Text::new("【表格视图演示】"), content_height())
+        .child(
+            TableView::new(
+                "编程语言对比",
+                vec!["语言".into(), "类型".into(), "特性".into()],
+                vec![
+                    vec!["Rust".into(), "系统".into(), "内存安全".into()],
+                    vec!["Python".into(), "脚本".into(), "简单易学".into()],
+                    vec!["JavaScript".into(), "Web".into(), "无处不在".into()],
+                    vec!["Go".into(), "系统".into(), "并发优秀".into()],
+                    vec!["C++".into(), "系统".into(), "性能极致".into()],
+                ],
+                state.table_selection.binding(),
+            )
+            .height(9u16),
+        );
+
+    // Label 和提示信息
+    let info_section = VStack::new()
+        .spacing(0)
+        .child_with_layout(Text::new("【提示信息】"), content_height())
+        .child_with_layout(Text::new("↑↓ - 在列表/表格中导航"), content_height())
+        .child_with_layout(Text::new("鼠标点击 - 直接选择"), content_height())
+        .child_with_layout(Text::new("Enter/Space - 激活按钮"), content_height());
+
+    let root = VStack::new()
+        .scrollable(true)
+        .child_with_layout(header, content_height())
+        .child_with_layout(list_section, content_height())
+        .child_with_layout(table_section, content_height())
+        .child_with_layout(info_section, content_height())
+        .spacing(1)
+        .padding(1);
+
+    Box::new(root)
+}
+
+fn build_status_bar(state: AppState) -> Box<dyn Component> {
+    let root = VStack::new()
+        .padding_insets(EdgeInsets {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        })
+        .child(TextFn::new(move || {
+            format!(
+                "状态: {} | 用户: {} | 复选: [{}{}{}] | 主题: {} | 语言: {} | 水果: #{} | 表格: #{}",
+                state.status_message.get(),
+                if state.username.get().is_empty() {
+                    "<未输入>".to_string()
+                } else {
+                    state.username.get()
+                },
+                if state.accept_terms.get() { "✓" } else { " " },
+                if state.enable_notifications.get() { "✓" } else { " " },
+                if state.remember_me.get() { "✓" } else { " " },
+                state.theme_selection.get(),
+                state.language_selection.get(),
+                state.fruit_selection.get(),
+                state.table_selection.get(),
+            )
+        }));
+
+    Box::new(root)
 }
 
 fn main() -> Result<()> {
@@ -347,7 +301,7 @@ fn main() -> Result<()> {
                 width: 45,
                 height: work.height.saturating_sub(5),
             },
-            Box::new(ViewAdapter::new(LeftPanelView::new(state.clone()))),
+            build_left_panel(state.clone()),
         );
         let left_id = desktop.add_window(left_window, screen);
 
@@ -360,7 +314,7 @@ fn main() -> Result<()> {
                 width: 45,
                 height: work.height.saturating_sub(5),
             },
-            Box::new(ViewAdapter::new(RightPanelView::new(state.clone()))),
+            build_right_panel(state.clone()),
         );
         desktop.add_window(right_window, screen);
 
@@ -373,7 +327,7 @@ fn main() -> Result<()> {
                 width: work.width.saturating_sub(4),
                 height: 3,
             },
-            Box::new(ViewAdapter::new(StatusView::new(state.clone()))),
+            build_status_bar(state.clone()),
         );
         desktop.add_window(status_window, screen);
 

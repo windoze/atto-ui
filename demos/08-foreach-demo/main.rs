@@ -9,13 +9,12 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::declarative::{
-    Align, DeclarativeView, Divider, EdgeInsets, ForEach, HStack, Identifiable, LayoutParams, Size,
-    Spacer, Text, TextFn, VStack, ViewAdapter,
+use atto_ui::composable::{
+    Align, Button, Checkbox, Component, Divider, EdgeInsets, ForEach, HStack, Identifiable,
+    LayoutParams, Size, Spacer, Text, TextBox, TextFn, VStack,
 };
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{Button, Checkbox, TextBox};
 use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
@@ -130,176 +129,150 @@ impl TodoModel {
     }
 }
 
-struct ControlsView {
-    model: TodoModel,
+fn build_controls_view(model: TodoModel) -> Box<dyn Component> {
+    let stats = {
+        let todos = model.todos.clone();
+        TextFn::new(move || {
+            let list = todos.get();
+            let total = list.len();
+            let done = list.iter().filter(|t| t.done.get()).count();
+            format!("Stats: total={total}  done={done}  (uses stable ids: .with_id())")
+        })
+    };
+
+    let add_row = HStack::new()
+        .spacing(1)
+        .child_with_layout(
+            TextBox::new("New task", model.new_text.binding()),
+            LayoutParams {
+                width: Size::Weight(1),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Button::new("Add").on_click({
+                let model = model.clone();
+                move || model.add_one()
+            }),
+            LayoutParams {
+                width: Size::Fixed(9),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Button::new("Add +50").on_click({
+                let model = model.clone();
+                move || model.add_many(50)
+            }),
+            LayoutParams {
+                width: Size::Fixed(9),
+                ..LayoutParams::default()
+            },
+        );
+
+    let ops_row = {
+        let model_rotate = model.clone();
+        let model_reverse = model.clone();
+        let model_clear_done = model.clone();
+        let model_clear_all = model.clone();
+
+        HStack::new()
+            .spacing(1)
+            .child(Button::new("Rotate").on_click(move || model_rotate.rotate()))
+            .child(Button::new("Reverse").on_click(move || model_reverse.reverse()))
+            .child(Button::new("Clear done").on_click(move || {
+                model_clear_done.clear_completed();
+            }))
+            .child(Button::new("Clear all").on_click(move || model_clear_all.clear_all()))
+            .child(Spacer::new())
+    };
+
+    let root = VStack::new()
+        .spacing(1)
+        .padding_insets(EdgeInsets::all(1))
+        .scrollable(true)
+        .child_with_layout(Text::new("ForEach Demo (Controls)"), content_height())
+        .child_with_layout(
+            Text::new(
+                "Keyboard: Tab/Shift+Tab to move focus, Enter/Space to activate. Mouse works too.",
+            ),
+            content_height(),
+        )
+        .child_with_layout(
+            Text::new(
+                "Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it (e.g. not typing in a TextBox).",
+            ),
+            content_height(),
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(add_row, content_height())
+        .child_with_layout(ops_row, content_height())
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(stats, content_height());
+
+    Box::new(root)
 }
 
-impl ControlsView {
-    fn new(model: TodoModel) -> Self {
-        Self { model }
-    }
-}
+fn build_list_view(model: TodoModel) -> Box<dyn Component> {
+    let todos = model.todos.clone();
 
-impl DeclarativeView for ControlsView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
+    let list = ForEach::new(todos.binding(), move |todo, _idx| {
+        let id = todo.id;
+        let todos_for_delete = todos.clone();
 
-        let stats = {
-            let todos = model.todos.clone();
-            TextFn::new(move || {
-                let list = todos.get();
-                let total = list.len();
-                let done = list.iter().filter(|t| t.done.get()).count();
-                format!("Stats: total={total}  done={done}  (uses stable ids: .with_id())")
-            })
-        };
-
-        let add_row = HStack::new()
+        HStack::new()
             .spacing(1)
             .child_with_layout(
-                TextBox::new("New task", model.new_text.binding()),
+                Checkbox::new("", todo.done.binding()),
+                LayoutParams {
+                    width: Size::Fixed(4),
+                    height: Size::Content,
+                    align_y: Align::Center,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                TextBox::new(format!("#{id:03}"), todo.text.binding()),
                 LayoutParams {
                     width: Size::Weight(1),
                     ..LayoutParams::default()
                 },
             )
             .child_with_layout(
-                Button::new("Add").on_click({
-                    let model = model.clone();
-                    move || model.add_one()
+                Button::new("Del").on_click(move || {
+                    todos_for_delete.update(|v| v.retain(|t| t.id != id));
                 }),
                 LayoutParams {
-                    width: Size::Fixed(9),
+                    width: Size::Fixed(7),
                     ..LayoutParams::default()
                 },
             )
-            .child_with_layout(
-                Button::new("Add +50").on_click({
-                    let model = model.clone();
-                    move || model.add_many(50)
-                }),
-                LayoutParams {
-                    width: Size::Fixed(9),
-                    ..LayoutParams::default()
-                },
-            );
+    })
+    .spacing(0)
+    .padding(1)
+    .scrollable(true)
+    .with_id();
 
-        let ops_row = {
-            let model_rotate = model.clone();
-            let model_reverse = model.clone();
-            let model_clear_done = model.clone();
-            let model_clear_all = model.clone();
-
-            HStack::new()
-                .spacing(1)
-                .child(Button::new("Rotate").on_click(move || model_rotate.rotate()))
-                .child(Button::new("Reverse").on_click(move || model_reverse.reverse()))
-                .child(Button::new("Clear done").on_click(move || {
-                    model_clear_done.clear_completed();
-                }))
-                .child(Button::new("Clear all").on_click(move || model_clear_all.clear_all()))
-                .child(Spacer::new())
-        };
-
-        Box::new(
-            VStack::new()
-                .spacing(1)
-                .padding_insets(EdgeInsets::all(1))
-                .scrollable(true)
-                .child_with_layout(Text::new("ForEach Demo (Controls)"), content_height())
-                .child_with_layout(
-                    Text::new(
-                        "Keyboard: Tab/Shift+Tab to move focus, Enter/Space to activate. Mouse works too.",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(
-                    Text::new(
-                        "Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it (e.g. not typing in a TextBox).",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(add_row, content_height())
-                .child_with_layout(ops_row, content_height())
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(stats, content_height()),
+    let root = VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(1)
+        .child_with_layout(Text::new("ForEach Demo (List)"), content_height())
+        .child_with_layout(
+            Text::new(
+                "Focus a TextBox, move cursor, then click Rotate/Reverse: state stays with the item id.",
+            ),
+            content_height(),
         )
-    }
-}
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            list,
+            LayoutParams {
+                height: Size::Fill,
+                ..LayoutParams::default()
+            },
+        );
 
-struct ListView {
-    model: TodoModel,
-}
-
-impl ListView {
-    fn new(model: TodoModel) -> Self {
-        Self { model }
-    }
-}
-
-impl DeclarativeView for ListView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let todos = self.model.todos.clone();
-
-        let list = ForEach::new(todos.binding(), move |todo, _idx| {
-            let id = todo.id;
-            let todos_for_delete = todos.clone();
-
-            HStack::new()
-                .spacing(1)
-                .child_with_layout(
-                    Checkbox::new("", todo.done.binding()),
-                    LayoutParams {
-                        width: Size::Fixed(4),
-                        height: Size::Content,
-                        align_y: Align::Center,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    TextBox::new(format!("#{id:03}"), todo.text.binding()),
-                    LayoutParams {
-                        width: Size::Weight(1),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    Button::new("Del").on_click(move || {
-                        todos_for_delete.update(|v| v.retain(|t| t.id != id));
-                    }),
-                    LayoutParams {
-                        width: Size::Fixed(7),
-                        ..LayoutParams::default()
-                    },
-                )
-        })
-        .spacing(0)
-        .padding(1)
-        .scrollable(true)
-        .with_id();
-
-        Box::new(
-            VStack::new()
-                .padding_insets(EdgeInsets::all(1))
-                .spacing(1)
-                .child_with_layout(Text::new("ForEach Demo (List)"), content_height())
-                .child_with_layout(
-                    Text::new(
-                        "Focus a TextBox, move cursor, then click Rotate/Reverse: state stays with the item id.",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    list,
-                    LayoutParams {
-                        height: Size::Fill,
-                        ..LayoutParams::default()
-                    },
-                ),
-        )
-    }
+    Box::new(root)
 }
 
 fn main() -> Result<()> {
@@ -347,7 +320,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "ForEach - Controls",
                 controls_rect,
-                Box::new(ViewAdapter::new(ControlsView::new(model.clone()))),
+                build_controls_view(model.clone()),
             ),
             screen,
         );
@@ -356,7 +329,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "ForEach - List (scrollable)",
                 list_rect,
-                Box::new(ViewAdapter::new(ListView::new(model.clone()))),
+                build_list_view(model.clone()),
             ),
             screen,
         );

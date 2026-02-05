@@ -13,13 +13,12 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use atto_ui::declarative::{DeclarativeView, EdgeInsets, LayoutParams, Size, Text, VStack};
+use atto_ui::composable::{Component, EdgeInsets, LayoutParams, Size, Text, VStack};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
-use atto_ui::view::View;
 use atto_ui::wm::{Window, WindowKind};
 
-fn build_scroll_test_view() -> Box<dyn View> {
+fn build_scroll_test_view() -> Box<dyn Component> {
     let root = (0..80u16).fold(
         VStack::new()
             .padding_insets(EdgeInsets::symmetric(1, 1))
@@ -43,7 +42,7 @@ fn build_scroll_test_view() -> Box<dyn View> {
         },
     );
 
-    root.build_view()
+    Box::new(root)
 }
 
 fn main() -> Result<()> {

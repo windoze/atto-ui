@@ -10,8 +10,8 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
+use atto_ui::composable::{Component, ComponentContext, EventOutcome, EventResult};
 use atto_ui::theme::Theme;
-use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
 use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -32,15 +32,12 @@ impl WindowInfoView {
     }
 }
 
-impl View for WindowInfoView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult {
-            outcome: atto_ui::view::EventOutcome::Ignored,
-            action: ViewAction::None,
-        }
+impl Component for WindowInfoView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let lines = vec![
             Line::raw(""),
             Line::from(vec![
@@ -189,8 +186,8 @@ fn main() -> Result<()> {
 /// 模态对话框视图
 struct ModalView;
 
-impl View for ModalView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for ModalView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         // 按 Esc 或 Enter 关闭对话框
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc | KeyCode::Enter,
@@ -198,15 +195,12 @@ impl View for ModalView {
             ..
         }) = event
         {
-            return ViewEventResult {
-                outcome: atto_ui::view::EventOutcome::Consumed,
-                action: ViewAction::CloseWindow,
-            };
+            return EventResult::close_window();
         }
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let lines = vec![
             Line::raw(""),
             Line::styled(

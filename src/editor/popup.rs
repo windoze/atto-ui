@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
 use crate::reactive::Binding;
-use crate::view::{View, ViewContext, ViewEventResult};
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
 
 use super::theme::{EditorTheme, EditorThemeSet};
@@ -92,8 +92,8 @@ impl HoverPopupView {
     }
 }
 
-impl View for HoverPopupView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for HoverPopupView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if matches!(
             event,
             Event::Mouse(MouseEvent {
@@ -106,12 +106,12 @@ impl View for HoverPopupView {
                 self.dismissed.set(Some(model.anchor));
             }
             self.model.set(None);
-            return ViewEventResult::consumed();
+            return EventResult::consumed();
         }
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let Some(model) = self.model.get() else {
             return;
@@ -161,49 +161,49 @@ impl CompletionPopupView {
     }
 }
 
-impl View for CompletionPopupView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for CompletionPopupView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         let Some(mut model) = self.model.get() else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         let Event::Mouse(m) = event else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
         let Some(area) = self.last_area else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         // Mouse events may arrive in screen coordinates (WindowManager dispatch) or already-local
         // (nested containers). Interpret both.
         let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // The popup view draws its own border, so y=0/y=height-1 are borders.
                 if area.width < 3 || area.height < 3 {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 }
                 if local_x == 0
                     || local_y == 0
                     || local_x + 1 >= area.width
                     || local_y + 1 >= area.height
                 {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 }
 
                 let item_row = (local_y - 1) as usize;
                 let idx = model.scroll.saturating_add(item_row);
                 if idx >= model.items.len() {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 }
 
                 model.selected = idx;
                 model.accept = Some(idx);
                 self.model.set(Some(model));
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::ScrollUp => {
                 let visible = area.height.saturating_sub(2) as usize;
@@ -216,7 +216,7 @@ impl View for CompletionPopupView {
                     model.selected = model.scroll + visible - 1;
                 }
                 self.model.set(Some(model));
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::ScrollDown => {
                 let visible = area.height.saturating_sub(2) as usize;
@@ -231,13 +231,13 @@ impl View for CompletionPopupView {
                     }
                     self.model.set(Some(model));
                 }
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
-            _ => ViewEventResult::ignored(),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let Some(model) = self.model.get() else {
             return;
@@ -297,7 +297,7 @@ fn popup_decorations() -> WindowDecorations {
 
 /// Manages the tooltip windows used by an [`crate::editor::EditorView`].
 ///
-/// This is intentionally separate from the `View` itself: it needs access to the host
+/// This is intentionally separate from the `Component` itself: it needs access to the host
 /// `WindowManager` to create/close popup windows.
 #[derive(Debug)]
 pub struct EditorPopupWindows {

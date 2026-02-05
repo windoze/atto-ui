@@ -8,8 +8,8 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::theme::Theme;
-use atto_ui::view::{View, ViewContext, ViewEventResult};
 use atto_ui::wm::{Window, WindowKind};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -17,12 +17,12 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 /// 最简单的视图 - 显示 "Hello, World!" 文本
 struct HelloView;
 
-impl View for HelloView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+impl Component for HelloView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         // 创建带边框的块
         let block = Block::default()
             .borders(Borders::NONE)

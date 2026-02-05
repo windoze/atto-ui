@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::reactive::Binding;
-use crate::views::ScrollConfig;
+use crate::composable::ScrollConfig;
 
 use super::keymap::EditorKeymap;
 

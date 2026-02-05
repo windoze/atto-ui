@@ -14,7 +14,7 @@ use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar};
 use atto_ui::theme::Theme;
-use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::wm::{Window, WindowKind};
 
 /// Background window content that draws two wide glyphs:
@@ -22,12 +22,12 @@ use atto_ui::wm::{Window, WindowKind};
 /// - `你` is placed so its right half is overlapped by the foreground window border
 struct BgView;
 
-impl View for BgView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+impl Component for BgView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
         } else {
@@ -52,12 +52,12 @@ impl View for BgView {
 /// Foreground window content isn't important; the border is what we need.
 struct FgView;
 
-impl View for FgView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+impl Component for FgView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = ctx.theme.widget.normal;
         frame.buffer_mut().set_string(area.x, area.y, "FG", style);
     }

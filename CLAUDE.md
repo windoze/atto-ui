@@ -67,13 +67,8 @@ cargo fmt
 └─────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────┐
-│   声明式层 (Declarative Layer)                  │
-│   VStack/HStack/Grid (SwiftUI 风格)            │
-└─────────────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
-│   视图层次/布局层 (Views/Layout Layer)           │
-│   ScrollView / BorderView / ControlView        │
+│   组合式组件层 (Composable Layer)               │
+│   Component / VStack / Grid / ScrollContainer  │
 └─────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────┐
@@ -82,23 +77,18 @@ cargo fmt
 └─────────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────────┐
-│   核心 View Trait                               │
-│   渲染 + 事件处理 + 滚动支持                      │
-└─────────────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────────────┐
 │   支持模块                                       │
 │   Theme / Text / Reactive / Cache              │
 └─────────────────────────────────────────────────┘
 ```
 
-### 1. View 层 (`src/view.rs`)
-- 最底层的抽象,提供基本的渲染和输入处理接口
-- 定义了 `View` trait,所有可渲染的组件都实现此 trait
-- 处理 `Rect` 区域内的渲染和事件分发
-- 提供滚动支持的扩展接口 (`is_scrollable()`, `content_size()`, `viewport_size()`, `scroll_offset()`)
-- `ViewContext` 包含主题、窗口ID、焦点状态、滚动条宿主等渲染上下文
-- `ScrollbarHost` 决定滚动条由谁渲染 (视图自己 vs 窗口装饰)
+### 1. Composable 组件层 (`src/composable/`)
+- 核心抽象: `Component` trait + `ComponentContext` + `EventResult`
+- 布局类型: `LayoutParams`, `EdgeInsets`, `Align`, `Anchor`, `Size`
+- 容器: `VStack`, `HStack`, `Grid`, `Border`, `ScrollContainer`
+- 基础组件: `Text`, `TextFn`, `Divider`, `Spacer`
+- 列表: `ForEach` / `ForEachIdentifiable` (稳定 ID 复用)
+- 滚动: `ScrollConfig`, `ScrollbarVisibility`, 统一滚动条与虚拟内容接口
 
 ### 2. Window Manager 层 (`src/wm/`)
 - **`window.rs`**: 定义 `Window` 结构,包含窗口装饰(标题栏、边框、控件按钮、阴影)
@@ -108,61 +98,13 @@ cargo fmt
 - 处理窗口拖动、调整大小、最小化/最大化/关闭等操作
 - 支持滚动条拖动 (包括轨道点击、滑块拖动、箭头按钮)
 
-### 2.5. Views/Layout 层 (`src/views/`)
-在 View trait 和 Window Manager 之间,提供布局容器和滚动支持:
-- **`layout.rs`**: 布局约束和对齐系统
-  - `EdgeInsets` - 内边距/外边距 (top/right/bottom/left)
-  - `Align` - 对齐方式 (Start/Center/End/Stretch)
-  - `Size` - 尺寸约束 (Fill/Fixed/Weight/Content)
-  - `Anchor` - 锚点定位 (TopLeft/Center/BottomRight 等 9 种)
-  - `LayoutParams` - 视图布局参数
-- **`node.rs`**: 视图层次节点,支持嵌套视图和事件路由
-- **`scroll.rs`**: 滚动配置和工具函数
-  - `ScrollConfig` - 滚动配置 (滚动条可见性、箭头、滚轮步长)
-  - `ScrollbarVisibility` - 可见性策略 (Always/Auto/Never)
-  - 滚动条布局计算和碰撞检测函数
-- **`scroll_view.rs`**: 滚动视图容器 (支持虚拟滚动)
-  - `ScrollView<T: ScrollContent>` - 通用滚动容器
-  - `ScrollContent` trait - 委托驱动的内容渲染协议
-  - 支持大规模数据集的高效虚拟滚动
-- **`border.rs`**: 边框视图包装器
-  - `BorderView` - 为任意视图添加可选边框
-  - 支持边框挂载的滚动条 (当内部视图可滚动时)
-  - 处理滚动条交互和事件坐标转换
-- **`control_view.rs`**: 控件视图适配器
-  - `ControlView` - 将 `Control` (表单控件) 适配为 `View`
-- 支持 padding、margin、对齐、锚点定位等布局属性
-- 支持键盘、鼠标滚轮和滚动条拖动交互
-
-### 3. Declarative 层 (`src/declarative/`)
-SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
-- **`view.rs`**: `DeclarativeView` trait - 声明式视图接口
-- **`primitives.rs`**: 基础组件
-  - `Text` - 文本元素
-  - `Divider` - 分隔线
-  - `Spacer` - 空白占位符
-- **`vstack.rs`**: `VStack` - 声明式垂直堆栈布局 (SwiftUI 风格)
-- **`hstack.rs`**: `HStack` - 声明式水平堆栈布局 (SwiftUI 风格)
-- **`grid.rs`**: `Grid` - 声明式网格布局
-- **`stack_view.rs`**: `StackView` - 堆栈布局的实现层 (2300+ 行)
-- **`grid_view.rs`**: `GridView` - 网格布局的实现层 (1200+ 行)
-- **`view_adapter.rs`**: `ViewAdapter` - 适配器模式实现
-- **`widget_controls.rs`**: 控件集成 - 将控件集成到声明式 API
-- 支持构建器模式: `.padding()`, `.alignment()`, `.frame()` 等
-- 从声明式代码自动生成命令式 `View` 实现
-
-### 4. App 层 (`src/app/`)
+### 3. App 层 (`src/app/`)
 - **`desktop.rs`**: `Desktop` 是最高层容器,组合了 MenuBar + WindowManager + StatusBar
 - **`menu.rs`**: `MenuBar` 提供顶部菜单栏,支持嵌套菜单和键盘快捷键
 - **`status.rs`**: `StatusBar` 提供底部状态栏,支持动态内容
 
-### 5. Widgets (`src/widgets/`)
-标准 UI 组件,都实现了 `Control` trait (通过 `ControlView` 适配为 `View`):
-- **`primitives.rs`**: 表单控件基础接口
-  - `Control` trait - 表单控件接口 (焦点、事件处理、渲染)
-  - `Form` - 表单容器,管理多个控件的焦点切换 (Tab/Shift+Tab)
-  - `ControlOutcome` - 事件消费状态
-  - `FormAction` - 表单动作 (None/Changed/Submitted)
+### 4. Widgets (`src/widgets/`)
+标准 UI 组件,直接实现 `Component`:
 - **`button.rs`**: `Button` - 按钮 (Enter/Space 激活,鼠标点击支持)
 - **`checkbox.rs`**: `Checkbox` - 复选框 (Space/Enter 切换)
 - **`radio.rs`**: `RadioGroup` - 单选按钮组 (上下箭头切换)
@@ -174,7 +116,7 @@ SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
 - **`list.rs`**: `ListBox` - 列表框 (上下箭头选择,鼠标点击)
 - **`table.rs`**: `TableView` - 表格视图 (表头 + 数据行)
 
-### 6. 支持模块
+### 5. 支持模块
 - **`text/`**: 文本缓冲区和 Unicode 处理
   - `buffer.rs` - `TextBuffer` 基于 grapheme cluster 的文本编辑缓冲区
 - **`theme/`**: 主题和样式系统
@@ -192,7 +134,7 @@ SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
   - `scheduler.rs` - 渲染调度器
 - **`macros/`**: 过程宏支持 (`crates/atto-ui-macros/`)
   - `reactive.rs` - `#[reactive]` 宏 - 自动生成反应式属性
-  - `view_builder.rs` - `#[view_builder]` 宏 - 视图构建助手
+  - `view_builder.rs` - `view_builder!` 宏 - 组合式组件构建助手
 
 ## 测试策略
 
@@ -218,8 +160,8 @@ SwiftUI 风格的声明式 API,提供更简洁的 UI 构建方式:
    - `pty_horizontal_scrolling.rs` - 测试水平滚动功能
    - `pty_virtual_scrolling.rs` - 测试虚拟滚动功能 (委托驱动的大规模数据渲染)
    - `pty_view_hierarchy.rs` - 测试视图层次和布局容器
-   - `declarative_primitives.rs` - 测试声明式基础组件 (Text, Divider, Spacer)
-   - `declarative_vstack.rs` - 测试声明式 VStack 布局
+   - `composable_primitives.rs` - 测试基础组件 (Text, Divider, Spacer)
+   - `composable_vstack.rs` - 测试 VStack 布局
    - `macro_reactive.rs` - 测试反应式宏 (#[reactive])
    - `macro_view_builder.rs` - 测试视图构建宏 (#[view_builder])
 

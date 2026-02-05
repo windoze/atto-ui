@@ -9,13 +9,12 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::declarative::{
-    DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer, Text, TextFn, VStack,
-    ViewAdapter,
+use atto_ui::composable::{
+    Button, Checkbox, Component, Divider, EdgeInsets, HStack, Label, LayoutParams, RadioGroup,
+    Size, Spacer, Text, TextBox, TextFn, VStack,
 };
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{Button, Checkbox, Label, RadioGroup, TextBox};
 use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
@@ -84,185 +83,156 @@ impl AppModel {
     }
 }
 
-struct EditorView {
-    model: AppModel,
-}
+fn build_editor_view(model: AppModel) -> Box<dyn Component> {
+    let editor_enabled = model.editor_enabled.clone();
 
-impl EditorView {
-    fn new(model: AppModel) -> Self {
-        Self { model }
-    }
-}
+    let buttons = {
+        let enabled = editor_enabled.binding();
+        let model_load = model.clone();
+        let model_clear = model.clone();
+        let model_count = model.clone();
 
-impl DeclarativeView for EditorView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
-        let editor_enabled = model.editor_enabled.clone();
-
-        let buttons = {
-            let enabled = editor_enabled.binding();
-            let model_load = model.clone();
-            let model_clear = model.clone();
-            let model_count = model.clone();
-
-            HStack::new()
-                .spacing(1)
-                .child(
-                    Button::new("Load sample")
-                        .enabled(enabled.clone())
-                        .on_click(move || model_load.load_sample()),
-                )
-                .child(
-                    Button::new("Clear")
-                        .enabled(enabled.clone())
-                        .on_click(move || model_clear.clear()),
-                )
-                .child(Spacer::new())
-                .child(
-                    Button::new("Count +1")
-                        .enabled(enabled.clone())
-                        .on_click(move || {
-                            model_count.counter.update(|c| *c = c.saturating_add(1));
-                            model_count
-                                .status
-                                .set(format!("Counter = {}", model_count.counter.get()));
-                        }),
-                )
-        };
-
-        let status_line = {
-            let status = model.status.clone();
-            TextFn::new(move || format!("Status: {}", status.get()))
-        };
-
-        Box::new(
-            VStack::new()
-                .spacing(1)
-                .padding(1)
-                .child_with_layout(Text::new("Data Binding Demo (Editor)"), content_height())
-                .child_with_layout(
-                    Text::new("Tip: 'q' quits only when the focused widget did not consume the key; Ctrl+Q always quits."),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    Checkbox::new(
-                        "Enable editor (disables inputs/buttons below)",
-                        model.editor_enabled.binding(),
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(
-                    VStack::new()
-                        .spacing(1)
-                        .child(TextBox::new("Name", model.name.binding()).enabled(
-                            editor_enabled.binding(),
-                        ))
-                        .child(TextBox::new("Email", model.email.binding()).enabled(
-                            editor_enabled.binding(),
-                        ))
-                        .child(Checkbox::new("Subscribed", model.subscribed.binding()).enabled(
-                            editor_enabled.binding(),
-                        ))
-                        .child(
-                            RadioGroup::new(
-                                "Role",
-                                vec!["User".into(), "Admin".into(), "Guest".into()],
-                                model.role.binding(),
-                            )
-                            .enabled(editor_enabled.binding()),
-                        )
-                        .child(TextBox::new("Notes (single-line)", model.notes.binding()).enabled(
-                            editor_enabled.binding(),
-                        )),
-                    LayoutParams {
-                        height: Size::Fill,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    buttons,
-                    LayoutParams {
-                        height: Size::Fixed(3),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    status_line,
-                    LayoutParams {
-                        height: Size::Fixed(1),
-                        ..LayoutParams::default()
-                    },
-                ),
-        )
-    }
-}
-
-struct MirrorView {
-    model: AppModel,
-}
-
-impl MirrorView {
-    fn new(model: AppModel) -> Self {
-        Self { model }
-    }
-}
-
-impl DeclarativeView for MirrorView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
-        let name = model.name.clone();
-        let email = model.email.clone();
-        let notes = model.notes.clone();
-        let subscribed = model.subscribed.clone();
-        let role = model.role.clone();
-        let counter = model.counter.clone();
-
-        let summary = TextFn::new(move || {
-            let role_label = match role.get() {
-                0 => "User",
-                1 => "Admin",
-                2 => "Guest",
-                _ => "Unknown",
-            };
-            format!(
-                "Summary: name=\"{}\"  email=\"{}\"  notes=\"{}\"  subscribed={}  role={}  counter={}",
-                name.get(),
-                email.get(),
-                notes.get(),
-                subscribed.get(),
-                role_label,
-                counter.get(),
+        HStack::new()
+            .spacing(1)
+            .child(
+                Button::new("Load sample")
+                    .enabled(enabled.clone())
+                    .on_click(move || model_load.load_sample()),
             )
-        });
+            .child(
+                Button::new("Clear")
+                    .enabled(enabled.clone())
+                    .on_click(move || model_clear.clear()),
+            )
+            .child(Spacer::new())
+            .child(
+                Button::new("Count +1")
+                    .enabled(enabled.clone())
+                    .on_click(move || {
+                        model_count.counter.update(|c| *c = c.saturating_add(1));
+                        model_count
+                            .status
+                            .set(format!("Counter = {}", model_count.counter.get()));
+                    }),
+            )
+    };
 
-        Box::new(
+    let status_line = {
+        let status = model.status.clone();
+        TextFn::new(move || format!("Status: {}", status.get()))
+    };
+
+    let root = VStack::new()
+        .spacing(1)
+        .padding(1)
+        .child_with_layout(Text::new("Data Binding Demo (Editor)"), content_height())
+        .child_with_layout(
+            Text::new("Tip: 'q' quits only when the focused widget did not consume the key; Ctrl+Q always quits."),
+            content_height(),
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            Checkbox::new(
+                "Enable editor (disables inputs/buttons below)",
+                model.editor_enabled.binding(),
+            ),
+            content_height(),
+        )
+        .child_with_layout(
             VStack::new()
                 .spacing(1)
-                .padding_insets(EdgeInsets::all(1))
-                .child_with_layout(Text::new("Data Binding Demo (Mirror)"), content_height())
-                .child_with_layout(
-                    Text::new("These widgets share the same bindings as the Editor window."),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(Label::new("Try editing on either side:"), content_height())
-                .child(TextBox::new("Name (mirror)", model.name.binding()))
-                .child(Checkbox::new(
-                    "Subscribed (mirror)",
-                    model.subscribed.binding(),
+                .child(TextBox::new("Name", model.name.binding()).enabled(
+                    editor_enabled.binding(),
                 ))
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    summary,
-                    LayoutParams {
-                        height: Size::Fixed(1),
-                        ..LayoutParams::default()
-                    },
-                ),
+                .child(TextBox::new("Email", model.email.binding()).enabled(
+                    editor_enabled.binding(),
+                ))
+                .child(Checkbox::new("Subscribed", model.subscribed.binding()).enabled(
+                    editor_enabled.binding(),
+                ))
+                .child(
+                    RadioGroup::new(
+                        "Role",
+                        vec!["User".into(), "Admin".into(), "Guest".into()],
+                        model.role.binding(),
+                    )
+                    .enabled(editor_enabled.binding()),
+                )
+                .child(TextBox::new("Notes (single-line)", model.notes.binding()).enabled(
+                    editor_enabled.binding(),
+                )),
+            LayoutParams {
+                height: Size::Fill,
+                ..LayoutParams::default()
+            },
         )
-    }
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            buttons,
+            LayoutParams {
+                height: Size::Fixed(3),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            status_line,
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+
+    Box::new(root)
+}
+
+fn build_mirror_view(model: AppModel) -> Box<dyn Component> {
+    let name = model.name.clone();
+    let email = model.email.clone();
+    let notes = model.notes.clone();
+    let subscribed = model.subscribed.clone();
+    let role = model.role.clone();
+    let counter = model.counter.clone();
+
+    let summary = TextFn::new(move || {
+        let role_label = match role.get() {
+            0 => "User",
+            1 => "Admin",
+            2 => "Guest",
+            _ => "Unknown",
+        };
+        format!(
+            "Summary: name=\"{}\"  email=\"{}\"  notes=\"{}\"  subscribed={}  role={}  counter={}",
+            name.get(),
+            email.get(),
+            notes.get(),
+            subscribed.get(),
+            role_label,
+            counter.get(),
+        )
+    });
+
+    let root = VStack::new()
+        .spacing(1)
+        .padding_insets(EdgeInsets::all(1))
+        .child_with_layout(Text::new("Data Binding Demo (Mirror)"), content_height())
+        .child_with_layout(
+            Text::new("These widgets share the same bindings as the Editor window."),
+            content_height(),
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(Label::new("Try editing on either side:"), content_height())
+        .child(TextBox::new("Name (mirror)", model.name.binding()))
+        .child(Checkbox::new("Subscribed (mirror)", model.subscribed.binding()))
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            summary,
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+
+    Box::new(root)
 }
 
 fn main() -> Result<()> {
@@ -304,7 +274,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "Data Binding - Editor",
                 left,
-                Box::new(ViewAdapter::new(EditorView::new(model.clone()))),
+                build_editor_view(model.clone()),
             ),
             screen,
         );
@@ -313,7 +283,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "Data Binding - Mirror",
                 right,
-                Box::new(ViewAdapter::new(MirrorView::new(model.clone()))),
+                build_mirror_view(model.clone()),
             ),
             screen,
         );

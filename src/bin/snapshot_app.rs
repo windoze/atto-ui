@@ -17,12 +17,11 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use atto_ui::declarative::{DeclarativeView, EdgeInsets, HStack, LayoutParams, Size, VStack};
+use atto_ui::composable::{Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack};
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::view::{View, ViewContext, ViewEventResult};
 use atto_ui::widgets::{
-    Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
+    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
 };
 use atto_ui::wm::{Window, WindowKind};
 
@@ -45,12 +44,12 @@ impl LogView {
     }
 }
 
-impl View for LogView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+impl Component for LogView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
         } else {
@@ -72,7 +71,7 @@ impl View for LogView {
 }
 
 struct WidgetsView {
-    form: Form,
+    root: VStack,
 }
 
 impl WidgetsView {
@@ -83,18 +82,31 @@ impl WidgetsView {
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
 
-        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
-            Box::new(Label::new(
-                "Paste Unicode into the textbox (bracketed paste).",
-            )),
-            Box::new(TextBox::new("Text", text.binding())),
-            Box::new(Checkbox::new("Enable feature", enable_feature.binding())),
-            Box::new(RadioGroup::new(
-                "Mode",
-                vec!["Normal".into(), "Insert".into(), "Visual".into()],
-                mode.binding(),
-            )),
-            Box::new(
+        let row_layout = LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        };
+
+        let root = VStack::new()
+            .spacing(0)
+            .child_with_layout(
+                Label::new("Paste Unicode into the textbox (bracketed paste)."),
+                row_layout,
+            )
+            .child_with_layout(TextBox::new("Text", text.binding()), row_layout)
+            .child_with_layout(
+                Checkbox::new("Enable feature", enable_feature.binding()),
+                row_layout,
+            )
+            .child_with_layout(
+                RadioGroup::new(
+                    "Mode",
+                    vec!["Normal".into(), "Insert".into(), "Visual".into()],
+                    mode.binding(),
+                ),
+                row_layout,
+            )
+            .child_with_layout(
                 ListBox::new(
                     "List",
                     vec![
@@ -106,8 +118,9 @@ impl WidgetsView {
                     list_selection.binding(),
                 )
                 .height(5u16),
-            ),
-            Box::new(
+                row_layout,
+            )
+            .child_with_layout(
                 TableView::new(
                     "Table",
                     vec!["Key".into(), "Value".into()],
@@ -119,30 +132,49 @@ impl WidgetsView {
                     table_selection.binding(),
                 )
                 .height(6u16),
-            ),
-            Box::new(Button::new("OK")),
-        ];
-        Self {
-            form: Form::new(controls),
-        }
+                row_layout,
+            )
+            .child_with_layout(Button::new("OK"), row_layout);
+
+        Self { root }
     }
 }
 
-impl View for WidgetsView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        let (outcome, _action) = self.form.handle_event(event);
-        match outcome {
-            ControlOutcome::Consumed => ViewEventResult::consumed(),
-            ControlOutcome::Ignored => ViewEventResult::ignored(),
-        }
+impl Component for WidgetsView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.root.handle_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
     }
 }
 
-fn view_hierarchy_demo() -> Box<dyn View> {
+fn view_hierarchy_demo() -> Box<dyn Component> {
     let row = HStack::new()
         .spacing(2)
         .child_with_layout(
@@ -154,43 +186,44 @@ fn view_hierarchy_demo() -> Box<dyn View> {
         )
         .child(Label::new("click to toggle"));
 
-    VStack::new()
-        .padding_insets(EdgeInsets::all(1))
-        .spacing(1)
-        .child_with_layout(
-            Label::new("View hierarchy demo (VStack + HStack)"),
-            LayoutParams {
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        )
-        .child_with_layout(
-            row,
-            LayoutParams {
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        )
-        .build_view()
+    Box::new(
+        VStack::new()
+            .padding_insets(EdgeInsets::all(1))
+            .spacing(1)
+            .child_with_layout(
+                Label::new("Component hierarchy demo (VStack + HStack)"),
+                LayoutParams {
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                row,
+                LayoutParams {
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
+            ),
+    )
 }
 
 #[derive(Default)]
 struct AboutView;
 
-impl View for AboutView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for AboutView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc | KeyCode::Enter,
             kind: KeyEventKind::Press,
             ..
         }) = event
         {
-            return ViewEventResult::close_window();
+            return EventResult::close_window();
         }
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 "About modal (Esc to close).",
@@ -385,7 +418,7 @@ fn run(
         }
 
         // Application-level shortcuts: only run if the event was not handled by the view/window/desktop.
-        if result.outcome == atto_ui::view::EventOutcome::Ignored
+        if result.outcome == atto_ui::composable::EventOutcome::Ignored
             && let Event::Key(KeyEvent {
                 code,
                 kind: KeyEventKind::Press,

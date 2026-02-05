@@ -8,7 +8,7 @@
   - `src/widgets/` — built-in widgets (`TextBox`, `Button`, `ListBox`, etc.)
   - `src/text/` — Unicode/grapheme-aware text editing primitives
   - `src/theme/` — theming/styling
-  - `src/view.rs` — `View` trait for window content
+  - `src/composable/` — `Component` trait + layouts/scrolling for window content
 - `src/bin/snapshot_app.rs` — deterministic test target used by PTY tests
 - `crates/atto-ui-test-host/` — PTY runner + `vt100` screen parser for integration tests
 - `tests/` — end-to-end/PTY integration tests
@@ -41,4 +41,3 @@
 - Make small commits per bug/feature; each commit should pass `cargo test`.
 - PRs should include: what changed, how to test, and (for UI changes) a PTY buffer snippet or screenshot.
 - Update `IMPLEMENTATION_PLAN.md` when milestone status changes.
-

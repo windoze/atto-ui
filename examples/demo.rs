@@ -15,16 +15,15 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use atto_ui::declarative::{
-    Align, Anchor, AnchorPlacement, DeclarativeView, EdgeInsets, Grid, HStack, LayoutParams, Size,
-    VStack, ViewAdapter,
+use atto_ui::composable::{
+    Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
+    EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
+    ScrollContentContext, Size, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use atto_ui::view::{EventOutcome, View, ViewContext, ViewEventResult};
-use atto_ui::views::{ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
 use atto_ui::widgets::{
-    Button, Checkbox, ControlOutcome, Form, Label, ListBox, RadioGroup, TableView, TextBox,
+    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
 };
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
@@ -40,20 +39,20 @@ impl TextView {
     }
 }
 
-impl View for TextView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for TextView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
             kind: KeyEventKind::Press,
             ..
         }) = event
         {
-            return ViewEventResult::close_window();
+            return EventResult::close_window();
         }
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
         } else {
@@ -68,48 +67,84 @@ impl View for TextView {
 }
 
 struct DialogView {
-    form: Form,
+    root: VStack,
 }
 
 impl DialogView {
     fn about() -> Self {
-        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
-            Box::new(Label::new("Chatty demo (Turbo Vision-inspired).")),
-            Box::new(Label::new("")),
-            Box::new(Label::new("Keys:")),
-            Box::new(Label::new(
-                "  F10 menu   Ctrl+W window mode   F2 cycle theme",
-            )),
-            Box::new(Label::new("  n new win  a about/modal        t tooltip")),
-            Box::new(Label::new("  d widget states demo (disabled controls)")),
-            Box::new(Label::new("  v layout demo (view hierarchy)")),
-            Box::new(Label::new("  s scroll demo (viewport + scrollbars)")),
-            Box::new(Label::new(
-                "  z virtual scroll demo (delegate-driven content)",
-            )),
-            Box::new(Label::new("")),
-            Box::new(Button::new("Close (Enter)")),
-        ];
-        Self {
-            form: Form::new(controls),
-        }
+        let row_layout = LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        };
+
+        let root = VStack::new()
+            .spacing(0)
+            .child_with_layout(Label::new("Chatty demo (Turbo Vision-inspired)."), row_layout)
+            .child_with_layout(Label::new(""), row_layout)
+            .child_with_layout(Label::new("Keys:"), row_layout)
+            .child_with_layout(
+                Label::new("  F10 menu   Ctrl+W window mode   F2 cycle theme"),
+                row_layout,
+            )
+            .child_with_layout(
+                Label::new("  n new win  a about/modal        t tooltip"),
+                row_layout,
+            )
+            .child_with_layout(
+                Label::new("  d widget states demo (disabled controls)"),
+                row_layout,
+            )
+            .child_with_layout(Label::new("  v layout demo (view hierarchy)"), row_layout)
+            .child_with_layout(
+                Label::new("  s scroll demo (viewport + scrollbars)"),
+                row_layout,
+            )
+            .child_with_layout(
+                Label::new("  z virtual scroll demo (delegate-driven content)"),
+                row_layout,
+            )
+            .child_with_layout(Label::new(""), row_layout)
+            .child_with_layout(Button::new("Close (Enter)"), row_layout);
+
+        Self { root }
     }
 }
 
-impl View for DialogView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        let (outcome, action) = self.form.handle_event(event);
-        if action == atto_ui::widgets::FormAction::Submitted {
-            return ViewEventResult::close_window();
-        }
-        match outcome {
-            ControlOutcome::Consumed => ViewEventResult::consumed(),
-            ControlOutcome::Ignored => ViewEventResult::ignored(),
-        }
+impl Component for DialogView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let res = self.root.handle_event(event, ctx);
+        if res.action == atto_ui::composable::ComponentAction::Submitted {
+            return EventResult::close_window();
+        }
+        res
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -152,22 +187,16 @@ impl WidgetsModel {
 }
 
 struct WidgetsView {
-    model: WidgetsModel,
+    _model: WidgetsModel,
+    root: VStack,
 }
 
 impl WidgetsView {
     fn new() -> Self {
-        Self {
-            model: WidgetsModel::new(),
-        }
-    }
-}
-
-impl DeclarativeView for WidgetsView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
+        let model = WidgetsModel::new();
         let click_count = model.click_count.clone();
         let last_msg = model.last_msg.clone();
+        let model_for_state = model.clone();
 
         let labels = view_builder! {
             VStack {
@@ -276,14 +305,14 @@ impl DeclarativeView for WidgetsView {
         let states = view_builder! { TextFn(move || {
             let status = format!(
                 "States: count={}  checked={}  mode={}  list={}  table={}  text={}",
-                model.get_click_count(),
-                if model.get_enable_feature() { "on" } else { "off" },
-                model.get_mode(),
-                model.get_list_selection(),
-                model.get_table_selection(),
-                model.get_text(),
+                model_for_state.get_click_count(),
+                if model_for_state.get_enable_feature() { "on" } else { "off" },
+                model_for_state.get_mode(),
+                model_for_state.get_list_selection(),
+                model_for_state.get_table_selection(),
+                model_for_state.get_text(),
             );
-            let msg = model.get_last_msg();
+            let msg = model_for_state.get_last_msg();
             if msg.is_empty() {
                 status
             } else {
@@ -291,45 +320,79 @@ impl DeclarativeView for WidgetsView {
             }
         }) };
 
-        Box::new(
-            VStack::new()
-                .child_with_layout(
-                    labels,
-                    LayoutParams {
-                        height: Size::Fixed(2),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    widgets,
-                    LayoutParams {
-                        height: Size::Fill,
-                        align_y: Align::Stretch,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    buttons,
-                    LayoutParams {
-                        height: Size::Fixed(3),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    states,
-                    LayoutParams {
-                        height: Size::Fixed(1),
-                        ..LayoutParams::default()
-                    },
-                )
-                .spacing(1)
-                .padding(1),
-        )
+        let root = VStack::new()
+            .child_with_layout(
+                labels,
+                LayoutParams {
+                    height: Size::Fixed(2),
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                widgets,
+                LayoutParams {
+                    height: Size::Fill,
+                    align_y: Align::Stretch,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                buttons,
+                LayoutParams {
+                    height: Size::Fixed(3),
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                states,
+                LayoutParams {
+                    height: Size::Fixed(1),
+                    ..LayoutParams::default()
+                },
+            )
+            .spacing(1)
+            .padding(1);
+
+        Self { _model: model, root }
+    }
+}
+
+impl Component for WidgetsView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.root.handle_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
     }
 }
 
 struct DisabledWidgetsView {
-    form: Form,
+    root: VStack,
 }
 
 impl DisabledWidgetsView {
@@ -340,23 +403,35 @@ impl DisabledWidgetsView {
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
 
-        let controls: Vec<Box<dyn atto_ui::widgets::Control>> = vec![
-            Box::new(Label::new(
-                "Disabled widgets (not focusable/clickable; Esc closes)",
-            )),
-            Box::new(TextBox::new("Text (disabled)", text.binding()).enabled(false)),
-            Box::new(
+        let row_layout = LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        };
+
+        let root = VStack::new()
+            .spacing(0)
+            .child_with_layout(
+                Label::new("Disabled widgets (not focusable/clickable; Esc closes)"),
+                row_layout,
+            )
+            .child_with_layout(
+                TextBox::new("Text (disabled)", text.binding()).enabled(false),
+                row_layout,
+            )
+            .child_with_layout(
                 Checkbox::new("Enable feature (disabled)", enable_feature.binding()).enabled(false),
-            ),
-            Box::new(
+                row_layout,
+            )
+            .child_with_layout(
                 RadioGroup::new(
                     "Mode (disabled)",
                     vec!["Normal".into(), "Insert".into(), "Visual".into()],
                     mode.binding(),
                 )
                 .enabled(false),
-            ),
-            Box::new(
+                row_layout,
+            )
+            .child_with_layout(
                 ListBox::new(
                     "List (disabled)",
                     vec![
@@ -369,8 +444,9 @@ impl DisabledWidgetsView {
                 )
                 .height(4u16)
                 .enabled(false),
-            ),
-            Box::new(
+                row_layout,
+            )
+            .child_with_layout(
                 TableView::new(
                     "Table (disabled)",
                     vec!["Key".into(), "Value".into()],
@@ -383,38 +459,58 @@ impl DisabledWidgetsView {
                 )
                 .height(4u16)
                 .enabled(false),
-            ),
-            Box::new(Button::new("OK (disabled)").enabled(false)),
-            Box::new(Label::new(
-                "Tip: focus another window to see inactive state.",
-            )),
-        ];
-        Self {
-            form: Form::new(controls),
-        }
+                row_layout,
+            )
+            .child_with_layout(Button::new("OK (disabled)").enabled(false), row_layout)
+            .child_with_layout(
+                Label::new("Tip: focus another window to see inactive state."),
+                row_layout,
+            );
+
+        Self { root }
     }
 }
 
-impl View for DisabledWidgetsView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for DisabledWidgetsView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
             kind: KeyEventKind::Press,
             ..
         }) = event
         {
-            return ViewEventResult::close_window();
+            return EventResult::close_window();
         }
 
-        let (outcome, _) = self.form.handle_event(event);
-        match outcome {
-            ControlOutcome::Consumed => ViewEventResult::consumed(),
-            ControlOutcome::Ignored => ViewEventResult::ignored(),
-        }
+        self.root.handle_event(event, ctx)
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
-        self.form.draw(frame, area, ctx.theme, ctx.is_focused);
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -429,8 +525,8 @@ impl TooltipView {
     }
 }
 
-impl View for TooltipView {
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+impl Component for TooltipView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         frame.render_widget(
             Paragraph::new(self.text.clone()).style(ctx.theme.widget.normal),
             area,
@@ -438,7 +534,7 @@ impl View for TooltipView {
     }
 }
 
-fn build_layout_demo_view() -> Box<dyn View> {
+fn build_layout_demo_view() -> Box<dyn Component> {
     let toolbar = HStack::new()
         .spacing(1)
         .child_with_layout(
@@ -491,7 +587,7 @@ fn build_layout_demo_view() -> Box<dyn View> {
         .child(Checkbox::new("Row 2A", Property::new(false).binding()))
         .child(Checkbox::new("Row 2B", Property::new(false).binding()));
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(
@@ -535,11 +631,12 @@ fn build_layout_demo_view() -> Box<dyn View> {
                 },
                 ..LayoutParams::default()
             },
-        )
-        .build_view()
+        );
+
+    Box::new(root)
 }
 
-fn build_scroll_demo_view() -> Box<dyn View> {
+fn build_scroll_demo_view() -> Box<dyn Component> {
     let wide_row = (0..24).fold(HStack::new().spacing(1).scrollable(true), |row, i| {
         row.child_with_layout(
             Label::new(format!("[col-{i:02}]")),
@@ -585,7 +682,7 @@ fn build_scroll_demo_view() -> Box<dyn View> {
         },
     );
 
-    root.build_view()
+    Box::new(root)
 }
 
 #[derive(Clone, Debug)]
@@ -673,17 +770,17 @@ impl ScrollContent for VirtualScrollContentView {
         &mut self,
         event: &Event,
         _ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost,
-    ) -> ViewEventResult {
+        _host: &mut ScrollContainerHost,
+    ) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
             kind: KeyEventKind::Press,
             ..
         }) = event
         {
-            return ViewEventResult::close_window();
+            return EventResult::close_window();
         }
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
     fn draw(
@@ -691,16 +788,16 @@ impl ScrollContent for VirtualScrollContentView {
         frame: &mut Frame<'_>,
         area: Rect,
         ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost,
+        _host: &mut ScrollContainerHost,
     ) {
         if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let style = if ctx.view.is_focused {
-            ctx.view.theme.widget.focused
+        let style = if ctx.component.is_focused {
+            ctx.component.theme.widget.focused
         } else {
-            ctx.view.theme.widget.normal
+            ctx.component.theme.widget.normal
         };
 
         let scroll = ctx.info.scroll_offset;
@@ -714,8 +811,8 @@ impl ScrollContent for VirtualScrollContentView {
     }
 }
 
-fn build_virtual_scroll_demo_view() -> ScrollView {
-    ScrollView::new(Box::new(VirtualScrollContentView::new(10_000, 40)))
+fn build_virtual_scroll_demo_view() -> ScrollContainer {
+    ScrollContainer::new(Box::new(VirtualScrollContentView::new(10_000, 40)))
         .with_padding(EdgeInsets::all(1))
 }
 
@@ -885,7 +982,7 @@ fn main() -> Result<()> {
                 width: 40,
                 height: work.height.saturating_sub(1),
             },
-            Box::new(ViewAdapter::new(WidgetsView::new())),
+            Box::new(WidgetsView::new()),
         ),
         screen,
     );

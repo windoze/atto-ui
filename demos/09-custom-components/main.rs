@@ -1,5 +1,5 @@
 // Demo: 09-custom-components
-// 演示如何用声明式 + 反应式 API 封装可复用组件（含：bindings / callbacks / disabled state）。
+// 演示如何用组合式 + 反应式 API 封装可复用组件（含：bindings / callbacks / disabled state）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,13 +10,12 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::declarative::{
-    Align, DeclarativeView, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer, Text, TextFn,
-    VStack, ViewAdapter,
+use atto_ui::composable::{
+    Align, Button, Checkbox, Component, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer,
+    Text, TextBox, TextFn, VStack,
 };
 use atto_ui::reactive::{Binding, Property};
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{Button, Checkbox, TextBox};
 use atto_ui::wm::{Window, WindowKind};
 
 fn content_height() -> LayoutParams {
@@ -85,11 +84,9 @@ impl LabeledField {
         self.enabled = enabled.into();
         self
     }
-}
 
-impl DeclarativeView for LabeledField {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        Box::new(TextBox::new(self.title.clone(), self.value.clone()).enabled(self.enabled.clone()))
+    fn build(&self) -> TextBox {
+        TextBox::new(self.title.clone(), self.value.clone()).enabled(self.enabled.clone())
     }
 }
 
@@ -114,56 +111,52 @@ impl CounterRow {
         self.enabled = enabled.into();
         self
     }
-}
 
-impl DeclarativeView for CounterRow {
-    fn body(&self) -> Box<dyn DeclarativeView> {
+    fn build(&self) -> HStack {
         let enabled = self.enabled.clone();
         let value_for_minus = self.value.clone();
         let value_for_plus = self.value.clone();
         let value_for_text = self.value.clone();
         let title = self.title.clone();
 
-        Box::new(
-            HStack::new()
-                .spacing(1)
-                .child_with_layout(
-                    Text::new(title),
-                    LayoutParams {
-                        width: Size::Weight(1),
-                        height: Size::Content,
-                        align_y: Align::Center,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    Button::new("−")
-                        .enabled(enabled.clone())
-                        .on_click(move || value_for_minus.update(|v| *v = v.saturating_sub(1))),
-                    LayoutParams {
-                        width: Size::Fixed(5),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    Button::new("+")
-                        .enabled(enabled.clone())
-                        .on_click(move || value_for_plus.update(|v| *v = v.saturating_add(1))),
-                    LayoutParams {
-                        width: Size::Fixed(5),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    TextFn::new(move || format!("{}", value_for_text.get())),
-                    LayoutParams {
-                        width: Size::Fixed(12),
-                        height: Size::Content,
-                        align_y: Align::Center,
-                        ..LayoutParams::default()
-                    },
-                ),
-        )
+        HStack::new()
+            .spacing(1)
+            .child_with_layout(
+                Text::new(title),
+                LayoutParams {
+                    width: Size::Weight(1),
+                    height: Size::Content,
+                    align_y: Align::Center,
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                Button::new("−")
+                    .enabled(enabled.clone())
+                    .on_click(move || value_for_minus.update(|v| *v = v.saturating_sub(1))),
+                LayoutParams {
+                    width: Size::Fixed(5),
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                Button::new("+")
+                    .enabled(enabled.clone())
+                    .on_click(move || value_for_plus.update(|v| *v = v.saturating_add(1))),
+                LayoutParams {
+                    width: Size::Fixed(5),
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                TextFn::new(move || format!("{}", value_for_text.get())),
+                LayoutParams {
+                    width: Size::Fixed(12),
+                    height: Size::Content,
+                    align_y: Align::Center,
+                    ..LayoutParams::default()
+                },
+            )
     }
 }
 
@@ -188,218 +181,198 @@ impl SearchBar {
         self.enabled = enabled.into();
         self
     }
-}
 
-impl DeclarativeView for SearchBar {
-    fn body(&self) -> Box<dyn DeclarativeView> {
+    fn build(&self) -> HStack {
         let enabled = self.enabled.clone();
         let query = self.query.clone();
         let on_search = self.on_search.clone();
 
-        Box::new(
+        HStack::new()
+            .spacing(1)
+            .child_with_layout(
+                TextBox::new("Query", query.binding()).enabled(enabled.clone()),
+                LayoutParams {
+                    width: Size::Weight(1),
+                    ..LayoutParams::default()
+                },
+            )
+            .child_with_layout(
+                Button::new("Search")
+                    .enabled(enabled.clone())
+                    .on_click(move || {
+                        let q = query.get();
+                        if !q.trim().is_empty() {
+                            on_search(q.clone());
+                        }
+                        query.set(String::new());
+                    }),
+                LayoutParams {
+                    width: Size::Fixed(10),
+                    ..LayoutParams::default()
+                },
+            )
+    }
+}
+
+fn build_components_view(model: DemoModel) -> Box<dyn Component> {
+    let enabled = model.enabled.binding();
+
+    let search_callback = {
+        let model = model.clone();
+        Arc::new(move |q: String| {
+            model.last_search.set(q.clone());
+            model.status.set(format!("Searched for: {q}"));
+        })
+    };
+
+    let reset_button = {
+        let model = model.clone();
+        Button::new("Reset").on_click(move || model.reset())
+    };
+
+    let status_line = {
+        let status = model.status.clone();
+        TextFn::new(move || format!("Status: {}", status.get()))
+    };
+
+    let root = VStack::new()
+        .spacing(1)
+        .padding(1)
+        .scrollable(true)
+        .child_with_layout(Text::new("Custom Components Demo"), content_height())
+        .child_with_layout(
+            Text::new(
+                "Components are plain Rust structs that compose views + pass bindings/callbacks.",
+            ),
+            content_height(),
+        )
+        .child_with_layout(
+            Text::new(
+                "Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it.",
+            ),
+            content_height(),
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            Checkbox::new("Enable controls", model.enabled.binding()),
+            content_height(),
+        )
+        .child_with_layout(
+            VStack::new()
+                .spacing(1)
+                .child_with_layout(Text::new("Profile"), content_height())
+                .child_with_layout(
+                    LabeledField::new("Name", model.name.binding())
+                        .enabled(enabled.clone())
+                        .build(),
+                    content_height(),
+                )
+                .child_with_layout(
+                    LabeledField::new("Email", model.email.binding())
+                        .enabled(enabled.clone())
+                        .build(),
+                    content_height(),
+                )
+                .child_with_layout(
+                    Checkbox::new("Subscribed", model.subscribed.binding())
+                        .enabled(enabled.clone()),
+                    content_height(),
+                ),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            VStack::new()
+                .spacing(1)
+                .child_with_layout(Text::new("Tuning"), content_height())
+                .child_with_layout(
+                    CounterRow::new("Volume", model.volume.binding())
+                        .enabled(enabled.clone())
+                        .build(),
+                    content_height(),
+                )
+                .child_with_layout(
+                    CounterRow::new("Brightness", model.brightness.binding())
+                        .enabled(enabled.clone())
+                        .build(),
+                    content_height(),
+                ),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
+            VStack::new()
+                .spacing(1)
+                .child_with_layout(
+                    Text::new("Search (local state + callback)"),
+                    content_height(),
+                )
+                .child_with_layout(
+                    SearchBar::new(search_callback)
+                        .enabled(enabled.clone())
+                        .build(),
+                    content_height(),
+                )
+                .child_with_layout(status_line, content_height()),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(
             HStack::new()
                 .spacing(1)
-                .child_with_layout(
-                    TextBox::new("Query", query.binding()).enabled(enabled.clone()),
-                    LayoutParams {
-                        width: Size::Weight(1),
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(
-                    Button::new("Search")
-                        .enabled(enabled.clone())
-                        .on_click(move || {
-                            let q = query.get();
-                            if !q.trim().is_empty() {
-                                on_search(q.clone());
-                            }
-                            query.set(String::new());
-                        }),
-                    LayoutParams {
-                        width: Size::Fixed(10),
-                        ..LayoutParams::default()
-                    },
-                ),
+                .child(reset_button.enabled(enabled.clone()))
+                .child(Spacer::new()),
+            content_height(),
+        );
+
+    Box::new(root)
+}
+
+fn build_preview_view(model: DemoModel) -> Box<dyn Component> {
+    let name = model.name.clone();
+    let email = model.email.clone();
+    let subscribed = model.subscribed.clone();
+    let volume = model.volume.clone();
+    let brightness = model.brightness.clone();
+    let last_search = model.last_search.clone();
+    let enabled = model.enabled.clone();
+
+    let summary = TextFn::new(move || {
+        format!(
+            "User: {} <{}>  subscribed={}  volume={}  brightness={}  last_search=\"{}\"  enabled={}",
+            name.get(),
+            email.get(),
+            subscribed.get(),
+            volume.get(),
+            brightness.get(),
+            last_search.get(),
+            enabled.get(),
         )
-    }
-}
+    });
 
-struct ComponentsView {
-    model: DemoModel,
-}
-
-impl ComponentsView {
-    fn new(model: DemoModel) -> Self {
-        Self { model }
-    }
-}
-
-impl DeclarativeView for ComponentsView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
-        let enabled = model.enabled.binding();
-
-        let search_callback = {
-            let model = model.clone();
-            Arc::new(move |q: String| {
-                model.last_search.set(q.clone());
-                model.status.set(format!("Searched for: {q}"));
-            })
-        };
-
-        let reset_button = {
-            let model = model.clone();
-            Button::new("Reset").on_click(move || model.reset())
-        };
-
-        let status_line = {
-            let status = model.status.clone();
-            TextFn::new(move || format!("Status: {}", status.get()))
-        };
-
-        Box::new(
-            VStack::new()
-                .spacing(1)
-                .padding(1)
-                .scrollable(true)
-                .child_with_layout(Text::new("Custom Components Demo"), content_height())
-                .child_with_layout(
-                    Text::new(
-                        "Components are plain Rust structs that compose views + pass bindings/callbacks.",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(
-                    Text::new(
-                        "Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it.",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    Checkbox::new("Enable controls", model.enabled.binding()),
-                    content_height(),
-                )
-                .child_with_layout(
-                    VStack::new()
-                        .spacing(1)
-                        .child_with_layout(Text::new("Profile"), content_height())
-                        .child_with_layout(
-                            LabeledField::new("Name", model.name.binding()).enabled(enabled.clone()),
-                            content_height(),
-                        )
-                        .child_with_layout(
-                            LabeledField::new("Email", model.email.binding()).enabled(enabled.clone()),
-                            content_height(),
-                        )
-                        .child_with_layout(
-                            Checkbox::new("Subscribed", model.subscribed.binding())
-                                .enabled(enabled.clone()),
-                            content_height(),
-                        ),
-                    LayoutParams {
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    VStack::new()
-                        .spacing(1)
-                        .child_with_layout(Text::new("Tuning"), content_height())
-                        .child_with_layout(
-                            CounterRow::new("Volume", model.volume.binding()).enabled(enabled.clone()),
-                            content_height(),
-                        )
-                        .child_with_layout(
-                            CounterRow::new("Brightness", model.brightness.binding()).enabled(enabled.clone()),
-                            content_height(),
-                        ),
-                    LayoutParams {
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    VStack::new()
-                        .spacing(1)
-                        .child_with_layout(
-                            Text::new("Search (local state + callback)"),
-                            content_height(),
-                        )
-                        .child_with_layout(
-                            SearchBar::new(search_callback).enabled(enabled.clone()),
-                            content_height(),
-                        )
-                        .child_with_layout(status_line, content_height()),
-                    LayoutParams {
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(
-                    HStack::new()
-                        .spacing(1)
-                        .child(reset_button.enabled(enabled.clone()))
-                        .child(Spacer::new()),
-                    content_height(),
-                ),
+    let root = VStack::new()
+        .spacing(1)
+        .padding_insets(EdgeInsets::all(1))
+        .child_with_layout(Text::new("Preview (shared bindings)"), content_height())
+        .child_with_layout(
+            Text::new(
+                "This window is read-only; it updates live as you interact with the components.",
+            ),
+            content_height(),
         )
-    }
-}
+        .child_with_layout(Divider::horizontal(), content_height())
+        .child_with_layout(summary, content_height());
 
-struct PreviewView {
-    model: DemoModel,
-}
-
-impl PreviewView {
-    fn new(model: DemoModel) -> Self {
-        Self { model }
-    }
-}
-
-impl DeclarativeView for PreviewView {
-    fn body(&self) -> Box<dyn DeclarativeView> {
-        let model = self.model.clone();
-        let name = model.name.clone();
-        let email = model.email.clone();
-        let subscribed = model.subscribed.clone();
-        let volume = model.volume.clone();
-        let brightness = model.brightness.clone();
-        let last_search = model.last_search.clone();
-        let enabled = model.enabled.clone();
-
-        let summary = TextFn::new(move || {
-            format!(
-                "User: {} <{}>  subscribed={}  volume={}  brightness={}  last_search=\"{}\"  enabled={}",
-                name.get(),
-                email.get(),
-                subscribed.get(),
-                volume.get(),
-                brightness.get(),
-                last_search.get(),
-                enabled.get(),
-            )
-        });
-
-        Box::new(
-            VStack::new()
-                .spacing(1)
-                .padding_insets(EdgeInsets::all(1))
-                .child_with_layout(Text::new("Preview (shared bindings)"), content_height())
-                .child_with_layout(
-                    Text::new(
-                        "This window is read-only; it updates live as you interact with the components.",
-                    ),
-                    content_height(),
-                )
-                .child_with_layout(Divider::horizontal(), content_height())
-                .child_with_layout(summary, content_height()),
-        )
-    }
+    Box::new(root)
 }
 
 fn main() -> Result<()> {
@@ -441,7 +414,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "Custom Components",
                 left,
-                Box::new(ViewAdapter::new(ComponentsView::new(model.clone()))),
+                build_components_view(model.clone()),
             ),
             screen,
         );
@@ -450,7 +423,7 @@ fn main() -> Result<()> {
                 WindowKind::Normal,
                 "Preview",
                 right,
-                Box::new(ViewAdapter::new(PreviewView::new(model.clone()))),
+                build_preview_view(model.clone()),
             ),
             screen,
         );

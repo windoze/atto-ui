@@ -9,8 +9,10 @@ use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
 use crate::reactive::Binding;
-use crate::view::{View, ViewContext, ViewEventResult};
-use crate::views::scroll::{ScrollConfig, ScrollOffset, clamp_scroll_offset, max_scroll_offset};
+use crate::composable::{
+    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig, ScrollOffset,
+};
+use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::wm::WindowMinSizeMode;
 
 #[derive(Debug, Clone)]
@@ -148,7 +150,7 @@ fn fill_buffer(buf: &mut Buffer, style: Style) {
 /// In `Clip`/`Scroll` modes, when the viewport is smaller than the inner view's minimum size,
 /// the inner view is rendered at its minimum size and then clipped (or panned with scrollbars).
 pub(crate) struct WindowMinSizeView {
-    inner: Box<dyn View>,
+    inner: Box<dyn Component>,
     mode: Binding<WindowMinSizeMode>,
     overflow_active: bool,
     viewport_size: (u16, u16),
@@ -159,7 +161,7 @@ pub(crate) struct WindowMinSizeView {
 }
 
 impl WindowMinSizeView {
-    pub(crate) fn new(inner: Box<dyn View>, mode: Binding<WindowMinSizeMode>) -> Self {
+    pub(crate) fn new(inner: Box<dyn Component>, mode: Binding<WindowMinSizeMode>) -> Self {
         Self {
             inner,
             mode,
@@ -197,7 +199,7 @@ impl WindowMinSizeView {
         &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
-        ctx: ViewContext<'_>,
+        ctx: ComponentContext<'_>,
         scroll: ScrollOffset,
     ) {
         let (min_w, min_h) = self.inner.min_size();
@@ -214,7 +216,7 @@ impl WindowMinSizeView {
             return;
         }
 
-        let inner_ctx = ViewContext {
+        let inner_ctx = ComponentContext {
             theme: ctx.theme,
             window_id: ctx.window_id,
             is_focused: ctx.is_focused,
@@ -269,14 +271,14 @@ impl WindowMinSizeView {
     fn forward_event_scrolled(
         &mut self,
         event: &Event,
-        ctx: ViewContext<'_>,
+        ctx: ComponentContext<'_>,
         scroll: ScrollOffset,
-    ) -> ViewEventResult {
+    ) -> EventResult {
         let Some(area) = self.last_area else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
-        let inner_ctx = ViewContext {
+        let inner_ctx = ComponentContext {
             theme: ctx.theme,
             window_id: ctx.window_id,
             is_focused: ctx.is_focused,
@@ -286,7 +288,7 @@ impl WindowMinSizeView {
 
         if let Event::Mouse(m) = event {
             let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                return ViewEventResult::ignored();
+                return EventResult::ignored();
             };
             let translated = MouseEvent {
                 kind: m.kind,
@@ -327,7 +329,7 @@ impl WindowMinSizeView {
     }
 }
 
-impl View for WindowMinSizeView {
+impl Component for WindowMinSizeView {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
     }
@@ -356,11 +358,11 @@ impl View for WindowMinSizeView {
         self.inner.desired_height()
     }
 
-    fn children(&self) -> &[crate::views::ViewNode] {
+    fn children(&self) -> &[ComponentNode] {
         self.inner.children()
     }
 
-    fn children_mut(&mut self) -> Option<&mut Vec<crate::views::ViewNode>> {
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         self.inner.children_mut()
     }
 
@@ -414,7 +416,7 @@ impl View for WindowMinSizeView {
         }
     }
 
-    fn scroll_to_child(&mut self, child_id: crate::views::ViewId) {
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
         if matches!(self.overflow_mode(), Some(WindowMinSizeMode::Scroll)) {
             // Window-level panning does not know how to target individual descendants; defer.
             self.inner.scroll_to_child(child_id);
@@ -423,7 +425,7 @@ impl View for WindowMinSizeView {
         }
     }
 
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let Some(area) = self.last_area else {
             return self.inner.handle_event(event, ctx);
         };
@@ -441,7 +443,7 @@ impl View for WindowMinSizeView {
                 match event {
                     Event::Key(KeyEvent { code, kind, .. }) => {
                         if matches!(kind, KeyEventKind::Release) {
-                            return ViewEventResult::ignored();
+                            return EventResult::ignored();
                         }
 
                         let max = max_scroll_offset(self.content_size, self.viewport_size);
@@ -466,14 +468,14 @@ impl View for WindowMinSizeView {
                         };
 
                         if changed {
-                            ViewEventResult::consumed()
+                            EventResult::consumed()
                         } else {
-                            ViewEventResult::ignored()
+                            EventResult::ignored()
                         }
                     }
                     Event::Mouse(m) => {
                         if mouse_coords_local_to_area(area, *m).is_none() {
-                            return ViewEventResult::ignored();
+                            return EventResult::ignored();
                         }
 
                         let step = self.scroll_config.wheel_step as i16;
@@ -486,19 +488,19 @@ impl View for WindowMinSizeView {
                         };
 
                         if changed {
-                            ViewEventResult::consumed()
+                            EventResult::consumed()
                         } else {
-                            ViewEventResult::ignored()
+                            EventResult::ignored()
                         }
                     }
-                    _ => ViewEventResult::ignored(),
+                    _ => EventResult::ignored(),
                 }
             }
             Some(WindowMinSizeMode::Enforce) | None => self.inner.handle_event(event, ctx),
         }
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
 
         let overflow_now = self.should_overflow(area);

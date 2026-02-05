@@ -1,4 +1,4 @@
-use atto_ui::declarative::DeclarativeView;
+use atto_ui::composable::Component;
 use atto_ui_macros::view_builder;
 
 #[test]
@@ -13,7 +13,7 @@ fn view_builder_macro_builds_vstack() {
         .padding(2)
     };
 
-    assert!(!view.is_primitive());
+    assert_eq!(view.children().len(), 3);
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn view_builder_macro_supports_nesting() {
         .spacing(1)
     };
 
-    assert!(!view.is_primitive());
+    assert_eq!(view.children().len(), 2);
 }
 
 #[test]
@@ -53,5 +53,5 @@ fn view_builder_macro_supports_child_modifiers() {
         .spacing(1)
     };
 
-    assert!(!view.is_primitive());
+    assert_eq!(view.children().len(), 2);
 }

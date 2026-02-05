@@ -4,10 +4,8 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
-use crate::theme::Theme;
-
-use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct Label {
@@ -34,20 +32,28 @@ impl Label {
     }
 }
 
-impl Control for Label {
+impl Component for Label {
     fn is_focusable(&self) -> bool {
         false
     }
 
-    fn handle_event(&mut self, _event: &Event) -> (ControlOutcome, FormAction) {
-        (ControlOutcome::Ignored, FormAction::None)
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.text.get().len().min(u16::MAX as usize) as u16)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if self.enabled.get() {
-            theme.widget.dim
+            ctx.theme.widget.dim
         } else {
-            theme.widget.disabled
+            ctx.theme.widget.disabled
         };
         let p = Paragraph::new(Line::styled(self.text.get(), style));
         frame.render_widget(p, area);

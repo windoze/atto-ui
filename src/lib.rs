@@ -2,14 +2,12 @@
 
 pub mod app;
 pub mod cache;
-pub mod declarative;
+pub mod composable;
 pub mod dialogs;
 pub mod editor;
 pub mod reactive;
 pub mod text;
 pub mod theme;
-pub mod view;
-pub mod views;
 pub mod widgets;
 pub mod wm;
 

@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -6,21 +6,41 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 use crate::text::TextBuffer;
-use crate::theme::Theme;
 
-use super::{Control, ControlOutcome, FormAction};
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+
+    if m.column >= area.x
+        && m.column < area.x.saturating_add(area.width)
+        && m.row >= area.y
+        && m.row < area.y.saturating_add(area.height)
+    {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
+}
 
 #[derive(Clone, Debug)]
 pub struct TextBox {
     title: Binding<String>,
     buffer: TextBuffer,
     binding: Binding<String>,
-    focused: bool,
     enabled: Binding<bool>,
     scroll: u16,
-    area: Option<Rect>,
+    last_area: Option<Rect>,
 }
 
 impl TextBox {
@@ -30,10 +50,9 @@ impl TextBox {
             title: title.into(),
             buffer: TextBuffer::with_text(initial),
             binding,
-            focused: false,
             enabled: true.into(),
             scroll: 0,
-            area: None,
+            last_area: None,
         }
     }
 
@@ -48,7 +67,7 @@ impl TextBox {
     }
 }
 
-impl Control for TextBox {
+impl Component for TextBox {
     fn min_width(&self) -> u16 {
         3
     }
@@ -61,25 +80,13 @@ impl Control for TextBox {
         self.enabled.get()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.get()
+    fn desired_height(&self) -> Option<u16> {
+        Some(3)
     }
 
-    fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    fn set_area(&mut self, area: Rect) {
-        self.area = Some(area);
-    }
-
-    fn desired_height(&self) -> u16 {
-        3
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         match event {
             Event::Mouse(m) => {
@@ -87,38 +94,42 @@ impl Control for TextBox {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
 
-                let Some(area) = self.area else {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
                 };
+                let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                    return EventResult::ignored();
+                };
+
                 let inner = Rect {
-                    x: area.x.saturating_add(1),
-                    y: area.y.saturating_add(1),
+                    x: 1,
+                    y: 1,
                     width: area.width.saturating_sub(2),
                     height: area.height.saturating_sub(2),
                 };
                 if inner.width == 0 || inner.height == 0 {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
 
                 // TextBox is a single-line editor.
-                if m.row != inner.y {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                if local_y != inner.y {
+                    return EventResult::ignored();
                 }
-                if m.column < inner.x || m.column >= inner.x.saturating_add(inner.width) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                if local_x < inner.x || local_x >= inner.x.saturating_add(inner.width) {
+                    return EventResult::ignored();
                 }
 
-                let col = self.scroll.saturating_add(m.column.saturating_sub(inner.x));
+                let col = self.scroll.saturating_add(local_x.saturating_sub(inner.x));
                 self.buffer.set_cursor_display_col(col);
-                (ControlOutcome::Consumed, FormAction::None)
+                EventResult::consumed()
             }
             Event::Paste(s) => {
                 self.buffer.insert_str(s);
                 self.binding.set(self.buffer.text().to_string());
-                (ControlOutcome::Consumed, FormAction::Changed)
+                EventResult::changed()
             }
             Event::Key(KeyEvent {
                 code, modifiers, ..
@@ -128,51 +139,52 @@ impl Control for TextBox {
                     KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
                         self.buffer.set_text("");
                         self.binding.set(String::new());
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
                     KeyCode::Backspace => {
                         self.buffer.backspace();
                         self.binding.set(self.buffer.text().to_string());
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
                     KeyCode::Delete => {
                         self.buffer.delete();
                         self.binding.set(self.buffer.text().to_string());
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
                     KeyCode::Left => {
                         self.buffer.move_left();
-                        (ControlOutcome::Consumed, FormAction::None)
+                        EventResult::consumed()
                     }
                     KeyCode::Right => {
                         self.buffer.move_right();
-                        (ControlOutcome::Consumed, FormAction::None)
+                        EventResult::consumed()
                     }
                     KeyCode::Home => {
                         self.buffer.move_home();
-                        (ControlOutcome::Consumed, FormAction::None)
+                        EventResult::consumed()
                     }
                     KeyCode::End => {
                         self.buffer.move_end();
-                        (ControlOutcome::Consumed, FormAction::None)
+                        EventResult::consumed()
                     }
-                    KeyCode::Enter => (ControlOutcome::Consumed, FormAction::Submitted),
+                    KeyCode::Enter => EventResult::submitted(),
                     KeyCode::Char(c)
                         if !mods.contains(KeyModifiers::CONTROL)
                             && !mods.contains(KeyModifiers::ALT) =>
                     {
                         self.buffer.insert_char(*c);
                         self.binding.set(self.buffer.text().to_string());
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
-                    _ => (ControlOutcome::Ignored, FormAction::None),
+                    _ => EventResult::ignored(),
                 }
             }
-            _ => (ControlOutcome::Ignored, FormAction::None),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         if area.height == 0 || area.width == 0 {
             return;
         }
@@ -182,16 +194,16 @@ impl Control for TextBox {
         }
         let enabled = self.enabled.get();
         let style = if !enabled {
-            theme.widget.disabled
-        } else if self.focused {
-            theme.widget.focused
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
         } else {
-            theme.widget.normal
+            ctx.theme.widget.normal
         };
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_set(theme.border_set(false))
+            .border_set(ctx.theme.border_set(false))
             .title(self.title.get());
         frame.render_widget(block.border_style(style), area);
 
@@ -210,7 +222,7 @@ impl Control for TextBox {
         let visible = slice_by_width(self.buffer.text(), self.scroll, inner.width);
         frame.render_widget(Paragraph::new(Line::raw(visible)).style(style), inner);
 
-        if self.focused {
+        if ctx.is_focused {
             let x = inner
                 .x
                 .saturating_add(cursor_col.saturating_sub(self.scroll).min(inner.width - 1));

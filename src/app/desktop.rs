@@ -6,8 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
 use crate::theme::Theme;
-use crate::view::EventOutcome;
-use crate::view::ViewAction;
+use crate::composable::{ComponentAction, EventOutcome};
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode};
 
 use super::menu::{MenuAction, MenuBar};
@@ -203,7 +202,7 @@ impl Desktop {
                 self.wm
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
             {
-                if res.action == ViewAction::CloseWindow {
+                if res.action == ComponentAction::CloseWindow {
                     if self.wm.request_close(id) {
                         return DesktopEventResult::close_window(id);
                     }
@@ -237,7 +236,7 @@ impl Desktop {
                 self.wm
                     .dispatch_to_window_view(target_id, event, layout.work_area, &self.theme)
         {
-            if res.action == ViewAction::CloseWindow {
+            if res.action == ComponentAction::CloseWindow {
                 if self.wm.request_close(id) {
                     return DesktopEventResult::close_window(id);
                 }
@@ -254,7 +253,7 @@ impl Desktop {
                 self.wm
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
         {
-            if res.action == ViewAction::CloseWindow {
+            if res.action == ComponentAction::CloseWindow {
                 if self.wm.request_close(id) {
                     return DesktopEventResult::close_window(id);
                 }
@@ -401,7 +400,7 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 mod tests {
     use super::*;
     use crate::theme::Theme;
-    use crate::view::{View, ViewContext, ViewEventResult};
+    use crate::composable::{Component, ComponentContext, EventResult};
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
@@ -411,17 +410,17 @@ mod tests {
     #[derive(Clone)]
     struct ConsumeF6View;
 
-    impl View for ConsumeF6View {
-        fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+    impl Component for ConsumeF6View {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
             if let Event::Key(KeyEvent { code, .. }) = event
                 && *code == KeyCode::F(6)
             {
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
-            ViewEventResult::ignored()
+            EventResult::ignored()
         }
 
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
     #[derive(Clone)]
@@ -435,20 +434,20 @@ mod tests {
         }
     }
 
-    impl View for CountingMouseView {
-        fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+    impl Component for CountingMouseView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
             if let Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 ..
             }) = event
             {
                 self.downs.fetch_add(1, Ordering::SeqCst);
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
-            ViewEventResult::ignored()
+            EventResult::ignored()
         }
 
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
 
     #[test]
@@ -507,12 +506,12 @@ mod tests {
     fn ignored_view_event_bubbles_to_window_manager() {
         struct IgnoreAllView;
 
-        impl View for IgnoreAllView {
-            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-                ViewEventResult::ignored()
+        impl Component for IgnoreAllView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+                EventResult::ignored()
             }
 
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
 
         let screen = Rect {
@@ -569,12 +568,12 @@ mod tests {
     fn modal_window_blocks_desktop_shortcuts() {
         struct IgnoreAllView;
 
-        impl View for IgnoreAllView {
-            fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-                ViewEventResult::ignored()
+        impl Component for IgnoreAllView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+                EventResult::ignored()
             }
 
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ViewContext<'_>) {}
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
 
         let screen = Rect {

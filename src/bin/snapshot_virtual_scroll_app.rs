@@ -16,7 +16,9 @@ use ratatui::{Frame, Terminal};
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
-use atto_ui::views::{EdgeInsets, ScrollContent, ScrollContentContext, ScrollView, ScrollViewHost};
+use atto_ui::composable::{
+    EdgeInsets, ScrollContent, ScrollContentContext, ScrollContainer, ScrollContainerHost,
+};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
@@ -103,16 +105,16 @@ impl ScrollContent for VirtualGridContent {
         frame: &mut Frame<'_>,
         area: Rect,
         ctx: ScrollContentContext<'_>,
-        _host: &mut ScrollViewHost,
+        _host: &mut ScrollContainerHost,
     ) {
         if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let style = if ctx.view.is_focused {
-            ctx.view.theme.widget.focused
+        let style = if ctx.component.is_focused {
+            ctx.component.theme.widget.focused
         } else {
-            ctx.view.theme.widget.normal
+            ctx.component.theme.widget.normal
         };
 
         let scroll = ctx.info.scroll_offset;
@@ -126,8 +128,8 @@ impl ScrollContent for VirtualGridContent {
     }
 }
 
-fn build_virtual_scroll_view() -> ScrollView {
-    ScrollView::new(Box::new(VirtualGridContent::new(1000, 40)))
+fn build_virtual_scroll_view() -> ScrollContainer {
+    ScrollContainer::new(Box::new(VirtualGridContent::new(1000, 40)))
         .with_padding(EdgeInsets::symmetric(1, 1))
 }
 

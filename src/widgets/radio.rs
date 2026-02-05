@@ -5,20 +5,17 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
-use crate::theme::Theme;
-
-use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct RadioGroup {
     label: Binding<String>,
     options: Binding<Vec<String>>,
     binding: Binding<usize>,
-    focused: bool,
     enabled: Binding<bool>,
     height: Option<Binding<u16>>,
-    area: Option<Rect>,
+    last_area: Option<Rect>,
 }
 
 impl RadioGroup {
@@ -37,10 +34,9 @@ impl RadioGroup {
             label: label.into(),
             options,
             binding,
-            focused: false,
             enabled: true.into(),
             height: None,
-            area: None,
+            last_area: None,
         }
     }
 
@@ -69,7 +65,7 @@ impl RadioGroup {
     }
 }
 
-impl Control for RadioGroup {
+impl Component for RadioGroup {
     fn min_width(&self) -> u16 {
         3
     }
@@ -83,25 +79,13 @@ impl Control for RadioGroup {
         self.enabled.get() && !self.options.get().is_empty()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.get()
-    }
-
-    fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    fn set_area(&mut self, area: Rect) {
-        self.area = Some(area);
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         let options = self.options.get();
         if options.is_empty() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         let mut selected = self.binding.get().min(options.len().saturating_sub(1));
         self.binding.set(selected);
@@ -111,23 +95,23 @@ impl Control for RadioGroup {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
-                let Some(area) = self.area else {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
                 };
 
                 let options_y = area.y.saturating_add(1);
                 if m.row < options_y || m.row >= options_y.saturating_add(options.len() as u16) {
-                    return (ControlOutcome::Ignored, FormAction::None);
+                    return EventResult::ignored();
                 }
                 let idx = m.row.saturating_sub(options_y) as usize;
                 if idx < options.len() {
                     selected = idx;
                     self.binding.set(selected);
-                    return (ControlOutcome::Consumed, FormAction::Changed);
+                    return EventResult::changed();
                 }
-                (ControlOutcome::Ignored, FormAction::None)
+                EventResult::ignored()
             }
             Event::Key(KeyEvent { code, .. }) => {
                 let len = options.len();
@@ -135,21 +119,21 @@ impl Control for RadioGroup {
                     KeyCode::Up => {
                         selected = if selected == 0 { len - 1 } else { selected - 1 };
                         self.binding.set(selected);
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
                     KeyCode::Down => {
                         selected = (selected + 1) % len;
                         self.binding.set(selected);
-                        (ControlOutcome::Consumed, FormAction::Changed)
+                        EventResult::changed()
                     }
-                    _ => (ControlOutcome::Ignored, FormAction::None),
+                    _ => EventResult::ignored(),
                 }
             }
-            _ => (ControlOutcome::Ignored, FormAction::None),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn desired_height(&self) -> u16 {
+    fn desired_height(&self) -> Option<u16> {
         let options_len = self.options.get().len() as u16;
         let min_height = if options_len == 0 { 1 } else { 2 };
         let auto_height = options_len.saturating_add(1);
@@ -159,18 +143,19 @@ impl Control for RadioGroup {
             .map(|height| height.get())
             .unwrap_or(auto_height);
 
-        desired_height.max(min_height)
+        Some(desired_height.max(min_height))
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         let enabled = self.enabled.get();
         let options = self.options.get();
         let title_style = if !enabled {
-            theme.widget.disabled
-        } else if self.focused {
-            theme.widget.accent
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.accent
         } else {
-            theme.widget.dim
+            ctx.theme.widget.dim
         };
         frame.render_widget(
             Paragraph::new(Line::styled(self.label.get(), title_style)),
@@ -192,18 +177,18 @@ impl Control for RadioGroup {
             }
             let is_sel = idx == selected;
             let mark = if is_sel {
-                theme.glyph("radio-selected").unwrap_or("(*)")
+                ctx.theme.glyph("radio-selected").unwrap_or("(*)")
             } else {
-                theme.glyph("radio-unselected").unwrap_or("( )")
+                ctx.theme.glyph("radio-unselected").unwrap_or("( )")
             };
             let style: Style = if !enabled {
-                theme.widget.disabled
-            } else if self.focused && is_sel {
-                theme.widget.focused
+                ctx.theme.widget.disabled
+            } else if ctx.is_focused && is_sel {
+                ctx.theme.widget.focused
             } else if is_sel {
-                theme.widget.accent
+                ctx.theme.widget.accent
             } else {
-                theme.widget.normal
+                ctx.theme.widget.normal
             };
             frame.render_widget(
                 Paragraph::new(Line::styled(format!("{mark} {opt}"), style)),
@@ -231,7 +216,7 @@ mod tests {
             vec!["Normal".into(), "Insert".into(), "Visual".into()],
             selected,
         );
-        assert_eq!(radio.desired_height(), 4);
+        assert_eq!(radio.desired_height(), Some(4));
     }
 
     #[test]
@@ -243,7 +228,7 @@ mod tests {
             selected,
         )
         .height(2u16);
-        assert_eq!(radio.desired_height(), 2);
+        assert_eq!(radio.desired_height(), Some(2));
     }
 
     #[test]
@@ -255,6 +240,6 @@ mod tests {
             selected,
         )
         .height(1u16);
-        assert_eq!(radio.desired_height(), 2);
+        assert_eq!(radio.desired_height(), Some(2));
     }
 }

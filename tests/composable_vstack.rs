@@ -1,6 +1,7 @@
-use atto_ui::declarative::{DeclarativeView, Text, VStack};
+use atto_ui::composable::{
+    Component, ComponentContext, LayoutParams, ScrollbarHost, Size, TabMode, Text, VStack,
+};
 use atto_ui::theme::Theme;
-use atto_ui::view::{ScrollbarHost, TabMode, ViewContext};
 use atto_ui::wm::WindowId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -16,27 +17,31 @@ fn line_as_string(terminal: &Terminal<TestBackend>, y: u16, width: u16) -> Strin
 }
 
 #[test]
-fn declarative_vstack_layout_with_spacing() {
+fn composable_vstack_layout_with_spacing() {
     let mut terminal = Terminal::new(TestBackend::new(20, 10)).unwrap();
     let theme = Theme::dark();
 
     terminal
         .draw(|f| {
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme: &theme,
                 window_id: WindowId::default(),
                 is_focused: true,
-                scrollbar_host: ScrollbarHost::default(),
+                scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
             };
 
-            let view = VStack::new()
-                .child(Text::new("Line 1"))
-                .child(Text::new("Line 2"))
-                .child(Text::new("Line 3"))
+            let row = LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            };
+            let mut view = VStack::new()
+                .child_with_layout(Text::new("Line 1"), row)
+                .child_with_layout(Text::new("Line 2"), row)
+                .child_with_layout(Text::new("Line 3"), row)
                 .spacing(1);
 
-            view.render(f, Rect::new(0, 0, 20, 10), ctx);
+            view.draw(f, Rect::new(0, 0, 20, 10), ctx);
         })
         .unwrap();
 
@@ -46,22 +51,22 @@ fn declarative_vstack_layout_with_spacing() {
 }
 
 #[test]
-fn declarative_vstack_padding_moves_content_inward() {
+fn composable_vstack_padding_moves_content_inward() {
     let mut terminal = Terminal::new(TestBackend::new(20, 10)).unwrap();
     let theme = Theme::dark();
 
     terminal
         .draw(|f| {
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme: &theme,
                 window_id: WindowId::default(),
                 is_focused: true,
-                scrollbar_host: ScrollbarHost::default(),
+                scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
             };
 
-            let view = VStack::new().child(Text::new("Padded")).padding(2);
-            view.render(f, Rect::new(0, 0, 20, 10), ctx);
+            let mut view = VStack::new().child(Text::new("Padded")).padding(2);
+            view.draw(f, Rect::new(0, 0, 20, 10), ctx);
         })
         .unwrap();
 

@@ -23,7 +23,7 @@ use ratatui::{Frame, Terminal};
 use atto_ui::app::{Desktop, MenuBar};
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::view::{View, ViewContext, ViewEventResult};
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
@@ -48,12 +48,12 @@ impl ProgressView {
     }
 }
 
-impl View for ProgressView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+impl Component for ProgressView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let progress = self.progress.get();
         let status = self.status.get();
 

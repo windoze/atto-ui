@@ -10,8 +10,8 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::theme::Theme;
-use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
 use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -83,8 +83,8 @@ impl EventLogView {
     }
 }
 
-impl View for EventLogView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for EventLogView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         // 记录事件
         match event {
             Event::Key(key) => {
@@ -96,10 +96,7 @@ impl View for EventLogView {
                     // 'c' 键清空日志
                     if key.code == KeyCode::Char('c') && key.modifiers.is_empty() {
                         self.clear();
-                        return ViewEventResult {
-                            outcome: EventOutcome::Consumed,
-                            action: ViewAction::None,
-                        };
+                        return EventResult::consumed();
                     }
                 }
             }
@@ -124,13 +121,10 @@ impl View for EventLogView {
         }
 
         // 所有事件都标记为 Ignored，让其他组件也能处理
-        ViewEventResult {
-            outcome: EventOutcome::Ignored,
-            action: ViewAction::None,
-        }
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let mut lines: Vec<Line> = Vec::new();
 
         // 标题
@@ -191,8 +185,8 @@ impl InteractiveView {
     }
 }
 
-impl View for InteractiveView {
-    fn handle_event(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+impl Component for InteractiveView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Mouse(mouse) = event
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
         {
@@ -200,16 +194,13 @@ impl View for InteractiveView {
             self.last_click_pos = Some((mouse.column, mouse.row));
 
             // 消费此事件，阻止传播
-            return ViewEventResult {
-                outcome: EventOutcome::Consumed,
-                action: ViewAction::None,
-            };
+            return EventResult::consumed();
         }
 
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let lines = vec![
             Line::raw(""),
             Line::styled(

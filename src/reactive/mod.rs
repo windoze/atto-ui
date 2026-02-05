@@ -1,7 +1,7 @@
 //! Reactive state management primitives.
 //!
 //! This module provides a small foundation for building declarative/reactive layers on top of
-//! Chatty's existing imperative `View` and `Control` APIs.
+//! Chatty's composable `Component` API.
 
 mod dirty;
 mod observable;

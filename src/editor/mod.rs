@@ -1,6 +1,6 @@
 //! Editor component built on top of `editor-core`.
 //!
-//! This module provides a `View` implementation (`EditorView`) that integrates:
+//! This module provides a `Component` implementation (`EditorView`) that integrates:
 //! - syntax highlighting (Sublime `.sublime-syntax` or simple regex fallback)
 //! - code folding
 //! - LSP (semantic tokens, folding ranges, hover, completion, goto*)

@@ -26,25 +26,25 @@ cargo run --bin demo-03-event-handling
 
 ## 关键概念
 
-### View Event Handling
+### Component Event Handling
 
-每个 View 可以实现三个事件处理方法：
+每个 Component 可以实现三个事件处理方法：
 
 ```rust
-trait View {
+trait Component {
     // 捕获阶段（从父到子）
-    fn handle_event_capture(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
     // 主处理
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
     // 冒泡阶段（从子到父）
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult::ignored()
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 ```
@@ -52,15 +52,15 @@ trait View {
 ### Event Result
 
 ```rust
-pub struct ViewEventResult {
+pub struct EventResult {
     pub outcome: EventOutcome,  // Consumed 或 Ignored
-    pub action: ViewAction,     // None 或 CloseWindow
+    pub action: ComponentAction,     // None 或 CloseWindow
 }
 ```
 
 - `EventOutcome::Consumed` - 事件已处理，停止传播
 - `EventOutcome::Ignored` - 事件未处理，继续传播
-- `ViewAction::CloseWindow` - 请求关闭当前窗口
+- `ComponentAction::CloseWindow` - 请求关闭当前窗口
 
 ### 常见事件类型
 

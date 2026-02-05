@@ -6,15 +6,13 @@ use ratatui::layout::Rect;
 use std::cmp::Ordering;
 
 use crate::reactive::Binding;
-use crate::view::{View, ViewContext, ViewEventResult};
-
-use crate::views::layout::{add_signed, apply_padding};
-use crate::views::scroll::{
-    ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset, max_scroll_offset,
-    scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
-};
-use crate::views::{
-    Align, Anchor, EdgeInsets, LayoutParams, ScrollConfig, ScrollOffset, Size, ViewId, ViewNode,
+use super::component::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
+use super::layout::{Align, Anchor, EdgeInsets, LayoutParams, Size, add_signed, apply_padding};
+use super::node::{ComponentId, ComponentNode};
+use super::scroll::{
+    ScrollConfig, ScrollOffset, ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset,
+    max_scroll_offset, scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d,
+    should_show_scrollbar,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,8 +40,8 @@ fn tab_direction_for_event(event: &Event) -> Option<TabDirection> {
     }
 }
 
-fn focusable_children_in_tab_order(children: &[ViewNode]) -> Vec<ViewId> {
-    let mut focusable: Vec<(Option<i32>, usize, ViewId)> = children
+fn focusable_children_in_tab_order(children: &[ComponentNode]) -> Vec<ComponentId> {
+    let mut focusable: Vec<(Option<i32>, usize, ComponentId)> = children
         .iter()
         .enumerate()
         .filter(|(_, c)| c.view.is_focusable())
@@ -164,7 +162,7 @@ fn align_within(slot: Rect, desired: (u16, u16), align_x: Align, align_y: Align)
     }
 }
 
-fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (u16, u16) {
+fn desired_size_for_slot(view: &dyn Component, slot: Rect, layout: LayoutParams) -> (u16, u16) {
     let min_w = view.min_width();
     let min_h = view.min_height();
     let w = match layout.width {
@@ -180,14 +178,14 @@ fn desired_size_for_slot(view: &dyn View, slot: Rect, layout: LayoutParams) -> (
     (w.max(min_w), h.max(min_h))
 }
 
-pub(super) struct GridView {
-    id: ViewId,
-    children: Vec<ViewNode>,
+pub struct Grid {
+    id: ComponentId,
+    children: Vec<ComponentNode>,
     columns: Binding<usize>,
     padding: Binding<EdgeInsets>,
     row_gap: Binding<u16>,
     column_gap: Binding<u16>,
-    focused: Option<ViewId>,
+    focused: Option<ComponentId>,
     last_area: Option<Rect>,
     scrollable: Binding<bool>,
     scroll: Binding<ScrollOffset>,
@@ -198,10 +196,10 @@ pub(super) struct GridView {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl GridView {
+impl Grid {
     pub fn new() -> Self {
         Self {
-            id: ViewId::next(),
+            id: ComponentId::next(),
             children: Vec::new(),
             columns: 1usize.into(),
             padding: EdgeInsets::ZERO.into(),
@@ -252,8 +250,50 @@ impl GridView {
         self
     }
 
-    pub fn add_child_with_layout(&mut self, view: Box<dyn View>, layout: LayoutParams) -> ViewId {
-        let mut node = ViewNode::new(view).with_layout(layout);
+    pub fn columns(self, columns: impl Into<Binding<usize>>) -> Self {
+        self.with_columns(columns)
+    }
+
+    pub fn padding(self, padding: u16) -> Self {
+        self.with_padding(EdgeInsets::all(padding))
+    }
+
+    pub fn padding_insets(self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+        self.with_padding(padding)
+    }
+
+    pub fn row_gap(self, gap: impl Into<Binding<u16>>) -> Self {
+        self.with_row_gap(gap)
+    }
+
+    pub fn column_gap(self, gap: impl Into<Binding<u16>>) -> Self {
+        self.with_column_gap(gap)
+    }
+
+    pub fn scrollable(self, scrollable: impl Into<Binding<bool>>) -> Self {
+        self.with_scrollable(scrollable)
+    }
+
+    pub fn scroll_config(self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+        self.with_scroll_config(config)
+    }
+
+    pub fn child(mut self, view: impl Component + 'static) -> Self {
+        self.add_child_with_layout(Box::new(view), LayoutParams::default());
+        self
+    }
+
+    pub fn child_with_layout(
+        mut self,
+        view: impl Component + 'static,
+        layout: LayoutParams,
+    ) -> Self {
+        self.add_child_with_layout(Box::new(view), layout);
+        self
+    }
+
+    pub fn add_child_with_layout(&mut self, view: Box<dyn Component>, layout: LayoutParams) -> ComponentId {
+        let mut node = ComponentNode::new(view).with_layout(layout);
         node.parent = Some(self.id);
         let id = node.id;
         if self.focused.is_none() && node.view.is_focusable() {
@@ -263,7 +303,7 @@ impl GridView {
         id
     }
 
-    fn first_focusable_child(&self) -> Option<ViewId> {
+    fn first_focusable_child(&self) -> Option<ComponentId> {
         focusable_children_in_tab_order(&self.children)
             .first()
             .copied()
@@ -332,20 +372,20 @@ impl GridView {
         }
     }
 
-    fn handle_tab_navigation(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_tab_navigation(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let Some(direction) = tab_direction_for_event(event) else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         if !ctx.is_focused {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
 
         // If we don't have a focused child yet, initialize focus and stop.
         let focusable = focusable_children_in_tab_order(&self.children);
         if focusable.is_empty() {
             self.focused = None;
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
 
         let focused = match self.focused {
@@ -357,14 +397,14 @@ impl GridView {
                 };
                 self.focused = Some(id);
                 self.focus_focused_child_edge(direction);
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
         };
 
         // Give the currently focused child a chance to advance focus within its subtree.
         if let Some(child_idx) = self.children.iter().position(|c| c.id == focused) {
             let child_focused = ctx.is_focused && self.focused == Some(focused);
-            let child_ctx = ViewContext {
+            let child_ctx = ComponentContext {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
@@ -380,13 +420,13 @@ impl GridView {
             }
         }
 
-        let wrap = matches!(ctx.tab_mode, crate::view::TabMode::Cycle);
+        let wrap = matches!(ctx.tab_mode, TabMode::Cycle);
         if self.move_focus(direction, wrap) {
             self.focus_focused_child_edge(direction);
-            return ViewEventResult::consumed();
+            return EventResult::consumed();
         }
 
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
@@ -440,7 +480,7 @@ impl GridView {
         viewport_x: u16,
         viewport_y: u16,
         viewport: (u16, u16),
-    ) -> Option<ViewId> {
+    ) -> Option<ComponentId> {
         for child in self
             .children
             .iter()
@@ -726,7 +766,7 @@ impl GridView {
     }
 }
 
-impl View for GridView {
+impl Component for Grid {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }
@@ -851,11 +891,11 @@ impl View for GridView {
             .saturating_add(rows_total)
     }
 
-    fn children(&self) -> &[ViewNode] {
+    fn children(&self) -> &[ComponentNode] {
         &self.children
     }
 
-    fn children_mut(&mut self) -> Option<&mut Vec<ViewNode>> {
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         Some(&mut self.children)
     }
 
@@ -884,7 +924,7 @@ impl View for GridView {
         let _ = self.scroll_to_clamped(x, y);
     }
 
-    fn scroll_to_child(&mut self, child_id: ViewId) {
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
         let Some(node) = self.children.iter().find(|c| c.id == child_id) else {
             return;
         };
@@ -909,25 +949,25 @@ impl View for GridView {
         let _ = self.scroll_to_clamped(target_x, target_y);
     }
 
-    fn handle_event_capture(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let tab = self.handle_tab_navigation(event, ctx);
         if tab.is_consumed() {
             return tab;
         }
 
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
-    fn handle_event_bubble(&mut self, event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event_bubble(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.scrollable.get() {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
 
         let cfg = self.scroll_config.get();
         match event {
             Event::Key(KeyEvent { code, kind, .. }) => {
                 if matches!(kind, KeyEventKind::Release) {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 }
 
                 let viewport_h = self.viewport_size.1;
@@ -946,17 +986,17 @@ impl View for GridView {
                 };
 
                 if changed {
-                    ViewEventResult::consumed()
+                    EventResult::consumed()
                 } else {
-                    ViewEventResult::ignored()
+                    EventResult::ignored()
                 }
             }
             Event::Mouse(m) => {
                 let Some(area) = self.last_area else {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 };
                 if mouse_coords_local_to_area(area, *m).is_none() {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 }
 
                 let step = cfg.wheel_step as i16;
@@ -969,16 +1009,16 @@ impl View for GridView {
                 };
 
                 if changed {
-                    ViewEventResult::consumed()
+                    EventResult::consumed()
                 } else {
-                    ViewEventResult::ignored()
+                    EventResult::ignored()
                 }
             }
-            _ => ViewEventResult::ignored(),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let capture = self.handle_event_capture(event, ctx);
         if capture.is_consumed() {
             return capture;
@@ -1020,10 +1060,10 @@ impl View for GridView {
                             ScrollbarDrag::Vertical { grab_offset } => {
                                 let Some(vbar) = scrollbars.vbar else {
                                     self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 };
                                 if vbar.height == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
                                 let layout = scrollbar_layout_1d(
                                     vbar.height,
@@ -1033,7 +1073,7 @@ impl View for GridView {
                                     cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let pos = local_y
@@ -1053,15 +1093,15 @@ impl View for GridView {
                                     new_thumb_start,
                                 );
                                 let _ = self.scroll_to_clamped(scroll.x, new_off);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarDrag::Horizontal { grab_offset } => {
                                 let Some(hbar) = scrollbars.hbar else {
                                     self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 };
                                 if hbar.width == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
                                 let layout = scrollbar_layout_1d(
                                     hbar.width,
@@ -1071,7 +1111,7 @@ impl View for GridView {
                                     cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let pos = local_x
@@ -1091,12 +1131,12 @@ impl View for GridView {
                                     new_thumb_start,
                                 );
                                 let _ = self.scroll_to_clamped(new_off, scroll.y);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                         },
                         MouseEventKind::Up(MouseButton::Left) => {
                             self.scrollbar_drag = None;
-                            return ViewEventResult::consumed();
+                            return EventResult::consumed();
                         }
                         _ => {}
                     }
@@ -1119,25 +1159,25 @@ impl View for GridView {
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
                                 let _ = self.scroll_by(0, -1);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::ArrowInc => {
                                 let _ = self.scroll_by(0, 1);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::Thumb { grab_offset } => {
                                 self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackDec => {
                                 let page = scrollbars.content.height as i16;
                                 let _ = self.scroll_by(0, -(page));
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackInc => {
                                 let page = scrollbars.content.height as i16;
                                 let _ = self.scroll_by(0, page);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::None => {}
                         }
@@ -1158,26 +1198,26 @@ impl View for GridView {
                         match scrollbar_hit_test(layout, pos) {
                             ScrollbarHit::ArrowDec => {
                                 let _ = self.scroll_by(-1, 0);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::ArrowInc => {
                                 let _ = self.scroll_by(1, 0);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::Thumb { grab_offset } => {
                                 self.scrollbar_drag =
                                     Some(ScrollbarDrag::Horizontal { grab_offset });
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackDec => {
                                 let page = scrollbars.content.width as i16;
                                 let _ = self.scroll_by(-(page), 0);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackInc => {
                                 let page = scrollbars.content.width as i16;
                                 let _ = self.scroll_by(page, 0);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::None => {}
                         }
@@ -1232,7 +1272,7 @@ impl View for GridView {
             });
 
             let child_focused = ctx.is_focused && self.focused == Some(child_id);
-            let child_ctx = ViewContext {
+            let child_ctx = ComponentContext {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
@@ -1248,7 +1288,7 @@ impl View for GridView {
             }
 
             if focus_changed {
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
 
             return self.handle_event_bubble(event, ctx);
@@ -1259,7 +1299,7 @@ impl View for GridView {
         {
             self.focused = Some(child_id);
             let child_focused = ctx.is_focused && self.focused == Some(child_id);
-            let child_ctx = ViewContext {
+            let child_ctx = ComponentContext {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
@@ -1275,7 +1315,7 @@ impl View for GridView {
         self.handle_event_bubble(event, ctx)
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
 
         let cfg = self.scroll_config.get();
@@ -1288,7 +1328,7 @@ impl View for GridView {
         let mut show_h = false;
 
         if self.scrollable.get() {
-            if matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+            if matches!(ctx.scrollbar_host, ScrollbarHost::Component) {
                 for _ in 0..2 {
                     inner = apply_padding(viewport_outer, padding);
                     self.viewport_size = (inner.width, inner.height);
@@ -1350,7 +1390,7 @@ impl View for GridView {
             scroll,
         ));
 
-        if self.scrollable.get() && matches!(ctx.scrollbar_host, crate::view::ScrollbarHost::View) {
+        if self.scrollable.get() && matches!(ctx.scrollbar_host, ScrollbarHost::Component) {
             let viewport_local = Rect {
                 x: viewport_outer.x.saturating_sub(area.x),
                 y: viewport_outer.y.saturating_sub(area.y),
@@ -1409,7 +1449,7 @@ impl View for GridView {
             };
 
             let child_focused = ctx.is_focused && self.focused == Some(child.id);
-            let child_ctx = ViewContext {
+            let child_ctx = ComponentContext {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
@@ -1436,7 +1476,7 @@ impl View for GridView {
             };
 
             let child_focused = ctx.is_focused && self.focused == Some(child.id);
-            let child_ctx = ViewContext {
+            let child_ctx = ComponentContext {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,

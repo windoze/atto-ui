@@ -1,6 +1,5 @@
-use atto_ui::declarative::{DeclarativeView, Divider, Text};
+use atto_ui::composable::{Component, ComponentContext, Divider, ScrollbarHost, TabMode, Text};
 use atto_ui::theme::Theme;
-use atto_ui::view::{ScrollbarHost, TabMode, ViewContext};
 use atto_ui::wm::WindowId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -16,22 +15,22 @@ fn line_as_string(terminal: &Terminal<TestBackend>, y: u16, width: u16) -> Strin
 }
 
 #[test]
-fn declarative_text_renders() {
+fn composable_text_renders() {
     let mut terminal = Terminal::new(TestBackend::new(20, 5)).unwrap();
     let theme = Theme::dark();
 
     terminal
         .draw(|f| {
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme: &theme,
                 window_id: WindowId::default(),
                 is_focused: true,
-                scrollbar_host: ScrollbarHost::default(),
+                scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
             };
 
-            let view = Text::new("Hello, World!");
-            view.render(f, Rect::new(0, 0, 20, 1), ctx);
+            let mut view = Text::new("Hello, World!");
+            view.draw(f, Rect::new(0, 0, 20, 1), ctx);
         })
         .unwrap();
 
@@ -40,22 +39,22 @@ fn declarative_text_renders() {
 }
 
 #[test]
-fn declarative_divider_horizontal_renders() {
+fn composable_divider_horizontal_renders() {
     let mut terminal = Terminal::new(TestBackend::new(10, 1)).unwrap();
     let theme = Theme::dark();
 
     terminal
         .draw(|f| {
-            let ctx = ViewContext {
+            let ctx = ComponentContext {
                 theme: &theme,
                 window_id: WindowId::default(),
                 is_focused: true,
-                scrollbar_host: ScrollbarHost::default(),
+                scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
             };
 
-            let view = Divider::horizontal();
-            view.render(f, Rect::new(0, 0, 10, 1), ctx);
+            let mut view = Divider::horizontal();
+            view.draw(f, Rect::new(0, 0, 10, 1), ctx);
         })
         .unwrap();
 

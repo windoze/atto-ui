@@ -4,16 +4,13 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
-use crate::theme::Theme;
-
-use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone, Debug)]
 pub struct Checkbox {
     label: Binding<String>,
     binding: Binding<bool>,
-    focused: bool,
     enabled: Binding<bool>,
 }
 
@@ -22,7 +19,6 @@ impl Checkbox {
         Self {
             label: label.into(),
             binding,
-            focused: false,
             enabled: true.into(),
         }
     }
@@ -38,7 +34,7 @@ impl Checkbox {
     }
 }
 
-impl Control for Checkbox {
+impl Component for Checkbox {
     fn min_width(&self) -> u16 {
         3
     }
@@ -51,17 +47,9 @@ impl Control for Checkbox {
         self.enabled.get()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.get()
-    }
-
-    fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         match event {
             Event::Mouse(m) => {
@@ -70,35 +58,39 @@ impl Control for Checkbox {
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
                     self.binding.update(|v| *v = !*v);
-                    return (ControlOutcome::Consumed, FormAction::Changed);
+                    return EventResult::changed();
                 }
-                (ControlOutcome::Ignored, FormAction::None)
+                EventResult::ignored()
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Char(' ') | KeyCode::Enter,
                 ..
             }) => {
                 self.binding.update(|v| *v = !*v);
-                (ControlOutcome::Consumed, FormAction::Changed)
+                EventResult::changed()
             }
-            Event::Key(KeyEvent { .. }) => (ControlOutcome::Ignored, FormAction::None),
-            _ => (ControlOutcome::Ignored, FormAction::None),
+            Event::Key(KeyEvent { .. }) => EventResult::ignored(),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let enabled = self.enabled.get();
         let style = if !enabled {
-            theme.widget.disabled
-        } else if self.focused {
-            theme.widget.focused
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
         } else {
-            theme.widget.normal
+            ctx.theme.widget.normal
         };
         let mark = if self.binding.get() {
-            theme.glyph("checkbox-checked").unwrap_or("[x]")
+            ctx.theme.glyph("checkbox-checked").unwrap_or("[x]")
         } else {
-            theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
+            ctx.theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
         };
         let text = format!("{mark} {}", self.label.get());
         frame.render_widget(Paragraph::new(Line::styled(text, style)), area);

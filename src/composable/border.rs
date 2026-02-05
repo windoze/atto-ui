@@ -4,7 +4,9 @@ use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
 use crate::reactive::Binding;
-use crate::view::{ScrollbarHost, View, ViewContext, ViewEventResult};
+use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
+use super::node::ComponentId;
+use super::scroll::ScrollConfig;
 
 use super::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
@@ -48,18 +50,18 @@ fn inset(area: Rect, n: u16) -> Rect {
     }
 }
 
-/// Adds an optional border around an arbitrary [`View`].
+/// Adds an optional border around an arbitrary [`Component`].
 ///
-/// This is the generic mechanism behind “all views can have optional borders”.
-pub struct BorderView {
-    inner: Box<dyn View>,
+/// This is the generic mechanism behind “all components can have optional borders”.
+pub struct Border {
+    inner: Box<dyn Component>,
     border: Binding<bool>,
     last_area: Option<Rect>,
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl BorderView {
-    pub fn new(inner: Box<dyn View>) -> Self {
+impl Border {
+    pub fn new(inner: Box<dyn Component>) -> Self {
         Self {
             inner,
             border: true.into(),
@@ -74,7 +76,7 @@ impl BorderView {
     }
 }
 
-impl View for BorderView {
+impl Component for Border {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
     }
@@ -119,7 +121,7 @@ impl View for BorderView {
         self.inner.is_scrollable()
     }
 
-    fn scroll_config(&self) -> crate::views::ScrollConfig {
+    fn scroll_config(&self) -> ScrollConfig {
         self.inner.scroll_config()
     }
 
@@ -139,16 +141,16 @@ impl View for BorderView {
         self.inner.set_scroll_offset(x, y);
     }
 
-    fn scroll_to_child(&mut self, child_id: crate::views::ViewId) {
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id);
     }
 
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let border = self.border.get();
         let host_scrollbars = border
-            && matches!(ctx.scrollbar_host, ScrollbarHost::View)
+            && matches!(ctx.scrollbar_host, ScrollbarHost::Component)
             && self.inner.is_scrollable();
-        let inner_ctx = ViewContext {
+        let inner_ctx = ComponentContext {
             theme: ctx.theme,
             window_id: ctx.window_id,
             is_focused: ctx.is_focused,
@@ -162,10 +164,10 @@ impl View for BorderView {
 
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
-                return ViewEventResult::ignored();
+                return EventResult::ignored();
             };
             let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                return ViewEventResult::ignored();
+                return EventResult::ignored();
             };
 
             let local_area = Rect {
@@ -180,7 +182,7 @@ impl View for BorderView {
                 local_area
             };
             if inner_local.width == 0 || inner_local.height == 0 {
-                return ViewEventResult::ignored();
+                return EventResult::ignored();
             }
 
             if host_scrollbars {
@@ -211,10 +213,10 @@ impl View for BorderView {
                             ScrollbarDrag::Vertical { grab_offset } => {
                                 let Some(vbar) = vbar else {
                                     self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 };
                                 if vbar.height == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let layout = scrollbar_layout_1d(
@@ -225,7 +227,7 @@ impl View for BorderView {
                                     cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let pos = local_y
@@ -245,22 +247,22 @@ impl View for BorderView {
                                     new_thumb_start,
                                 );
                                 self.inner.set_scroll_offset(scroll_x, new_off);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarDrag::Horizontal { grab_offset } => {
                                 let Some(hbar) = hbar else {
                                     self.scrollbar_drag = None;
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 };
                                 if hbar.width == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let layout = scrollbar_layout_1d(
                                     hbar.width, viewport_w, content_w, scroll_x, cfg.arrows,
                                 );
                                 if layout.track_len == 0 {
-                                    return ViewEventResult::consumed();
+                                    return EventResult::consumed();
                                 }
 
                                 let pos = local_x
@@ -280,12 +282,12 @@ impl View for BorderView {
                                     new_thumb_start,
                                 );
                                 self.inner.set_scroll_offset(new_off, scroll_y);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                         },
                         MouseEventKind::Up(MouseButton::Left) => {
                             self.scrollbar_drag = None;
-                            return ViewEventResult::consumed();
+                            return EventResult::consumed();
                         }
                         _ => {}
                     }
@@ -308,30 +310,30 @@ impl View for BorderView {
                             ScrollbarHit::ArrowDec => {
                                 self.inner
                                     .set_scroll_offset(scroll_x, scroll_y.saturating_sub(1));
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::ArrowInc => {
                                 self.inner
                                     .set_scroll_offset(scroll_x, scroll_y.saturating_add(1));
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::Thumb { grab_offset } => {
                                 self.scrollbar_drag = Some(ScrollbarDrag::Vertical { grab_offset });
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackDec => {
                                 self.inner.set_scroll_offset(
                                     scroll_x,
                                     scroll_y.saturating_sub(viewport_h),
                                 );
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackInc => {
                                 self.inner.set_scroll_offset(
                                     scroll_x,
                                     scroll_y.saturating_add(viewport_h),
                                 );
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::None => {}
                         }
@@ -349,31 +351,31 @@ impl View for BorderView {
                             ScrollbarHit::ArrowDec => {
                                 self.inner
                                     .set_scroll_offset(scroll_x.saturating_sub(1), scroll_y);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::ArrowInc => {
                                 self.inner
                                     .set_scroll_offset(scroll_x.saturating_add(1), scroll_y);
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::Thumb { grab_offset } => {
                                 self.scrollbar_drag =
                                     Some(ScrollbarDrag::Horizontal { grab_offset });
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackDec => {
                                 self.inner.set_scroll_offset(
                                     scroll_x.saturating_sub(viewport_w),
                                     scroll_y,
                                 );
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::TrackInc => {
                                 self.inner.set_scroll_offset(
                                     scroll_x.saturating_add(viewport_w),
                                     scroll_y,
                                 );
-                                return ViewEventResult::consumed();
+                                return EventResult::consumed();
                             }
                             ScrollbarHit::None => {}
                         }
@@ -382,7 +384,7 @@ impl View for BorderView {
             }
 
             if !contains(inner_local, local_x, local_y) {
-                return ViewEventResult::ignored();
+                return EventResult::ignored();
             }
 
             let child_event = Event::Mouse(MouseEvent {
@@ -396,7 +398,7 @@ impl View for BorderView {
         self.inner.handle_event(event, inner_ctx)
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
 
         let border = self.border.get();
@@ -421,9 +423,9 @@ impl View for BorderView {
         }
 
         let host_scrollbars = border
-            && matches!(ctx.scrollbar_host, ScrollbarHost::View)
+            && matches!(ctx.scrollbar_host, ScrollbarHost::Component)
             && self.inner.is_scrollable();
-        let inner_ctx = ViewContext {
+        let inner_ctx = ComponentContext {
             theme: ctx.theme,
             window_id: ctx.window_id,
             is_focused: ctx.is_focused,

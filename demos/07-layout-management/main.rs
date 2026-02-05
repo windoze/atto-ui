@@ -7,13 +7,12 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use atto_ui::declarative::{
-    Align, Anchor, AnchorPlacement, DeclarativeView, Divider, EdgeInsets, Grid, HStack,
+use atto_ui::composable::{
+    Align, Anchor, AnchorPlacement, Component, Divider, EdgeInsets, EventOutcome, Grid, HStack,
     LayoutParams, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::view::{EventOutcome, View};
 use atto_ui::widgets::{Button, Checkbox, Label};
 use atto_ui::wm::{Window, WindowKind};
 
@@ -25,7 +24,7 @@ fn content_height() -> LayoutParams {
 }
 
 /// 构建 VStack 演示窗口
-fn build_vstack_demo_view() -> Box<dyn View> {
+fn build_vstack_demo_view() -> Box<dyn Component> {
     let items = VStack::new()
         .spacing(1)
         .padding(1)
@@ -33,7 +32,7 @@ fn build_vstack_demo_view() -> Box<dyn View> {
         .child_with_layout(Text::new("Item 2 - Fixed height"), content_height())
         .child_with_layout(Text::new("Item 3 - Fixed height"), content_height());
 
-    VStack::new()
+    let root = VStack::new()
         .spacing(1)
         .padding(1)
         .child_with_layout(
@@ -50,12 +49,13 @@ fn build_vstack_demo_view() -> Box<dyn View> {
         .child_with_layout(
             Text::new("Press 'h' for HStack, 'g' for Grid, 'a' for Alignment demo"),
             content_height(),
-        )
-        .build_view()
+        );
+
+    Box::new(root)
 }
 
 /// 构建 HStack 演示窗口
-fn build_hstack_demo_view() -> Box<dyn View> {
+fn build_hstack_demo_view() -> Box<dyn Component> {
     let row1 = HStack::new()
         .spacing(1)
         .child(Text::new("Left"))
@@ -98,7 +98,7 @@ fn build_hstack_demo_view() -> Box<dyn View> {
         )
         .spacing(1);
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(
@@ -131,12 +131,13 @@ fn build_hstack_demo_view() -> Box<dyn View> {
                 height: Size::Fixed(3),
                 ..LayoutParams::default()
             },
-        )
-        .build_view()
+        );
+
+    Box::new(root)
 }
 
 /// 构建 Grid 演示窗口
-fn build_grid_demo_view() -> Box<dyn View> {
+fn build_grid_demo_view() -> Box<dyn Component> {
     let grid = Grid::new()
         .columns(3)
         .row_gap(1)
@@ -164,7 +165,7 @@ fn build_grid_demo_view() -> Box<dyn View> {
         )
         .child(Label::new("Row 3, Col 3"));
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(Text::new("Grid Demo - Grid Layout"), content_height())
@@ -179,12 +180,13 @@ fn build_grid_demo_view() -> Box<dyn View> {
                 height: Size::Fixed(15),
                 ..LayoutParams::default()
             },
-        )
-        .build_view()
+        );
+
+    Box::new(root)
 }
 
 /// 构建对齐和锚点演示窗口
-fn build_alignment_demo_view() -> Box<dyn View> {
+fn build_alignment_demo_view() -> Box<dyn Component> {
     // 锚点演示
     let anchor_demo = VStack::new()
         .child_with_layout(
@@ -284,7 +286,7 @@ fn build_alignment_demo_view() -> Box<dyn View> {
             },
         );
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(Text::new("Alignment & Anchor Demo"), content_height())
@@ -307,12 +309,13 @@ fn build_alignment_demo_view() -> Box<dyn View> {
                 height: Size::Fill,
                 ..LayoutParams::default()
             },
-        )
-        .build_view()
+        );
+
+    Box::new(root)
 }
 
 /// 构建尺寸约束演示窗口
-fn build_size_demo_view() -> Box<dyn View> {
+fn build_size_demo_view() -> Box<dyn Component> {
     let size_demo = VStack::new()
         .spacing(1)
         .child_with_layout(Text::new("Size::Content (auto size):"), content_height())
@@ -384,17 +387,18 @@ fn build_size_demo_view() -> Box<dyn View> {
             },
         );
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(Text::new("Size Constraints Demo"), content_height())
         .child_with_layout(Divider::horizontal(), content_height())
-        .child_with_layout(size_demo, content_height())
-        .build_view()
+        .child_with_layout(size_demo, content_height());
+
+    Box::new(root)
 }
 
 /// 构建 Padding/Margin 演示窗口
-fn build_spacing_demo_view() -> Box<dyn View> {
+fn build_spacing_demo_view() -> Box<dyn Component> {
     let padding_demo = VStack::new()
         .padding_insets(EdgeInsets {
             top: 2,
@@ -439,7 +443,7 @@ fn build_spacing_demo_view() -> Box<dyn View> {
             },
         );
 
-    VStack::new()
+    let root = VStack::new()
         .padding_insets(EdgeInsets::all(1))
         .spacing(1)
         .child_with_layout(Text::new("Padding & Margin Demo"), content_height())
@@ -454,8 +458,9 @@ fn build_spacing_demo_view() -> Box<dyn View> {
         )
         .child_with_layout(Divider::horizontal(), content_height())
         .child_with_layout(Text::new("Margin (outside element):"), content_height())
-        .child_with_layout(margin_demo, content_height())
-        .build_view()
+        .child_with_layout(margin_demo, content_height());
+
+    Box::new(root)
 }
 
 fn main() -> Result<()> {

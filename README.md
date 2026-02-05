@@ -11,7 +11,7 @@ It has following features:
 9. It should support Unicode and wide character rendering for internationalization.
 10. It should include common widgets such as buttons, labels, text boxes, checkboxes, radio buttons, lists, and tables that can be used within windows.
 
-The library should have a modular architecture, from a basic view which can be used to build custom windows and widgets, to a high-level window management system that handles all aspects of window behavior and interaction.
+The library should have a modular architecture, from a basic component which can be used to build custom windows and widgets, to a high-level window management system that handles all aspects of window behavior and interaction.
 
 The library should expose traits and interfaces that allow developers to easily create custom windows, widgets, and behaviors, while still leveraging the built-in functionality of the framework.
 

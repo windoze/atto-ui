@@ -6,16 +6,13 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
-use crate::theme::Theme;
-
-use super::{Control, ControlOutcome, FormAction};
 
 #[derive(Clone)]
 pub struct Button {
     label: Binding<String>,
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
-    focused: bool,
     enabled: Binding<bool>,
 }
 
@@ -24,7 +21,6 @@ impl Button {
         Self {
             label: label.into(),
             on_click: None,
-            focused: false,
             enabled: true.into(),
         }
     }
@@ -54,7 +50,7 @@ impl Button {
     }
 }
 
-impl Control for Button {
+impl Component for Button {
     fn min_width(&self) -> u16 {
         3
     }
@@ -67,17 +63,9 @@ impl Control for Button {
         self.enabled.get()
     }
 
-    fn is_enabled(&self) -> bool {
-        self.enabled.get()
-    }
-
-    fn set_focused(&mut self, focused: bool) {
-        self.focused = focused;
-    }
-
-    fn handle_event(&mut self, event: &Event) -> (ControlOutcome, FormAction) {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
-            return (ControlOutcome::Ignored, FormAction::None);
+            return EventResult::ignored();
         }
         match event {
             Event::Mouse(m) => {
@@ -86,39 +74,39 @@ impl Control for Button {
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
                     self.trigger();
-                    return (ControlOutcome::Consumed, FormAction::Submitted);
+                    return EventResult::submitted();
                 }
-                (ControlOutcome::Ignored, FormAction::None)
+                EventResult::ignored()
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Enter | KeyCode::Char(' '),
                 ..
             }) => {
                 self.trigger();
-                (ControlOutcome::Consumed, FormAction::Submitted)
+                EventResult::submitted()
             }
-            Event::Key(KeyEvent { .. }) => (ControlOutcome::Ignored, FormAction::None),
-            _ => (ControlOutcome::Ignored, FormAction::None),
+            Event::Key(KeyEvent { .. }) => EventResult::ignored(),
+            _ => EventResult::ignored(),
         }
     }
 
-    fn desired_height(&self) -> u16 {
-        3
+    fn desired_height(&self) -> Option<u16> {
+        Some(3)
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let enabled = self.enabled.get();
         let style = if !enabled {
-            theme.widget.disabled
-        } else if self.focused {
-            theme.widget.focused
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
         } else {
-            theme.widget.normal
+            ctx.theme.widget.normal
         };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(style)
-            .border_set(theme.border_set(false));
+            .border_set(ctx.theme.border_set(false));
         let text = Line::styled(format!(" {} ", self.label.get()), style);
         let p = Paragraph::new(text).block(block);
         frame.render_widget(p, area);

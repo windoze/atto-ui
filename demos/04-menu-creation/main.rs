@@ -9,9 +9,9 @@ use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     run_crossterm_desktop,
 };
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::view::{EventOutcome, View, ViewAction, ViewContext, ViewEventResult};
 use atto_ui::wm::{Window, WindowKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -140,15 +140,12 @@ impl StatusView {
     }
 }
 
-impl View for StatusView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ViewContext<'_>) -> ViewEventResult {
-        ViewEventResult {
-            outcome: EventOutcome::Ignored,
-            action: ViewAction::None,
-        }
+impl Component for StatusView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let mut lines: Vec<Line> = Vec::new();
 
         // 标题

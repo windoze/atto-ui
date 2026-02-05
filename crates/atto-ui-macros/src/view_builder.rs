@@ -82,7 +82,7 @@ pub fn view_builder_impl(input: TokenStream) -> TokenStream {
 
 fn expand_container(container: &ViewContainer) -> TokenStream2 {
     let name = &container.container;
-    let mut out = quote! { ::atto_ui::declarative::#name::new() };
+    let mut out = quote! { ::atto_ui::composable::#name::new() };
 
     for child in &container.children {
         let child_expr = expand_node(child);
@@ -97,7 +97,7 @@ fn expand_node(node: &ViewNode) -> TokenStream2 {
         ViewNode::Call(call) => {
             let name = &call.view_type;
             let args = &call.args;
-            let base = quote! { ::atto_ui::declarative::#name::new(#(#args),*) };
+            let base = quote! { ::atto_ui::composable::#name::new(#(#args),*) };
             apply_modifiers(base, &call.modifiers)
         }
         ViewNode::Container(container) => expand_container(container),

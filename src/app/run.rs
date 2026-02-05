@@ -13,7 +13,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopAction, DesktopEventResult};
-use crate::view::EventOutcome;
+use crate::composable::EventOutcome;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {

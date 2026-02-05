@@ -19,8 +19,7 @@ use serde_json::json;
 use std::process::Command as ProcessCommand;
 
 use crate::reactive::{DirtyObserver, EventQueue};
-use crate::view::{View, ViewContext, ViewEventResult};
-use crate::views::ScrollConfig;
+use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig};
 
 use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode, EditorSyntaxConfig};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
@@ -2113,9 +2112,9 @@ impl EditorView {
         )
     }
 
-    fn handle_mouse(&mut self, m: MouseEvent) -> ViewEventResult {
+    fn handle_mouse(&mut self, m: MouseEvent) -> EventResult {
         let Some(area) = self.last_area else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
         let Some((local_x, local_y)) = mouse_coords_local_to_area(area, m) else {
             self.mouse_drag = None;
@@ -2126,7 +2125,7 @@ impl EditorView {
                 self.hover_suppressed_position = None;
             }
             self.hide_hover_popup_only();
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         let (gutter, text_area) = self.layout_rects(Rect {
@@ -2161,7 +2160,7 @@ impl EditorView {
                     .visual_to_logical_line(visual_row);
                 if visual_in_line == 0 {
                     self.toggle_fold_at_line(logical_line);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
             }
         }
@@ -2174,7 +2173,7 @@ impl EditorView {
                 self.hover_suppressed_position = None;
                 self.hide_hover_popup_only();
             }
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
         let x_in_text = local_x.saturating_sub(text_area.x);
         let y_in_text = local_y.saturating_sub(text_area.y);
@@ -2185,7 +2184,7 @@ impl EditorView {
                 self.hover_suppressed_position = None;
                 self.hide_hover_popup_only();
             }
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
 
         match m.kind {
@@ -2196,7 +2195,7 @@ impl EditorView {
                     area.y.saturating_add(local_y),
                 );
                 self.update_hover_anchor(pos, screen);
-                ViewEventResult::ignored()
+                EventResult::ignored()
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.hide_popups();
@@ -2219,13 +2218,13 @@ impl EditorView {
                     if self.select_word_at(pos) {
                         self.adjust_scroll();
                         self.mouse_drag = None;
-                        return ViewEventResult::consumed();
+                        return EventResult::consumed();
                     }
                 } else if click_count >= 3 {
                     if self.select_line_at(pos.line) {
                         self.adjust_scroll();
                         self.mouse_drag = None;
-                        return ViewEventResult::consumed();
+                        return EventResult::consumed();
                     }
                 }
 
@@ -2257,11 +2256,11 @@ impl EditorView {
                         rect: rect_drag,
                     })
                 };
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 let Some(drag) = self.mouse_drag else {
-                    return ViewEventResult::ignored();
+                    return EventResult::ignored();
                 };
                 let pos = self.position_at_text_point(x_in_text, y_in_text);
 
@@ -2277,11 +2276,11 @@ impl EditorView {
                     }));
                 }
                 self.adjust_scroll();
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.mouse_drag = None;
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::ScrollUp => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
@@ -2292,7 +2291,7 @@ impl EditorView {
                     area.y.saturating_add(local_y),
                 );
                 self.update_hover_anchor(pos, screen);
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             MouseEventKind::ScrollDown => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
@@ -2303,9 +2302,9 @@ impl EditorView {
                     area.y.saturating_add(local_y),
                 );
                 self.update_hover_anchor(pos, screen);
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
-            _ => ViewEventResult::ignored(),
+            _ => EventResult::ignored(),
         }
     }
 
@@ -2385,7 +2384,7 @@ impl EditorView {
         Position::new(logical_line, col.min(segment_end_col))
     }
 
-    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
 
         let theme = self.editor_theme();
@@ -2616,9 +2615,9 @@ impl EditorView {
         }
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) -> ViewEventResult {
+    fn handle_key_event(&mut self, key: KeyEvent) -> EventResult {
         let Some(chord) = KeyChord::from_key_event(key) else {
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         };
 
         // Completion popup keyboard navigation/accept (editor keeps focus, popup stays non-modal).
@@ -2626,7 +2625,7 @@ impl EditorView {
             match key.code {
                 KeyCode::Esc => {
                     self.completion_popup.set(None);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 KeyCode::Enter => {
                     if popup.selected < popup.items.len() {
@@ -2637,23 +2636,23 @@ impl EditorView {
                     } else {
                         self.completion_popup.set(None);
                     }
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 KeyCode::Up => {
                     self.select_completion_relative(-1);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 KeyCode::Down => {
                     self.select_completion_relative(1);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 KeyCode::PageUp => {
                     self.select_completion_relative(-5);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 KeyCode::PageDown => {
                     self.select_completion_relative(5);
-                    return ViewEventResult::consumed();
+                    return EventResult::consumed();
                 }
                 _ => {
                     // Any other key dismisses completion; the key is then handled normally.
@@ -2666,9 +2665,9 @@ impl EditorView {
         if let Some(action) = keymap.get(chord) {
             let consumed = self.handle_action(action);
             return if consumed {
-                ViewEventResult::consumed()
+                EventResult::consumed()
             } else {
-                ViewEventResult::ignored()
+                EventResult::ignored()
             };
         }
 
@@ -2680,12 +2679,12 @@ impl EditorView {
             {
                 self.insert_text(&c.to_string());
                 self.adjust_scroll();
-                return ViewEventResult::consumed();
+                return EventResult::consumed();
             }
             _ => {}
         }
 
-        ViewEventResult::ignored()
+        EventResult::ignored()
     }
 
     fn select_completion_relative(&mut self, delta: isize) {
@@ -2719,7 +2718,7 @@ impl EditorView {
     }
 }
 
-impl View for EditorView {
+impl Component for EditorView {
     fn is_focusable(&self) -> bool {
         true
     }
@@ -2763,7 +2762,7 @@ impl View for EditorView {
         self.config.scroll.config.get()
     }
 
-    fn handle_event(&mut self, event: &Event, ctx: ViewContext<'_>) -> ViewEventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         // Keep internal state in sync with external bindings (without constantly cloning).
         self.sync_external_text_if_dirty();
 
@@ -2776,7 +2775,7 @@ impl View for EditorView {
         // Popups should be dismissed whenever focus is lost.
         if !ctx.is_focused {
             self.hide_popups();
-            return ViewEventResult::ignored();
+            return EventResult::ignored();
         }
 
         // Hover popup can be dismissed from its own tooltip window; reflect that here.
@@ -2809,11 +2808,11 @@ impl View for EditorView {
             Event::Paste(text) => {
                 self.insert_text(text);
                 self.adjust_scroll();
-                ViewEventResult::consumed()
+                EventResult::consumed()
             }
             Event::Key(key) => self.handle_key_event(*key),
             Event::Mouse(m) => self.handle_mouse(*m),
-            _ => ViewEventResult::ignored(),
+            _ => EventResult::ignored(),
         };
 
         // Schedule hover for when the user goes idle again.
@@ -2822,7 +2821,7 @@ impl View for EditorView {
         res
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ViewContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         // Sync external text changes and config at draw time too (tick-driven apps).
         self.sync_external_text_if_dirty();
         if self.config.syntax.check_dirty(&mut self.syntax_observer) {
@@ -2947,12 +2946,12 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
 
         let app_theme = crate::theme::Theme::dark();
-        let ctx = crate::view::ViewContext {
+        let ctx = crate::composable::ComponentContext {
             theme: &app_theme,
             window_id: crate::wm::WindowId(1),
             is_focused: true,
-            scrollbar_host: crate::view::ScrollbarHost::View,
-            tab_mode: crate::view::TabMode::Cycle,
+            scrollbar_host: crate::composable::ScrollbarHost::Component,
+            tab_mode: crate::composable::TabMode::Cycle,
         };
 
         terminal

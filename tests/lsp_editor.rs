@@ -9,7 +9,7 @@ use ratatui::style::Color;
 
 use atto_ui::editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
 use atto_ui::editor::{EditorThemeSet, EditorView};
-use atto_ui::view::{ScrollbarHost, TabMode, View, ViewContext};
+use atto_ui::composable::{Component, ComponentContext, ScrollbarHost, TabMode};
 use atto_ui::wm::WindowId;
 
 #[test]
@@ -41,11 +41,11 @@ fn lsp_semantic_tokens_and_folding_markers_render_and_toggle() {
     let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
 
     let app_theme = atto_ui::theme::Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &app_theme,
         window_id: WindowId::default(),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
@@ -137,11 +137,11 @@ fn lsp_hover_popup_tracks_mouse_and_suppresses_until_move() {
     let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
 
     let app_theme = atto_ui::theme::Theme::dark();
-    let ctx = ViewContext {
+    let ctx = ComponentContext {
         theme: &app_theme,
         window_id: WindowId::default(),
         is_focused: true,
-        scrollbar_host: ScrollbarHost::View,
+        scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     };
 
