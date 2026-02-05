@@ -50,6 +50,7 @@ struct MouseDrag {
     rect: bool,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum SyntaxProcessor {
     Regex(RegexHighlightProcessor),
@@ -964,8 +965,8 @@ impl EditorView {
             let result = resp.result;
             let error = resp.error;
 
-            if let Some((pending_id, kind)) = self.pending_goto {
-                if pending_id == id {
+            if let Some((pending_id, kind)) = self.pending_goto
+                && pending_id == id {
                     let locs = result
                         .as_ref()
                         .map(locations_from_value)
@@ -976,10 +977,9 @@ impl EditorView {
                     });
                     self.pending_goto = None;
                 }
-            }
 
-            if let Some(pending_id) = self.hover_pending_request {
-                if pending_id == id && method.as_str() == "textDocument/hover" {
+            if let Some(pending_id) = self.hover_pending_request
+                && pending_id == id && method.as_str() == "textDocument/hover" {
                     self.hover_pending_request = None;
                     self.hover_requested_position = None;
                     if error.is_some() {
@@ -991,10 +991,9 @@ impl EditorView {
                         self.hover_popup.set(None);
                     }
                 }
-            }
 
-            if let Some(pending_id) = self.completion_pending_request {
-                if pending_id == id && method.as_str() == "textDocument/completion" {
+            if let Some(pending_id) = self.completion_pending_request
+                && pending_id == id && method.as_str() == "textDocument/completion" {
                     self.completion_pending_request = None;
                     self.completion_requested_position = None;
                     if let Some(result) = result.as_ref() {
@@ -1003,7 +1002,6 @@ impl EditorView {
                         self.completion_popup.set(None);
                     }
                 }
-            }
         }
     }
 
@@ -1246,12 +1244,10 @@ impl EditorView {
     }
 
     fn hover_popup_rect_for_cursor(&self, lines: &[String]) -> Option<Rect> {
-        let Some((cursor_x, cursor_y)) = self.cursor_screen_position()? else {
-            return None;
-        };
+        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
         let max_line = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-        let width = (max_line + 2).min(80).max(10) as u16;
-        let height = (lines.len() + 2).min(12).max(3) as u16;
+        let width = (max_line + 2).clamp(10, 80) as u16;
+        let height = (lines.len() + 2).clamp(3, 12) as u16;
 
         Some(Rect {
             x: cursor_x.saturating_add(1),
@@ -1262,9 +1258,7 @@ impl EditorView {
     }
 
     fn completion_popup_rect_for_cursor(&self, item_count: usize) -> Option<Rect> {
-        let Some((cursor_x, cursor_y)) = self.cursor_screen_position()? else {
-            return None;
-        };
+        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
         let height = (item_count.min(8) + 2).max(3) as u16;
         let width = 40u16;
         Some(Rect {
@@ -1869,12 +1863,12 @@ impl EditorView {
             }
             MouseEventKind::ScrollUp => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
-                self.scroll_by_rows(-(step as isize));
+                self.scroll_by_rows(-step);
                 ViewEventResult::consumed()
             }
             MouseEventKind::ScrollDown => {
                 let step = self.scroll_config().wheel_step.max(1) as isize;
-                self.scroll_by_rows(step as isize);
+                self.scroll_by_rows(step);
                 ViewEventResult::consumed()
             }
             _ => ViewEventResult::ignored(),
@@ -2183,11 +2177,10 @@ impl EditorView {
 
         frame.render_widget(Paragraph::new(display_lines).style(theme.text), area);
 
-        if focused {
-            if let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
+        if focused
+            && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
                 frame.set_cursor_position((cursor_x, cursor_y));
             }
-        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> ViewEventResult {

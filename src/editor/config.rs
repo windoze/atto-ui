@@ -8,7 +8,9 @@ use crate::views::ScrollConfig;
 use super::keymap::EditorKeymap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum EditorSyntaxConfig {
+    #[default]
     None,
     /// Regex-based lightweight highlighting (no folding).
     SimpleJson,
@@ -21,12 +23,6 @@ pub enum EditorSyntaxConfig {
         /// Additional search paths for included syntaxes.
         include_paths: Vec<PathBuf>,
     },
-}
-
-impl Default for EditorSyntaxConfig {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -155,15 +151,11 @@ impl EditorLspConfig {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum EditorLspMode {
+    #[default]
     Disabled,
     Enabled(EditorLspConfig),
-}
-
-impl Default for EditorLspMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 #[derive(Clone, Debug)]
