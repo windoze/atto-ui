@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -178,6 +179,68 @@ where
         tick_global_timers();
         if on_tick(&mut desktop, screen)? == AppControl::Exit {
             break;
+        }
+
+        session.terminal.draw(|f| desktop.draw(f))?;
+
+        if !event::poll(config.tick_rate)? {
+            continue;
+        }
+
+        let ev = event::read()?;
+        let screen: Rect = session.terminal.size()?.into();
+        let result = desktop.handle_event(&ev, screen);
+        handle_desktop_action(&mut desktop, &result.action);
+
+        if should_quit_default(&ev, result.outcome) {
+            break;
+        }
+        if on_event(&mut desktop, &ev, screen, &result)? == AppControl::Exit {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Runs a crossterm-backed desktop UI, draining background actions from a channel each frame.
+///
+/// This is the standard-library-only integration point for receiving async events (network,
+/// timers, worker threads, etc.) and dispatching them onto the main UI thread.
+///
+/// The channel is drained before each draw, so actions can update UI state immediately.
+pub fn run_crossterm_desktop_with_actions<B, TTick, TEvent, TAction, A>(
+    config: CrosstermAppConfig,
+    build: B,
+    action_receiver: mpsc::Receiver<A>,
+    mut on_action: TAction,
+    mut on_tick: TTick,
+    mut on_event: TEvent,
+) -> Result<()>
+where
+    B: FnOnce(Rect) -> Result<Desktop>,
+    TAction: FnMut(&mut Desktop, A, Rect) -> Result<AppControl>,
+    TTick: FnMut(&mut Desktop, Rect) -> Result<AppControl>,
+    TEvent: FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
+{
+    let mut session = TerminalSession::new(config)?;
+    let screen: Rect = session.terminal.size()?.into();
+    let mut desktop = build(screen)?;
+    set_global_tick_rate(config.tick_rate);
+
+    loop {
+        let screen: Rect = session.terminal.size()?.into();
+
+        tick_global_timers();
+        if on_tick(&mut desktop, screen)? == AppControl::Exit {
+            break;
+        }
+
+        // Drain background actions before drawing so their effects are visible immediately.
+        while let Ok(action) = action_receiver.try_recv() {
+            if on_action(&mut desktop, action, screen)? == AppControl::Exit {
+                return Ok(());
+            }
         }
 
         session.terminal.draw(|f| desktop.draw(f))?;

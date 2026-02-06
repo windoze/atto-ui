@@ -42,41 +42,72 @@ enum AppAction {
 ### 2. 创建 Channel
 
 ```rust
-use std::sync::mpsc;
+use atto_ui::reactive::EventQueue;
 
 // 在 main 函数中创建
-let (action_sender, action_receiver) = mpsc::channel::<AppAction>();
+let (action_sender, action_receiver) = EventQueue::<AppAction>::channel();
 ```
 
-### 3. 主事件循环集成
+### 3. 主事件循环集成（推荐）
 
 ```rust
-loop {
-    // 1. 渲染 UI
-    terminal.draw(|f| desktop.draw(f))?;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 
-    // 2. 非阻塞地检查应用动作
-    while let Ok(action) = action_receiver.try_recv() {
+use atto_ui::app::{AppControl, CrosstermAppConfig, Desktop, MenuBar, run_crossterm_desktop_with_actions};
+use atto_ui::composable::EventOutcome;
+
+run_crossterm_desktop_with_actions(
+    CrosstermAppConfig::default(),
+    |screen: Rect| {
+        let mut desktop = Desktop::new(atto_ui::theme::Theme::dark(), MenuBar::new(vec![]));
+        // ... add windows
+        Ok(desktop)
+    },
+    action_receiver,
+    |_desktop, action, _screen| {
+        // ✅ 在主线程处理后台动作（在 draw 前被 drain）
         match action {
             AppAction::UpdateProgress(p) => {
-                progress.set(p);  // 更新反应式属性
+                // ... 更新反应式状态（Property / Binding / 你的 app state）
+                drop(p);
             }
             AppAction::ShowMessage(msg) => {
-                status.set(msg);
+                // ... 更新 UI 状态
+                drop(msg);
             }
-            // ...
+            AppAction::DataLoaded(rows) => {
+                // ... 渲染数据/列表
+                drop(rows);
+            }
         }
-    }
+        Ok(AppControl::Continue)
+    },
+    |_desktop, _screen| Ok(AppControl::Continue),
+    |_desktop, event, _screen, result| {
+        // 可选：只在 UI 未消费事件时处理全局快捷键
+        if result.outcome != EventOutcome::Ignored {
+            return Ok(AppControl::Continue);
+        }
 
-    // 3. 轮询终端事件（带超时）
-    if event::poll(Duration::from_millis(50))? {
-        let ev = event::read()?;
-        desktop.handle_event(&ev, screen);
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Char('s'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            // 示例：用户输入触发后台任务，然后由后台线程通过 `action_sender` 回传结果
+            // start_download_task(action_sender.clone());
+        }
 
-        // 处理用户输入...
-    }
-}
+        Ok(AppControl::Continue)
+    },
+)?;
 ```
+
+> 如果你有自定义事件循环（不使用 `run_crossterm_desktop_with_actions`），可以用
+> `atto_ui::reactive::drain_channel(&action_receiver)` 非阻塞地一次性取出所有待处理消息。
 
 ### 4. 启动后台任务
 

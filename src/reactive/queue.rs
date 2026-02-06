@@ -100,7 +100,6 @@ impl<T> Default for EventQueue<T> {
 /// Helper to drain all pending messages from a channel without blocking.
 ///
 /// This is useful in the main event loop to process all queued actions at once.
-#[allow(dead_code)]
 pub fn drain_channel<T>(receiver: &mpsc::Receiver<T>) -> Vec<T> {
     let mut out = Vec::new();
     while let Ok(value) = receiver.try_recv() {
