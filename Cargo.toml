@@ -69,5 +69,9 @@ path = "demos/10-file-dialog/main.rs"
 name = "demo-11-markdown-viewer"
 path = "demos/11-markdown-viewer/main.rs"
 
+[[bin]]
+name = "demo-12-tab-view"
+path = "demos/12-tab-view/main.rs"
+
 [workspace]
 members = ["crates/atto-ui-test-host", "crates/atto-ui-macros"]

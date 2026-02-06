@@ -81,6 +81,13 @@ cargo run --bin demo-10-file-dialog
 cargo run --bin demo-11-markdown-viewer -- README.md
 ```
 
+### 12. [TabView](./12-tab-view/)
+演示 `TabView` 的页签切换、动态增删、程序化选中与头部位置切换。
+
+```bash
+cargo run --bin demo-12-tab-view
+```
+
 ## 学习路径
 
 ### 初学者路径
