@@ -12,6 +12,7 @@ pub(crate) mod scroll;
 mod scroll_container;
 mod splitter;
 mod stack;
+mod tab_window;
 
 pub use crate::widgets::{
     Button, Checkbox, Label, ListBox, MarkdownViewer, RadioGroup, TableView, TextBox,
@@ -19,6 +20,7 @@ pub use crate::widgets::{
 pub use border::Border;
 pub use component::{
     Component, ComponentAction, ComponentContext, EventOutcome, EventResult, ScrollbarHost, TabMode,
+    TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 pub use for_each::{ForEach, ForEachIdentifiable};
 pub use grid::Grid;
@@ -33,6 +35,7 @@ pub use scroll_container::{
 };
 pub use splitter::{Splitter, SplitterOrientation};
 pub use stack::{HStack, VStack};
+pub use tab_window::TabWindow;
 
 #[cfg(test)]
 mod tests;

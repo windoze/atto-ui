@@ -214,7 +214,9 @@ impl Desktop {
             }
         }
 
-        let wm_action = self.wm.handle_event(event, layout.work_area, input_mode);
+        let wm_action = self
+            .wm
+            .handle_event(event, layout.work_area, input_mode, &self.theme);
         if let Some(id) = wm_action.close {
             if self.wm.request_close(id) {
                 return DesktopEventResult::close_window(id);

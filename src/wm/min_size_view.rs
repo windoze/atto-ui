@@ -11,7 +11,7 @@ use ratatui::style::Style;
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
-    ScrollOffset,
+    ScrollOffset, TitleBarContent, TitleBarContext,
 };
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
@@ -499,6 +499,14 @@ impl Component for WindowMinSizeView {
             }
             Some(WindowMinSizeMode::Enforce) | None => self.inner.handle_event(event, ctx),
         }
+    }
+
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.inner.titlebar(ctx)
+    }
+
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.inner.handle_titlebar_event(event, ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

@@ -1,6 +1,7 @@
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
@@ -21,6 +22,47 @@ pub struct ComponentContext<'a> {
     pub is_focused: bool,
     pub scrollbar_host: ScrollbarHost,
     pub tab_mode: TabMode,
+}
+
+#[derive(Clone, Debug)]
+pub struct TitleBarSpan {
+    pub text: String,
+    pub style: Option<Style>,
+}
+
+impl TitleBarSpan {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            style: None,
+        }
+    }
+
+    pub fn styled(text: impl Into<String>, style: Style) -> Self {
+        Self {
+            text: text.into(),
+            style: Some(style),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TitleBarContent {
+    pub spans: Vec<TitleBarSpan>,
+}
+
+impl TitleBarContent {
+    pub fn push(&mut self, span: TitleBarSpan) {
+        self.spans.push(span);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TitleBarContext<'a> {
+    pub theme: &'a Theme,
+    pub window_id: WindowId,
+    pub is_focused: bool,
+    pub area: Rect,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -187,6 +229,14 @@ pub trait Component: Send {
     }
 
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn titlebar(&mut self, _ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        None
+    }
+
+    fn handle_titlebar_event(&mut self, _event: &Event, _ctx: TitleBarContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 

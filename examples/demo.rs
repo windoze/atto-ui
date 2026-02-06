@@ -18,7 +18,7 @@ use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{
     Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
-    ScrollContentContext, ScrollbarVisibility, Size, Splitter, VStack,
+    ScrollContentContext, ScrollbarVisibility, Size, Splitter, TabWindow, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
@@ -99,6 +99,7 @@ impl DialogView {
             )
             .child_with_layout(Label::new("  v layout demo (view hierarchy)"), row_layout)
             .child_with_layout(Label::new("  p splitter demo (drag divider)"), row_layout)
+            .child_with_layout(Label::new("  b tab demo (titlebar tabs)"), row_layout)
             .child_with_layout(
                 Label::new("  s scroll demo (viewport + scrollbars)"),
                 row_layout,
@@ -397,6 +398,220 @@ impl Component for WidgetsView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.root.draw(frame, area, ctx);
     }
+}
+
+struct TabWindowDemo {
+    tabs: TabWindow,
+    next_id: usize,
+}
+
+impl TabWindowDemo {
+    fn new() -> Self {
+        let mut tabs = TabWindow::new();
+        tabs.add_tab("Tab0", build_tab_demo_intro());
+        tabs.add_tab("Tab1", build_tab_demo_short("Short tab (no scrollbars)."));
+        tabs.add_tab("Tab2", build_tab_demo_scroll());
+        tabs.add_tab("Tab3", build_tab_demo_short("Another short tab."));
+        let _ = tabs.select_tab(2);
+        Self { tabs, next_id: 4 }
+    }
+
+    fn add_tab(&mut self) -> bool {
+        let title = format!("Tab{}", self.next_id);
+        let index = self.tabs.add_tab(title, build_tab_demo_short("Dynamically added tab."));
+        self.next_id += 1;
+        self.tabs.select_tab(index)
+    }
+
+    fn remove_active_tab(&mut self) -> bool {
+        if let Some(index) = self.tabs.active_tab() {
+            self.tabs.remove_tab(index);
+            return true;
+        }
+        false
+    }
+
+    fn select_digit(&mut self, digit: char) -> bool {
+        let Some(value) = digit.to_digit(10) else {
+            return false;
+        };
+        if value == 0 {
+            return false;
+        }
+        let index = (value - 1) as usize;
+        self.tabs.select_tab(index)
+    }
+}
+
+impl Component for TabWindowDemo {
+    fn is_focusable(&self) -> bool {
+        self.tabs.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.tabs.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.tabs.focus_last()
+    }
+
+    fn min_width(&self) -> u16 {
+        self.tabs.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.tabs.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.tabs.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.tabs.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.tabs.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.tabs.children_mut()
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.tabs.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.tabs.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Event::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            let changed = match code {
+                KeyCode::Char('+') | KeyCode::Char('=') => self.add_tab(),
+                KeyCode::Char('-') | KeyCode::Char('_') => self.remove_active_tab(),
+                KeyCode::Char(digit) => self.select_digit(*digit),
+                _ => false,
+            };
+            if changed {
+                return EventResult::changed();
+            }
+        }
+
+        self.tabs.handle_event(event, ctx)
+    }
+
+    fn titlebar(&mut self, ctx: atto_ui::composable::TitleBarContext<'_>) -> Option<atto_ui::composable::TitleBarContent> {
+        self.tabs.titlebar(ctx)
+    }
+
+    fn handle_titlebar_event(
+        &mut self,
+        event: &Event,
+        ctx: atto_ui::composable::TitleBarContext<'_>,
+    ) -> EventResult {
+        self.tabs.handle_titlebar_event(event, ctx)
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.tabs.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.tabs.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.tabs.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.tabs.viewport_size()
+    }
+
+    fn scroll_config(&self) -> atto_ui::composable::ScrollConfig {
+        self.tabs.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.tabs.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: atto_ui::composable::ComponentId) {
+        self.tabs.scroll_to_child(child_id);
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.tabs.draw(frame, area, ctx);
+    }
+}
+
+fn build_tab_demo_intro() -> Box<dyn Component> {
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+    let root = VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(0)
+        .child_with_layout(Label::new("Tab window demo (titlebar tabs)."), row_layout)
+        .child_with_layout(Label::new("Click tabs in the title bar to switch."), row_layout)
+        .child_with_layout(
+            Label::new("Keys: 1-9 select tab, + add tab, - remove tab."),
+            row_layout,
+        )
+        .child_with_layout(
+            Label::new("Tab2 is scrollable; other tabs are short."),
+            row_layout,
+        );
+    Box::new(root)
+}
+
+fn build_tab_demo_short(label: &str) -> Box<dyn Component> {
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+    let root = VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(0)
+        .child_with_layout(Label::new(label), row_layout)
+        .child_with_layout(Label::new("No scrollbars should appear here."), row_layout);
+    Box::new(root)
+}
+
+fn build_tab_demo_scroll() -> Box<dyn Component> {
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+    let root = (0..60u16).fold(
+        VStack::new()
+            .padding_insets(EdgeInsets::all(1))
+            .spacing(0)
+            .scrollable(true)
+            .child_with_layout(Label::new("Scrollable tab (expect window scrollbars)."), row_layout)
+            .child_with_layout(
+                Label::new("Long line: 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz"),
+                row_layout,
+            ),
+        |v, i| {
+            v.child_with_layout(
+                Label::new(format!("Row {i:02}: The quick brown fox jumps over the lazy dog.")),
+                row_layout,
+            )
+        },
+    );
+    Box::new(root)
 }
 
 const MARKDOWN_SAMPLE: &str = r#"
@@ -1085,6 +1300,7 @@ enum DemoAction {
     OpenLayoutDemo,
     OpenScrollDemo,
     OpenVirtualScrollDemo,
+    OpenTabWindowDemo,
     OpenWidgetStatesDemo,
     OpenMarkdownDemo,
     MinimizeFocused,
@@ -1234,6 +1450,7 @@ fn main() -> Result<()> {
         screen,
     ));
     let mut splitter_demo_window_id: Option<WindowId> = None;
+    let mut tab_demo_window_id: Option<WindowId> = None;
     let mut scroll_demo_window_id: Option<WindowId> = None;
     let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
     let mut widget_states_demo_window_id: Option<WindowId> = None;
@@ -1257,6 +1474,7 @@ fn main() -> Result<()> {
                 "D: widget states demo (disabled)".into(),
                 "V: layout demo (view hierarchy)".into(),
                 "P: splitter demo (drag divider)".into(),
+                "B: tab demo (titlebar tabs)".into(),
                 "S/Z: scroll / virtual scroll demos".into(),
                 "R: markdown demo (links, tables, code)".into(),
             ])),
@@ -1273,6 +1491,7 @@ fn main() -> Result<()> {
         log_id,
         &mut layout_demo_window_id,
         &mut splitter_demo_window_id,
+        &mut tab_demo_window_id,
         &mut scroll_demo_window_id,
         &mut virtual_scroll_demo_window_id,
         &mut widget_states_demo_window_id,
@@ -1357,6 +1576,11 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::OpenSplitterDemo)
                 })
                 .shortcut("p"),
+                MenuItem::action("Tab window demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenTabWindowDemo)
+                })
+                .shortcut("b"),
                 MenuItem::action("Scroll demo", {
                     let actions = actions.clone();
                     move || actions.push(DemoAction::OpenScrollDemo)
@@ -1411,6 +1635,7 @@ fn run(
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
     splitter_demo_window_id: &mut Option<WindowId>,
+    tab_demo_window_id: &mut Option<WindowId>,
     scroll_demo_window_id: &mut Option<WindowId>,
     virtual_scroll_demo_window_id: &mut Option<WindowId>,
     widget_states_demo_window_id: &mut Option<WindowId>,
@@ -1467,6 +1692,9 @@ fn run(
                 }
                 DemoAction::OpenSplitterDemo => {
                     open_splitter_demo(desktop, screen, splitter_demo_window_id)?;
+                }
+                DemoAction::OpenTabWindowDemo => {
+                    open_tab_window_demo(desktop, screen, tab_demo_window_id)?;
                 }
                 DemoAction::OpenScrollDemo => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
@@ -1551,6 +1779,9 @@ fn run(
                 }
                 (KeyCode::Char('p'), KeyModifiers::NONE) => {
                     open_splitter_demo(desktop, screen, splitter_demo_window_id)?;
+                }
+                (KeyCode::Char('b'), KeyModifiers::NONE) => {
+                    open_tab_window_demo(desktop, screen, tab_demo_window_id)?;
                 }
                 (KeyCode::Char('s'), KeyModifiers::NONE) => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
@@ -1662,6 +1893,42 @@ fn open_splitter_demo(
         screen,
     );
     *splitter_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_tab_window_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    tab_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *tab_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 62.min(work.width.saturating_sub(2)).max(28);
+    let h = 16.min(work.height.saturating_sub(2)).max(9);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Tabs",
+            rect,
+            Box::new(TabWindowDemo::new()),
+        ),
+        screen,
+    );
+    *tab_demo_window_id = Some(id);
     Ok(())
 }
 
