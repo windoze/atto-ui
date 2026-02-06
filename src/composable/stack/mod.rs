@@ -1,12 +1,19 @@
+mod events;
+mod layout;
+mod scrollbars;
+
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use std::cmp::Ordering;
 
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
-use super::layout::{Align, Anchor, EdgeInsets, LayoutParams, Size, add_signed, apply_padding};
+use super::geom::{
+    TabDirection, align_within, contains, focusable_children_in_tab_order,
+    mouse_coords_local_to_area, position_anchored, tab_direction_for_event,
+};
+use super::layout::{EdgeInsets, LayoutParams, Size, add_signed, apply_padding};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::{
     ScrollConfig, ScrollOffset, ScrollbarDrag, ScrollbarHit, Scrollbars, clamp_scroll_offset,
@@ -14,177 +21,20 @@ use super::scroll::{
     should_show_scrollbar,
 };
 use crate::reactive::Binding;
+use layout::desired_size_for_slot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TabDirection {
-    Next,
-    Prev,
+enum StackAxis {
+    Vertical,
+    Horizontal,
 }
 
-fn tab_direction_for_event(event: &Event) -> Option<TabDirection> {
-    match event {
-        Event::Key(KeyEvent {
-            code: KeyCode::Tab,
-            modifiers,
-            ..
-        }) => Some(if modifiers.contains(KeyModifiers::SHIFT) {
-            TabDirection::Prev
-        } else {
-            TabDirection::Next
-        }),
-        Event::Key(KeyEvent {
-            code: KeyCode::BackTab,
-            ..
-        }) => Some(TabDirection::Prev),
-        _ => None,
-    }
-}
-
-fn focusable_children_in_tab_order(children: &[ComponentNode]) -> Vec<ComponentId> {
-    let mut focusable: Vec<(Option<i32>, usize, ComponentId)> = children
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.view.is_focusable())
-        .map(|(idx, c)| (c.layout.tab_index, idx, c.id))
-        .collect();
-
-    focusable.sort_by(|a, b| match (a.0, b.0) {
-        (Some(a_idx), Some(b_idx)) => a_idx.cmp(&b_idx).then_with(|| a.1.cmp(&b.1)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => a.1.cmp(&b.1),
-    });
-
-    focusable.into_iter().map(|(_, _, id)| id).collect()
-}
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn clamp_u16(v: u16, min: u16, max: u16) -> u16 {
-    if v < min {
-        min
-    } else if v > max {
-        max
-    } else {
-        v
-    }
-}
-
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    // Nested containers receive mouse coordinates already relative to their own origin.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
-}
-
-fn position_anchored(
-    content_size: (u16, u16),
-    size: (u16, u16),
-    anchor: Anchor,
-    offset_x: i16,
-    offset_y: i16,
-) -> Rect {
-    let (content_w, content_h) = content_size;
-    let (w, h) = size;
-
-    let base_x = match anchor {
-        Anchor::TopLeft | Anchor::Left | Anchor::BottomLeft => 0,
-        Anchor::TopRight | Anchor::Right | Anchor::BottomRight => content_w.saturating_sub(w),
-        Anchor::Top | Anchor::Bottom | Anchor::Center => content_w.saturating_sub(w) / 2,
-    };
-    let base_y = match anchor {
-        Anchor::TopLeft | Anchor::Top | Anchor::TopRight => 0,
-        Anchor::BottomLeft | Anchor::Bottom | Anchor::BottomRight => content_h.saturating_sub(h),
-        Anchor::Left | Anchor::Right | Anchor::Center => content_h.saturating_sub(h) / 2,
-    };
-
-    let x = add_signed(base_x, offset_x);
-    let y = add_signed(base_y, offset_y);
-
-    let max_x = content_w.saturating_sub(w);
-    let max_y = content_h.saturating_sub(h);
-
-    Rect {
-        x: clamp_u16(x, 0, max_x),
-        y: clamp_u16(y, 0, max_y),
-        width: w,
-        height: h,
-    }
-}
-
-fn align_within(slot: Rect, desired: (u16, u16), align_x: Align, align_y: Align) -> Rect {
-    let (desired_w, desired_h) = desired;
-
-    let w = match align_x {
-        Align::Stretch => slot.width,
-        _ => desired_w.min(slot.width),
-    };
-    let h = match align_y {
-        Align::Stretch => slot.height,
-        _ => desired_h.min(slot.height),
-    };
-
-    let dx = slot.width.saturating_sub(w);
-    let dy = slot.height.saturating_sub(h);
-
-    let off_x = match align_x {
-        Align::Start | Align::Stretch => 0,
-        Align::Center => dx / 2,
-        Align::End => dx,
-    };
-    let off_y = match align_y {
-        Align::Start | Align::Stretch => 0,
-        Align::Center => dy / 2,
-        Align::End => dy,
-    };
-
-    Rect {
-        x: slot.x.saturating_add(off_x),
-        y: slot.y.saturating_add(off_y),
-        width: w,
-        height: h,
-    }
-}
-
-fn desired_size_for_slot(view: &dyn Component, slot: Rect, layout: LayoutParams) -> (u16, u16) {
-    let min_w = view.min_width();
-    let min_h = view.min_height();
-    let w = match layout.width {
-        Size::Fixed(w) => w,
-        Size::Content => view.desired_width().unwrap_or(slot.width),
-        Size::Fill | Size::Weight(_) => view.desired_width().unwrap_or(slot.width),
-    };
-    let h = match layout.height {
-        Size::Fixed(h) => h,
-        Size::Content => view.desired_height().unwrap_or(slot.height),
-        Size::Fill | Size::Weight(_) => view.desired_height().unwrap_or(slot.height),
-    };
-    (w.max(min_w), h.max(min_h))
-}
-
-pub struct Grid {
+struct StackCore {
+    axis: StackAxis,
     id: ComponentId,
     children: Vec<ComponentNode>,
-    columns: Binding<usize>,
     padding: Binding<EdgeInsets>,
-    row_gap: Binding<u16>,
-    column_gap: Binding<u16>,
+    spacing: Binding<u16>,
     focused: Option<ComponentId>,
     last_area: Option<Rect>,
     scrollable: Binding<bool>,
@@ -196,15 +46,20 @@ pub struct Grid {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl Default for Grid {
+impl Default for StackCore {
     fn default() -> Self {
+        Self::new(StackAxis::Vertical)
+    }
+}
+
+impl StackCore {
+    fn new(axis: StackAxis) -> Self {
         Self {
+            axis,
             id: ComponentId::next(),
             children: Vec::new(),
-            columns: 1usize.into(),
             padding: EdgeInsets::ZERO.into(),
-            row_gap: 0u16.into(),
-            column_gap: 0u16.into(),
+            spacing: 0u16.into(),
             focused: None,
             last_area: None,
             scrollable: false.into(),
@@ -216,34 +71,18 @@ impl Default for Grid {
             scrollbar_drag: None,
         }
     }
-}
 
-impl Grid {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_columns(mut self, columns: impl Into<Binding<usize>>) -> Self {
-        self.columns = columns.into();
-        self
-    }
-
-    pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+    fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
         self.padding = padding.into();
         self
     }
 
-    pub fn with_row_gap(mut self, gap: impl Into<Binding<u16>>) -> Self {
-        self.row_gap = gap.into();
+    fn with_spacing(mut self, spacing: impl Into<Binding<u16>>) -> Self {
+        self.spacing = spacing.into();
         self
     }
 
-    pub fn with_column_gap(mut self, gap: impl Into<Binding<u16>>) -> Self {
-        self.column_gap = gap.into();
-        self
-    }
-
-    pub fn with_scrollable(mut self, scrollable: impl Into<Binding<bool>>) -> Self {
+    fn with_scrollable(mut self, scrollable: impl Into<Binding<bool>>) -> Self {
         self.scrollable = scrollable.into();
         if !self.scrollable.get() {
             self.scroll.set(ScrollOffset::ZERO);
@@ -251,45 +90,17 @@ impl Grid {
         self
     }
 
-    pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+    fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
         self.scroll_config = config.into();
         self
     }
 
-    pub fn columns(self, columns: impl Into<Binding<usize>>) -> Self {
-        self.with_columns(columns)
-    }
-
-    pub fn padding(self, padding: u16) -> Self {
-        self.with_padding(EdgeInsets::all(padding))
-    }
-
-    pub fn padding_insets(self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
-        self.with_padding(padding)
-    }
-
-    pub fn row_gap(self, gap: impl Into<Binding<u16>>) -> Self {
-        self.with_row_gap(gap)
-    }
-
-    pub fn column_gap(self, gap: impl Into<Binding<u16>>) -> Self {
-        self.with_column_gap(gap)
-    }
-
-    pub fn scrollable(self, scrollable: impl Into<Binding<bool>>) -> Self {
-        self.with_scrollable(scrollable)
-    }
-
-    pub fn scroll_config(self, config: impl Into<Binding<ScrollConfig>>) -> Self {
-        self.with_scroll_config(config)
-    }
-
-    pub fn child(mut self, view: impl Component + 'static) -> Self {
+    fn child(mut self, view: impl Component + 'static) -> Self {
         self.add_child_with_layout(Box::new(view), LayoutParams::default());
         self
     }
 
-    pub fn child_with_layout(
+    fn child_with_layout(
         mut self,
         view: impl Component + 'static,
         layout: LayoutParams,
@@ -298,7 +109,7 @@ impl Grid {
         self
     }
 
-    pub fn add_child_with_layout(
+    fn add_child_with_layout(
         &mut self,
         view: Box<dyn Component>,
         layout: LayoutParams,
@@ -311,6 +122,27 @@ impl Grid {
         }
         self.children.push(node);
         id
+    }
+
+    fn replace_children(&mut self, mut children: Vec<ComponentNode>) {
+        for child in children.iter_mut() {
+            child.parent = Some(self.id);
+        }
+
+        self.children = children;
+
+        let focused_valid = self.focused.is_some_and(|id| {
+            self.children
+                .iter()
+                .any(|child| child.id == id && child.view.is_focusable())
+        });
+
+        if !focused_valid {
+            self.focused = self.first_focusable_child();
+        }
+
+        // Any in-progress scrollbar drag is no longer valid after restructuring children.
+        self.scrollbar_drag = None;
     }
 
     fn first_focusable_child(&self) -> Option<ComponentId> {
@@ -471,7 +303,6 @@ impl Grid {
         if viewport.0 == 0 || viewport.1 == 0 {
             return false;
         }
-
         let x0 = bounds.x;
         let y0 = bounds.y;
         let x1 = bounds.x.saturating_add(bounds.width);
@@ -491,6 +322,7 @@ impl Grid {
         viewport_y: u16,
         viewport: (u16, u16),
     ) -> Option<ComponentId> {
+        // Anchored children are treated as overlays and do not scroll.
         for child in self
             .children
             .iter()
@@ -522,261 +354,810 @@ impl Grid {
         None
     }
 
-    fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
-        let (viewport_w, viewport_h) = viewport_size;
+    fn desired_height_flow(&self) -> u16 {
+        match self.axis {
+            StackAxis::Vertical => {
+                let spacing = self.spacing.get();
+                let padding = self.padding.get();
 
-        let columns = self.columns.get().max(1);
-        let col_gap = self.column_gap.get();
-        let row_gap = self.row_gap.get();
+                let mut total: u16 = padding.top.saturating_add(padding.bottom);
+                let mut first_flow = true;
+
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    if !first_flow {
+                        total = total.saturating_add(spacing);
+                    }
+                    first_flow = false;
+
+                    let margin = child.layout.margin;
+                    total = total
+                        .saturating_add(margin.top)
+                        .saturating_add(margin.bottom);
+
+                    let min_h = child.view.min_height();
+                    let h = match child.layout.height {
+                        Size::Fixed(h) => h,
+                        Size::Content => child.view.desired_height().unwrap_or(1),
+                        Size::Fill | Size::Weight(_) => min_h,
+                    }
+                    .max(min_h);
+
+                    total = total.saturating_add(h);
+                }
+
+                total
+            }
+            StackAxis::Horizontal => {
+                let padding = self.padding.get();
+
+                let mut max_child: u16 = 0;
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    let margin = child.layout.margin;
+
+                    let min_h = child.view.min_height();
+                    let h = match child.layout.height {
+                        Size::Fixed(h) => h,
+                        Size::Content => child.view.desired_height().unwrap_or(1),
+                        Size::Fill | Size::Weight(_) => min_h,
+                    }
+                    .max(min_h);
+
+                    let h = h.saturating_add(margin.top).saturating_add(margin.bottom);
+                    max_child = max_child.max(h);
+                }
+
+                padding
+                    .top
+                    .saturating_add(padding.bottom)
+                    .saturating_add(max_child)
+            }
+        }
+    }
+
+    fn min_width_flow(&self) -> u16 {
+        match self.axis {
+            StackAxis::Vertical => {
+                let padding = self.padding.get();
+
+                let mut max_child: u16 = 0;
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    let margin = child.layout.margin;
+                    let min_w = child.view.min_width();
+                    let required_w = match child.layout.width {
+                        Size::Fixed(w) => w.max(min_w),
+                        Size::Content | Size::Fill | Size::Weight(_) => min_w,
+                    };
+
+                    let outer_w = margin
+                        .left
+                        .saturating_add(required_w)
+                        .saturating_add(margin.right);
+                    max_child = max_child.max(outer_w);
+                }
+
+                padding
+                    .left
+                    .saturating_add(padding.right)
+                    .saturating_add(max_child)
+            }
+            StackAxis::Horizontal => {
+                let padding = self.padding.get();
+                let spacing = self.spacing.get();
+                let scrollable = self.scrollable.get();
+
+                if scrollable {
+                    let mut max_child: u16 = 0;
+                    for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                        let margin = child.layout.margin;
+                        let min_w = child.view.min_width();
+                        let required_w = match child.layout.width {
+                            Size::Fixed(w) => w.max(min_w),
+                            Size::Content | Size::Fill | Size::Weight(_) => min_w,
+                        };
+                        let outer_w = margin
+                            .left
+                            .saturating_add(required_w)
+                            .saturating_add(margin.right);
+                        max_child = max_child.max(outer_w);
+                    }
+
+                    return padding
+                        .left
+                        .saturating_add(padding.right)
+                        .saturating_add(max_child);
+                }
+
+                let mut total: u16 = padding.left.saturating_add(padding.right);
+                let mut first_flow = true;
+
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    if !first_flow {
+                        total = total.saturating_add(spacing);
+                    }
+                    first_flow = false;
+
+                    let margin = child.layout.margin;
+                    total = total
+                        .saturating_add(margin.left)
+                        .saturating_add(margin.right);
+
+                    let min_w = child.view.min_width();
+                    let required_w = match child.layout.width {
+                        Size::Fixed(w) => w.max(min_w),
+                        Size::Content | Size::Fill | Size::Weight(_) => min_w,
+                    };
+
+                    total = total.saturating_add(required_w);
+                }
+
+                total
+            }
+        }
+    }
+
+    fn min_height_flow(&self) -> u16 {
+        match self.axis {
+            StackAxis::Vertical => {
+                let spacing = self.spacing.get();
+                let padding = self.padding.get();
+                let scrollable = self.scrollable.get();
+
+                if scrollable {
+                    let mut max_child: u16 = 0;
+                    for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                        let margin = child.layout.margin;
+                        let min_h = child.view.min_height();
+                        let required_h = match child.layout.height {
+                            Size::Fixed(h) => h.max(min_h),
+                            Size::Content | Size::Fill | Size::Weight(_) => min_h,
+                        };
+
+                        let outer_h = margin
+                            .top
+                            .saturating_add(required_h)
+                            .saturating_add(margin.bottom);
+                        max_child = max_child.max(outer_h);
+                    }
+
+                    return padding
+                        .top
+                        .saturating_add(padding.bottom)
+                        .saturating_add(max_child);
+                }
+
+                let mut total: u16 = padding.top.saturating_add(padding.bottom);
+                let mut first_flow = true;
+
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    if !first_flow {
+                        total = total.saturating_add(spacing);
+                    }
+                    first_flow = false;
+
+                    let margin = child.layout.margin;
+                    total = total
+                        .saturating_add(margin.top)
+                        .saturating_add(margin.bottom);
+
+                    let min_h = child.view.min_height();
+                    let required_h = match child.layout.height {
+                        Size::Fixed(h) => h.max(min_h),
+                        Size::Content | Size::Fill | Size::Weight(_) => min_h,
+                    };
+
+                    total = total.saturating_add(required_h);
+                }
+
+                total
+            }
+            StackAxis::Horizontal => {
+                let padding = self.padding.get();
+
+                let mut max_child: u16 = 0;
+                for child in self.children.iter().filter(|c| c.layout.anchor.is_none()) {
+                    let margin = child.layout.margin;
+
+                    let min_h = child.view.min_height();
+                    let required_h = match child.layout.height {
+                        Size::Fixed(h) => h.max(min_h),
+                        Size::Content | Size::Fill | Size::Weight(_) => min_h,
+                    };
+
+                    let h = required_h
+                        .saturating_add(margin.top)
+                        .saturating_add(margin.bottom);
+                    max_child = max_child.max(h);
+                }
+
+                padding
+                    .top
+                    .saturating_add(padding.bottom)
+                    .saturating_add(max_child)
+            }
+        }
+    }
+
+    fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
+        match self.axis {
+            StackAxis::Vertical => self.layout_children_vertical(viewport_size),
+            StackAxis::Horizontal => self.layout_children_horizontal(viewport_size),
+        }
+    }
+
+    fn layout_children_vertical(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
+        let (content_w, content_h) = viewport_size;
+        let spacing = self.spacing.get();
         let scrollable = self.scrollable.get();
 
-        let mut col_mins: Vec<u16> = vec![0; columns];
-        let mut row_mins: Vec<u16> = Vec::new();
-        let mut row_desired: Vec<u16> = Vec::new();
-        let mut flow_rows: Vec<Vec<usize>> = Vec::new();
+        #[derive(Clone, Copy, Debug)]
+        enum HeightSpec {
+            /// Fixed height (cannot shrink).
+            Fixed(u16),
+            /// Content-sized height (can shrink down to `min` when constrained).
+            Content { min: u16, desired: u16 },
+            /// Flexible height (takes remaining space), with an enforced minimum.
+            Weight { weight: u16, min: u16 },
+        }
+
+        let mut specs: Vec<Option<HeightSpec>> = vec![None; self.children.len()];
+        let mut margin_total: u16 = 0;
+        let mut flow_count = 0usize;
 
         for (idx, child) in self.children.iter().enumerate() {
             if child.layout.anchor.is_some() {
                 continue;
             }
-            let row = idx / columns;
-            let col = idx % columns;
-            while flow_rows.len() <= row {
-                flow_rows.push(Vec::new());
-                row_mins.push(0);
-                row_desired.push(0);
-            }
-            flow_rows[row].push(idx);
+            flow_count += 1;
 
             let margin = child.layout.margin;
-
-            let min_w = child.view.min_width();
-            let required_w = match child.layout.width {
-                Size::Fixed(w) => w.max(min_w),
-                Size::Content | Size::Fill | Size::Weight(_) => min_w,
-            };
-            let outer_min_w = margin
-                .left
-                .saturating_add(required_w)
-                .saturating_add(margin.right);
-            if let Some(slot) = col_mins.get_mut(col) {
-                *slot = (*slot).max(outer_min_w);
-            }
+            margin_total = margin_total
+                .saturating_add(margin.top)
+                .saturating_add(margin.bottom);
 
             let min_h = child.view.min_height();
-            let required_min_h = match child.layout.height {
-                Size::Fixed(h) => h.max(min_h),
-                Size::Content | Size::Fill | Size::Weight(_) => min_h,
+            let spec = match child.layout.height {
+                Size::Fixed(h) => HeightSpec::Fixed(h.max(min_h)),
+                Size::Content => {
+                    let desired = child.view.desired_height().unwrap_or(1).max(min_h);
+                    HeightSpec::Content {
+                        min: min_h,
+                        desired,
+                    }
+                }
+                Size::Weight(w) => HeightSpec::Weight {
+                    weight: w.max(1),
+                    min: min_h,
+                },
+                Size::Fill => HeightSpec::Weight {
+                    weight: 1,
+                    min: min_h,
+                },
             };
-            let outer_min_h = margin
-                .top
-                .saturating_add(required_min_h)
-                .saturating_add(margin.bottom);
-            row_mins[row] = row_mins[row].max(outer_min_h);
 
-            let desired_h = match child.layout.height {
-                Size::Fixed(h) => h.max(min_h),
-                Size::Content => child.view.desired_height().unwrap_or(1).max(min_h),
-                Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1).max(min_h),
-            };
-            let outer_desired_h = margin
-                .top
-                .saturating_add(desired_h)
-                .saturating_add(margin.bottom);
-            row_desired[row] = row_desired[row].max(outer_desired_h);
+            specs[idx] = Some(spec);
         }
 
-        let gap_total_w = if columns >= 2 {
-            col_gap.saturating_mul(columns as u16 - 1)
-        } else {
-            0
-        };
-        let cols_min_sum: u16 = col_mins
-            .iter()
-            .copied()
-            .fold(0, |acc, w| acc.saturating_add(w));
-        let min_content_w = cols_min_sum.saturating_add(gap_total_w);
-        let content_w = if scrollable {
-            viewport_w.max(min_content_w)
-        } else {
-            viewport_w
-        };
+        if flow_count >= 2 && spacing > 0 {
+            margin_total =
+                margin_total.saturating_add(spacing.saturating_mul(flow_count as u16 - 1));
+        }
 
-        let col_widths: Vec<u16> = if !scrollable && viewport_w < min_content_w {
-            // When not scrollable, never emit x coordinates outside the viewport.
-            // This fallback keeps the grid inside the viewport even if constraints are violated.
-            let usable_w = viewport_w.saturating_sub(gap_total_w);
-            let base = usable_w / columns as u16;
-            let remainder = usable_w % columns as u16;
+        let mut allocations: Vec<u16> = vec![0; self.children.len()];
 
-            let mut widths = vec![base; columns];
-            for w in widths.iter_mut().take(remainder as usize) {
-                *w = w.saturating_add(1);
+        if scrollable {
+            let mut fixed_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
+
+                match *spec {
+                    HeightSpec::Fixed(h) => {
+                        allocations[idx] = h;
+                        fixed_total = fixed_total.saturating_add(h);
+                    }
+                    HeightSpec::Content { desired, .. } => {
+                        allocations[idx] = desired;
+                        fixed_total = fixed_total.saturating_add(desired);
+                    }
+                    HeightSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        fixed_total = fixed_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
             }
-            widths
-        } else {
-            let mut widths = col_mins;
-            if columns > 0 {
-                let extra = content_w.saturating_sub(min_content_w);
-                if extra > 0 {
-                    let share = extra / columns as u16;
-                    let remainder = extra % columns as u16;
-                    for (idx, w) in widths.iter_mut().enumerate() {
-                        *w = w.saturating_add(share);
-                        if idx < remainder as usize {
-                            *w = w.saturating_add(1);
+
+            let available = content_h
+                .saturating_sub(margin_total)
+                .saturating_sub(fixed_total);
+            let mut remaining = available;
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+                remaining = remaining.saturating_sub(used);
+
+                // Distribute any leftover 1-row remainders deterministically.
+                if remaining > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(HeightSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            remaining = remaining.saturating_sub(1);
                         }
                     }
                 }
             }
-            widths
-        };
-
-        let mut col_xs = vec![0u16; columns];
-        let mut x = 0u16;
-        for (i, w) in col_widths.iter().enumerate() {
-            col_xs[i] = x;
-            x = x.saturating_add(*w).saturating_add(col_gap);
-        }
-
-        let rows = row_desired.len();
-        let gap_total_h = if rows >= 2 {
-            row_gap.saturating_mul(rows as u16 - 1)
         } else {
-            0
-        };
+            let mut min_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+            let mut content_extras: Vec<(usize, u16)> = Vec::new();
 
-        let row_heights: Vec<u16> = if scrollable {
-            row_desired
-        } else {
-            let mut heights = row_mins;
-            let available_for_rows = viewport_h.saturating_sub(gap_total_h);
-            let min_sum: u16 = heights
-                .iter()
-                .copied()
-                .fold(0, |acc, h| acc.saturating_add(h));
-            let mut remaining = available_for_rows.saturating_sub(min_sum);
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
 
-            for row in 0..rows {
+                match *spec {
+                    HeightSpec::Fixed(h) => {
+                        allocations[idx] = h;
+                        min_total = min_total.saturating_add(h);
+                    }
+                    HeightSpec::Content { min, desired } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        content_extras.push((idx, desired.saturating_sub(min)));
+                    }
+                    HeightSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available_for_children = content_h.saturating_sub(margin_total);
+            let mut remaining = available_for_children.saturating_sub(min_total);
+
+            // First, satisfy content views up to their desired size.
+            for (idx, needed) in content_extras {
                 if remaining == 0 {
                     break;
                 }
-                let need = row_desired[row].saturating_sub(heights[row]);
-                let extra = need.min(remaining);
-                heights[row] = heights[row].saturating_add(extra);
+                let extra = needed.min(remaining);
+                allocations[idx] = allocations[idx].saturating_add(extra);
                 remaining = remaining.saturating_sub(extra);
             }
 
-            heights
-        };
+            // Then distribute any leftover space across weight/fill children.
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(HeightSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
 
-        let mut row_ys: Vec<u16> = vec![0; rows];
-        let mut y = 0u16;
-        for (row, h) in row_heights.iter().enumerate() {
-            row_ys[row] = y;
-            y = y.saturating_add(*h).saturating_add(row_gap);
-        }
-
-        for child in self.children.iter_mut() {
-            child.set_bounds(Rect::default());
-        }
-
-        for (row, indices) in flow_rows.iter().enumerate() {
-            let y0 = row_ys[row];
-            if !scrollable && y0 >= viewport_h {
-                continue;
+                let mut leftover = remaining.saturating_sub(used);
+                if leftover > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if leftover == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(HeightSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            leftover = leftover.saturating_sub(1);
+                        }
+                    }
+                }
             }
-            let row_h = if scrollable {
-                row_heights[row]
-            } else {
-                row_heights[row].min(viewport_h.saturating_sub(y0))
-            };
+        }
 
-            for &idx in indices {
-                let col = idx % columns;
-                let cell_x = col_xs[col];
-                let cell_w = col_widths[col];
+        let mut cursor_y: u16 = 0;
+        let mut first_flow = true;
+        let mut out_of_space = false;
 
-                let child = &mut self.children[idx];
-                let margin = child.layout.margin;
+        for (idx, child) in self.children.iter_mut().enumerate() {
+            if let Some(anchor) = child.layout.anchor {
+                let desired_w = match child.layout.width {
+                    Size::Fixed(w) => w,
+                    Size::Content => child.view.desired_width().unwrap_or(content_w),
+                    Size::Fill | Size::Weight(_) => child.view.desired_width().unwrap_or(content_w),
+                }
+                .min(content_w);
+                let desired_h = match child.layout.height {
+                    Size::Fixed(h) => h,
+                    Size::Content => child.view.desired_height().unwrap_or(1),
+                    Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1),
+                }
+                .min(content_h);
 
-                let slot_x = cell_x.saturating_add(margin.left);
-                let slot_y = y0.saturating_add(margin.top);
-                let slot_w = cell_w.saturating_sub(margin.left.saturating_add(margin.right));
-                let slot_h = row_h.saturating_sub(margin.top.saturating_add(margin.bottom));
-
-                let min_w = child.view.min_width();
-                let min_h = child.view.min_height();
-                let required_w = match child.layout.width {
-                    Size::Fixed(w) => w.max(min_w),
-                    Size::Content | Size::Fill | Size::Weight(_) => min_w,
-                };
-                let required_h = match child.layout.height {
-                    Size::Fixed(h) => h.max(min_h),
-                    Size::Content | Size::Fill | Size::Weight(_) => min_h,
-                };
-
-                if slot_w < required_w || slot_h < required_h {
+                let (min_w, min_h) = child.view.min_size();
+                if content_w < min_w || content_h < min_h {
                     child.set_bounds(Rect::default());
                     continue;
                 }
 
-                let slot = Rect {
-                    x: slot_x,
-                    y: slot_y,
-                    width: slot_w,
-                    height: slot_h,
-                };
-
-                let desired = desired_size_for_slot(child.view.as_ref(), slot, child.layout);
-                let aligned =
-                    align_within(slot, desired, child.layout.align_x, child.layout.align_y);
-                child.set_bounds(aligned);
-            }
-        }
-
-        for child in self.children.iter_mut() {
-            let Some(anchor) = child.layout.anchor else {
+                child.set_bounds(position_anchored(
+                    viewport_size,
+                    (desired_w.max(min_w), desired_h.max(min_h)),
+                    anchor.anchor,
+                    anchor.offset_x,
+                    anchor.offset_y,
+                ));
                 continue;
-            };
-            let desired_w = match child.layout.width {
-                Size::Fixed(w) => w,
-                Size::Content => child.view.desired_width().unwrap_or(viewport_w),
-                Size::Fill | Size::Weight(_) => child.view.desired_width().unwrap_or(viewport_w),
             }
-            .min(viewport_w);
-            let desired_h = match child.layout.height {
-                Size::Fixed(h) => h,
-                Size::Content => child.view.desired_height().unwrap_or(1),
-                Size::Fill | Size::Weight(_) => child.view.desired_height().unwrap_or(1),
-            }
-            .min(viewport_h);
 
-            let (min_w, min_h) = child.view.min_size();
-            if viewport_w < min_w || viewport_h < min_h {
+            if !first_flow && spacing > 0 {
+                cursor_y = cursor_y.saturating_add(spacing);
+            }
+            first_flow = false;
+
+            let margin = child.layout.margin;
+            cursor_y = cursor_y.saturating_add(margin.top);
+
+            if !scrollable && cursor_y >= content_h {
                 child.set_bounds(Rect::default());
                 continue;
             }
 
-            child.set_bounds(position_anchored(
-                viewport_size,
-                (desired_w.max(min_w), desired_h.max(min_h)),
-                anchor.anchor,
-                anchor.offset_x,
-                anchor.offset_y,
-            ));
+            if out_of_space {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let slot_h = allocations[idx];
+
+            let max_h = content_h.saturating_sub(cursor_y);
+            let available_h = max_h.saturating_sub(margin.bottom);
+            let available_w = content_w.saturating_sub(margin.left.saturating_add(margin.right));
+            let min_w = child.view.min_width();
+            if available_w < min_w {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let required_h = child.view.min_height();
+            if !scrollable && available_h < required_h {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
+
+            let h = if scrollable {
+                slot_h
+            } else {
+                slot_h.min(available_h)
+            };
+            if h == 0 {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let slot = Rect {
+                x: margin.left,
+                y: cursor_y,
+                width: available_w,
+                height: h,
+            };
+
+            let desired = desired_size_for_slot(child.view.as_ref(), slot, child.layout);
+            let aligned = align_within(slot, desired, child.layout.align_x, child.layout.align_y);
+            child.set_bounds(aligned);
+
+            cursor_y = cursor_y.saturating_add(h).saturating_add(margin.bottom);
         }
 
-        let total_h = match rows {
-            0 => 0,
-            n => row_ys[n - 1].saturating_add(row_heights[n - 1]),
-        };
+        (content_w, cursor_y)
+    }
 
-        (content_w, total_h)
+    fn layout_children_horizontal(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
+        let (content_w, content_h) = viewport_size;
+        let spacing = self.spacing.get();
+        let scrollable = self.scrollable.get();
+
+        #[derive(Clone, Copy, Debug)]
+        enum WidthSpec {
+            /// Fixed width (cannot shrink).
+            Fixed(u16),
+            /// Content-sized width (can shrink down to `min` when constrained).
+            Content { min: u16, desired: u16 },
+            /// Flexible width (takes remaining space), with an enforced minimum.
+            Weight { weight: u16, min: u16 },
+        }
+
+        let mut specs: Vec<Option<WidthSpec>> = vec![None; self.children.len()];
+        let mut margin_total: u16 = 0;
+        let mut flow_count = 0usize;
+
+        for (idx, child) in self.children.iter().enumerate() {
+            if child.layout.anchor.is_some() {
+                continue;
+            }
+            flow_count += 1;
+
+            let margin = child.layout.margin;
+            margin_total = margin_total
+                .saturating_add(margin.left)
+                .saturating_add(margin.right);
+
+            let min_w = child.view.min_width();
+            let spec = match child.layout.width {
+                Size::Fixed(w) => WidthSpec::Fixed(w.max(min_w)),
+                Size::Content => {
+                    let desired = child.view.desired_width().unwrap_or(1).max(min_w);
+                    WidthSpec::Content {
+                        min: min_w,
+                        desired,
+                    }
+                }
+                Size::Weight(w) => WidthSpec::Weight {
+                    weight: w.max(1),
+                    min: min_w,
+                },
+                Size::Fill => WidthSpec::Weight {
+                    weight: 1,
+                    min: min_w,
+                },
+            };
+
+            specs[idx] = Some(spec);
+        }
+
+        if flow_count >= 2 && spacing > 0 {
+            margin_total =
+                margin_total.saturating_add(spacing.saturating_mul(flow_count as u16 - 1));
+        }
+
+        let mut allocations: Vec<u16> = vec![0; self.children.len()];
+
+        if scrollable {
+            let mut fixed_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
+
+                match *spec {
+                    WidthSpec::Fixed(w) => {
+                        allocations[idx] = w;
+                        fixed_total = fixed_total.saturating_add(w);
+                    }
+                    WidthSpec::Content { desired, .. } => {
+                        allocations[idx] = desired;
+                        fixed_total = fixed_total.saturating_add(desired);
+                    }
+                    WidthSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        fixed_total = fixed_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available = content_w
+                .saturating_sub(margin_total)
+                .saturating_sub(fixed_total);
+            let mut remaining = available;
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(WidthSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+                remaining = remaining.saturating_sub(used);
+
+                if remaining > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(WidthSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            remaining = remaining.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut min_total: u16 = 0;
+            let mut weight_total: u16 = 0;
+            let mut content_extras: Vec<(usize, u16)> = Vec::new();
+
+            for (idx, spec) in specs.iter().enumerate() {
+                let Some(spec) = spec else {
+                    continue;
+                };
+
+                match *spec {
+                    WidthSpec::Fixed(w) => {
+                        allocations[idx] = w;
+                        min_total = min_total.saturating_add(w);
+                    }
+                    WidthSpec::Content { min, desired } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        content_extras.push((idx, desired.saturating_sub(min)));
+                    }
+                    WidthSpec::Weight { weight, min } => {
+                        allocations[idx] = min;
+                        min_total = min_total.saturating_add(min);
+                        weight_total = weight_total.saturating_add(weight);
+                    }
+                }
+            }
+
+            let available_for_children = content_w.saturating_sub(margin_total);
+            let mut remaining = available_for_children.saturating_sub(min_total);
+
+            for (idx, needed) in content_extras {
+                if remaining == 0 {
+                    break;
+                }
+                let extra = needed.min(remaining);
+                allocations[idx] = allocations[idx].saturating_add(extra);
+                remaining = remaining.saturating_sub(extra);
+            }
+
+            if weight_total > 0 && remaining > 0 {
+                let mut used: u16 = 0;
+                for (idx, spec) in specs.iter().enumerate() {
+                    let Some(WidthSpec::Weight { weight: w, .. }) = spec else {
+                        continue;
+                    };
+                    let share = ((remaining as u32) * (*w as u32) / (weight_total as u32))
+                        .min(u16::MAX as u32) as u16;
+                    allocations[idx] = allocations[idx].saturating_add(share);
+                    used = used.saturating_add(share);
+                }
+
+                let mut leftover = remaining.saturating_sub(used);
+                if leftover > 0 {
+                    for (idx, spec) in specs.iter().enumerate() {
+                        if leftover == 0 {
+                            break;
+                        }
+                        if matches!(spec, Some(WidthSpec::Weight { .. })) {
+                            allocations[idx] = allocations[idx].saturating_add(1);
+                            leftover = leftover.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor_x: u16 = 0;
+        let mut first_flow = true;
+        let mut out_of_space = false;
+
+        for (idx, child) in self.children.iter_mut().enumerate() {
+            if let Some(anchor) = child.layout.anchor {
+                let desired_w = match child.layout.width {
+                    Size::Fixed(w) => w,
+                    Size::Content => child.view.desired_width().unwrap_or(1),
+                    Size::Fill | Size::Weight(_) => child.view.desired_width().unwrap_or(1),
+                }
+                .min(content_w);
+                let desired_h = match child.layout.height {
+                    Size::Fixed(h) => h,
+                    Size::Content => child.view.desired_height().unwrap_or(content_h),
+                    Size::Fill | Size::Weight(_) => {
+                        child.view.desired_height().unwrap_or(content_h)
+                    }
+                }
+                .min(content_h);
+
+                let (min_w, min_h) = child.view.min_size();
+                if content_w < min_w || content_h < min_h {
+                    child.set_bounds(Rect::default());
+                    continue;
+                }
+
+                child.set_bounds(position_anchored(
+                    viewport_size,
+                    (desired_w.max(min_w), desired_h.max(min_h)),
+                    anchor.anchor,
+                    anchor.offset_x,
+                    anchor.offset_y,
+                ));
+                continue;
+            }
+
+            if !first_flow && spacing > 0 {
+                cursor_x = cursor_x.saturating_add(spacing);
+            }
+            first_flow = false;
+
+            let margin = child.layout.margin;
+            cursor_x = cursor_x.saturating_add(margin.left);
+
+            if !scrollable && cursor_x >= content_w {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            if out_of_space {
+                child.set_bounds(Rect::default());
+                continue;
+            }
+
+            let slot_w = allocations[idx];
+
+            let max_w = content_w.saturating_sub(cursor_x);
+            let available_w = max_w.saturating_sub(margin.right);
+            let available_h = content_h.saturating_sub(margin.top.saturating_add(margin.bottom));
+
+            let required_w = child.view.min_width();
+            if !scrollable && available_w < required_w {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
+
+            let required_h = child.view.min_height();
+
+            let w = if scrollable {
+                slot_w
+            } else {
+                slot_w.min(available_w)
+            };
+            if w == 0 && required_w > 0 {
+                child.set_bounds(Rect::default());
+                out_of_space = true;
+                continue;
+            }
+
+            if available_h < required_h {
+                // Reserve horizontal space, but don't render an unusable child.
+                child.set_bounds(Rect::default());
+                cursor_x = cursor_x.saturating_add(w).saturating_add(margin.right);
+                continue;
+            }
+
+            let slot = Rect {
+                x: cursor_x,
+                y: margin.top,
+                width: w,
+                height: available_h,
+            };
+
+            let desired = desired_size_for_slot(child.view.as_ref(), slot, child.layout);
+            let aligned = align_within(slot, desired, child.layout.align_x, child.layout.align_y);
+            child.set_bounds(aligned);
+
+            cursor_x = cursor_x.saturating_add(w).saturating_add(margin.right);
+        }
+
+        (cursor_x, content_h)
     }
 }
 
-impl Component for Grid {
+impl Component for StackCore {
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }
@@ -812,93 +1193,15 @@ impl Component for Grid {
     }
 
     fn min_width(&self) -> u16 {
-        let columns = self.columns.get().max(1);
-        let padding = self.padding.get();
-        let col_gap = self.column_gap.get();
-
-        let mut col_mins: Vec<u16> = vec![0; columns];
-        for (idx, child) in self.children.iter().enumerate() {
-            if child.layout.anchor.is_some() {
-                continue;
-            }
-            let col = idx % columns;
-            let margin = child.layout.margin;
-
-            let min_w = child.view.min_width();
-            let required_w = match child.layout.width {
-                Size::Fixed(w) => w.max(min_w),
-                Size::Content | Size::Fill | Size::Weight(_) => min_w,
-            };
-
-            let outer_w = margin
-                .left
-                .saturating_add(required_w)
-                .saturating_add(margin.right);
-            if let Some(slot) = col_mins.get_mut(col) {
-                *slot = (*slot).max(outer_w);
-            }
-        }
-
-        let mut total: u16 = padding.left.saturating_add(padding.right);
-        if columns >= 2 {
-            total = total.saturating_add(col_gap.saturating_mul(columns as u16 - 1));
-        }
-        for w in col_mins {
-            total = total.saturating_add(w);
-        }
-        total
+        self.min_width_flow()
     }
 
     fn min_height(&self) -> u16 {
-        let columns = self.columns.get().max(1);
-        let padding = self.padding.get();
-        let row_gap = self.row_gap.get();
-        let scrollable = self.scrollable.get();
+        self.min_height_flow()
+    }
 
-        let mut row_mins: Vec<u16> = Vec::new();
-        for (idx, child) in self.children.iter().enumerate() {
-            if child.layout.anchor.is_some() {
-                continue;
-            }
-            let row = idx / columns;
-            if row_mins.len() <= row {
-                row_mins.resize(row.saturating_add(1), 0);
-            }
-
-            let margin = child.layout.margin;
-
-            let min_h = child.view.min_height();
-            let required_h = match child.layout.height {
-                Size::Fixed(h) => h.max(min_h),
-                Size::Content | Size::Fill | Size::Weight(_) => min_h,
-            };
-
-            let outer_h = margin
-                .top
-                .saturating_add(required_h)
-                .saturating_add(margin.bottom);
-            row_mins[row] = row_mins[row].max(outer_h);
-        }
-
-        let Some(first) = row_mins.first().copied() else {
-            return padding.top.saturating_add(padding.bottom);
-        };
-
-        let rows = row_mins.len();
-        let mut rows_total: u16 = if scrollable {
-            row_mins.into_iter().max().unwrap_or(first)
-        } else {
-            row_mins.into_iter().fold(0, |acc, h| acc.saturating_add(h))
-        };
-
-        if !scrollable && rows >= 2 {
-            rows_total = rows_total.saturating_add(row_gap.saturating_mul(rows as u16 - 1));
-        }
-
-        padding
-            .top
-            .saturating_add(padding.bottom)
-            .saturating_add(rows_total)
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.desired_height_flow())
     }
 
     fn children(&self) -> &[ComponentNode] {
@@ -1063,6 +1366,7 @@ impl Component for Grid {
             };
 
             if self.scrollable.get() {
+                // If we started a thumb drag, keep consuming drag/up events.
                 if let Some(drag) = self.scrollbar_drag {
                     let scroll = self.scroll.get();
                     match m.kind {
@@ -1304,6 +1608,7 @@ impl Component for Grid {
             return self.handle_event_bubble(event, ctx);
         }
 
+        // Keyboard/paste/etc: send to focused child first.
         if let Some(child_id) = self.focused.or_else(|| self.first_focusable_child())
             && let Some(child_idx) = self.children.iter().position(|c| c.id == child_id)
         {
@@ -1596,3 +1901,172 @@ impl Component for Grid {
         }
     }
 }
+
+macro_rules! define_stack {
+    ($name:ident, $axis:expr) => {
+        pub struct $name {
+            core: StackCore,
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
+        impl $name {
+            pub fn new() -> Self {
+                Self {
+                    core: StackCore::new($axis),
+                }
+            }
+
+            pub fn with_padding(mut self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+                self.core = self.core.with_padding(padding);
+                self
+            }
+
+            pub fn with_spacing(mut self, spacing: impl Into<Binding<u16>>) -> Self {
+                self.core = self.core.with_spacing(spacing);
+                self
+            }
+
+            pub fn with_scrollable(mut self, scrollable: impl Into<Binding<bool>>) -> Self {
+                self.core = self.core.with_scrollable(scrollable);
+                self
+            }
+
+            pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+                self.core = self.core.with_scroll_config(config);
+                self
+            }
+
+            pub fn spacing(self, spacing: impl Into<Binding<u16>>) -> Self {
+                self.with_spacing(spacing)
+            }
+
+            pub fn padding(self, padding: u16) -> Self {
+                self.with_padding(EdgeInsets::all(padding))
+            }
+
+            pub fn padding_insets(self, padding: impl Into<Binding<EdgeInsets>>) -> Self {
+                self.with_padding(padding)
+            }
+
+            pub fn scrollable(self, scrollable: impl Into<Binding<bool>>) -> Self {
+                self.with_scrollable(scrollable)
+            }
+
+            pub fn scroll_config(self, config: impl Into<Binding<ScrollConfig>>) -> Self {
+                self.with_scroll_config(config)
+            }
+
+            pub fn child(mut self, view: impl Component + 'static) -> Self {
+                self.core = self.core.child(view);
+                self
+            }
+
+            pub fn child_with_layout(
+                mut self,
+                view: impl Component + 'static,
+                layout: LayoutParams,
+            ) -> Self {
+                self.core = self.core.child_with_layout(view, layout);
+                self
+            }
+
+            pub fn add_child_with_layout(
+                &mut self,
+                view: Box<dyn Component>,
+                layout: LayoutParams,
+            ) {
+                self.core.add_child_with_layout(view, layout);
+            }
+
+            pub fn replace_children(&mut self, children: Vec<ComponentNode>) {
+                self.core.replace_children(children);
+            }
+        }
+
+        impl Component for $name {
+            fn is_focusable(&self) -> bool {
+                self.core.is_focusable()
+            }
+
+            fn focus_first(&mut self) -> bool {
+                self.core.focus_first()
+            }
+
+            fn focus_last(&mut self) -> bool {
+                self.core.focus_last()
+            }
+
+            fn min_width(&self) -> u16 {
+                self.core.min_width()
+            }
+
+            fn min_height(&self) -> u16 {
+                self.core.min_height()
+            }
+
+            fn desired_height(&self) -> Option<u16> {
+                self.core.desired_height()
+            }
+
+            fn children(&self) -> &[ComponentNode] {
+                self.core.children()
+            }
+
+            fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+                self.core.children_mut()
+            }
+
+            fn is_scrollable(&self) -> bool {
+                self.core.is_scrollable()
+            }
+
+            fn content_size(&self) -> (u16, u16) {
+                self.core.content_size()
+            }
+
+            fn scroll_offset(&self) -> (u16, u16) {
+                self.core.scroll_offset()
+            }
+
+            fn viewport_size(&self) -> (u16, u16) {
+                self.core.viewport_size()
+            }
+
+            fn scroll_config(&self) -> ScrollConfig {
+                Component::scroll_config(&self.core)
+            }
+
+            fn set_scroll_offset(&mut self, x: u16, y: u16) {
+                self.core.set_scroll_offset(x, y);
+            }
+
+            fn scroll_to_child(&mut self, child_id: ComponentId) {
+                self.core.scroll_to_child(child_id);
+            }
+
+            fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+                self.core.handle_event_capture(event, ctx)
+            }
+
+            fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+                self.core.handle_event_bubble(event, ctx)
+            }
+
+            fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+                self.core.handle_event(event, ctx)
+            }
+
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+                self.core.draw(frame, area, ctx)
+            }
+        }
+    };
+}
+
+define_stack!(VStack, StackAxis::Vertical);
+define_stack!(HStack, StackAxis::Horizontal);

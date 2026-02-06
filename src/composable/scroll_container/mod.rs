@@ -1,8 +1,12 @@
+mod events;
+mod scrollbars;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
+use super::geom::{contains, mouse_coords_local_to_area};
 use crate::reactive::Binding;
 
 use super::layout::{EdgeInsets, add_signed, apply_padding};
@@ -11,31 +15,6 @@ use super::scroll::{
     max_scroll_offset, scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d,
     should_show_scrollbar,
 };
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
-}
 
 /// Public, 1D scrollbar layout info passed to virtual scrolling delegates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

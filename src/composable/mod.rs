@@ -3,6 +3,7 @@
 mod border;
 mod component;
 mod for_each;
+mod geom;
 mod grid;
 mod identifiable;
 mod layout;
