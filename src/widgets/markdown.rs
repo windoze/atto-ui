@@ -1,7 +1,7 @@
 use std::cmp;
 use std::sync::Arc;
 
-use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use parking_lot::RwLock;
 use pulldown_cmark::{CodeBlockKind, Event as MdEvent, Options, Parser, Tag, TagEnd};
 use ratatui::Frame;
@@ -11,6 +11,7 @@ use ratatui::widgets::Block;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::composable::scroll::{scrollbar_layout_1d, should_show_scrollbar};
 use crate::composable::{
     Component, ComponentContext, EventResult, ScrollConfig, ScrollContainer, ScrollContainerHost,
     ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarVisibility,
@@ -368,6 +369,7 @@ impl ScrollContent for MarkdownContent {
                             scroll,
                             content_width,
                             &styles,
+                            ctx.component.theme,
                             *in_blockquote,
                         );
                     }
@@ -387,6 +389,7 @@ impl ScrollContent for MarkdownContent {
                             scroll,
                             content_width,
                             &styles,
+                            ctx.component.theme,
                             *in_blockquote,
                         );
                     }
@@ -505,46 +508,102 @@ impl MarkdownShared {
         &mut self,
         block: &LayoutBlock,
         local_x: u16,
-        _local_y: u16,
+        local_y: u16,
         m: MouseEvent,
         viewport: (u16, u16),
         wrap_width: u16,
     ) -> Option<EventResult> {
+        let is_wheel = matches!(
+            m.kind,
+            MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight
+        );
+
         match &block.kind {
             LayoutBlockKind::Code { index, prefix, .. } => {
                 let prefix_width = prefix.first_width.max(prefix.rest_width);
-                let content_x = local_x.saturating_sub(prefix_width);
-                let content_width = wrap_width.min(viewport.0).saturating_sub(prefix_width);
-                if local_x >= prefix_width && content_x < content_width {
+                let total_width = wrap_width.min(viewport.0);
+                if total_width == 0 || local_x >= total_width {
+                    return None;
+                }
+                let outer_w = total_width.saturating_sub(prefix_width);
+                if outer_w == 0 {
+                    return None;
+                }
+
+                if is_wheel {
                     let code = self.code_blocks.get_mut(*index)?;
-                    let consumed =
-                        code.handle_scroll(m, content_width, block.height, DEFAULT_SCROLL_STEP);
-                    return Some(if consumed {
-                        EventResult::consumed()
-                    } else {
-                        EventResult::ignored()
-                    });
+                    let (content_w, content_h) = code.content_size();
+                    let embedded = EmbeddedScrollView::solve_auto(
+                        (content_w, content_h),
+                        (outer_w, block.height),
+                    );
+                    let consumed = code.handle_scroll(
+                        m,
+                        embedded.viewport_w,
+                        embedded.viewport_h,
+                        DEFAULT_SCROLL_STEP,
+                    );
+                    if consumed {
+                        return Some(EventResult::consumed());
+                    }
+                    return None;
                 }
                 None
             }
             LayoutBlockKind::Table { index, prefix, .. } => {
                 let prefix_width = prefix.first_width.max(prefix.rest_width);
-                let content_x = local_x.saturating_sub(prefix_width);
-                let content_width = wrap_width.min(viewport.0).saturating_sub(prefix_width);
-                if local_x >= prefix_width && content_x < content_width {
+                let total_width = wrap_width.min(viewport.0);
+                if total_width == 0 || local_x >= total_width {
+                    return None;
+                }
+                let outer_w = total_width.saturating_sub(prefix_width);
+                if outer_w == 0 {
+                    return None;
+                }
+
+                if is_wheel {
                     let table = self.tables.get_mut(*index)?;
-                    let consumed =
-                        table.handle_scroll(m, content_width, block.height, DEFAULT_SCROLL_STEP);
+                    let (content_w, content_h) = table.content_size();
+                    let embedded = EmbeddedScrollView::solve_auto(
+                        (content_w, content_h),
+                        (outer_w, block.height),
+                    );
+                    let consumed = table.handle_scroll(
+                        m,
+                        embedded.viewport_w,
+                        embedded.viewport_h,
+                        DEFAULT_SCROLL_STEP,
+                    );
                     if consumed {
                         return Some(EventResult::consumed());
                     }
+                    return None;
+                }
+
+                let content_x = local_x.saturating_sub(prefix_width);
+                let table = self.tables.get_mut(*index)?;
+                let (content_w, content_h) = table.content_size();
+                let embedded =
+                    EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
+
+                let max_x = content_w.saturating_sub(embedded.viewport_w);
+                let max_y = content_h.saturating_sub(embedded.viewport_h);
+                table.scroll.x = table.scroll.x.min(max_x);
+                table.scroll.y = table.scroll.y.min(max_y);
+
+                if local_x >= prefix_width
+                    && content_x < embedded.viewport_w
+                    && local_y < embedded.viewport_h
+                {
                     if let MouseEventKind::Down(MouseButton::Left) = m.kind
-                        && let Some(url) = table.link_at(content_x, _local_y)
+                        && let Some(url) = table.link_at(content_x, local_y)
                     {
                         self.link_callback.fire(&url);
                         return Some(EventResult::consumed());
                     }
-                    return Some(EventResult::ignored());
                 }
                 None
             }
@@ -726,7 +785,8 @@ impl CodeBlockState {
         let mut scroll = self.scroll;
         let mut changed = false;
 
-        match m.kind {
+        let kind = normalize_wheel_kind(m.kind, m.modifiers);
+        match kind {
             MouseEventKind::ScrollUp => {
                 let dy = step as i16;
                 let new_y = scroll.y.saturating_sub(dy as u16);
@@ -830,7 +890,8 @@ impl TableBlockState {
         let mut scroll = self.scroll;
         let mut changed = false;
 
-        match m.kind {
+        let kind = normalize_wheel_kind(m.kind, m.modifiers);
+        match kind {
             MouseEventKind::ScrollUp => {
                 let dy = step as i16;
                 let new_y = scroll.y.saturating_sub(dy as u16);
@@ -884,6 +945,69 @@ impl TableBlockState {
     }
 }
 
+fn normalize_wheel_kind(kind: MouseEventKind, modifiers: KeyModifiers) -> MouseEventKind {
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        match kind {
+            MouseEventKind::ScrollUp => MouseEventKind::ScrollLeft,
+            MouseEventKind::ScrollDown => MouseEventKind::ScrollRight,
+            _ => kind,
+        }
+    } else {
+        kind
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EmbeddedScrollView {
+    show_v: bool,
+    show_h: bool,
+    viewport_w: u16,
+    viewport_h: u16,
+}
+
+impl EmbeddedScrollView {
+    const THICKNESS: u16 = 1;
+
+    fn solve_auto(content: (u16, u16), outer: (u16, u16)) -> Self {
+        let (content_w, content_h) = content;
+        let (outer_w, outer_h) = outer;
+
+        let mut show_v = false;
+        let mut show_h = false;
+
+        // Two-pass solve: scrollbar visibility affects viewport size, which can affect the other
+        // scrollbar's visibility (e.g. vbar steals width, causing hbar).
+        for _ in 0..2 {
+            let viewport_w = outer_w.saturating_sub(if show_v { Self::THICKNESS } else { 0 });
+            let viewport_h = outer_h.saturating_sub(if show_h { Self::THICKNESS } else { 0 });
+
+            let can_show_v = outer_w > Self::THICKNESS && viewport_h > 0;
+            let can_show_h = outer_h > Self::THICKNESS && viewport_w > 0;
+
+            let new_show_v = can_show_v
+                && should_show_scrollbar(ScrollbarVisibility::Auto, content_h, viewport_h);
+            let new_show_h = can_show_h
+                && should_show_scrollbar(ScrollbarVisibility::Auto, content_w, viewport_w);
+
+            if new_show_v == show_v && new_show_h == show_h {
+                break;
+            }
+            show_v = new_show_v;
+            show_h = new_show_h;
+        }
+
+        let viewport_w = outer_w.saturating_sub(if show_v { Self::THICKNESS } else { 0 });
+        let viewport_h = outer_h.saturating_sub(if show_h { Self::THICKNESS } else { 0 });
+
+        Self {
+            show_v,
+            show_h,
+            viewport_w,
+            viewport_h,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct MarkdownStyles {
     base: Style,
@@ -896,6 +1020,7 @@ struct MarkdownStyles {
     code_inline: Style,
     code_block: Style,
     table_border: Style,
+    table_border_glyphs: TableBorderGlyphs,
     table_header: Style,
     table_cell: Style,
     link: Style,
@@ -959,6 +1084,7 @@ impl MarkdownStyles {
             table_border: theme
                 .named_style("markdown-table-border")
                 .unwrap_or(theme.widget.dim),
+            table_border_glyphs: TableBorderGlyphs::from_theme(theme),
             table_header: base.patch(
                 theme
                     .named_style("markdown-table-header")
@@ -975,6 +1101,65 @@ impl MarkdownStyles {
                     .named_style("markdown-mark")
                     .unwrap_or(theme.widget.dim),
             ),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TableBorderGlyphs {
+    top_left: String,
+    top_right: String,
+    bottom_left: String,
+    bottom_right: String,
+    horizontal: String,
+    vertical: String,
+    top_join: String,
+    bottom_join: String,
+    left_join: String,
+    right_join: String,
+    center_join: String,
+}
+
+impl TableBorderGlyphs {
+    fn from_theme(theme: &Theme) -> Self {
+        let horizontal = theme.glyph("h-border").unwrap_or("─").to_string();
+        let vertical = theme.glyph("v-border").unwrap_or("│").to_string();
+        let top_left = theme.glyph("top-left-corner").unwrap_or("┌").to_string();
+        let top_right = theme.glyph("top-right-corner").unwrap_or("┐").to_string();
+        let bottom_left = theme.glyph("bottom-left-corner").unwrap_or("└").to_string();
+        let bottom_right = theme
+            .glyph("bottom-right-corner")
+            .unwrap_or("┘")
+            .to_string();
+
+        let is_double = horizontal == "═"
+            || vertical == "║"
+            || top_left == "╔"
+            || top_right == "╗"
+            || bottom_left == "╚"
+            || bottom_right == "╝";
+        let is_ascii = horizontal == "-" || vertical == "|" || top_left == "+";
+
+        let (top_join, bottom_join, left_join, right_join, center_join) = if is_double {
+            ("╦", "╩", "╠", "╣", "╬")
+        } else if is_ascii {
+            ("+", "+", "+", "+", "+")
+        } else {
+            ("┬", "┴", "├", "┤", "┼")
+        };
+
+        Self {
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
+            horizontal,
+            vertical,
+            top_join: top_join.to_string(),
+            bottom_join: bottom_join.to_string(),
+            left_join: left_join.to_string(),
+            right_join: right_join.to_string(),
+            center_join: center_join.to_string(),
         }
     }
 }
@@ -2077,11 +2262,12 @@ fn draw_code_block(
     frame: &mut Frame<'_>,
     area: Rect,
     block: &LayoutBlock,
-    code: &CodeBlockState,
+    code: &mut CodeBlockState,
     prefix: &PrefixSpec,
     scroll: ScrollOffset,
     wrap_width: u16,
     styles: &MarkdownStyles,
+    theme: &Theme,
     in_blockquote: bool,
 ) {
     let prefix_width = prefix.first_width.max(prefix.rest_width);
@@ -2108,12 +2294,46 @@ fn draw_code_block(
     let code_style = styles.code_block;
 
     let (content_w, content_h) = code.content_size();
-    let max_x = content_w.saturating_sub(content_width);
-    let max_y = content_h.saturating_sub(block.height);
+    let embedded =
+        EmbeddedScrollView::solve_auto((content_w, content_h), (content_width, block.height));
+    let viewport_w = embedded.viewport_w;
+    let viewport_h = embedded.viewport_h;
+
+    let max_x = content_w.saturating_sub(viewport_w);
+    let max_y = content_h.saturating_sub(viewport_h);
     let content_scroll = ScrollOffset {
         x: code.scroll.x.min(max_x),
         y: code.scroll.y.min(max_y),
     };
+    if content_scroll != code.scroll {
+        code.scroll = content_scroll;
+    }
+
+    let arrows = true;
+    let v_layout = embedded.show_v.then_some(scrollbar_layout_1d(
+        viewport_h,
+        viewport_h,
+        content_h,
+        content_scroll.y,
+        arrows,
+    ));
+    let h_layout = embedded.show_h.then_some(scrollbar_layout_1d(
+        viewport_w,
+        viewport_w,
+        content_w,
+        content_scroll.x,
+        arrows,
+    ));
+
+    let track_style = theme.scrollbar_track;
+    let thumb_style = theme.scrollbar_thumb;
+    let arrow_style = theme.scrollbar_arrow;
+    let track = theme.glyph("scrollbar-track").unwrap_or("░");
+    let thumb = theme.glyph("scrollbar-thumb").unwrap_or("█");
+    let arrow_up = theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+    let arrow_down = theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+    let arrow_left = theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+    let arrow_right = theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
     for line_offset in visible_start..visible_end {
         let local_line = line_offset.saturating_sub(block_start);
@@ -2126,19 +2346,77 @@ fn draw_code_block(
         let styled_prefix = styled_prefix_spans(prefix_spans, prefix_style, styles);
         draw_spans_with_scroll(frame, area.x, screen_y, prefix_width, &styled_prefix, 0);
 
+        if embedded.show_h && local_line >= viewport_h {
+            let Some(layout) = h_layout else {
+                continue;
+            };
+
+            let buf = frame.buffer_mut();
+            for dx in 0..viewport_w {
+                let (symbol, bar_style) = if layout.has_arrows && dx == 0 {
+                    (arrow_left, arrow_style)
+                } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
+                    (arrow_right, arrow_style)
+                } else if dx >= layout.thumb_start
+                    && dx < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (thumb, thumb_style)
+                } else {
+                    (track, track_style)
+                };
+                if let Some(cell) = buf.cell_mut((content_x.saturating_add(dx), screen_y)) {
+                    cell.set_symbol(symbol);
+                    cell.set_style(code_style.patch(bar_style));
+                }
+            }
+
+            if embedded.show_v {
+                if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
+                    cell.set_symbol(track);
+                    cell.set_style(code_style.patch(track_style));
+                }
+            }
+            continue;
+        }
+
         let code_line_idx = content_scroll.y.saturating_add(local_line);
         let line = code
             .lines
             .get(code_line_idx as usize)
             .cloned()
             .unwrap_or_default();
-        fill_line(frame, content_x, screen_y, content_width, code_style);
-        let (segment, _) = slice_by_width(&line, content_scroll.x, content_width);
+        fill_line(frame, content_x, screen_y, viewport_w, code_style);
+        let (segment, _) = slice_by_width(&line, content_scroll.x, viewport_w);
         let styled = vec![StyledSpan {
             text: segment,
             style: code_style,
         }];
-        draw_spans_with_scroll(frame, content_x, screen_y, content_width, &styled, 0);
+        draw_spans_with_scroll(frame, content_x, screen_y, viewport_w, &styled, 0);
+
+        if embedded.show_v {
+            let Some(layout) = v_layout else {
+                continue;
+            };
+
+            let dy = local_line.min(layout.bar_len.saturating_sub(1));
+            let (symbol, bar_style) = if layout.has_arrows && dy == 0 {
+                (arrow_up, arrow_style)
+            } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                (arrow_down, arrow_style)
+            } else if dy >= layout.thumb_start
+                && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                (thumb, thumb_style)
+            } else {
+                (track, track_style)
+            };
+
+            let buf = frame.buffer_mut();
+            if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
+                cell.set_symbol(symbol);
+                cell.set_style(code_style.patch(bar_style));
+            }
+        }
     }
 }
 
@@ -2147,11 +2425,12 @@ fn draw_table_block(
     frame: &mut Frame<'_>,
     area: Rect,
     block: &LayoutBlock,
-    table: &TableBlockState,
+    table: &mut TableBlockState,
     prefix: &PrefixSpec,
     scroll: ScrollOffset,
     wrap_width: u16,
     styles: &MarkdownStyles,
+    theme: &Theme,
     in_blockquote: bool,
 ) {
     let prefix_width = prefix.first_width.max(prefix.rest_width);
@@ -2182,12 +2461,46 @@ fn draw_table_block(
     };
 
     let (content_w, content_h) = table.content_size();
-    let max_x = content_w.saturating_sub(content_width);
-    let max_y = content_h.saturating_sub(block.height);
+    let embedded =
+        EmbeddedScrollView::solve_auto((content_w, content_h), (content_width, block.height));
+    let viewport_w = embedded.viewport_w;
+    let viewport_h = embedded.viewport_h;
+
+    let max_x = content_w.saturating_sub(viewport_w);
+    let max_y = content_h.saturating_sub(viewport_h);
     let content_scroll = ScrollOffset {
         x: table.scroll.x.min(max_x),
         y: table.scroll.y.min(max_y),
     };
+    if content_scroll != table.scroll {
+        table.scroll = content_scroll;
+    }
+
+    let arrows = true;
+    let v_layout = embedded.show_v.then_some(scrollbar_layout_1d(
+        viewport_h,
+        viewport_h,
+        content_h,
+        content_scroll.y,
+        arrows,
+    ));
+    let h_layout = embedded.show_h.then_some(scrollbar_layout_1d(
+        viewport_w,
+        viewport_w,
+        content_w,
+        content_scroll.x,
+        arrows,
+    ));
+
+    let track_style = theme.scrollbar_track;
+    let thumb_style = theme.scrollbar_thumb;
+    let arrow_style = theme.scrollbar_arrow;
+    let track = theme.glyph("scrollbar-track").unwrap_or("░");
+    let thumb = theme.glyph("scrollbar-thumb").unwrap_or("█");
+    let arrow_up = theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+    let arrow_down = theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+    let arrow_left = theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+    let arrow_right = theme.glyph("scrollbar-right-arrow").unwrap_or("►");
 
     for line_offset in visible_start..visible_end {
         let local_line = line_offset.saturating_sub(block_start);
@@ -2201,16 +2514,74 @@ fn draw_table_block(
         let styled_prefix = styled_prefix_spans(prefix_spans, prefix_style, styles);
         draw_spans_with_scroll(frame, area.x, screen_y, prefix_width, &styled_prefix, 0);
 
+        if embedded.show_h && local_line >= viewport_h {
+            let Some(layout) = h_layout else {
+                continue;
+            };
+
+            let buf = frame.buffer_mut();
+            for dx in 0..viewport_w {
+                let (symbol, bar_style) = if layout.has_arrows && dx == 0 {
+                    (arrow_left, arrow_style)
+                } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
+                    (arrow_right, arrow_style)
+                } else if dx >= layout.thumb_start
+                    && dx < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (thumb, thumb_style)
+                } else {
+                    (track, track_style)
+                };
+                if let Some(cell) = buf.cell_mut((content_x.saturating_add(dx), screen_y)) {
+                    cell.set_symbol(symbol);
+                    cell.set_style(styles.table_cell.patch(bar_style));
+                }
+            }
+
+            if embedded.show_v {
+                if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
+                    cell.set_symbol(track);
+                    cell.set_style(styles.table_cell.patch(track_style));
+                }
+            }
+            continue;
+        }
+
         let table_line = content_scroll.y.saturating_add(local_line);
         let spans = table_line_spans(table, table_line, styles);
         draw_spans_with_scroll(
             frame,
             content_x,
             screen_y,
-            content_width,
+            viewport_w,
             &spans,
             content_scroll.x,
         );
+
+        if embedded.show_v {
+            let Some(layout) = v_layout else {
+                continue;
+            };
+
+            let dy = local_line.min(layout.bar_len.saturating_sub(1));
+            let (symbol, bar_style) = if layout.has_arrows && dy == 0 {
+                (arrow_up, arrow_style)
+            } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                (arrow_down, arrow_style)
+            } else if dy >= layout.thumb_start
+                && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                (thumb, thumb_style)
+            } else {
+                (track, track_style)
+            };
+
+            let buf = frame.buffer_mut();
+            if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
+                cell.set_symbol(symbol);
+                cell.set_style(styles.table_cell.patch(bar_style));
+            }
+        }
     }
 }
 
@@ -2227,7 +2598,7 @@ fn table_line_spans(
     let mut line_idx = 0u16;
 
     if line == line_idx {
-        return border_line_spans(table, styles);
+        return border_line_spans(table, TableBorderLineKind::Top, styles);
     }
     line_idx = line_idx.saturating_add(1);
 
@@ -2237,7 +2608,7 @@ fn table_line_spans(
         }
         line_idx = line_idx.saturating_add(1);
         if line == line_idx {
-            return border_line_spans(table, styles);
+            return border_line_spans(table, TableBorderLineKind::Middle, styles);
         }
         line_idx = line_idx.saturating_add(1);
     }
@@ -2247,7 +2618,7 @@ fn table_line_spans(
         return row_line_spans(table, &table.rows[body_index as usize], false, styles);
     }
 
-    border_line_spans(table, styles)
+    border_line_spans(table, TableBorderLineKind::Bottom, styles)
 }
 
 fn table_line_raw_spans(table: &TableBlockState, line: u16) -> Vec<InlineSpan> {
@@ -2318,16 +2689,41 @@ fn row_line_raw_spans(table: &TableBlockState, row: &[Vec<InlineSpan>]) -> Vec<I
     spans
 }
 
-fn border_line_spans(table: &TableBlockState, styles: &MarkdownStyles) -> Vec<StyledSpan> {
+#[derive(Clone, Copy, Debug)]
+enum TableBorderLineKind {
+    Top,
+    Middle,
+    Bottom,
+}
+
+fn border_line_spans(
+    table: &TableBlockState,
+    kind: TableBorderLineKind,
+    styles: &MarkdownStyles,
+) -> Vec<StyledSpan> {
     if table.col_widths.is_empty() {
         return Vec::new();
     }
+    let glyphs = &styles.table_border_glyphs;
+    let (left, join, right) = match kind {
+        TableBorderLineKind::Top => (&glyphs.top_left, &glyphs.top_join, &glyphs.top_right),
+        TableBorderLineKind::Middle => (&glyphs.left_join, &glyphs.center_join, &glyphs.right_join),
+        TableBorderLineKind::Bottom => (
+            &glyphs.bottom_left,
+            &glyphs.bottom_join,
+            &glyphs.bottom_right,
+        ),
+    };
     let mut text = String::new();
-    text.push('+');
-    for width in &table.col_widths {
+    text.push_str(left);
+    for (idx, width) in table.col_widths.iter().enumerate() {
         let cell_w = width.saturating_add(2);
-        text.push_str(&"-".repeat(cell_w as usize));
-        text.push('+');
+        text.push_str(&glyphs.horizontal.repeat(cell_w as usize));
+        if idx + 1 < table.col_widths.len() {
+            text.push_str(join);
+        } else {
+            text.push_str(right);
+        }
     }
     vec![StyledSpan {
         text,
@@ -2343,6 +2739,7 @@ fn row_line_spans(
 ) -> Vec<StyledSpan> {
     let mut spans = Vec::new();
     let border_style = styles.table_border;
+    let vbar = styles.table_border_glyphs.vertical.clone();
     let cell_style = if is_header {
         styles.table_header
     } else {
@@ -2350,7 +2747,7 @@ fn row_line_spans(
     };
 
     spans.push(StyledSpan {
-        text: "|".to_string(),
+        text: vbar.clone(),
         style: border_style,
     });
 
@@ -2375,7 +2772,7 @@ fn row_line_spans(
             style: cell_style,
         });
         spans.push(StyledSpan {
-            text: "|".to_string(),
+            text: vbar.clone(),
             style: border_style,
         });
     }
@@ -2572,9 +2969,11 @@ fn link_at_in_spans(spans: &[InlineSpan], col: u16) -> Option<String> {
     for span in spans {
         let width = text_width(&span.text);
         if let Some(url) = &span.link
-            && col >= offset && col < offset.saturating_add(width) {
-                return Some(url.clone());
-            }
+            && col >= offset
+            && col < offset.saturating_add(width)
+        {
+            return Some(url.clone());
+        }
         offset = offset.saturating_add(width);
     }
     None
