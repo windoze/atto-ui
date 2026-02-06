@@ -16,7 +16,7 @@ use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{Component, ScrollbarVisibility};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
-use atto_ui::widgets::MarkdownViewer;
+use atto_ui_markdown::MarkdownViewer;
 use atto_ui::wm::{Window, WindowKind};
 
 const MARKDOWN: &str = r#"

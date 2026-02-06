@@ -1,0 +1,17 @@
+[package]
+name = "atto-ui-markdown"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+atto-ui = { path = "../.." }
+crossterm = "0.28"
+parking_lot = "0.12"
+pulldown-cmark = "0.11"
+ratatui = "0.30"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }

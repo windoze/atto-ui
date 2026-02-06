@@ -18,12 +18,12 @@ use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{
     Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
-    ScrollContentContext, ScrollbarVisibility, Size, Splitter, TabWindow, VStack,
+    ScrollContentContext, Size, Splitter, TabWindow, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use atto_ui::widgets::{
-    Button, Checkbox, Label, ListBox, MarkdownViewer, RadioGroup, TableView, TextBox,
+    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
 };
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
@@ -614,93 +614,21 @@ fn build_tab_demo_scroll() -> Box<dyn Component> {
     Box::new(root)
 }
 
-const MARKDOWN_SAMPLE: &str = r#"
-# Markdown Viewer
-
-This demo renders **bold**, *italic*, and ~~strikethrough~~ text with word wrapping.
-
-> Blockquotes support links like [example.com](https://example.com) and nested lists:
-> - First quoted item
-> - Second quoted item
-
-## Lists
-- Unordered item with `inline code`
-- Another item
-
-1. Ordered list item
-2. Second list item
-
-## Code Block
-```rust
-fn main() {
-    let long_line = "This line is intentionally long to show code scrolling inside the block.";
-    println!("{long_line}");
-}
-```
-
-## Table
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Tables | Supported | Cells have borders |
-| Links | Clickable | [docs](https://example.com/docs) |
-| Long cell | Supported | This cell is intentionally very long to exceed the width and require scrolling |
-"#;
-
-const MARKDOWN_MARKERS_SAMPLE: &str = r#"
-Raw markers enabled for this snippet:
-- **bold**
-- *italic*
-- `code`
-- [link](https://example.com)
-"#;
-
 struct MarkdownDemoView {
     root: VStack,
 }
 
 impl MarkdownDemoView {
     fn new() -> Self {
-        let last_link = Property::new("Click a link to see the URL here.".to_string());
-        let link_label = Label::new(last_link.binding());
-        let link_store = last_link.clone();
-
-        let viewer = MarkdownViewer::new(MARKDOWN_SAMPLE)
-            .wrap_width(58)
-            .vertical_scrollbar(ScrollbarVisibility::Auto)
-            .code_block_max_height(6)
-            .table_max_height(6)
-            .on_link(move |url| {
-                link_store.set(format!("Last link: {url}"));
-            });
-
-        let raw_markers = MarkdownViewer::new(MARKDOWN_MARKERS_SAMPLE)
-            .wrap_width(58)
-            .show_markers(true)
-            .vertical_scrollbar(ScrollbarVisibility::Never);
-
-        let row_layout = LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        };
-        let fill_layout = LayoutParams {
-            height: Size::Weight(1),
-            ..LayoutParams::default()
-        };
-
         let root = VStack::new()
             .padding_insets(EdgeInsets::all(1))
             .spacing(1)
-            .child_with_layout(
-                Label::new("Markdown viewer demo (links are clickable)."),
-                row_layout,
-            )
-            .child_with_layout(link_label, row_layout)
-            .child_with_layout(viewer, fill_layout)
-            .child_with_layout(
-                Label::new("Raw marker preview (scrollbars disabled):"),
-                row_layout,
-            )
-            .child_with_layout(raw_markers, row_layout);
+            .child(Label::new(
+                "MarkdownViewer has moved to the atto-ui-markdown crate.",
+            ))
+            .child(Label::new(
+                "Run: cargo run -p atto-ui-markdown --example markdown_viewer",
+            ));
 
         Self { root }
     }

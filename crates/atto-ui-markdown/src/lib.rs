@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::cmp;
 use std::sync::Arc;
 
@@ -11,16 +13,14 @@ use ratatui::widgets::Block;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::composable::scroll::{
-    ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
-    scrollbar_layout_1d, should_show_scrollbar,
-};
-use crate::composable::{
+use atto_ui::composable::{
     Component, ComponentContext, EventResult, ScrollConfig, ScrollContainer, ScrollContainerHost,
-    ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarVisibility,
+    ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarDrag, ScrollbarHit,
+    ScrollbarVisibility, scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d,
+    should_show_scrollbar,
 };
-use crate::reactive::{Binding, DirtyObserver};
-use crate::theme::Theme;
+use atto_ui::reactive::{Binding, DirtyObserver};
+use atto_ui::theme::Theme;
 
 const DEFAULT_CODE_BLOCK_MAX_HEIGHT: u16 = 8;
 const DEFAULT_TABLE_MAX_HEIGHT: u16 = 8;

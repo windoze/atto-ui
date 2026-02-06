@@ -52,7 +52,6 @@ dependencies = [
  "editor-core-sublime",
  "once_cell",
  "parking_lot",
- "pulldown-cmark",
  "ratatui",
  "serde",
  "serde_json",
@@ -68,6 +67,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "atto-ui-markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-test-host",
+ "crossterm 0.28.1",
+ "parking_lot",
+ "pulldown-cmark",
+ "ratatui",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

@@ -88,7 +88,7 @@ pub(crate) struct Scrollbars {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ScrollbarDrag {
+pub enum ScrollbarDrag {
     Vertical { grab_offset: u16 },
     Horizontal { grab_offset: u16 },
 }
@@ -111,7 +111,7 @@ pub(crate) fn clamp_scroll_offset(
     }
 }
 
-pub(crate) fn should_show_scrollbar(
+pub fn should_show_scrollbar(
     vis: ScrollbarVisibility,
     content_len: u16,
     viewport_len: u16,
@@ -182,7 +182,7 @@ pub(crate) fn scrollbar_thumb(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ScrollbarLayout1D {
+pub struct ScrollbarLayout1D {
     /// Total bar length (cells along the scrolling axis).
     pub bar_len: u16,
     /// Whether arrow buttons are present.
@@ -197,7 +197,7 @@ pub(crate) struct ScrollbarLayout1D {
     pub thumb_len: u16,
 }
 
-pub(crate) fn scrollbar_layout_1d(
+pub fn scrollbar_layout_1d(
     bar_len: u16,
     viewport_len: u16,
     content_len: u16,
@@ -230,7 +230,7 @@ pub(crate) fn scrollbar_layout_1d(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ScrollbarHit {
+pub enum ScrollbarHit {
     ArrowDec,
     ArrowInc,
     TrackDec,
@@ -239,7 +239,7 @@ pub(crate) enum ScrollbarHit {
     None,
 }
 
-pub(crate) fn scrollbar_hit_test(layout: ScrollbarLayout1D, pos: u16) -> ScrollbarHit {
+pub fn scrollbar_hit_test(layout: ScrollbarLayout1D, pos: u16) -> ScrollbarHit {
     if layout.bar_len == 0 || pos >= layout.bar_len {
         return ScrollbarHit::None;
     }
@@ -278,7 +278,7 @@ pub(crate) fn scrollbar_hit_test(layout: ScrollbarLayout1D, pos: u16) -> Scrollb
     }
 }
 
-pub(crate) fn scroll_offset_from_thumb_start(
+pub fn scroll_offset_from_thumb_start(
     track_len: u16,
     viewport_len: u16,
     content_len: u16,
