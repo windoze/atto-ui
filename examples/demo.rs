@@ -18,11 +18,13 @@ use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{
     Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
-    ScrollContentContext, Size, VStack,
+    ScrollContentContext, ScrollbarVisibility, Size, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
+use atto_ui::widgets::{
+    Button, Checkbox, Label, ListBox, MarkdownViewer, RadioGroup, TableView, TextBox,
+};
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
 
@@ -104,6 +106,7 @@ impl DialogView {
                 Label::new("  z virtual scroll demo (delegate-driven content)"),
                 row_layout,
             )
+            .child_with_layout(Label::new("  r markdown demo (links + tables)"), row_layout)
             .child_with_layout(Label::new(""), row_layout)
             .child_with_layout(Button::new("Close (Enter)"), row_layout);
 
@@ -362,6 +365,132 @@ impl WidgetsView {
 }
 
 impl Component for WidgetsView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.root.handle_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+const MARKDOWN_SAMPLE: &str = r#"
+# Markdown Viewer
+
+This demo renders **bold**, *italic*, and ~~strikethrough~~ text with word wrapping.
+
+> Blockquotes support links like [example.com](https://example.com) and nested lists:
+> - First quoted item
+> - Second quoted item
+
+## Lists
+- Unordered item with `inline code`
+- Another item
+
+1. Ordered list item
+2. Second list item
+
+## Code Block
+```rust
+fn main() {
+    let long_line = "This line is intentionally long to show code scrolling inside the block.";
+    println!("{long_line}");
+}
+```
+
+## Table
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Tables | Supported | Cells have borders |
+| Links | Clickable | [docs](https://example.com/docs) |
+| Long cell | Supported | This cell is intentionally very long to exceed the width and require scrolling |
+"#;
+
+const MARKDOWN_MARKERS_SAMPLE: &str = r#"
+Raw markers enabled for this snippet:
+- **bold**
+- *italic*
+- `code`
+- [link](https://example.com)
+"#;
+
+struct MarkdownDemoView {
+    root: VStack,
+}
+
+impl MarkdownDemoView {
+    fn new() -> Self {
+        let last_link = Property::new("Click a link to see the URL here.".to_string());
+        let link_label = Label::new(last_link.binding());
+        let link_store = last_link.clone();
+
+        let viewer = MarkdownViewer::new(MARKDOWN_SAMPLE)
+            .wrap_width(58)
+            .vertical_scrollbar(ScrollbarVisibility::Auto)
+            .code_block_max_height(6)
+            .table_max_height(6)
+            .on_link(move |url| {
+                link_store.set(format!("Last link: {url}"));
+            });
+
+        let raw_markers = MarkdownViewer::new(MARKDOWN_MARKERS_SAMPLE)
+            .wrap_width(58)
+            .show_markers(true)
+            .vertical_scrollbar(ScrollbarVisibility::Never);
+
+        let row_layout = LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        };
+        let fill_layout = LayoutParams {
+            height: Size::Weight(1),
+            ..LayoutParams::default()
+        };
+
+        let root = VStack::new()
+            .padding_insets(EdgeInsets::all(1))
+            .spacing(1)
+            .child_with_layout(
+                Label::new("Markdown viewer demo (links are clickable)."),
+                row_layout,
+            )
+            .child_with_layout(link_label, row_layout)
+            .child_with_layout(viewer, fill_layout)
+            .child_with_layout(
+                Label::new("Raw marker preview (scrollbars disabled):"),
+                row_layout,
+            )
+            .child_with_layout(raw_markers, row_layout);
+
+        Self { root }
+    }
+}
+
+impl Component for MarkdownDemoView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -860,6 +989,7 @@ enum DemoAction {
     OpenScrollDemo,
     OpenVirtualScrollDemo,
     OpenWidgetStatesDemo,
+    OpenMarkdownDemo,
     MinimizeFocused,
     ToggleMaximizeFocused,
     CloseFocused,
@@ -1009,6 +1139,7 @@ fn main() -> Result<()> {
     let mut scroll_demo_window_id: Option<WindowId> = None;
     let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
     let mut widget_states_demo_window_id: Option<WindowId> = None;
+    let mut markdown_demo_window_id: Option<WindowId> = None;
 
     let log_id = desktop.add_window(
         Window::new(
@@ -1028,6 +1159,7 @@ fn main() -> Result<()> {
                 "D: widget states demo (disabled)".into(),
                 "V: layout demo (view hierarchy)".into(),
                 "S/Z: scroll / virtual scroll demos".into(),
+                "R: markdown demo (links, tables, code)".into(),
             ])),
         ),
         screen,
@@ -1044,6 +1176,7 @@ fn main() -> Result<()> {
         &mut scroll_demo_window_id,
         &mut virtual_scroll_demo_window_id,
         &mut widget_states_demo_window_id,
+        &mut markdown_demo_window_id,
         &mut tooltip,
     );
 
@@ -1129,6 +1262,11 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::OpenVirtualScrollDemo)
                 })
                 .shortcut("z"),
+                MenuItem::action("Markdown demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenMarkdownDemo)
+                })
+                .shortcut("r"),
                 MenuItem::action("Minimize", {
                     let actions = actions.clone();
                     move || actions.push(DemoAction::MinimizeFocused)
@@ -1170,6 +1308,7 @@ fn run(
     scroll_demo_window_id: &mut Option<WindowId>,
     virtual_scroll_demo_window_id: &mut Option<WindowId>,
     widget_states_demo_window_id: &mut Option<WindowId>,
+    markdown_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
@@ -1228,6 +1367,9 @@ fn run(
                 }
                 DemoAction::OpenWidgetStatesDemo => {
                     open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
+                }
+                DemoAction::OpenMarkdownDemo => {
+                    open_markdown_demo(desktop, screen, markdown_demo_window_id)?;
                 }
                 DemoAction::MinimizeFocused => desktop.wm.minimize_focused(),
                 DemoAction::ToggleMaximizeFocused => {
@@ -1303,6 +1445,9 @@ fn run(
                 }
                 (KeyCode::Char('z'), KeyModifiers::NONE) => {
                     open_virtual_scroll_demo(desktop, screen, virtual_scroll_demo_window_id)?;
+                }
+                (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                    open_markdown_demo(desktop, screen, markdown_demo_window_id)?;
                 }
                 _ => {}
             }
@@ -1435,6 +1580,42 @@ fn open_virtual_scroll_demo(
         screen,
     );
     *virtual_scroll_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_markdown_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    markdown_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *markdown_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 70.min(work.width.saturating_sub(2)).max(32);
+    let h = 22.min(work.height.saturating_sub(2)).max(12);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Markdown",
+            rect,
+            Box::new(MarkdownDemoView::new()),
+        ),
+        screen,
+    );
+    *markdown_demo_window_id = Some(id);
     Ok(())
 }
 

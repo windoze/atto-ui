@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -157,8 +159,8 @@ impl Default for TimerWheel {
     }
 }
 
-static GLOBAL_TIMER_WHEEL: Lazy<Mutex<TimerWheel>> =
-    Lazy::new(|| Mutex::new(TimerWheel::new()));
+static GLOBAL_TIMER_WHEEL: Lazy<Mutex<TimerWheel>> = Lazy::new(|| Mutex::new(TimerWheel::new()));
+static GLOBAL_TICK_RATE_NANOS: AtomicU64 = AtomicU64::new(16_000_000);
 
 /// Register a timer on the global timer wheel with an interval in ticks.
 pub fn register_timer<F>(interval_ticks: u64, callback: F) -> TimerHandle
@@ -167,6 +169,22 @@ where
 {
     let mut wheel = GLOBAL_TIMER_WHEEL.lock();
     wheel.register(interval_ticks, callback)
+}
+
+/// Register a timer using a `Duration`, based on the configured global tick rate.
+pub fn register_timer_with_duration<F>(interval: Duration, callback: F) -> TimerHandle
+where
+    F: FnMut() -> bool + Send + 'static,
+{
+    let ticks = ticks_for_duration(interval, GLOBAL_TICK_RATE_NANOS.load(Ordering::Acquire));
+    register_timer(ticks, callback)
+}
+
+/// Sets the global tick rate used when registering timers by `Duration`.
+pub fn set_global_tick_rate(tick_rate: Duration) {
+    let nanos = tick_rate.as_nanos().min(u64::MAX as u128) as u64;
+    let nanos = nanos.max(1);
+    GLOBAL_TICK_RATE_NANOS.store(nanos, Ordering::Release);
 }
 
 /// Cancel a timer by handle. Returns true if the timer was removed or canceled.
@@ -198,6 +216,13 @@ pub fn tick_global_timers() {
 
     let mut wheel = GLOBAL_TIMER_WHEEL.lock();
     wheel.finish_tick(tick, reschedule, &finished);
+}
+
+fn ticks_for_duration(duration: Duration, tick_rate_nanos: u64) -> u64 {
+    let rate = tick_rate_nanos.max(1) as u128;
+    let total = duration.as_nanos();
+    let ticks = (total.saturating_add(rate - 1)) / rate;
+    ticks.max(1).min(u64::MAX as u128) as u64
 }
 
 #[cfg(test)]
@@ -263,5 +288,14 @@ mod tests {
         wheel.tick();
         wheel.tick();
         assert_eq!(fired.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn duration_to_ticks_rounds_up() {
+        let tick_rate = 16_000_000;
+        assert_eq!(ticks_for_duration(Duration::from_millis(16), tick_rate), 1);
+        assert_eq!(ticks_for_duration(Duration::from_millis(17), tick_rate), 2);
+        assert_eq!(ticks_for_duration(Duration::from_millis(32), tick_rate), 2);
+        assert_eq!(ticks_for_duration(Duration::from_millis(0), tick_rate), 1);
     }
 }

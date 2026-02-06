@@ -14,7 +14,7 @@ use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopAction, DesktopEventResult};
 use crate::composable::EventOutcome;
-use crate::reactive::tick_global_timers;
+use crate::reactive::{set_global_tick_rate, tick_global_timers};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {
@@ -170,6 +170,7 @@ where
     let mut session = TerminalSession::new(config)?;
     let screen: Rect = session.terminal.size()?.into();
     let mut desktop = build(screen)?;
+    set_global_tick_rate(config.tick_rate);
 
     loop {
         let screen: Rect = session.terminal.size()?.into();
