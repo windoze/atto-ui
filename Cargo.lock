@@ -46,10 +46,6 @@ dependencies = [
  "atto-ui-macros",
  "atto-ui-test-host",
  "crossterm 0.28.1",
- "editor-core",
- "editor-core-highlight-simple",
- "editor-core-lsp",
- "editor-core-sublime",
  "once_cell",
  "parking_lot",
  "ratatui",
@@ -57,6 +53,23 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "atto-ui-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-test-host",
+ "crossterm 0.28.1",
+ "editor-core",
+ "editor-core-highlight-simple",
+ "editor-core-lsp",
+ "editor-core-sublime",
+ "ratatui",
+ "serde_json",
  "unicode-width",
 ]
 

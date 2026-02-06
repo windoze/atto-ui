@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use atto_ui::editor::{EditorConfig, EditorSyntaxConfig, EditorThemeSet, EditorView};
+use atto_ui_editor::{EditorConfig, EditorSyntaxConfig, EditorThemeSet, EditorView};
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowKind};
 

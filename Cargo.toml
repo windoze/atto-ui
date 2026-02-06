@@ -6,10 +6,6 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 crossterm = "0.28"
-editor-core = "0.1.0"
-editor-core-highlight-simple = "0.1.0"
-editor-core-lsp = "0.1.0"
-editor-core-sublime = "0.1.0"
 once_cell = "1"
 parking_lot = "0.12"
 ratatui = "0.30"
@@ -69,4 +65,9 @@ name = "demo-12-tab-view"
 path = "demos/12-tab-view/main.rs"
 
 [workspace]
-members = ["crates/atto-ui-test-host", "crates/atto-ui-macros", "crates/atto-ui-markdown"]
+members = [
+    "crates/atto-ui-test-host",
+    "crates/atto-ui-macros",
+    "crates/atto-ui-markdown",
+    "crates/atto-ui-editor",
+]

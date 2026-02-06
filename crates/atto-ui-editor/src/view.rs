@@ -18,8 +18,8 @@ use ratatui::widgets::{Block, Paragraph};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
 
-use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig};
-use crate::reactive::{DirtyObserver, EventQueue};
+use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig};
+use atto_ui::reactive::{DirtyObserver, EventQueue};
 
 use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode, EditorSyntaxConfig};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
@@ -37,11 +37,11 @@ pub enum EditorEvent {
 #[derive(Clone, Debug)]
 pub struct EditorViewHandle {
     pub events: EventQueue<EditorEvent>,
-    pub hover_popup: crate::reactive::Binding<Option<HoverPopupModel>>,
-    pub hover_popup_dismissed: crate::reactive::Binding<Option<Position>>,
-    pub completion_popup: crate::reactive::Binding<Option<CompletionPopupModel>>,
-    pub theme: crate::reactive::Binding<EditorThemeSet>,
-    pub language_id: crate::reactive::Binding<String>,
+    pub hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
+    pub hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
+    pub completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
+    pub theme: atto_ui::reactive::Binding<EditorThemeSet>,
+    pub language_id: atto_ui::reactive::Binding<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,13 +87,13 @@ impl SyntaxProcessor {
 pub struct EditorView {
     config: EditorConfig,
 
-    theme: crate::reactive::Binding<EditorThemeSet>,
+    theme: atto_ui::reactive::Binding<EditorThemeSet>,
 
     // Outputs / host integration
     events: EventQueue<EditorEvent>,
-    hover_popup: crate::reactive::Binding<Option<HoverPopupModel>>,
-    hover_popup_dismissed: crate::reactive::Binding<Option<Position>>,
-    completion_popup: crate::reactive::Binding<Option<CompletionPopupModel>>,
+    hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
+    hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
+    completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
 
     state_manager: EditorStateManager,
 
@@ -138,15 +138,15 @@ pub struct EditorView {
 impl EditorView {
     pub fn new(
         config: EditorConfig,
-        theme: impl Into<crate::reactive::Binding<EditorThemeSet>>,
+        theme: impl Into<atto_ui::reactive::Binding<EditorThemeSet>>,
     ) -> (Self, EditorViewHandle) {
         let initial = config.text.get();
 
         let theme = theme.into();
         let events = EventQueue::new();
-        let hover_popup = crate::reactive::Binding::new(None);
-        let hover_popup_dismissed = crate::reactive::Binding::new(None);
-        let completion_popup = crate::reactive::Binding::new(None);
+        let hover_popup = atto_ui::reactive::Binding::new(None);
+        let hover_popup_dismissed = atto_ui::reactive::Binding::new(None);
+        let completion_popup = atto_ui::reactive::Binding::new(None);
 
         let handle = EditorViewHandle {
             events: events.clone(),
@@ -2936,12 +2936,12 @@ mod tests {
 
     #[test]
     fn editor_view_applies_simple_json_highlighting_on_new() {
-        let text: crate::reactive::Binding<String> =
+        let text: atto_ui::reactive::Binding<String> =
             r#"{"s": "hello", "n": 42}"#.to_string().into();
         let cfg = EditorConfig::new(text);
         cfg.syntax.set(EditorSyntaxConfig::SimpleJson);
 
-        let theme: crate::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+        let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
         let (view, _handle) = EditorView::new(cfg, theme);
 
         // 'h' in "hello" is at column 7 in the sample.
@@ -2960,26 +2960,26 @@ mod tests {
 
     #[test]
     fn editor_view_renders_simple_json_highlight_as_green_cells() {
-        let text: crate::reactive::Binding<String> = ["tab:ab", r#"{"s": "hello", "n": 42}"#, ""]
+        let text: atto_ui::reactive::Binding<String> = ["tab:ab", r#"{"s": "hello", "n": 42}"#, ""]
             .join("\n")
             .into();
 
         let cfg = EditorConfig::new(text);
         cfg.syntax.set(EditorSyntaxConfig::SimpleJson);
 
-        let theme: crate::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+        let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
         let (mut view, _handle) = EditorView::new(cfg, theme);
 
         let backend = ratatui::backend::TestBackend::new(80, 10);
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
 
-        let app_theme = crate::theme::Theme::dark();
-        let ctx = crate::composable::ComponentContext {
+        let app_theme = atto_ui::theme::Theme::dark();
+        let ctx = atto_ui::composable::ComponentContext {
             theme: &app_theme,
-            window_id: crate::wm::WindowId(1),
+            window_id: atto_ui::wm::WindowId::default(),
             is_focused: true,
-            scrollbar_host: crate::composable::ScrollbarHost::Component,
-            tab_mode: crate::composable::TabMode::Cycle,
+            scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+            tab_mode: atto_ui::composable::TabMode::Cycle,
         };
 
         terminal

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Editor component built on top of `editor-core`.
 //!
 //! This module provides a `Component` implementation (`EditorView`) that integrates:
@@ -6,7 +8,7 @@
 //! - LSP (semantic tokens, folding ranges, hover, completion, goto*)
 //!
 //! The editor maintains its own theming system (per-language) and does not depend on
-//! `crate::theme::Theme` for text styling.
+//! `atto_ui::theme::Theme` for text styling.
 
 mod config;
 mod keymap;

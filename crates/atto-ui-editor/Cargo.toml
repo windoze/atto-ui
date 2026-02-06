@@ -1,0 +1,19 @@
+[package]
+name = "atto-ui-editor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+atto-ui = { path = "../.." }
+crossterm = "0.28"
+editor-core = "0.1.0"
+editor-core-highlight-simple = "0.1.0"
+editor-core-lsp = "0.1.0"
+editor-core-sublime = "0.1.0"
+ratatui = "0.30"
+serde_json = "1"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }
+unicode-width = "0.2"

@@ -2,8 +2,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::composable::ScrollConfig;
-use crate::reactive::Binding;
+use atto_ui::composable::ScrollConfig;
+use atto_ui::reactive::Binding;
 
 use super::keymap::EditorKeymap;
 

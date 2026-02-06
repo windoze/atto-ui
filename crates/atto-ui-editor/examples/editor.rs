@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use atto_ui::editor::{
+use atto_ui_editor::{
     EditorConfig, EditorLspConfig, EditorLspMode, EditorPopupWindows, EditorThemeSet, EditorView,
 };
 use atto_ui::reactive::Binding;
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
 
             // Drain goto results (host callback hook).
             for ev in editor_events.drain() {
-                let atto_ui::editor::EditorEvent::LspGoto { kind: _, locations } = ev;
+                let atto_ui_editor::EditorEvent::LspGoto { kind: _, locations } = ev;
                 // For the demo, just open a tooltip window with the first target.
                 if let Some(loc) = locations.first() {
                     let _ = loc;
