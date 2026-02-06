@@ -196,8 +196,8 @@ pub struct Grid {
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
-impl Grid {
-    pub fn new() -> Self {
+impl Default for Grid {
+    fn default() -> Self {
         Self {
             id: ComponentId::next(),
             children: Vec::new(),
@@ -216,7 +216,13 @@ impl Grid {
             scrollbar_drag: None,
         }
     }
+}
 
+impl Grid {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
     pub fn with_columns(mut self, columns: impl Into<Binding<usize>>) -> Self {
         self.columns = columns.into();
         self

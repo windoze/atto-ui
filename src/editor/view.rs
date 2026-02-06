@@ -2220,13 +2220,12 @@ impl EditorView {
                         self.mouse_drag = None;
                         return EventResult::consumed();
                     }
-                } else if click_count >= 3 {
-                    if self.select_line_at(pos.line) {
+                } else if click_count >= 3
+                    && self.select_line_at(pos.line) {
                         self.adjust_scroll();
                         self.mouse_drag = None;
                         return EventResult::consumed();
                     }
-                }
 
                 if rect_drag {
                     let _ = self.execute(Command::Cursor(CursorCommand::SetRectSelection {
@@ -2902,6 +2901,36 @@ fn style_for_sublime_scope(theme: &EditorTheme, scope: &str) -> Option<Style> {
     None
 }
 
+fn hover_contents_to_plain_text(contents: &serde_json::Value) -> Option<Vec<String>> {
+    // Spec: `contents` can be MarkedString | MarkedString[] | MarkupContent.
+    if let Some(s) = contents.as_str() {
+        return Some(s.lines().map(|l| l.to_string()).collect());
+    }
+
+    if let Some(obj) = contents.as_object() {
+        // MarkupContent: { kind: "markdown" | "plaintext", value: "..."}
+        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+            return Some(value.lines().map(|l| l.to_string()).collect());
+        }
+        // MarkedString: { language, value }
+        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+            return Some(value.lines().map(|l| l.to_string()).collect());
+        }
+    }
+
+    if let Some(arr) = contents.as_array() {
+        let mut out = Vec::<String>::new();
+        for item in arr {
+            if let Some(lines) = hover_contents_to_plain_text(item) {
+                out.extend(lines);
+            }
+        }
+        return Some(out);
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2977,34 +3006,4 @@ mod tests {
             "expected syntax-highlighted string cell to be green"
         );
     }
-}
-
-fn hover_contents_to_plain_text(contents: &serde_json::Value) -> Option<Vec<String>> {
-    // Spec: `contents` can be MarkedString | MarkedString[] | MarkupContent.
-    if let Some(s) = contents.as_str() {
-        return Some(s.lines().map(|l| l.to_string()).collect());
-    }
-
-    if let Some(obj) = contents.as_object() {
-        // MarkupContent: { kind: "markdown" | "plaintext", value: "..."}
-        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
-            return Some(value.lines().map(|l| l.to_string()).collect());
-        }
-        // MarkedString: { language, value }
-        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
-            return Some(value.lines().map(|l| l.to_string()).collect());
-        }
-    }
-
-    if let Some(arr) = contents.as_array() {
-        let mut out = Vec::<String>::new();
-        for item in arr {
-            if let Some(lines) = hover_contents_to_plain_text(item) {
-                out.extend(lines);
-            }
-        }
-        return Some(out);
-    }
-
-    None
 }

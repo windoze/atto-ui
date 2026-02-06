@@ -23,15 +23,17 @@ const DEFAULT_TABLE_MAX_HEIGHT: u16 = 8;
 const DEFAULT_SCROLL_STEP: u16 = 3;
 const LIST_INDENT_SPACES: usize = 2;
 
+type LinkCallBackType = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Clone)]
-struct LinkCallback(Arc<RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>);
+struct LinkCallback(Arc<RwLock<Option<LinkCallBackType>>>);
 
 impl LinkCallback {
     fn new() -> Self {
         Self(Arc::new(RwLock::new(None)))
     }
 
-    fn set(&self, cb: Option<Arc<dyn Fn(&str) + Send + Sync>>) {
+    fn set(&self, cb: Option<LinkCallBackType>) {
         *self.0.write() = cb;
     }
 
@@ -279,18 +281,17 @@ impl ScrollContent for MarkdownContent {
             let local_x = content_x;
             if let Some(res) =
                 shared.handle_block_event(block, local_x, local_y, *m, viewport, layout.wrap_width)
+                && res.is_consumed()
             {
-                if res.is_consumed() {
-                    return res;
-                }
+                return res;
             }
         }
 
-        if let MouseEventKind::Down(MouseButton::Left) = m.kind {
-            if let Some(hit) = layout.link_at(content_x, content_y) {
-                shared.link_callback.fire(&hit.url);
-                return EventResult::consumed();
-            }
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(hit) = layout.link_at(content_x, content_y)
+        {
+            shared.link_callback.fire(&hit.url);
+            return EventResult::consumed();
         }
 
         EventResult::ignored()
@@ -420,6 +421,7 @@ struct MarkdownShared {
 }
 
 impl MarkdownShared {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         markdown: Binding<String>,
         width: Binding<Option<u16>>,
@@ -536,11 +538,11 @@ impl MarkdownShared {
                     if consumed {
                         return Some(EventResult::consumed());
                     }
-                    if let MouseEventKind::Down(MouseButton::Left) = m.kind {
-                        if let Some(url) = table.link_at(content_x, _local_y) {
-                            self.link_callback.fire(&url);
-                            return Some(EventResult::consumed());
-                        }
+                    if let MouseEventKind::Down(MouseButton::Left) = m.kind
+                        && let Some(url) = table.link_at(content_x, _local_y)
+                    {
+                        self.link_callback.fire(&url);
+                        return Some(EventResult::consumed());
                     }
                     return Some(EventResult::ignored());
                 }
@@ -694,7 +696,7 @@ struct CodeBlockState {
 
 impl CodeBlockState {
     fn new(text: &str) -> Self {
-        let mut lines: Vec<String> = text.split('\n').map(|s| normalize_tabs(s)).collect();
+        let mut lines: Vec<String> = text.split('\n').map(normalize_tabs).collect();
         if lines.is_empty() {
             lines.push(String::new());
         }
@@ -1116,16 +1118,16 @@ impl ParserState {
 
     fn handle_end(&mut self, tag: TagEnd) {
         if self.code_block.is_some() {
-            if matches!(tag, TagEnd::CodeBlock) {
-                if let Some(code) = self.code_block.take() {
-                    let id = self.next_code_id;
-                    self.next_code_id += 1;
-                    self.push_block(MdBlock::CodeBlock {
-                        id,
-                        info: code.info,
-                        text: code.text,
-                    });
-                }
+            if matches!(tag, TagEnd::CodeBlock)
+                && let Some(code) = self.code_block.take()
+            {
+                let id = self.next_code_id;
+                self.next_code_id += 1;
+                self.push_block(MdBlock::CodeBlock {
+                    id,
+                    info: code.info,
+                    text: code.text,
+                });
             }
             return;
         }
@@ -1197,16 +1199,16 @@ impl ParserState {
             }
             TagEnd::Link => {
                 let url = self.inline_style.link_stack.pop();
-                if let Some(url) = url {
-                    if self.show_markers {
-                        self.push_span(InlineSpan::marker("]("));
-                        self.push_span(InlineSpan::text(
-                            &url,
-                            InlineStyle::default(),
-                            Some(url.clone()),
-                        ));
-                        self.push_span(InlineSpan::marker(")"));
-                    }
+                if let Some(url) = url
+                    && self.show_markers
+                {
+                    self.push_span(InlineSpan::marker("]("));
+                    self.push_span(InlineSpan::text(
+                        &url,
+                        InlineStyle::default(),
+                        Some(url.clone()),
+                    ));
+                    self.push_span(InlineSpan::marker(")"));
                 }
             }
             _ => {}
@@ -1228,8 +1230,10 @@ impl ParserState {
             self.push_text(text);
             return;
         }
-        let mut style = InlineStyle::default();
-        style.code = true;
+        let style = InlineStyle {
+            code: true,
+            ..Default::default()
+        };
         if self.show_markers {
             self.push_span(InlineSpan::marker("`"));
         }
@@ -1503,10 +1507,9 @@ impl RenderContext {
             .iter_mut()
             .rev()
             .find(|layer| matches!(layer, PrefixLayer::List { .. }))
+            && let PrefixLayer::List { used, .. } = layer
         {
-            if let PrefixLayer::List { used, .. } = layer {
-                *used = true;
-            }
+            *used = true;
         }
     }
 
@@ -1604,15 +1607,15 @@ impl LayoutBuilder {
             let mut col: u16 = 0;
             for span in &line.spans {
                 let w = text_width(&span.text);
-                if let Some(url) = &span.link {
-                    if w > 0 {
-                        self.link_hits.push(LinkHit {
-                            row,
-                            start: col,
-                            end: col.saturating_add(w),
-                            url: url.clone(),
-                        });
-                    }
+                if let Some(url) = &span.link
+                    && w > 0
+                {
+                    self.link_hits.push(LinkHit {
+                        row,
+                        start: col,
+                        end: col.saturating_add(w),
+                        url: url.clone(),
+                    });
                 }
                 col = col.saturating_add(w);
             }
@@ -1664,6 +1667,7 @@ impl LayoutBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_block_list(
     blocks: &[MdBlock],
     wrap_width: u16,
@@ -1695,6 +1699,7 @@ fn render_block_list(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_block(
     block: &MdBlock,
     wrap_width: u16,
@@ -2067,6 +2072,7 @@ fn draw_line(
     draw_spans_with_scroll(frame, x, y, width, &spans, 0);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_code_block(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2128,15 +2134,15 @@ fn draw_code_block(
             .unwrap_or_default();
         fill_line(frame, content_x, screen_y, content_width, code_style);
         let (segment, _) = slice_by_width(&line, content_scroll.x, content_width);
-        let mut styled = Vec::new();
-        styled.push(StyledSpan {
+        let styled = vec![StyledSpan {
             text: segment,
             style: code_style,
-        });
+        }];
         draw_spans_with_scroll(frame, content_x, screen_y, content_width, &styled, 0);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_table_block(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -2565,11 +2571,10 @@ fn link_at_in_spans(spans: &[InlineSpan], col: u16) -> Option<String> {
     let mut offset: u16 = 0;
     for span in spans {
         let width = text_width(&span.text);
-        if let Some(url) = &span.link {
-            if col >= offset && col < offset.saturating_add(width) {
+        if let Some(url) = &span.link
+            && col >= offset && col < offset.saturating_add(width) {
                 return Some(url.clone());
             }
-        }
         offset = offset.saturating_add(width);
     }
     None
