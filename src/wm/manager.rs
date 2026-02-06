@@ -11,7 +11,10 @@ use crate::composable::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
     scrollbar_layout_1d, should_show_scrollbar,
 };
-use crate::composable::{ComponentContext, EventResult, ScrollbarHost, TabMode};
+use crate::composable::{
+    ComponentAction, ComponentContext, EventResult, ScrollbarHost, TabMode, TitleBarContent,
+    TitleBarContext,
+};
 use crate::theme::Theme;
 
 use super::{
@@ -250,9 +253,10 @@ impl WindowManager {
         event: &Event,
         bounds: Rect,
         mode: WindowManagerInputMode,
+        theme: &Theme,
     ) -> WindowManagerAction {
         match event {
-            Event::Mouse(m) => self.handle_mouse(m, bounds),
+            Event::Mouse(m) => self.handle_mouse(m, bounds, theme),
             Event::Key(k) => self.handle_key(*k, bounds, mode),
             _ => WindowManagerAction::default(),
         }
@@ -303,7 +307,6 @@ impl WindowManager {
             });
 
             if decorations.border.has_border() {
-                let title = window.title.get();
                 let border_set = match decorations.border {
                     WindowBorderStyle::Normal => theme.border_set(is_focused),
                     WindowBorderStyle::Thin => theme.border_set(false),
@@ -315,14 +318,25 @@ impl WindowManager {
                     .border_set(border_set);
                 frame.render_widget(block, rect);
                 let buttons = effective_titlebar_buttons(window, &decorations);
-                draw_titlebar(
-                    frame.buffer_mut(),
-                    rect,
-                    &title,
-                    title_style,
-                    &buttons,
+                let layout = titlebar_layout(rect, &buttons);
+                let titlebar_ctx = TitleBarContext {
                     theme,
-                );
+                    window_id: window.id,
+                    is_focused,
+                    area: layout.text_area,
+                };
+                if let Some(content) = window.view.titlebar(titlebar_ctx) {
+                    draw_titlebar_spans(
+                        frame.buffer_mut(),
+                        &layout,
+                        &content,
+                        title_style,
+                    );
+                } else {
+                    let title = window.title.get();
+                    draw_titlebar_text(frame.buffer_mut(), &layout, &title, title_style);
+                }
+                draw_titlebar_buttons(frame.buffer_mut(), &layout, title_style, theme);
             }
 
             let inner = window.inner_rect();
@@ -437,7 +451,7 @@ impl WindowManager {
             .map(|w| w.id)
     }
 
-    fn handle_mouse(&mut self, m: &MouseEvent, bounds: Rect) -> WindowManagerAction {
+    fn handle_mouse(&mut self, m: &MouseEvent, bounds: Rect, theme: &Theme) -> WindowManagerAction {
         use crossterm::event::MouseEventKind;
 
         let modal = self.active_modal_id();
@@ -497,18 +511,38 @@ impl WindowManager {
                         }
                     }
                     HitRegion::TitleBar => {
-                        if let Some(w) = self.window_mut(window_id)
-                            && w.movable.get()
-                            && w.state.get() != WindowState::Maximized
-                        {
-                            let rect = w.rect.get();
-                            self.drag = Some(DragState {
+                        let is_focused = self.focused() == Some(window_id);
+                        if let Some(w) = self.window_mut(window_id) {
+                            let deco = w.decorations.get();
+                            let buttons = effective_titlebar_buttons(w, &deco);
+                            let layout = titlebar_layout(w.rect.get(), &buttons);
+                            let ctx = TitleBarContext {
+                                theme,
                                 window_id,
-                                kind: DragKind::Move {
-                                    offset_x: m.column.saturating_sub(rect.x),
-                                    offset_y: m.row.saturating_sub(rect.y),
-                                },
-                            });
+                                is_focused,
+                                area: layout.text_area,
+                            };
+                            let res = w.view.handle_titlebar_event(&Event::Mouse(*m), ctx);
+                            if res.action == ComponentAction::CloseWindow {
+                                action.close = Some(window_id);
+                                action.consumed = true;
+                                return action;
+                            }
+                            if res.is_consumed() {
+                                action.consumed = true;
+                                return action;
+                            }
+
+                            if w.movable.get() && w.state.get() != WindowState::Maximized {
+                                let rect = w.rect.get();
+                                self.drag = Some(DragState {
+                                    window_id,
+                                    kind: DragKind::Move {
+                                        offset_x: m.column.saturating_sub(rect.x),
+                                        offset_y: m.row.saturating_sub(rect.y),
+                                    },
+                                });
+                            }
                         }
                     }
                     HitRegion::ResizeHandle(corner) => {
@@ -1265,22 +1299,27 @@ fn draw_window_border_scrollbars(
     }
 }
 
-fn draw_titlebar(
-    buf: &mut Buffer,
-    rect: Rect,
-    title: &str,
-    style: Style,
-    buttons: &WindowButtons,
-    theme: &Theme,
-) {
+struct TitleBarLayout {
+    text_area: Rect,
+    button_cols: Vec<(HitRegion, u16)>,
+}
+
+fn titlebar_layout(rect: Rect, buttons: &WindowButtons) -> TitleBarLayout {
     if rect.width < 3 {
-        return;
+        return TitleBarLayout {
+            text_area: Rect {
+                x: rect.x,
+                y: rect.y,
+                width: 0,
+                height: 1,
+            },
+            button_cols: Vec::new(),
+        };
     }
+
     let inner_left = rect.x.saturating_add(1);
     let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
-    let mut cursor = inner_left;
 
-    // Buttons (right side).
     let mut button_cols = Vec::new();
     if buttons.minimize {
         button_cols.push((HitRegion::MinimizeButton, inner_right.saturating_sub(4)));
@@ -1292,7 +1331,6 @@ fn draw_titlebar(
         button_cols.push((HitRegion::CloseButton, inner_right));
     }
 
-    // Title, truncated to not overwrite buttons.
     let reserved_right = button_cols
         .iter()
         .map(|(_, col)| *col)
@@ -1300,40 +1338,111 @@ fn draw_titlebar(
         .unwrap_or(inner_right)
         .saturating_sub(2);
 
+    let width = if reserved_right >= inner_left {
+        reserved_right.saturating_sub(inner_left).saturating_add(1)
+    } else {
+        0
+    };
+
+    TitleBarLayout {
+        text_area: Rect {
+            x: inner_left,
+            y: rect.y,
+            width,
+            height: 1,
+        },
+        button_cols,
+    }
+}
+
+fn draw_titlebar_text(buf: &mut Buffer, layout: &TitleBarLayout, title: &str, style: Style) {
+    if layout.text_area.width == 0 {
+        return;
+    }
+    let mut cursor = layout.text_area.x;
+    let right = layout
+        .text_area
+        .x
+        .saturating_add(layout.text_area.width)
+        .saturating_sub(1);
+
     for g in title.graphemes(true) {
         let w = (UnicodeWidthStr::width(g) as u16).max(1);
         let end = cursor.saturating_add(w).saturating_sub(1);
-        if cursor > reserved_right || end > reserved_right {
+        if cursor > right || end > right {
             break;
         }
-        let Some(cell) = buf.cell_mut((cursor, rect.y)) else {
+        let Some(cell) = buf.cell_mut((cursor, layout.text_area.y)) else {
             break;
         };
         cell.set_style(style);
         cell.set_symbol(g);
 
-        // Keep ratatui's Buffer well-formed: wide graphemes must be followed by blank cells.
         for dx in 1..w {
-            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), rect.y)) {
+            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), layout.text_area.y)) {
                 trailing.reset();
             }
         }
 
         cursor = cursor.saturating_add(w);
     }
+}
 
-    // Draw buttons.
-    for (region, col) in button_cols {
-        if col < inner_left || col > inner_right {
-            continue;
+fn draw_titlebar_spans(
+    buf: &mut Buffer,
+    layout: &TitleBarLayout,
+    content: &TitleBarContent,
+    fallback_style: Style,
+) {
+    if layout.text_area.width == 0 {
+        return;
+    }
+    let mut cursor = layout.text_area.x;
+    let right = layout
+        .text_area
+        .x
+        .saturating_add(layout.text_area.width)
+        .saturating_sub(1);
+
+    for span in &content.spans {
+        let style = span.style.unwrap_or(fallback_style);
+        for g in span.text.graphemes(true) {
+            let w = (UnicodeWidthStr::width(g) as u16).max(1);
+            let end = cursor.saturating_add(w).saturating_sub(1);
+            if cursor > right || end > right {
+                return;
+            }
+            let Some(cell) = buf.cell_mut((cursor, layout.text_area.y)) else {
+                return;
+            };
+            cell.set_style(style);
+            cell.set_symbol(g);
+            for dx in 1..w {
+                if let Some(trailing) =
+                    buf.cell_mut((cursor.saturating_add(dx), layout.text_area.y))
+                {
+                    trailing.reset();
+                }
+            }
+            cursor = cursor.saturating_add(w);
         }
+    }
+}
+
+fn draw_titlebar_buttons(
+    buf: &mut Buffer,
+    layout: &TitleBarLayout,
+    style: Style,
+    theme: &Theme,
+) {
+    for (region, col) in &layout.button_cols {
         let symbol = match region {
             HitRegion::MinimizeButton => theme.glyph("minimize-button").unwrap_or("−"),
             HitRegion::MaximizeButton => theme.glyph("maximize-button").unwrap_or("□"),
             HitRegion::CloseButton => theme.glyph("close-button").unwrap_or("×"),
             _ => "?",
         };
-        if let Some(cell) = buf.cell_mut((col, rect.y)) {
+        if let Some(cell) = buf.cell_mut((*col, layout.text_area.y)) {
             cell.set_style(style);
             cell.set_symbol(symbol);
         }
@@ -1881,6 +1990,7 @@ mod tests {
                 bounds,
             );
 
+            let theme = Theme::dark();
             wm.handle_event(
                 &Event::Mouse(MouseEvent {
                     kind: MouseEventKind::Down(MouseButton::Left),
@@ -1890,6 +2000,7 @@ mod tests {
                 }),
                 bounds,
                 super::WindowManagerInputMode::Normal,
+                &theme,
             );
             wm.handle_event(
                 &Event::Mouse(MouseEvent {
@@ -1900,6 +2011,7 @@ mod tests {
                 }),
                 bounds,
                 super::WindowManagerInputMode::Normal,
+                &theme,
             );
 
             let w = wm.window_mut(id).expect("window");

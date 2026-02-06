@@ -284,6 +284,14 @@ impl Theme {
             .insert("inactive-window-title".into(), self.window_title);
         self.named_styles
             .insert("active-window-title".into(), self.window_title_focused);
+        self.named_styles
+            .insert("tab-title-inactive".into(), self.window_title);
+        self.named_styles
+            .insert("tab-title-active".into(), self.window_title_focused);
+        self.named_styles
+            .insert("tab-title-separator".into(), self.window_title);
+        self.named_styles
+            .insert("tab-title-marker".into(), self.window_title_focused);
         self.named_styles.insert("window-bg".into(), self.window_bg);
         self.named_styles
             .insert("window-shadow".into(), self.window_shadow);
@@ -492,6 +500,11 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("minimize-button".into(), "−".into());
     g.insert("maximize-button".into(), "□".into());
     g.insert("close-button".into(), "×".into());
+
+    // Tab window titlebar glyphs.
+    g.insert("tab-separator".into(), "|".into());
+    g.insert("tab-active-left".into(), ">".into());
+    g.insert("tab-active-right".into(), "<".into());
 
     // Controls.
     //
