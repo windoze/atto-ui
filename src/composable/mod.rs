@@ -14,7 +14,7 @@ mod splitter;
 mod stack;
 
 pub use crate::widgets::{
-    Button, Checkbox, Label, ListBox, MarkdownViewer, RadioGroup, TableView, TextBox,
+    Button, Checkbox, Label, ListBox, MarkdownViewer, RadioGroup, StyledLabel, TableView, TextBox,
 };
 pub use border::Border;
 pub use component::{

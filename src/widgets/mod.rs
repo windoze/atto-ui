@@ -9,6 +9,7 @@ mod label;
 mod list;
 mod markdown;
 mod radio;
+mod styled_label;
 mod table;
 mod textbox;
 
@@ -18,5 +19,6 @@ pub use label::Label;
 pub use list::ListBox;
 pub use markdown::MarkdownViewer;
 pub use radio::RadioGroup;
+pub use styled_label::StyledLabel;
 pub use table::TableView;
 pub use textbox::TextBox;
