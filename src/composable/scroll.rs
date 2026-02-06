@@ -1,6 +1,12 @@
 use std::cmp;
 
+use crossterm::event::{MouseButton, MouseEventKind};
+use ratatui::Frame;
 use ratatui::layout::Rect;
+
+use super::geom::contains;
+use super::layout::{EdgeInsets, add_signed, apply_padding};
+use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScrollOffset {
@@ -91,6 +97,445 @@ pub(crate) struct Scrollbars {
 pub enum ScrollbarDrag {
     Vertical { grab_offset: u16 },
     Horizontal { grab_offset: u16 },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ResolvedScrollView {
+    pub inner: Rect,
+    pub viewport_size: (u16, u16),
+    pub content_size: (u16, u16),
+    pub scrollbars: Option<Scrollbars>,
+    pub show_v: bool,
+    pub show_h: bool,
+}
+
+pub(crate) fn scrollbars_for_event(
+    area: Rect,
+    padding: EdgeInsets,
+    thickness: u16,
+    existing: Option<Scrollbars>,
+) -> Scrollbars {
+    if let Some(scrollbars) = existing {
+        return scrollbars;
+    }
+
+    let viewport = Rect {
+        x: 0,
+        y: 0,
+        width: area.width,
+        height: area.height,
+    };
+    Scrollbars {
+        viewport,
+        content: apply_padding(viewport, padding),
+        vbar: None,
+        hbar: None,
+        thickness: thickness.max(1),
+    }
+}
+
+pub(crate) fn scroll_by_delta(
+    content_size: (u16, u16),
+    viewport_size: (u16, u16),
+    scroll: ScrollOffset,
+    dx: i16,
+    dy: i16,
+) -> ScrollOffset {
+    clamp_scroll_offset(
+        content_size,
+        viewport_size,
+        ScrollOffset {
+            x: add_signed(scroll.x, dx),
+            y: add_signed(scroll.y, dy),
+        },
+    )
+}
+
+pub(crate) fn handle_scrollbar_mouse_event(
+    cfg: ScrollConfig,
+    scrollbars: Scrollbars,
+    content_size: (u16, u16),
+    scroll: ScrollOffset,
+    drag: &mut Option<ScrollbarDrag>,
+    local_x: u16,
+    local_y: u16,
+    kind: MouseEventKind,
+) -> Option<ScrollOffset> {
+    let viewport_size = (scrollbars.content.width, scrollbars.content.height);
+
+    if let Some(active) = *drag {
+        match kind {
+            MouseEventKind::Drag(MouseButton::Left) => match active {
+                ScrollbarDrag::Vertical { grab_offset } => {
+                    let Some(vbar) = scrollbars.vbar else {
+                        *drag = None;
+                        return Some(scroll);
+                    };
+                    if vbar.height == 0 {
+                        return Some(scroll);
+                    }
+
+                    let layout = scrollbar_layout_1d(
+                        vbar.height,
+                        viewport_size.1,
+                        content_size.1,
+                        scroll.y,
+                        cfg.arrows,
+                    );
+                    if layout.track_len == 0 {
+                        return Some(scroll);
+                    }
+
+                    let pos = local_y
+                        .saturating_sub(vbar.y)
+                        .min(vbar.height.saturating_sub(1));
+                    let pos_in_track = pos
+                        .saturating_sub(layout.track_start)
+                        .min(layout.track_len.saturating_sub(1));
+
+                    let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                    let new_thumb_start = pos_in_track
+                        .saturating_sub(grab_offset)
+                        .min(max_start);
+                    let new_off = scroll_offset_from_thumb_start(
+                        layout.track_len,
+                        viewport_size.1,
+                        content_size.1,
+                        new_thumb_start,
+                    );
+                    return Some(ScrollOffset { x: scroll.x, y: new_off });
+                }
+                ScrollbarDrag::Horizontal { grab_offset } => {
+                    let Some(hbar) = scrollbars.hbar else {
+                        *drag = None;
+                        return Some(scroll);
+                    };
+                    if hbar.width == 0 {
+                        return Some(scroll);
+                    }
+
+                    let layout = scrollbar_layout_1d(
+                        hbar.width,
+                        viewport_size.0,
+                        content_size.0,
+                        scroll.x,
+                        cfg.arrows,
+                    );
+                    if layout.track_len == 0 {
+                        return Some(scroll);
+                    }
+
+                    let pos = local_x
+                        .saturating_sub(hbar.x)
+                        .min(hbar.width.saturating_sub(1));
+                    let pos_in_track = pos
+                        .saturating_sub(layout.track_start)
+                        .min(layout.track_len.saturating_sub(1));
+
+                    let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                    let new_thumb_start = pos_in_track
+                        .saturating_sub(grab_offset)
+                        .min(max_start);
+                    let new_off = scroll_offset_from_thumb_start(
+                        layout.track_len,
+                        viewport_size.0,
+                        content_size.0,
+                        new_thumb_start,
+                    );
+                    return Some(ScrollOffset { x: new_off, y: scroll.y });
+                }
+            },
+            MouseEventKind::Up(MouseButton::Left) => {
+                *drag = None;
+                return Some(scroll);
+            }
+            _ => {}
+        }
+    }
+
+    if let MouseEventKind::Down(MouseButton::Left) = kind {
+        if let Some(vbar) = scrollbars.vbar
+            && contains(vbar, local_x, local_y)
+            && vbar.height > 0
+        {
+            let pos = local_y.saturating_sub(vbar.y);
+            let layout = scrollbar_layout_1d(
+                vbar.height,
+                viewport_size.1,
+                content_size.1,
+                scroll.y,
+                cfg.arrows,
+            );
+            match scrollbar_hit_test(layout, pos) {
+                ScrollbarHit::ArrowDec => {
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, -1));
+                }
+                ScrollbarHit::ArrowInc => {
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, 1));
+                }
+                ScrollbarHit::Thumb { grab_offset } => {
+                    *drag = Some(ScrollbarDrag::Vertical { grab_offset });
+                    return Some(scroll);
+                }
+                ScrollbarHit::TrackDec => {
+                    let page = viewport_size.1 as i16;
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, -page));
+                }
+                ScrollbarHit::TrackInc => {
+                    let page = viewport_size.1 as i16;
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, page));
+                }
+                ScrollbarHit::None => {}
+            }
+        }
+
+        if let Some(hbar) = scrollbars.hbar
+            && contains(hbar, local_x, local_y)
+            && hbar.width > 0
+        {
+            let pos = local_x.saturating_sub(hbar.x);
+            let layout = scrollbar_layout_1d(
+                hbar.width,
+                viewport_size.0,
+                content_size.0,
+                scroll.x,
+                cfg.arrows,
+            );
+            match scrollbar_hit_test(layout, pos) {
+                ScrollbarHit::ArrowDec => {
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, -1, 0));
+                }
+                ScrollbarHit::ArrowInc => {
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 1, 0));
+                }
+                ScrollbarHit::Thumb { grab_offset } => {
+                    *drag = Some(ScrollbarDrag::Horizontal { grab_offset });
+                    return Some(scroll);
+                }
+                ScrollbarHit::TrackDec => {
+                    let page = viewport_size.0 as i16;
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, -page, 0));
+                }
+                ScrollbarHit::TrackInc => {
+                    let page = viewport_size.0 as i16;
+                    return Some(scroll_by_delta(content_size, viewport_size, scroll, page, 0));
+                }
+                ScrollbarHit::None => {}
+            }
+        }
+    }
+
+    None
+}
+
+pub(crate) fn resolve_scroll_view(
+    area: Rect,
+    padding: EdgeInsets,
+    cfg: ScrollConfig,
+    scrollable: bool,
+    host_scrollbars: bool,
+    mut content_size_for_viewport: impl FnMut((u16, u16)) -> (u16, u16),
+) -> ResolvedScrollView {
+    let thickness = cfg.scrollbar_thickness.max(1);
+
+    let mut viewport_outer = area;
+    let mut inner = apply_padding(viewport_outer, padding);
+    let mut viewport_size = (inner.width, inner.height);
+    let mut content_size = (0, 0);
+
+    let mut show_v = false;
+    let mut show_h = false;
+
+    if scrollable && host_scrollbars {
+        // Two-pass solve: scrollbar visibility affects viewport size (which affects content size).
+        for _ in 0..2 {
+            inner = apply_padding(viewport_outer, padding);
+            viewport_size = (inner.width, inner.height);
+            content_size = content_size_for_viewport(viewport_size);
+
+            let new_show_v = should_show_scrollbar(
+                cfg.vertical_scrollbar,
+                content_size.1,
+                viewport_size.1,
+            );
+            let new_show_h = should_show_scrollbar(
+                cfg.horizontal_scrollbar,
+                content_size.0,
+                viewport_size.0,
+            );
+
+            if new_show_v == show_v && new_show_h == show_h {
+                break;
+            }
+
+            show_v = new_show_v;
+            show_h = new_show_h;
+
+            let v_thick = if show_v { thickness } else { 0 };
+            let h_thick = if show_h { thickness } else { 0 };
+            viewport_outer = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width.saturating_sub(v_thick),
+                height: area.height.saturating_sub(h_thick),
+            };
+        }
+    } else {
+        viewport_outer = area;
+        inner = apply_padding(area, padding);
+        viewport_size = (inner.width, inner.height);
+        content_size = content_size_for_viewport(viewport_size);
+
+        if scrollable {
+            show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
+            show_h =
+                should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
+        }
+    }
+
+    let scrollbars = (scrollable && host_scrollbars).then(|| {
+        let viewport_local = Rect {
+            x: viewport_outer.x.saturating_sub(area.x),
+            y: viewport_outer.y.saturating_sub(area.y),
+            width: viewport_outer.width,
+            height: viewport_outer.height,
+        };
+        let content_local = apply_padding(viewport_local, padding);
+        let vbar = show_v.then_some(Rect {
+            x: viewport_local.x.saturating_add(viewport_local.width),
+            y: viewport_local.y,
+            width: thickness,
+            height: viewport_local.height,
+        });
+        let hbar = show_h.then_some(Rect {
+            x: viewport_local.x,
+            y: viewport_local.y.saturating_add(viewport_local.height),
+            width: viewport_local.width,
+            height: thickness,
+        });
+        Scrollbars {
+            viewport: viewport_local,
+            content: content_local,
+            vbar,
+            hbar,
+            thickness,
+        }
+    });
+
+    ResolvedScrollView {
+        inner,
+        viewport_size,
+        content_size,
+        scrollbars,
+        show_v,
+        show_h,
+    }
+}
+
+pub(crate) fn draw_scrollbars(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    scrollbars: Scrollbars,
+    viewport_size: (u16, u16),
+    content_size: (u16, u16),
+    scroll: ScrollOffset,
+    cfg: ScrollConfig,
+    theme: &Theme,
+) {
+    let track_style = theme.scrollbar_track;
+    let thumb_style = theme.scrollbar_thumb;
+    let arrow_style = theme.scrollbar_arrow;
+    let buf = frame.buffer_mut();
+
+    let track = theme.glyph("scrollbar-track").unwrap_or("\u{2591}");
+    let thumb = theme.glyph("scrollbar-thumb").unwrap_or("\u{2588}");
+    let arrow_up = theme.glyph("scrollbar-up-arrow").unwrap_or("\u{25B2}");
+    let arrow_down = theme.glyph("scrollbar-down-arrow").unwrap_or("\u{25BC}");
+    let arrow_left = theme.glyph("scrollbar-left-arrow").unwrap_or("\u{25C4}");
+    let arrow_right = theme.glyph("scrollbar-right-arrow").unwrap_or("\u{25BA}");
+
+    if let Some(vbar) = scrollbars.vbar {
+        let layout = scrollbar_layout_1d(
+            vbar.height,
+            viewport_size.1,
+            content_size.1,
+            scroll.y,
+            cfg.arrows,
+        );
+
+        for dy in 0..vbar.height {
+            let (symbol, style) = if layout.has_arrows && dy == 0 {
+                (arrow_up, arrow_style)
+            } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                (arrow_down, arrow_style)
+            } else if dy >= layout.thumb_start
+                && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                (thumb, thumb_style)
+            } else {
+                (track, track_style)
+            };
+            for dx in 0..vbar.width {
+                buf[(
+                    area.x.saturating_add(vbar.x).saturating_add(dx),
+                    area.y.saturating_add(vbar.y).saturating_add(dy),
+                )]
+                    .set_symbol(symbol)
+                    .set_style(style);
+            }
+        }
+    }
+
+    if let Some(hbar) = scrollbars.hbar {
+        let layout = scrollbar_layout_1d(
+            hbar.width,
+            viewport_size.0,
+            content_size.0,
+            scroll.x,
+            cfg.arrows,
+        );
+
+        for dx in 0..hbar.width {
+            let (symbol, style) = if layout.has_arrows && dx == 0 {
+                (arrow_left, arrow_style)
+            } else if layout.has_arrows && dx == layout.bar_len.saturating_sub(1) {
+                (arrow_right, arrow_style)
+            } else if dx >= layout.thumb_start
+                && dx < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                (thumb, thumb_style)
+            } else {
+                (track, track_style)
+            };
+            for dy in 0..hbar.height {
+                buf[(
+                    area.x.saturating_add(hbar.x).saturating_add(dx),
+                    area.y.saturating_add(hbar.y).saturating_add(dy),
+                )]
+                    .set_symbol(symbol)
+                    .set_style(style);
+            }
+        }
+    }
+
+    if let (Some(vbar), Some(hbar)) = (scrollbars.vbar, scrollbars.hbar) {
+        let corner = Rect {
+            x: vbar.x,
+            y: hbar.y,
+            width: vbar.width,
+            height: hbar.height,
+        };
+        for dy in 0..corner.height {
+            for dx in 0..corner.width {
+                buf[(
+                    area.x.saturating_add(corner.x).saturating_add(dx),
+                    area.y.saturating_add(corner.y).saturating_add(dy),
+                )]
+                    .set_symbol(track)
+                    .set_style(track_style);
+            }
+        }
+    }
 }
 
 pub(crate) fn max_scroll_offset(content: (u16, u16), viewport: (u16, u16)) -> ScrollOffset {

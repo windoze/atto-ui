@@ -3,9 +3,9 @@ use ratatui::layout::Rect;
 
 use super::super::component::{ComponentContext, ScrollbarHost};
 use super::super::scroll::{clamp_scroll_offset, draw_scrollbars, resolve_scroll_view};
-use super::StackCore;
+use super::Grid;
 
-impl StackCore {
+impl Grid {
     pub(super) fn draw_impl(
         &mut self,
         frame: &mut Frame<'_>,
