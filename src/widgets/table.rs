@@ -1,11 +1,41 @@
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
+use unicode_width::UnicodeWidthStr;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::scroll::{
+    ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
+    scrollbar_layout_1d, should_show_scrollbar,
+};
+use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig, ScrollbarHost};
 use crate::reactive::Binding;
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if contains(area, m.column, m.row) {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    // Nested containers may forward mouse coordinates already relative to this view.
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
+}
 
 #[derive(Clone, Debug)]
 pub struct TableView {
@@ -18,6 +48,10 @@ pub struct TableView {
     height: Binding<u16>,
     last_area: Option<Rect>,
     min_size: (u16, u16),
+    scroll_config: ScrollConfig,
+    viewport_size: (u16, u16),
+    content_size: (u16, u16),
+    scrollbar_drag: Option<ScrollbarDrag>,
 }
 
 impl TableView {
@@ -45,6 +79,11 @@ impl TableView {
             height: 8.into(),
             last_area: None,
             min_size: (3, 4), // Minimum size to render borders, header, and one row.
+            scroll_config: ScrollConfig::default()
+                .horizontal_scrollbar(crate::composable::ScrollbarVisibility::Never),
+            viewport_size: (0, 0),
+            content_size: (0, 0),
+            scrollbar_drag: None,
         }
     }
 
@@ -70,6 +109,11 @@ impl TableView {
 
     pub fn height(mut self, height: impl Into<Binding<u16>>) -> Self {
         self.height = height.into();
+        self
+    }
+
+    pub fn scroll_config(mut self, config: ScrollConfig) -> Self {
+        self.scroll_config = config;
         self
     }
 
@@ -102,11 +146,62 @@ impl Component for TableView {
         self.enabled.get()
     }
 
+    fn is_scrollable(&self) -> bool {
+        true
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.content_size
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport_size
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        let y = self.state.offset().min(u16::MAX as usize) as u16;
+        (0, y)
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll_config
+    }
+
+    fn set_scroll_offset(&mut self, _x: u16, y: u16) {
+        let rows = self.rows.get();
+        if rows.is_empty() {
+            return;
+        }
+
+        let viewport_h = self.viewport_size.1.max(1) as usize;
+        let content_h = rows.len();
+        let max_off = content_h.saturating_sub(viewport_h);
+        let desired_off = (y as usize).min(max_off);
+        *self.state.offset_mut() = desired_off;
+
+        let mut selected = self
+            .state
+            .selected()
+            .unwrap_or_else(|| self.selection.get());
+        if selected >= content_h {
+            selected = content_h.saturating_sub(1);
+        }
+
+        if selected < desired_off {
+            selected = desired_off;
+        } else if selected >= desired_off.saturating_add(viewport_h) {
+            selected = desired_off.saturating_add(viewport_h.saturating_sub(1));
+        }
+
+        self.state.select(Some(selected));
+        self.selection.set(selected);
+    }
+
     fn desired_height(&self) -> Option<u16> {
         Some(self.height.get().max(self.min_size.1))
     }
 
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -121,18 +216,16 @@ impl Component for TableView {
         let sel = self.state.selected().unwrap_or(0);
         match event {
             Event::Mouse(m) => {
-                use crossterm::event::MouseButton;
-                use crossterm::event::MouseEventKind;
-
-                if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return EventResult::ignored();
-                }
                 let Some(area) = self.last_area else {
                     return EventResult::ignored();
                 };
+                let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                    return EventResult::ignored();
+                };
+
                 let inner = Rect {
-                    x: area.x.saturating_add(1),
-                    y: area.y.saturating_add(1),
+                    x: 1,
+                    y: 1,
                     width: area.width.saturating_sub(2),
                     height: area.height.saturating_sub(2),
                 };
@@ -140,18 +233,179 @@ impl Component for TableView {
                     return EventResult::ignored();
                 }
 
-                // Skip header row (always rendered at the top of the table body).
-                let data_y = inner.y.saturating_add(1);
-                if m.row < data_y || m.row >= inner.y.saturating_add(inner.height) {
-                    return EventResult::ignored();
+                let cfg = self.scroll_config;
+                let thickness = cfg.scrollbar_thickness.max(1);
+
+                let body_y = inner.y.saturating_add(1);
+                let body_h = inner.height.saturating_sub(1);
+                let viewport_h = body_h;
+                let content_h = rows.len().min(u16::MAX as usize) as u16;
+
+                let show_v = matches!(ctx.scrollbar_host, ScrollbarHost::Component)
+                    && viewport_h > 0
+                    && should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+
+                let body = if show_v {
+                    Rect {
+                        x: inner.x,
+                        y: body_y,
+                        width: inner.width.saturating_sub(thickness),
+                        height: body_h,
+                    }
+                } else {
+                    Rect {
+                        x: inner.x,
+                        y: body_y,
+                        width: inner.width,
+                        height: body_h,
+                    }
+                };
+                let vbar = show_v.then(|| Rect {
+                    x: body.x.saturating_add(body.width),
+                    y: body_y,
+                    width: thickness.min(inner.width),
+                    height: body_h,
+                });
+
+                if let Some(drag) = self.scrollbar_drag {
+                    match m.kind {
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            let Some(vbar) = vbar else {
+                                self.scrollbar_drag = None;
+                                return EventResult::consumed();
+                            };
+                            if vbar.height == 0 {
+                                return EventResult::consumed();
+                            }
+
+                            let layout = scrollbar_layout_1d(
+                                vbar.height,
+                                viewport_h,
+                                content_h,
+                                self.scroll_offset().1,
+                                cfg.arrows,
+                            );
+                            if layout.track_len == 0 {
+                                return EventResult::consumed();
+                            }
+
+                            let pos = local_y
+                                .saturating_sub(vbar.y)
+                                .min(vbar.height.saturating_sub(1));
+                            let pos_in_track = pos
+                                .saturating_sub(layout.track_start)
+                                .min(layout.track_len.saturating_sub(1));
+
+                            let ScrollbarDrag::Vertical { grab_offset } = drag else {
+                                self.scrollbar_drag = None;
+                                return EventResult::consumed();
+                            };
+
+                            let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+                            let new_thumb_start =
+                                pos_in_track.saturating_sub(grab_offset).min(max_start);
+                            let new_off = scroll_offset_from_thumb_start(
+                                layout.track_len,
+                                viewport_h,
+                                content_h,
+                                new_thumb_start,
+                            );
+                            self.set_scroll_offset(0, new_off);
+                            return EventResult::consumed();
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            self.scrollbar_drag = None;
+                            return EventResult::consumed();
+                        }
+                        _ => {}
+                    }
                 }
-                let row = m.row.saturating_sub(data_y) as usize;
-                if row < rows.len() {
-                    self.state.select(Some(row));
-                    self.selection.set(row);
-                    return EventResult::changed();
+
+                match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(vbar) = vbar
+                            && contains(vbar, local_x, local_y)
+                            && vbar.height > 0
+                        {
+                            let pos = local_y.saturating_sub(vbar.y);
+                            let layout = scrollbar_layout_1d(
+                                vbar.height,
+                                viewport_h,
+                                content_h,
+                                self.scroll_offset().1,
+                                cfg.arrows,
+                            );
+                            match scrollbar_hit_test(layout, pos) {
+                                ScrollbarHit::ArrowDec => {
+                                    let next = sel.saturating_sub(1);
+                                    self.state.select(Some(next));
+                                    self.selection.set(next);
+                                    return EventResult::changed();
+                                }
+                                ScrollbarHit::ArrowInc => {
+                                    let next = (sel + 1).min(rows.len().saturating_sub(1));
+                                    self.state.select(Some(next));
+                                    self.selection.set(next);
+                                    return EventResult::changed();
+                                }
+                                ScrollbarHit::TrackDec => {
+                                    let page = viewport_h.max(1) as usize;
+                                    let next = sel.saturating_sub(page);
+                                    self.state.select(Some(next));
+                                    self.selection.set(next);
+                                    return EventResult::changed();
+                                }
+                                ScrollbarHit::TrackInc => {
+                                    let page = viewport_h.max(1) as usize;
+                                    let next = (sel + page).min(rows.len().saturating_sub(1));
+                                    self.state.select(Some(next));
+                                    self.selection.set(next);
+                                    return EventResult::changed();
+                                }
+                                ScrollbarHit::Thumb { grab_offset } => {
+                                    self.scrollbar_drag =
+                                        Some(ScrollbarDrag::Vertical { grab_offset });
+                                    return EventResult::consumed();
+                                }
+                                ScrollbarHit::None => {}
+                            }
+                        }
+
+                        if !contains(body, local_x, local_y) {
+                            return EventResult::ignored();
+                        }
+
+                        let row_in_view = local_y.saturating_sub(body.y) as usize;
+                        let idx = self.state.offset().saturating_add(row_in_view);
+                        if idx < rows.len() {
+                            self.state.select(Some(idx));
+                            self.selection.set(idx);
+                            return EventResult::changed();
+                        }
+                        EventResult::ignored()
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if !contains(inner, local_x, local_y) {
+                            return EventResult::ignored();
+                        }
+                        let step = cfg.wheel_step.max(1) as usize;
+                        let next = sel.saturating_sub(step);
+                        self.state.select(Some(next));
+                        self.selection.set(next);
+                        EventResult::changed()
+                    }
+                    MouseEventKind::ScrollDown => {
+                        if !contains(inner, local_x, local_y) {
+                            return EventResult::ignored();
+                        }
+                        let step = cfg.wheel_step.max(1) as usize;
+                        let next = (sel + step).min(rows.len().saturating_sub(1));
+                        self.state.select(Some(next));
+                        self.selection.set(next);
+                        EventResult::changed()
+                    }
+                    _ => EventResult::ignored(),
                 }
-                EventResult::ignored()
             }
             Event::Key(KeyEvent { code, .. }) => match code {
                 KeyCode::Up => {
@@ -164,6 +418,31 @@ impl Component for TableView {
                     let next = (sel + 1) % rows.len();
                     self.state.select(Some(next));
                     self.selection.set(next);
+                    EventResult::changed()
+                }
+                KeyCode::PageUp => {
+                    let page = self.viewport_size.1.max(1) as usize;
+                    let next = sel.saturating_sub(page);
+                    self.state.select(Some(next));
+                    self.selection.set(next);
+                    EventResult::changed()
+                }
+                KeyCode::PageDown => {
+                    let page = self.viewport_size.1.max(1) as usize;
+                    let next = (sel + page).min(rows.len().saturating_sub(1));
+                    self.state.select(Some(next));
+                    self.selection.set(next);
+                    EventResult::changed()
+                }
+                KeyCode::Home => {
+                    self.state.select(Some(0));
+                    self.selection.set(0);
+                    EventResult::changed()
+                }
+                KeyCode::End => {
+                    let last = rows.len().saturating_sub(1);
+                    self.state.select(Some(last));
+                    self.selection.set(last);
                     EventResult::changed()
                 }
                 _ => EventResult::ignored(),
@@ -218,17 +497,123 @@ impl Component for TableView {
         let data_rows = rows
             .iter()
             .map(|r| Row::new(r.iter().cloned().map(Cell::from)));
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(ctx.theme.border_set(false))
+            .title(self.title.get());
+        frame.render_widget(block.border_style(base_style), area);
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            self.viewport_size = (0, 0);
+            self.content_size = (0, 0);
+            return;
+        }
+
+        let cfg = self.scroll_config;
+        let thickness = cfg.scrollbar_thickness.max(1);
+
+        let body_y = inner.y.saturating_add(1);
+        let body_h = inner.height.saturating_sub(1);
+        let content_h = rows.len().min(u16::MAX as usize) as u16;
+
+        let show_v = matches!(ctx.scrollbar_host, ScrollbarHost::Component)
+            && body_h > 0
+            && should_show_scrollbar(cfg.vertical_scrollbar, content_h, body_h);
+
+        let table_area = if show_v {
+            Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width.saturating_sub(thickness),
+                height: inner.height,
+            }
+        } else {
+            inner
+        };
+
+        let max_cell_w = headers
+            .iter()
+            .chain(rows.iter().flatten())
+            .map(|s| UnicodeWidthStr::width(s.as_str()).min(u16::MAX as usize) as u16)
+            .max()
+            .unwrap_or(0);
+        self.viewport_size = (table_area.width, body_h);
+        self.content_size = (max_cell_w, content_h);
+
+        if table_area.width == 0 || table_area.height == 0 {
+            return;
+        }
+
         let table = Table::new(data_rows, widths)
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_set(ctx.theme.border_set(false))
-                    .title(self.title.get()),
-            )
             .row_highlight_style(highlight_style)
             .style(base_style);
+        frame.render_stateful_widget(table, table_area, &mut self.state);
 
-        frame.render_stateful_widget(table, area, &mut self.state);
+        if show_v {
+            let vbar = Rect {
+                x: table_area.x.saturating_add(table_area.width),
+                y: body_y,
+                width: thickness.min(inner.width),
+                height: body_h,
+            };
+            self.draw_vscrollbar(frame, vbar, ctx, content_h);
+        }
+    }
+}
+
+impl TableView {
+    fn draw_vscrollbar(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ComponentContext<'_>,
+        content_h: u16,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let cfg = self.scroll_config;
+        let viewport_h = self.viewport_size.1;
+        let scroll_y = self.scroll_offset().1;
+
+        let layout = scrollbar_layout_1d(area.height, viewport_h, content_h, scroll_y, cfg.arrows);
+
+        let track_style = ctx.theme.scrollbar_track;
+        let thumb_style = ctx.theme.scrollbar_thumb;
+        let arrow_style = ctx.theme.scrollbar_arrow;
+        let buf = frame.buffer_mut();
+
+        let track = ctx.theme.glyph("scrollbar-track").unwrap_or("░");
+        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
+        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+
+        for dy in 0..area.height {
+            let (symbol, style) = if layout.has_arrows && dy == 0 {
+                (arrow_up, arrow_style)
+            } else if layout.has_arrows && dy == layout.bar_len.saturating_sub(1) {
+                (arrow_down, arrow_style)
+            } else if dy >= layout.thumb_start
+                && dy < layout.thumb_start.saturating_add(layout.thumb_len)
+            {
+                (thumb, thumb_style)
+            } else {
+                (track, track_style)
+            };
+            for dx in 0..area.width {
+                buf[(area.x.saturating_add(dx), area.y.saturating_add(dy))]
+                    .set_symbol(symbol)
+                    .set_style(style);
+            }
+        }
     }
 }

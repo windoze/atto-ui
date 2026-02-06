@@ -35,6 +35,11 @@ impl TextBuffer {
         self.cursor
     }
 
+    pub fn set_cursor_byte_index(&mut self, idx: usize) {
+        self.cursor = idx;
+        self.clamp_cursor();
+    }
+
     pub fn cursor_display_col(&self) -> u16 {
         let prefix = &self.text[..self.cursor.min(self.text.len())];
         UnicodeWidthStr::width(prefix).min(u16::MAX as usize) as u16
@@ -71,6 +76,36 @@ impl TextBuffer {
         self.clamp_cursor();
         self.text.insert(self.cursor, c);
         self.cursor += c.len_utf8();
+        self.clamp_cursor();
+    }
+
+    pub fn delete_range(&mut self, start: usize, end: usize) {
+        let len = self.text.len();
+        let mut start = start.min(len);
+        let mut end = end.min(len);
+        if start > end {
+            std::mem::swap(&mut start, &mut end);
+        }
+        if start == end {
+            return;
+        }
+
+        if !is_grapheme_boundary(&self.text, start) {
+            if let Some(prev) = prev_grapheme_boundary(&self.text, start) {
+                start = prev;
+            }
+        }
+        if !is_grapheme_boundary(&self.text, end) {
+            if let Some(next) = next_grapheme_boundary(&self.text, end) {
+                end = next;
+            }
+        }
+        if start >= end {
+            return;
+        }
+
+        self.text.replace_range(start..end, "");
+        self.cursor = start;
         self.clamp_cursor();
     }
 
