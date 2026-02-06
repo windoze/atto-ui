@@ -11,7 +11,10 @@ use ratatui::widgets::Block;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::composable::scroll::{scrollbar_layout_1d, should_show_scrollbar};
+use crate::composable::scroll::{
+    ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
+    scrollbar_layout_1d, should_show_scrollbar,
+};
 use crate::composable::{
     Component, ComponentContext, EventResult, ScrollConfig, ScrollContainer, ScrollContainerHost,
     ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarVisibility,
@@ -43,6 +46,18 @@ impl LinkCallback {
             cb(url);
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddedScrollbarTarget {
+    Code(usize),
+    Table(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EmbeddedScrollbarDragState {
+    target: EmbeddedScrollbarTarget,
+    drag: ScrollbarDrag,
 }
 
 /// Markdown viewer component.
@@ -273,6 +288,12 @@ impl ScrollContent for MarkdownContent {
             return EventResult::ignored();
         };
 
+        if shared.embedded_scrollbar_drag.is_some()
+            && let Some(res) = shared.handle_embedded_scrollbar_drag(*m, scroll, viewport, &layout)
+        {
+            return res;
+        }
+
         let content_x = scroll.x.saturating_add(m.column);
         let content_y = scroll.y.saturating_add(m.row);
 
@@ -421,6 +442,8 @@ struct MarkdownShared {
     tables: Vec<TableBlockState>,
     layout: Option<Layout>,
     last_wrap_width: Option<u16>,
+
+    embedded_scrollbar_drag: Option<EmbeddedScrollbarDragState>,
 }
 
 impl MarkdownShared {
@@ -455,6 +478,124 @@ impl MarkdownShared {
             tables: Vec::new(),
             layout: None,
             last_wrap_width: None,
+            embedded_scrollbar_drag: None,
+        }
+    }
+
+    fn handle_embedded_scrollbar_drag(
+        &mut self,
+        m: MouseEvent,
+        scroll: ScrollOffset,
+        viewport: (u16, u16),
+        layout: &Layout,
+    ) -> Option<EventResult> {
+        let drag = self.embedded_scrollbar_drag?;
+        match m.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let content_x = scroll.x.saturating_add(m.column);
+                let content_y = scroll.y.saturating_add(m.row);
+
+                let Some(block) =
+                    layout
+                        .blocks
+                        .iter()
+                        .find(|block| match (&block.kind, drag.target) {
+                            (
+                                LayoutBlockKind::Code { index, .. },
+                                EmbeddedScrollbarTarget::Code(id),
+                            ) => *index == id,
+                            (
+                                LayoutBlockKind::Table { index, .. },
+                                EmbeddedScrollbarTarget::Table(id),
+                            ) => *index == id,
+                            _ => false,
+                        })
+                else {
+                    self.embedded_scrollbar_drag = None;
+                    return Some(EventResult::consumed());
+                };
+
+                let local_x = content_x;
+                let local_y = content_y.saturating_sub(block.y);
+
+                let (target_content_w, target_content_h, target_scroll) = match drag.target {
+                    EmbeddedScrollbarTarget::Code(id) => {
+                        let Some(code) = self.code_blocks.get(id) else {
+                            self.embedded_scrollbar_drag = None;
+                            return Some(EventResult::consumed());
+                        };
+                        let (w, h) = code.content_size();
+                        (w, h, code.scroll)
+                    }
+                    EmbeddedScrollbarTarget::Table(id) => {
+                        let Some(table) = self.tables.get(id) else {
+                            self.embedded_scrollbar_drag = None;
+                            return Some(EventResult::consumed());
+                        };
+                        let (w, h) = table.content_size();
+                        (w, h, table.scroll)
+                    }
+                };
+
+                let (target_scroll, embedded) = solve_embedded_scroll_and_layout(
+                    target_scroll,
+                    (target_content_w, target_content_h),
+                    block,
+                    viewport,
+                    layout.wrap_width,
+                );
+
+                let prefix_width = match &block.kind {
+                    LayoutBlockKind::Code { prefix, .. }
+                    | LayoutBlockKind::Table { prefix, .. } => {
+                        prefix.first_width.max(prefix.rest_width)
+                    }
+                    _ => 0,
+                };
+
+                let scroll_after_drag = apply_embedded_scrollbar_drag(
+                    target_scroll,
+                    (target_content_w, target_content_h),
+                    embedded,
+                    prefix_width,
+                    local_x,
+                    local_y,
+                    drag.drag,
+                );
+
+                match drag.target {
+                    EmbeddedScrollbarTarget::Code(id) => {
+                        let Some(code) = self.code_blocks.get_mut(id) else {
+                            self.embedded_scrollbar_drag = None;
+                            return Some(EventResult::consumed());
+                        };
+                        code.scroll = scroll_after_drag;
+                    }
+                    EmbeddedScrollbarTarget::Table(id) => {
+                        let Some(table) = self.tables.get_mut(id) else {
+                            self.embedded_scrollbar_drag = None;
+                            return Some(EventResult::consumed());
+                        };
+                        table.scroll = scroll_after_drag;
+                    }
+                }
+
+                // If scrollbars disappeared mid-drag (e.g. viewport shrank), stop the drag.
+                let should_keep_drag = match drag.drag {
+                    ScrollbarDrag::Vertical { .. } => embedded.show_v,
+                    ScrollbarDrag::Horizontal { .. } => embedded.show_h,
+                };
+                if !should_keep_drag {
+                    self.embedded_scrollbar_drag = None;
+                }
+
+                Some(EventResult::consumed())
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.embedded_scrollbar_drag = None;
+                Some(EventResult::consumed())
+            }
+            _ => None,
         }
     }
 
@@ -533,9 +674,29 @@ impl MarkdownShared {
                     return None;
                 }
 
+                let code = self.code_blocks.get_mut(*index)?;
+                let (content_w, content_h) = code.content_size();
+                let embedded =
+                    EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
+
+                // Click/drag on embedded scrollbars.
+                if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                    if let Some(res) = handle_embedded_scrollbar_mouse_down(
+                        &mut self.embedded_scrollbar_drag,
+                        EmbeddedScrollbarTarget::Code(*index),
+                        code.scroll,
+                        (content_w, content_h),
+                        embedded,
+                        local_x,
+                        local_y,
+                        prefix_width,
+                    ) {
+                        code.scroll = res;
+                        return Some(EventResult::consumed());
+                    }
+                }
+
                 if is_wheel {
-                    let code = self.code_blocks.get_mut(*index)?;
-                    let (content_w, content_h) = code.content_size();
                     let embedded = EmbeddedScrollView::solve_auto(
                         (content_w, content_h),
                         (outer_w, block.height),
@@ -564,9 +725,29 @@ impl MarkdownShared {
                     return None;
                 }
 
+                let table = self.tables.get_mut(*index)?;
+                let (content_w, content_h) = table.content_size();
+                let embedded =
+                    EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
+
+                // Click/drag on embedded scrollbars.
+                if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                    if let Some(res) = handle_embedded_scrollbar_mouse_down(
+                        &mut self.embedded_scrollbar_drag,
+                        EmbeddedScrollbarTarget::Table(*index),
+                        table.scroll,
+                        (content_w, content_h),
+                        embedded,
+                        local_x,
+                        local_y,
+                        prefix_width,
+                    ) {
+                        table.scroll = res;
+                        return Some(EventResult::consumed());
+                    }
+                }
+
                 if is_wheel {
-                    let table = self.tables.get_mut(*index)?;
-                    let (content_w, content_h) = table.content_size();
                     let embedded = EmbeddedScrollView::solve_auto(
                         (content_w, content_h),
                         (outer_w, block.height),
@@ -584,10 +765,6 @@ impl MarkdownShared {
                 }
 
                 let content_x = local_x.saturating_sub(prefix_width);
-                let table = self.tables.get_mut(*index)?;
-                let (content_w, content_h) = table.content_size();
-                let embedded =
-                    EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
 
                 let max_x = content_w.saturating_sub(embedded.viewport_w);
                 let max_y = content_h.saturating_sub(embedded.viewport_h);
@@ -610,6 +787,210 @@ impl MarkdownShared {
             _ => None,
         }
     }
+}
+
+fn solve_embedded_scroll_and_layout(
+    scroll: ScrollOffset,
+    content: (u16, u16),
+    block: &LayoutBlock,
+    viewport: (u16, u16),
+    wrap_width: u16,
+) -> (ScrollOffset, EmbeddedScrollView) {
+    let prefix_width = match &block.kind {
+        LayoutBlockKind::Code { prefix, .. } | LayoutBlockKind::Table { prefix, .. } => {
+            prefix.first_width.max(prefix.rest_width)
+        }
+        _ => 0,
+    };
+
+    let total_width = wrap_width.min(viewport.0);
+    let outer_w = total_width.saturating_sub(prefix_width);
+    let outer_h = block.height;
+
+    let embedded = EmbeddedScrollView::solve_auto(content, (outer_w, outer_h));
+    let max_x = content.0.saturating_sub(embedded.viewport_w);
+    let max_y = content.1.saturating_sub(embedded.viewport_h);
+    (
+        ScrollOffset {
+            x: scroll.x.min(max_x),
+            y: scroll.y.min(max_y),
+        },
+        embedded,
+    )
+}
+
+fn apply_embedded_scrollbar_drag(
+    scroll: ScrollOffset,
+    content: (u16, u16),
+    embedded: EmbeddedScrollView,
+    prefix_width: u16,
+    local_x: u16,
+    local_y: u16,
+    drag: ScrollbarDrag,
+) -> ScrollOffset {
+    let mut scroll = scroll;
+
+    match drag {
+        ScrollbarDrag::Vertical { grab_offset } => {
+            if !embedded.show_v || embedded.viewport_h == 0 {
+                return scroll;
+            }
+            let bar_len = embedded.viewport_h;
+            let layout =
+                scrollbar_layout_1d(bar_len, embedded.viewport_h, content.1, scroll.y, true);
+            if layout.track_len == 0 {
+                return scroll;
+            }
+
+            let pos = local_y.min(bar_len.saturating_sub(1));
+            let pos_in_track = pos
+                .saturating_sub(layout.track_start)
+                .min(layout.track_len.saturating_sub(1));
+            let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+            let new_thumb_start = pos_in_track.saturating_sub(grab_offset).min(max_start);
+            let new_y = scroll_offset_from_thumb_start(
+                layout.track_len,
+                embedded.viewport_h,
+                content.1,
+                new_thumb_start,
+            );
+            scroll.y = new_y;
+        }
+        ScrollbarDrag::Horizontal { grab_offset } => {
+            if !embedded.show_h || embedded.viewport_w == 0 {
+                return scroll;
+            }
+            let bar_len = embedded.viewport_w;
+            let layout =
+                scrollbar_layout_1d(bar_len, embedded.viewport_w, content.0, scroll.x, true);
+            if layout.track_len == 0 {
+                return scroll;
+            }
+
+            let local_x_in_bar = local_x.saturating_sub(prefix_width);
+            let pos = local_x_in_bar.min(bar_len.saturating_sub(1));
+            let pos_in_track = pos
+                .saturating_sub(layout.track_start)
+                .min(layout.track_len.saturating_sub(1));
+            let max_start = layout.track_len.saturating_sub(layout.thumb_len);
+            let new_thumb_start = pos_in_track.saturating_sub(grab_offset).min(max_start);
+            let new_x = scroll_offset_from_thumb_start(
+                layout.track_len,
+                embedded.viewport_w,
+                content.0,
+                new_thumb_start,
+            );
+            scroll.x = new_x;
+        }
+    }
+
+    let max_x = content.0.saturating_sub(embedded.viewport_w);
+    let max_y = content.1.saturating_sub(embedded.viewport_h);
+    scroll.x = scroll.x.min(max_x);
+    scroll.y = scroll.y.min(max_y);
+
+    scroll
+}
+
+fn handle_embedded_scrollbar_mouse_down(
+    drag_state: &mut Option<EmbeddedScrollbarDragState>,
+    target: EmbeddedScrollbarTarget,
+    scroll: ScrollOffset,
+    content: (u16, u16),
+    embedded: EmbeddedScrollView,
+    local_x: u16,
+    local_y: u16,
+    prefix_width: u16,
+) -> Option<ScrollOffset> {
+    let mut scroll = scroll;
+
+    let bar_x_v = prefix_width.saturating_add(embedded.viewport_w);
+    let bar_y_h = embedded.viewport_h;
+    let arrows = true;
+
+    // Vertical scrollbar hit-test.
+    if embedded.show_v
+        && local_x == bar_x_v
+        && embedded.viewport_h > 0
+        && local_y < embedded.viewport_h
+    {
+        let layout = scrollbar_layout_1d(
+            embedded.viewport_h,
+            embedded.viewport_h,
+            content.1,
+            scroll.y,
+            arrows,
+        );
+        let pos = local_y.min(layout.bar_len.saturating_sub(1));
+        match scrollbar_hit_test(layout, pos) {
+            ScrollbarHit::ArrowDec => scroll.y = scroll.y.saturating_sub(1),
+            ScrollbarHit::ArrowInc => {
+                let max = content.1.saturating_sub(embedded.viewport_h);
+                scroll.y = scroll.y.saturating_add(1).min(max);
+            }
+            ScrollbarHit::TrackDec => {
+                let page = embedded.viewport_h;
+                scroll.y = scroll.y.saturating_sub(page);
+            }
+            ScrollbarHit::TrackInc => {
+                let max = content.1.saturating_sub(embedded.viewport_h);
+                let page = embedded.viewport_h;
+                scroll.y = scroll.y.saturating_add(page).min(max);
+            }
+            ScrollbarHit::Thumb { grab_offset } => {
+                *drag_state = Some(EmbeddedScrollbarDragState {
+                    target,
+                    drag: ScrollbarDrag::Vertical { grab_offset },
+                });
+            }
+            ScrollbarHit::None => {}
+        }
+        return Some(scroll);
+    }
+
+    // Horizontal scrollbar hit-test (bottom row of the embedded viewport).
+    if embedded.show_h
+        && embedded.viewport_w > 0
+        && local_y == bar_y_h
+        && local_x >= prefix_width
+        && local_x < prefix_width.saturating_add(embedded.viewport_w)
+    {
+        let layout = scrollbar_layout_1d(
+            embedded.viewport_w,
+            embedded.viewport_w,
+            content.0,
+            scroll.x,
+            arrows,
+        );
+        let local_x_in_bar = local_x.saturating_sub(prefix_width);
+        let pos = local_x_in_bar.min(layout.bar_len.saturating_sub(1));
+        match scrollbar_hit_test(layout, pos) {
+            ScrollbarHit::ArrowDec => scroll.x = scroll.x.saturating_sub(1),
+            ScrollbarHit::ArrowInc => {
+                let max = content.0.saturating_sub(embedded.viewport_w);
+                scroll.x = scroll.x.saturating_add(1).min(max);
+            }
+            ScrollbarHit::TrackDec => {
+                let page = embedded.viewport_w;
+                scroll.x = scroll.x.saturating_sub(page);
+            }
+            ScrollbarHit::TrackInc => {
+                let max = content.0.saturating_sub(embedded.viewport_w);
+                let page = embedded.viewport_w;
+                scroll.x = scroll.x.saturating_add(page).min(max);
+            }
+            ScrollbarHit::Thumb { grab_offset } => {
+                *drag_state = Some(EmbeddedScrollbarDragState {
+                    target,
+                    drag: ScrollbarDrag::Horizontal { grab_offset },
+                });
+            }
+            ScrollbarHit::None => {}
+        }
+        return Some(scroll);
+    }
+
+    None
 }
 
 #[derive(Clone, Debug)]
