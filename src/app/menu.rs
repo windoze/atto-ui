@@ -765,6 +765,7 @@ fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
         return;
     }
 
+    let style = reset_style(style);
     let shadow_x = rect.x.saturating_add(rect.width);
     let shadow_y = rect.y.saturating_add(rect.height);
 
@@ -810,4 +811,8 @@ fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
         cell.set_symbol(" ");
         cell.set_style(style);
     }
+}
+
+fn reset_style(style: Style) -> Style {
+    Style::reset().patch(style)
 }

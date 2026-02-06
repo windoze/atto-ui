@@ -1122,6 +1122,7 @@ fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
         return;
     }
 
+    let style = reset_style(style);
     let shadow_x = rect.x.saturating_add(rect.width);
     let shadow_y = rect.y.saturating_add(rect.height);
 
@@ -1170,6 +1171,7 @@ fn draw_shadow(buf: &mut Buffer, rect: Rect, bounds: Rect, style: Style) {
 }
 
 fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
+    let style = reset_style(style);
     let symbol = ch.to_string();
     for y in rect.y..rect.y.saturating_add(rect.height) {
         for x in rect.x..rect.x.saturating_add(rect.width) {
@@ -1179,6 +1181,10 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
             }
         }
     }
+}
+
+fn reset_style(style: Style) -> Style {
+    Style::reset().patch(style)
 }
 
 fn draw_window_border_scrollbars(

@@ -54,10 +54,11 @@ pub(crate) struct Fill {
 impl Widget for Fill {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let s = self.ch.to_string();
+        let style = ratatui::style::Style::reset().patch(self.style);
         for y in area.y..area.y.saturating_add(area.height) {
             for x in area.x..area.x.saturating_add(area.width) {
                 if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_style(self.style);
+                    cell.set_style(style);
                     cell.set_symbol(&s);
                 }
             }
