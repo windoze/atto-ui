@@ -808,7 +808,10 @@ fn build_splitter_demo_view() -> Box<dyn Component> {
         .spacing(1)
         .child_with_layout(Label::new("Top pane"), row_layout)
         .child_with_layout(
-            TextBox::new("Filter", Property::new("type to filter".to_string()).binding()),
+            TextBox::new(
+                "Filter",
+                Property::new("type to filter".to_string()).binding(),
+            ),
             LayoutParams {
                 height: Size::Fixed(3),
                 ..LayoutParams::default()

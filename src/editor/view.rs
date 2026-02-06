@@ -2220,12 +2220,11 @@ impl EditorView {
                         self.mouse_drag = None;
                         return EventResult::consumed();
                     }
-                } else if click_count >= 3
-                    && self.select_line_at(pos.line) {
-                        self.adjust_scroll();
-                        self.mouse_drag = None;
-                        return EventResult::consumed();
-                    }
+                } else if click_count >= 3 && self.select_line_at(pos.line) {
+                    self.adjust_scroll();
+                    self.mouse_drag = None;
+                    return EventResult::consumed();
+                }
 
                 if rect_drag {
                     let _ = self.execute(Command::Cursor(CursorCommand::SetRectSelection {

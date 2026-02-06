@@ -36,7 +36,10 @@ fn tab_direction_for_event(event: &Event) -> Option<TabDirection> {
         } else {
             TabDirection::Next
         }),
-        Event::Key(KeyEvent { code: KeyCode::BackTab, .. }) => Some(TabDirection::Prev),
+        Event::Key(KeyEvent {
+            code: KeyCode::BackTab,
+            ..
+        }) => Some(TabDirection::Prev),
         _ => None,
     }
 }
@@ -187,7 +190,11 @@ impl Splitter {
         self
     }
 
-    pub fn min_sizes(mut self, first: impl Into<Binding<u16>>, second: impl Into<Binding<u16>>) -> Self {
+    pub fn min_sizes(
+        mut self,
+        first: impl Into<Binding<u16>>,
+        second: impl Into<Binding<u16>>,
+    ) -> Self {
         self.min_first = first.into();
         self.min_second = second.into();
         self
@@ -716,7 +723,10 @@ impl Component for Splitter {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
-            self.last_layout = Some(SplitLayout { area, ..SplitLayout::default() });
+            self.last_layout = Some(SplitLayout {
+                area,
+                ..SplitLayout::default()
+            });
             return;
         }
 

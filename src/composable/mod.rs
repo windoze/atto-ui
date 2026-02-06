@@ -8,9 +8,9 @@ mod identifiable;
 mod layout;
 mod node;
 mod primitives;
-mod splitter;
 pub(crate) mod scroll;
 mod scroll_container;
+mod splitter;
 mod stack;
 
 pub use crate::widgets::{
@@ -26,12 +26,12 @@ pub use identifiable::Identifiable;
 pub use layout::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
 pub use node::{ComponentId, ComponentNode};
 pub use primitives::{Divider, Spacer, Text, TextFn};
-pub use splitter::{Splitter, SplitterOrientation};
 pub use scroll::{ScrollConfig, ScrollOffset, ScrollbarVisibility};
 pub use scroll_container::{
     ScrollContainer, ScrollContainerHost, ScrollContainerInfo, ScrollContainerScrollbars,
     ScrollContent, ScrollContentContext, ScrollbarLayout, ScrollbarPlacement,
 };
+pub use splitter::{Splitter, SplitterOrientation};
 pub use stack::{HStack, VStack};
 
 #[cfg(test)]

@@ -243,8 +243,11 @@ fn vstack_layout_fixed_heights() {
 
 #[test]
 fn splitter_vertical_layout_respects_split_position() {
-    let mut splitter = Splitter::vertical(RecordingView::new(Arc::new(Mutex::new(Vec::new()))), RecordingView::new(Arc::new(Mutex::new(Vec::new()))))
-        .split_position(12u16);
+    let mut splitter = Splitter::vertical(
+        RecordingView::new(Arc::new(Mutex::new(Vec::new()))),
+        RecordingView::new(Arc::new(Mutex::new(Vec::new()))),
+    )
+    .split_position(12u16);
 
     draw_view(&mut splitter, Rect::new(0, 0, 40, 10));
 

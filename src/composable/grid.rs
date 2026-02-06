@@ -222,7 +222,7 @@ impl Grid {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn with_columns(mut self, columns: impl Into<Binding<usize>>) -> Self {
         self.columns = columns.into();
         self
