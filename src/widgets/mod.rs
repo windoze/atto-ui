@@ -11,6 +11,7 @@ mod markdown;
 mod radio;
 mod styled_label;
 mod table;
+mod tab_view;
 mod textbox;
 
 pub use button::Button;
@@ -21,4 +22,5 @@ pub use markdown::MarkdownViewer;
 pub use radio::RadioGroup;
 pub use styled_label::StyledLabel;
 pub use table::TableView;
+pub use tab_view::{TabHeaderPosition, TabView};
 pub use textbox::TextBox;

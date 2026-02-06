@@ -319,6 +319,15 @@ impl Theme {
         self.named_styles
             .insert("widget-accent".into(), self.widget.accent);
 
+        self.named_styles
+            .insert("tab-active".into(), self.widget.focused);
+        self.named_styles
+            .insert("tab-inactive".into(), self.widget.normal);
+        self.named_styles
+            .insert("tab-separator".into(), self.widget.dim);
+        self.named_styles
+            .insert("tab-header".into(), self.widget.normal);
+
         let markdown_base = self.window_bg.patch(self.widget.normal);
         self.named_styles
             .insert("markdown-base".into(), markdown_base);
@@ -501,6 +510,11 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("scrollbar-down-arrow".into(), "▼".into());
     g.insert("scrollbar-left-arrow".into(), "◄".into());
     g.insert("scrollbar-right-arrow".into(), "►".into());
+
+    // Tabs.
+    g.insert("tab-separator".into(), "|".into());
+    g.insert("tab-active-left".into(), ">".into());
+    g.insert("tab-active-right".into(), "<".into());
 
     g
 }
