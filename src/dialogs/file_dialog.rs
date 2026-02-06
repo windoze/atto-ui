@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use crate::composable::{Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack, LayoutParams, Size, VStack};
+use crate::composable::{
+    Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack,
+    LayoutParams, Size, VStack,
+};
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::widgets::{Button, Label, ListBox, TextBox};
 
@@ -788,8 +791,8 @@ fn cmp_entries(a: &Entry, b: &Entry) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::Theme;
     use crate::composable::{ComponentContext, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
     use crate::wm::WindowId;
     use crossterm::event::{KeyEventState, KeyModifiers};
     use ratatui::Terminal;

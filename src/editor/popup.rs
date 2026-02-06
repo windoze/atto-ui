@@ -6,8 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
-use crate::reactive::Binding;
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::reactive::Binding;
 use crate::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
 
 use super::theme::{EditorTheme, EditorThemeSet};

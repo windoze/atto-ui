@@ -21,9 +21,9 @@ use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar};
+use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::reactive::Property;
 use atto_ui::theme::Theme;
-use atto_ui::composable::{Component, ComponentContext, EventResult};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]

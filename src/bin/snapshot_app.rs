@@ -17,12 +17,12 @@ use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use atto_ui::composable::{Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack};
+use atto_ui::composable::{
+    Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack,
+};
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{
-    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
-};
+use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]

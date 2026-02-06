@@ -8,11 +8,12 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
-use crate::reactive::Binding;
-use crate::composable::{
-    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig, ScrollOffset,
-};
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
+use crate::composable::{
+    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
+    ScrollOffset,
+};
+use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
 
 #[derive(Debug, Clone)]

@@ -318,6 +318,68 @@ impl Theme {
             .insert("widget-disabled".into(), self.widget.disabled);
         self.named_styles
             .insert("widget-accent".into(), self.widget.accent);
+
+        let markdown_base = self.window_bg.patch(self.widget.normal);
+        self.named_styles
+            .insert("markdown-base".into(), markdown_base);
+        self.named_styles.insert(
+            "markdown-heading-1".into(),
+            self.widget
+                .focused
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        );
+        self.named_styles.insert(
+            "markdown-heading-2".into(),
+            self.widget
+                .normal
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        );
+        self.named_styles.insert(
+            "markdown-heading-3".into(),
+            self.widget.normal.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles.insert(
+            "markdown-heading-4".into(),
+            self.widget.normal.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("markdown-heading-5".into(), self.widget.normal);
+        self.named_styles
+            .insert("markdown-heading-6".into(), self.widget.dim);
+        self.named_styles.insert(
+            "markdown-bold".into(),
+            Style::default().add_modifier(Modifier::BOLD),
+        );
+        self.named_styles.insert(
+            "markdown-italic".into(),
+            Style::default().add_modifier(Modifier::ITALIC),
+        );
+        self.named_styles.insert(
+            "markdown-strikethrough".into(),
+            Style::default().add_modifier(Modifier::CROSSED_OUT),
+        );
+        self.named_styles
+            .insert("markdown-blockquote".into(), self.widget.dim);
+        self.named_styles
+            .insert("markdown-list-bullet".into(), self.widget.accent);
+        self.named_styles
+            .insert("markdown-code-inline".into(), self.widget.accent);
+        self.named_styles
+            .insert("markdown-code-block".into(), markdown_base);
+        self.named_styles
+            .insert("markdown-table-border".into(), self.widget.dim);
+        self.named_styles.insert(
+            "markdown-table-header".into(),
+            self.widget.accent.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("markdown-table-cell".into(), markdown_base);
+        self.named_styles.insert(
+            "markdown-link".into(),
+            self.widget.accent.add_modifier(Modifier::UNDERLINED),
+        );
+        self.named_styles
+            .insert("markdown-mark".into(), self.widget.dim);
     }
 
     fn refresh_typed_fields_from_named_styles(&mut self) {

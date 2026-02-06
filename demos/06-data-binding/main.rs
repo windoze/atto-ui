@@ -222,7 +222,10 @@ fn build_mirror_view(model: AppModel) -> Box<dyn Component> {
         .child_with_layout(Divider::horizontal(), content_height())
         .child_with_layout(Label::new("Try editing on either side:"), content_height())
         .child(TextBox::new("Name (mirror)", model.name.binding()))
-        .child(Checkbox::new("Subscribed (mirror)", model.subscribed.binding()))
+        .child(Checkbox::new(
+            "Subscribed (mirror)",
+            model.subscribed.binding(),
+        ))
         .child_with_layout(Divider::horizontal(), content_height())
         .child_with_layout(
             summary,

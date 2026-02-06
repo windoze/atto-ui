@@ -2,8 +2,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, Mous
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::reactive::Binding;
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
+use crate::reactive::Binding;
 
 use super::layout::{EdgeInsets, add_signed, apply_padding};
 use super::scroll::{
@@ -1019,8 +1019,8 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::theme::Theme;
     use crate::composable::{ComponentContext, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
     use crate::wm::WindowId;
 
     use super::*;

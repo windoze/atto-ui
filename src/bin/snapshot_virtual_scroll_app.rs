@@ -14,11 +14,11 @@ use ratatui::style::Style;
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::composable::{
+    EdgeInsets, ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
+};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
-use atto_ui::composable::{
-    EdgeInsets, ScrollContent, ScrollContentContext, ScrollContainer, ScrollContainerHost,
-};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]

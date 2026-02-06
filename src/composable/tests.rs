@@ -769,7 +769,13 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut vstack = VStack::new()
@@ -871,7 +877,13 @@ fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut vstack = VStack::new().with_spacing(1u16);
@@ -920,7 +932,13 @@ fn vstack_layout_at_min_height_keeps_all_children_visible() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut vstack = VStack::new().with_spacing(1u16);
@@ -977,7 +995,13 @@ fn hstack_layout_at_min_width_keeps_all_children_visible() {
             self.desired_w
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut hstack = HStack::new().with_spacing(1u16);
@@ -1030,7 +1054,13 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut grid = Grid::new().with_columns(1usize).with_row_gap(1u16);
@@ -1083,7 +1113,13 @@ fn hstack_desired_height_is_max_child_height_plus_padding() {
             self.desired_h
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut hstack = HStack::new().with_padding(EdgeInsets {
@@ -1140,7 +1176,13 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
             Some(1)
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut vstack = VStack::new().with_scrollable(true).with_scroll_config(
@@ -1204,7 +1246,13 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
             Some(1)
         }
 
-        fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
     }
 
     let mut hstack = HStack::new().with_scrollable(true).with_scroll_config(

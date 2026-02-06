@@ -247,9 +247,7 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
             content_height(),
         )
         .child_with_layout(
-            Text::new(
-                "Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it.",
-            ),
+            Text::new("Quit: Ctrl+Q always; 'q' only when the focused widget did not consume it."),
             content_height(),
         )
         .child_with_layout(Divider::horizontal(), content_height())

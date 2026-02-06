@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopAction, DesktopEventResult};
 use crate::composable::EventOutcome;
+use crate::reactive::tick_global_timers;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {
@@ -173,6 +174,7 @@ where
     loop {
         let screen: Rect = session.terminal.size()?.into();
 
+        tick_global_timers();
         if on_tick(&mut desktop, screen)? == AppControl::Exit {
             break;
         }

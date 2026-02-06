@@ -5,7 +5,6 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use std::cmp::Ordering;
 
-use crate::reactive::Binding;
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
 use super::layout::{Align, Anchor, EdgeInsets, LayoutParams, Size, add_signed, apply_padding};
 use super::node::{ComponentId, ComponentNode};
@@ -14,6 +13,7 @@ use super::scroll::{
     max_scroll_offset, scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d,
     should_show_scrollbar,
 };
+use crate::reactive::Binding;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TabDirection {
@@ -292,7 +292,11 @@ impl Grid {
         self
     }
 
-    pub fn add_child_with_layout(&mut self, view: Box<dyn Component>, layout: LayoutParams) -> ComponentId {
+    pub fn add_child_with_layout(
+        &mut self,
+        view: Box<dyn Component>,
+        layout: LayoutParams,
+    ) -> ComponentId {
         let mut node = ComponentNode::new(view).with_layout(layout);
         node.parent = Some(self.id);
         let id = node.id;

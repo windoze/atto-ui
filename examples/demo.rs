@@ -22,9 +22,7 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use atto_ui::widgets::{
-    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
-};
+use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
 
@@ -79,7 +77,10 @@ impl DialogView {
 
         let root = VStack::new()
             .spacing(0)
-            .child_with_layout(Label::new("Chatty demo (Turbo Vision-inspired)."), row_layout)
+            .child_with_layout(
+                Label::new("Chatty demo (Turbo Vision-inspired)."),
+                row_layout,
+            )
             .child_with_layout(Label::new(""), row_layout)
             .child_with_layout(Label::new("Keys:"), row_layout)
             .child_with_layout(
@@ -353,7 +354,10 @@ impl WidgetsView {
             .spacing(1)
             .padding(1);
 
-        Self { _model: model, root }
+        Self {
+            _model: model,
+            root,
+        }
     }
 }
 

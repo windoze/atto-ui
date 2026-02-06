@@ -3,10 +3,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
-use crate::reactive::Binding;
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use super::node::ComponentId;
 use super::scroll::ScrollConfig;
+use crate::reactive::Binding;
 
 use super::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,

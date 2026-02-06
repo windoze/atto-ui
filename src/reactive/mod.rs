@@ -7,8 +7,10 @@ mod dirty;
 mod observable;
 mod property;
 mod queue;
+mod timer;
 
 pub use dirty::{DirtyFlag, DirtyObserver};
 pub use observable::Observable;
 pub use property::{Binding, Property};
 pub use queue::EventQueue;
+pub use timer::{TimerHandle, TimerWheel, cancel_timer, register_timer, tick_global_timers};

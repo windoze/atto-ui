@@ -5,8 +5,8 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
-use crate::theme::Theme;
 use crate::composable::{ComponentAction, EventOutcome};
+use crate::theme::Theme;
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode};
 
 use super::menu::{MenuAction, MenuBar};
@@ -399,8 +399,8 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::Theme;
     use crate::composable::{Component, ComponentContext, EventResult};
+    use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;

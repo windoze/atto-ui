@@ -1,8 +1,8 @@
 use ratatui::layout::Rect;
 
 use super::min_size_view::WindowMinSizeView;
-use crate::reactive::Binding;
 use crate::composable::Component;
+use crate::reactive::Binding;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);

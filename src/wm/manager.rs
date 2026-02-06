@@ -7,12 +7,12 @@ use ratatui::widgets::{Block, Borders};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::theme::Theme;
-use crate::composable::{ComponentContext, EventResult, ScrollbarHost, TabMode};
 use crate::composable::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
     scrollbar_layout_1d, should_show_scrollbar,
 };
+use crate::composable::{ComponentContext, EventResult, ScrollbarHost, TabMode};
+use crate::theme::Theme;
 
 use super::{
     Window, WindowBorderStyle, WindowButtons, WindowId, WindowKind, WindowMinSizeMode, WindowState,
@@ -1381,8 +1381,10 @@ fn can_minimize(w: &Window) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{WindowManager, draw_shadow};
+    use crate::composable::{
+        Component, ComponentContext, EventResult, ScrollConfig, ScrollbarVisibility,
+    };
     use crate::theme::Theme;
-    use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig, ScrollbarVisibility};
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,

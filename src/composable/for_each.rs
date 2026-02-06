@@ -6,13 +6,13 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::reactive::{Binding, DirtyObserver};
 use super::component::{Component, ComponentContext, EventResult};
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use super::stack::VStack;
+use crate::reactive::{Binding, DirtyObserver};
 
 pub type BuilderFn<T, V> = dyn Fn(&T, usize) -> V + Send + Sync;
 
@@ -249,8 +249,7 @@ where
         for (idx, item) in items.iter().enumerate() {
             let child_view = (self.builder)(item, idx);
             children.push(
-                ComponentNode::new(Box::new(child_view))
-                    .with_layout(default_foreach_item_layout()),
+                ComponentNode::new(Box::new(child_view)).with_layout(default_foreach_item_layout()),
             );
         }
 
@@ -315,7 +314,11 @@ where
         self.cached_view.scroll_to_child(child_id);
     }
 
-    fn handle_event(&mut self, event: &crossterm::event::Event, ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(
+        &mut self,
+        event: &crossterm::event::Event,
+        ctx: ComponentContext<'_>,
+    ) -> EventResult {
         if self.data.check_dirty(&mut self.data_observer) {
             self.rebuild_children();
         }
@@ -374,7 +377,8 @@ where
             std::mem::take(children)
         };
 
-        let mut old_by_id: HashMap<T::Id, ComponentNode> = HashMap::with_capacity(old_children.len());
+        let mut old_by_id: HashMap<T::Id, ComponentNode> =
+            HashMap::with_capacity(old_children.len());
         if old_ids.len() == old_children.len() {
             for (id, node) in old_ids.into_iter().zip(old_children) {
                 old_by_id.insert(id, node);
@@ -414,7 +418,6 @@ where
         self.cached_ids = new_ids;
         self.cached_view.replace_children(new_children);
     }
-
 }
 
 impl<T, V> Component for ForEachIdentifiable<T, V>
@@ -475,7 +478,11 @@ where
         self.cached_view.scroll_to_child(child_id);
     }
 
-    fn handle_event(&mut self, event: &crossterm::event::Event, ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(
+        &mut self,
+        event: &crossterm::event::Event,
+        ctx: ComponentContext<'_>,
+    ) -> EventResult {
         if self.data.check_dirty(&mut self.data_observer) {
             self.reconcile_children();
         }
@@ -499,8 +506,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composable::{ScrollbarHost, TabMode};
     use crate::composable::Text;
+    use crate::composable::{ScrollbarHost, TabMode};
     use crate::reactive::Property;
     use crate::theme::Theme;
     use crate::wm::WindowId;
@@ -559,18 +566,30 @@ mod tests {
         let data = Property::new(vec!["A".to_string()]);
         let mut for_each = ForEach::new(data.binding(), |item, _idx| Text::new(item.clone()));
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         let children = for_each.children();
         assert_eq!(children.len(), 1);
 
         data.set(vec!["A".to_string(), "B".to_string()]);
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         let children = for_each.children();
         assert_eq!(children.len(), 2);
 
         data.set(Vec::new());
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         let children = for_each.children();
         assert_eq!(children.len(), 0);
     }
@@ -629,7 +648,11 @@ mod tests {
         })
         .scrollable(true);
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
 
         let content = for_each.content_size();
         assert!(content.1 > 0, "content height should be > 0");
@@ -663,7 +686,11 @@ mod tests {
         })
         .with_id();
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         assert_eq!(build_count.load(Ordering::SeqCst), 1);
 
         data.set(vec![Item {
@@ -671,7 +698,11 @@ mod tests {
             value: "A".to_string(),
         }]);
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         assert_eq!(build_count.load(Ordering::SeqCst), 1);
 
         data.set(vec![Item {
@@ -679,7 +710,11 @@ mod tests {
             value: "B".to_string(),
         }]);
 
-        draw_component(&mut for_each, Rect::new(0, 0, 10, 5), ScrollbarHost::Component);
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
         assert_eq!(build_count.load(Ordering::SeqCst), 2);
     }
 }

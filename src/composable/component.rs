@@ -2,9 +2,9 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::theme::Theme;
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
+use crate::theme::Theme;
 use crate::wm::WindowId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -178,19 +178,11 @@ pub trait Component: Send {
         None
     }
 
-    fn handle_event_capture(
-        &mut self,
-        _event: &Event,
-        _ctx: ComponentContext<'_>,
-    ) -> EventResult {
+    fn handle_event_capture(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 
-    fn handle_event_bubble(
-        &mut self,
-        _event: &Event,
-        _ctx: ComponentContext<'_>,
-    ) -> EventResult {
+    fn handle_event_bubble(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 

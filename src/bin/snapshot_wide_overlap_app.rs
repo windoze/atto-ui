@@ -13,8 +13,8 @@ use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar};
-use atto_ui::theme::Theme;
 use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
 /// Background window content that draws two wide glyphs:

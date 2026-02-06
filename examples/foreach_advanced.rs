@@ -127,7 +127,10 @@ fn build_todo_window(todos: Property<Vec<TodoItem>>) -> Box<dyn Component> {
 }
 
 /// 构建用户列表窗口（展示回调模式）
-fn build_user_window(users: Property<Vec<User>>, click_log: Property<String>) -> Box<dyn Component> {
+fn build_user_window(
+    users: Property<Vec<User>>,
+    click_log: Property<String>,
+) -> Box<dyn Component> {
     let log_for_foreach = click_log.clone();
     let log_for_text = click_log.clone();
 

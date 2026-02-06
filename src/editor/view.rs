@@ -18,8 +18,8 @@ use ratatui::widgets::{Block, Paragraph};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
 
-use crate::reactive::{DirtyObserver, EventQueue};
 use crate::composable::{Component, ComponentContext, EventResult, ScrollConfig};
+use crate::reactive::{DirtyObserver, EventQueue};
 
 use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode, EditorSyntaxConfig};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
