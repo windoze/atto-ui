@@ -13,7 +13,7 @@ use crate::wm::WindowId;
 use super::{
     Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, EdgeInsets,
     EventOutcome, EventResult, Grid, HStack, LayoutParams, ScrollConfig, ScrollbarHost,
-    ScrollbarVisibility, Size, TabMode, VStack,
+    ScrollbarVisibility, Size, Splitter, SplitterOrientation, TabMode, VStack,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +29,30 @@ struct RecordingView {
     desired_height: Option<u16>,
     outcome: EventOutcome,
     events: Arc<Mutex<Vec<RecordedEvent>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SizedView {
+    min_w: u16,
+    min_h: u16,
+}
+
+impl SizedView {
+    fn new(min_w: u16, min_h: u16) -> Self {
+        Self { min_w, min_h }
+    }
+}
+
+impl Component for SizedView {
+    fn min_width(&self) -> u16 {
+        self.min_w
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_h
+    }
+
+    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
 
 impl RecordingView {
@@ -120,6 +144,17 @@ fn draw_view(view: &mut dyn Component, area: Rect) {
     terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
 }
 
+fn test_context() -> ComponentContext<'static> {
+    let theme = Box::leak(Box::new(Theme::dark()));
+    ComponentContext {
+        theme,
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+    }
+}
+
 #[test]
 fn view_hierarchy_sets_parent_ids_for_children() {
     let mut vstack = VStack::new();
@@ -204,6 +239,72 @@ fn vstack_layout_fixed_heights() {
     assert_eq!(children[0].bounds(), Rect::new(0, 0, 40, 5));
     assert_eq!(children[1].bounds(), Rect::new(0, 5, 40, 10));
     assert_eq!(children[2].bounds(), Rect::new(0, 15, 40, 5));
+}
+
+#[test]
+fn splitter_vertical_layout_respects_split_position() {
+    let mut splitter = Splitter::vertical(RecordingView::new(Arc::new(Mutex::new(Vec::new()))), RecordingView::new(Arc::new(Mutex::new(Vec::new()))))
+        .split_position(12u16);
+
+    draw_view(&mut splitter, Rect::new(0, 0, 40, 10));
+
+    let children = splitter.children();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0].bounds(), Rect::new(0, 0, 12, 10));
+    assert_eq!(children[1].bounds(), Rect::new(13, 0, 27, 10));
+}
+
+#[test]
+fn splitter_horizontal_layout_respects_split_position() {
+    let mut splitter = Splitter::horizontal(
+        RecordingView::new(Arc::new(Mutex::new(Vec::new()))),
+        RecordingView::new(Arc::new(Mutex::new(Vec::new()))),
+    )
+    .split_position(4u16);
+
+    draw_view(&mut splitter, Rect::new(0, 0, 20, 12));
+
+    let children = splitter.children();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0].bounds(), Rect::new(0, 0, 20, 4));
+    assert_eq!(children[1].bounds(), Rect::new(0, 5, 20, 7));
+}
+
+#[test]
+fn splitter_drag_clamps_to_min_sizes() {
+    let mut splitter = Splitter::new(
+        SplitterOrientation::Vertical,
+        SizedView::new(8, 1),
+        SizedView::new(8, 1),
+    )
+    .min_sizes(8u16, 8u16)
+    .split_position(10u16);
+
+    let area = Rect::new(0, 0, 30, 5);
+    draw_view(&mut splitter, area);
+
+    let ctx = test_context();
+    let down = Event::Mouse(MouseEvent {
+        column: 10,
+        row: 0,
+        kind: MouseEventKind::Down(MouseButton::Left),
+        modifiers: KeyModifiers::empty(),
+    });
+    splitter.handle_event(&down, ctx);
+
+    let drag = Event::Mouse(MouseEvent {
+        column: 1,
+        row: 0,
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        modifiers: KeyModifiers::empty(),
+    });
+    splitter.handle_event(&drag, ctx);
+
+    draw_view(&mut splitter, area);
+
+    let children = splitter.children();
+    assert_eq!(children[0].bounds(), Rect::new(0, 0, 8, 5));
+    assert_eq!(children[1].bounds(), Rect::new(9, 0, 21, 5));
 }
 
 #[test]

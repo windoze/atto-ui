@@ -10,7 +10,7 @@ use crossterm::terminal::{
 use crossterm::{cursor, style};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
@@ -18,7 +18,7 @@ use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{
     Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
-    ScrollContentContext, ScrollbarVisibility, Size, VStack,
+    ScrollContentContext, ScrollbarVisibility, Size, Splitter, VStack,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
@@ -98,6 +98,7 @@ impl DialogView {
                 row_layout,
             )
             .child_with_layout(Label::new("  v layout demo (view hierarchy)"), row_layout)
+            .child_with_layout(Label::new("  p splitter demo (drag divider)"), row_layout)
             .child_with_layout(
                 Label::new("  s scroll demo (viewport + scrollbars)"),
                 row_layout,
@@ -769,6 +770,98 @@ fn build_layout_demo_view() -> Box<dyn Component> {
     Box::new(root)
 }
 
+fn build_splitter_demo_view() -> Box<dyn Component> {
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+
+    let show_divider = Property::new(true);
+    let list_selection = Property::new(0usize);
+
+    let left = VStack::new()
+        .spacing(1)
+        .child_with_layout(Label::new("Left pane"), row_layout)
+        .child_with_layout(
+            Checkbox::new("Show divider", show_divider.binding()),
+            row_layout,
+        )
+        .child_with_layout(
+            ListBox::new(
+                "Items",
+                vec![
+                    "Alpha".into(),
+                    "Bravo".into(),
+                    "Charlie".into(),
+                    "Delta".into(),
+                ],
+                list_selection.binding(),
+            )
+            .height(6u16),
+            LayoutParams {
+                height: Size::Fixed(8),
+                ..LayoutParams::default()
+            },
+        );
+
+    let top = VStack::new()
+        .spacing(1)
+        .child_with_layout(Label::new("Top pane"), row_layout)
+        .child_with_layout(
+            TextBox::new("Filter", Property::new("type to filter".to_string()).binding()),
+            LayoutParams {
+                height: Size::Fixed(3),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(Label::new("Drag the divider to resize."), row_layout);
+
+    let bottom = VStack::new()
+        .spacing(1)
+        .child_with_layout(Label::new("Bottom pane"), row_layout)
+        .child_with_layout(
+            HStack::new()
+                .spacing(1)
+                .child(Button::new("Apply"))
+                .child(Button::new("Reset")),
+            LayoutParams {
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+
+    let divider_style = Style::default().fg(Color::LightBlue);
+
+    let right = Splitter::horizontal(top, bottom)
+        .split_position(6u16)
+        .min_sizes(3u16, 3u16)
+        .with_border(show_divider.binding())
+        .border_style(divider_style);
+
+    let split = Splitter::vertical(left, right)
+        .with_initial_sizes(18, 24)
+        .min_sizes(12u16, 14u16)
+        .with_border(show_divider.binding())
+        .border_style(divider_style);
+
+    let root = VStack::new()
+        .padding_insets(EdgeInsets::all(1))
+        .spacing(1)
+        .child_with_layout(
+            Label::new("Splitter demo: vertical + nested horizontal split."),
+            row_layout,
+        )
+        .child_with_layout(
+            split,
+            LayoutParams {
+                height: Size::Fill,
+                ..LayoutParams::default()
+            },
+        );
+
+    Box::new(root)
+}
+
 fn build_scroll_demo_view() -> Box<dyn Component> {
     let wide_row = (0..24).fold(HStack::new().spacing(1).scrollable(true), |row, i| {
         row.child_with_layout(
@@ -985,6 +1078,7 @@ enum DemoAction {
     Quit,
     NewWindow,
     FocusNext,
+    OpenSplitterDemo,
     OpenLayoutDemo,
     OpenScrollDemo,
     OpenVirtualScrollDemo,
@@ -1136,6 +1230,7 @@ fn main() -> Result<()> {
         ),
         screen,
     ));
+    let mut splitter_demo_window_id: Option<WindowId> = None;
     let mut scroll_demo_window_id: Option<WindowId> = None;
     let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
     let mut widget_states_demo_window_id: Option<WindowId> = None;
@@ -1158,6 +1253,7 @@ fn main() -> Result<()> {
                 "Paste: bracketed paste into textbox".into(),
                 "D: widget states demo (disabled)".into(),
                 "V: layout demo (view hierarchy)".into(),
+                "P: splitter demo (drag divider)".into(),
                 "S/Z: scroll / virtual scroll demos".into(),
                 "R: markdown demo (links, tables, code)".into(),
             ])),
@@ -1173,6 +1269,7 @@ fn main() -> Result<()> {
         &actions,
         log_id,
         &mut layout_demo_window_id,
+        &mut splitter_demo_window_id,
         &mut scroll_demo_window_id,
         &mut virtual_scroll_demo_window_id,
         &mut widget_states_demo_window_id,
@@ -1252,6 +1349,11 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::OpenLayoutDemo)
                 })
                 .shortcut("v"),
+                MenuItem::action("Splitter demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenSplitterDemo)
+                })
+                .shortcut("p"),
                 MenuItem::action("Scroll demo", {
                     let actions = actions.clone();
                     move || actions.push(DemoAction::OpenScrollDemo)
@@ -1305,6 +1407,7 @@ fn run(
     actions: &EventQueue<DemoAction>,
     notes_window_id: WindowId,
     layout_demo_window_id: &mut Option<WindowId>,
+    splitter_demo_window_id: &mut Option<WindowId>,
     scroll_demo_window_id: &mut Option<WindowId>,
     virtual_scroll_demo_window_id: &mut Option<WindowId>,
     widget_states_demo_window_id: &mut Option<WindowId>,
@@ -1358,6 +1461,9 @@ fn run(
                 DemoAction::FocusNext => desktop.wm.focus_next(),
                 DemoAction::OpenLayoutDemo => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
+                }
+                DemoAction::OpenSplitterDemo => {
+                    open_splitter_demo(desktop, screen, splitter_demo_window_id)?;
                 }
                 DemoAction::OpenScrollDemo => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
@@ -1440,6 +1546,9 @@ fn run(
                 (KeyCode::Char('v'), KeyModifiers::NONE) => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
                 }
+                (KeyCode::Char('p'), KeyModifiers::NONE) => {
+                    open_splitter_demo(desktop, screen, splitter_demo_window_id)?;
+                }
                 (KeyCode::Char('s'), KeyModifiers::NONE) => {
                     open_scroll_demo(desktop, screen, scroll_demo_window_id)?;
                 }
@@ -1514,6 +1623,42 @@ fn open_layout_demo(
         screen,
     );
     *layout_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_splitter_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    splitter_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *splitter_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 58.min(work.width.saturating_sub(2)).max(28);
+    let h = 18.min(work.height.saturating_sub(2)).max(10);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Splitter",
+            rect,
+            build_splitter_demo_view(),
+        ),
+        screen,
+    );
+    *splitter_demo_window_id = Some(id);
     Ok(())
 }
 
