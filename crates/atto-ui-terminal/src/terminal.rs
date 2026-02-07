@@ -63,6 +63,7 @@ struct TerminalShared {
     input_forward: Option<InputCallback>,
     capture: bool,
     release_shortcut: TerminalShortcut,
+    dsr_tail: Vec<u8>,
 }
 
 impl TerminalShared {
@@ -147,6 +148,100 @@ fn dispatch_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
     }
 }
 
+fn forward_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let cb = { shared.lock().input_forward.clone() };
+    if let Some(cb) = cb {
+        cb(bytes);
+    }
+}
+
+enum DsrResponse {
+    Cursor { private: bool },
+    Status { private: bool },
+}
+
+fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u8>> {
+    if bytes.is_empty() {
+        return Vec::new();
+    }
+
+    let mut combined = Vec::with_capacity(shared.dsr_tail.len() + bytes.len());
+    combined.extend_from_slice(&shared.dsr_tail);
+    combined.extend_from_slice(bytes);
+
+    let mut responses = Vec::new();
+    let mut idx = 0;
+    while idx + 3 < combined.len() {
+        if combined[idx] == 0x1b && combined[idx + 1] == b'[' {
+            if combined[idx + 2] == b'6' && combined[idx + 3] == b'n' {
+                responses.push(DsrResponse::Cursor { private: false });
+                idx += 4;
+                continue;
+            }
+            if idx + 4 < combined.len()
+                && combined[idx + 2] == b'?'
+                && combined[idx + 3] == b'6'
+                && combined[idx + 4] == b'n'
+            {
+                responses.push(DsrResponse::Cursor { private: true });
+                idx += 5;
+                continue;
+            }
+            if combined[idx + 2] == b'5' && combined[idx + 3] == b'n' {
+                responses.push(DsrResponse::Status { private: false });
+                idx += 4;
+                continue;
+            }
+            if idx + 4 < combined.len()
+                && combined[idx + 2] == b'?'
+                && combined[idx + 3] == b'5'
+                && combined[idx + 4] == b'n'
+            {
+                responses.push(DsrResponse::Status { private: true });
+                idx += 5;
+                continue;
+            }
+        }
+        idx += 1;
+    }
+
+    let keep = combined.len().min(4);
+    shared.dsr_tail.clear();
+    shared
+        .dsr_tail
+        .extend_from_slice(&combined[combined.len().saturating_sub(keep)..]);
+
+    if responses.is_empty() {
+        return Vec::new();
+    }
+
+    responses
+        .into_iter()
+        .map(|response| match response {
+            DsrResponse::Cursor { private } => {
+                let (row, col) = shared.parser.screen().cursor_position();
+                let row = row.saturating_add(1);
+                let col = col.saturating_add(1);
+                if private {
+                    format!("\x1b[?{row};{col}R").into_bytes()
+                } else {
+                    format!("\x1b[{row};{col}R").into_bytes()
+                }
+            }
+            DsrResponse::Status { private } => {
+                if private {
+                    b"\x1b[?0n".to_vec()
+                } else {
+                    b"\x1b[0n".to_vec()
+                }
+            }
+        })
+        .collect()
+}
+
 /// A terminal emulator widget.
 pub struct TerminalEmulator {
     shared: Arc<Mutex<TerminalShared>>,
@@ -168,6 +263,7 @@ impl TerminalEmulator {
             input_forward: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
+            dsr_tail: Vec::with_capacity(4),
         };
 
         Self {
@@ -589,8 +685,14 @@ pub struct TerminalHandle {
 impl TerminalHandle {
     /// Feeds bytes into the terminal emulator (ANSI output stream).
     pub fn process_output(&self, bytes: &[u8]) {
-        let mut shared = self.shared.lock();
-        shared.parser.process(bytes);
+        let responses = {
+            let mut shared = self.shared.lock();
+            shared.parser.process(bytes);
+            collect_dsr_responses(&mut shared, bytes)
+        };
+        for response in responses {
+            forward_input(&self.shared, &response);
+        }
     }
 
     pub fn process_output_str(&self, text: &str) {
