@@ -1,0 +1,276 @@
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+
+use crate::composable::{Component, ComponentContext, EventResult};
+use crate::reactive::Binding;
+
+#[derive(Clone, Debug)]
+pub struct Slider {
+    min: Binding<f64>,
+    max: Binding<f64>,
+    value: Binding<f64>,
+    step: Binding<f64>,
+    enabled: Binding<bool>,
+    fill_char: char,
+    empty_char: char,
+    thumb_char: char,
+    last_area: Option<Rect>,
+}
+
+impl Slider {
+    pub fn new(
+        min: impl Into<Binding<f64>>,
+        max: impl Into<Binding<f64>>,
+        value: Binding<f64>,
+    ) -> Self {
+        Self {
+            min: min.into(),
+            max: max.into(),
+            value,
+            step: 1.0.into(),
+            enabled: true.into(),
+            fill_char: '=',
+            empty_char: '-',
+            thumb_char: '|',
+            last_area: None,
+        }
+    }
+
+    pub fn min(mut self, min: impl Into<Binding<f64>>) -> Self {
+        self.min = min.into();
+        self
+    }
+
+    pub fn max(mut self, max: impl Into<Binding<f64>>) -> Self {
+        self.max = max.into();
+        self
+    }
+
+    pub fn value(mut self, value: Binding<f64>) -> Self {
+        self.value = value;
+        self
+    }
+
+    pub fn step(mut self, step: impl Into<Binding<f64>>) -> Self {
+        self.step = step.into();
+        self
+    }
+
+    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.enabled = enabled.into();
+        self
+    }
+
+    pub fn fill_char(mut self, ch: char) -> Self {
+        self.fill_char = ch;
+        self
+    }
+
+    pub fn empty_char(mut self, ch: char) -> Self {
+        self.empty_char = ch;
+        self
+    }
+
+    pub fn thumb_char(mut self, ch: char) -> Self {
+        self.thumb_char = ch;
+        self
+    }
+
+    fn normalized_range(&self) -> (f64, f64) {
+        let mut min = self.min.get();
+        let mut max = self.max.get();
+        if max < min {
+            std::mem::swap(&mut min, &mut max);
+        }
+        (min, max)
+    }
+
+    fn clamp_value(&self, value: f64) -> f64 {
+        let (min, max) = self.normalized_range();
+        if value < min {
+            min
+        } else if value > max {
+            max
+        } else {
+            value
+        }
+    }
+
+    fn snap_value(&self, value: f64) -> f64 {
+        let (min, max) = self.normalized_range();
+        let step = self.step.get().abs();
+        if step <= f64::EPSILON {
+            return self.clamp_value(value);
+        }
+        let steps = ((value - min) / step).round();
+        let snapped = min + steps * step;
+        if snapped < min {
+            min
+        } else if snapped > max {
+            max
+        } else {
+            snapped
+        }
+    }
+
+    fn value_from_pos(&self, x: u16, width: u16) -> f64 {
+        let (min, max) = self.normalized_range();
+        let range = max - min;
+        if width <= 1 || range.abs() <= f64::EPSILON {
+            return min;
+        }
+        let ratio = (x as f64) / (width.saturating_sub(1) as f64);
+        let value = min + ratio * range;
+        self.snap_value(value)
+    }
+
+    fn thumb_pos(&self, width: u16) -> u16 {
+        let (min, max) = self.normalized_range();
+        let range = max - min;
+        if width <= 1 || range.abs() <= f64::EPSILON {
+            return 0;
+        }
+        let value = self.clamp_value(self.value.get());
+        let ratio = (value - min) / range;
+        let pos = (ratio * (width.saturating_sub(1) as f64)).round() as u16;
+        pos.min(width.saturating_sub(1))
+    }
+
+    fn set_value_from_mouse(&mut self, area: Rect, m: MouseEvent) -> EventResult {
+        let Some((local_x, _local_y)) = mouse_coords_local_to_area(area, m) else {
+            return EventResult::ignored();
+        };
+        let value = self.value_from_pos(local_x, area.width);
+        self.value.set(value);
+        EventResult::changed()
+    }
+
+    fn adjust_by_step(&mut self, delta: f64) -> EventResult {
+        let value = self.value.get();
+        let next = self.snap_value(value + delta);
+        self.value.set(next);
+        EventResult::changed()
+    }
+}
+
+impl Component for Slider {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.enabled.get()
+    }
+
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if !self.enabled.get() {
+            return EventResult::ignored();
+        }
+
+        match event {
+            Event::Mouse(m) => {
+                if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+                    || matches!(m.kind, MouseEventKind::Drag(MouseButton::Left))
+                {
+                    let Some(area) = self.last_area else {
+                        return EventResult::ignored();
+                    };
+                    return self.set_value_from_mouse(area, *m);
+                }
+                EventResult::ignored()
+            }
+            Event::Key(KeyEvent { code, .. }) => match code {
+                KeyCode::Left => self.adjust_by_step(-self.step.get().abs()),
+                KeyCode::Right => self.adjust_by_step(self.step.get().abs()),
+                KeyCode::Home => {
+                    let (min, _max) = self.normalized_range();
+                    self.value.set(min);
+                    EventResult::changed()
+                }
+                KeyCode::End => {
+                    let (_min, max) = self.normalized_range();
+                    self.value.set(max);
+                    EventResult::changed()
+                }
+                _ => EventResult::ignored(),
+            },
+            _ => EventResult::ignored(),
+        }
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let enabled = self.enabled.get();
+        let fill_style = if enabled {
+            ctx.theme.widget.accent
+        } else {
+            ctx.theme.widget.disabled
+        };
+        let empty_style = if enabled {
+            ctx.theme.widget.dim
+        } else {
+            ctx.theme.widget.disabled
+        };
+        let thumb_style = if !enabled {
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
+        } else {
+            ctx.theme.widget.normal
+        };
+
+        let width = area.width as usize;
+        let thumb_pos = self.thumb_pos(area.width) as usize;
+        let mut spans = Vec::with_capacity(width);
+        for idx in 0..width {
+            let (ch, style) = if idx == thumb_pos {
+                (self.thumb_char, thumb_style)
+            } else if idx < thumb_pos {
+                (self.fill_char, fill_style)
+            } else {
+                (self.empty_char, empty_style)
+            };
+            spans.push(Span::styled(ch.to_string(), style));
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+
+    if m.column >= area.x
+        && m.column < area.x.saturating_add(area.width)
+        && m.row >= area.y
+        && m.row < area.y.saturating_add(area.height)
+    {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
+}
