@@ -75,10 +75,10 @@ cargo run --bin demo-10-file-dialog
 ```
 
 ### 11. [Markdown Viewer](./11-markdown-viewer/)
-演示如何使用 `MarkdownViewer` 渲染 Markdown 文件内容（也支持不传参数的内置示例）。
+演示如何使用 `atto_ui_markdown::MarkdownViewer` 渲染 Markdown 文件内容（也支持不传参数的内置示例）。
 
 ```bash
-cargo run --bin demo-11-markdown-viewer -- README.md
+cargo run -p atto-ui-markdown --example markdown_viewer -- README.md
 ```
 
 ### 12. [TabView](./12-tab-view/)

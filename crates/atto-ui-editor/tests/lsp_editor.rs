@@ -8,9 +8,9 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use atto_ui::composable::{Component, ComponentContext, ScrollbarHost, TabMode};
-use atto_ui::editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
-use atto_ui::editor::{EditorThemeSet, EditorView};
 use atto_ui::wm::WindowId;
+use atto_ui_editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
+use atto_ui_editor::{EditorThemeSet, EditorView};
 
 #[test]
 fn lsp_semantic_tokens_and_folding_markers_render_and_toggle() {

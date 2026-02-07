@@ -6,9 +6,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
-use crate::composable::{Component, ComponentContext, EventResult};
-use crate::reactive::Binding;
-use crate::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
+use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::reactive::Binding;
+use atto_ui::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
 
 use super::theme::{EditorTheme, EditorThemeSet};
 
@@ -285,9 +285,9 @@ impl Component for CompletionPopupView {
 
 fn popup_decorations() -> WindowDecorations {
     WindowDecorations {
-        border: crate::wm::WindowBorderStyle::Borderless,
+        border: atto_ui::wm::WindowBorderStyle::Borderless,
         shadow: false,
-        buttons: crate::wm::WindowButtons {
+        buttons: atto_ui::wm::WindowButtons {
             minimize: false,
             maximize: false,
             close: false,
@@ -295,7 +295,7 @@ fn popup_decorations() -> WindowDecorations {
     }
 }
 
-/// Manages the tooltip windows used by an [`crate::editor::EditorView`].
+/// Manages the tooltip windows used by an [`crate::EditorView`].
 ///
 /// This is intentionally separate from the `Component` itself: it needs access to the host
 /// `WindowManager` to create/close popup windows.

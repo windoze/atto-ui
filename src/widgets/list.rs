@@ -1,22 +1,55 @@
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use std::sync::Arc;
+
+use crate::text::styled_text::{inline_display_width, parse_inline, slice_spans_from_segments};
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
+use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{
+    Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
+    ScrollContainerHost, ScrollContent, ScrollContentContext,
+};
 use crate::reactive::Binding;
 
 #[derive(Clone, Debug)]
-pub struct ListBox {
+struct ListBoxBindings {
     title: Binding<String>,
     items: Binding<Vec<String>>,
-    state: ListState,
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
-    last_area: Option<Rect>,
+}
+
+pub struct ListBox {
+    bindings: Arc<RwLock<ListBoxBindings>>,
+    scroll: ScrollContainer,
     min_size: (u16, u16),
+}
+
+impl Clone for ListBox {
+    fn clone(&self) -> Self {
+        let bindings = self.bindings.clone();
+        Self {
+            scroll: build_scroll_container(bindings.clone()),
+            bindings,
+            min_size: self.min_size,
+        }
+    }
+}
+
+impl std::fmt::Debug for ListBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bindings = self.bindings.read();
+        f.debug_struct("ListBox")
+            .field("title", &bindings.title.get())
+            .field("enabled", &bindings.enabled.get())
+            .field("height", &bindings.height.get())
+            .field("min_size", &self.min_size)
+            .finish()
+    }
 }
 
 impl ListBox {
@@ -25,52 +58,62 @@ impl ListBox {
         items: impl Into<Binding<Vec<String>>>,
         selection: Binding<usize>,
     ) -> Self {
-        let mut state = ListState::default();
         let items = items.into();
         let items_len = items.get().len();
         if items_len > 0 {
             let selected = selection.get().min(items_len.saturating_sub(1));
             selection.set(selected);
-            state.select(Some(selected));
         }
-        Self {
+        let bindings = Arc::new(RwLock::new(ListBoxBindings {
             title: title.into(),
             items,
-            state,
             enabled: true.into(),
             selection,
             height: 7.into(),
-            last_area: None,
-            min_size: (3, 3), // Minimum size to render borders and one item.
+        }));
+        Self {
+            scroll: build_scroll_container(bindings.clone()),
+            bindings,
+            min_size: (3, 3),
         }
     }
 
-    pub fn title(mut self, title: impl Into<Binding<String>>) -> Self {
-        self.title = title.into();
+    pub fn title(self, title: impl Into<Binding<String>>) -> Self {
+        self.bindings.write().title = title.into();
         self
     }
 
-    pub fn items(mut self, items: impl Into<Binding<Vec<String>>>) -> Self {
-        self.items = items.into();
+    pub fn items(self, items: impl Into<Binding<Vec<String>>>) -> Self {
+        {
+            let mut bindings = self.bindings.write();
+            bindings.items = items.into();
+            let items_len = bindings.items.get().len();
+            if items_len > 0 {
+                let selected = bindings.selection.get().min(items_len.saturating_sub(1));
+                bindings.selection.set(selected);
+            }
+        }
         self
     }
 
-    pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
-        self.enabled = enabled.into();
+    pub fn enabled(self, enabled: impl Into<Binding<bool>>) -> Self {
+        self.bindings.write().enabled = enabled.into();
         self
     }
 
-    pub fn height(mut self, height: impl Into<Binding<u16>>) -> Self {
-        self.height = height.into();
+    pub fn height(self, height: impl Into<Binding<u16>>) -> Self {
+        self.bindings.write().height = height.into();
         self
     }
 
     pub fn selected(&self) -> Option<usize> {
-        self.state.selected().or_else(|| {
-            let items = self.items.get();
-            (!items.is_empty() && self.selection.get() < items.len())
-                .then_some(self.selection.get())
-        })
+        let bindings = self.bindings.read();
+        let items = bindings.items.get();
+        if items.is_empty() {
+            return None;
+        }
+        let selection = bindings.selection.get();
+        (selection < items.len()).then_some(selection)
     }
 
     pub fn with_min_height(mut self, height: u16) -> Self {
@@ -99,69 +142,180 @@ impl Component for ListBox {
     }
 
     fn is_focusable(&self) -> bool {
-        self.enabled.get()
+        self.bindings.read().enabled.get()
     }
 
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if !self.enabled.get() {
+    fn desired_height(&self) -> Option<u16> {
+        let height = self.bindings.read().height.get();
+        Some(height.max(self.min_size.1))
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.bindings.read().enabled.get() {
             return EventResult::ignored();
         }
-        let items = self.items.get();
-        if items.is_empty() {
+        self.scroll.handle_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let bindings = self.bindings.read();
+        let enabled = bindings.enabled.get();
+        let style = if !enabled {
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
+        } else {
+            ctx.theme.widget.normal
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(ctx.theme.border_set(false))
+            .title(bindings.title.get())
+            .style(style);
+        frame.render_widget(block, area);
+        drop(bindings);
+
+        self.scroll.draw(frame, area, ctx);
+    }
+}
+
+struct ListBoxContent {
+    bindings: Arc<RwLock<ListBoxBindings>>,
+    state: ListState,
+    last_selection: Option<usize>,
+}
+
+impl ListBoxContent {
+    fn new(bindings: Arc<RwLock<ListBoxBindings>>) -> Self {
+        Self {
+            bindings,
+            state: ListState::default(),
+            last_selection: None,
+        }
+    }
+
+    fn bindings(&self) -> ListBoxBindings {
+        self.bindings.read().clone()
+    }
+
+    fn normalize_selection(&mut self, items_len: usize) -> Option<usize> {
+        if items_len == 0 {
+            return None;
+        }
+        let bindings = self.bindings();
+        let mut selection = bindings.selection.get();
+        if selection >= items_len {
+            selection = items_len.saturating_sub(1);
+            bindings.selection.set(selection);
+        }
+        Some(selection)
+    }
+
+    fn ensure_selection_visible(&mut self, selection: usize, host: &mut ScrollContainerHost) {
+        let viewport_h = host.viewport_size().1;
+        if viewport_h == 0 {
+            return;
+        }
+        let scroll = host.scroll_offset();
+        let sel = selection.min(u16::MAX as usize) as u16;
+        let mut next_y = scroll.y;
+        if sel < scroll.y {
+            next_y = sel;
+        } else if sel >= scroll.y.saturating_add(viewport_h) {
+            next_y = sel.saturating_add(1).saturating_sub(viewport_h);
+        }
+        if next_y != scroll.y {
+            host.set_scroll_offset(scroll.x, next_y);
+        }
+    }
+
+    fn content_size_for_items(items: &[String]) -> (u16, u16) {
+        let height = items.len().min(u16::MAX as usize) as u16;
+        let mut width = 0_u16;
+        for item in items {
+            let w = inline_display_width(item.as_str());
+            width = width.max(w);
+        }
+        (width, height)
+    }
+}
+
+impl ScrollContent for ListBoxContent {
+    fn is_focusable(&self) -> bool {
+        self.bindings().enabled.get()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.bindings().height.get())
+    }
+
+    fn content_size(
+        &mut self,
+        _viewport: (u16, u16),
+        _ctx: ScrollContentContext<'_>,
+    ) -> (u16, u16) {
+        let items = self.bindings().items.get();
+        Self::content_size_for_items(&items)
+    }
+
+    fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, host: &mut ScrollContainerHost) {
+        let items = self.bindings().items.get();
+        let selection = self.normalize_selection(items.len());
+        if selection != self.last_selection {
+            if let Some(sel) = selection {
+                self.ensure_selection_visible(sel, host);
+            }
+            self.last_selection = selection;
+        }
+    }
+
+    fn handle_event(
+        &mut self,
+        event: &Event,
+        _ctx: ScrollContentContext<'_>,
+        host: &mut ScrollContainerHost,
+    ) -> EventResult {
+        let bindings = self.bindings();
+        if !bindings.enabled.get() {
             return EventResult::ignored();
         }
-        // Sync from external selection.
-        let ext = self.selection.get();
-        if ext < items.len() {
-            self.state.select(Some(ext));
-        }
-        let sel = self.state.selected().unwrap_or(0);
+        let items = bindings.items.get();
+        let Some(selection) = self.normalize_selection(items.len()) else {
+            return EventResult::ignored();
+        };
+
         match event {
             Event::Mouse(m) => {
-                use crossterm::event::MouseButton;
-                use crossterm::event::MouseEventKind;
-
                 if m.kind != MouseEventKind::Down(MouseButton::Left) {
                     return EventResult::ignored();
                 }
-                let Some(area) = self.last_area else {
-                    return EventResult::ignored();
-                };
-                let inner = Rect {
-                    x: area.x.saturating_add(1),
-                    y: area.y.saturating_add(1),
-                    width: area.width.saturating_sub(2),
-                    height: area.height.saturating_sub(2),
-                };
-                if inner.width == 0 || inner.height == 0 {
-                    return EventResult::ignored();
-                }
-                if m.row < inner.y || m.row >= inner.y.saturating_add(inner.height) {
-                    return EventResult::ignored();
-                }
-                let row = m.row.saturating_sub(inner.y) as usize;
-                if row < items.len() {
-                    self.state.select(Some(row));
-                    self.selection.set(row);
+                let row = m.row as usize;
+                let idx = host.scroll_offset().y as usize + row;
+                if idx < items.len() {
+                    bindings.selection.set(idx);
+                    self.ensure_selection_visible(idx, host);
+                    self.last_selection = Some(idx);
                     return EventResult::changed();
                 }
                 EventResult::ignored()
             }
             Event::Key(KeyEvent { code, .. }) => match code {
                 KeyCode::Up => {
-                    let next = if sel == 0 {
+                    let next = if selection == 0 {
                         items.len() - 1
                     } else {
-                        sel.saturating_sub(1)
+                        selection.saturating_sub(1)
                     };
-                    self.state.select(Some(next));
-                    self.selection.set(next);
+                    bindings.selection.set(next);
+                    self.ensure_selection_visible(next, host);
+                    self.last_selection = Some(next);
                     EventResult::changed()
                 }
                 KeyCode::Down => {
-                    let next = (sel + 1) % items.len();
-                    self.state.select(Some(next));
-                    self.selection.set(next);
+                    let next = (selection + 1) % items.len();
+                    bindings.selection.set(next);
+                    self.ensure_selection_visible(next, host);
+                    self.last_selection = Some(next);
                     EventResult::changed()
                 }
                 _ => EventResult::ignored(),
@@ -170,48 +324,64 @@ impl Component for ListBox {
         }
     }
 
-    fn desired_height(&self) -> Option<u16> {
-        Some(self.height.get().max(self.min_size.1))
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        let items = self.items.get();
-        if !items.is_empty() {
-            let ext = self.selection.get();
-            if ext < items.len() {
-                self.state.select(Some(ext));
-            } else {
-                self.state.select(Some(0));
-                self.selection.set(0);
-            }
-        }
-        let enabled = self.enabled.get();
+    fn draw(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ScrollContentContext<'_>,
+        _host: &mut ScrollContainerHost,
+    ) {
+        let bindings = self.bindings();
+        let enabled = bindings.enabled.get();
         let style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
+            ctx.component.theme.widget.disabled
+        } else if ctx.component.is_focused {
+            ctx.component.theme.widget.focused
         } else {
-            ctx.theme.widget.normal
+            ctx.component.theme.widget.normal
         };
         let highlight_style = if enabled {
-            ctx.theme.selection
+            ctx.component.theme.selection
         } else {
-            ctx.theme.selection.patch(ctx.theme.widget.disabled)
+            ctx.component
+                .theme
+                .selection
+                .patch(ctx.component.theme.widget.disabled)
         };
+
+        let items = bindings.items.get();
+        let selection = self.normalize_selection(items.len());
+        let scroll = ctx.info.scroll_offset;
+        let viewport_w = area.width;
+        let link_overlay = ctx.component.theme.named_style("markdown-link");
         let items: Vec<ListItem> = items
             .iter()
-            .map(|s| ListItem::new(Line::raw(s.clone())))
+            .enumerate()
+            .map(|(idx, s)| {
+                let segments = parse_inline(s);
+                let spans =
+                    slice_spans_from_segments(&segments, scroll.x, viewport_w, style, link_overlay);
+                let item = ListItem::new(Line::from(spans));
+                if selection.is_some_and(|sel| sel == idx) {
+                    item.style(highlight_style)
+                } else {
+                    item
+                }
+            })
             .collect();
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_set(ctx.theme.border_set(false))
-                    .title(self.title.get()),
-            )
-            .highlight_style(highlight_style)
-            .style(style);
-        frame.render_stateful_widget(list, area, &mut self.state);
+
+        *self.state.selected_mut() = None;
+        *self.state.offset_mut() = scroll.y as usize;
+
+        if area.width > 0 && area.height > 0 {
+            let list = List::new(items).style(style);
+            frame.render_stateful_widget(list, area, &mut self.state);
+        }
     }
+}
+
+fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollContainer {
+    ScrollContainer::new(Box::new(ListBoxContent::new(bindings)))
+        .with_padding(EdgeInsets::all(1))
+        .with_scroll_config(ScrollConfig::default())
 }

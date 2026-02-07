@@ -1,13 +1,13 @@
-use std::cmp::Ordering;
-
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use super::component::{Component, ComponentContext, EventResult, TabMode};
+use super::geom::{
+    TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
+    tab_direction_for_event,
+};
 use super::node::{ComponentId, ComponentNode};
 use crate::reactive::Binding;
 
@@ -17,74 +17,6 @@ pub enum SplitterOrientation {
     Vertical,
     /// Panels are top/bottom with a horizontal divider.
     Horizontal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TabDirection {
-    Next,
-    Prev,
-}
-
-fn tab_direction_for_event(event: &Event) -> Option<TabDirection> {
-    match event {
-        Event::Key(KeyEvent {
-            code: KeyCode::Tab,
-            modifiers,
-            ..
-        }) => Some(if modifiers.contains(KeyModifiers::SHIFT) {
-            TabDirection::Prev
-        } else {
-            TabDirection::Next
-        }),
-        Event::Key(KeyEvent {
-            code: KeyCode::BackTab,
-            ..
-        }) => Some(TabDirection::Prev),
-        _ => None,
-    }
-}
-
-fn focusable_children_in_tab_order(children: &[ComponentNode]) -> Vec<ComponentId> {
-    let mut focusable: Vec<(Option<i32>, usize, ComponentId)> = children
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.view.is_focusable())
-        .map(|(idx, c)| (c.layout.tab_index, idx, c.id))
-        .collect();
-
-    focusable.sort_by(|a, b| match (a.0, b.0) {
-        (Some(a_idx), Some(b_idx)) => a_idx.cmp(&b_idx).then_with(|| a.1.cmp(&b.1)),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => a.1.cmp(&b.1),
-    });
-
-    focusable.into_iter().map(|(_, _, id)| id).collect()
-}
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 #[derive(Clone, Copy, Debug, Default)]

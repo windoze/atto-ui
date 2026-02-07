@@ -10,6 +10,10 @@ use ratatui::layout::Rect;
 use crate::theme::Theme;
 use crate::wm::WindowId;
 
+use super::geom::{
+    TabDirection, align_within, contains, mouse_coords_local_to_area, position_anchored,
+    tab_direction_for_event,
+};
 use super::{
     Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, EdgeInsets,
     EventOutcome, EventResult, Grid, HStack, LayoutParams, ScrollConfig, ScrollbarHost,
@@ -153,6 +157,76 @@ fn test_context() -> ComponentContext<'static> {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
     }
+}
+
+#[test]
+fn geom_contains_checks_bounds() {
+    let rect = Rect {
+        x: 2,
+        y: 3,
+        width: 4,
+        height: 2,
+    };
+    assert!(contains(rect, 2, 3));
+    assert!(contains(rect, 5, 4));
+    assert!(!contains(rect, 6, 4));
+    assert!(!contains(rect, 5, 5));
+}
+
+#[test]
+fn geom_mouse_coords_local_to_area_accepts_local_coords() {
+    let area = Rect {
+        x: 10,
+        y: 20,
+        width: 5,
+        height: 4,
+    };
+    let abs = MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 12,
+        row: 22,
+        modifiers: KeyModifiers::empty(),
+    };
+    assert_eq!(mouse_coords_local_to_area(area, abs), Some((2, 2)));
+
+    let local = MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 3,
+        row: 1,
+        modifiers: KeyModifiers::empty(),
+    };
+    assert_eq!(
+        mouse_coords_local_to_area(Rect::new(0, 0, 4, 3), local),
+        Some((3, 1))
+    );
+}
+
+#[test]
+fn geom_position_anchored_clamps_to_content() {
+    let rect = position_anchored((10, 6), (4, 4), Anchor::BottomRight, 5, 5);
+    assert_eq!(rect.x, 6);
+    assert_eq!(rect.y, 2);
+}
+
+#[test]
+fn geom_align_within_centers_child() {
+    let slot = Rect::new(0, 0, 10, 6);
+    let aligned = align_within(slot, (4, 2), Align::Center, Align::Center);
+    assert_eq!(aligned.x, 3);
+    assert_eq!(aligned.y, 2);
+    assert_eq!(aligned.width, 4);
+    assert_eq!(aligned.height, 2);
+}
+
+#[test]
+fn geom_tab_direction_detects_shift_tab() {
+    let event = Event::Key(KeyEvent {
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::empty(),
+    });
+    assert_eq!(tab_direction_for_event(&event), Some(TabDirection::Prev));
 }
 
 #[test]

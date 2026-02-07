@@ -9,8 +9,8 @@ use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::theme::Theme;
-use atto_ui::widgets::MarkdownViewer;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_markdown::MarkdownViewer;
 
 const DEFAULT_MARKDOWN: &str = r#"
 # Markdown Viewer
@@ -70,15 +70,13 @@ fn main() {
 
 fn usage(program: &str) -> String {
     format!(
-        "用法:\n  {program} [markdown_file]\n\n示例:\n  {program}\n  {program} README.md\n\n提示: 使用 cargo 运行时，参数需要放在 `--` 之后:\n  cargo run --bin demo-11-markdown-viewer -- README.md\n"
+        "用法:\n  {program} [markdown_file]\n\n示例:\n  {program}\n  {program} README.md\n\n提示: 使用 cargo 运行时，参数需要放在 `--` 之后:\n  cargo run -p atto-ui-markdown --example markdown_viewer -- README.md\n"
     )
 }
 
 fn load_markdown_from_args() -> Result<(String, String)> {
     let mut args = env::args();
-    let program = args
-        .next()
-        .unwrap_or_else(|| "demo-11-markdown-viewer".to_string());
+    let program = args.next().unwrap_or_else(|| "markdown_viewer".to_string());
     let first = args.next();
 
     if matches!(first.as_deref(), Some("-h" | "--help")) {

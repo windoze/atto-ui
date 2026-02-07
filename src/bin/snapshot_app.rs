@@ -110,10 +110,10 @@ impl WidgetsView {
                 ListBox::new(
                     "List",
                     vec![
-                        "Alpha".into(),
-                        "Beta".into(),
-                        "Gamma".into(),
-                        "Delta".into(),
+                        "**Alpha**".into(),
+                        "*Beta*".into(),
+                        "__Gamma__".into(),
+                        "Delta [link](https://example.com)".into(),
                     ],
                     list_selection.binding(),
                 )
@@ -123,11 +123,11 @@ impl WidgetsView {
             .child_with_layout(
                 TableView::new(
                     "Table",
-                    vec!["Key".into(), "Value".into()],
+                    vec!["Key".into(), "Value (__styled__)".into()],
                     vec![
-                        vec!["lang".into(), "Rust".into()],
-                        vec!["hello".into(), "こんにちは".into()],
-                        vec!["wide".into(), "你好👋".into()],
+                        vec!["lang".into(), "**Rust**".into()],
+                        vec!["hello".into(), "こんにちは *world*".into()],
+                        vec!["wide".into(), "你好👋 [link](https://example.com)".into()],
                     ],
                     table_selection.binding(),
                 )

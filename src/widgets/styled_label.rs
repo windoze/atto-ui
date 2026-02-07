@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
+use crate::composable::{Component, ComponentContext, EventResult};
+use crate::reactive::Binding;
+use crate::text::styled_text::{
+    hit_test_link, inline_display_width, parse_inline, spans_from_segments,
+};
 use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
-
-use crate::composable::{Component, ComponentContext, EventResult};
-use crate::reactive::Binding;
 
 type LinkCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -88,18 +88,11 @@ impl Component for StyledLabel {
         }
 
         let segments = parse_inline(&self.text.get());
-        let mut col: u16 = 0;
-        for seg in segments {
-            let w = seg.display_width_u16();
-            if let Some(url) = &seg.link_url {
-                if local_x >= col && local_x < col.saturating_add(w) {
-                    if let Some(cb) = &self.on_link {
-                        cb(url);
-                        return EventResult::consumed();
-                    }
-                }
+        if let Some(url) = hit_test_link(&segments, local_x) {
+            if let Some(cb) = &self.on_link {
+                cb(url);
+                return EventResult::consumed();
             }
-            col = col.saturating_add(w);
         }
 
         EventResult::ignored()
@@ -110,12 +103,7 @@ impl Component for StyledLabel {
     }
 
     fn desired_width(&self) -> Option<u16> {
-        let segments = parse_inline(&self.text.get());
-        let mut total: u16 = 0;
-        for seg in segments {
-            total = total.saturating_add(seg.display_width_u16());
-        }
-        Some(total)
+        Some(inline_display_width(&self.text.get()))
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
@@ -131,11 +119,8 @@ impl Component for StyledLabel {
         };
         let link_overlay = ctx.theme.named_style("markdown-link");
 
-        let spans = parse_inline(&self.text.get())
-            .into_iter()
-            .filter(|seg| !seg.text.is_empty())
-            .map(|seg| seg.to_span(base, link_overlay))
-            .collect::<Vec<_>>();
+        let segments = parse_inline(&self.text.get());
+        let spans = spans_from_segments(&segments, base, link_overlay);
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 }
@@ -162,316 +147,4 @@ fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
     }
 
     None
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct InlineStyleFlags {
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    strikethrough: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct InlineSegment {
-    text: String,
-    style: InlineStyleFlags,
-    link_url: Option<String>,
-}
-
-impl InlineSegment {
-    fn display_width_u16(&self) -> u16 {
-        let w = UnicodeWidthStr::width(self.text.as_str());
-        w.min(u16::MAX as usize) as u16
-    }
-
-    fn to_span(self, base: Style, link_overlay: Option<Style>) -> Span<'static> {
-        let mut style = base;
-        if self.style.bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        if self.style.italic {
-            style = style.add_modifier(Modifier::ITALIC);
-        }
-        if self.style.underline {
-            style = style.add_modifier(Modifier::UNDERLINED);
-        }
-        if self.style.strikethrough {
-            style = style.add_modifier(Modifier::CROSSED_OUT);
-        }
-
-        if self.link_url.is_some() {
-            if let Some(overlay) = link_overlay {
-                style = style.patch(overlay);
-            } else {
-                style = style.add_modifier(Modifier::UNDERLINED);
-            }
-        }
-
-        Span::styled(self.text, style)
-    }
-}
-
-fn push_segment(segments: &mut Vec<InlineSegment>, seg: InlineSegment) {
-    if seg.text.is_empty() {
-        return;
-    }
-    if let Some(last) = segments.last_mut()
-        && last.style == seg.style
-        && last.link_url == seg.link_url
-    {
-        last.text.push_str(&seg.text);
-        return;
-    }
-    segments.push(seg);
-}
-
-fn parse_inline(input: &str) -> Vec<InlineSegment> {
-    let mut segments = Vec::new();
-    let mut plain = String::new();
-
-    let mut i = 0;
-    while i < input.len() {
-        let rest = &input[i..];
-
-        if rest.starts_with("**") {
-            if let Some((content, consumed)) = parse_delimited(rest, "**", "**") {
-                flush_plain(&mut segments, &mut plain);
-                push_segment(
-                    &mut segments,
-                    InlineSegment {
-                        text: content.to_string(),
-                        style: InlineStyleFlags {
-                            bold: true,
-                            ..Default::default()
-                        },
-                        link_url: None,
-                    },
-                );
-                i += consumed;
-                continue;
-            }
-            plain.push_str("**");
-            i += 2;
-            continue;
-        }
-
-        if rest.starts_with("__") {
-            if let Some((content, consumed)) = parse_delimited(rest, "__", "__") {
-                flush_plain(&mut segments, &mut plain);
-                push_segment(
-                    &mut segments,
-                    InlineSegment {
-                        text: content.to_string(),
-                        style: InlineStyleFlags {
-                            underline: true,
-                            ..Default::default()
-                        },
-                        link_url: None,
-                    },
-                );
-                i += consumed;
-                continue;
-            }
-            plain.push_str("__");
-            i += 2;
-            continue;
-        }
-
-        if rest.starts_with("~~") {
-            if let Some((content, consumed)) = parse_delimited(rest, "~~", "~~") {
-                flush_plain(&mut segments, &mut plain);
-                push_segment(
-                    &mut segments,
-                    InlineSegment {
-                        text: content.to_string(),
-                        style: InlineStyleFlags {
-                            strikethrough: true,
-                            ..Default::default()
-                        },
-                        link_url: None,
-                    },
-                );
-                i += consumed;
-                continue;
-            }
-            plain.push_str("~~");
-            i += 2;
-            continue;
-        }
-
-        if rest.starts_with('*') {
-            if let Some((content, consumed)) = parse_italic(rest) {
-                flush_plain(&mut segments, &mut plain);
-                push_segment(
-                    &mut segments,
-                    InlineSegment {
-                        text: content.to_string(),
-                        style: InlineStyleFlags {
-                            italic: true,
-                            ..Default::default()
-                        },
-                        link_url: None,
-                    },
-                );
-                i += consumed;
-                continue;
-            }
-            plain.push('*');
-            i += 1;
-            continue;
-        }
-
-        if rest.starts_with('[') {
-            if let Some(parsed) = parse_link(rest) {
-                flush_plain(&mut segments, &mut plain);
-                push_segment(
-                    &mut segments,
-                    InlineSegment {
-                        text: parsed.text.to_string(),
-                        style: InlineStyleFlags::default(),
-                        link_url: Some(parsed.url.to_string()),
-                    },
-                );
-                i += parsed.consumed;
-                continue;
-            }
-            plain.push('[');
-            i += 1;
-            continue;
-        }
-
-        let ch = rest.chars().next().unwrap_or('\0');
-        if ch == '\0' {
-            break;
-        }
-        plain.push(ch);
-        i += ch.len_utf8();
-    }
-
-    flush_plain(&mut segments, &mut plain);
-    segments
-}
-
-fn flush_plain(segments: &mut Vec<InlineSegment>, plain: &mut String) {
-    if plain.is_empty() {
-        return;
-    }
-    let text = std::mem::take(plain);
-    push_segment(
-        segments,
-        InlineSegment {
-            text,
-            style: InlineStyleFlags::default(),
-            link_url: None,
-        },
-    );
-}
-
-fn parse_delimited<'a>(input: &'a str, open: &str, close: &str) -> Option<(&'a str, usize)> {
-    if !input.starts_with(open) {
-        return None;
-    }
-    let after_open = &input[open.len()..];
-    let end_rel = after_open.find(close)?;
-    let content = &after_open[..end_rel];
-    let consumed = open.len() + end_rel + close.len();
-    Some((content, consumed))
-}
-
-fn parse_italic(input: &str) -> Option<(&str, usize)> {
-    if !input.starts_with('*') || input.starts_with("**") {
-        return None;
-    }
-    let after_open = &input[1..];
-    let end_rel = find_next_single_delim(after_open, b'*')?;
-    let content = &after_open[..end_rel];
-    let consumed = 1 + end_rel + 1;
-    Some((content, consumed))
-}
-
-fn find_next_single_delim(input: &str, byte: u8) -> Option<usize> {
-    let bytes = input.as_bytes();
-    for (idx, b) in bytes.iter().enumerate() {
-        if *b != byte {
-            continue;
-        }
-
-        let prev_is = idx > 0 && bytes[idx.saturating_sub(1)] == byte;
-        let next_is = idx + 1 < bytes.len() && bytes[idx.saturating_add(1)] == byte;
-        if prev_is || next_is {
-            continue;
-        }
-
-        return Some(idx);
-    }
-    None
-}
-
-struct ParsedLink<'a> {
-    text: &'a str,
-    url: &'a str,
-    consumed: usize,
-}
-
-fn parse_link(input: &str) -> Option<ParsedLink<'_>> {
-    if !input.starts_with('[') {
-        return None;
-    }
-
-    let text_end = input[1..].find(']')? + 1;
-    let text = &input[1..text_end];
-
-    let after_bracket = input.get(text_end + 1..)?;
-    if !after_bracket.starts_with('(') {
-        return None;
-    }
-
-    let url_end = after_bracket[1..].find(')')? + 1;
-    let url = &after_bracket[1..url_end];
-
-    let consumed = text_end + url_end + 2;
-    Some(ParsedLink {
-        text,
-        url,
-        consumed,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn display_text(input: &str) -> String {
-        parse_inline(input)
-            .into_iter()
-            .map(|seg| seg.text)
-            .collect::<String>()
-    }
-
-    #[test]
-    fn strips_supported_markers() {
-        let input = "**BOLD** *ITALIC* __UNDER__ ~~STRIKE~~ [LINK](https://example.com)";
-        assert_eq!(
-            display_text(input),
-            "BOLD ITALIC UNDER STRIKE LINK".to_string()
-        );
-    }
-
-    #[test]
-    fn leaves_unclosed_markers_literal() {
-        assert_eq!(display_text("**oops"), "**oops".to_string());
-        assert_eq!(display_text("*oops"), "*oops".to_string());
-        assert_eq!(display_text("__oops"), "__oops".to_string());
-        assert_eq!(display_text("~~oops"), "~~oops".to_string());
-        assert_eq!(display_text("[x](y"), "[x](y".to_string());
-    }
-
-    #[test]
-    fn captures_link_url_for_callback() {
-        let segs = parse_inline("go [here](url)!");
-        let link = segs.iter().find(|s| s.link_url.is_some()).unwrap();
-        assert_eq!(link.text, "here");
-        assert_eq!(link.link_url.as_deref(), Some("url"));
-    }
 }
