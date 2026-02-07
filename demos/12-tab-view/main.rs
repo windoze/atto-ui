@@ -293,12 +293,11 @@ impl Component for TabDemoView {
             return EventResult::ignored();
         };
 
-        if let Event::Key(key) = event {
-            if let Some(result) = self.handle_shortcuts(*key) {
-                if result.is_consumed() {
-                    return result;
-                }
-            }
+        if let Event::Key(key) = event
+            && let Some(result) = self.handle_shortcuts(*key)
+            && result.is_consumed()
+        {
+            return result;
         }
 
         if let Event::Mouse(m) = event {

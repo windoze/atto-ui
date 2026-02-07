@@ -151,6 +151,7 @@ pub(crate) fn scroll_by_delta(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_scrollbar_mouse_event(
     cfg: ScrollConfig,
     scrollbars: Scrollbars,
@@ -452,6 +453,7 @@ pub(crate) fn resolve_scroll_view(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_scrollbars(
     frame: &mut Frame<'_>,
     area: Rect,

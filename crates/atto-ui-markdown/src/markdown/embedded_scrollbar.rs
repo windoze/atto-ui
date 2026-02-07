@@ -345,6 +345,7 @@ pub(super) fn apply_embedded_scrollbar_drag(
     scroll
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_embedded_scrollbar_mouse_down(
     drag_state: &mut Option<EmbeddedScrollbarDragState>,
     target: EmbeddedScrollbarTarget,

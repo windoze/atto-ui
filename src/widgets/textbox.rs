@@ -151,10 +151,8 @@ impl Component for TextBox {
                             self.select_all();
                             return EventResult::consumed();
                         }
-                        if click_count == 2 {
-                            if self.select_word_at_col(col) {
-                                return EventResult::consumed();
-                            }
+                        if click_count == 2 && self.select_word_at_col(col) {
+                            return EventResult::consumed();
                         }
 
                         let cursor_before = self.buffer.cursor_byte_index();
@@ -502,12 +500,11 @@ impl TextBox {
         const MULTI_CLICK_MS: u64 = 400;
         let now = Instant::now();
         let mut count = 1;
-        if let Some(last) = self.last_click_at {
-            if now.duration_since(last) <= Duration::from_millis(MULTI_CLICK_MS)
-                && self.last_click_col == Some(col)
-            {
-                count = self.click_count.saturating_add(1).min(3);
-            }
+        if let Some(last) = self.last_click_at
+            && now.duration_since(last) <= Duration::from_millis(MULTI_CLICK_MS)
+            && self.last_click_col == Some(col)
+        {
+            count = self.click_count.saturating_add(1).min(3);
         }
         self.last_click_at = Some(now);
         self.last_click_col = Some(col);

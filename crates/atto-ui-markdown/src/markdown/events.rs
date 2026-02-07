@@ -191,8 +191,8 @@ impl MarkdownShared {
                     EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
 
                 // Click/drag on embedded scrollbars.
-                if let MouseEventKind::Down(MouseButton::Left) = m.kind {
-                    if let Some(res) = handle_embedded_scrollbar_mouse_down(
+                if let MouseEventKind::Down(MouseButton::Left) = m.kind
+                    && let Some(res) = handle_embedded_scrollbar_mouse_down(
                         &mut self.embedded_scrollbar_drag,
                         EmbeddedScrollbarTarget::Code(*index),
                         code.scroll,
@@ -201,10 +201,10 @@ impl MarkdownShared {
                         local_x,
                         local_y,
                         prefix_width,
-                    ) {
-                        code.scroll = res;
-                        return Some(EventResult::consumed());
-                    }
+                    )
+                {
+                    code.scroll = res;
+                    return Some(EventResult::consumed());
                 }
 
                 if is_wheel {
@@ -242,8 +242,8 @@ impl MarkdownShared {
                     EmbeddedScrollView::solve_auto((content_w, content_h), (outer_w, block.height));
 
                 // Click/drag on embedded scrollbars.
-                if let MouseEventKind::Down(MouseButton::Left) = m.kind {
-                    if let Some(res) = handle_embedded_scrollbar_mouse_down(
+                if let MouseEventKind::Down(MouseButton::Left) = m.kind
+                    && let Some(res) = handle_embedded_scrollbar_mouse_down(
                         &mut self.embedded_scrollbar_drag,
                         EmbeddedScrollbarTarget::Table(*index),
                         table.scroll,
@@ -252,10 +252,10 @@ impl MarkdownShared {
                         local_x,
                         local_y,
                         prefix_width,
-                    ) {
-                        table.scroll = res;
-                        return Some(EventResult::consumed());
-                    }
+                    )
+                {
+                    table.scroll = res;
+                    return Some(EventResult::consumed());
                 }
 
                 if is_wheel {
@@ -285,13 +285,11 @@ impl MarkdownShared {
                 if local_x >= prefix_width
                     && content_x < embedded.viewport_w
                     && local_y < embedded.viewport_h
+                    && let MouseEventKind::Down(MouseButton::Left) = m.kind
+                    && let Some(url) = table.link_at(content_x, local_y)
                 {
-                    if let MouseEventKind::Down(MouseButton::Left) = m.kind
-                        && let Some(url) = table.link_at(content_x, local_y)
-                    {
-                        self.link_callback.fire(&url);
-                        return Some(EventResult::consumed());
-                    }
+                    self.link_callback.fire(&url);
+                    return Some(EventResult::consumed());
                 }
                 None
             }

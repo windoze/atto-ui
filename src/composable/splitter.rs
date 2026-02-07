@@ -150,7 +150,7 @@ impl Splitter {
 
     fn axis_min_first(&self) -> u16 {
         let configured = self.min_first.get();
-        let child = self.children.get(0);
+        let child = self.children.first();
         let child_min = match (self.orientation, child) {
             (SplitterOrientation::Vertical, Some(node)) => node.view.min_width(),
             (SplitterOrientation::Horizontal, Some(node)) => node.view.min_height(),
@@ -171,7 +171,7 @@ impl Splitter {
     }
 
     fn cross_min_size(&self) -> u16 {
-        let first = self.children.get(0);
+        let first = self.children.first();
         let second = self.children.get(1);
         match self.orientation {
             SplitterOrientation::Vertical => {
@@ -463,7 +463,7 @@ impl Component for Splitter {
     }
 
     fn desired_width(&self) -> Option<u16> {
-        let first = self.children.get(0);
+        let first = self.children.first();
         let second = self.children.get(1);
         match self.orientation {
             SplitterOrientation::Vertical => {
@@ -491,7 +491,7 @@ impl Component for Splitter {
     }
 
     fn desired_height(&self) -> Option<u16> {
-        let first = self.children.get(0);
+        let first = self.children.first();
         let second = self.children.get(1);
         match self.orientation {
             SplitterOrientation::Horizontal => {
@@ -566,16 +566,16 @@ impl Component for Splitter {
                 }
             }
 
-            if let MouseEventKind::Down(MouseButton::Left) = m.kind {
-                if contains(layout.divider, local_x, local_y) {
-                    let grab_offset = match self.orientation {
-                        SplitterOrientation::Vertical => local_x.saturating_sub(layout.divider.x),
-                        SplitterOrientation::Horizontal => local_y.saturating_sub(layout.divider.y),
-                    };
-                    self.drag = Some(DragState { grab_offset });
-                    self.split_auto = false;
-                    return EventResult::consumed();
-                }
+            if let MouseEventKind::Down(MouseButton::Left) = m.kind
+                && contains(layout.divider, local_x, local_y)
+            {
+                let grab_offset = match self.orientation {
+                    SplitterOrientation::Vertical => local_x.saturating_sub(layout.divider.x),
+                    SplitterOrientation::Horizontal => local_y.saturating_sub(layout.divider.y),
+                };
+                self.drag = Some(DragState { grab_offset });
+                self.split_auto = false;
+                return EventResult::consumed();
             }
 
             let (child_idx, child_bounds) = if contains(layout.first, local_x, local_y) {
@@ -672,44 +672,46 @@ impl Component for Splitter {
             second.set_bounds(layout.second);
         }
 
-        if let Some(first) = self.children.get_mut(0) {
-            if layout.first.width > 0 && layout.first.height > 0 {
-                let abs = Rect {
-                    x: area.x.saturating_add(layout.first.x),
-                    y: area.y.saturating_add(layout.first.y),
-                    width: layout.first.width,
-                    height: layout.first.height,
-                };
-                let child_focused = ctx.is_focused && self.focused == Some(first.id);
-                let child_ctx = ComponentContext {
-                    theme: ctx.theme,
-                    window_id: ctx.window_id,
-                    is_focused: child_focused,
-                    scrollbar_host: ctx.scrollbar_host.for_child(),
-                    tab_mode: ctx.tab_mode.for_child(),
-                };
-                first.view.draw(frame, abs, child_ctx);
-            }
+        if let Some(first) = self.children.get_mut(0)
+            && layout.first.width > 0
+            && layout.first.height > 0
+        {
+            let abs = Rect {
+                x: area.x.saturating_add(layout.first.x),
+                y: area.y.saturating_add(layout.first.y),
+                width: layout.first.width,
+                height: layout.first.height,
+            };
+            let child_focused = ctx.is_focused && self.focused == Some(first.id);
+            let child_ctx = ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+            first.view.draw(frame, abs, child_ctx);
         }
 
-        if let Some(second) = self.children.get_mut(1) {
-            if layout.second.width > 0 && layout.second.height > 0 {
-                let abs = Rect {
-                    x: area.x.saturating_add(layout.second.x),
-                    y: area.y.saturating_add(layout.second.y),
-                    width: layout.second.width,
-                    height: layout.second.height,
-                };
-                let child_focused = ctx.is_focused && self.focused == Some(second.id);
-                let child_ctx = ComponentContext {
-                    theme: ctx.theme,
-                    window_id: ctx.window_id,
-                    is_focused: child_focused,
-                    scrollbar_host: ctx.scrollbar_host.for_child(),
-                    tab_mode: ctx.tab_mode.for_child(),
-                };
-                second.view.draw(frame, abs, child_ctx);
-            }
+        if let Some(second) = self.children.get_mut(1)
+            && layout.second.width > 0
+            && layout.second.height > 0
+        {
+            let abs = Rect {
+                x: area.x.saturating_add(layout.second.x),
+                y: area.y.saturating_add(layout.second.y),
+                width: layout.second.width,
+                height: layout.second.height,
+            };
+            let child_focused = ctx.is_focused && self.focused == Some(second.id);
+            let child_ctx = ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: child_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+            second.view.draw(frame, abs, child_ctx);
         }
 
         if self.border.get() && layout.divider.width > 0 && layout.divider.height > 0 {

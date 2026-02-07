@@ -88,11 +88,11 @@ impl Component for StyledLabel {
         }
 
         let segments = parse_inline(&self.text.get());
-        if let Some(url) = hit_test_link(&segments, local_x) {
-            if let Some(cb) = &self.on_link {
-                cb(url);
-                return EventResult::consumed();
-            }
+        if let Some(url) = hit_test_link(&segments, local_x)
+            && let Some(cb) = &self.on_link
+        {
+            cb(url);
+            return EventResult::consumed();
         }
 
         EventResult::ignored()

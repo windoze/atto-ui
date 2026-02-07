@@ -219,15 +219,15 @@ impl Default for TabWindow {
 
 impl Component for TabWindow {
     fn is_focusable(&self) -> bool {
-        self.active_view().map_or(false, |v| v.is_focusable())
+        self.active_view().is_some_and(|v| v.is_focusable())
     }
 
     fn focus_first(&mut self) -> bool {
-        self.active_view_mut().map_or(false, |v| v.focus_first())
+        self.active_view_mut().is_some_and(|v| v.focus_first())
     }
 
     fn focus_last(&mut self) -> bool {
-        self.active_view_mut().map_or(false, |v| v.focus_last())
+        self.active_view_mut().is_some_and(|v| v.focus_last())
     }
 
     fn min_width(&self) -> u16 {
@@ -306,7 +306,7 @@ impl Component for TabWindow {
     }
 
     fn is_scrollable(&self) -> bool {
-        self.active_view().map_or(false, |v| v.is_scrollable())
+        self.active_view().is_some_and(|v| v.is_scrollable())
     }
 
     fn content_size(&self) -> (u16, u16) {

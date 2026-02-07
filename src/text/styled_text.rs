@@ -158,7 +158,7 @@ pub(crate) fn segments_display_width(segments: &[StyledTextSegment]) -> u16 {
     total
 }
 
-pub(crate) fn hit_test_link<'a>(segments: &'a [StyledTextSegment], x: u16) -> Option<&'a str> {
+pub(crate) fn hit_test_link(segments: &[StyledTextSegment], x: u16) -> Option<&str> {
     let mut col: u16 = 0;
     for seg in segments {
         let w = UnicodeWidthStr::width(seg.text.as_str());

@@ -163,20 +163,19 @@ impl Component for TableView {
         if !self.bindings.read().enabled.get() {
             return EventResult::ignored();
         }
-        if let Event::Mouse(m) = event {
-            if let Some(area) = self.last_area
-                && let Some((_, body_area, header_height)) = self.layout_areas(area)
+        if let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((_, body_area, header_height)) = self.layout_areas(area)
+        {
+            if let Some(new_scroll) =
+                self.handle_border_scrollbar_event(*m, area, body_area, header_height)
             {
-                if let Some(new_scroll) =
-                    self.handle_border_scrollbar_event(*m, area, body_area, header_height)
-                {
-                    self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
-                    return EventResult::consumed();
-                }
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
 
-                if !contains(body_area, m.column, m.row) {
-                    return EventResult::ignored();
-                }
+            if !contains(body_area, m.column, m.row) {
+                return EventResult::ignored();
             }
         }
 

@@ -238,11 +238,11 @@ fn draw_code_block(
                 }
             }
 
-            if embedded.show_v {
-                if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
-                    cell.set_symbol(track);
-                    cell.set_style(code_style.patch(track_style));
-                }
+            if embedded.show_v
+                && let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y))
+            {
+                cell.set_symbol(track);
+                cell.set_style(code_style.patch(track_style));
             }
             continue;
         }
@@ -406,11 +406,11 @@ fn draw_table_block(
                 }
             }
 
-            if embedded.show_v {
-                if let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y)) {
-                    cell.set_symbol(track);
-                    cell.set_style(styles.table_cell.patch(track_style));
-                }
+            if embedded.show_v
+                && let Some(cell) = buf.cell_mut((content_x.saturating_add(viewport_w), screen_y))
+            {
+                cell.set_symbol(track);
+                cell.set_style(styles.table_cell.patch(track_style));
             }
             continue;
         }

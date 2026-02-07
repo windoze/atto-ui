@@ -15,21 +15,11 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 }
 
 fn find_cell_in_row(host: &PtyTestHost, y: u16, x0: u16, x1: u16, needle: &str) -> Option<u16> {
-    for x in x0..=x1 {
-        if host.cell_contents(x, y).ok().as_deref() == Some(needle) {
-            return Some(x);
-        }
-    }
-    None
+    (x0..=x1).find(|&x| host.cell_contents(x, y).ok().as_deref() == Some(needle))
 }
 
 fn find_cell_in_col(host: &PtyTestHost, x: u16, y0: u16, y1: u16, needle: &str) -> Option<u16> {
-    for y in y0..=y1 {
-        if host.cell_contents(x, y).ok().as_deref() == Some(needle) {
-            return Some(y);
-        }
-    }
-    None
+    (y0..=y1).find(|&y| host.cell_contents(x, y).ok().as_deref() == Some(needle))
 }
 
 #[test]

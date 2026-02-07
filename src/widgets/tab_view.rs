@@ -117,14 +117,13 @@ impl TabView {
             self.focused = None;
         }
         self.normalize_selection();
-        if let Some(active_id) = self.active_child_id() {
-            if self
+        if let Some(active_id) = self.active_child_id()
+            && self
                 .children
                 .iter()
                 .any(|c| c.id == active_id && c.view.is_focusable())
-            {
-                self.focused = Some(active_id);
-            }
+        {
+            self.focused = Some(active_id);
         }
         true
     }
@@ -440,31 +439,29 @@ impl Component for TabView {
             };
 
             if contains(header_local, local_x, local_y) {
-                if m.kind == MouseEventKind::Down(MouseButton::Left) {
-                    if let Some(layout) = &self.last_header {
-                        if let Some((idx, _)) = layout
-                            .tab_ranges
-                            .iter()
-                            .enumerate()
-                            .find(|(_, (start, end))| local_x >= *start && local_x < *end)
-                        {
-                            let prev = self.selection.get();
-                            if prev != idx {
-                                self.selection.set(idx);
-                                self.normalize_selection();
-                                if let Some(child) = self.children.get_mut(idx) {
-                                    if child.view.is_focusable() {
-                                        self.focused = Some(child.id);
-                                        let _ = child.view.focus_first();
-                                    } else {
-                                        self.focused = None;
-                                    }
-                                }
-                                return EventResult::changed();
+                if m.kind == MouseEventKind::Down(MouseButton::Left)
+                    && let Some(layout) = &self.last_header
+                    && let Some((idx, _)) = layout
+                        .tab_ranges
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (start, end))| local_x >= *start && local_x < *end)
+                {
+                    let prev = self.selection.get();
+                    if prev != idx {
+                        self.selection.set(idx);
+                        self.normalize_selection();
+                        if let Some(child) = self.children.get_mut(idx) {
+                            if child.view.is_focusable() {
+                                self.focused = Some(child.id);
+                                let _ = child.view.focus_first();
+                            } else {
+                                self.focused = None;
                             }
-                            return EventResult::consumed();
                         }
+                        return EventResult::changed();
                     }
+                    return EventResult::consumed();
                 }
                 return EventResult::ignored();
             }
@@ -538,25 +535,25 @@ impl Component for TabView {
             self.last_header = None;
         }
 
-        if let Some(idx) = selected {
-            if let Some(child) = self.children.get_mut(idx) {
-                child.set_bounds(content_abs);
-                if child.view.is_focusable() {
-                    self.focused = Some(child.id);
-                } else {
-                    self.focused = None;
-                }
+        if let Some(idx) = selected
+            && let Some(child) = self.children.get_mut(idx)
+        {
+            child.set_bounds(content_abs);
+            if child.view.is_focusable() {
+                self.focused = Some(child.id);
+            } else {
+                self.focused = None;
+            }
 
-                if content_abs.width > 0 && content_abs.height > 0 {
-                    let child_ctx = ComponentContext {
-                        theme: ctx.theme,
-                        window_id: ctx.window_id,
-                        is_focused: ctx.is_focused && self.focused == Some(child.id),
-                        scrollbar_host: ctx.scrollbar_host.for_child(),
-                        tab_mode: ctx.tab_mode.for_child(),
-                    };
-                    child.view.draw(frame, content_abs, child_ctx);
-                }
+            if content_abs.width > 0 && content_abs.height > 0 {
+                let child_ctx = ComponentContext {
+                    theme: ctx.theme,
+                    window_id: ctx.window_id,
+                    is_focused: ctx.is_focused && self.focused == Some(child.id),
+                    scrollbar_host: ctx.scrollbar_host.for_child(),
+                    tab_mode: ctx.tab_mode.for_child(),
+                };
+                child.view.draw(frame, content_abs, child_ctx);
             }
         }
     }
