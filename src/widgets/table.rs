@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -190,14 +190,28 @@ impl Component for TableView {
             && let Some(area) = self.last_area
             && let Some((_, body_area, header_height)) = self.layout_areas(area)
         {
+            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                return EventResult::ignored();
+            };
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
             if let Some(new_scroll) =
-                self.handle_border_scrollbar_event(*m, area, body_area, header_height)
+                self.handle_border_scrollbar_event(abs_event, area, body_area, header_height)
             {
                 self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
                 return EventResult::consumed();
             }
 
-            if !contains(body_area, m.column, m.row) {
+            let body_local = Rect {
+                x: body_area.x.saturating_sub(area.x),
+                y: body_area.y.saturating_sub(area.y),
+                width: body_area.width,
+                height: body_area.height,
+            };
+            if !contains(body_local, local_x, local_y) {
                 return EventResult::ignored();
             }
         }
@@ -654,4 +668,20 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && x < rect.x.saturating_add(rect.width)
         && y >= rect.y
         && y < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if contains(area, m.column, m.row) {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    // Nested containers receive mouse coordinates already relative to their own origin.
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
 }

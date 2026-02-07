@@ -135,6 +135,7 @@ impl Desktop {
 
     pub fn handle_event(&mut self, event: &Event, screen: Rect) -> DesktopEventResult {
         let layout = Self::layout(screen);
+        self.menu.refresh_minimized_windows(&self.wm);
 
         // Desktop chrome mouse routing (menu bar / status bar) comes first so clicks don't
         // accidentally fall through to the focused view.
@@ -155,6 +156,12 @@ impl Desktop {
                         self.menu.deactivate();
                         return DesktopEventResult::consumed();
                     }
+                    MenuAction::RestoreWindow(id) => {
+                        self.wm.restore_window(id);
+                        self.mode = DesktopMode::Normal;
+                        self.menu.deactivate();
+                        return DesktopEventResult::consumed();
+                    }
                 }
             }
         }
@@ -171,6 +178,12 @@ impl Desktop {
             let action = match action {
                 MenuAction::None => DesktopAction::None,
                 MenuAction::Closed => {
+                    self.mode = DesktopMode::Normal;
+                    self.menu.deactivate();
+                    DesktopAction::None
+                }
+                MenuAction::RestoreWindow(id) => {
+                    self.wm.restore_window(id);
                     self.mode = DesktopMode::Normal;
                     self.menu.deactivate();
                     DesktopAction::None
@@ -318,6 +331,7 @@ impl Desktop {
     pub fn draw(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let layout = Self::layout(area);
+        self.menu.refresh_minimized_windows(&self.wm);
 
         frame.render_widget(
             Fill {

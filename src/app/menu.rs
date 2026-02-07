@@ -11,10 +11,14 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::reactive::Binding;
 use crate::theme::Theme;
+use crate::wm::{WindowId, WindowManager, WindowState};
 
 use super::status::Fill;
 
 pub type MenuCallback = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+const MINIMIZED_WINDOWS_MENU_ID: &str = "atto_ui:minimized_windows";
+const MINIMIZED_WINDOW_ITEM_PREFIX: &str = "atto_ui:minimized_window:";
 
 #[derive(Clone)]
 pub struct MenuItem {
@@ -50,6 +54,12 @@ impl MenuItem {
             on_activate: None,
             submenu,
         }
+    }
+
+    pub fn minimized_windows(label: impl Into<Binding<String>>) -> Self {
+        let mut item = Self::submenu(label, Vec::new());
+        item.automation_id = Some(MINIMIZED_WINDOWS_MENU_ID.to_string());
+        item
     }
 
     pub fn label(mut self, label: impl Into<Binding<String>>) -> Self {
@@ -116,6 +126,7 @@ struct MenuState {
 pub enum MenuAction {
     None,
     Closed,
+    RestoreWindow(WindowId),
 }
 
 #[derive(Clone, Default)]
@@ -138,6 +149,13 @@ impl MenuBar {
 
     pub fn menus_mut(&mut self) -> &mut [MenuSpec] {
         &mut self.menus
+    }
+
+    pub fn refresh_minimized_windows(&mut self, wm: &WindowManager) {
+        let items = build_minimized_window_items(wm);
+        for menu in &mut self.menus {
+            refresh_minimized_windows_in_items(&mut menu.items, &items);
+        }
     }
 
     pub fn is_active(&self) -> bool {
@@ -206,11 +224,7 @@ impl MenuBar {
                 if self.open_selected_submenu() {
                     return MenuAction::None;
                 }
-                if self.activate_selected_item() {
-                    self.deactivate();
-                    return MenuAction::Closed;
-                }
-                MenuAction::None
+                self.activate_selected_item()
             }
             KeyCode::Char(c)
                 if !modifiers.contains(KeyModifiers::CONTROL)
@@ -268,6 +282,7 @@ impl MenuBar {
                 row: usize,
                 has_submenu: bool,
                 on_activate: Option<MenuCallback>,
+                restore_id: Option<WindowId>,
                 enabled: bool,
             },
         }
@@ -304,7 +319,7 @@ impl MenuBar {
                 continue;
             }
 
-            let (has_submenu, enabled, on_activate) = {
+            let (has_submenu, enabled, on_activate, restore_id) = {
                 let item = &items[row];
                 let has_submenu = !item.submenu.is_empty();
                 let enabled = item.enabled.get();
@@ -313,7 +328,8 @@ impl MenuBar {
                 } else {
                     None
                 };
-                (has_submenu, enabled, on_activate)
+                let restore_id = minimized_window_id(item);
+                (has_submenu, enabled, on_activate, restore_id)
             };
 
             hit = Some(DropdownHit::Item {
@@ -321,6 +337,7 @@ impl MenuBar {
                 row,
                 has_submenu,
                 on_activate,
+                restore_id,
                 enabled,
             });
         }
@@ -332,6 +349,7 @@ impl MenuBar {
                 row,
                 has_submenu,
                 on_activate,
+                restore_id,
                 enabled,
             }) => {
                 self.state.stack.truncate(depth.saturating_add(1));
@@ -348,9 +366,13 @@ impl MenuBar {
                 if enabled {
                     if let Some(cb) = on_activate {
                         cb();
+                        self.deactivate();
+                        return MenuAction::Closed;
                     }
-                    self.deactivate();
-                    return MenuAction::Closed;
+                    if let Some(id) = restore_id {
+                        self.deactivate();
+                        return MenuAction::RestoreWindow(id);
+                    }
                 }
 
                 return MenuAction::None;
@@ -513,21 +535,26 @@ impl MenuBar {
         items.get(idx)
     }
 
-    fn activate_selected_item(&self) -> bool {
+    fn activate_selected_item(&mut self) -> MenuAction {
         let Some(item) = self.selected_item() else {
-            return false;
+            return MenuAction::None;
         };
         if !item.enabled.get() {
-            return false;
+            return MenuAction::None;
         }
         if !item.submenu.is_empty() {
-            return false;
+            return MenuAction::None;
         }
         if let Some(cb) = &item.on_activate {
             cb();
-            return true;
+            self.deactivate();
+            return MenuAction::Closed;
         }
-        false
+        if let Some(id) = minimized_window_id(item) {
+            self.deactivate();
+            return MenuAction::RestoreWindow(id);
+        }
+        MenuAction::None
     }
 
     pub fn activate_menu(&mut self, menu_index: usize) {
@@ -559,12 +586,12 @@ impl MenuBar {
         let target = c.to_ascii_lowercase();
         let depth = self.state.stack.len().saturating_sub(1);
 
-        let (hit_idx, has_submenu, on_activate, enabled) = {
+        let (hit_idx, has_submenu, on_activate, enabled, restore_id) = {
             let Some(items) = self.selected_items() else {
                 return MenuAction::None;
             };
 
-            let mut hit: Option<(usize, bool, Option<MenuCallback>, bool)> = None;
+            let mut hit: Option<(usize, bool, Option<MenuCallback>, bool, Option<WindowId>)> = None;
             for (idx, item) in items.iter().enumerate() {
                 let enabled = item.enabled.get();
                 if !enabled {
@@ -585,15 +612,16 @@ impl MenuBar {
                         !item.submenu.is_empty(),
                         item.on_activate.clone(),
                         enabled,
+                        minimized_window_id(item),
                     ));
                     break;
                 }
             }
 
-            let Some((idx, has_submenu, on_activate, enabled)) = hit else {
+            let Some((idx, has_submenu, on_activate, enabled, restore_id)) = hit else {
                 return MenuAction::None;
             };
-            (idx, has_submenu, on_activate, enabled)
+            (idx, has_submenu, on_activate, enabled, restore_id)
         };
 
         if depth < self.state.stack.len() {
@@ -610,9 +638,13 @@ impl MenuBar {
         if enabled {
             if let Some(cb) = on_activate {
                 cb();
+                self.deactivate();
+                return MenuAction::Closed;
             }
-            self.deactivate();
-            return MenuAction::Closed;
+            if let Some(id) = restore_id {
+                self.deactivate();
+                return MenuAction::RestoreWindow(id);
+            }
         }
 
         MenuAction::None
@@ -664,6 +696,49 @@ impl MenuBar {
             cur_x = cur_x.saturating_add(w).saturating_add(1);
         }
         None
+    }
+}
+
+fn minimized_window_id(item: &MenuItem) -> Option<WindowId> {
+    let id = item.automation_id.as_deref()?;
+    let suffix = id.strip_prefix(MINIMIZED_WINDOW_ITEM_PREFIX)?;
+    let parsed = suffix.parse::<u64>().ok()?;
+    Some(WindowId(parsed))
+}
+
+fn minimized_window_menu_item(id: WindowId, label: String) -> MenuItem {
+    let mut item = MenuItem::submenu(label, Vec::new());
+    item.automation_id = Some(format!("{MINIMIZED_WINDOW_ITEM_PREFIX}{}", id.0));
+    item
+}
+
+fn build_minimized_window_items(wm: &WindowManager) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    for window in wm.windows().iter().rev() {
+        if window.state.get() != WindowState::Minimized {
+            continue;
+        }
+        let mut label = window.title.get();
+        if label.trim().is_empty() {
+            label = format!("Window {}", window.id.0);
+        }
+        items.push(minimized_window_menu_item(window.id, label));
+    }
+    if items.is_empty() {
+        items.push(MenuItem::submenu("No minimized windows", Vec::new()).enabled(false));
+    }
+    items
+}
+
+fn refresh_minimized_windows_in_items(items: &mut [MenuItem], minimized_items: &[MenuItem]) {
+    for item in items {
+        if item.automation_id.as_deref() == Some(MINIMIZED_WINDOWS_MENU_ID) {
+            item.submenu = minimized_items.to_vec();
+            continue;
+        }
+        if !item.submenu.is_empty() {
+            refresh_minimized_windows_in_items(&mut item.submenu, minimized_items);
+        }
     }
 }
 

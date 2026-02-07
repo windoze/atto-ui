@@ -1693,6 +1693,7 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::FocusNext)
                 })
                 .shortcut("F6"),
+                MenuItem::minimized_windows("Minimized windows"),
                 MenuItem::action("Widget states demo", {
                     let actions = actions.clone();
                     move || actions.push(DemoAction::OpenWidgetStatesDemo)

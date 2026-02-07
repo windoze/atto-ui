@@ -73,6 +73,21 @@ impl WindowManager {
         }
     }
 
+    pub fn restore_window(&mut self, id: WindowId) -> bool {
+        let restored = if let Some(w) = self.window_mut(id)
+            && w.state.get() == WindowState::Minimized
+        {
+            w.state.set(WindowState::Normal);
+            true
+        } else {
+            false
+        };
+        if restored {
+            self.focus(id);
+        }
+        restored
+    }
+
     pub(super) fn topmost_focusable_id(&self) -> Option<WindowId> {
         self.windows
             .iter()
