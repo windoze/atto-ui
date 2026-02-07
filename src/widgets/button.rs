@@ -6,10 +6,11 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 
-#[derive(Clone)]
+#[derive(Clone, Automatable)]
 pub struct Button {
     label: Binding<String>,
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -50,6 +51,7 @@ impl Button {
     }
 }
 
+#[automate_component]
 impl Component for Button {
     fn min_width(&self) -> u16 {
         3

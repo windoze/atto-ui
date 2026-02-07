@@ -6,6 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use atto_ui_macros::{Automatable, automate_component};
+use crate::automation::AutomationAction;
 use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
 use crate::reactive::Binding;
 
@@ -19,6 +21,7 @@ struct HeaderLayout {
     tab_ranges: Vec<(u16, u16)>,
 }
 
+#[derive(Automatable)]
 pub struct TabView {
     id: ComponentId,
     children: Vec<ComponentNode>,
@@ -284,6 +287,30 @@ impl TabView {
 
         (Line::from(spans), ranges)
     }
+
+    fn set_selection(&mut self, idx: usize) -> EventResult {
+        if self.children.is_empty() {
+            self.selection.set(0);
+            self.focused = None;
+            return EventResult::ignored();
+        }
+        let idx = idx.min(self.children.len().saturating_sub(1));
+        let prev = self.selection.get();
+        if prev == idx {
+            return EventResult::ignored();
+        }
+        self.selection.set(idx);
+        self.normalize_selection();
+        if let Some(child) = self.children.get_mut(idx) {
+            if child.view.is_focusable() {
+                self.focused = Some(child.id);
+                let _ = child.view.focus_first();
+            } else {
+                self.focused = None;
+            }
+        }
+        EventResult::changed()
+    }
 }
 
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
@@ -334,7 +361,19 @@ impl TabView {
     }
 }
 
+#[automate_component]
 impl Component for TabView {
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.focused
+    }
+
+    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+        match action {
+            AutomationAction::SelectIndex(idx) => self.set_selection(idx),
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn is_focusable(&self) -> bool {
         self.selected()
             .and_then(|idx| self.children.get(idx))

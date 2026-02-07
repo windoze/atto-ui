@@ -6,6 +6,7 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use atto_ui_macros::{Automatable, automate_component};
 use super::component::{Component, ComponentContext, EventResult};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -29,6 +30,7 @@ fn desired_size_for_slot(view: &dyn Component, slot: Rect, layout: LayoutParams)
     (w.max(min_w), h.max(min_h))
 }
 
+#[derive(Automatable)]
 pub struct Grid {
     id: ComponentId,
     children: Vec<ComponentNode>,
@@ -418,7 +420,12 @@ impl Grid {
     }
 }
 
+#[automate_component]
 impl Component for Grid {
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.focused
+    }
+
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }

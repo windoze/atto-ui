@@ -1,7 +1,9 @@
 //! Composable component system (single component model).
 
 mod border;
+mod automation_tag;
 mod component;
+mod visibility;
 mod for_each;
 mod geom;
 mod grid;
@@ -21,6 +23,8 @@ pub use crate::widgets::{
     TableView, TextBox,
 };
 pub use border::Border;
+pub use automation_tag::{AutomationIdExt, AutomationTag};
+pub use visibility::{Visibility, VisibilityExt};
 pub use component::{
     Component, ComponentAction, ComponentContext, EventOutcome, EventResult, ScrollbarHost,
     TabMode, TitleBarContent, TitleBarContext, TitleBarSpan,

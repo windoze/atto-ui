@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+extern crate self as atto_ui;
+
 pub mod app;
+pub mod automation;
 pub mod cache;
 pub mod composable;
 pub mod dialogs;

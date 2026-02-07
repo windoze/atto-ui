@@ -97,6 +97,7 @@ impl Default for WindowDecorations {
 
 pub struct Window {
     pub id: WindowId,
+    pub automation_id: Option<String>,
     pub kind: WindowKind,
     pub title: Binding<String>,
     pub rect: Binding<Rect>,
@@ -124,6 +125,7 @@ impl Window {
 
         Self {
             id: WindowId(0),
+            automation_id: None,
             kind,
             title: title.into(),
             rect: rect.into(),
@@ -138,6 +140,15 @@ impl Window {
             close_hook: None,
             restore_rect: None,
         }
+    }
+
+    pub fn with_automation_id(mut self, id: impl Into<String>) -> Self {
+        self.automation_id = Some(id.into());
+        self
+    }
+
+    pub fn automation_id(&self) -> Option<&str> {
+        self.automation_id.as_deref()
     }
 
     pub fn with_decorations(mut self, decorations: impl Into<Binding<WindowDecorations>>) -> Self {

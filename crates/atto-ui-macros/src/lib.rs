@@ -6,6 +6,7 @@
 use proc_macro::TokenStream;
 
 mod reactive;
+mod automatable;
 mod view_builder;
 
 /// Generates convenience accessors around `atto_ui::reactive::Property<_>` fields.
@@ -16,6 +17,18 @@ mod view_builder;
 #[proc_macro_derive(Reactive, attributes(reactive))]
 pub fn derive_reactive(input: TokenStream) -> TokenStream {
     reactive::derive_reactive_impl(input)
+}
+
+/// Derive automatable property accessors for components with `Binding<_>` fields.
+#[proc_macro_derive(Automatable, attributes(automation))]
+pub fn derive_automatable(input: TokenStream) -> TokenStream {
+    automatable::derive_automatable_impl(input)
+}
+
+/// Injects `automation_*` methods into a `impl Component for ...` block.
+#[proc_macro_attribute]
+pub fn automate_component(attr: TokenStream, item: TokenStream) -> TokenStream {
+    automatable::automate_component_impl(attr, item)
 }
 
 /// SwiftUI-ish composable builder DSL.

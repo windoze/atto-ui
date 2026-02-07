@@ -8,6 +8,8 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
+use atto_ui_macros::{Automatable, automate_component};
+use crate::automation::AutomationAction;
 use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
 };
@@ -19,7 +21,7 @@ use crate::composable::{
 use crate::reactive::Binding;
 use crate::text::styled_text::spans_from_inline;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Automatable)]
 struct TableViewBindings {
     title: Binding<String>,
     headers: Binding<Vec<String>>,
@@ -29,7 +31,9 @@ struct TableViewBindings {
     height: Binding<u16>,
 }
 
+#[derive(Automatable)]
 pub struct TableView {
+    #[automation(delegate)]
     bindings: Arc<RwLock<TableViewBindings>>,
     scroll: ScrollContainer,
     scrollbar_drag: Option<ScrollbarDrag>,
@@ -141,7 +145,26 @@ impl TableView {
     }
 }
 
+#[automate_component]
 impl Component for TableView {
+    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+        match action {
+            AutomationAction::SelectIndex(idx) => {
+                let bindings = self.bindings.write();
+                let row_count = bindings.rows.get().len();
+                if row_count > 0 {
+                    bindings
+                        .selection
+                        .set(idx.min(row_count.saturating_sub(1)));
+                    EventResult::changed()
+                } else {
+                    EventResult::ignored()
+                }
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn min_width(&self) -> u16 {
         self.min_size.0
     }

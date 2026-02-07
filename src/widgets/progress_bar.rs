@@ -4,10 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Automatable)]
 pub struct ProgressBar {
     min: Binding<f64>,
     max: Binding<f64>,
@@ -100,6 +101,7 @@ impl ProgressBar {
     }
 }
 
+#[automate_component]
 impl Component for ProgressBar {
     fn min_width(&self) -> u16 {
         3

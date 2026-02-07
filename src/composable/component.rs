@@ -3,6 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
+use crate::automation::{AutomationAction, AutomationError, AutomationValue};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::theme::Theme;
@@ -163,6 +164,38 @@ impl EventResult {
 }
 
 pub trait Component: Send {
+    fn automation_type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    fn automation_id(&self) -> Option<&str> {
+        None
+    }
+
+    fn automation_properties(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    fn automation_get_property(&self, _name: &str) -> Option<AutomationValue> {
+        None
+    }
+
+    fn automation_set_property(
+        &mut self,
+        name: &str,
+        _value: AutomationValue,
+    ) -> Result<(), AutomationError> {
+        Err(AutomationError::unsupported_property(name))
+    }
+
+    fn automation_action(&mut self, _action: AutomationAction) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        None
+    }
+
     fn is_focusable(&self) -> bool {
         false
     }

@@ -4,10 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Automatable)]
 pub struct Label {
     text: Binding<String>,
     enabled: Binding<bool>,
@@ -32,6 +33,7 @@ impl Label {
     }
 }
 
+#[automate_component]
 impl Component for Label {
     fn is_focusable(&self) -> bool {
         false
