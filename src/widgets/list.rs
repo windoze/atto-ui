@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
+use crate::text::styled_text::{inline_display_width, parse_inline, slice_spans_from_segments};
 use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
@@ -234,8 +233,8 @@ impl ListBoxContent {
         let height = items.len().min(u16::MAX as usize) as u16;
         let mut width = 0_u16;
         for item in items {
-            let w = UnicodeWidthStr::width(item.as_str());
-            width = width.max(w.min(u16::MAX as usize) as u16);
+            let w = inline_display_width(item.as_str());
+            width = width.max(w);
         }
         (width, height)
     }
@@ -354,12 +353,15 @@ impl ScrollContent for ListBoxContent {
         let selection = self.normalize_selection(items.len());
         let scroll = ctx.info.scroll_offset;
         let viewport_w = area.width;
+        let link_overlay = ctx.component.theme.named_style("markdown-link");
         let items: Vec<ListItem> = items
             .iter()
             .enumerate()
             .map(|(idx, s)| {
-                let text = slice_by_width(s, scroll.x, viewport_w);
-                let item = ListItem::new(Line::raw(text));
+                let segments = parse_inline(s);
+                let spans =
+                    slice_spans_from_segments(&segments, scroll.x, viewport_w, style, link_overlay);
+                let item = ListItem::new(Line::from(spans));
                 if selection.is_some_and(|sel| sel == idx) {
                     item.style(highlight_style)
                 } else {
@@ -382,31 +384,4 @@ fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollConta
     ScrollContainer::new(Box::new(ListBoxContent::new(bindings)))
         .with_padding(EdgeInsets::all(1))
         .with_scroll_config(ScrollConfig::default())
-}
-
-fn slice_by_width(text: &str, start_col: u16, width: u16) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    let mut out = String::new();
-    let mut col: u16 = 0;
-    let end = start_col.saturating_add(width);
-
-    for g in text.graphemes(true) {
-        let w = (UnicodeWidthStr::width(g) as u16).max(1);
-        let next = col.saturating_add(w);
-
-        if next <= start_col {
-            col = next;
-            continue;
-        }
-        if col >= end {
-            break;
-        }
-
-        out.push_str(g);
-        col = next;
-    }
-
-    out
 }

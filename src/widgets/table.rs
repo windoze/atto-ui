@@ -5,6 +5,7 @@ use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
 use crate::composable::scroll::{
@@ -16,6 +17,7 @@ use crate::composable::{
     ScrollbarVisibility, should_show_scrollbar,
 };
 use crate::reactive::Binding;
+use crate::text::styled_text::spans_from_inline;
 
 #[derive(Clone, Debug)]
 struct TableViewBindings {
@@ -218,6 +220,7 @@ impl Component for TableView {
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
         let header_height = if headers.is_empty() { 0 } else { 1 };
+        let link_overlay = ctx.theme.named_style("markdown-link");
 
         if header_height > 0 {
             let header_style = if enabled {
@@ -231,7 +234,7 @@ impl Component for TableView {
                 width: inner.width,
                 height: 1.min(inner.height),
             };
-            let header_cells = row_cells(&headers, column_count);
+            let header_cells = row_cells(&headers, column_count, header_style, link_overlay);
             let header = Row::new(header_cells).style(header_style);
             let header_table = Table::new(Vec::<Row>::new(), widths.clone())
                 .header(header)
@@ -554,12 +557,13 @@ impl ScrollContent for TableBodyContent {
 
         let headers = bindings.headers.get();
         let rows = bindings.rows.get();
+        let link_overlay = ctx.component.theme.named_style("markdown-link");
         let selection = self.normalize_selection(rows.len());
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
 
         let data_rows = rows.iter().enumerate().map(|(idx, row)| {
-            let cells = row_cells(row, column_count);
+            let cells = row_cells(row, column_count, base_style, link_overlay);
             let row = Row::new(cells);
             if selection.is_some_and(|sel| sel == idx) {
                 row.style(highlight_style)
@@ -604,11 +608,21 @@ fn column_constraints(column_count: usize) -> Vec<Constraint> {
         .collect()
 }
 
-fn row_cells(row: &[String], column_count: usize) -> Vec<Cell<'static>> {
+fn row_cells(
+    row: &[String],
+    column_count: usize,
+    base_style: Style,
+    link_overlay: Option<Style>,
+) -> Vec<Cell<'static>> {
     (0..column_count)
         .map(|idx| row.get(idx).cloned().unwrap_or_default())
-        .map(Cell::from)
+        .map(|text| styled_cell(&text, base_style, link_overlay))
         .collect()
+}
+
+fn styled_cell(text: &str, base_style: Style, link_overlay: Option<Style>) -> Cell<'static> {
+    let spans = spans_from_inline(text, base_style, link_overlay);
+    Cell::from(Line::from(spans))
 }
 
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
