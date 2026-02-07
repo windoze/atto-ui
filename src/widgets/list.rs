@@ -8,13 +8,15 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
+use atto_ui_macros::{Automatable, automate_component};
+use crate::automation::AutomationAction;
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
     ScrollContainerHost, ScrollContent, ScrollContentContext,
 };
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Automatable)]
 struct ListBoxBindings {
     title: Binding<String>,
     items: Binding<Vec<String>>,
@@ -23,7 +25,9 @@ struct ListBoxBindings {
     height: Binding<u16>,
 }
 
+#[derive(Automatable)]
 pub struct ListBox {
+    #[automation(delegate)]
     bindings: Arc<RwLock<ListBoxBindings>>,
     scroll: ScrollContainer,
     min_size: (u16, u16),
@@ -132,7 +136,26 @@ impl ListBox {
     }
 }
 
+#[automate_component]
 impl Component for ListBox {
+    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+        match action {
+            AutomationAction::SelectIndex(idx) => {
+                let bindings = self.bindings.write();
+                let items_len = bindings.items.get().len();
+                if items_len > 0 {
+                    bindings
+                        .selection
+                        .set(idx.min(items_len.saturating_sub(1)));
+                    EventResult::changed()
+                } else {
+                    EventResult::ignored()
+                }
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn min_width(&self) -> u16 {
         self.min_size.0
     }

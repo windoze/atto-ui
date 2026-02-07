@@ -5,6 +5,8 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use crate::automation::{AutomationAction, AutomationError, AutomationValue};
+use atto_ui_macros::{Automatable, automate_component};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use crate::reactive::Binding;
 
@@ -176,6 +178,7 @@ impl ScrollContainerHost {
     }
 }
 
+#[derive(Automatable)]
 pub struct ScrollContainer {
     padding: Binding<EdgeInsets>,
     scroll: Binding<ScrollOffset>,
@@ -224,7 +227,57 @@ impl ScrollContainer {
     }
 }
 
+#[automate_component]
 impl Component for ScrollContainer {
+    fn automation_properties(&self) -> Vec<&'static str> {
+        vec![
+            "scroll_x",
+            "scroll_y",
+            "content_width",
+            "content_height",
+            "viewport_width",
+            "viewport_height",
+        ]
+    }
+
+    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
+        match name {
+            "scroll_x" => Some(AutomationValue::U64(self.scroll.get().x as u64)),
+            "scroll_y" => Some(AutomationValue::U64(self.scroll.get().y as u64)),
+            "content_width" => Some(AutomationValue::U64(self.content_size.get().0 as u64)),
+            "content_height" => Some(AutomationValue::U64(self.content_size.get().1 as u64)),
+            "viewport_width" => Some(AutomationValue::U64(self.viewport_size.get().0 as u64)),
+            "viewport_height" => Some(AutomationValue::U64(self.viewport_size.get().1 as u64)),
+            _ => None,
+        }
+    }
+
+    fn automation_set_property(
+        &mut self,
+        name: &str,
+        value: AutomationValue,
+    ) -> Result<(), AutomationError> {
+        match name {
+            "scroll_x" => {
+                let x = value.try_into_usize(name)? as u16;
+                let scroll = self.scroll.get();
+                self.set_scroll_offset(x, scroll.y);
+                Ok(())
+            }
+            "scroll_y" => {
+                let y = value.try_into_usize(name)? as u16;
+                let scroll = self.scroll.get();
+                self.set_scroll_offset(scroll.x, y);
+                Ok(())
+            }
+            _ => Err(AutomationError::unsupported_property(name)),
+        }
+    }
+
+    fn automation_action(&mut self, _action: AutomationAction) -> EventResult {
+        EventResult::ignored()
+    }
+
     fn is_focusable(&self) -> bool {
         self.content.is_focusable()
     }

@@ -18,6 +18,7 @@ pub type MenuCallback = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone)]
 pub struct MenuItem {
+    pub automation_id: Option<String>,
     pub label: Binding<String>,
     pub shortcut: Binding<Option<String>>,
     pub enabled: Binding<bool>,
@@ -31,6 +32,7 @@ impl MenuItem {
         F: Fn() + Send + Sync + 'static,
     {
         Self {
+            automation_id: None,
             label: label.into(),
             shortcut: None.into(),
             enabled: true.into(),
@@ -41,6 +43,7 @@ impl MenuItem {
 
     pub fn submenu(label: impl Into<Binding<String>>, submenu: Vec<MenuItem>) -> Self {
         Self {
+            automation_id: None,
             label: label.into(),
             shortcut: None.into(),
             enabled: true.into(),
@@ -68,10 +71,16 @@ impl MenuItem {
         self.enabled = enabled.into();
         self
     }
+
+    pub fn with_automation_id(mut self, id: impl Into<String>) -> Self {
+        self.automation_id = Some(id.into());
+        self
+    }
 }
 
 #[derive(Clone)]
 pub struct MenuSpec {
+    pub automation_id: Option<String>,
     pub title: Binding<String>,
     pub items: Vec<MenuItem>,
 }
@@ -79,6 +88,7 @@ pub struct MenuSpec {
 impl MenuSpec {
     pub fn new(title: impl Into<Binding<String>>, items: Vec<MenuItem>) -> Self {
         Self {
+            automation_id: None,
             title: title.into(),
             items,
         }
@@ -86,6 +96,11 @@ impl MenuSpec {
 
     pub fn title(mut self, title: impl Into<Binding<String>>) -> Self {
         self.title = title.into();
+        self
+    }
+
+    pub fn with_automation_id(mut self, id: impl Into<String>) -> Self {
+        self.automation_id = Some(id.into());
         self
     }
 }
@@ -115,6 +130,14 @@ impl MenuBar {
             menus,
             state: MenuState::default(),
         }
+    }
+
+    pub fn menus(&self) -> &[MenuSpec] {
+        &self.menus
+    }
+
+    pub fn menus_mut(&mut self) -> &mut [MenuSpec] {
+        &mut self.menus
     }
 
     pub fn is_active(&self) -> bool {

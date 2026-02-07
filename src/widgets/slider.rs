@@ -4,10 +4,11 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Automatable)]
 pub struct Slider {
     min: Binding<f64>,
     max: Binding<f64>,
@@ -156,6 +157,7 @@ impl Slider {
     }
 }
 
+#[automate_component]
 impl Component for Slider {
     fn min_width(&self) -> u16 {
         3

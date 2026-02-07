@@ -8,6 +8,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
+use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
@@ -150,6 +151,7 @@ fn fill_buffer(buf: &mut Buffer, style: Style) {
 ///
 /// In `Clip`/`Scroll` modes, when the viewport is smaller than the inner view's minimum size,
 /// the inner view is rendered at its minimum size and then clipped (or panned with scrollbars).
+#[derive(Automatable)]
 pub(crate) struct WindowMinSizeView {
     inner: Box<dyn Component>,
     mode: Binding<WindowMinSizeMode>,
@@ -330,7 +332,51 @@ impl WindowMinSizeView {
     }
 }
 
+#[automate_component]
 impl Component for WindowMinSizeView {
+    fn automation_type_name(&self) -> &'static str {
+        self.inner.automation_type_name()
+    }
+
+    fn automation_id(&self) -> Option<&str> {
+        self.inner.automation_id()
+    }
+
+    fn automation_properties(&self) -> Vec<&'static str> {
+        let mut props = ::atto_ui::automation::Automatable::automation_properties(self);
+        props.extend(self.inner.automation_properties());
+        props
+    }
+
+    fn automation_get_property(
+        &self,
+        name: &str,
+    ) -> Option<::atto_ui::automation::AutomationValue> {
+        ::atto_ui::automation::Automatable::automation_get_property(self, name)
+            .or_else(|| self.inner.automation_get_property(name))
+    }
+
+    fn automation_set_property(
+        &mut self,
+        name: &str,
+        value: ::atto_ui::automation::AutomationValue,
+    ) -> Result<(), ::atto_ui::automation::AutomationError> {
+        if ::atto_ui::automation::Automatable::automation_set_property(self, name, value.clone())
+            .is_ok()
+        {
+            return Ok(());
+        }
+        self.inner.automation_set_property(name, value)
+    }
+
+    fn automation_action(&mut self, action: ::atto_ui::automation::AutomationAction) -> EventResult {
+        self.inner.automation_action(action)
+    }
+
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.inner.automation_focused_child()
+    }
+
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
     }

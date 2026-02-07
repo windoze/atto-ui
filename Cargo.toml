@@ -14,9 +14,9 @@ serde_json = "1"
 serde_yaml = "0.9"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+atto-ui-macros = { path = "crates/atto-ui-macros" }
 
 [dev-dependencies]
-atto-ui-macros = { path = "crates/atto-ui-macros" }
 atto-ui-test-host = { path = "crates/atto-ui-test-host" }
 
 # Demo binaries (teaching materials under `demos/`)

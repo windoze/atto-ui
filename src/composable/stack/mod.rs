@@ -6,6 +6,7 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use atto_ui_macros::{Automatable, automate_component};
 use super::component::{Component, ComponentContext, EventResult};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -20,6 +21,7 @@ enum StackAxis {
     Horizontal,
 }
 
+#[derive(Automatable)]
 struct StackCore {
     axis: StackAxis,
     id: ComponentId,
@@ -935,7 +937,12 @@ impl StackCore {
     }
 }
 
+#[automate_component]
 impl Component for StackCore {
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.focused
+    }
+
     fn is_focusable(&self) -> bool {
         self.children.iter().any(|c| c.view.is_focusable())
     }
@@ -1059,7 +1066,9 @@ impl Component for StackCore {
 
 macro_rules! define_stack {
     ($name:ident, $axis:expr) => {
+        #[derive(Automatable)]
         pub struct $name {
+            #[automation(delegate)]
             core: StackCore,
         }
 
@@ -1143,7 +1152,12 @@ macro_rules! define_stack {
             }
         }
 
+        #[automate_component]
         impl Component for $name {
+            fn automation_focused_child(&self) -> Option<ComponentId> {
+                self.core.automation_focused_child()
+            }
+
             fn is_focusable(&self) -> bool {
                 self.core.is_focusable()
             }

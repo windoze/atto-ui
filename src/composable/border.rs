@@ -3,6 +3,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
+use crate::automation::{AutomationAction, AutomationError, AutomationValue};
+use atto_ui_macros::{Automatable, automate_component};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use super::geom::{contains, mouse_coords_local_to_area};
 use super::node::ComponentId;
@@ -29,6 +31,7 @@ fn inset(area: Rect, n: u16) -> Rect {
 /// Adds an optional border around an arbitrary [`Component`].
 ///
 /// This is the generic mechanism behind “all components can have optional borders”.
+#[derive(Automatable)]
 pub struct Border {
     inner: Box<dyn Component>,
     border: Binding<bool>,
@@ -52,7 +55,44 @@ impl Border {
     }
 }
 
+#[automate_component]
 impl Component for Border {
+    fn automation_properties(&self) -> Vec<&'static str> {
+        let mut props = self.inner.automation_properties();
+        props.push("border");
+        props
+    }
+
+    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
+        match name {
+            "border" => Some(AutomationValue::Bool(self.border.get())),
+            _ => self.inner.automation_get_property(name),
+        }
+    }
+
+    fn automation_set_property(
+        &mut self,
+        name: &str,
+        value: AutomationValue,
+    ) -> Result<(), AutomationError> {
+        match name {
+            "border" => {
+                let v = value.try_into_bool(name)?;
+                self.border.set(v);
+                Ok(())
+            }
+            _ => self.inner.automation_set_property(name, value),
+        }
+    }
+
+    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+        self.inner.automation_action(action)
+    }
+
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.inner.automation_focused_child()
+    }
+
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
     }
