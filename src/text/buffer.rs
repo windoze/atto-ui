@@ -35,6 +35,11 @@ impl TextBuffer {
         self.cursor
     }
 
+    pub fn set_cursor_byte_index(&mut self, idx: usize) {
+        self.cursor = idx.min(self.text.len());
+        self.clamp_cursor();
+    }
+
     pub fn cursor_display_col(&self) -> u16 {
         let prefix = &self.text[..self.cursor.min(self.text.len())];
         UnicodeWidthStr::width(prefix).min(u16::MAX as usize) as u16
