@@ -38,8 +38,11 @@ impl Grid {
         }
 
         let scroll = self.scroll.get();
-        self.scroll
-            .set(clamp_scroll_offset(self.content_size, self.viewport_size, scroll));
+        self.scroll.set(clamp_scroll_offset(
+            self.content_size,
+            self.viewport_size,
+            scroll,
+        ));
 
         let scrollable = self.scrollable.get();
         let scroll = self.scroll.get();
@@ -118,4 +121,3 @@ impl Grid {
         );
     }
 }
-

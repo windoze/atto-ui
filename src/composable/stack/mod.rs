@@ -91,11 +91,7 @@ impl StackCore {
         self
     }
 
-    fn child_with_layout(
-        mut self,
-        view: impl Component + 'static,
-        layout: LayoutParams,
-    ) -> Self {
+    fn child_with_layout(mut self, view: impl Component + 'static, layout: LayoutParams) -> Self {
         self.add_child_with_layout(Box::new(view), layout);
         self
     }
@@ -1059,7 +1055,6 @@ impl Component for StackCore {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.draw_impl(frame, area, ctx)
     }
-
 }
 
 macro_rules! define_stack {
@@ -1209,11 +1204,19 @@ macro_rules! define_stack {
                 self.core.scroll_to_child(child_id);
             }
 
-            fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+            fn handle_event_capture(
+                &mut self,
+                event: &Event,
+                ctx: ComponentContext<'_>,
+            ) -> EventResult {
                 self.core.handle_event_capture(event, ctx)
             }
 
-            fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+            fn handle_event_bubble(
+                &mut self,
+                event: &Event,
+                ctx: ComponentContext<'_>,
+            ) -> EventResult {
                 self.core.handle_event_bubble(event, ctx)
             }
 

@@ -8,11 +8,11 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
+use atto_ui::reactive::Binding;
+use atto_ui::wm::{Window, WindowKind};
 use atto_ui_editor::{
     EditorConfig, EditorLspConfig, EditorLspMode, EditorPopupWindows, EditorThemeSet, EditorView,
 };
-use atto_ui::reactive::Binding;
-use atto_ui::wm::{Window, WindowKind};
 
 fn guess_language_id(path: &Path) -> String {
     let ext = path

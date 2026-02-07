@@ -4,12 +4,13 @@ use ratatui::layout::Rect;
 use super::super::component::{ComponentContext, ScrollbarHost};
 use super::super::layout::apply_padding;
 use super::super::scroll::{Scrollbars, scrollbar_layout_1d};
-use super::{
-    ScrollContainer, ScrollContainerScrollbars, ScrollbarLayout, ScrollbarPlacement,
-};
+use super::{ScrollContainer, ScrollContainerScrollbars, ScrollbarLayout, ScrollbarPlacement};
 
 impl ScrollContainer {
-    pub(super) fn scrollbars_info(&self, scrollbar_host: ScrollbarHost) -> ScrollContainerScrollbars {
+    pub(super) fn scrollbars_info(
+        &self,
+        scrollbar_host: ScrollbarHost,
+    ) -> ScrollContainerScrollbars {
         let cfg = self.scroll_config.get();
         let padding = self.padding.get();
         let viewport_size = self.viewport_size.get();
@@ -78,7 +79,12 @@ impl ScrollContainer {
         }
     }
 
-    pub(super) fn draw_scrollbars(&self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+    pub(super) fn draw_scrollbars(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ComponentContext<'_>,
+    ) {
         let Some(scrollbars) = self.scrollbars else {
             return;
         };

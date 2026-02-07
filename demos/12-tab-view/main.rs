@@ -221,7 +221,12 @@ impl TabDemoView {
         }
     }
 
-    fn forward_mouse(&mut self, area: Rect, event: MouseEvent, ctx: ComponentContext<'_>) -> EventResult {
+    fn forward_mouse(
+        &mut self,
+        area: Rect,
+        event: MouseEvent,
+        ctx: ComponentContext<'_>,
+    ) -> EventResult {
         let (_, tab_area) = self.layout_areas(area);
         if tab_area.width == 0 || tab_area.height == 0 {
             return EventResult::ignored();

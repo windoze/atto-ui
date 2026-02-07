@@ -22,9 +22,7 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use atto_ui::widgets::{
-    Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox,
-};
+use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
 
@@ -418,7 +416,9 @@ impl TabWindowDemo {
 
     fn add_tab(&mut self) -> bool {
         let title = format!("Tab{}", self.next_id);
-        let index = self.tabs.add_tab(title, build_tab_demo_short("Dynamically added tab."));
+        let index = self
+            .tabs
+            .add_tab(title, build_tab_demo_short("Dynamically added tab."));
         self.next_id += 1;
         self.tabs.select_tab(index)
     }
@@ -510,7 +510,10 @@ impl Component for TabWindowDemo {
         self.tabs.handle_event(event, ctx)
     }
 
-    fn titlebar(&mut self, ctx: atto_ui::composable::TitleBarContext<'_>) -> Option<atto_ui::composable::TitleBarContent> {
+    fn titlebar(
+        &mut self,
+        ctx: atto_ui::composable::TitleBarContext<'_>,
+    ) -> Option<atto_ui::composable::TitleBarContent> {
         self.tabs.titlebar(ctx)
     }
 
@@ -564,7 +567,10 @@ fn build_tab_demo_intro() -> Box<dyn Component> {
         .padding_insets(EdgeInsets::all(1))
         .spacing(0)
         .child_with_layout(Label::new("Tab window demo (titlebar tabs)."), row_layout)
-        .child_with_layout(Label::new("Click tabs in the title bar to switch."), row_layout)
+        .child_with_layout(
+            Label::new("Click tabs in the title bar to switch."),
+            row_layout,
+        )
         .child_with_layout(
             Label::new("Keys: 1-9 select tab, + add tab, - remove tab."),
             row_layout,
@@ -599,14 +605,21 @@ fn build_tab_demo_scroll() -> Box<dyn Component> {
             .padding_insets(EdgeInsets::all(1))
             .spacing(0)
             .scrollable(true)
-            .child_with_layout(Label::new("Scrollable tab (expect window scrollbars)."), row_layout)
             .child_with_layout(
-                Label::new("Long line: 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz"),
+                Label::new("Scrollable tab (expect window scrollbars)."),
+                row_layout,
+            )
+            .child_with_layout(
+                Label::new(
+                    "Long line: 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz",
+                ),
                 row_layout,
             ),
         |v, i| {
             v.child_with_layout(
-                Label::new(format!("Row {i:02}: The quick brown fox jumps over the lazy dog.")),
+                Label::new(format!(
+                    "Row {i:02}: The quick brown fox jumps over the lazy dog."
+                )),
                 row_layout,
             )
         },

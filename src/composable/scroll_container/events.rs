@@ -1,9 +1,9 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use super::super::component::{ComponentContext, EventResult, ScrollbarHost};
 use super::super::geom::{contains, mouse_coords_local_to_area};
 use super::super::layout::add_signed;
 use super::super::scroll::{ScrollOffset, clamp_scroll_offset, max_scroll_offset};
 use super::{ScrollContainer, ScrollContainerHost, ScrollContentContext};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 
 impl ScrollContainer {
     fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {

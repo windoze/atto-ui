@@ -110,7 +110,6 @@ pub trait ScrollContent: Send {
         EventResult::ignored()
     }
 
-
     fn draw(
         &mut self,
         frame: &mut Frame<'_>,
@@ -223,7 +222,6 @@ impl ScrollContainer {
             scrollbars: self.scrollbars_info(scrollbar_host),
         }
     }
-
 }
 
 impl Component for ScrollContainer {
@@ -269,7 +267,6 @@ impl Component for ScrollContainer {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_event_impl(event, ctx)
     }
-
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);

@@ -194,16 +194,17 @@ pub(crate) fn handle_scrollbar_mouse_event(
                         .min(layout.track_len.saturating_sub(1));
 
                     let max_start = layout.track_len.saturating_sub(layout.thumb_len);
-                    let new_thumb_start = pos_in_track
-                        .saturating_sub(grab_offset)
-                        .min(max_start);
+                    let new_thumb_start = pos_in_track.saturating_sub(grab_offset).min(max_start);
                     let new_off = scroll_offset_from_thumb_start(
                         layout.track_len,
                         viewport_size.1,
                         content_size.1,
                         new_thumb_start,
                     );
-                    return Some(ScrollOffset { x: scroll.x, y: new_off });
+                    return Some(ScrollOffset {
+                        x: scroll.x,
+                        y: new_off,
+                    });
                 }
                 ScrollbarDrag::Horizontal { grab_offset } => {
                     let Some(hbar) = scrollbars.hbar else {
@@ -233,16 +234,17 @@ pub(crate) fn handle_scrollbar_mouse_event(
                         .min(layout.track_len.saturating_sub(1));
 
                     let max_start = layout.track_len.saturating_sub(layout.thumb_len);
-                    let new_thumb_start = pos_in_track
-                        .saturating_sub(grab_offset)
-                        .min(max_start);
+                    let new_thumb_start = pos_in_track.saturating_sub(grab_offset).min(max_start);
                     let new_off = scroll_offset_from_thumb_start(
                         layout.track_len,
                         viewport_size.0,
                         content_size.0,
                         new_thumb_start,
                     );
-                    return Some(ScrollOffset { x: new_off, y: scroll.y });
+                    return Some(ScrollOffset {
+                        x: new_off,
+                        y: scroll.y,
+                    });
                 }
             },
             MouseEventKind::Up(MouseButton::Left) => {
@@ -279,11 +281,23 @@ pub(crate) fn handle_scrollbar_mouse_event(
                 }
                 ScrollbarHit::TrackDec => {
                     let page = viewport_size.1 as i16;
-                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, -page));
+                    return Some(scroll_by_delta(
+                        content_size,
+                        viewport_size,
+                        scroll,
+                        0,
+                        -page,
+                    ));
                 }
                 ScrollbarHit::TrackInc => {
                     let page = viewport_size.1 as i16;
-                    return Some(scroll_by_delta(content_size, viewport_size, scroll, 0, page));
+                    return Some(scroll_by_delta(
+                        content_size,
+                        viewport_size,
+                        scroll,
+                        0,
+                        page,
+                    ));
                 }
                 ScrollbarHit::None => {}
             }
@@ -314,11 +328,23 @@ pub(crate) fn handle_scrollbar_mouse_event(
                 }
                 ScrollbarHit::TrackDec => {
                     let page = viewport_size.0 as i16;
-                    return Some(scroll_by_delta(content_size, viewport_size, scroll, -page, 0));
+                    return Some(scroll_by_delta(
+                        content_size,
+                        viewport_size,
+                        scroll,
+                        -page,
+                        0,
+                    ));
                 }
                 ScrollbarHit::TrackInc => {
                     let page = viewport_size.0 as i16;
-                    return Some(scroll_by_delta(content_size, viewport_size, scroll, page, 0));
+                    return Some(scroll_by_delta(
+                        content_size,
+                        viewport_size,
+                        scroll,
+                        page,
+                        0,
+                    ));
                 }
                 ScrollbarHit::None => {}
             }
@@ -353,16 +379,10 @@ pub(crate) fn resolve_scroll_view(
             viewport_size = (inner.width, inner.height);
             content_size = content_size_for_viewport(viewport_size);
 
-            let new_show_v = should_show_scrollbar(
-                cfg.vertical_scrollbar,
-                content_size.1,
-                viewport_size.1,
-            );
-            let new_show_h = should_show_scrollbar(
-                cfg.horizontal_scrollbar,
-                content_size.0,
-                viewport_size.0,
-            );
+            let new_show_v =
+                should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
+            let new_show_h =
+                should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
 
             if new_show_v == show_v && new_show_h == show_h {
                 break;

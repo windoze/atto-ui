@@ -10,14 +10,14 @@ use ratatui::layout::Rect;
 use crate::theme::Theme;
 use crate::wm::WindowId;
 
+use super::geom::{
+    TabDirection, align_within, contains, mouse_coords_local_to_area, position_anchored,
+    tab_direction_for_event,
+};
 use super::{
     Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, EdgeInsets,
     EventOutcome, EventResult, Grid, HStack, LayoutParams, ScrollConfig, ScrollbarHost,
     ScrollbarVisibility, Size, Splitter, SplitterOrientation, TabMode, VStack,
-};
-use super::geom::{
-    TabDirection, align_within, contains, mouse_coords_local_to_area, position_anchored,
-    tab_direction_for_event,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +195,10 @@ fn geom_mouse_coords_local_to_area_accepts_local_coords() {
         row: 1,
         modifiers: KeyModifiers::empty(),
     };
-    assert_eq!(mouse_coords_local_to_area(Rect::new(0, 0, 4, 3), local), Some((3, 1)));
+    assert_eq!(
+        mouse_coords_local_to_area(Rect::new(0, 0, 4, 3), local),
+        Some((3, 1))
+    );
 }
 
 #[test]

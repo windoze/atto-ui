@@ -9,8 +9,8 @@ mod label;
 mod list;
 mod radio;
 mod styled_label;
-mod table;
 mod tab_view;
+mod table;
 mod textbox;
 
 pub use button::Button;
@@ -19,6 +19,6 @@ pub use label::Label;
 pub use list::ListBox;
 pub use radio::RadioGroup;
 pub use styled_label::StyledLabel;
-pub use table::TableView;
 pub use tab_view::{TabHeaderPosition, TabView};
+pub use table::TableView;
 pub use textbox::TextBox;

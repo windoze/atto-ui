@@ -21,8 +21,8 @@ pub use crate::widgets::{
 };
 pub use border::Border;
 pub use component::{
-    Component, ComponentAction, ComponentContext, EventOutcome, EventResult, ScrollbarHost, TabMode,
-    TitleBarContent, TitleBarContext, TitleBarSpan,
+    Component, ComponentAction, ComponentContext, EventOutcome, EventResult, ScrollbarHost,
+    TabMode, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 pub use for_each::{ForEach, ForEachIdentifiable};
 pub use grid::Grid;
@@ -31,8 +31,9 @@ pub use layout::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size}
 pub use node::{ComponentId, ComponentNode};
 pub use primitives::{Divider, Spacer, Text, TextFn};
 pub use scroll::{
-    ScrollConfig, ScrollOffset, ScrollbarDrag, ScrollbarHit, ScrollbarLayout1D, ScrollbarVisibility,
-    scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
+    ScrollConfig, ScrollOffset, ScrollbarDrag, ScrollbarHit, ScrollbarLayout1D,
+    ScrollbarVisibility, scroll_offset_from_thumb_start, scrollbar_hit_test, scrollbar_layout_1d,
+    should_show_scrollbar,
 };
 pub use scroll_container::{
     ScrollContainer, ScrollContainerHost, ScrollContainerInfo, ScrollContainerScrollbars,

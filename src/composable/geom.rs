@@ -118,7 +118,12 @@ pub(crate) fn position_anchored(
     }
 }
 
-pub(crate) fn align_within(slot: Rect, desired: (u16, u16), align_x: Align, align_y: Align) -> Rect {
+pub(crate) fn align_within(
+    slot: Rect,
+    desired: (u16, u16),
+    align_x: Align,
+    align_y: Align,
+) -> Rect {
     let (desired_w, desired_h) = desired;
 
     let w = match align_x {

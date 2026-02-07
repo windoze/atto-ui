@@ -9,8 +9,8 @@ use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::theme::Theme;
-use atto_ui_markdown::MarkdownViewer;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_markdown::MarkdownViewer;
 
 const DEFAULT_MARKDOWN: &str = r#"
 # Markdown Viewer
@@ -76,9 +76,7 @@ fn usage(program: &str) -> String {
 
 fn load_markdown_from_args() -> Result<(String, String)> {
     let mut args = env::args();
-    let program = args
-        .next()
-        .unwrap_or_else(|| "markdown_viewer".to_string());
+    let program = args.next().unwrap_or_else(|| "markdown_viewer".to_string());
     let first = args.next();
 
     if matches!(first.as_deref(), Some("-h" | "--help")) {

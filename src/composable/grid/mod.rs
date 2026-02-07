@@ -164,7 +164,6 @@ impl Grid {
         id
     }
 
-
     fn layout_children(&mut self, viewport_size: (u16, u16)) -> (u16, u16) {
         let (viewport_w, viewport_h) = viewport_size;
 
@@ -617,5 +616,4 @@ impl Component for Grid {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.draw_impl(frame, area, ctx)
     }
-
 }

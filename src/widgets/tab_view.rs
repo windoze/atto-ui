@@ -55,10 +55,7 @@ impl TabView {
         self
     }
 
-    pub fn with_header_position(
-        mut self,
-        position: impl Into<Binding<TabHeaderPosition>>,
-    ) -> Self {
+    pub fn with_header_position(mut self, position: impl Into<Binding<TabHeaderPosition>>) -> Self {
         self.header_position = position.into();
         self
     }
@@ -67,7 +64,11 @@ impl TabView {
         self.with_header_position(position)
     }
 
-    pub fn tab(mut self, title: impl Into<Binding<String>>, view: impl Component + 'static) -> Self {
+    pub fn tab(
+        mut self,
+        title: impl Into<Binding<String>>,
+        view: impl Component + 'static,
+    ) -> Self {
         self.add_tab(title, view);
         self
     }
@@ -117,7 +118,11 @@ impl TabView {
         }
         self.normalize_selection();
         if let Some(active_id) = self.active_child_id() {
-            if self.children.iter().any(|c| c.id == active_id && c.view.is_focusable()) {
+            if self
+                .children
+                .iter()
+                .any(|c| c.id == active_id && c.view.is_focusable())
+            {
                 self.focused = Some(active_id);
             }
         }
@@ -139,7 +144,8 @@ impl TabView {
     }
 
     fn active_child_id(&self) -> Option<ComponentId> {
-        self.selected().and_then(|idx| self.children.get(idx).map(|c| c.id))
+        self.selected()
+            .and_then(|idx| self.children.get(idx).map(|c| c.id))
     }
 
     fn normalize_selection(&mut self) -> Option<usize> {

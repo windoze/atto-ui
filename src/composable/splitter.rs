@@ -1,6 +1,4 @@
-use crossterm::event::{
-    Event, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;

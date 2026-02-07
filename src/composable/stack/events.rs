@@ -1,6 +1,4 @@
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use super::super::component::{ComponentContext, EventResult, TabMode};
@@ -10,9 +8,7 @@ use super::super::geom::{
 };
 use super::super::layout::add_signed;
 use super::super::node::ComponentId;
-use super::super::scroll::{
-    ScrollOffset, clamp_scroll_offset, max_scroll_offset,
-};
+use super::super::scroll::{ScrollOffset, clamp_scroll_offset, max_scroll_offset};
 use super::StackCore;
 
 impl StackCore {
