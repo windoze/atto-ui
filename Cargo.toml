@@ -70,4 +70,5 @@ members = [
     "crates/atto-ui-macros",
     "crates/atto-ui-markdown",
     "crates/atto-ui-editor",
+    "crates/atto-ui-terminal",
 ]

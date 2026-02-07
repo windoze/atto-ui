@@ -1,0 +1,16 @@
+[package]
+name = "atto-ui-terminal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+atto-ui = { path = "../.." }
+crossterm = "0.28"
+parking_lot = "0.12"
+portable-pty = "0.9"
+ratatui = "0.30"
+vt100 = "0.16"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }

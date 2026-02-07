@@ -1,0 +1,1087 @@
+use std::collections::VecDeque;
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+
+use anyhow::Result;
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use parking_lot::Mutex;
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+
+use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig};
+
+const DEFAULT_SCROLLBACK_LEN: usize = 2000;
+const DEFAULT_SCROLL_STEP: u16 = 3;
+
+/// Keyboard shortcut used to release terminal input capture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalShortcut {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+}
+
+impl TerminalShortcut {
+    pub const fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+        Self { code, modifiers }
+    }
+
+    fn matches(&self, event: KeyEvent) -> bool {
+        if event.code != self.code {
+            match (event.code, self.code) {
+                (KeyCode::Char(a), KeyCode::Char(b))
+                    if a.to_ascii_lowercase() == b.to_ascii_lowercase() => {}
+                _ => return false,
+            }
+        }
+        if event.kind == KeyEventKind::Release {
+            return false;
+        }
+        event.modifiers == self.modifiers
+    }
+}
+
+fn default_release_shortcut() -> TerminalShortcut {
+    TerminalShortcut {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    }
+}
+
+type InputCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
+struct TerminalShared {
+    parser: vt100::Parser,
+    scrollback_len: usize,
+    input: VecDeque<u8>,
+    on_input: Option<InputCallback>,
+    input_forward: Option<InputCallback>,
+    capture: bool,
+    release_shortcut: TerminalShortcut,
+}
+
+impl TerminalShared {
+    fn queue_input(&mut self, bytes: &[u8]) {
+        self.input.extend(bytes);
+    }
+
+    fn max_scrollback(&mut self) -> usize {
+        let screen = self.parser.screen_mut();
+        let current = screen.scrollback();
+        screen.set_scrollback(usize::MAX);
+        let max = screen.scrollback();
+        screen.set_scrollback(current);
+        max
+    }
+
+    fn scrollback_offset(&self) -> usize {
+        self.parser.screen().scrollback()
+    }
+
+    fn set_scrollback_offset(&mut self, offset: usize) {
+        self.parser.screen_mut().set_scrollback(offset);
+    }
+
+    fn set_scrollback_from_scroll_offset(&mut self, scroll_offset: u16) {
+        let max = self.max_scrollback().min(u16::MAX as usize);
+        let y = scroll_offset.min(max as u16) as usize;
+        let offset = max.saturating_sub(y);
+        self.set_scrollback_offset(offset);
+    }
+}
+
+struct TerminalProcess {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    reader_alive: Arc<AtomicBool>,
+    reader_thread: Option<thread::JoinHandle<()>>,
+    last_size: (u16, u16),
+}
+
+impl TerminalProcess {
+    fn resize_if_needed(&mut self, rows: u16, cols: u16) {
+        if self.last_size == (rows, cols) {
+            return;
+        }
+        let _ = self.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+        self.last_size = (rows, cols);
+    }
+
+    fn shutdown(&mut self) {
+        self.reader_alive.store(false, Ordering::Relaxed);
+        let _ = self.child.kill();
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn dispatch_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let callbacks = {
+        let mut shared = shared.lock();
+        shared.queue_input(bytes);
+        let mut callbacks = Vec::new();
+        if let Some(cb) = shared.on_input.clone() {
+            callbacks.push(cb);
+        }
+        if let Some(cb) = shared.input_forward.clone() {
+            callbacks.push(cb);
+        }
+        callbacks
+    };
+    for cb in callbacks {
+        cb(bytes);
+    }
+}
+
+/// A terminal emulator widget.
+pub struct TerminalEmulator {
+    shared: Arc<Mutex<TerminalShared>>,
+    last_area: Option<Rect>,
+    scroll_step: u16,
+    capture_on_click: bool,
+    process: Option<TerminalProcess>,
+    on_close: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl TerminalEmulator {
+    pub fn new() -> Self {
+        let parser = vt100::Parser::new(24, 80, DEFAULT_SCROLLBACK_LEN);
+        let shared = TerminalShared {
+            parser,
+            scrollback_len: DEFAULT_SCROLLBACK_LEN,
+            input: VecDeque::new(),
+            on_input: None,
+            input_forward: None,
+            capture: true,
+            release_shortcut: default_release_shortcut(),
+        };
+
+        Self {
+            shared: Arc::new(Mutex::new(shared)),
+            last_area: None,
+            scroll_step: DEFAULT_SCROLL_STEP,
+            capture_on_click: true,
+            process: None,
+            on_close: None,
+        }
+    }
+
+    pub fn handle(&self) -> TerminalHandle {
+        TerminalHandle {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+
+    pub fn scrollback_len(self, len: usize) -> Self {
+        {
+            let mut shared = self.shared.lock();
+            shared.scrollback_len = len;
+            let (rows, cols) = shared.parser.screen().size();
+            shared.parser = vt100::Parser::new(rows, cols, len);
+        }
+        self
+    }
+
+    pub fn capture(self, capture: bool) -> Self {
+        self.shared.lock().capture = capture;
+        self
+    }
+
+    pub fn release_shortcut(self, shortcut: TerminalShortcut) -> Self {
+        self.shared.lock().release_shortcut = shortcut;
+        self
+    }
+
+    pub fn scroll_step(mut self, step: u16) -> Self {
+        self.scroll_step = step.max(1);
+        self
+    }
+
+    pub fn capture_on_click(mut self, enabled: bool) -> Self {
+        self.capture_on_click = enabled;
+        self
+    }
+
+    pub fn on_input<F>(self, callback: F) -> Self
+    where
+        F: Fn(&[u8]) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_input = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn on_close<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.on_close = Some(Arc::new(callback));
+        self
+    }
+
+    /// Spawns a subprocess attached to the terminal's PTY.
+    pub fn spawn_process(&mut self, command: &str, args: &[String]) -> Result<()> {
+        let mut cmd = CommandBuilder::new(command);
+        for arg in args {
+            cmd.arg(arg);
+        }
+        self.spawn_command(cmd)
+    }
+
+    /// Spawns a subprocess using a custom command builder.
+    pub fn spawn_command(&mut self, cmd: CommandBuilder) -> Result<()> {
+        self.stop_process();
+
+        let (rows, cols) = {
+            let shared = self.shared.lock();
+            shared.parser.screen().size()
+        };
+
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+
+        let child = pair.slave.spawn_command(cmd)?;
+        let writer = pair.master.take_writer()?;
+        let reader = pair.master.try_clone_reader()?;
+
+        let handle = self.handle();
+        let reader_alive = Arc::new(AtomicBool::new(true));
+        let reader_alive_thread = Arc::clone(&reader_alive);
+        let reader_thread = thread::spawn(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 8192];
+            while reader_alive_thread.load(Ordering::Relaxed) {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => handle.process_output(&buf[..n]),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let forward_writer = Arc::new(Mutex::new(writer));
+        self.shared.lock().input_forward = Some(Arc::new(move |bytes| {
+            if bytes.is_empty() {
+                return;
+            }
+            let mut writer = forward_writer.lock();
+            let _ = writer.write_all(bytes);
+            let _ = writer.flush();
+        }));
+
+        self.process = Some(TerminalProcess {
+            master: pair.master,
+            child,
+            reader_alive,
+            reader_thread: Some(reader_thread),
+            last_size: (rows, cols),
+        });
+
+        Ok(())
+    }
+
+    /// Stops the currently attached subprocess, if any.
+    pub fn stop_process(&mut self) {
+        self.shared.lock().input_forward = None;
+        if let Some(mut process) = self.process.take() {
+            process.shutdown();
+        }
+    }
+
+    fn handle_scrollback_wheel(&mut self, event: MouseEvent, step: u16) -> bool {
+        let mut shared = self.shared.lock();
+        let delta = match event.kind {
+            MouseEventKind::ScrollUp => -(step as i16),
+            MouseEventKind::ScrollDown => step as i16,
+            _ => return false,
+        };
+        let max = shared.max_scrollback();
+        let current = shared.parser.screen().scrollback();
+        let desired = if delta.is_negative() {
+            let amount = i32::from(delta).abs() as usize;
+            current.saturating_add(amount).min(max)
+        } else {
+            current.saturating_sub(delta as usize)
+        };
+        if desired != current {
+            shared.parser.screen_mut().set_scrollback(desired);
+            return true;
+        }
+        false
+    }
+
+    fn handle_scrollback_key(&mut self, event: KeyEvent) -> bool {
+        if event.kind == KeyEventKind::Release {
+            return false;
+        }
+        let mut shared = self.shared.lock();
+        let max = shared.max_scrollback();
+        let current = shared.parser.screen().scrollback();
+        let rows = shared.parser.screen().size().0 as usize;
+        let desired = match event.code {
+            KeyCode::PageUp => current.saturating_add(rows).min(max),
+            KeyCode::PageDown => current.saturating_sub(rows),
+            KeyCode::Home => max,
+            KeyCode::End => 0,
+            _ => return false,
+        };
+        if desired != current {
+            shared.parser.screen_mut().set_scrollback(desired);
+            return true;
+        }
+        false
+    }
+}
+
+impl Default for TerminalEmulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Component for TerminalEmulator {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn is_scrollable(&self) -> bool {
+        let mut shared = self.shared.lock();
+        let max = shared.max_scrollback();
+        max > 0
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        let mut shared = self.shared.lock();
+        let (rows, cols) = shared.parser.screen().size();
+        let max = shared.max_scrollback().min(u16::MAX as usize);
+        let height = rows.saturating_add(max as u16);
+        (cols, height)
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        let shared = self.shared.lock();
+        let (rows, cols) = shared.parser.screen().size();
+        (cols, rows)
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        ScrollConfig::default()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        let mut shared = self.shared.lock();
+        let max = shared.max_scrollback().min(u16::MAX as usize);
+        let offset = shared.scrollback_offset().min(max);
+        let y = max.saturating_sub(offset) as u16;
+        (0, y)
+    }
+
+    fn set_scroll_offset(&mut self, _x: u16, y: u16) {
+        let mut shared = self.shared.lock();
+        shared.set_scrollback_from_scroll_offset(y);
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        let Event::Key(key) = event else {
+            return EventResult::ignored();
+        };
+        let shared = self.shared.lock();
+        if !shared.capture {
+            return EventResult::ignored();
+        }
+        match key.code {
+            KeyCode::Tab | KeyCode::BackTab => {
+                if let Some(bytes) = encode_key_event(shared.parser.screen(), *key) {
+                    drop(shared);
+                    dispatch_input(&self.shared, &bytes);
+                    return EventResult::consumed();
+                }
+                EventResult::consumed()
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        match event {
+            Event::Key(key) => {
+                let mut shared = self.shared.lock();
+                if shared.capture {
+                    if shared.release_shortcut.matches(*key) {
+                        shared.capture = false;
+                        return EventResult::consumed();
+                    }
+                    if let Some(bytes) = encode_key_event(shared.parser.screen(), *key) {
+                        drop(shared);
+                        dispatch_input(&self.shared, &bytes);
+                        return EventResult::consumed();
+                    }
+                    return EventResult::consumed();
+                }
+                drop(shared);
+                if self.handle_scrollback_key(*key) {
+                    return EventResult::consumed();
+                }
+                EventResult::ignored()
+            }
+            Event::Paste(text) => {
+                let shared = self.shared.lock();
+                if !shared.capture {
+                    return EventResult::ignored();
+                }
+                let screen = shared.parser.screen();
+                let bytes = if screen.bracketed_paste() {
+                    let mut buf = Vec::with_capacity(text.len() + 16);
+                    buf.extend_from_slice(b"\x1b[200~");
+                    buf.extend_from_slice(text.as_bytes());
+                    buf.extend_from_slice(b"\x1b[201~");
+                    buf
+                } else {
+                    text.as_bytes().to_vec()
+                };
+                drop(shared);
+                dispatch_input(&self.shared, &bytes);
+                EventResult::consumed()
+            }
+            Event::Mouse(m) => {
+                let shared = self.shared.lock();
+                let screen = shared.parser.screen();
+                let inside = mouse_coords_local(self.last_area, *m).is_some();
+                if !inside {
+                    return EventResult::ignored();
+                }
+
+                if !shared.capture {
+                    drop(shared);
+                    if matches!(m.kind, MouseEventKind::Down(_)) && self.capture_on_click {
+                        self.shared.lock().capture = true;
+                        return EventResult::consumed();
+                    }
+                    if self.handle_scrollback_wheel(*m, self.scroll_step) {
+                        return EventResult::consumed();
+                    }
+                    return EventResult::ignored();
+                }
+
+                if let Some(bytes) = encode_mouse_event(screen, *m, self.last_area) {
+                    drop(shared);
+                    dispatch_input(&self.shared, &bytes);
+                    return EventResult::consumed();
+                }
+                drop(shared);
+                if self.handle_scrollback_wheel(*m, self.scroll_step) {
+                    return EventResult::consumed();
+                }
+                EventResult::consumed()
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let mut shared = self.shared.lock();
+        if !ctx.is_focused && shared.capture {
+            shared.capture = false;
+        }
+        let screen = shared.parser.screen_mut();
+        let (rows, cols) = (area.height, area.width);
+        if screen.size() != (rows, cols) {
+            screen.set_size(rows, cols);
+        }
+        if let Some(process) = &mut self.process {
+            process.resize_if_needed(rows, cols);
+        }
+
+        let base_style = ctx.theme.window_bg;
+        let base_fg = base_style.fg;
+        let base_bg = base_style.bg;
+
+        let buf = frame.buffer_mut();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = screen.cell(y, x);
+                let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
+                let symbol = cell
+                    .and_then(|c| {
+                        if c.is_wide_continuation() {
+                            Some(" ")
+                        } else if c.contents().is_empty() {
+                            Some(" ")
+                        } else {
+                            Some(c.contents())
+                        }
+                    })
+                    .unwrap_or(" ");
+
+                let style = cell
+                    .map(|c| cell_style(c, base_fg, base_bg))
+                    .unwrap_or(base_style);
+
+                let dst_x = area.x.saturating_add(x);
+                let dst_y = area.y.saturating_add(y);
+                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
+                    dst.set_symbol(symbol);
+                    dst.set_style(style);
+                    dst.set_skip(is_wide_cont);
+                }
+            }
+        }
+
+        if !screen.hide_cursor() && screen.scrollback() == 0 {
+            let (cur_row, cur_col) = screen.cursor_position();
+            if cur_row < area.height && cur_col < area.width {
+                let dst_x = area.x.saturating_add(cur_col);
+                let dst_y = area.y.saturating_add(cur_row);
+                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
+                    dst.set_style(dst.style().add_modifier(Modifier::REVERSED));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for TerminalEmulator {
+    fn drop(&mut self) {
+        self.stop_process();
+        if let Some(cb) = self.on_close.take() {
+            cb();
+        }
+    }
+}
+
+/// Handle for interacting with a [`TerminalEmulator`] from outside the UI tree.
+#[derive(Clone)]
+pub struct TerminalHandle {
+    shared: Arc<Mutex<TerminalShared>>,
+}
+
+impl TerminalHandle {
+    /// Feeds bytes into the terminal emulator (ANSI output stream).
+    pub fn process_output(&self, bytes: &[u8]) {
+        let mut shared = self.shared.lock();
+        shared.parser.process(bytes);
+    }
+
+    pub fn process_output_str(&self, text: &str) {
+        self.process_output(text.as_bytes());
+    }
+
+    /// Sends a user input event to the terminal (encoded to bytes).
+    pub fn send_event(&self, event: &Event) {
+        let shared = self.shared.lock();
+        let screen = shared.parser.screen();
+        let bytes = match event {
+            Event::Key(key) => encode_key_event(screen, *key),
+            Event::Paste(text) => {
+                if screen.bracketed_paste() {
+                    let mut buf = Vec::with_capacity(text.len() + 16);
+                    buf.extend_from_slice(b"\x1b[200~");
+                    buf.extend_from_slice(text.as_bytes());
+                    buf.extend_from_slice(b"\x1b[201~");
+                    Some(buf)
+                } else {
+                    Some(text.as_bytes().to_vec())
+                }
+            }
+            Event::Mouse(m) => encode_mouse_event(screen, *m, None),
+            _ => None,
+        };
+        if let Some(bytes) = bytes {
+            drop(shared);
+            dispatch_input(&self.shared, &bytes);
+        }
+    }
+
+    /// Pushes raw input bytes to the terminal input stream.
+    pub fn send_input_bytes(&self, bytes: &[u8]) {
+        dispatch_input(&self.shared, bytes);
+    }
+
+    /// Returns and clears the queued input bytes.
+    pub fn take_input(&self) -> Vec<u8> {
+        let mut shared = self.shared.lock();
+        let mut out = Vec::with_capacity(shared.input.len());
+        while let Some(b) = shared.input.pop_front() {
+            out.push(b);
+        }
+        out
+    }
+
+    pub fn set_capture(&self, capture: bool) {
+        self.shared.lock().capture = capture;
+    }
+
+    pub fn capture(&self) -> bool {
+        self.shared.lock().capture
+    }
+
+    pub fn set_release_shortcut(&self, shortcut: TerminalShortcut) {
+        self.shared.lock().release_shortcut = shortcut;
+    }
+
+    pub fn release_shortcut(&self) -> TerminalShortcut {
+        self.shared.lock().release_shortcut
+    }
+
+    /// Snapshot of the terminal contents including scrollback.
+    pub fn snapshot(&self) -> TerminalSnapshot {
+        let mut shared = self.shared.lock();
+        let max_scrollback = shared.max_scrollback();
+        let (rows, cols, current_offset) = {
+            let screen = shared.parser.screen();
+            let (rows, cols) = screen.size();
+            let current_offset = screen.scrollback();
+            (rows, cols, current_offset)
+        };
+        let screen = shared.parser.screen_mut();
+
+        let mut lines = Vec::with_capacity(max_scrollback + rows as usize);
+        let mut start = 0;
+        while start < max_scrollback {
+            let offset = max_scrollback - start;
+            screen.set_scrollback(offset);
+            let chunk: Vec<String> = screen.rows(0, cols).collect();
+            let take = (max_scrollback - start).min(rows as usize);
+            lines.extend(chunk.into_iter().take(take));
+            start += take;
+        }
+
+        screen.set_scrollback(0);
+        lines.extend(screen.rows(0, cols));
+
+        screen.set_scrollback(current_offset);
+
+        TerminalSnapshot {
+            lines,
+            cols,
+            rows,
+            scrollback: max_scrollback,
+        }
+    }
+}
+
+/// Full text snapshot of the terminal contents including scrollback.
+#[derive(Clone, Debug)]
+pub struct TerminalSnapshot {
+    pub lines: Vec<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub scrollback: usize,
+}
+
+impl TerminalSnapshot {
+    pub fn text(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
+fn mouse_coords_local(area: Option<Rect>, m: MouseEvent) -> Option<(u16, u16)> {
+    let Some(area) = area else {
+        return Some((m.column, m.row));
+    };
+
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+
+    if m.column >= area.x
+        && m.column < area.x.saturating_add(area.width)
+        && m.row >= area.y
+        && m.row < area.y.saturating_add(area.height)
+    {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
+}
+
+fn cell_style(cell: &vt100::Cell, base_fg: Option<Color>, base_bg: Option<Color>) -> Style {
+    let mut fg = resolve_color(cell.fgcolor(), base_fg);
+    let mut bg = resolve_color(cell.bgcolor(), base_bg);
+    if cell.inverse() {
+        std::mem::swap(&mut fg, &mut bg);
+    }
+
+    let mut style = Style::default();
+    if let Some(fg) = fg {
+        style = style.fg(fg);
+    }
+    if let Some(bg) = bg {
+        style = style.bg(bg);
+    }
+
+    let mut mods = Modifier::empty();
+    if cell.bold() {
+        mods |= Modifier::BOLD;
+    }
+    if cell.dim() {
+        mods |= Modifier::DIM;
+    }
+    if cell.italic() {
+        mods |= Modifier::ITALIC;
+    }
+    if cell.underline() {
+        mods |= Modifier::UNDERLINED;
+    }
+
+    style.add_modifier(mods)
+}
+
+fn resolve_color(color: vt100::Color, default: Option<Color>) -> Option<Color> {
+    match color {
+        vt100::Color::Default => default,
+        vt100::Color::Idx(i) => Some(color_from_index(i)),
+        vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
+    }
+}
+
+fn color_from_index(i: u8) -> Color {
+    match i {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        8 => Color::DarkGray,
+        9 => Color::LightRed,
+        10 => Color::LightGreen,
+        11 => Color::LightYellow,
+        12 => Color::LightBlue,
+        13 => Color::LightMagenta,
+        14 => Color::LightCyan,
+        15 => Color::White,
+        _ => Color::Indexed(i),
+    }
+}
+
+fn encode_key_event(screen: &vt100::Screen, event: KeyEvent) -> Option<Vec<u8>> {
+    if event.kind == KeyEventKind::Release {
+        return None;
+    }
+
+    let mods = event.modifiers;
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+
+    let mut out = Vec::new();
+
+    match event.code {
+        KeyCode::Char(c) => {
+            if ctrl {
+                if let Some(b) = ctrl_char(c) {
+                    out.push(b);
+                } else {
+                    out.extend_from_slice(c.to_string().as_bytes());
+                }
+            } else {
+                out.extend_from_slice(c.to_string().as_bytes());
+            }
+            if alt {
+                out.insert(0, 0x1b);
+            }
+        }
+        KeyCode::Enter => {
+            out.push(b'\r');
+            if alt {
+                out.insert(0, 0x1b);
+            }
+        }
+        KeyCode::Backspace => {
+            out.push(0x7f);
+            if alt {
+                out.insert(0, 0x1b);
+            }
+        }
+        KeyCode::Tab => {
+            if shift {
+                out.extend_from_slice(b"\x1b[Z");
+            } else {
+                out.push(b'\t');
+            }
+            if alt {
+                out.insert(0, 0x1b);
+            }
+        }
+        KeyCode::BackTab => {
+            out.extend_from_slice(b"\x1b[Z");
+        }
+        KeyCode::Esc => {
+            out.push(0x1b);
+        }
+        KeyCode::Up => {
+            out.extend_from_slice(encode_cursor_key(screen, 'A', mods).as_bytes());
+        }
+        KeyCode::Down => {
+            out.extend_from_slice(encode_cursor_key(screen, 'B', mods).as_bytes());
+        }
+        KeyCode::Right => {
+            out.extend_from_slice(encode_cursor_key(screen, 'C', mods).as_bytes());
+        }
+        KeyCode::Left => {
+            out.extend_from_slice(encode_cursor_key(screen, 'D', mods).as_bytes());
+        }
+        KeyCode::Home => {
+            out.extend_from_slice(encode_home_end_key(screen, 'H', mods).as_bytes());
+        }
+        KeyCode::End => {
+            out.extend_from_slice(encode_home_end_key(screen, 'F', mods).as_bytes());
+        }
+        KeyCode::PageUp => {
+            out.extend_from_slice(encode_csi_tilde(5, mods).as_bytes());
+        }
+        KeyCode::PageDown => {
+            out.extend_from_slice(encode_csi_tilde(6, mods).as_bytes());
+        }
+        KeyCode::Insert => {
+            out.extend_from_slice(encode_csi_tilde(2, mods).as_bytes());
+        }
+        KeyCode::Delete => {
+            out.extend_from_slice(encode_csi_tilde(3, mods).as_bytes());
+        }
+        KeyCode::F(n) => {
+            if let Some(seq) = encode_function_key(n, mods) {
+                out.extend_from_slice(seq.as_bytes());
+            }
+        }
+        _ => return None,
+    }
+
+    Some(out)
+}
+
+fn encode_cursor_key(screen: &vt100::Screen, suffix: char, mods: KeyModifiers) -> String {
+    let mod_value = modifier_value(mods);
+    if mod_value == 1 {
+        if screen.application_cursor() {
+            format!("\x1bO{suffix}")
+        } else {
+            format!("\x1b[{suffix}")
+        }
+    } else {
+        format!("\x1b[1;{mod_value}{suffix}")
+    }
+}
+
+fn encode_home_end_key(screen: &vt100::Screen, suffix: char, mods: KeyModifiers) -> String {
+    let mod_value = modifier_value(mods);
+    if mod_value == 1 {
+        if screen.application_cursor() {
+            format!("\x1bO{suffix}")
+        } else {
+            format!("\x1b[{suffix}")
+        }
+    } else {
+        format!("\x1b[1;{mod_value}{suffix}")
+    }
+}
+
+fn encode_csi_tilde(n: u8, mods: KeyModifiers) -> String {
+    let mod_value = modifier_value(mods);
+    if mod_value == 1 {
+        format!("\x1b[{n}~")
+    } else {
+        format!("\x1b[{n};{mod_value}~")
+    }
+}
+
+fn encode_function_key(n: u8, mods: KeyModifiers) -> Option<String> {
+    let mod_value = modifier_value(mods);
+    let seq = match n {
+        1 => {
+            if mod_value == 1 {
+                "\x1bOP".to_string()
+            } else {
+                format!("\x1b[1;{mod_value}P")
+            }
+        }
+        2 => {
+            if mod_value == 1 {
+                "\x1bOQ".to_string()
+            } else {
+                format!("\x1b[1;{mod_value}Q")
+            }
+        }
+        3 => {
+            if mod_value == 1 {
+                "\x1bOR".to_string()
+            } else {
+                format!("\x1b[1;{mod_value}R")
+            }
+        }
+        4 => {
+            if mod_value == 1 {
+                "\x1bOS".to_string()
+            } else {
+                format!("\x1b[1;{mod_value}S")
+            }
+        }
+        5 => encode_csi_tilde(15, mods),
+        6 => encode_csi_tilde(17, mods),
+        7 => encode_csi_tilde(18, mods),
+        8 => encode_csi_tilde(19, mods),
+        9 => encode_csi_tilde(20, mods),
+        10 => encode_csi_tilde(21, mods),
+        11 => encode_csi_tilde(23, mods),
+        12 => encode_csi_tilde(24, mods),
+        _ => return None,
+    };
+    Some(seq)
+}
+
+fn modifier_value(mods: KeyModifiers) -> u8 {
+    let mut value = 1;
+    if mods.contains(KeyModifiers::SHIFT) {
+        value += 1;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        value += 2;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        value += 4;
+    }
+    value
+}
+
+fn ctrl_char(c: char) -> Option<u8> {
+    let c = c.to_ascii_uppercase();
+    match c {
+        '@' => Some(0),
+        'A'..='Z' => Some((c as u8) - b'A' + 1),
+        '[' => Some(27),
+        '\\' => Some(28),
+        ']' => Some(29),
+        '^' => Some(30),
+        '_' => Some(31),
+        '?' => Some(127),
+        _ => None,
+    }
+}
+
+fn encode_mouse_event(
+    screen: &vt100::Screen,
+    event: MouseEvent,
+    area: Option<Rect>,
+) -> Option<Vec<u8>> {
+    if matches!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None) {
+        return None;
+    }
+
+    let (col, row) = mouse_coords_local(area, event)?;
+    let (rows, cols) = screen.size();
+    if row >= rows || col >= cols {
+        return None;
+    }
+
+    let cb = match event.kind {
+        MouseEventKind::Down(button) => match button {
+            MouseButton::Left => Some(0),
+            MouseButton::Middle => Some(1),
+            MouseButton::Right => Some(2),
+        },
+        MouseEventKind::Up(button) => match screen.mouse_protocol_mode() {
+            vt100::MouseProtocolMode::PressRelease
+            | vt100::MouseProtocolMode::ButtonMotion
+            | vt100::MouseProtocolMode::AnyMotion => match button {
+                MouseButton::Left => Some(0),
+                MouseButton::Middle => Some(1),
+                MouseButton::Right => Some(2),
+            },
+            _ => None,
+        },
+        MouseEventKind::Drag(button) => match screen.mouse_protocol_mode() {
+            vt100::MouseProtocolMode::ButtonMotion
+            | vt100::MouseProtocolMode::AnyMotion => match button {
+                MouseButton::Left => Some(32),
+                MouseButton::Middle => Some(33),
+                MouseButton::Right => Some(34),
+            },
+            _ => None,
+        },
+        MouseEventKind::Moved => match screen.mouse_protocol_mode() {
+            vt100::MouseProtocolMode::AnyMotion => Some(35),
+            _ => None,
+        },
+        MouseEventKind::ScrollUp => Some(64),
+        MouseEventKind::ScrollDown => Some(65),
+        MouseEventKind::ScrollLeft => Some(66),
+        MouseEventKind::ScrollRight => Some(67),
+    }?;
+
+    let mut cb = cb;
+    if event.modifiers.contains(KeyModifiers::SHIFT) {
+        cb += 4;
+    }
+    if event.modifiers.contains(KeyModifiers::ALT) {
+        cb += 8;
+    }
+    if event.modifiers.contains(KeyModifiers::CONTROL) {
+        cb += 16;
+    }
+
+    let x = col.saturating_add(1);
+    let y = row.saturating_add(1);
+
+    match screen.mouse_protocol_encoding() {
+        vt100::MouseProtocolEncoding::Sgr => {
+            let suffix = match event.kind {
+                MouseEventKind::Up(_) => 'm',
+                _ => 'M',
+            };
+            let seq = format!("\x1b[<{cb};{x};{y}{suffix}");
+            Some(seq.into_bytes())
+        }
+        vt100::MouseProtocolEncoding::Utf8 | vt100::MouseProtocolEncoding::Default => {
+            let cb = (cb + 32).min(255);
+            let x = (x + 32).min(255);
+            let y = (y + 32).min(255);
+            let mut seq = Vec::with_capacity(6);
+            seq.extend_from_slice(b"\x1b[M");
+            seq.push(cb as u8);
+            seq.push(x as u8);
+            seq.push(y as u8);
+            Some(seq)
+        }
+    }
+}
