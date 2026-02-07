@@ -16,7 +16,8 @@ mod stack;
 mod tab_window;
 
 pub use crate::widgets::{
-    Button, Checkbox, Label, ListBox, RadioGroup, StyledLabel, TabHeaderPosition, TabView,
+    Button, Checkbox, FlowDirection, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner,
+    SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, StyledLabel, TabHeaderPosition, TabView,
     TableView, TextBox,
 };
 pub use border::Border;

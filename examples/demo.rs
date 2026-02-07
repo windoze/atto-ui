@@ -20,9 +20,12 @@ use atto_ui::composable::{
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
     ScrollContentContext, Size, Splitter, TabWindow, VStack,
 };
-use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::reactive::{EventQueue, Property, set_global_tick_rate, tick_global_timers};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
-use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
+use atto_ui::widgets::{
+    Button, Checkbox, FlowDirection, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner,
+    SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, TableView, TextBox,
+};
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_macros::{Reactive, view_builder};
 
@@ -93,6 +96,10 @@ impl DialogView {
             )
             .child_with_layout(
                 Label::new("  d widget states demo (disabled controls)"),
+                row_layout,
+            )
+            .child_with_layout(
+                Label::new("  l loading widgets demo (progress/slider/spinner)"),
                 row_layout,
             )
             .child_with_layout(Label::new("  v layout demo (view hierarchy)"), row_layout)
@@ -168,6 +175,10 @@ struct WidgetsModel {
     click_count: Property<u32>,
     #[reactive]
     last_msg: Property<String>,
+    #[reactive]
+    progress: Property<f64>,
+    #[reactive]
+    loading: Property<bool>,
 }
 
 impl WidgetsModel {
@@ -178,6 +189,8 @@ impl WidgetsModel {
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
         let click_count = Property::new(0u32);
+        let progress = Property::new(42.0);
+        let loading = Property::new(true);
         Self {
             text,
             enable_feature,
@@ -186,6 +199,8 @@ impl WidgetsModel {
             table_selection,
             click_count,
             last_msg: Property::new(String::new()),
+            progress,
+            loading,
         }
     }
 }
@@ -195,12 +210,28 @@ struct WidgetsView {
     root: VStack,
 }
 
+fn codex_wave_colors() -> Vec<Color> {
+    vec![
+        Color::DarkGray,
+        Color::Gray,
+        Color::LightBlue,
+        Color::Cyan,
+        Color::White,
+        Color::Cyan,
+        Color::LightBlue,
+        Color::Gray,
+        Color::DarkGray,
+    ]
+}
+
 impl WidgetsView {
     fn new() -> Self {
         let model = WidgetsModel::new();
         let click_count = model.click_count.clone();
         let last_msg = model.last_msg.clone();
         let model_for_state = model.clone();
+        let progress = model.progress_binding();
+        let loading = model.loading_binding();
 
         let labels = view_builder! {
             VStack {
@@ -233,6 +264,49 @@ impl WidgetsView {
                         vec!["Normal".into(), "Insert".into(), "Visual".into()],
                         model.mode_binding(),
                     ),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    Label::new("Progress"),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    Slider::new(0.0, 100.0, progress.clone()).step(1.0),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    ProgressBar::new(0.0, 100.0, progress.clone()).text("Loading..."),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    Checkbox::new("Loading", loading.clone()),
+                    LayoutParams {
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                )
+                .child_with_layout(
+                    Spinner::new("Loading...")
+                        .icon_style(SpinnerIconStyle::Braille)
+                        .layout(SpinnerLayout::IconLeft)
+                        .text_effect(SpinnerTextEffect::Flow {
+                            colors: codex_wave_colors(),
+                            speed: Duration::from_millis(140),
+                            direction: FlowDirection::LeftToRight,
+                        })
+                        .running(loading.clone()),
                     LayoutParams {
                         height: Size::Content,
                         ..LayoutParams::default()
@@ -308,12 +382,14 @@ impl WidgetsView {
 
         let states = view_builder! { TextFn(move || {
             let status = format!(
-                "States: count={}  checked={}  mode={}  list={}  table={}  text={}",
+                "States: count={}  checked={}  mode={}  list={}  table={}  progress={:.0}%  loading={}  text={}",
                 model_for_state.get_click_count(),
                 if model_for_state.get_enable_feature() { "on" } else { "off" },
                 model_for_state.get_mode(),
                 model_for_state.get_list_selection(),
                 model_for_state.get_table_selection(),
+                model_for_state.get_progress(),
+                if model_for_state.get_loading() { "on" } else { "off" },
                 model_for_state.get_text(),
             );
             let msg = model_for_state.get_last_msg();
@@ -390,6 +466,92 @@ impl Component for WidgetsView {
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.root.handle_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+struct LoadingWidgetsView {
+    root: VStack,
+}
+
+impl LoadingWidgetsView {
+    fn new() -> Self {
+        let progress = Property::new(35.0);
+        let loading = Property::new(true);
+
+        let row_layout = LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        };
+
+        let root = VStack::new()
+            .spacing(1)
+            .padding(1)
+            .child_with_layout(Label::new("Loading widgets demo (Esc closes)"), row_layout)
+            .child_with_layout(
+                Slider::new(0.0, 100.0, progress.binding()).step(1.0),
+                row_layout,
+            )
+            .child_with_layout(
+                ProgressBar::new(0.0, 100.0, progress.binding()).text("Loading..."),
+                row_layout,
+            )
+            .child_with_layout(Checkbox::new("Loading", loading.binding()), row_layout)
+            .child_with_layout(
+                Spinner::new("Loading... Loading... Loading... Loading... Loading...")
+                    .icon_style(SpinnerIconStyle::Circles)
+                    .icon_speed(Duration::from_millis(1000))
+                    .text_effect(SpinnerTextEffect::Flow {
+                        colors: codex_wave_colors(),
+                        speed: Duration::from_millis(1000),
+                        direction: FlowDirection::LeftToRight,
+                    })
+                    .running(loading.binding()),
+                row_layout,
+            );
+
+        Self { root }
+    }
+}
+
+impl Component for LoadingWidgetsView {
+    fn min_width(&self) -> u16 {
+        self.root.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.root.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.root.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.root.desired_height()
+    }
+
+    fn children(&self) -> &[atto_ui::composable::ComponentNode] {
+        self.root.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
+        self.root.children_mut()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return EventResult::close_window();
+        }
         self.root.handle_event(event, ctx)
     }
 
@@ -692,6 +854,7 @@ impl DisabledWidgetsView {
         let mode = Property::new(1usize);
         let list_selection = Property::new(0usize);
         let table_selection = Property::new(0usize);
+        let progress = Property::new(65.0);
 
         let row_layout = LayoutParams {
             height: Size::Content,
@@ -749,6 +912,30 @@ impl DisabledWidgetsView {
                 )
                 .height(4u16)
                 .enabled(false),
+                row_layout,
+            )
+            .child_with_layout(
+                Slider::new(0.0, 100.0, progress.binding())
+                    .step(1.0)
+                    .enabled(false),
+                row_layout,
+            )
+            .child_with_layout(
+                ProgressBar::new(0.0, 100.0, progress.binding())
+                    .text("Loading...")
+                    .enabled(false),
+                row_layout,
+            )
+            .child_with_layout(
+                Spinner::new("Loading...")
+                    .icon_style(SpinnerIconStyle::Bars)
+                    .text_effect(SpinnerTextEffect::Flow {
+                        colors: codex_wave_colors(),
+                        speed: Duration::from_millis(140),
+                        direction: FlowDirection::LeftToRight,
+                    })
+                    .enabled(false)
+                    .running(false),
                 row_layout,
             )
             .child_with_layout(Button::new("OK (disabled)").enabled(false), row_layout)
@@ -1243,6 +1430,7 @@ enum DemoAction {
     OpenVirtualScrollDemo,
     OpenTabWindowDemo,
     OpenWidgetStatesDemo,
+    OpenLoadingWidgetsDemo,
     OpenMarkdownDemo,
     MinimizeFocused,
     ToggleMaximizeFocused,
@@ -1395,6 +1583,7 @@ fn main() -> Result<()> {
     let mut scroll_demo_window_id: Option<WindowId> = None;
     let mut virtual_scroll_demo_window_id: Option<WindowId> = None;
     let mut widget_states_demo_window_id: Option<WindowId> = None;
+    let mut loading_widgets_demo_window_id: Option<WindowId> = None;
     let mut markdown_demo_window_id: Option<WindowId> = None;
 
     let log_id = desktop.add_window(
@@ -1413,6 +1602,7 @@ fn main() -> Result<()> {
                 "F2: cycle theme (built-in + overlays)".into(),
                 "Paste: bracketed paste into textbox".into(),
                 "D: widget states demo (disabled)".into(),
+                "L: loading widgets demo (progress/slider/spinner)".into(),
                 "V: layout demo (view hierarchy)".into(),
                 "P: splitter demo (drag divider)".into(),
                 "B: tab demo (titlebar tabs)".into(),
@@ -1436,6 +1626,7 @@ fn main() -> Result<()> {
         &mut scroll_demo_window_id,
         &mut virtual_scroll_demo_window_id,
         &mut widget_states_demo_window_id,
+        &mut loading_widgets_demo_window_id,
         &mut markdown_demo_window_id,
         &mut tooltip,
     );
@@ -1507,6 +1698,11 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::OpenWidgetStatesDemo)
                 })
                 .shortcut("d"),
+                MenuItem::action("Loading widgets demo", {
+                    let actions = actions.clone();
+                    move || actions.push(DemoAction::OpenLoadingWidgetsDemo)
+                })
+                .shortcut("l"),
                 MenuItem::action("Layout demo", {
                     let actions = actions.clone();
                     move || actions.push(DemoAction::OpenLayoutDemo)
@@ -1580,10 +1776,13 @@ fn run(
     scroll_demo_window_id: &mut Option<WindowId>,
     virtual_scroll_demo_window_id: &mut Option<WindowId>,
     widget_states_demo_window_id: &mut Option<WindowId>,
+    loading_widgets_demo_window_id: &mut Option<WindowId>,
     markdown_demo_window_id: &mut Option<WindowId>,
     tooltip: &mut Option<(WindowId, Instant)>,
 ) -> Result<()> {
     let mut next_float = 0u32;
+    let tick_rate = Duration::from_millis(50);
+    set_global_tick_rate(tick_rate);
 
     loop {
         // Auto-close tooltip after a short time.
@@ -1595,9 +1794,10 @@ fn run(
             }
         }
 
+        tick_global_timers();
         terminal.draw(|f| desktop.draw(f))?;
 
-        if !event::poll(Duration::from_millis(50))? {
+        if !event::poll(tick_rate)? {
             continue;
         }
         let ev = event::read()?;
@@ -1645,6 +1845,9 @@ fn run(
                 }
                 DemoAction::OpenWidgetStatesDemo => {
                     open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
+                }
+                DemoAction::OpenLoadingWidgetsDemo => {
+                    open_loading_widgets_demo(desktop, screen, loading_widgets_demo_window_id)?;
                 }
                 DemoAction::OpenMarkdownDemo => {
                     open_markdown_demo(desktop, screen, markdown_demo_window_id)?;
@@ -1714,6 +1917,9 @@ fn run(
                 }
                 (KeyCode::Char('d'), KeyModifiers::NONE) => {
                     open_widget_states_demo(desktop, screen, widget_states_demo_window_id)?;
+                }
+                (KeyCode::Char('l'), KeyModifiers::NONE) => {
+                    open_loading_widgets_demo(desktop, screen, loading_widgets_demo_window_id)?;
                 }
                 (KeyCode::Char('v'), KeyModifiers::NONE) => {
                     open_layout_demo(desktop, screen, layout_demo_window_id)?;
@@ -2008,6 +2214,42 @@ fn open_widget_states_demo(
         screen,
     );
     *widget_states_demo_window_id = Some(id);
+    Ok(())
+}
+
+fn open_loading_widgets_demo(
+    desktop: &mut Desktop,
+    screen: Rect,
+    loading_widgets_demo_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *loading_widgets_demo_window_id
+        && desktop.wm.window_mut(id).is_some()
+    {
+        desktop.wm.focus(id);
+        desktop.wm.bring_to_front(id);
+        return Ok(());
+    }
+
+    let work = Desktop::layout(screen).work_area;
+    let w = 48.min(work.width.saturating_sub(2)).max(24);
+    let h = 12.min(work.height.saturating_sub(2)).max(8);
+    let rect = Rect {
+        x: work.x + (work.width.saturating_sub(w)) / 2,
+        y: work.y + (work.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Loading Widgets",
+            rect,
+            Box::new(LoadingWidgetsView::new()),
+        ),
+        screen,
+    );
+    *loading_widgets_demo_window_id = Some(id);
     Ok(())
 }
 
