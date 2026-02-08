@@ -9,6 +9,7 @@ use atto_ui_macros::{ComponentProperties, component_properties};
 use super::{
     Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
+use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 #[derive(ComponentProperties)]
 pub struct TabWindowTab {
@@ -134,6 +135,20 @@ impl TabWindow {
         } else {
             None
         }
+    }
+
+    fn active_dynamic_view(&mut self) -> Result<&mut dyn Component, TreeError> {
+        let Some(active) = self.tabs.get_mut(self.active) else {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        };
+        if active.view.dynamic_root_spec().is_none() {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        }
+        Ok(active.view.as_mut())
     }
 
     fn titlebar_layout(&self, ctx: &TitleBarContext<'_>) -> Option<TabTitlebarLayout> {
@@ -340,6 +355,26 @@ impl Component for TabWindow {
         if let Some(view) = self.active_view_mut() {
             view.scroll_to_child(child_id);
         }
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.active_dynamic_view()?.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.active_dynamic_view()?.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| tab.view.dynamic_root_spec())
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| tab.view.dynamic_callbacks())
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

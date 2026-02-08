@@ -326,24 +326,44 @@ pub trait Component: Send {
     /// Default: no-op.
     fn scroll_to_child(&mut self, _child_id: ComponentId) {}
 
-    fn apply_tree_ops(&mut self, _ops: &[TreeOp]) -> Result<bool, TreeError> {
-        Err(TreeError::InvalidTreeOp(
-            "component does not support tree operations".to_string(),
-        ))
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        let Some(children) = self.children_mut() else {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        };
+        let Some(index) = find_dynamic_child_index(children)? else {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        };
+        children[index].view.apply_tree_ops(ops)
     }
 
     fn rebuild_tree(&mut self) -> Result<(), TreeError> {
-        Err(TreeError::InvalidTreeOp(
-            "component does not support tree operations".to_string(),
-        ))
+        let Some(children) = self.children_mut() else {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        };
+        let Some(index) = find_dynamic_child_index(children)? else {
+            return Err(TreeError::InvalidTreeOp(
+                "component does not support tree operations".to_string(),
+            ));
+        };
+        children[index].view.rebuild_tree()
     }
 
     fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
-        None
+        self.children()
+            .iter()
+            .find_map(|child| child.view.dynamic_root_spec())
     }
 
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
-        None
+        self.children()
+            .iter()
+            .find_map(|child| child.view.dynamic_callbacks())
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>);
@@ -493,4 +513,19 @@ impl Component for Box<dyn Component> {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.as_mut().draw(frame, area, ctx);
     }
+}
+
+fn find_dynamic_child_index(children: &[ComponentNode]) -> Result<Option<usize>, TreeError> {
+    let mut index = None;
+    for (idx, child) in children.iter().enumerate() {
+        if child.view.dynamic_root_spec().is_some() {
+            if index.is_some() {
+                return Err(TreeError::InvalidTreeOp(
+                    "multiple dynamic roots found".to_string(),
+                ));
+            }
+            index = Some(idx);
+        }
+    }
+    Ok(index)
 }
