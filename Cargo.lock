@@ -58,6 +58,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-ui-chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-markdown",
+ "atto-ui-test-host",
+ "crossterm 0.28.1",
+ "ratatui",
+ "unicode-width",
+]
+
+[[package]]
 name = "atto-ui-editor"
 version = "0.1.0"
 dependencies = [
