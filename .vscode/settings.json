@@ -1,7 +1,6 @@
 {
-    "cSpell.words": [
-        "Automatable",
-        "crossterm",
-        "ratatui"
-    ]
+  "python.defaultInterpreterPath": "python3",
+  "pylint.interpreter": ["python3"],
+  "pylint.args": ["--extension-pkg-allow-list=atto_ui"],
+  "cSpell.words": ["Automatable", "crossterm", "ratatui"]
 }
