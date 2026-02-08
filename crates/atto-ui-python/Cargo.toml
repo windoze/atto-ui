@@ -1,0 +1,17 @@
+[package]
+name = "atto-ui-python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "atto_ui"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28.0" }
+atto-ui = { path = "../.." }
+atto-ui-runtime = { path = "../atto-ui-runtime" }
+ratatui = "0.30.0"
+
+[build-dependencies]
+pyo3-build-config = { version = "0.28.0", features = ["resolve-config"] }

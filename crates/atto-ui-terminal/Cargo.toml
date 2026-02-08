@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
+anyhow = "1.0.101"
 atto-ui = { path = "../.." }
-crossterm = "0.28"
-parking_lot = "0.12"
-portable-pty = "0.9"
-ratatui = "0.30"
-vt100 = "0.16"
+crossterm = "0.29.0"
+parking_lot = "0.12.5"
+portable-pty = "0.9.0"
+ratatui = "0.30.0"
+vt100 = "0.16.2"
 
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }

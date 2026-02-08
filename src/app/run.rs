@@ -145,6 +145,106 @@ fn handle_desktop_action(desktop: &mut Desktop, action: &DesktopAction) {
     }
 }
 
+pub type TickCallBack = dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>;
+pub type EventCallBack =
+    dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>;
+
+pub struct AppHost {
+    config: CrosstermAppConfig,
+    session: TerminalSession,
+    desktop: Desktop,
+    on_tick: Option<Box<TickCallBack>>,
+    on_event: Option<Box<EventCallBack>>,
+}
+
+impl AppHost {
+    pub fn new<B>(config: CrosstermAppConfig, build: B) -> Result<Self>
+    where
+        B: FnOnce(Rect) -> Result<Desktop>,
+    {
+        let session = TerminalSession::new(config)?;
+        let screen: Rect = session.terminal.size()?.into();
+        let desktop = build(screen)?;
+        set_global_tick_rate(config.tick_rate);
+        Ok(Self {
+            config,
+            session,
+            desktop,
+            on_tick: None,
+            on_event: None,
+        })
+    }
+
+    pub fn desktop(&mut self) -> &mut Desktop {
+        &mut self.desktop
+    }
+
+    pub fn desktop_ref(&self) -> &Desktop {
+        &self.desktop
+    }
+
+    pub fn screen(&self) -> Result<Rect> {
+        Ok(self.session.terminal.size()?.into())
+    }
+
+    pub fn set_on_tick<F>(&mut self, handler: F)
+    where
+        F: FnMut(&mut Desktop, Rect) -> Result<AppControl> + 'static,
+    {
+        self.on_tick = Some(Box::new(handler));
+    }
+
+    pub fn set_on_event<F>(&mut self, handler: F)
+    where
+        F: FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl> + 'static,
+    {
+        self.on_event = Some(Box::new(handler));
+    }
+
+    pub fn step(&mut self) -> Result<AppControl> {
+        let screen: Rect = self.session.terminal.size()?.into();
+
+        tick_global_timers();
+        if let Some(handler) = self.on_tick.as_mut()
+            && handler(&mut self.desktop, screen)? == AppControl::Exit
+        {
+            return Ok(AppControl::Exit);
+        }
+
+        self.session.terminal.draw(|f| self.desktop.draw(f))?;
+
+        if !event::poll(self.config.tick_rate)? {
+            return Ok(AppControl::Continue);
+        }
+
+        let ev = event::read()?;
+        let screen: Rect = self.session.terminal.size()?.into();
+        let result = self.desktop.handle_event(&ev, screen);
+        handle_desktop_action(&mut self.desktop, &result.action);
+
+        if should_quit_default(&ev, result.outcome) {
+            return Ok(AppControl::Exit);
+        }
+
+        if let Some(handler) = self.on_event.as_mut()
+            && handler(&mut self.desktop, &ev, screen, &result)? == AppControl::Exit
+        {
+            return Ok(AppControl::Exit);
+        }
+
+        Ok(AppControl::Continue)
+    }
+
+    pub fn run(&mut self) -> Result<()> {
+        loop {
+            if self.step()? == AppControl::Exit {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn run_crossterm_desktop_simple<B>(config: CrosstermAppConfig, build: B) -> Result<()>
 where
     B: FnOnce(Rect) -> Result<Desktop>,

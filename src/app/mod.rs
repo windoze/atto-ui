@@ -6,7 +6,7 @@ mod status;
 pub use desktop::{Desktop, DesktopAction, DesktopEventResult, DesktopLayout, DesktopMode};
 pub use menu::{MenuAction, MenuBar, MenuItem, MenuSpec};
 pub use run::{
-    AppControl, CrosstermAppConfig, CursorMode, run_crossterm_desktop,
+    AppControl, AppHost, CrosstermAppConfig, CursorMode, run_crossterm_desktop,
     run_crossterm_desktop_simple, run_crossterm_desktop_with_actions, should_quit_default,
 };
 pub use status::StatusBar;

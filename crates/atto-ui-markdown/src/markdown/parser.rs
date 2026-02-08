@@ -212,7 +212,7 @@ impl ParserState {
         match tag {
             TagEnd::Paragraph => self.finish_block(),
             TagEnd::Heading(_) => self.finish_block(),
-            TagEnd::BlockQuote => {
+            TagEnd::BlockQuote(_) => {
                 if let Some(container) = self.stack.pop() {
                     self.push_container(container);
                 }

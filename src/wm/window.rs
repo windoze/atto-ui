@@ -9,6 +9,16 @@ use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
 
+impl WindowId {
+    pub fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 pub type WindowCloseHook = Box<dyn FnMut(WindowId) -> bool + Send>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

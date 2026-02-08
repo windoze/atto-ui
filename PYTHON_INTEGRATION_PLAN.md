@@ -120,10 +120,9 @@
 ### 5.1 Python API 草案
 
 ```python
-app = atto_ui.App()
+app = atto_ui.AppHost()
 
-root = app.root()
-root.set_tree({
+root = {
     "type": "VStack",
     "id": "main",
     "props": {"spacing": 1},
@@ -131,14 +130,19 @@ root.set_tree({
         {"type": "Label", "id": "title", "props": {"text": "Hello"}},
         {"type": "Button", "id": "ok", "props": {"label": "OK"}}
     ]
-})
+}
 
-@app.on("ok", "click")
-def handle_ok(event):
-    print("clicked", event)
+win_id = app.add_dynamic_window("Demo", (2, 2, 40, 12), root)
+app.apply_tree_ops(win_id, [
+    {"op": "bind_event", "id": "ok", "event": "click", "callback": 1}
+])
 
-app.run()
+while app.step():
+    for ev in app.drain_callbacks():
+        print("clicked", ev)
 ```
+
+说明：当前 Python 绑定直接接收 Python 的 dict/list/tuple 结构，不再需要 JSON 字符串。
 
 ### 5.2 Maturin 工程结构
 

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "atto-ui"
+version = "0.1.0"
+description = "Python bindings for atto-ui"
+requires-python = ">=3.9"
+
+[tool.maturin]
+module-name = "atto_ui"
