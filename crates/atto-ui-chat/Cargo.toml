@@ -1,0 +1,15 @@
+[package]
+name = "atto-ui-chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+atto-ui = { path = "../.." }
+atto-ui-markdown = { path = "../atto-ui-markdown" }
+crossterm = "0.28"
+ratatui = "0.30"
+unicode-width = "0.2"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }
