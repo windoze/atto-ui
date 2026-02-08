@@ -8,9 +8,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use crate::composable::{Component, ComponentContext, EventResult};
-use crate::dynamic::CallbackHandle;
+use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 use crate::text::TextBuffer;
 
@@ -37,12 +37,12 @@ fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
     None
 }
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 pub struct TextBox {
     title: Binding<String>,
     placeholder: Option<Binding<String>>,
     buffer: TextBuffer,
-    #[automation(rename = "text")]
+    #[component(rename = "text")]
     binding: Binding<String>,
     enabled: Binding<bool>,
     clipboard: Binding<String>,
@@ -131,7 +131,7 @@ impl TextBox {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for TextBox {
     fn min_width(&self) -> u16 {
         3

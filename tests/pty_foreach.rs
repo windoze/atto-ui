@@ -19,7 +19,7 @@ fn test_foreach_simple_list() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_foreach_dynamic_add() -> anyhow::Result<()> {
+fn test_foreach_binding_add() -> anyhow::Result<()> {
     let bin = env!("CARGO_BIN_EXE_foreach_demo");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24)?;
 
@@ -40,7 +40,7 @@ fn test_foreach_dynamic_add() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_foreach_dynamic_remove() -> anyhow::Result<()> {
+fn test_foreach_binding_remove() -> anyhow::Result<()> {
     let bin = env!("CARGO_BIN_EXE_foreach_demo");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24)?;
 

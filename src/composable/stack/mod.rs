@@ -6,7 +6,7 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::component::{Component, ComponentContext, EventResult};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -21,7 +21,7 @@ enum StackAxis {
     Horizontal,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 struct StackCore {
     axis: StackAxis,
     id: ComponentId,
@@ -937,9 +937,9 @@ impl StackCore {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for StackCore {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
+    fn focused_child(&self) -> Option<ComponentId> {
         self.focused
     }
 
@@ -1066,9 +1066,9 @@ impl Component for StackCore {
 
 macro_rules! define_stack {
     ($name:ident, $axis:expr) => {
-        #[derive(Automatable)]
+        #[derive(ComponentProps)]
         pub struct $name {
-            #[automation(delegate)]
+            #[component(delegate)]
             core: StackCore,
         }
 
@@ -1152,10 +1152,10 @@ macro_rules! define_stack {
             }
         }
 
-        #[automate_component]
+        #[component_props]
         impl Component for $name {
-            fn automation_focused_child(&self) -> Option<ComponentId> {
-                self.core.automation_focused_child()
+            fn focused_child(&self) -> Option<ComponentId> {
+                self.core.focused_child()
             }
 
             fn is_focusable(&self) -> bool {

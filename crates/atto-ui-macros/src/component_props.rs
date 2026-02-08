@@ -12,7 +12,7 @@ enum FieldKind {
     OptionBinding { inner: Type },
 }
 
-pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
+pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let generics = &input.generics;
@@ -27,14 +27,14 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             Fields::Unit => {}
             Fields::Unnamed(_) => {
                 return quote! {
-                    compile_error!("Automatable only supports structs with named fields");
+                    compile_error!("ComponentProps only supports structs with named fields");
                 }
                 .into();
             }
         },
         _ => {
             return quote! {
-                compile_error!("Automatable only supports structs");
+                compile_error!("ComponentProps only supports structs");
             }
             .into();
         }
@@ -61,13 +61,13 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
         let mut include = false;
 
         for attr in &field.attrs {
-            if !attr.path().is_ident("automation") {
+            if !attr.path().is_ident("component") {
                 continue;
             }
 
             match &attr.meta {
                 Meta::Path(_) => {
-                    // #[automation] - no-op
+                    // #[component] - no-op
                 }
                 Meta::NameValue(MetaNameValue { path, value, .. }) => {
                     if path.is_ident("rename")
@@ -160,7 +160,7 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
                 quote! {
                     #name => {
                         let v: #inner = self.#ident.get();
-                        return Some(::atto_ui::automation::AutomationValueCodec::to_automation_value(&v));
+                        return Some(::atto_ui::ComponentValueCodec::to_component_value(&v));
                     }
                 }
             }
@@ -169,7 +169,7 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
                     #name => {
                         if let Some(binding) = &self.#ident {
                             let v: #inner = binding.get();
-                            return Some(::atto_ui::automation::AutomationValueCodec::to_automation_value(&v));
+                            return Some(::atto_ui::ComponentValueCodec::to_component_value(&v));
                         }
                         return None;
                     }
@@ -190,7 +190,7 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             FieldKind::Binding { .. } => {
                 quote! {
                     #name => {
-                        let v: #inner = ::atto_ui::automation::AutomationValueCodec::from_automation_value(value, name)?;
+                        let v: #inner = ::atto_ui::ComponentValueCodec::from_component_value(value, name)?;
                         self.#ident.set(v);
                         return Ok(());
                     }
@@ -199,7 +199,7 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             FieldKind::OptionBinding { .. } => {
                 quote! {
                     #name => {
-                        let v: #inner = ::atto_ui::automation::AutomationValueCodec::from_automation_value(value, name)?;
+                        let v: #inner = ::atto_ui::ComponentValueCodec::from_component_value(value, name)?;
                         if let Some(binding) = &self.#ident {
                             binding.set(v);
                         } else {
@@ -217,12 +217,12 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             quote! {
                 {
                     let guard = self.#ident.read();
-                    props.extend(::atto_ui::automation::Automatable::automation_properties(&*guard));
+                    props.extend(::atto_ui::ComponentProps::property_names(&*guard));
                 }
             }
         } else {
             quote! {
-                props.extend(::atto_ui::automation::Automatable::automation_properties(&self.#ident));
+                props.extend(::atto_ui::ComponentProps::property_names(&self.#ident));
             }
         }
     });
@@ -232,14 +232,14 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             quote! {
                 {
                     let guard = self.#ident.read();
-                    if let Some(v) = ::atto_ui::automation::Automatable::automation_get_property(&*guard, name) {
+                    if let Some(v) = ::atto_ui::ComponentProps::get_property(&*guard, name) {
                         return Some(v);
                     }
                 }
             }
         } else {
             quote! {
-                if let Some(v) = ::atto_ui::automation::Automatable::automation_get_property(&self.#ident, name) {
+                if let Some(v) = ::atto_ui::ComponentProps::get_property(&self.#ident, name) {
                     return Some(v);
                 }
             }
@@ -251,14 +251,14 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
             quote! {
                 {
                     let mut guard = self.#ident.write();
-                    if ::atto_ui::automation::Automatable::automation_set_property(&mut *guard, name, value).is_ok() {
+                    if ::atto_ui::ComponentProps::set_property(&mut *guard, name, value).is_ok() {
                         return Ok(());
                     }
                 }
             }
         } else {
             quote! {
-                if ::atto_ui::automation::Automatable::automation_set_property(&mut self.#ident, name, value).is_ok() {
+                if ::atto_ui::ComponentProps::set_property(&mut self.#ident, name, value).is_ok() {
                     return Ok(());
                 }
             }
@@ -266,18 +266,18 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
     });
 
     quote! {
-        impl #impl_generics ::atto_ui::automation::Automatable for #name #ty_generics #where_clause {
-            fn automation_properties(&self) -> Vec<&'static str> {
+        impl #impl_generics ::atto_ui::ComponentProps for #name #ty_generics #where_clause {
+            fn property_names(&self) -> Vec<&'static str> {
                 let mut props: Vec<&'static str> = Vec::new();
                 #(props.push(#prop_names);)*
                 #(#delegate_props)*
                 props
             }
 
-            fn automation_get_property(
+            fn get_property(
                 &self,
                 name: &str,
-            ) -> Option<::atto_ui::automation::AutomationValue> {
+            ) -> Option<::atto_ui::ComponentValue> {
                 match name {
                     #(#get_match_arms)*
                     _ => {}
@@ -286,24 +286,24 @@ pub fn derive_automatable_impl(input: TokenStream) -> TokenStream {
                 None
             }
 
-            fn automation_set_property(
+            fn set_property(
                 &mut self,
                 name: &str,
-                value: ::atto_ui::automation::AutomationValue,
-            ) -> Result<(), ::atto_ui::automation::AutomationError> {
+                value: ::atto_ui::ComponentValue,
+            ) -> Result<(), ::atto_ui::ComponentError> {
                 match name {
                     #(#set_match_arms)*
                     _ => {}
                 }
                 #(#delegate_set)*
-                Err(::atto_ui::automation::AutomationError::unsupported_property(name))
+                Err(::atto_ui::ComponentError::unsupported_property(name))
             }
         }
     }
     .into()
 }
 
-pub fn automate_component_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn component_props_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item_impl = parse_macro_input!(item as ItemImpl);
 
     let is_component = item_impl
@@ -329,9 +329,9 @@ pub fn automate_component_impl(_attr: TokenStream, item: TokenStream) -> TokenSt
         if let syn::ImplItem::Fn(func) = item {
             let name = func.sig.ident.to_string();
             match name.as_str() {
-                "automation_properties" => has_props = true,
-                "automation_get_property" => has_get = true,
-                "automation_set_property" => has_set = true,
+                "property_names" => has_props = true,
+                "get_property" => has_get = true,
+                "set_property" => has_set = true,
                 _ => {}
             }
         }
@@ -341,31 +341,31 @@ pub fn automate_component_impl(_attr: TokenStream, item: TokenStream) -> TokenSt
 
     if !has_props {
         extra_items.push(syn::parse_quote! {
-            fn automation_properties(&self) -> Vec<&'static str> {
-                ::atto_ui::automation::Automatable::automation_properties(self)
+            fn property_names(&self) -> Vec<&'static str> {
+                ::atto_ui::ComponentProps::property_names(self)
             }
         });
     }
 
     if !has_get {
         extra_items.push(syn::parse_quote! {
-            fn automation_get_property(
+            fn get_property(
                 &self,
                 name: &str,
-            ) -> Option<::atto_ui::automation::AutomationValue> {
-                ::atto_ui::automation::Automatable::automation_get_property(self, name)
+            ) -> Option<::atto_ui::ComponentValue> {
+                ::atto_ui::ComponentProps::get_property(self, name)
             }
         });
     }
 
     if !has_set {
         extra_items.push(syn::parse_quote! {
-            fn automation_set_property(
+            fn set_property(
                 &mut self,
                 name: &str,
-                value: ::atto_ui::automation::AutomationValue,
-            ) -> Result<(), ::atto_ui::automation::AutomationError> {
-                ::atto_ui::automation::Automatable::automation_set_property(self, name, value)
+                value: ::atto_ui::ComponentValue,
+            ) -> Result<(), ::atto_ui::ComponentError> {
+                ::atto_ui::ComponentProps::set_property(self, name, value)
             }
         });
     }

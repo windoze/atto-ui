@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use parking_lot::Mutex;
 
-type Factory<T> = dyn Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, DynamicError> + Send + Sync;
+type Factory<T> = dyn Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, TreeError> + Send + Sync;
 
 struct ComponentFactory<T> {
     schema: ComponentSchema,
@@ -31,7 +31,7 @@ impl<T> ComponentRegistry<T> {
 
     pub fn register<F>(&mut self, schema: ComponentSchema, build: F)
     where
-        F: Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, DynamicError>
+        F: Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, TreeError>
             + Send
             + Sync
             + 'static,
@@ -54,11 +54,11 @@ impl<T> ComponentRegistry<T> {
         self.factories.values().map(|factory| &factory.schema)
     }
 
-    pub fn build(&self, spec: &ComponentSpec) -> Result<T, DynamicError> {
+    pub fn build(&self, spec: &ComponentSpec) -> Result<T, TreeError> {
         let factory = self
             .factories
             .get(&spec.type_name)
-            .ok_or_else(|| DynamicError::UnknownComponent(spec.type_name.clone()))?;
+            .ok_or_else(|| TreeError::UnknownComponent(spec.type_name.clone()))?;
         (factory.build)(spec, self)
     }
 }
@@ -78,7 +78,7 @@ pub struct Rect {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum DynamicValue {
+pub enum ComponentValue {
     Null,
     Bool(bool),
     I64(i64),
@@ -89,41 +89,41 @@ pub enum DynamicValue {
     Table(Vec<Vec<String>>),
     Rect(Rect),
     Bytes(Vec<u8>),
-    List(Vec<DynamicValue>),
-    Map(BTreeMap<String, DynamicValue>),
+    List(Vec<ComponentValue>),
+    Map(BTreeMap<String, ComponentValue>),
 }
 
-impl DynamicValue {
+impl ComponentValue {
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            DynamicValue::String(v) => Some(v.as_str()),
+            ComponentValue::String(v) => Some(v.as_str()),
             _ => None,
         }
     }
 
     pub fn as_u64(&self) -> Option<u64> {
         match self {
-            DynamicValue::U64(v) => Some(*v),
-            DynamicValue::I64(v) if *v >= 0 => Some(*v as u64),
-            DynamicValue::F64(v) if *v >= 0.0 => Some(*v as u64),
+            ComponentValue::U64(v) => Some(*v),
+            ComponentValue::I64(v) if *v >= 0 => Some(*v as u64),
+            ComponentValue::F64(v) if *v >= 0.0 => Some(*v as u64),
             _ => None,
         }
     }
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            DynamicValue::I64(v) => Some(*v),
-            DynamicValue::U64(v) => Some(*v as i64),
-            DynamicValue::F64(v) => Some(*v as i64),
+            ComponentValue::I64(v) => Some(*v),
+            ComponentValue::U64(v) => Some(*v as i64),
+            ComponentValue::F64(v) => Some(*v as i64),
             _ => None,
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            DynamicValue::F64(v) => Some(*v),
-            DynamicValue::I64(v) => Some(*v as f64),
-            DynamicValue::U64(v) => Some(*v as f64),
+            ComponentValue::F64(v) => Some(*v),
+            ComponentValue::I64(v) => Some(*v as f64),
+            ComponentValue::U64(v) => Some(*v as f64),
             _ => None,
         }
     }
@@ -343,7 +343,7 @@ impl Default for LayoutSpec {
 pub struct ComponentSpecChild {
     pub node: Box<ComponentSpec>,
     pub layout: Option<LayoutSpec>,
-    pub meta: BTreeMap<String, DynamicValue>,
+    pub meta: BTreeMap<String, ComponentValue>,
 }
 
 impl ComponentSpecChild {
@@ -360,7 +360,7 @@ impl ComponentSpecChild {
         self
     }
 
-    pub fn with_meta(mut self, key: impl Into<String>, value: DynamicValue) -> Self {
+    pub fn with_meta(mut self, key: impl Into<String>, value: ComponentValue) -> Self {
         self.meta.insert(key.into(), value);
         self
     }
@@ -370,7 +370,7 @@ impl ComponentSpecChild {
 pub struct ComponentSpec {
     pub type_name: String,
     pub id: Option<String>,
-    pub props: BTreeMap<String, DynamicValue>,
+    pub props: BTreeMap<String, ComponentValue>,
     pub events: BTreeMap<String, CallbackId>,
     pub children: Vec<ComponentSpecChild>,
 }
@@ -391,7 +391,7 @@ impl ComponentSpec {
         self
     }
 
-    pub fn with_prop(mut self, name: impl Into<String>, value: DynamicValue) -> Self {
+    pub fn with_prop(mut self, name: impl Into<String>, value: ComponentValue) -> Self {
         self.props.insert(name.into(), value);
         self
     }
@@ -415,7 +415,7 @@ pub struct CallbackInvocation {
     pub callback_id: CallbackId,
     pub target_id: Option<String>,
     pub event: String,
-    pub payload: Option<DynamicValue>,
+    pub payload: Option<ComponentValue>,
 }
 
 #[derive(Clone, Default)]
@@ -489,7 +489,7 @@ pub enum TreeOp {
     SetProp {
         id: String,
         name: String,
-        value: DynamicValue,
+        value: ComponentValue,
     },
     BindEvent {
         id: String,
@@ -503,7 +503,7 @@ pub enum TreeOp {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DynamicError {
+pub enum TreeError {
     MissingId(String),
     NotFound(String),
     UnknownComponent(String),
@@ -519,26 +519,26 @@ pub enum DynamicError {
     InvalidTreeOp(String),
 }
 
-impl fmt::Display for DynamicError {
+impl fmt::Display for TreeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DynamicError::MissingId(id) => write!(f, "missing id: {id}"),
-            DynamicError::NotFound(id) => write!(f, "node not found: {id}"),
-            DynamicError::UnknownComponent(name) => write!(f, "unknown component: {name}"),
-            DynamicError::InvalidProperty { id, name, reason } => {
+            TreeError::MissingId(id) => write!(f, "missing id: {id}"),
+            TreeError::NotFound(id) => write!(f, "node not found: {id}"),
+            TreeError::UnknownComponent(name) => write!(f, "unknown component: {name}"),
+            TreeError::InvalidProperty { id, name, reason } => {
                 write!(f, "invalid property {name} for {id}: {reason}")
             }
-            DynamicError::InvalidEvent { id, name } => {
+            TreeError::InvalidEvent { id, name } => {
                 write!(f, "invalid event {name} for {id}")
             }
-            DynamicError::InvalidTreeOp(reason) => write!(f, "invalid tree op: {reason}"),
+            TreeError::InvalidTreeOp(reason) => write!(f, "invalid tree op: {reason}"),
         }
     }
 }
 
-impl std::error::Error for DynamicError {}
+impl std::error::Error for TreeError {}
 
-pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, DynamicError> {
+pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, TreeError> {
     let mut structural = false;
     for op in ops {
         match op {
@@ -552,7 +552,7 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 child,
             } => {
                 let parent = find_by_id_mut(root, parent_id)
-                    .ok_or_else(|| DynamicError::NotFound(parent_id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(parent_id.clone()))?;
                 let idx = (*index).min(parent.children.len());
                 parent.children.insert(idx, child.clone());
                 structural = true;
@@ -561,14 +561,14 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 if remove_by_id(root, id) {
                     structural = true;
                 } else {
-                    return Err(DynamicError::NotFound(id.clone()));
+                    return Err(TreeError::NotFound(id.clone()));
                 }
             }
             TreeOp::Replace { id, node } => {
                 if replace_by_id(root, id, node.clone()) {
                     structural = true;
                 } else {
-                    return Err(DynamicError::NotFound(id.clone()));
+                    return Err(TreeError::NotFound(id.clone()));
                 }
             }
             TreeOp::Move {
@@ -577,26 +577,26 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 index,
             } => {
                 let node = take_by_id(root, id)
-                    .ok_or_else(|| DynamicError::NotFound(id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 let parent = find_by_id_mut(root, new_parent_id)
-                    .ok_or_else(|| DynamicError::NotFound(new_parent_id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(new_parent_id.clone()))?;
                 let idx = (*index).min(parent.children.len());
                 parent.children.insert(idx, node);
                 structural = true;
             }
             TreeOp::SetProp { id, name, value } => {
                 let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| DynamicError::NotFound(id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.props.insert(name.clone(), value.clone());
             }
             TreeOp::BindEvent { id, event, callback } => {
                 let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| DynamicError::NotFound(id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.events.insert(event.clone(), *callback);
             }
             TreeOp::ClearEvent { id, event } => {
                 let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| DynamicError::NotFound(id.clone()))?;
+                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.events.remove(event);
             }
         }
@@ -725,7 +725,7 @@ mod tests {
             TreeOp::SetProp {
                 id: "a".to_string(),
                 name: "text".to_string(),
-                value: DynamicValue::String("hi".into()),
+                value: ComponentValue::String("hi".into()),
             },
             TreeOp::BindEvent {
                 id: "a".to_string(),
@@ -741,7 +741,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             node.node.props.get("text"),
-            Some(&DynamicValue::String("hi".into()))
+            Some(&ComponentValue::String("hi".into()))
         );
         assert_eq!(node.node.events.get("click"), Some(&cb));
     }

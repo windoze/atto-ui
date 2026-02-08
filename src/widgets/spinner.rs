@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::{Binding, TimerHandle, cancel_timer, register_timer_with_duration};
 
@@ -46,17 +46,17 @@ pub enum SpinnerTextEffect {
     },
 }
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 struct SpinnerState {
     text: Binding<String>,
     enabled: Binding<bool>,
     running: Binding<bool>,
     icon_frames: Vec<String>,
     icon_speed: Duration,
-    #[automation(skip)]
+    #[component(skip)]
     icon_index: Binding<usize>,
     text_effect: SpinnerTextEffect,
-    #[automation(skip)]
+    #[component(skip)]
     text_offset: Binding<usize>,
     layout: SpinnerLayout,
     spacing: u16,
@@ -66,9 +66,9 @@ struct SpinnerState {
     text_timer_speed: Option<Duration>,
 }
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 pub struct Spinner {
-    #[automation(delegate)]
+    #[component(delegate)]
     state: Arc<RwLock<SpinnerState>>,
 }
 
@@ -311,20 +311,20 @@ impl Spinner {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for Spinner {
-    fn automation_set_property(
+    fn set_property(
         &mut self,
         name: &str,
-        value: crate::automation::AutomationValue,
-    ) -> Result<(), crate::automation::AutomationError> {
+        value: crate::ComponentValue,
+    ) -> Result<(), crate::ComponentError> {
         if name == "running" {
-            let v = crate::automation::AutomationValueCodec::from_automation_value(value, name)?;
+            let v = crate::ComponentValueCodec::from_component_value(value, name)?;
             self.state.write().running.set(v);
             self.sync_timers();
             return Ok(());
         }
-        ::atto_ui::automation::Automatable::automation_set_property(self, name, value)
+        ::atto_ui::ComponentProps::set_property(self, name, value)
     }
 
     fn is_focusable(&self) -> bool {

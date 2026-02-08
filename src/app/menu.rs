@@ -22,7 +22,7 @@ const MINIMIZED_WINDOW_ITEM_PREFIX: &str = "atto_ui:minimized_window:";
 
 #[derive(Clone)]
 pub struct MenuItem {
-    pub automation_id: Option<String>,
+    pub tag: Option<String>,
     pub label: Binding<String>,
     pub shortcut: Binding<Option<String>>,
     pub enabled: Binding<bool>,
@@ -36,7 +36,7 @@ impl MenuItem {
         F: Fn() + Send + Sync + 'static,
     {
         Self {
-            automation_id: None,
+            tag: None,
             label: label.into(),
             shortcut: None.into(),
             enabled: true.into(),
@@ -47,7 +47,7 @@ impl MenuItem {
 
     pub fn submenu(label: impl Into<Binding<String>>, submenu: Vec<MenuItem>) -> Self {
         Self {
-            automation_id: None,
+            tag: None,
             label: label.into(),
             shortcut: None.into(),
             enabled: true.into(),
@@ -58,7 +58,7 @@ impl MenuItem {
 
     pub fn minimized_windows(label: impl Into<Binding<String>>) -> Self {
         let mut item = Self::submenu(label, Vec::new());
-        item.automation_id = Some(MINIMIZED_WINDOWS_MENU_ID.to_string());
+        item.tag = Some(MINIMIZED_WINDOWS_MENU_ID.to_string());
         item
     }
 
@@ -82,15 +82,15 @@ impl MenuItem {
         self
     }
 
-    pub fn with_automation_id(mut self, id: impl Into<String>) -> Self {
-        self.automation_id = Some(id.into());
+    pub fn with_tag(mut self, id: impl Into<String>) -> Self {
+        self.tag = Some(id.into());
         self
     }
 }
 
 #[derive(Clone)]
 pub struct MenuSpec {
-    pub automation_id: Option<String>,
+    pub tag: Option<String>,
     pub title: Binding<String>,
     pub items: Vec<MenuItem>,
 }
@@ -98,7 +98,7 @@ pub struct MenuSpec {
 impl MenuSpec {
     pub fn new(title: impl Into<Binding<String>>, items: Vec<MenuItem>) -> Self {
         Self {
-            automation_id: None,
+            tag: None,
             title: title.into(),
             items,
         }
@@ -109,8 +109,8 @@ impl MenuSpec {
         self
     }
 
-    pub fn with_automation_id(mut self, id: impl Into<String>) -> Self {
-        self.automation_id = Some(id.into());
+    pub fn with_tag(mut self, id: impl Into<String>) -> Self {
+        self.tag = Some(id.into());
         self
     }
 }
@@ -700,7 +700,7 @@ impl MenuBar {
 }
 
 fn minimized_window_id(item: &MenuItem) -> Option<WindowId> {
-    let id = item.automation_id.as_deref()?;
+    let id = item.tag.as_deref()?;
     let suffix = id.strip_prefix(MINIMIZED_WINDOW_ITEM_PREFIX)?;
     let parsed = suffix.parse::<u64>().ok()?;
     Some(WindowId(parsed))
@@ -708,7 +708,7 @@ fn minimized_window_id(item: &MenuItem) -> Option<WindowId> {
 
 fn minimized_window_menu_item(id: WindowId, label: String) -> MenuItem {
     let mut item = MenuItem::submenu(label, Vec::new());
-    item.automation_id = Some(format!("{MINIMIZED_WINDOW_ITEM_PREFIX}{}", id.0));
+    item.tag = Some(format!("{MINIMIZED_WINDOW_ITEM_PREFIX}{}", id.0));
     item
 }
 
@@ -732,7 +732,7 @@ fn build_minimized_window_items(wm: &WindowManager) -> Vec<MenuItem> {
 
 fn refresh_minimized_windows_in_items(items: &mut [MenuItem], minimized_items: &[MenuItem]) {
     for item in items {
-        if item.automation_id.as_deref() == Some(MINIMIZED_WINDOWS_MENU_ID) {
+        if item.tag.as_deref() == Some(MINIMIZED_WINDOWS_MENU_ID) {
             item.submenu = minimized_items.to_vec();
             continue;
         }

@@ -5,18 +5,18 @@ use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::{
     Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct TabWindowTab {
     pub title: String,
     pub view: Box<dyn Component>,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct TabWindow {
     tabs: Vec<TabWindowTab>,
     active: usize,
@@ -220,7 +220,7 @@ impl Default for TabWindow {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for TabWindow {
     fn is_focusable(&self) -> bool {
         self.active_view().is_some_and(|v| v.is_focusable())

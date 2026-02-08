@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::automation::{AutomationAction, AutomationError, AutomationValue};
+use crate::{ComponentCommand, ComponentError, ComponentValue};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::theme::Theme;
@@ -164,35 +164,35 @@ impl EventResult {
 }
 
 pub trait Component: Send {
-    fn automation_type_name(&self) -> &'static str {
+    fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
 
-    fn automation_id(&self) -> Option<&str> {
+    fn tag(&self) -> Option<&str> {
         None
     }
 
-    fn automation_properties(&self) -> Vec<&'static str> {
+    fn property_names(&self) -> Vec<&'static str> {
         Vec::new()
     }
 
-    fn automation_get_property(&self, _name: &str) -> Option<AutomationValue> {
+    fn get_property(&self, _name: &str) -> Option<ComponentValue> {
         None
     }
 
-    fn automation_set_property(
+    fn set_property(
         &mut self,
         name: &str,
-        _value: AutomationValue,
-    ) -> Result<(), AutomationError> {
-        Err(AutomationError::unsupported_property(name))
+        _value: ComponentValue,
+    ) -> Result<(), ComponentError> {
+        Err(ComponentError::unsupported_property(name))
     }
 
-    fn automation_action(&mut self, _action: AutomationAction) -> EventResult {
+    fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
         EventResult::ignored()
     }
 
-    fn automation_focused_child(&self) -> Option<ComponentId> {
+    fn focused_child(&self) -> Option<ComponentId> {
         None
     }
 
@@ -329,36 +329,36 @@ pub trait Component: Send {
 }
 
 impl Component for Box<dyn Component> {
-    fn automation_type_name(&self) -> &'static str {
-        self.as_ref().automation_type_name()
+    fn type_name(&self) -> &'static str {
+        self.as_ref().type_name()
     }
 
-    fn automation_id(&self) -> Option<&str> {
-        self.as_ref().automation_id()
+    fn tag(&self) -> Option<&str> {
+        self.as_ref().tag()
     }
 
-    fn automation_properties(&self) -> Vec<&'static str> {
-        self.as_ref().automation_properties()
+    fn property_names(&self) -> Vec<&'static str> {
+        self.as_ref().property_names()
     }
 
-    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
-        self.as_ref().automation_get_property(name)
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        self.as_ref().get_property(name)
     }
 
-    fn automation_set_property(
+    fn set_property(
         &mut self,
         name: &str,
-        value: AutomationValue,
-    ) -> Result<(), AutomationError> {
-        self.as_mut().automation_set_property(name, value)
+        value: ComponentValue,
+    ) -> Result<(), ComponentError> {
+        self.as_mut().set_property(name, value)
     }
 
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        self.as_mut().automation_action(action)
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        self.as_mut().apply_command(command)
     }
 
-    fn automation_focused_child(&self) -> Option<ComponentId> {
-        self.as_ref().automation_focused_child()
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.as_ref().focused_child()
     }
 
     fn is_focusable(&self) -> bool {

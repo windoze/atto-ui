@@ -7,252 +7,256 @@ use ratatui::layout::Rect;
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
 use crate::composable::{Component, EventResult};
 use crate::wm::{Window, WindowId};
+use atto_ui_runtime::ComponentValue;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AutomationValue {
-    Bool(bool),
-    I64(i64),
-    U64(u64),
-    F64(f64),
-    String(String),
-    StringList(Vec<String>),
-    Table(Vec<Vec<String>>),
-    Rect(Rect),
-}
-
-pub trait Automatable {
-    fn automation_properties(&self) -> Vec<&'static str>;
-    fn automation_get_property(&self, name: &str) -> Option<AutomationValue>;
-    fn automation_set_property(
+pub trait ComponentProps {
+    fn property_names(&self) -> Vec<&'static str>;
+    fn get_property(&self, name: &str) -> Option<ComponentValue>;
+    fn set_property(
         &mut self,
         name: &str,
-        value: AutomationValue,
-    ) -> Result<(), AutomationError>;
+        value: ComponentValue,
+    ) -> Result<(), ComponentError>;
 }
 
-pub trait AutomationValueCodec: Sized {
-    fn to_automation_value(&self) -> AutomationValue;
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError>;
+pub trait ComponentValueCodec: Sized {
+    fn to_component_value(&self) -> ComponentValue;
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError>;
 }
 
-impl AutomationValue {
-    pub fn try_into_bool(self, name: &str) -> Result<bool, AutomationError> {
+pub trait ComponentValueExt {
+    fn try_into_bool(self, name: &str) -> Result<bool, ComponentError>;
+    fn try_into_f64(self, name: &str) -> Result<f64, ComponentError>;
+    fn try_into_usize(self, name: &str) -> Result<usize, ComponentError>;
+    fn try_into_string(self, name: &str) -> Result<String, ComponentError>;
+    fn try_into_string_list(self, name: &str) -> Result<Vec<String>, ComponentError>;
+    fn try_into_table(self, name: &str) -> Result<Vec<Vec<String>>, ComponentError>;
+    fn try_into_rect(self, name: &str) -> Result<Rect, ComponentError>;
+}
+
+impl ComponentValueExt for ComponentValue {
+    fn try_into_bool(self, name: &str) -> Result<bool, ComponentError> {
         match self {
-            AutomationValue::Bool(v) => Ok(v),
-            _ => Err(AutomationError::invalid_value(name, "bool")),
+            ComponentValue::Bool(v) => Ok(v),
+            _ => Err(ComponentError::invalid_value(name, "bool")),
         }
     }
 
-    pub fn try_into_f64(self, name: &str) -> Result<f64, AutomationError> {
+    fn try_into_f64(self, name: &str) -> Result<f64, ComponentError> {
         match self {
-            AutomationValue::F64(v) => Ok(v),
-            AutomationValue::I64(v) => Ok(v as f64),
-            AutomationValue::U64(v) => Ok(v as f64),
-            _ => Err(AutomationError::invalid_value(name, "number")),
+            ComponentValue::F64(v) => Ok(v),
+            ComponentValue::I64(v) => Ok(v as f64),
+            ComponentValue::U64(v) => Ok(v as f64),
+            _ => Err(ComponentError::invalid_value(name, "number")),
         }
     }
 
-    pub fn try_into_usize(self, name: &str) -> Result<usize, AutomationError> {
+    fn try_into_usize(self, name: &str) -> Result<usize, ComponentError> {
         match self {
-            AutomationValue::U64(v) => Ok(v as usize),
-            AutomationValue::I64(v) if v >= 0 => Ok(v as usize),
-            AutomationValue::F64(v) if v >= 0.0 => Ok(v as usize),
-            _ => Err(AutomationError::invalid_value(name, "usize")),
+            ComponentValue::U64(v) => Ok(v as usize),
+            ComponentValue::I64(v) if v >= 0 => Ok(v as usize),
+            ComponentValue::F64(v) if v >= 0.0 => Ok(v as usize),
+            _ => Err(ComponentError::invalid_value(name, "usize")),
         }
     }
 
-    pub fn try_into_string(self, name: &str) -> Result<String, AutomationError> {
+    fn try_into_string(self, name: &str) -> Result<String, ComponentError> {
         match self {
-            AutomationValue::String(v) => Ok(v),
-            _ => Err(AutomationError::invalid_value(name, "string")),
+            ComponentValue::String(v) => Ok(v),
+            _ => Err(ComponentError::invalid_value(name, "string")),
         }
     }
 
-    pub fn try_into_string_list(self, name: &str) -> Result<Vec<String>, AutomationError> {
+    fn try_into_string_list(self, name: &str) -> Result<Vec<String>, ComponentError> {
         match self {
-            AutomationValue::StringList(v) => Ok(v),
-            _ => Err(AutomationError::invalid_value(name, "string list")),
+            ComponentValue::StringList(v) => Ok(v),
+            _ => Err(ComponentError::invalid_value(name, "string list")),
         }
     }
 
-    pub fn try_into_table(self, name: &str) -> Result<Vec<Vec<String>>, AutomationError> {
+    fn try_into_table(self, name: &str) -> Result<Vec<Vec<String>>, ComponentError> {
         match self {
-            AutomationValue::Table(v) => Ok(v),
-            _ => Err(AutomationError::invalid_value(name, "table")),
+            ComponentValue::Table(v) => Ok(v),
+            _ => Err(ComponentError::invalid_value(name, "table")),
         }
     }
 
-    pub fn try_into_rect(self, name: &str) -> Result<Rect, AutomationError> {
+    fn try_into_rect(self, name: &str) -> Result<Rect, ComponentError> {
         match self {
-            AutomationValue::Rect(v) => Ok(v),
-            _ => Err(AutomationError::invalid_value(name, "rect")),
+            ComponentValue::Rect(v) => Ok(Rect::new(v.x, v.y, v.width, v.height)),
+            _ => Err(ComponentError::invalid_value(name, "rect")),
         }
     }
 }
 
-impl AutomationValueCodec for String {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::String(self.clone())
+impl ComponentValueCodec for String {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::String(self.clone())
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_string(name)
     }
 }
 
-impl AutomationValueCodec for bool {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::Bool(*self)
+impl ComponentValueCodec for bool {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::Bool(*self)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_bool(name)
     }
 }
 
-impl AutomationValueCodec for f64 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::F64(*self)
+impl ComponentValueCodec for f64 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::F64(*self)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_f64(name)
     }
 }
 
-impl AutomationValueCodec for f32 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::F64(*self as f64)
+impl ComponentValueCodec for f32 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::F64(*self as f64)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         Ok(value.try_into_f64(name)? as f32)
     }
 }
 
-impl AutomationValueCodec for i64 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::I64(*self)
+impl ComponentValueCodec for i64 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::I64(*self)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         match value {
-            AutomationValue::I64(v) => Ok(v),
-            AutomationValue::U64(v) => Ok(v as i64),
-            AutomationValue::F64(v) => Ok(v as i64),
-            _ => Err(AutomationError::invalid_value(name, "i64")),
+            ComponentValue::I64(v) => Ok(v),
+            ComponentValue::U64(v) => Ok(v as i64),
+            ComponentValue::F64(v) => Ok(v as i64),
+            _ => Err(ComponentError::invalid_value(name, "i64")),
         }
     }
 }
 
-impl AutomationValueCodec for u64 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::U64(*self)
+impl ComponentValueCodec for u64 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::U64(*self)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         match value {
-            AutomationValue::U64(v) => Ok(v),
-            AutomationValue::I64(v) if v >= 0 => Ok(v as u64),
-            AutomationValue::F64(v) if v >= 0.0 => Ok(v as u64),
-            _ => Err(AutomationError::invalid_value(name, "u64")),
+            ComponentValue::U64(v) => Ok(v),
+            ComponentValue::I64(v) if v >= 0 => Ok(v as u64),
+            ComponentValue::F64(v) if v >= 0.0 => Ok(v as u64),
+            _ => Err(ComponentError::invalid_value(name, "u64")),
         }
     }
 }
 
-impl AutomationValueCodec for usize {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::U64(*self as u64)
+impl ComponentValueCodec for usize {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::U64(*self as u64)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_usize(name)
     }
 }
 
-impl AutomationValueCodec for u32 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::U64(*self as u64)
+impl ComponentValueCodec for u32 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::U64(*self as u64)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         Ok(value.try_into_usize(name)? as u32)
     }
 }
 
-impl AutomationValueCodec for u16 {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::U64(*self as u64)
+impl ComponentValueCodec for u16 {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::U64(*self as u64)
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         Ok(value.try_into_usize(name)? as u16)
     }
 }
 
-impl AutomationValueCodec for Vec<String> {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::StringList(self.clone())
+impl ComponentValueCodec for Vec<String> {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::StringList(self.clone())
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_string_list(name)
     }
 }
 
-impl AutomationValueCodec for Vec<Vec<String>> {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::Table(self.clone())
+impl ComponentValueCodec for Vec<Vec<String>> {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::Table(self.clone())
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_table(name)
     }
 }
 
-impl AutomationValueCodec for Rect {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::Rect(*self)
+impl ComponentValueCodec for Rect {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::Rect(atto_ui_runtime::Rect {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        })
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         value.try_into_rect(name)
     }
 }
 
-impl AutomationValueCodec for crate::widgets::TabHeaderPosition {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::String(format!("{:?}", self))
+impl ComponentValueCodec for crate::widgets::TabHeaderPosition {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::String(format!("{:?}", self))
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         let v = value.try_into_string(name)?;
         match v.as_str() {
             "Top" | "top" => Ok(crate::widgets::TabHeaderPosition::Top),
             "Bottom" | "bottom" => Ok(crate::widgets::TabHeaderPosition::Bottom),
-            _ => Err(AutomationError::invalid_value(name, "Top/Bottom")),
+            _ => Err(ComponentError::invalid_value(name, "Top/Bottom")),
         }
     }
 }
 
-impl AutomationValueCodec for crate::wm::WindowMinSizeMode {
-    fn to_automation_value(&self) -> AutomationValue {
-        AutomationValue::String(format!("{:?}", self))
+impl ComponentValueCodec for crate::wm::WindowMinSizeMode {
+    fn to_component_value(&self) -> ComponentValue {
+        ComponentValue::String(format!("{:?}", self))
     }
 
-    fn from_automation_value(value: AutomationValue, name: &str) -> Result<Self, AutomationError> {
+    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         let v = value.try_into_string(name)?;
         match v.as_str() {
             "Enforce" | "enforce" => Ok(crate::wm::WindowMinSizeMode::Enforce),
             "Clip" | "clip" => Ok(crate::wm::WindowMinSizeMode::Clip),
             "Scroll" | "scroll" => Ok(crate::wm::WindowMinSizeMode::Scroll),
-            _ => Err(AutomationError::invalid_value(name, "WindowMinSizeMode")),
+            _ => Err(ComponentError::invalid_value(name, "WindowMinSizeMode")),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum AutomationAction {
+pub enum ComponentCommand {
     Click,
     Toggle,
     InputText(String),
@@ -262,13 +266,13 @@ pub enum AutomationAction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AutomationTarget {
+pub enum ComponentTarget {
     Id(String),
     Focused,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AutomationError {
+pub enum ComponentError {
     NotFound(String),
     UnsupportedProperty(String),
     InvalidValue {
@@ -279,33 +283,33 @@ pub enum AutomationError {
     RenderFailed(String),
 }
 
-impl AutomationError {
+impl ComponentError {
     pub fn not_found(id: impl Into<String>) -> Self {
-        AutomationError::NotFound(id.into())
+        ComponentError::NotFound(id.into())
     }
 
     pub fn unsupported_property(name: impl Into<String>) -> Self {
-        AutomationError::UnsupportedProperty(name.into())
+        ComponentError::UnsupportedProperty(name.into())
     }
 
     pub fn invalid_value(name: impl Into<String>, expected: &'static str) -> Self {
-        AutomationError::InvalidValue {
+        ComponentError::InvalidValue {
             name: name.into(),
             expected,
         }
     }
 
     pub fn action_not_supported(name: impl Into<String>) -> Self {
-        AutomationError::ActionNotSupported(name.into())
+        ComponentError::ActionNotSupported(name.into())
     }
 
     fn render_failed(err: impl ToString) -> Self {
-        AutomationError::RenderFailed(err.to_string())
+        ComponentError::RenderFailed(err.to_string())
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AutomationKind {
+pub enum NodeKind {
     Desktop,
     MenuBar,
     Menu,
@@ -316,19 +320,19 @@ pub enum AutomationKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct AutomationNode {
-    pub kind: AutomationKind,
+pub struct InspectNode {
+    pub kind: NodeKind,
     pub id: Option<String>,
     pub name: String,
     pub type_id: String,
     pub bounds: Option<Rect>,
     pub properties: Vec<String>,
     pub window_id: Option<WindowId>,
-    pub children: Vec<AutomationNode>,
+    pub children: Vec<InspectNode>,
 }
 
-impl AutomationNode {
-    pub fn find_by_id(&self, id: &str) -> Option<&AutomationNode> {
+impl InspectNode {
+    pub fn find_by_id(&self, id: &str) -> Option<&InspectNode> {
         if self.id.as_deref() == Some(id) {
             return Some(self);
         }
@@ -342,12 +346,12 @@ impl AutomationNode {
 }
 
 #[derive(Clone, Debug)]
-pub struct AutomationSnapshot {
+pub struct InspectSnapshot {
     pub buffer: Buffer,
-    pub tree: AutomationNode,
+    pub tree: InspectNode,
 }
 
-impl AutomationSnapshot {
+impl InspectSnapshot {
     pub fn contents(&self) -> String {
         buffer_to_string(&self.buffer)
     }
@@ -359,35 +363,35 @@ impl AutomationSnapshot {
     }
 }
 
-pub struct DesktopAutomation<'a> {
+pub struct DesktopInspector<'a> {
     desktop: &'a mut Desktop,
 }
 
-impl<'a> DesktopAutomation<'a> {
+impl<'a> DesktopInspector<'a> {
     pub fn new(desktop: &'a mut Desktop) -> Self {
         Self { desktop }
     }
 
-    pub fn tree(&mut self, screen: Rect) -> Result<AutomationNode, AutomationError> {
+    pub fn tree(&mut self, screen: Rect) -> Result<InspectNode, ComponentError> {
         Ok(self.snapshot(screen)?.tree)
     }
 
-    pub fn snapshot(&mut self, screen: Rect) -> Result<AutomationSnapshot, AutomationError> {
+    pub fn snapshot(&mut self, screen: Rect) -> Result<InspectSnapshot, ComponentError> {
         let backend = TestBackend::new(screen.width, screen.height);
-        let mut terminal = Terminal::new(backend).map_err(AutomationError::render_failed)?;
+        let mut terminal = Terminal::new(backend).map_err(ComponentError::render_failed)?;
         terminal
             .draw(|f| self.desktop.draw(f))
-            .map_err(AutomationError::render_failed)?;
+            .map_err(ComponentError::render_failed)?;
         let buffer = terminal.backend().buffer().clone();
         let tree = build_desktop_tree(self.desktop, screen);
-        Ok(AutomationSnapshot { buffer, tree })
+        Ok(InspectSnapshot { buffer, tree })
     }
 
     pub fn get_property(
         &mut self,
         id: &str,
         name: &str,
-    ) -> Result<AutomationValue, AutomationError> {
+    ) -> Result<ComponentValue, ComponentError> {
         if let Some(value) = menu_get_property(&self.desktop.menu, id, name) {
             return Ok(value);
         }
@@ -397,15 +401,15 @@ impl<'a> DesktopAutomation<'a> {
         if let Some(value) = component_get_property(&self.desktop.wm, id, name) {
             return Ok(value);
         }
-        Err(AutomationError::not_found(id))
+        Err(ComponentError::not_found(id))
     }
 
     pub fn set_property(
         &mut self,
         id: &str,
         name: &str,
-        value: AutomationValue,
-    ) -> Result<(), AutomationError> {
+        value: ComponentValue,
+    ) -> Result<(), ComponentError> {
         if menu_set_property(&mut self.desktop.menu, id, name, value.clone())? {
             return Ok(());
         }
@@ -415,27 +419,27 @@ impl<'a> DesktopAutomation<'a> {
         if component_set_property(&mut self.desktop.wm, id, name, value)? {
             return Ok(());
         }
-        Err(AutomationError::not_found(id))
+        Err(ComponentError::not_found(id))
     }
 
     pub fn action(
         &mut self,
         screen: Rect,
         id: &str,
-        action: AutomationAction,
-    ) -> Result<EventResult, AutomationError> {
-        self.action_target(screen, AutomationTarget::Id(id.to_string()), action)
+        action: ComponentCommand,
+    ) -> Result<EventResult, ComponentError> {
+        self.action_target(screen, ComponentTarget::Id(id.to_string()), action)
     }
 
     pub fn action_target(
         &mut self,
         screen: Rect,
-        target: AutomationTarget,
-        action: AutomationAction,
-    ) -> Result<EventResult, AutomationError> {
+        target: ComponentTarget,
+        action: ComponentCommand,
+    ) -> Result<EventResult, ComponentError> {
         match target {
-            AutomationTarget::Id(id) => self.action_by_id(screen, &id, action),
-            AutomationTarget::Focused => self.action_focused(action),
+            ComponentTarget::Id(id) => self.action_by_id(screen, &id, action),
+            ComponentTarget::Focused => self.action_focused(action),
         }
     }
 
@@ -443,10 +447,10 @@ impl<'a> DesktopAutomation<'a> {
         &mut self,
         screen: Rect,
         id: &str,
-        action: AutomationAction,
-    ) -> Result<EventResult, AutomationError> {
+        action: ComponentCommand,
+    ) -> Result<EventResult, ComponentError> {
         let custom_name = match &action {
-            AutomationAction::Custom { name, .. } => Some(name.clone()),
+            ComponentCommand::Custom { name, .. } => Some(name.clone()),
             _ => None,
         };
 
@@ -461,7 +465,7 @@ impl<'a> DesktopAutomation<'a> {
                 return Ok(result);
             }
             if let Some(name) = custom_name {
-                return Err(AutomationError::action_not_supported(name));
+                return Err(ComponentError::action_not_supported(name));
             }
         }
 
@@ -470,20 +474,20 @@ impl<'a> DesktopAutomation<'a> {
                 || window_exists(&self.desktop.wm, id)
                 || component_exists(&self.desktop.wm, id)
             {
-                return Err(AutomationError::action_not_supported(name));
+                return Err(ComponentError::action_not_supported(name));
             }
         }
 
         match action {
-            AutomationAction::Click | AutomationAction::Toggle | AutomationAction::Submit => {
+            ComponentCommand::Click | ComponentCommand::Toggle | ComponentCommand::Submit => {
                 let snapshot = self.snapshot(screen)?;
                 let bounds = snapshot
                     .tree
                     .find_by_id(id)
                     .and_then(|node| node.bounds)
-                    .ok_or_else(|| AutomationError::not_found(id))?;
+                    .ok_or_else(|| ComponentError::not_found(id))?;
                 let (x, y) = center_point(bounds)
-                    .ok_or_else(|| AutomationError::action_not_supported("empty bounds"))?;
+                    .ok_or_else(|| ComponentError::action_not_supported("empty bounds"))?;
                 let event = Event::Mouse(MouseEvent {
                     kind: MouseEventKind::Down(MouseButton::Left),
                     column: x,
@@ -497,13 +501,13 @@ impl<'a> DesktopAutomation<'a> {
                     action: crate::composable::ComponentAction::None,
                 })
             }
-            AutomationAction::InputText(text) => {
+            ComponentCommand::InputText(text) => {
                 let snapshot = self.snapshot(screen)?;
                 let bounds = snapshot
                     .tree
                     .find_by_id(id)
                     .and_then(|node| node.bounds)
-                    .ok_or_else(|| AutomationError::not_found(id))?;
+                    .ok_or_else(|| ComponentError::not_found(id))?;
                 if let Some((x, y)) = center_point(bounds) {
                     let click_event = Event::Mouse(MouseEvent {
                         kind: MouseEventKind::Down(MouseButton::Left),
@@ -522,44 +526,44 @@ impl<'a> DesktopAutomation<'a> {
                     action: crate::composable::ComponentAction::None,
                 })
             }
-            AutomationAction::SelectIndex(_) => {
-                Err(AutomationError::action_not_supported("SelectIndex"))
+            ComponentCommand::SelectIndex(_) => {
+                Err(ComponentError::action_not_supported("SelectIndex"))
             }
-            AutomationAction::Custom { name, .. } => {
-                Err(AutomationError::action_not_supported(name))
+            ComponentCommand::Custom { name, .. } => {
+                Err(ComponentError::action_not_supported(name))
             }
         }
     }
 
     fn action_focused(
         &mut self,
-        action: AutomationAction,
-    ) -> Result<EventResult, AutomationError> {
+        action: ComponentCommand,
+    ) -> Result<EventResult, ComponentError> {
         let Some(focused) = focused_component_mut(&mut self.desktop.wm) else {
-            return Err(AutomationError::not_found("focused"));
+            return Err(ComponentError::not_found("focused"));
         };
-        let result = focused.automation_action(action.clone());
+        let result = focused.apply_command(action.clone());
         match action {
-            AutomationAction::Custom { name, .. } => {
+            ComponentCommand::Custom { name, .. } => {
                 if result.is_consumed() {
                     Ok(result)
                 } else {
-                    Err(AutomationError::action_not_supported(name))
+                    Err(ComponentError::action_not_supported(name))
                 }
             }
-            AutomationAction::SelectIndex(_) => {
+            ComponentCommand::SelectIndex(_) => {
                 if result.is_consumed() {
                     Ok(result)
                 } else {
-                    Err(AutomationError::action_not_supported("SelectIndex"))
+                    Err(ComponentError::action_not_supported("SelectIndex"))
                 }
             }
             _ => Ok(result),
         }
     }
 
-    pub fn click(&mut self, screen: Rect, id: &str) -> Result<EventResult, AutomationError> {
-        self.action(screen, id, AutomationAction::Click)
+    pub fn click(&mut self, screen: Rect, id: &str) -> Result<EventResult, ComponentError> {
+        self.action(screen, id, ComponentCommand::Click)
     }
 
     pub fn input_text(
@@ -567,14 +571,14 @@ impl<'a> DesktopAutomation<'a> {
         screen: Rect,
         id: &str,
         text: impl Into<String>,
-    ) -> Result<EventResult, AutomationError> {
-        self.action(screen, id, AutomationAction::InputText(text.into()))
+    ) -> Result<EventResult, ComponentError> {
+        self.action(screen, id, ComponentCommand::InputText(text.into()))
     }
 }
 
 impl Desktop {
-    pub fn automation(&mut self) -> DesktopAutomation<'_> {
-        DesktopAutomation::new(self)
+    pub fn inspect(&mut self) -> DesktopInspector<'_> {
+        DesktopInspector::new(self)
     }
 }
 
@@ -584,10 +588,10 @@ fn apply_desktop_action(desktop: &mut Desktop, action: &crate::app::DesktopActio
     }
 }
 
-fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> AutomationNode {
+fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
     let layout = Desktop::layout(screen);
-    let mut root = AutomationNode {
-        kind: AutomationKind::Desktop,
+    let mut root = InspectNode {
+        kind: NodeKind::Desktop,
         id: None,
         name: "Desktop".to_string(),
         type_id: "Desktop".to_string(),
@@ -598,8 +602,8 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> AutomationNode {
     };
 
     root.children.push(build_menu_tree(&desktop.menu, layout));
-    root.children.push(AutomationNode {
-        kind: AutomationKind::StatusBar,
+    root.children.push(InspectNode {
+        kind: NodeKind::StatusBar,
         id: None,
         name: "StatusBar".to_string(),
         type_id: "StatusBar".to_string(),
@@ -616,9 +620,9 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> AutomationNode {
     root
 }
 
-fn build_menu_tree(menu: &crate::app::MenuBar, layout: DesktopLayout) -> AutomationNode {
-    let mut node = AutomationNode {
-        kind: AutomationKind::MenuBar,
+fn build_menu_tree(menu: &crate::app::MenuBar, layout: DesktopLayout) -> InspectNode {
+    let mut node = InspectNode {
+        kind: NodeKind::MenuBar,
         id: None,
         name: "MenuBar".to_string(),
         type_id: "MenuBar".to_string(),
@@ -633,10 +637,10 @@ fn build_menu_tree(menu: &crate::app::MenuBar, layout: DesktopLayout) -> Automat
     node
 }
 
-fn build_menu_spec_tree(menu: &MenuSpec) -> AutomationNode {
-    let mut node = AutomationNode {
-        kind: AutomationKind::Menu,
-        id: menu.automation_id.clone(),
+fn build_menu_spec_tree(menu: &MenuSpec) -> InspectNode {
+    let mut node = InspectNode {
+        kind: NodeKind::Menu,
+        id: menu.tag.clone(),
         name: menu.title.get(),
         type_id: "Menu".to_string(),
         bounds: None,
@@ -650,10 +654,10 @@ fn build_menu_spec_tree(menu: &MenuSpec) -> AutomationNode {
     node
 }
 
-fn build_menu_item_tree(item: &MenuItem) -> AutomationNode {
-    let mut node = AutomationNode {
-        kind: AutomationKind::MenuItem,
-        id: item.automation_id.clone(),
+fn build_menu_item_tree(item: &MenuItem) -> InspectNode {
+    let mut node = InspectNode {
+        kind: NodeKind::MenuItem,
+        id: item.tag.clone(),
         name: item.label.get(),
         type_id: "MenuItem".to_string(),
         bounds: None,
@@ -667,11 +671,11 @@ fn build_menu_item_tree(item: &MenuItem) -> AutomationNode {
     node
 }
 
-fn build_window_tree(window: &Window) -> AutomationNode {
+fn build_window_tree(window: &Window) -> InspectNode {
     let inner = window.inner_rect();
-    let mut node = AutomationNode {
-        kind: AutomationKind::Window,
-        id: window.automation_id.clone(),
+    let mut node = InspectNode {
+        kind: NodeKind::Window,
+        id: window.tag.clone(),
         name: window.title.get(),
         type_id: "Window".to_string(),
         bounds: Some(window.rect.get()),
@@ -690,15 +694,15 @@ fn build_window_tree(window: &Window) -> AutomationNode {
     node
 }
 
-fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId) -> AutomationNode {
-    let mut node = AutomationNode {
-        kind: AutomationKind::Component,
-        id: view.automation_id().map(|s| s.to_string()),
-        name: short_type_name(view.automation_type_name()),
-        type_id: view.automation_type_name().to_string(),
+fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId) -> InspectNode {
+    let mut node = InspectNode {
+        kind: NodeKind::Component,
+        id: view.tag().map(|s| s.to_string()),
+        name: short_type_name(view.type_name()),
+        type_id: view.type_name().to_string(),
         bounds: Some(bounds),
         properties: view
-            .automation_properties()
+            .property_names()
             .into_iter()
             .map(|s| s.to_string())
             .collect(),
@@ -759,22 +763,22 @@ fn center_point(bounds: Rect) -> Option<(u16, u16)> {
     Some((x, y))
 }
 
-fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option<AutomationValue> {
+fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option<ComponentValue> {
     if let Some(spec) = menu_find_spec(menu, id) {
         return match name {
-            "title" => Some(AutomationValue::String(spec.title.get())),
+            "title" => Some(ComponentValue::String(spec.title.get())),
             _ => None,
         };
     }
     let item = menu_find_item(menu, id)?;
     match name {
-        "label" => Some(AutomationValue::String(item.label.get())),
+        "label" => Some(ComponentValue::String(item.label.get())),
         "shortcut" => item
             .shortcut
             .get()
-            .map(AutomationValue::String)
-            .or_else(|| Some(AutomationValue::String(String::new()))),
-        "enabled" => Some(AutomationValue::Bool(item.enabled.get())),
+            .map(ComponentValue::String)
+            .or_else(|| Some(ComponentValue::String(String::new()))),
+        "enabled" => Some(ComponentValue::Bool(item.enabled.get())),
         _ => None,
     }
 }
@@ -783,8 +787,8 @@ fn menu_set_property(
     menu: &mut crate::app::MenuBar,
     id: &str,
     name: &str,
-    value: AutomationValue,
-) -> Result<bool, AutomationError> {
+    value: ComponentValue,
+) -> Result<bool, ComponentError> {
     if let Some(spec) = menu_find_spec_mut(menu, id) {
         return match name {
             "title" => {
@@ -792,7 +796,7 @@ fn menu_set_property(
                 spec.title.set(v);
                 Ok(true)
             }
-            _ => Err(AutomationError::unsupported_property(name)),
+            _ => Err(ComponentError::unsupported_property(name)),
         };
     }
     let Some(item) = menu_find_item_mut(menu, id) else {
@@ -818,21 +822,21 @@ fn menu_set_property(
             item.enabled.set(v);
             Ok(true)
         }
-        _ => Err(AutomationError::unsupported_property(name)),
+        _ => Err(ComponentError::unsupported_property(name)),
     }
 }
 
 fn menu_action(
     menu: &mut crate::app::MenuBar,
     id: &str,
-    action: &AutomationAction,
+    action: &ComponentCommand,
 ) -> Option<EventResult> {
     let item = menu_find_item(menu, id)?;
     if !item.enabled.get() {
         return Some(EventResult::ignored());
     }
     match action {
-        AutomationAction::Click | AutomationAction::Submit => {
+        ComponentCommand::Click | ComponentCommand::Submit => {
             if item.submenu.is_empty()
                 && let Some(cb) = &item.on_activate
             {
@@ -857,13 +861,13 @@ fn menu_find_item<'a>(menu: &'a crate::app::MenuBar, id: &str) -> Option<&'a Men
 fn menu_find_spec<'a>(menu: &'a crate::app::MenuBar, id: &str) -> Option<&'a MenuSpec> {
     menu.menus()
         .iter()
-        .find(|spec| spec.automation_id.as_deref() == Some(id))
+        .find(|spec| spec.tag.as_deref() == Some(id))
 }
 
 fn menu_find_spec_mut<'a>(menu: &'a mut crate::app::MenuBar, id: &str) -> Option<&'a mut MenuSpec> {
     menu.menus_mut()
         .iter_mut()
-        .find(|spec| spec.automation_id.as_deref() == Some(id))
+        .find(|spec| spec.tag.as_deref() == Some(id))
 }
 
 fn menu_find_item_mut<'a>(menu: &'a mut crate::app::MenuBar, id: &str) -> Option<&'a mut MenuItem> {
@@ -877,7 +881,7 @@ fn menu_find_item_mut<'a>(menu: &'a mut crate::app::MenuBar, id: &str) -> Option
 
 fn menu_find_item_in_list<'a>(items: &'a [MenuItem], id: &str) -> Option<&'a MenuItem> {
     for item in items {
-        if item.automation_id.as_deref() == Some(id) {
+        if item.tag.as_deref() == Some(id) {
             return Some(item);
         }
         if let Some(found) = menu_find_item_in_list(&item.submenu, id) {
@@ -889,7 +893,7 @@ fn menu_find_item_in_list<'a>(items: &'a [MenuItem], id: &str) -> Option<&'a Men
 
 fn menu_find_item_in_list_mut<'a>(items: &'a mut [MenuItem], id: &str) -> Option<&'a mut MenuItem> {
     for item in items {
-        if item.automation_id.as_deref() == Some(id) {
+        if item.tag.as_deref() == Some(id) {
             return Some(item);
         }
         if let Some(found) = menu_find_item_in_list_mut(&mut item.submenu, id) {
@@ -907,13 +911,18 @@ fn window_get_property(
     wm: &crate::wm::WindowManager,
     id: &str,
     name: &str,
-) -> Option<AutomationValue> {
+) -> Option<ComponentValue> {
     let window = window_find(wm, id)?;
     match name {
-        "title" => Some(AutomationValue::String(window.title.get())),
-        "rect" => Some(AutomationValue::Rect(window.rect.get())),
-        "state" => Some(AutomationValue::String(format!("{:?}", window.state.get()))),
-        "kind" => Some(AutomationValue::String(format!("{:?}", window.kind))),
+        "title" => Some(ComponentValue::String(window.title.get())),
+        "rect" => Some(ComponentValue::Rect(atto_ui_runtime::Rect {
+            x: window.rect.get().x,
+            y: window.rect.get().y,
+            width: window.rect.get().width,
+            height: window.rect.get().height,
+        })),
+        "state" => Some(ComponentValue::String(format!("{:?}", window.state.get()))),
+        "kind" => Some(ComponentValue::String(format!("{:?}", window.kind))),
         _ => None,
     }
 }
@@ -922,8 +931,8 @@ fn window_set_property(
     wm: &mut crate::wm::WindowManager,
     id: &str,
     name: &str,
-    value: AutomationValue,
-) -> Result<bool, AutomationError> {
+    value: ComponentValue,
+) -> Result<bool, ComponentError> {
     let Some(window) = window_find_mut(wm, id) else {
         return Ok(false);
     };
@@ -944,23 +953,23 @@ fn window_set_property(
                 "Normal" | "normal" => crate::wm::WindowState::Normal,
                 "Minimized" | "minimized" => crate::wm::WindowState::Minimized,
                 "Maximized" | "maximized" => crate::wm::WindowState::Maximized,
-                _ => return Err(AutomationError::invalid_value(name, "WindowState")),
+                _ => return Err(ComponentError::invalid_value(name, "WindowState")),
             };
             window.state.set(state);
             Ok(true)
         }
-        _ => Err(AutomationError::unsupported_property(name)),
+        _ => Err(ComponentError::unsupported_property(name)),
     }
 }
 
 fn window_action(
     wm: &mut crate::wm::WindowManager,
     id: &str,
-    action: &AutomationAction,
+    action: &ComponentCommand,
 ) -> Option<EventResult> {
     let window_id = window_find(wm, id)?.id;
     match action {
-        AutomationAction::Click => {
+        ComponentCommand::Click => {
             wm.bring_to_front(window_id);
             Some(EventResult::consumed())
         }
@@ -971,13 +980,13 @@ fn window_action(
 fn window_find<'a>(wm: &'a crate::wm::WindowManager, id: &str) -> Option<&'a Window> {
     wm.windows()
         .iter()
-        .find(|w| w.automation_id.as_deref() == Some(id))
+        .find(|w| w.tag.as_deref() == Some(id))
 }
 
 fn window_find_mut<'a>(wm: &'a mut crate::wm::WindowManager, id: &str) -> Option<&'a mut Window> {
     wm.windows_mut()
         .iter_mut()
-        .find(|w| w.automation_id.as_deref() == Some(id))
+        .find(|w| w.tag.as_deref() == Some(id))
 }
 
 fn window_exists(wm: &crate::wm::WindowManager, id: &str) -> bool {
@@ -988,10 +997,10 @@ fn component_get_property(
     wm: &crate::wm::WindowManager,
     id: &str,
     name: &str,
-) -> Option<AutomationValue> {
+) -> Option<ComponentValue> {
     for window in wm.windows() {
         if let Some(found) = component_find(window.view.as_ref(), id) {
-            return found.automation_get_property(name);
+            return found.get_property(name);
         }
     }
     None
@@ -1001,11 +1010,11 @@ fn component_set_property(
     wm: &mut crate::wm::WindowManager,
     id: &str,
     name: &str,
-    value: AutomationValue,
-) -> Result<bool, AutomationError> {
+    value: ComponentValue,
+) -> Result<bool, ComponentError> {
     for window in wm.windows_mut() {
         if let Some(found) = component_find_mut(window.view.as_mut(), id) {
-            found.automation_set_property(name, value)?;
+            found.set_property(name, value)?;
             return Ok(true);
         }
     }
@@ -1015,11 +1024,11 @@ fn component_set_property(
 fn component_action(
     wm: &mut crate::wm::WindowManager,
     id: &str,
-    action: &AutomationAction,
+    action: &ComponentCommand,
 ) -> Option<EventResult> {
     for window in wm.windows_mut() {
         if let Some(found) = component_find_mut(window.view.as_mut(), id) {
-            return Some(found.automation_action(action.clone()));
+            return Some(found.apply_command(action.clone()));
         }
     }
     None
@@ -1043,7 +1052,7 @@ fn focused_component_mut(wm: &mut crate::wm::WindowManager) -> Option<&mut dyn C
 fn focused_component_in_view<'a>(view: &'a mut dyn Component) -> Option<&'a mut dyn Component> {
     let mut current: &mut dyn Component = view;
     loop {
-        if let Some(child_id) = current.automation_focused_child() {
+        if let Some(child_id) = current.focused_child() {
             let Some(children) = current.children_mut() else {
                 return None;
             };
@@ -1067,7 +1076,7 @@ fn focused_component_in_view<'a>(view: &'a mut dyn Component) -> Option<&'a mut 
 }
 
 fn component_find<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
-    if view.automation_id() == Some(id) {
+    if view.tag() == Some(id) {
         return Some(view);
     }
     for child in view.children() {
@@ -1079,7 +1088,7 @@ fn component_find<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Compo
 }
 
 fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a mut dyn Component> {
-    if view.automation_id() == Some(id) {
+    if view.tag() == Some(id) {
         return Some(view);
     }
     let children = view.children_mut()?;
@@ -1095,35 +1104,35 @@ fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a m
 mod tests {
     use super::*;
     use crate::app::MenuBar;
-    use crate::composable::{AutomationIdExt, Label, TabView, Visibility};
+    use crate::composable::{ComponentTagExt, Label, TabView, Visibility};
     use crate::reactive::Binding;
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
 
     #[test]
-    fn automation_tree_finds_ids() {
+    fn inspect_tree_finds_tags() {
         let screen = Rect::new(0, 0, 80, 24);
         let menu = MenuBar::new(vec![
             MenuSpec::new(
                 "File",
-                vec![MenuItem::action("Open", || {}).with_automation_id("menu_open")],
+                vec![MenuItem::action("Open", || {}).with_tag("menu_open")],
             )
-            .with_automation_id("menu_file"),
+            .with_tag("menu_file"),
         ]);
         let mut desktop = Desktop::new(Theme::dark(), menu);
 
-        let view = Label::new("Hello").automation_id("label");
+        let view = Label::new("Hello").tag("label");
         let window = Window::new(
             WindowKind::Normal,
             "Win",
             Rect::new(2, 2, 20, 6),
             Box::new(view),
         )
-        .with_automation_id("win1");
+        .with_tag("win1");
         desktop.add_window(window, screen);
 
-        let mut auto = desktop.automation();
-        let tree = auto.tree(screen).expect("tree");
+        let mut inspector = desktop.inspect();
+        let tree = inspector.tree(screen).expect("tree");
         assert!(tree.find_by_id("menu_file").is_some());
         assert!(tree.find_by_id("menu_open").is_some());
         assert!(tree.find_by_id("win1").is_some());
@@ -1131,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_can_select_tab() {
+    fn inspect_can_select_tab() {
         let screen = Rect::new(0, 0, 80, 24);
         let menu = MenuBar::new(vec![]);
         let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -1141,7 +1150,7 @@ mod tests {
             .selection(selection.clone())
             .tab("One", Label::new("one"))
             .tab("Two", Label::new("two"))
-            .automation_id("tabs");
+            .tag("tabs");
 
         let window = Window::new(
             WindowKind::Normal,
@@ -1151,14 +1160,15 @@ mod tests {
         );
         desktop.add_window(window, screen);
 
-        let mut auto = desktop.automation();
-        auto.action(screen, "tabs", AutomationAction::SelectIndex(1))
+        let mut inspector = desktop.inspect();
+        inspector
+            .action(screen, "tabs", ComponentCommand::SelectIndex(1))
             .expect("select");
         assert_eq!(selection.get(), 1);
     }
 
     #[test]
-    fn automation_can_set_table_rows() {
+    fn inspect_can_set_table_rows() {
         let screen = Rect::new(0, 0, 80, 24);
         let menu = MenuBar::new(vec![]);
         let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -1170,7 +1180,7 @@ mod tests {
             rows.clone(),
             Binding::new(0usize),
         )
-        .automation_id("table");
+        .tag("table");
 
         let window = Window::new(
             WindowKind::Normal,
@@ -1180,21 +1190,22 @@ mod tests {
         );
         desktop.add_window(window, screen);
 
-        let mut auto = desktop.automation();
+        let mut inspector = desktop.inspect();
         let new_rows = vec![vec!["x".into(), "y".into()], vec!["1".into(), "2".into()]];
-        auto.set_property("table", "rows", AutomationValue::Table(new_rows.clone()))
+        inspector
+            .set_property("table", "rows", ComponentValue::Table(new_rows.clone()))
             .expect("rows");
         assert_eq!(rows.get(), new_rows);
     }
 
     #[test]
-    fn automation_can_toggle_visibility() {
+    fn inspect_can_toggle_visibility() {
         let screen = Rect::new(0, 0, 80, 24);
         let menu = MenuBar::new(vec![]);
         let mut desktop = Desktop::new(Theme::dark(), menu);
 
         let visible = Binding::new(true);
-        let view = Visibility::new(visible.clone(), Label::new("Hello")).automation_id("vis");
+        let view = Visibility::new(visible.clone(), Label::new("Hello")).tag("vis");
         let window = Window::new(
             WindowKind::Normal,
             "Vis",
@@ -1203,8 +1214,9 @@ mod tests {
         );
         desktop.add_window(window, screen);
 
-        let mut auto = desktop.automation();
-        auto.set_property("vis", "visible", AutomationValue::Bool(false))
+        let mut inspector = desktop.inspect();
+        inspector
+            .set_property("vis", "visible", ComponentValue::Bool(false))
             .expect("visible");
         assert!(!visible.get());
     }

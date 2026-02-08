@@ -2,15 +2,15 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::automation::{AutomationAction, AutomationError, AutomationValue};
-use atto_ui_macros::{Automatable, automate_component};
+use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueExt};
+use atto_ui_macros::{ComponentProps, component_props};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig, TitleBarContent,
     TitleBarContext,
 };
 use crate::reactive::Binding;
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct Visibility {
     visible: Binding<bool>,
     inner: Box<dyn Component>,
@@ -51,48 +51,48 @@ pub trait VisibilityExt: Component + Sized + 'static {
 
 impl<T> VisibilityExt for T where T: Component + Sized + 'static {}
 
-#[automate_component]
+#[component_props]
 impl Component for Visibility {
-    fn automation_properties(&self) -> Vec<&'static str> {
-        let mut props = self.inner.automation_properties();
+    fn property_names(&self) -> Vec<&'static str> {
+        let mut props = self.inner.property_names();
         props.push("visible");
         props
     }
 
-    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
         match name {
-            "visible" => Some(AutomationValue::Bool(self.visible.get())),
-            _ => self.inner.automation_get_property(name),
+            "visible" => Some(ComponentValue::Bool(self.visible.get())),
+            _ => self.inner.get_property(name),
         }
     }
 
-    fn automation_set_property(
+    fn set_property(
         &mut self,
         name: &str,
-        value: AutomationValue,
-    ) -> Result<(), AutomationError> {
+        value: ComponentValue,
+    ) -> Result<(), ComponentError> {
         match name {
             "visible" => {
                 let v = value.try_into_bool(name)?;
                 self.visible.set(v);
                 Ok(())
             }
-            _ => self.inner.automation_set_property(name, value),
+            _ => self.inner.set_property(name, value),
         }
     }
 
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+    fn apply_command(&mut self, action: ComponentCommand) -> EventResult {
         if !self.visible.get() {
             return EventResult::ignored();
         }
-        self.inner.automation_action(action)
+        self.inner.apply_command(action)
     }
 
-    fn automation_focused_child(&self) -> Option<ComponentId> {
+    fn focused_child(&self) -> Option<ComponentId> {
         if !self.visible.get() {
             return None;
         }
-        self.inner.automation_focused_child()
+        self.inner.focused_child()
     }
 
     fn is_focusable(&self) -> bool {

@@ -5,17 +5,17 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{Automatable, automate_component};
-use crate::automation::AutomationAction;
+use atto_ui_macros::{ComponentProps, component_props};
+use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, EventResult};
-use crate::dynamic::CallbackHandle;
+use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 pub struct RadioGroup {
     label: Binding<String>,
     options: Binding<Vec<String>>,
-    #[automation(rename = "selection")]
+    #[component(rename = "selection")]
     binding: Binding<usize>,
     enabled: Binding<bool>,
     height: Option<Binding<u16>>,
@@ -82,11 +82,11 @@ impl RadioGroup {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for RadioGroup {
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        match action {
-            AutomationAction::SelectIndex(idx) => {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::SelectIndex(idx) => {
                 let options_len = self.options.get().len();
                 if options_len > 0 {
                     self.binding.set(idx.min(options_len.saturating_sub(1)));

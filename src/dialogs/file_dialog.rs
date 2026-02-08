@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use crate::composable::{
     Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack,
     LayoutParams, Size, VStack,
@@ -14,7 +14,7 @@ use crate::composable::{
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::widgets::{Button, Label, ListBox, TextBox};
 
-#[derive(Clone, Automatable)]
+#[derive(Clone, ComponentProps)]
 struct FocusBindingComponent<T> {
     inner: T,
     focused: Binding<bool>,
@@ -26,13 +26,13 @@ impl<T> FocusBindingComponent<T> {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl<T> Component for FocusBindingComponent<T>
 where
     T: Component + Clone + Send + 'static,
 {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
-        self.inner.automation_focused_child()
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
     }
 
     fn is_focusable(&self) -> bool {
@@ -179,7 +179,7 @@ impl Entry {
 ///   - In the file name field: submit.
 /// - `Backspace`: go to parent directory (when the file list is focused).
 /// - `Esc`: cancel and close.
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct FileDialog {
     mode: FileDialogMode,
     result: Binding<Option<PathBuf>>,
@@ -591,7 +591,7 @@ impl FileDialog {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for FileDialog {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()

@@ -1,12 +1,12 @@
-//! Dynamic runtime integration layer.
+//! Runtime integration layer.
 
 use std::fmt;
 
 use atto_ui_runtime::{
     ActionMeta, AlignSpec, AnchorPlacementSpec, AnchorSpec, CallbackId, CallbackInvocation,
     CallbackRegistry, ComponentRegistry, ComponentSchema, ComponentSpec, ComponentSpecChild,
-    DynamicError, DynamicValue, EdgeInsetsSpec, EventMeta, LayoutSpec, PropertyMeta,
-    SizeSpec, TreeOp, ValueType, apply_tree_ops,
+    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec, PropertyMeta,
+    SizeSpec, TreeError, TreeOp, ValueType, apply_tree_ops,
 };
 
 use crate::composable::{
@@ -14,13 +14,12 @@ use crate::composable::{
     HStack, Label, LayoutParams, Size, Spacer, Splitter, SplitterOrientation, TabView, Text,
     TextBox, VStack, Visibility,
 };
-use crate::automation::{AutomationError, AutomationValue};
+use crate::ComponentError;
 use crate::reactive::Binding;
 use crate::widgets::{
     Button, Checkbox, ListBox, ProgressBar, RadioGroup, Slider, Spinner, StyledLabel, TableView,
     TabHeaderPosition,
 };
-use ratatui::layout::Rect as UiRect;
 
 #[derive(Clone)]
 pub struct CallbackHandle {
@@ -49,7 +48,7 @@ impl CallbackHandle {
         self.emit_with(None);
     }
 
-    pub fn emit_with(&self, payload: Option<DynamicValue>) {
+    pub fn emit_with(&self, payload: Option<ComponentValue>) {
         self.registry.emit(CallbackInvocation {
             callback_id: self.callback_id,
             target_id: self.target_id.clone(),
@@ -97,15 +96,15 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
     registry
 }
 
-pub struct DynamicTree {
+pub struct ComponentTree {
     root: ComponentSpec,
     callbacks: CallbackRegistry,
     registry: ComponentRegistry<Box<dyn Component>>,
     view: Box<dyn Component>,
 }
 
-impl DynamicTree {
-    pub fn new(root: ComponentSpec, callbacks: CallbackRegistry) -> Result<Self, DynamicError> {
+impl ComponentTree {
+    pub fn new(root: ComponentSpec, callbacks: CallbackRegistry) -> Result<Self, TreeError> {
         let registry = builtin_registry(callbacks.clone());
         let view = registry.build(&root)?;
         Ok(Self {
@@ -136,21 +135,21 @@ impl DynamicTree {
         self.view.as_mut()
     }
 
-    pub fn apply_ops(&mut self, ops: &[TreeOp]) -> Result<bool, DynamicError> {
+    pub fn apply_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         apply_tree_ops(&mut self.root, ops)
     }
 
-    pub fn rebuild(&mut self) -> Result<(), DynamicError> {
+    pub fn rebuild(&mut self) -> Result<(), TreeError> {
         self.view = self.registry.build(&self.root)?;
         Ok(())
     }
 
-    pub fn apply_ops_and_rebuild(&mut self, ops: &[TreeOp]) -> Result<(), DynamicError> {
+    pub fn apply_ops_and_rebuild(&mut self, ops: &[TreeOp]) -> Result<(), TreeError> {
         apply_tree_ops(&mut self.root, ops)?;
         self.rebuild()
     }
 
-    pub fn apply_ops_incremental(&mut self, ops: &[TreeOp]) -> Result<bool, DynamicError> {
+    pub fn apply_ops_incremental(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         let has_set_tree = ops.iter().any(|op| matches!(op, TreeOp::SetTree(_)));
         apply_tree_ops(&mut self.root, ops)?;
         if has_set_tree {
@@ -228,7 +227,7 @@ impl DynamicTree {
                 }
                 TreeOp::Remove { id } => {
                     if id_matches_root(&self.view, id) {
-                        return Err(DynamicError::InvalidTreeOp(
+                        return Err(TreeError::InvalidTreeOp(
                             "cannot remove root node".to_string(),
                         ));
                     }
@@ -260,7 +259,7 @@ impl DynamicTree {
                     index,
                 } => {
                     if id_matches_root(&self.view, id) {
-                        return Err(DynamicError::InvalidTreeOp(
+                        return Err(TreeError::InvalidTreeOp(
                             "cannot move root node".to_string(),
                         ));
                     }
@@ -290,51 +289,26 @@ enum PropertyApply {
 }
 
 fn id_matches_root(view: &dyn Component, id: &str) -> bool {
-    view.automation_id().is_some_and(|view_id| view_id == id)
-}
-
-fn automation_value_from_dynamic(value: &DynamicValue) -> Option<AutomationValue> {
-    match value {
-        DynamicValue::Bool(v) => Some(AutomationValue::Bool(*v)),
-        DynamicValue::I64(v) => Some(AutomationValue::I64(*v)),
-        DynamicValue::U64(v) => Some(AutomationValue::U64(*v)),
-        DynamicValue::F64(v) => Some(AutomationValue::F64(*v)),
-        DynamicValue::String(v) => Some(AutomationValue::String(v.clone())),
-        DynamicValue::StringList(v) => Some(AutomationValue::StringList(v.clone())),
-        DynamicValue::Table(v) => Some(AutomationValue::Table(v.clone())),
-        DynamicValue::Rect(rect) => Some(AutomationValue::Rect(UiRect::new(
-            rect.x,
-            rect.y,
-            rect.width,
-            rect.height,
-        ))),
-        DynamicValue::Null
-        | DynamicValue::Bytes(_)
-        | DynamicValue::List(_)
-        | DynamicValue::Map(_) => None,
-    }
+    view.tag().is_some_and(|view_id| view_id == id)
 }
 
 fn apply_property_to_view(
     view: &mut dyn Component,
     id: &str,
     name: &str,
-    value: &DynamicValue,
-) -> Result<PropertyApply, DynamicError> {
-    if view.automation_id() == Some(id) {
-        let Some(auto_value) = automation_value_from_dynamic(value) else {
-            return Ok(PropertyApply::NeedsRebuild);
-        };
-        return match view.automation_set_property(name, auto_value) {
+    value: &ComponentValue,
+) -> Result<PropertyApply, TreeError> {
+    if view.tag() == Some(id) {
+        return match view.set_property(name, value.clone()) {
             Ok(()) => Ok(PropertyApply::Applied),
-            Err(AutomationError::UnsupportedProperty(_)) => Ok(PropertyApply::NeedsRebuild),
-            Err(AutomationError::NotFound(_)) => Ok(PropertyApply::NeedsRebuild),
-            Err(AutomationError::InvalidValue { expected, .. }) => Err(DynamicError::InvalidProperty {
+            Err(ComponentError::UnsupportedProperty(_)) => Ok(PropertyApply::NeedsRebuild),
+            Err(ComponentError::NotFound(_)) => Ok(PropertyApply::NeedsRebuild),
+            Err(ComponentError::InvalidValue { expected, .. }) => Err(TreeError::InvalidProperty {
                 id: id.to_string(),
                 name: name.to_string(),
                 reason: format!("expected {expected}"),
             }),
-            Err(err) => Err(DynamicError::InvalidProperty {
+            Err(err) => Err(TreeError::InvalidProperty {
                 id: id.to_string(),
                 name: name.to_string(),
                 reason: format!("{err:?}"),
@@ -355,7 +329,7 @@ fn apply_property_to_view(
 }
 
 fn is_tab_view(view: &dyn Component) -> bool {
-    view.automation_type_name()
+    view.type_name()
         .rsplit("::")
         .next()
         .is_some_and(|name| name == "TabView")
@@ -381,7 +355,7 @@ fn replace_node_with_spec(
     id: &str,
     root: &ComponentSpec,
     registry: &ComponentRegistry<Box<dyn Component>>,
-) -> Result<bool, DynamicError> {
+) -> Result<bool, TreeError> {
     let Some(child_spec) = find_child_spec_by_id(root, id) else {
         return Ok(false);
     };
@@ -393,13 +367,13 @@ fn replace_node_with_child_spec(
     id: &str,
     child: &ComponentSpecChild,
     registry: &ComponentRegistry<Box<dyn Component>>,
-) -> Result<bool, DynamicError> {
+) -> Result<bool, TreeError> {
     let tab_view = is_tab_view(view);
     let Some(children) = view.children_mut() else {
         return Ok(false);
     };
     for node in children.iter_mut() {
-        if node.view.automation_id() == Some(id) {
+        if node.view.tag() == Some(id) {
             if tab_view {
                 return Ok(false);
             }
@@ -425,8 +399,8 @@ fn insert_child_spec(
     index: usize,
     child: &ComponentSpecChild,
     registry: &ComponentRegistry<Box<dyn Component>>,
-) -> Result<bool, DynamicError> {
-    if view.automation_id() == Some(parent_id) {
+) -> Result<bool, TreeError> {
+    if view.tag() == Some(parent_id) {
         if is_tab_view(view) {
             return Ok(false);
         }
@@ -464,13 +438,13 @@ fn remove_node(view: &mut dyn Component, id: &str) -> bool {
     if tab_view {
         if children
             .iter()
-            .any(|child| child.view.automation_id() == Some(id))
+            .any(|child| child.view.tag() == Some(id))
         {
             return false;
         }
     } else if let Some(idx) = children
         .iter()
-        .position(|child| child.view.automation_id() == Some(id))
+        .position(|child| child.view.tag() == Some(id))
     {
         children.remove(idx);
         return true;
@@ -509,13 +483,13 @@ fn take_node(view: &mut dyn Component, id: &str) -> Option<ComponentNode> {
     if !tab_view {
         if let Some(idx) = children
             .iter()
-            .position(|child| child.view.automation_id() == Some(id))
+            .position(|child| child.view.tag() == Some(id))
         {
             return Some(children.remove(idx));
         }
     } else if children
         .iter()
-        .any(|child| child.view.automation_id() == Some(id))
+        .any(|child| child.view.tag() == Some(id))
     {
         return None;
     }
@@ -537,7 +511,7 @@ fn insert_existing_node(
     if node.is_none() {
         return true;
     }
-    if view.automation_id() == Some(parent_id) {
+    if view.tag() == Some(parent_id) {
         if is_tab_view(view) {
             return false;
         }
@@ -1114,7 +1088,7 @@ fn register_visibility(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 
 fn wrap_with_id(spec: &ComponentSpec, view: Box<dyn Component>) -> Box<dyn Component> {
     match &spec.id {
-        Some(id) => Box::new(crate::composable::AutomationTag::boxed(id.clone(), view)),
+        Some(id) => Box::new(crate::composable::ComponentTag::boxed(id.clone(), view)),
         None => view,
     }
 }
@@ -1194,23 +1168,23 @@ fn edge_insets_from_spec(spec: EdgeInsetsSpec) -> EdgeInsets {
     }
 }
 
-fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, DynamicError> {
+fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, TreeError> {
     match spec.props.get(name) {
-        Some(DynamicValue::String(v)) => Ok(Some(v.clone())),
+        Some(ComponentValue::String(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "string", other)),
         None => Ok(None),
     }
 }
 
-fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, DynamicError> {
+fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, TreeError> {
     match spec.props.get(name) {
-        Some(DynamicValue::Bool(v)) => Ok(Some(*v)),
+        Some(ComponentValue::Bool(v)) => Ok(Some(*v)),
         Some(other) => Err(invalid_prop(spec, name, "bool", other)),
         None => Ok(None),
     }
 }
 
-fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, DynamicError> {
+fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_u64() {
             Some(v) => Ok(Some(v.min(u16::MAX as u64) as u16)),
@@ -1220,7 +1194,7 @@ fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, DynamicErro
     }
 }
 
-fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, DynamicError> {
+fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_u64() {
             Some(v) => Ok(Some(v as usize)),
@@ -1230,7 +1204,7 @@ fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, Dynamic
     }
 }
 
-fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, DynamicError> {
+fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_f64() {
             Some(v) => Ok(Some(v)),
@@ -1243,9 +1217,9 @@ fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, DynamicErro
 fn prop_vec_string(
     spec: &ComponentSpec,
     name: &str,
-) -> Result<Option<Vec<String>>, DynamicError> {
+) -> Result<Option<Vec<String>>, TreeError> {
     match spec.props.get(name) {
-        Some(DynamicValue::StringList(v)) => Ok(Some(v.clone())),
+        Some(ComponentValue::StringList(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "string list", other)),
         None => Ok(None),
     }
@@ -1254,9 +1228,9 @@ fn prop_vec_string(
 fn prop_table(
     spec: &ComponentSpec,
     name: &str,
-) -> Result<Option<Vec<Vec<String>>>, DynamicError> {
+) -> Result<Option<Vec<Vec<String>>>, TreeError> {
     match spec.props.get(name) {
-        Some(DynamicValue::Table(v)) => Ok(Some(v.clone())),
+        Some(ComponentValue::Table(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "table", other)),
         None => Ok(None),
     }
@@ -1265,7 +1239,7 @@ fn prop_table(
 fn prop_edge_insets(
     spec: &ComponentSpec,
     name: &str,
-) -> Result<Option<EdgeInsets>, DynamicError> {
+) -> Result<Option<EdgeInsets>, TreeError> {
     let Some(value) = spec.props.get(name) else {
         return Ok(None);
     };
@@ -1275,22 +1249,22 @@ fn prop_edge_insets(
 fn edge_insets_from_value(
     spec: &ComponentSpec,
     name: &str,
-    value: &DynamicValue,
-) -> Result<EdgeInsets, DynamicError> {
+    value: &ComponentValue,
+) -> Result<EdgeInsets, TreeError> {
     match value {
-        DynamicValue::U64(v) => {
+        ComponentValue::U64(v) => {
             let val = (*v).min(u16::MAX as u64) as u16;
             Ok(EdgeInsets::all(val))
         }
-        DynamicValue::I64(v) if *v >= 0 => {
+        ComponentValue::I64(v) if *v >= 0 => {
             let val = (*v as u64).min(u16::MAX as u64) as u16;
             Ok(EdgeInsets::all(val))
         }
-        DynamicValue::F64(v) if *v >= 0.0 => {
+        ComponentValue::F64(v) if *v >= 0.0 => {
             let val = (*v as u64).min(u16::MAX as u64) as u16;
             Ok(EdgeInsets::all(val))
         }
-        DynamicValue::Map(map) => {
+        ComponentValue::Map(map) => {
             let top = map
                 .get("top")
                 .and_then(|v| v.as_u64())
@@ -1318,7 +1292,7 @@ fn edge_insets_from_value(
                 left,
             })
         }
-        DynamicValue::List(values) => {
+        ComponentValue::List(values) => {
             if values.len() != 4 {
                 return Err(invalid_prop(spec, name, "padding list of 4", value));
             }
@@ -1363,9 +1337,9 @@ fn invalid_prop(
     spec: &ComponentSpec,
     name: &str,
     expected: &str,
-    value: &DynamicValue,
-) -> DynamicError {
-    DynamicError::InvalidProperty {
+    value: &ComponentValue,
+) -> TreeError {
+    TreeError::InvalidProperty {
         id: spec
             .id
             .clone()
@@ -1430,7 +1404,6 @@ impl StackBuilder for HStack {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automation::AutomationValue;
     use atto_ui_runtime::ComponentSpecChild;
     use crate::composable::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
     use crate::theme::Theme;
@@ -1438,13 +1411,13 @@ mod tests {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     #[test]
-    fn dynamic_button_click_emits_callback() {
+    fn component_button_click_emits_callback() {
         let callbacks = CallbackRegistry::new();
         let cb = callbacks.register();
 
         let mut spec = ComponentSpec::new("Button")
             .with_id("btn")
-            .with_prop("label", DynamicValue::String("OK".into()));
+            .with_prop("label", ComponentValue::String("OK".into()));
         spec.events.insert("click".into(), cb);
 
         let registry = builtin_registry(callbacks.clone());
@@ -1474,14 +1447,14 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_checkbox_change_emits_callback() {
+    fn component_checkbox_change_emits_callback() {
         let callbacks = CallbackRegistry::new();
         let cb = callbacks.register();
 
         let mut spec = ComponentSpec::new("Checkbox")
             .with_id("chk")
-            .with_prop("label", DynamicValue::String("A".into()))
-            .with_prop("checked", DynamicValue::Bool(false));
+            .with_prop("label", ComponentValue::String("A".into()))
+            .with_prop("checked", ComponentValue::Bool(false));
         spec.events.insert("change".into(), cb);
 
         let registry = builtin_registry(callbacks.clone());
@@ -1511,16 +1484,16 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_tree_ops_rebuild_children() {
+    fn component_tree_ops_rebuild_children() {
         let callbacks = CallbackRegistry::new();
         let mut tree =
-            DynamicTree::new(ComponentSpec::new("VStack").with_id("root"), callbacks)
+            ComponentTree::new(ComponentSpec::new("VStack").with_id("root"), callbacks)
                 .expect("tree");
 
         let child = ComponentSpecChild::new(
             ComponentSpec::new("Label")
                 .with_id("title")
-                .with_prop("text", DynamicValue::String("Hello".into())),
+                .with_prop("text", ComponentValue::String("Hello".into())),
         )
         .with_layout(LayoutSpec {
             width: SizeSpec::Fixed(8),
@@ -1541,28 +1514,28 @@ mod tests {
         assert_eq!(children[0].layout.width, Size::Fixed(8));
         let value = children[0]
             .view
-            .automation_get_property("text")
+            .get_property("text")
             .expect("text property");
-        assert_eq!(value, AutomationValue::String("Hello".into()));
+        assert_eq!(value, ComponentValue::String("Hello".into()));
     }
 
     #[test]
-    fn dynamic_tree_incremental_set_prop_updates_view() {
+    fn component_tree_incremental_set_prop_updates_view() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack")
             .with_id("root")
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Label")
                     .with_id("title")
-                    .with_prop("text", DynamicValue::String("A".into())),
+                    .with_prop("text", ComponentValue::String("A".into())),
             ));
-        let mut tree = DynamicTree::new(root, callbacks).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let changed = tree
             .apply_ops_incremental(&[TreeOp::SetProp {
                 id: "title".into(),
                 name: "text".into(),
-                value: DynamicValue::String("B".into()),
+                value: ComponentValue::String("B".into()),
             }])
             .expect("apply");
         assert!(!changed);
@@ -1570,21 +1543,21 @@ mod tests {
         let children = tree.view().children();
         let value = children[0]
             .view
-            .automation_get_property("text")
+            .get_property("text")
             .expect("text property");
-        assert_eq!(value, AutomationValue::String("B".into()));
+        assert_eq!(value, ComponentValue::String("B".into()));
     }
 
     #[test]
-    fn dynamic_tree_incremental_insert_child() {
+    fn component_tree_incremental_insert_child() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack").with_id("root");
-        let mut tree = DynamicTree::new(root, callbacks).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let child = ComponentSpecChild::new(
             ComponentSpec::new("Label")
                 .with_id("a")
-                .with_prop("text", DynamicValue::String("Hello".into())),
+                .with_prop("text", ComponentValue::String("Hello".into())),
         )
         .with_layout(LayoutSpec {
             width: SizeSpec::Fixed(5),
@@ -1606,13 +1579,13 @@ mod tests {
         assert_eq!(children[0].layout.width, Size::Fixed(5));
         let value = children[0]
             .view
-            .automation_get_property("text")
+            .get_property("text")
             .expect("text property");
-        assert_eq!(value, AutomationValue::String("Hello".into()));
+        assert_eq!(value, ComponentValue::String("Hello".into()));
     }
 
     #[test]
-    fn dynamic_tree_incremental_remove_child() {
+    fn component_tree_incremental_remove_child() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack")
             .with_id("root")
@@ -1622,7 +1595,7 @@ mod tests {
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Label").with_id("b"),
             ));
-        let mut tree = DynamicTree::new(root, callbacks).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let changed = tree
             .apply_ops_incremental(&[TreeOp::Remove { id: "a".into() }])
@@ -1631,11 +1604,11 @@ mod tests {
 
         let children = tree.view().children();
         assert_eq!(children.len(), 1);
-        assert_eq!(children[0].view.automation_id(), Some("b"));
+        assert_eq!(children[0].view.tag(), Some("b"));
     }
 
     #[test]
-    fn dynamic_tree_incremental_move_child() {
+    fn component_tree_incremental_move_child() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack")
             .with_id("root")
@@ -1648,7 +1621,7 @@ mod tests {
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Label").with_id("c"),
             ));
-        let mut tree = DynamicTree::new(root, callbacks).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let changed = tree
             .apply_ops_incremental(&[TreeOp::Move {
@@ -1662,25 +1635,25 @@ mod tests {
         let children = tree.view().children();
         let ids: Vec<Option<&str>> = children
             .iter()
-            .map(|child| child.view.automation_id())
+            .map(|child| child.view.tag())
             .collect();
         assert_eq!(ids, vec![Some("c"), Some("a"), Some("b")]);
     }
 
     #[test]
-    fn dynamic_tree_incremental_replace_child() {
+    fn component_tree_incremental_replace_child() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack")
             .with_id("root")
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Label").with_id("a"),
             ));
-        let mut tree = DynamicTree::new(root, callbacks).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let node = ComponentSpecChild::new(
             ComponentSpec::new("Button")
                 .with_id("a")
-                .with_prop("label", DynamicValue::String("OK".into())),
+                .with_prop("label", ComponentValue::String("OK".into())),
         )
         .with_layout(LayoutSpec {
             width: SizeSpec::Fixed(6),
@@ -1698,16 +1671,16 @@ mod tests {
 
         let children = tree.view().children();
         assert_eq!(children[0].layout.width, Size::Fixed(6));
-        assert!(children[0].view.automation_type_name().ends_with("Button"));
+        assert!(children[0].view.type_name().ends_with("Button"));
         let value = children[0]
             .view
-            .automation_get_property("label")
+            .get_property("label")
             .expect("label property");
-        assert_eq!(value, AutomationValue::String("OK".into()));
+        assert_eq!(value, ComponentValue::String("OK".into()));
     }
 
     #[test]
-    fn dynamic_tree_incremental_bind_and_clear_event() {
+    fn component_tree_incremental_bind_and_clear_event() {
         let callbacks = CallbackRegistry::new();
         let cb = callbacks.register();
         let root = ComponentSpec::new("VStack")
@@ -1715,9 +1688,9 @@ mod tests {
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Button")
                     .with_id("btn")
-                    .with_prop("label", DynamicValue::String("Go".into())),
+                    .with_prop("label", ComponentValue::String("Go".into())),
             ));
-        let mut tree = DynamicTree::new(root, callbacks.clone()).expect("tree");
+        let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
 
         let changed = tree
             .apply_ops_incremental(&[TreeOp::BindEvent {

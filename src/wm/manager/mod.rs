@@ -157,7 +157,7 @@ impl WindowManager {
 mod tests {
     use super::WindowManager;
     use super::draw::draw_shadow;
-    use crate::automation::AutomationValue;
+    use crate::ComponentValue;
     use crate::composable::{
         Component, ComponentContext, EventResult, Label, ScrollConfig, ScrollbarVisibility,
     };
@@ -215,16 +215,16 @@ mod tests {
         );
         let before = wm
             .window_mut(id)
-            .and_then(|w| w.view.automation_get_property("text"))
+            .and_then(|w| w.view.get_property("text"))
             .expect("before text");
-        assert_eq!(before, AutomationValue::String("A".into()));
+        assert_eq!(before, ComponentValue::String("A".into()));
 
         assert!(wm.set_view(id, Box::new(Label::new("B"))));
         let after = wm
             .window_mut(id)
-            .and_then(|w| w.view.automation_get_property("text"))
+            .and_then(|w| w.view.get_property("text"))
             .expect("after text");
-        assert_eq!(after, AutomationValue::String("B".into()));
+        assert_eq!(after, ComponentValue::String("B".into()));
     }
 
     #[test]

@@ -2,19 +2,19 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::component::{Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
-use crate::automation::{AutomationAction, AutomationError, AutomationValue};
+use crate::{ComponentCommand, ComponentError, ComponentValue};
 
-#[derive(Automatable)]
-pub struct AutomationTag {
+#[derive(ComponentProps)]
+pub struct ComponentTag {
     id: String,
     inner: Box<dyn Component>,
 }
 
-impl AutomationTag {
+impl ComponentTag {
     pub fn new(id: impl Into<String>, inner: impl Component + 'static) -> Self {
         Self {
             id: id.into(),
@@ -34,46 +34,46 @@ impl AutomationTag {
     }
 }
 
-pub trait AutomationIdExt: Component + Sized + 'static {
-    fn automation_id(self, id: impl Into<String>) -> AutomationTag {
-        AutomationTag::new(id, self)
+pub trait ComponentTagExt: Component + Sized + 'static {
+    fn tag(self, id: impl Into<String>) -> ComponentTag {
+        ComponentTag::new(id, self)
     }
 }
 
-impl<T> AutomationIdExt for T where T: Component + Sized + 'static {}
+impl<T> ComponentTagExt for T where T: Component + Sized + 'static {}
 
-#[automate_component]
-impl Component for AutomationTag {
-    fn automation_type_name(&self) -> &'static str {
-        self.inner.automation_type_name()
+#[component_props]
+impl Component for ComponentTag {
+    fn type_name(&self) -> &'static str {
+        self.inner.type_name()
     }
 
-    fn automation_id(&self) -> Option<&str> {
+    fn tag(&self) -> Option<&str> {
         Some(self.id.as_str())
     }
 
-    fn automation_focused_child(&self) -> Option<ComponentId> {
-        self.inner.automation_focused_child()
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
     }
 
-    fn automation_properties(&self) -> Vec<&'static str> {
-        self.inner.automation_properties()
+    fn property_names(&self) -> Vec<&'static str> {
+        self.inner.property_names()
     }
 
-    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
-        self.inner.automation_get_property(name)
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        self.inner.get_property(name)
     }
 
-    fn automation_set_property(
+    fn set_property(
         &mut self,
         name: &str,
-        value: AutomationValue,
-    ) -> Result<(), AutomationError> {
-        self.inner.automation_set_property(name, value)
+        value: ComponentValue,
+    ) -> Result<(), ComponentError> {
+        self.inner.set_property(name, value)
     }
 
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        self.inner.automation_action(action)
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        self.inner.apply_command(command)
     }
 
     fn is_focusable(&self) -> bool {
@@ -173,28 +173,28 @@ impl Component for AutomationTag {
     }
 }
 
-impl From<(String, Box<dyn Component>)> for AutomationTag {
+impl From<(String, Box<dyn Component>)> for ComponentTag {
     fn from(value: (String, Box<dyn Component>)) -> Self {
-        AutomationTag::boxed(value.0, value.1)
+        ComponentTag::boxed(value.0, value.1)
     }
 }
 
-impl From<(&str, Box<dyn Component>)> for AutomationTag {
+impl From<(&str, Box<dyn Component>)> for ComponentTag {
     fn from(value: (&str, Box<dyn Component>)) -> Self {
-        AutomationTag::boxed(value.0.to_string(), value.1)
+        ComponentTag::boxed(value.0.to_string(), value.1)
     }
 }
 
-impl From<(String, AutomationTag)> for AutomationTag {
-    fn from(value: (String, AutomationTag)) -> Self {
+impl From<(String, ComponentTag)> for ComponentTag {
+    fn from(value: (String, ComponentTag)) -> Self {
         let (id, mut tag) = value;
         tag.id = id;
         tag
     }
 }
 
-impl From<(&str, AutomationTag)> for AutomationTag {
-    fn from(value: (&str, AutomationTag)) -> Self {
+impl From<(&str, ComponentTag)> for ComponentTag {
+    fn from(value: (&str, ComponentTag)) -> Self {
         let (id, mut tag) = value;
         tag.id = id.to_string();
         tag

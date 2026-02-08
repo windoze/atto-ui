@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::component::{Component, ComponentContext, EventResult, TabMode};
 use super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
@@ -33,7 +33,7 @@ struct DragState {
     grab_offset: u16,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct Splitter {
     children: Vec<ComponentNode>,
     orientation: SplitterOrientation,
@@ -409,9 +409,9 @@ impl Splitter {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for Splitter {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
+    fn focused_child(&self) -> Option<ComponentId> {
         self.focused
     }
 

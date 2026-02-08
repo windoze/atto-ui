@@ -8,29 +8,29 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
-use atto_ui_macros::{Automatable, automate_component};
-use crate::automation::AutomationAction;
+use atto_ui_macros::{ComponentProps, component_props};
+use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
     ScrollContainerHost, ScrollContent, ScrollContentContext,
 };
-use crate::dynamic::CallbackHandle;
+use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 struct ListBoxBindings {
     title: Binding<String>,
     items: Binding<Vec<String>>,
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
-    #[automation(skip)]
+    #[component(skip)]
     on_change: Option<CallbackHandle>,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct ListBox {
-    #[automation(delegate)]
+    #[component(delegate)]
     bindings: Arc<RwLock<ListBoxBindings>>,
     scroll: ScrollContainer,
     min_size: (u16, u16),
@@ -145,11 +145,11 @@ impl ListBox {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for ListBox {
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        match action {
-            AutomationAction::SelectIndex(idx) => {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::SelectIndex(idx) => {
                 let bindings = self.bindings.write();
                 let items_len = bindings.items.get().len();
                 if items_len > 0 {

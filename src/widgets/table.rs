@@ -8,8 +8,8 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
-use atto_ui_macros::{Automatable, automate_component};
-use crate::automation::AutomationAction;
+use atto_ui_macros::{ComponentProps, component_props};
+use crate::ComponentCommand;
 use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
 };
@@ -18,11 +18,11 @@ use crate::composable::{
     ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
     ScrollbarVisibility, should_show_scrollbar,
 };
-use crate::dynamic::CallbackHandle;
+use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 use crate::text::styled_text::spans_from_inline;
 
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 struct TableViewBindings {
     title: Binding<String>,
     headers: Binding<Vec<String>>,
@@ -30,13 +30,13 @@ struct TableViewBindings {
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
-    #[automation(skip)]
+    #[component(skip)]
     on_change: Option<CallbackHandle>,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct TableView {
-    #[automation(delegate)]
+    #[component(delegate)]
     bindings: Arc<RwLock<TableViewBindings>>,
     scroll: ScrollContainer,
     scrollbar_drag: Option<ScrollbarDrag>,
@@ -154,11 +154,11 @@ impl TableView {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for TableView {
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        match action {
-            AutomationAction::SelectIndex(idx) => {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::SelectIndex(idx) => {
                 let bindings = self.bindings.write();
                 let row_count = bindings.rows.get().len();
                 if row_count > 0 {

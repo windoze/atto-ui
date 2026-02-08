@@ -6,11 +6,11 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::component::{Component, ComponentContext};
 
 /// Text view (renders a single line of text; will clip if the area is too small).
-#[derive(Clone, Automatable)]
+#[derive(Clone, ComponentProps)]
 pub struct Text {
     content: TextContent,
     style: Option<Style>,
@@ -57,7 +57,7 @@ impl Text {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for Text {
     fn desired_height(&self) -> Option<u16> {
         Some(1)
@@ -80,7 +80,7 @@ impl Component for Text {
 ///
 /// This exists primarily to make `Text::from_fn` usable from the `view_builder!` macro, which
 /// expects a `Type::new(...)` constructor form.
-#[derive(Clone, Automatable)]
+#[derive(Clone, ComponentProps)]
 pub struct TextFn {
     inner: Text,
 }
@@ -111,7 +111,7 @@ impl TextFn {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for TextFn {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
@@ -133,7 +133,7 @@ enum TextContent {
 }
 
 /// Spacer view (takes space, renders nothing).
-#[derive(Clone, Debug, Default, Automatable)]
+#[derive(Clone, Debug, Default, ComponentProps)]
 pub struct Spacer;
 
 impl Spacer {
@@ -142,13 +142,13 @@ impl Spacer {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for Spacer {
     fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
 
 /// Divider view (horizontal or vertical line).
-#[derive(Clone, Debug, Automatable)]
+#[derive(Clone, Debug, ComponentProps)]
 pub struct Divider {
     horizontal: bool,
 }
@@ -163,7 +163,7 @@ impl Divider {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for Divider {
     fn desired_height(&self) -> Option<u16> {
         Some(1)

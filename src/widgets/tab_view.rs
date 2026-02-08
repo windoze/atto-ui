@@ -6,10 +6,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{Automatable, automate_component};
-use crate::automation::AutomationAction;
+use atto_ui_macros::{ComponentProps, component_props};
+use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
-use crate::dynamic::CallbackHandle;
+use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ struct HeaderLayout {
     tab_ranges: Vec<(u16, u16)>,
 }
 
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct TabView {
     id: ComponentId,
     children: Vec<ComponentNode>,
@@ -375,15 +375,15 @@ impl TabView {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for TabView {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
+    fn focused_child(&self) -> Option<ComponentId> {
         self.focused
     }
 
-    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
-        match action {
-            AutomationAction::SelectIndex(idx) => self.set_selection(idx),
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::SelectIndex(idx) => self.set_selection(idx),
             _ => EventResult::ignored(),
         }
     }

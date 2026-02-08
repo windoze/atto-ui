@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use super::component::{Component, ComponentContext, EventResult};
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -103,7 +103,7 @@ fn default_foreach_item_layout() -> LayoutParams {
 ///         .on_click(move || on_click(user_id))
 /// });
 /// ```
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct ForEach<T, V>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -259,14 +259,14 @@ where
     }
 }
 
-#[automate_component]
+#[component_props]
 impl<T, V> Component for ForEach<T, V>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
     V: Component + 'static,
 {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
-        self.cached_view.automation_focused_child()
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.cached_view.focused_child()
     }
 
     fn min_width(&self) -> u16 {
@@ -350,7 +350,7 @@ where
 ///
 /// 此结构通过 ID 跟踪列表元素，实现了视图缓存和差异更新。
 /// 当数据变化时，只有新增、删除或修改的元素会重建视图。
-#[derive(Automatable)]
+#[derive(ComponentProps)]
 pub struct ForEachIdentifiable<T, V>
 where
     T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
@@ -428,15 +428,15 @@ where
     }
 }
 
-#[automate_component]
+#[component_props]
 impl<T, V> Component for ForEachIdentifiable<T, V>
 where
     T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
     T::Id: Hash + Eq + Send + Sync,
     V: Component + 'static,
 {
-    fn automation_focused_child(&self) -> Option<ComponentId> {
-        self.cached_view.automation_focused_child()
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.cached_view.focused_child()
     }
 
     fn min_width(&self) -> u16 {
@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn test_foreach_dynamic_update() {
+    fn test_foreach_binding_update() {
         let data = Property::new(vec!["A".to_string()]);
         let mut for_each = ForEach::new(data.binding(), |item, _idx| Text::new(item.clone()));
 

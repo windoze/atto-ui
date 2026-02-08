@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use atto_ui_macros::{Automatable, automate_component};
+use atto_ui_macros::{ComponentProps, component_props};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
 use crate::text::styled_text::{
@@ -24,7 +24,7 @@ type LinkCallback = Arc<dyn Fn(&str) + Send + Sync>;
 /// - `[link text](url)` (link text is underlined; clicking calls `on_link(url)`)
 ///
 /// Parsing is intentionally simple (no full markdown support).
-#[derive(Clone, Automatable)]
+#[derive(Clone, ComponentProps)]
 pub struct StyledLabel {
     text: Binding<String>,
     enabled: Binding<bool>,
@@ -61,7 +61,7 @@ impl StyledLabel {
     }
 }
 
-#[automate_component]
+#[component_props]
 impl Component for StyledLabel {
     fn is_focusable(&self) -> bool {
         false
