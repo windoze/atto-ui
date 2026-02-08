@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
@@ -17,7 +17,7 @@ use crate::composable::{
 use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 struct ListBoxBindings {
     title: Binding<String>,
     items: Binding<Vec<String>>,
@@ -28,7 +28,7 @@ struct ListBoxBindings {
     on_change: Option<CallbackHandle>,
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct ListBox {
     #[component(delegate)]
     bindings: Arc<RwLock<ListBoxBindings>>,
@@ -145,7 +145,7 @@ impl ListBox {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for ListBox {
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {

@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::{Binding, TimerHandle, cancel_timer, register_timer_with_duration};
 
@@ -46,7 +46,7 @@ pub enum SpinnerTextEffect {
     },
 }
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 struct SpinnerState {
     text: Binding<String>,
     enabled: Binding<bool>,
@@ -66,7 +66,7 @@ struct SpinnerState {
     text_timer_speed: Option<Duration>,
 }
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 pub struct Spinner {
     #[component(delegate)]
     state: Arc<RwLock<SpinnerState>>,
@@ -311,7 +311,7 @@ impl Spinner {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Spinner {
     fn set_property(
         &mut self,
@@ -324,7 +324,7 @@ impl Component for Spinner {
             self.sync_timers();
             return Ok(());
         }
-        ::atto_ui::ComponentProps::set_property(self, name, value)
+        self.__component_set_property(name, value)
     }
 
     fn is_focusable(&self) -> bool {

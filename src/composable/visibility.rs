@@ -2,15 +2,18 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueExt};
-use atto_ui_macros::{ComponentProps, component_props};
+use crate::{
+    CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
+    ComponentValueCodec, TreeError, TreeOp,
+};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig, TitleBarContent,
     TitleBarContext,
 };
 use crate::reactive::Binding;
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct Visibility {
     visible: Binding<bool>,
     inner: Box<dyn Component>,
@@ -51,7 +54,7 @@ pub trait VisibilityExt: Component + Sized + 'static {
 
 impl<T> VisibilityExt for T where T: Component + Sized + 'static {}
 
-#[component_props]
+#[component_properties]
 impl Component for Visibility {
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
@@ -73,7 +76,7 @@ impl Component for Visibility {
     ) -> Result<(), ComponentError> {
         match name {
             "visible" => {
-                let v = value.try_into_bool(name)?;
+                let v: bool = ComponentValueCodec::from_component_value(value, name)?;
                 self.visible.set(v);
                 Ok(())
             }
@@ -240,6 +243,22 @@ impl Component for Visibility {
         if self.visible.get() {
             self.inner.scroll_to_child(child_id);
         }
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

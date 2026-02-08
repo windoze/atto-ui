@@ -5,8 +5,8 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueExt};
-use atto_ui_macros::{ComponentProps, component_props};
+use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueCodec};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use crate::reactive::Binding;
 
@@ -178,7 +178,7 @@ impl ScrollContainerHost {
     }
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct ScrollContainer {
     padding: Binding<EdgeInsets>,
     scroll: Binding<ScrollOffset>,
@@ -227,7 +227,7 @@ impl ScrollContainer {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for ScrollContainer {
     fn property_names(&self) -> Vec<&'static str> {
         vec![
@@ -259,13 +259,15 @@ impl Component for ScrollContainer {
     ) -> Result<(), ComponentError> {
         match name {
             "scroll_x" => {
-                let x = value.try_into_usize(name)? as u16;
+                let x: usize = ComponentValueCodec::from_component_value(value, name)?;
+                let x = x as u16;
                 let scroll = self.scroll.get();
                 self.set_scroll_offset(x, scroll.y);
                 Ok(())
             }
             "scroll_y" => {
-                let y = value.try_into_usize(name)? as u16;
+                let y: usize = ComponentValueCodec::from_component_value(value, name)?;
+                let y = y as u16;
                 let scroll = self.scroll.get();
                 self.set_scroll_offset(scroll.x, y);
                 Ok(())

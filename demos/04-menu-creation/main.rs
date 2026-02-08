@@ -10,9 +10,10 @@ use atto_ui::app::{
     run_crossterm_desktop,
 };
 use atto_ui::composable::{Component, ComponentContext, EventResult};
-use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -40,21 +41,21 @@ enum AppAction {
 }
 
 /// 状态视图 - 显示应用状态和最后执行的菜单项
-#[derive(Clone)]
+#[derive(Clone, ComponentProperties)]
 struct StatusView {
-    zoom_level: Property<f32>,
-    theme: Property<String>,
-    last_action: Property<String>,
-    action_history: Property<Vec<String>>,
+    zoom_level: Binding<f32>,
+    theme: Binding<String>,
+    last_action: Binding<String>,
+    action_history: Binding<Vec<String>>,
 }
 
 impl StatusView {
     fn new() -> Self {
         Self {
-            zoom_level: Property::new(100.0),
-            theme: Property::new("Dark".to_string()),
-            last_action: Property::new("Welcome! Press F10 to activate menu".to_string()),
-            action_history: Property::new(Vec::new()),
+            zoom_level: Binding::new(100.0),
+            theme: Binding::new("Dark".to_string()),
+            last_action: Binding::new("Welcome! Press F10 to activate menu".to_string()),
+            action_history: Binding::new(Vec::new()),
         }
     }
 
@@ -140,6 +141,7 @@ impl StatusView {
     }
 }
 
+#[component_properties]
 impl Component for StatusView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()

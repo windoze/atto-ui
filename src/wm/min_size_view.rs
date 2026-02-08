@@ -8,7 +8,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
@@ -16,6 +16,7 @@ use crate::composable::{
 };
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
+use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 #[derive(Debug, Clone)]
 struct OffscreenBackend {
@@ -151,7 +152,7 @@ fn fill_buffer(buf: &mut Buffer, style: Style) {
 ///
 /// In `Clip`/`Scroll` modes, when the viewport is smaller than the inner view's minimum size,
 /// the inner view is rendered at its minimum size and then clipped (or panned with scrollbars).
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub(crate) struct WindowMinSizeView {
     inner: Box<dyn Component>,
     mode: Binding<WindowMinSizeMode>,
@@ -332,7 +333,7 @@ impl WindowMinSizeView {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for WindowMinSizeView {
     fn type_name(&self) -> &'static str {
         self.inner.type_name()
@@ -343,7 +344,7 @@ impl Component for WindowMinSizeView {
     }
 
     fn property_names(&self) -> Vec<&'static str> {
-        let mut props = ::atto_ui::ComponentProps::property_names(self);
+        let mut props = self.__component_property_names();
         props.extend(self.inner.property_names());
         props
     }
@@ -352,7 +353,7 @@ impl Component for WindowMinSizeView {
         &self,
         name: &str,
     ) -> Option<::atto_ui::ComponentValue> {
-        ::atto_ui::ComponentProps::get_property(self, name)
+        self.__component_get_property(name)
             .or_else(|| self.inner.get_property(name))
     }
 
@@ -361,9 +362,7 @@ impl Component for WindowMinSizeView {
         name: &str,
         value: ::atto_ui::ComponentValue,
     ) -> Result<(), ::atto_ui::ComponentError> {
-        if ::atto_ui::ComponentProps::set_property(self, name, value.clone())
-            .is_ok()
-        {
+        if self.__component_set_property(name, value.clone()).is_ok() {
             return Ok(());
         }
         self.inner.set_property(name, value)
@@ -553,6 +552,22 @@ impl Component for WindowMinSizeView {
 
     fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
         self.inner.handle_titlebar_event(event, ctx)
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

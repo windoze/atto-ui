@@ -3,6 +3,7 @@
 extern crate self as atto_ui;
 
 pub mod app;
+pub mod component_api;
 pub mod inspect;
 pub mod cache;
 pub mod composable;
@@ -14,11 +15,16 @@ pub mod theme;
 pub mod widgets;
 pub mod wm;
 
-pub use atto_ui_runtime::ComponentValue;
-pub use inspect::{
-    ComponentCommand, ComponentError, ComponentProps, ComponentTarget, ComponentValueCodec,
-    ComponentValueExt, DesktopInspector, InspectNode, InspectSnapshot,
+pub use atto_ui_runtime::{
+    ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry, ComponentSchema,
+    ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta, TreeError, TreeOp,
+    ValueType,
 };
+pub use component_api::{
+    ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget,
+    ComponentValueCodec,
+};
+pub use inspect::{DesktopInspector, InspectNode, InspectSnapshot};
 pub use wm::{
     Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
     WindowManager, WindowMinSizeMode, WindowState,

@@ -98,6 +98,10 @@ impl WindowManager {
         self.windows.iter().find(|w| w.id == id).map(|w| w.kind)
     }
 
+    pub fn window(&self, id: WindowId) -> Option<&Window> {
+        self.windows.iter().find(|w| w.id == id)
+    }
+
     pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         self.windows.iter_mut().find(|w| w.id == id)
     }

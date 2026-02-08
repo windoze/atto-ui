@@ -16,9 +16,10 @@ use atto_ui::composable::{
     Checkbox, Component, ComponentContext, EventResult, ListBox, TabHeaderPosition, TabView, Text,
     TextBox, VStack,
 };
-use atto_ui::reactive::{Binding, Property};
+use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 const INFO_HEIGHT: u16 = 5;
 
@@ -60,22 +61,25 @@ fn build_info_tab(title: String) -> VStack {
         .child(Text::new("每个 Tab 都是独立容器，可放任意子组件。"))
 }
 
+#[derive(ComponentProperties)]
 struct TabDemoView {
     tab_view: TabView,
-    selection: Property<usize>,
-    header_position: Property<TabHeaderPosition>,
+    selection: Binding<usize>,
+    header_position: Binding<TabHeaderPosition>,
+    #[component(skip)]
     next_tab_index: usize,
+    #[component(skip)]
     last_area: Option<Rect>,
 }
 
 impl TabDemoView {
     fn new() -> Self {
-        let selection = Property::new(0usize);
-        let header_position = Property::new(TabHeaderPosition::Top);
+        let selection = Binding::new(0usize);
+        let header_position = Binding::new(TabHeaderPosition::Top);
 
         let mut tab_view = TabView::new()
-            .selection(selection.binding())
-            .header_position(header_position.binding());
+            .selection(selection.clone())
+            .header_position(header_position.clone());
 
         tab_view.add_tab("Tab0", build_form_tab());
         tab_view.add_tab("Tab1", build_list_tab());
@@ -257,6 +261,7 @@ impl TabDemoView {
     }
 }
 
+#[component_properties]
 impl Component for TabDemoView {
     fn is_focusable(&self) -> bool {
         self.tab_view.is_focusable()

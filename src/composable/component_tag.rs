@@ -2,13 +2,16 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
-use crate::{ComponentCommand, ComponentError, ComponentValue};
+use crate::{
+    CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue, TreeError,
+    TreeOp,
+};
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct ComponentTag {
     id: String,
     inner: Box<dyn Component>,
@@ -42,7 +45,7 @@ pub trait ComponentTagExt: Component + Sized + 'static {
 
 impl<T> ComponentTagExt for T where T: Component + Sized + 'static {}
 
-#[component_props]
+#[component_properties]
 impl Component for ComponentTag {
     fn type_name(&self) -> &'static str {
         self.inner.type_name()
@@ -166,6 +169,22 @@ impl Component for ComponentTag {
 
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id)
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

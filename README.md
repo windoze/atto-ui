@@ -15,6 +15,43 @@ The library should have a modular architecture, from a basic component which can
 
 The library should expose traits and interfaces that allow developers to easily create custom windows, widgets, and behaviors, while still leveraging the built-in functionality of the framework.
 
+## Component Properties & Introspection
+
+Custom components can expose dynamic properties for introspection and runtime updates.
+
+- `#[derive(ComponentProperties)]` collects property metadata from `Binding<T>` / `Option<Binding<T>>` fields.
+- `#[component_properties]` on the `impl Component` block wires `property_names/get_property/set_property`.
+- Use `#[component(rename = "alias")]` to rename a property, `#[component(skip)]` to hide it, and
+  `#[component(delegate)]` to forward property access to a child component.
+- Conversions go through `ComponentValue` + `ComponentValueCodec`, keeping the API language-agnostic.
+
+Example:
+
+```rust
+use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::reactive::Binding;
+use atto_ui_macros::{ComponentProperties, component_properties};
+
+#[derive(ComponentProperties)]
+struct HeaderView {
+    title: Binding<String>,
+    #[component(skip)]
+    local_state: usize,
+}
+
+#[component_properties]
+impl Component for HeaderView {
+    fn handle_event(&mut self, _event: &crossterm::event::Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect, ctx: ComponentContext<'_>) {
+        // ...
+        let _ = (frame, area, ctx);
+    }
+}
+```
+
 Refer to the [Turbo Vision](https://en.wikipedia.org/wiki/Turbo_Vision) framework for inspiration on design and functionality.
 
 You should use following ways to test the library:

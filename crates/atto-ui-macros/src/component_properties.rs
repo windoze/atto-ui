@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
 use syn::parse::Parser;
 use syn::{
@@ -12,7 +13,7 @@ enum FieldKind {
     OptionBinding { inner: Type },
 }
 
-pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
+pub fn derive_component_properties_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let generics = &input.generics;
@@ -27,14 +28,14 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
             Fields::Unit => {}
             Fields::Unnamed(_) => {
                 return quote! {
-                    compile_error!("ComponentProps only supports structs with named fields");
+                    compile_error!("ComponentProperties only supports structs with named fields");
                 }
                 .into();
             }
         },
         _ => {
             return quote! {
-                compile_error!("ComponentProps only supports structs");
+                compile_error!("ComponentProperties only supports structs");
             }
             .into();
         }
@@ -45,10 +46,11 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
         ident: Ident,
         prop_name: String,
         kind: FieldKind,
+        value_type: TokenStream2,
     }
 
     let mut binding_fields: Vec<FieldInfo> = Vec::new();
-    let mut delegate_fields: Vec<(Ident, bool)> = Vec::new();
+    let mut delegate_fields: Vec<(Ident, bool, Type)> = Vec::new();
 
     for field in fields {
         let Some(field_name) = field.ident.clone() else {
@@ -111,7 +113,7 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
 
         if delegate {
             let rwlock_like = is_rwlock_like(&field.ty);
-            delegate_fields.push((field_name.clone(), rwlock_like));
+            delegate_fields.push((field_name.clone(), rwlock_like, field.ty.clone()));
             if skip {
                 continue;
             }
@@ -130,21 +132,36 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
             FieldKind::OptionBinding { inner } => inner.clone(),
         };
 
-        if !include && !is_supported_type(&inner_ty) {
-            continue;
-        }
+        let value_type = match value_type_for(&inner_ty) {
+            Some(v) => v,
+            None => {
+                if !include {
+                    continue;
+                }
+                quote! { ::atto_ui::ValueType::Unknown }
+            }
+        };
 
         let prop_name = rename.unwrap_or_else(|| field_name.to_string());
         binding_fields.push(FieldInfo {
             ident: field_name,
             prop_name,
             kind,
+            value_type,
         });
     }
 
     let prop_names = binding_fields.iter().map(|field| {
         let name = &field.prop_name;
         quote! { #name }
+    });
+
+    let prop_types = binding_fields.iter().map(|field| {
+        let name = &field.prop_name;
+        let ty = &field.value_type;
+        quote! {
+            ::atto_ui::PropertyMeta::new(#name, #ty)
+        }
     });
 
     let get_match_arms = binding_fields.iter().map(|field| {
@@ -212,69 +229,75 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
         }
     });
 
-    let delegate_props = delegate_fields.iter().map(|(ident, rwlock_like)| {
+    let delegate_props = delegate_fields.iter().map(|(ident, rwlock_like, _ty)| {
         if *rwlock_like {
             quote! {
                 {
                     let guard = self.#ident.read();
-                    props.extend(::atto_ui::ComponentProps::property_names(&*guard));
+                    props.extend(guard.__component_property_names());
                 }
             }
         } else {
             quote! {
-                props.extend(::atto_ui::ComponentProps::property_names(&self.#ident));
+                props.extend(self.#ident.__component_property_names());
             }
         }
     });
 
-    let delegate_get = delegate_fields.iter().map(|(ident, rwlock_like)| {
+    let delegate_get = delegate_fields.iter().map(|(ident, rwlock_like, _ty)| {
         if *rwlock_like {
             quote! {
                 {
                     let guard = self.#ident.read();
-                    if let Some(v) = ::atto_ui::ComponentProps::get_property(&*guard, name) {
+                    if let Some(v) = guard.__component_get_property(name) {
                         return Some(v);
                     }
                 }
             }
         } else {
             quote! {
-                if let Some(v) = ::atto_ui::ComponentProps::get_property(&self.#ident, name) {
+                if let Some(v) = self.#ident.__component_get_property(name) {
                     return Some(v);
                 }
             }
         }
     });
 
-    let delegate_set = delegate_fields.iter().map(|(ident, rwlock_like)| {
+    let delegate_set = delegate_fields.iter().map(|(ident, rwlock_like, _ty)| {
         if *rwlock_like {
             quote! {
                 {
                     let mut guard = self.#ident.write();
-                    if ::atto_ui::ComponentProps::set_property(&mut *guard, name, value).is_ok() {
+                    if guard.__component_set_property(name, value.clone()).is_ok() {
                         return Ok(());
                     }
                 }
             }
         } else {
             quote! {
-                if ::atto_ui::ComponentProps::set_property(&mut self.#ident, name, value).is_ok() {
+                if self.#ident.__component_set_property(name, value.clone()).is_ok() {
                     return Ok(());
                 }
             }
         }
     });
 
+    let delegate_schema = delegate_fields.iter().map(|(_ident, _rwlock_like, ty)| {
+        quote! {
+            props.extend(<#ty as ::atto_ui::ComponentPropertySchema>::property_schema());
+        }
+    });
+
     quote! {
-        impl #impl_generics ::atto_ui::ComponentProps for #name #ty_generics #where_clause {
-            fn property_names(&self) -> Vec<&'static str> {
+        impl #impl_generics #name #ty_generics #where_clause {
+            fn __component_property_names(&self) -> Vec<&'static str> {
                 let mut props: Vec<&'static str> = Vec::new();
                 #(props.push(#prop_names);)*
                 #(#delegate_props)*
                 props
             }
 
-            fn get_property(
+            fn __component_get_property(
                 &self,
                 name: &str,
             ) -> Option<::atto_ui::ComponentValue> {
@@ -286,7 +309,7 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
                 None
             }
 
-            fn set_property(
+            fn __component_set_property(
                 &mut self,
                 name: &str,
                 value: ::atto_ui::ComponentValue,
@@ -299,11 +322,20 @@ pub fn derive_component_props_impl(input: TokenStream) -> TokenStream {
                 Err(::atto_ui::ComponentError::unsupported_property(name))
             }
         }
+
+        impl #impl_generics ::atto_ui::ComponentPropertySchema for #name #ty_generics #where_clause {
+            fn property_schema() -> Vec<::atto_ui::PropertyMeta> {
+                let mut props = Vec::new();
+                #(props.push(#prop_types);)*
+                #(#delegate_schema)*
+                props
+            }
+        }
     }
     .into()
 }
 
-pub fn component_props_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn component_properties_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item_impl = parse_macro_input!(item as ItemImpl);
 
     let is_component = item_impl
@@ -342,7 +374,7 @@ pub fn component_props_impl(_attr: TokenStream, item: TokenStream) -> TokenStrea
     if !has_props {
         extra_items.push(syn::parse_quote! {
             fn property_names(&self) -> Vec<&'static str> {
-                ::atto_ui::ComponentProps::property_names(self)
+                self.__component_property_names()
             }
         });
     }
@@ -353,7 +385,7 @@ pub fn component_props_impl(_attr: TokenStream, item: TokenStream) -> TokenStrea
                 &self,
                 name: &str,
             ) -> Option<::atto_ui::ComponentValue> {
-                ::atto_ui::ComponentProps::get_property(self, name)
+                self.__component_get_property(name)
             }
         });
     }
@@ -365,7 +397,7 @@ pub fn component_props_impl(_attr: TokenStream, item: TokenStream) -> TokenStrea
                 name: &str,
                 value: ::atto_ui::ComponentValue,
             ) -> Result<(), ::atto_ui::ComponentError> {
-                ::atto_ui::ComponentProps::set_property(self, name, value)
+                self.__component_set_property(name, value)
             }
         });
     }
@@ -418,45 +450,52 @@ fn option_binding_inner_type(ty: &Type) -> Option<Type> {
     binding_inner_type(inner)
 }
 
-fn is_supported_type(ty: &Type) -> bool {
-    let Type::Path(tp) = ty else { return false };
+fn value_type_for(ty: &Type) -> Option<TokenStream2> {
+    let Type::Path(tp) = ty else { return None };
     let seg = tp.path.segments.last().map(|s| s.ident.to_string());
-    let Some(name) = seg else { return false };
+    let Some(name) = seg else { return None };
 
     match name.as_str() {
-        "String" | "bool" | "f64" | "f32" | "i64" | "u64" | "usize" | "u16" | "u32" => true,
-        "Rect" => true,
-        "TabHeaderPosition" => true,
-        "WindowMinSizeMode" => true,
-        "Vec" => is_vec_string_or_table(tp),
-        _ => false,
+        "String" => Some(quote! { ::atto_ui::ValueType::String }),
+        "bool" => Some(quote! { ::atto_ui::ValueType::Bool }),
+        "f64" | "f32" => Some(quote! { ::atto_ui::ValueType::F64 }),
+        "i64" => Some(quote! { ::atto_ui::ValueType::I64 }),
+        "u64" | "usize" | "u16" | "u32" => Some(quote! { ::atto_ui::ValueType::U64 }),
+        "Rect" => Some(quote! { ::atto_ui::ValueType::Rect }),
+        "EdgeInsets" => Some(quote! { ::atto_ui::ValueType::Map }),
+        "DividerOrientation" => Some(quote! { ::atto_ui::ValueType::String }),
+        "SplitterOrientation" => Some(quote! { ::atto_ui::ValueType::String }),
+        "TabHeaderPosition" => Some(quote! { ::atto_ui::ValueType::String }),
+        "WindowMinSizeMode" => Some(quote! { ::atto_ui::ValueType::String }),
+        "Vec" => vec_value_type(tp),
+        _ => None,
     }
 }
 
-fn is_vec_string_or_table(tp: &syn::TypePath) -> bool {
+fn vec_value_type(tp: &syn::TypePath) -> Option<TokenStream2> {
     let seg = match tp.path.segments.last() {
         Some(seg) => seg,
-        None => return false,
+        None => return None,
     };
     let PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return false;
+        return None;
     };
     let first = match args.args.first() {
         Some(GenericArgument::Type(ty)) => ty,
-        _ => return false,
+        _ => return None,
     };
     let Type::Path(inner_tp) = first else {
-        return false;
+        return None;
     };
     let inner_seg = inner_tp.path.segments.last().map(|s| s.ident.to_string());
     if inner_seg.as_deref() == Some("String") {
-        return true;
+        return Some(quote! { ::atto_ui::ValueType::StringList });
     }
     if inner_seg.as_deref() == Some("Vec") {
         // Vec<Vec<String>>
-        return is_vec_string_or_table(inner_tp);
+        return vec_value_type(&inner_tp).map(|_| quote! { ::atto_ui::ValueType::Table });
     }
-    false
+    None
 }
 
 fn is_rwlock_like(ty: &Type) -> bool {

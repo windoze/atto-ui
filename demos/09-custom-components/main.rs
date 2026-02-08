@@ -5,18 +5,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::event::Event;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::composable::{
-    Align, Button, Checkbox, Component, Divider, EdgeInsets, HStack, LayoutParams, Size, Spacer,
-    Text, TextBox, TextFn, VStack,
+    Align, Button, Checkbox, Component, ComponentContext, ComponentId, ComponentNode, Divider,
+    EdgeInsets, EventResult, HStack, Label, LayoutParams, ScrollConfig, Size, Spacer, Text,
+    TextBox, TextFn, TitleBarContent, TitleBarContext, VStack,
 };
 use atto_ui::reactive::{Binding, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 fn content_height() -> LayoutParams {
     LayoutParams {
@@ -25,14 +29,133 @@ fn content_height() -> LayoutParams {
     }
 }
 
+macro_rules! delegate_component {
+    ($ty:ty, $inner:ident) => {
+        #[component_properties]
+        impl Component for $ty {
+            fn focused_child(&self) -> Option<ComponentId> {
+                self.$inner.focused_child()
+            }
+
+            fn is_focusable(&self) -> bool {
+                self.$inner.is_focusable()
+            }
+
+            fn focus_first(&mut self) -> bool {
+                self.$inner.focus_first()
+            }
+
+            fn focus_last(&mut self) -> bool {
+                self.$inner.focus_last()
+            }
+
+            fn min_width(&self) -> u16 {
+                self.$inner.min_width()
+            }
+
+            fn min_height(&self) -> u16 {
+                self.$inner.min_height()
+            }
+
+            fn min_size(&self) -> (u16, u16) {
+                self.$inner.min_size()
+            }
+
+            fn desired_width(&self) -> Option<u16> {
+                self.$inner.desired_width()
+            }
+
+            fn desired_height(&self) -> Option<u16> {
+                self.$inner.desired_height()
+            }
+
+            fn children(&self) -> &[ComponentNode] {
+                self.$inner.children()
+            }
+
+            fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+                self.$inner.children_mut()
+            }
+
+            fn handle_event_capture(
+                &mut self,
+                event: &Event,
+                ctx: ComponentContext<'_>,
+            ) -> EventResult {
+                self.$inner.handle_event_capture(event, ctx)
+            }
+
+            fn handle_event_bubble(
+                &mut self,
+                event: &Event,
+                ctx: ComponentContext<'_>,
+            ) -> EventResult {
+                self.$inner.handle_event_bubble(event, ctx)
+            }
+
+            fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+                self.$inner.handle_event(event, ctx)
+            }
+
+            fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+                self.$inner.titlebar(ctx)
+            }
+
+            fn handle_titlebar_event(
+                &mut self,
+                event: &Event,
+                ctx: TitleBarContext<'_>,
+            ) -> EventResult {
+                self.$inner.handle_titlebar_event(event, ctx)
+            }
+
+            fn is_scrollable(&self) -> bool {
+                self.$inner.is_scrollable()
+            }
+
+            fn content_size(&self) -> (u16, u16) {
+                self.$inner.content_size()
+            }
+
+            fn scroll_offset(&self) -> (u16, u16) {
+                self.$inner.scroll_offset()
+            }
+
+            fn viewport_size(&self) -> (u16, u16) {
+                self.$inner.viewport_size()
+            }
+
+            fn scroll_config(&self) -> ScrollConfig {
+                Component::scroll_config(&self.$inner)
+            }
+
+            fn set_scroll_offset(&mut self, x: u16, y: u16) {
+                self.$inner.set_scroll_offset(x, y)
+            }
+
+            fn scroll_to(&mut self, x: u16, y: u16) {
+                self.$inner.scroll_to(x, y)
+            }
+
+            fn scroll_to_child(&mut self, child_id: ComponentId) {
+                self.$inner.scroll_to_child(child_id)
+            }
+
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+                self.$inner.draw(frame, area, ctx)
+            }
+        }
+    };
+}
+
 #[derive(Clone)]
 struct DemoModel {
     enabled: Property<bool>,
     name: Property<String>,
     email: Property<String>,
     subscribed: Property<bool>,
-    volume: Property<i32>,
-    brightness: Property<i32>,
+    volume: Property<i64>,
+    brightness: Property<i64>,
     last_search: Property<String>,
     status: Property<String>,
 }
@@ -64,154 +187,182 @@ impl DemoModel {
 }
 
 /// A simple wrapper around TextBox to demonstrate "component = reusable building block".
-#[derive(Clone)]
+#[derive(ComponentProperties)]
 struct LabeledField {
-    title: String,
+    title: Binding<String>,
     value: Binding<String>,
     enabled: Binding<bool>,
+    view: TextBox,
 }
 
 impl LabeledField {
-    fn new(title: impl Into<String>, value: Binding<String>) -> Self {
+    fn new(title: impl Into<Binding<String>>, value: impl Into<Binding<String>>) -> Self {
+        let title = title.into();
+        let value = value.into();
+        let enabled: Binding<bool> = true.into();
+        let view = TextBox::new(title.clone(), value.clone()).enabled(enabled.clone());
         Self {
-            title: title.into(),
             value,
-            enabled: true.into(),
+            enabled,
+            title,
+            view,
         }
     }
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
+        self.view = TextBox::new(self.title.clone(), self.value.clone())
+            .enabled(self.enabled.clone());
         self
-    }
-
-    fn build(&self) -> TextBox {
-        TextBox::new(self.title.clone(), self.value.clone()).enabled(self.enabled.clone())
     }
 }
 
+delegate_component!(LabeledField, view);
+
 /// A small counter component (value is fully owned by parent via binding).
-#[derive(Clone)]
+#[derive(ComponentProperties)]
 struct CounterRow {
-    title: String,
-    value: Binding<i32>,
+    title: Binding<String>,
+    value: Binding<i64>,
     enabled: Binding<bool>,
+    view: HStack,
 }
 
 impl CounterRow {
-    fn new(title: impl Into<String>, value: Binding<i32>) -> Self {
+    fn new(title: impl Into<Binding<String>>, value: impl Into<Binding<i64>>) -> Self {
+        let title = title.into();
+        let value = value.into();
+        let enabled: Binding<bool> = true.into();
+        let view = build_counter_row_view(title.clone(), value.clone(), enabled.clone());
         Self {
-            title: title.into(),
             value,
-            enabled: true.into(),
+            title,
+            enabled,
+            view,
         }
     }
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
+        self.view = build_counter_row_view(self.title.clone(), self.value.clone(), self.enabled.clone());
         self
-    }
-
-    fn build(&self) -> HStack {
-        let enabled = self.enabled.clone();
-        let value_for_minus = self.value.clone();
-        let value_for_plus = self.value.clone();
-        let value_for_text = self.value.clone();
-        let title = self.title.clone();
-
-        HStack::new()
-            .spacing(1)
-            .child_with_layout(
-                Text::new(title),
-                LayoutParams {
-                    width: Size::Weight(1),
-                    height: Size::Content,
-                    align_y: Align::Center,
-                    ..LayoutParams::default()
-                },
-            )
-            .child_with_layout(
-                Button::new("−")
-                    .enabled(enabled.clone())
-                    .on_click(move || value_for_minus.update(|v| *v = v.saturating_sub(1))),
-                LayoutParams {
-                    width: Size::Fixed(5),
-                    ..LayoutParams::default()
-                },
-            )
-            .child_with_layout(
-                Button::new("+")
-                    .enabled(enabled.clone())
-                    .on_click(move || value_for_plus.update(|v| *v = v.saturating_add(1))),
-                LayoutParams {
-                    width: Size::Fixed(5),
-                    ..LayoutParams::default()
-                },
-            )
-            .child_with_layout(
-                TextFn::new(move || format!("{}", value_for_text.get())),
-                LayoutParams {
-                    width: Size::Fixed(12),
-                    height: Size::Content,
-                    align_y: Align::Center,
-                    ..LayoutParams::default()
-                },
-            )
     }
 }
 
+delegate_component!(CounterRow, view);
+
+fn build_counter_row_view(
+    title: Binding<String>,
+    value: Binding<i64>,
+    enabled: Binding<bool>,
+) -> HStack {
+    let value_for_minus = value.clone();
+    let value_for_plus = value.clone();
+    let value_for_text = value.clone();
+
+    HStack::new()
+        .spacing(1)
+        .child_with_layout(
+            Label::new(title),
+            LayoutParams {
+                width: Size::Weight(1),
+                height: Size::Content,
+                align_y: Align::Center,
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Button::new("−")
+                .enabled(enabled.clone())
+                .on_click(move || value_for_minus.update(|v| *v = v.saturating_sub(1))),
+            LayoutParams {
+                width: Size::Fixed(5),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Button::new("+")
+                .enabled(enabled.clone())
+                .on_click(move || value_for_plus.update(|v| *v = v.saturating_add(1))),
+            LayoutParams {
+                width: Size::Fixed(5),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            TextFn::new(move || format!("{}", value_for_text.get())),
+            LayoutParams {
+                width: Size::Fixed(12),
+                height: Size::Content,
+                align_y: Align::Center,
+                ..LayoutParams::default()
+            },
+        )
+}
+
 /// A component with local state + a callback back to the parent.
-#[derive(Clone)]
+#[derive(ComponentProperties)]
 struct SearchBar {
-    query: Property<String>,
+    query: Binding<String>,
     enabled: Binding<bool>,
     on_search: Arc<dyn Fn(String) + Send + Sync>,
+    view: HStack,
 }
 
 impl SearchBar {
     fn new(on_search: Arc<dyn Fn(String) + Send + Sync>) -> Self {
+        let query: Binding<String> = String::new().into();
+        let enabled: Binding<bool> = true.into();
+        let view = build_search_view(query.clone(), enabled.clone(), on_search.clone());
         Self {
-            query: Property::new(String::new()),
-            enabled: true.into(),
+            query,
+            enabled,
             on_search,
+            view,
         }
     }
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
+        self.view = build_search_view(self.query.clone(), self.enabled.clone(), self.on_search.clone());
         self
     }
+}
 
-    fn build(&self) -> HStack {
-        let enabled = self.enabled.clone();
-        let query = self.query.clone();
-        let on_search = self.on_search.clone();
+delegate_component!(SearchBar, view);
 
-        HStack::new()
-            .spacing(1)
-            .child_with_layout(
-                TextBox::new("Query", query.binding()).enabled(enabled.clone()),
-                LayoutParams {
-                    width: Size::Weight(1),
-                    ..LayoutParams::default()
-                },
-            )
-            .child_with_layout(
-                Button::new("Search")
-                    .enabled(enabled.clone())
-                    .on_click(move || {
-                        let q = query.get();
-                        if !q.trim().is_empty() {
-                            on_search(q.clone());
-                        }
-                        query.set(String::new());
-                    }),
-                LayoutParams {
-                    width: Size::Fixed(10),
-                    ..LayoutParams::default()
-                },
-            )
-    }
+fn build_search_view(
+    query: Binding<String>,
+    enabled: Binding<bool>,
+    on_search: Arc<dyn Fn(String) + Send + Sync>,
+) -> HStack {
+    let query_for_button = query.clone();
+    let on_search = on_search.clone();
+
+    HStack::new()
+        .spacing(1)
+        .child_with_layout(
+            TextBox::new("Query", query.clone()).enabled(enabled.clone()),
+            LayoutParams {
+                width: Size::Weight(1),
+                ..LayoutParams::default()
+            },
+        )
+        .child_with_layout(
+            Button::new("Search")
+                .enabled(enabled.clone())
+                .on_click(move || {
+                    let q = query_for_button.get();
+                    if !q.trim().is_empty() {
+                        on_search(q.clone());
+                    }
+                    query_for_button.set(String::new());
+                }),
+            LayoutParams {
+                width: Size::Fixed(10),
+                ..LayoutParams::default()
+            },
+        )
 }
 
 fn build_components_view(model: DemoModel) -> Box<dyn Component> {
@@ -261,14 +412,12 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                 .child_with_layout(Text::new("Profile"), content_height())
                 .child_with_layout(
                     LabeledField::new("Name", model.name.binding())
-                        .enabled(enabled.clone())
-                        .build(),
+                        .enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
                     LabeledField::new("Email", model.email.binding())
-                        .enabled(enabled.clone())
-                        .build(),
+                        .enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
@@ -288,14 +437,12 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                 .child_with_layout(Text::new("Tuning"), content_height())
                 .child_with_layout(
                     CounterRow::new("Volume", model.volume.binding())
-                        .enabled(enabled.clone())
-                        .build(),
+                        .enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
                     CounterRow::new("Brightness", model.brightness.binding())
-                        .enabled(enabled.clone())
-                        .build(),
+                        .enabled(enabled.clone()),
                     content_height(),
                 ),
             LayoutParams {
@@ -313,8 +460,7 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                 )
                 .child_with_layout(
                     SearchBar::new(search_callback)
-                        .enabled(enabled.clone())
-                        .build(),
+                        .enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(status_line, content_height()),

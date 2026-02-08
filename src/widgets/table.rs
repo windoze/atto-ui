@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
@@ -22,7 +22,7 @@ use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 use crate::text::styled_text::spans_from_inline;
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 struct TableViewBindings {
     title: Binding<String>,
     headers: Binding<Vec<String>>,
@@ -34,7 +34,7 @@ struct TableViewBindings {
     on_change: Option<CallbackHandle>,
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct TableView {
     #[component(delegate)]
     bindings: Arc<RwLock<TableViewBindings>>,
@@ -154,7 +154,7 @@ impl TableView {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for TableView {
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {

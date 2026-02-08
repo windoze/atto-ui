@@ -5,308 +5,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
+use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
 use crate::composable::{Component, EventResult};
 use crate::wm::{Window, WindowId};
 use atto_ui_runtime::ComponentValue;
-
-pub trait ComponentProps {
-    fn property_names(&self) -> Vec<&'static str>;
-    fn get_property(&self, name: &str) -> Option<ComponentValue>;
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError>;
-}
-
-pub trait ComponentValueCodec: Sized {
-    fn to_component_value(&self) -> ComponentValue;
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError>;
-}
-
-pub trait ComponentValueExt {
-    fn try_into_bool(self, name: &str) -> Result<bool, ComponentError>;
-    fn try_into_f64(self, name: &str) -> Result<f64, ComponentError>;
-    fn try_into_usize(self, name: &str) -> Result<usize, ComponentError>;
-    fn try_into_string(self, name: &str) -> Result<String, ComponentError>;
-    fn try_into_string_list(self, name: &str) -> Result<Vec<String>, ComponentError>;
-    fn try_into_table(self, name: &str) -> Result<Vec<Vec<String>>, ComponentError>;
-    fn try_into_rect(self, name: &str) -> Result<Rect, ComponentError>;
-}
-
-impl ComponentValueExt for ComponentValue {
-    fn try_into_bool(self, name: &str) -> Result<bool, ComponentError> {
-        match self {
-            ComponentValue::Bool(v) => Ok(v),
-            _ => Err(ComponentError::invalid_value(name, "bool")),
-        }
-    }
-
-    fn try_into_f64(self, name: &str) -> Result<f64, ComponentError> {
-        match self {
-            ComponentValue::F64(v) => Ok(v),
-            ComponentValue::I64(v) => Ok(v as f64),
-            ComponentValue::U64(v) => Ok(v as f64),
-            _ => Err(ComponentError::invalid_value(name, "number")),
-        }
-    }
-
-    fn try_into_usize(self, name: &str) -> Result<usize, ComponentError> {
-        match self {
-            ComponentValue::U64(v) => Ok(v as usize),
-            ComponentValue::I64(v) if v >= 0 => Ok(v as usize),
-            ComponentValue::F64(v) if v >= 0.0 => Ok(v as usize),
-            _ => Err(ComponentError::invalid_value(name, "usize")),
-        }
-    }
-
-    fn try_into_string(self, name: &str) -> Result<String, ComponentError> {
-        match self {
-            ComponentValue::String(v) => Ok(v),
-            _ => Err(ComponentError::invalid_value(name, "string")),
-        }
-    }
-
-    fn try_into_string_list(self, name: &str) -> Result<Vec<String>, ComponentError> {
-        match self {
-            ComponentValue::StringList(v) => Ok(v),
-            _ => Err(ComponentError::invalid_value(name, "string list")),
-        }
-    }
-
-    fn try_into_table(self, name: &str) -> Result<Vec<Vec<String>>, ComponentError> {
-        match self {
-            ComponentValue::Table(v) => Ok(v),
-            _ => Err(ComponentError::invalid_value(name, "table")),
-        }
-    }
-
-    fn try_into_rect(self, name: &str) -> Result<Rect, ComponentError> {
-        match self {
-            ComponentValue::Rect(v) => Ok(Rect::new(v.x, v.y, v.width, v.height)),
-            _ => Err(ComponentError::invalid_value(name, "rect")),
-        }
-    }
-}
-
-impl ComponentValueCodec for String {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::String(self.clone())
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_string(name)
-    }
-}
-
-impl ComponentValueCodec for bool {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::Bool(*self)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_bool(name)
-    }
-}
-
-impl ComponentValueCodec for f64 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::F64(*self)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_f64(name)
-    }
-}
-
-impl ComponentValueCodec for f32 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::F64(*self as f64)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(value.try_into_f64(name)? as f32)
-    }
-}
-
-impl ComponentValueCodec for i64 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::I64(*self)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        match value {
-            ComponentValue::I64(v) => Ok(v),
-            ComponentValue::U64(v) => Ok(v as i64),
-            ComponentValue::F64(v) => Ok(v as i64),
-            _ => Err(ComponentError::invalid_value(name, "i64")),
-        }
-    }
-}
-
-impl ComponentValueCodec for u64 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::U64(*self)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        match value {
-            ComponentValue::U64(v) => Ok(v),
-            ComponentValue::I64(v) if v >= 0 => Ok(v as u64),
-            ComponentValue::F64(v) if v >= 0.0 => Ok(v as u64),
-            _ => Err(ComponentError::invalid_value(name, "u64")),
-        }
-    }
-}
-
-impl ComponentValueCodec for usize {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::U64(*self as u64)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_usize(name)
-    }
-}
-
-impl ComponentValueCodec for u32 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::U64(*self as u64)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(value.try_into_usize(name)? as u32)
-    }
-}
-
-impl ComponentValueCodec for u16 {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::U64(*self as u64)
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(value.try_into_usize(name)? as u16)
-    }
-}
-
-impl ComponentValueCodec for Vec<String> {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::StringList(self.clone())
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_string_list(name)
-    }
-}
-
-impl ComponentValueCodec for Vec<Vec<String>> {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::Table(self.clone())
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_table(name)
-    }
-}
-
-impl ComponentValueCodec for Rect {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::Rect(atto_ui_runtime::Rect {
-            x: self.x,
-            y: self.y,
-            width: self.width,
-            height: self.height,
-        })
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        value.try_into_rect(name)
-    }
-}
-
-impl ComponentValueCodec for crate::widgets::TabHeaderPosition {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::String(format!("{:?}", self))
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        let v = value.try_into_string(name)?;
-        match v.as_str() {
-            "Top" | "top" => Ok(crate::widgets::TabHeaderPosition::Top),
-            "Bottom" | "bottom" => Ok(crate::widgets::TabHeaderPosition::Bottom),
-            _ => Err(ComponentError::invalid_value(name, "Top/Bottom")),
-        }
-    }
-}
-
-impl ComponentValueCodec for crate::wm::WindowMinSizeMode {
-    fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::String(format!("{:?}", self))
-    }
-
-    fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        let v = value.try_into_string(name)?;
-        match v.as_str() {
-            "Enforce" | "enforce" => Ok(crate::wm::WindowMinSizeMode::Enforce),
-            "Clip" | "clip" => Ok(crate::wm::WindowMinSizeMode::Clip),
-            "Scroll" | "scroll" => Ok(crate::wm::WindowMinSizeMode::Scroll),
-            _ => Err(ComponentError::invalid_value(name, "WindowMinSizeMode")),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ComponentCommand {
-    Click,
-    Toggle,
-    InputText(String),
-    SelectIndex(usize),
-    Submit,
-    Custom { name: String, payload: Vec<u8> },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ComponentTarget {
-    Id(String),
-    Focused,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ComponentError {
-    NotFound(String),
-    UnsupportedProperty(String),
-    InvalidValue {
-        name: String,
-        expected: &'static str,
-    },
-    ActionNotSupported(String),
-    RenderFailed(String),
-}
-
-impl ComponentError {
-    pub fn not_found(id: impl Into<String>) -> Self {
-        ComponentError::NotFound(id.into())
-    }
-
-    pub fn unsupported_property(name: impl Into<String>) -> Self {
-        ComponentError::UnsupportedProperty(name.into())
-    }
-
-    pub fn invalid_value(name: impl Into<String>, expected: &'static str) -> Self {
-        ComponentError::InvalidValue {
-            name: name.into(),
-            expected,
-        }
-    }
-
-    pub fn action_not_supported(name: impl Into<String>) -> Self {
-        ComponentError::ActionNotSupported(name.into())
-    }
-
-    fn render_failed(err: impl ToString) -> Self {
-        ComponentError::RenderFailed(err.to_string())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
@@ -792,7 +494,7 @@ fn menu_set_property(
     if let Some(spec) = menu_find_spec_mut(menu, id) {
         return match name {
             "title" => {
-                let v = value.try_into_string(name)?;
+                let v: String = ComponentValueCodec::from_component_value(value, name)?;
                 spec.title.set(v);
                 Ok(true)
             }
@@ -804,12 +506,12 @@ fn menu_set_property(
     };
     match name {
         "label" => {
-            let v = value.try_into_string(name)?;
+            let v: String = ComponentValueCodec::from_component_value(value, name)?;
             item.label.set(v);
             Ok(true)
         }
         "shortcut" => {
-            let v = value.try_into_string(name)?;
+            let v: String = ComponentValueCodec::from_component_value(value, name)?;
             if v.is_empty() {
                 item.shortcut.set(None);
             } else {
@@ -818,7 +520,7 @@ fn menu_set_property(
             Ok(true)
         }
         "enabled" => {
-            let v = value.try_into_bool(name)?;
+            let v: bool = ComponentValueCodec::from_component_value(value, name)?;
             item.enabled.set(v);
             Ok(true)
         }
@@ -938,17 +640,17 @@ fn window_set_property(
     };
     match name {
         "title" => {
-            let v = value.try_into_string(name)?;
+            let v: String = ComponentValueCodec::from_component_value(value, name)?;
             window.title.set(v);
             Ok(true)
         }
         "rect" => {
-            let v = value.try_into_rect(name)?;
+            let v: Rect = ComponentValueCodec::from_component_value(value, name)?;
             window.rect.set(v);
             Ok(true)
         }
         "state" => {
-            let v = value.try_into_string(name)?;
+            let v: String = ComponentValueCodec::from_component_value(value, name)?;
             let state = match v.as_str() {
                 "Normal" | "normal" => crate::wm::WindowState::Normal,
                 "Minimized" | "minimized" => crate::wm::WindowState::Minimized,

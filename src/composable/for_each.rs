@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult};
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -103,7 +103,7 @@ fn default_foreach_item_layout() -> LayoutParams {
 ///         .on_click(move || on_click(user_id))
 /// });
 /// ```
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct ForEach<T, V>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -259,7 +259,7 @@ where
     }
 }
 
-#[component_props]
+#[component_properties]
 impl<T, V> Component for ForEach<T, V>
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -350,7 +350,7 @@ where
 ///
 /// 此结构通过 ID 跟踪列表元素，实现了视图缓存和差异更新。
 /// 当数据变化时，只有新增、删除或修改的元素会重建视图。
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct ForEachIdentifiable<T, V>
 where
     T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
@@ -428,7 +428,7 @@ where
     }
 }
 
-#[component_props]
+#[component_properties]
 impl<T, V> Component for ForEachIdentifiable<T, V>
 where
     T: Clone + PartialEq + Identifiable + Send + Sync + 'static,

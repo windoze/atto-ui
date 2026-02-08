@@ -6,7 +6,7 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -21,7 +21,7 @@ enum StackAxis {
     Horizontal,
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 struct StackCore {
     axis: StackAxis,
     id: ComponentId,
@@ -937,7 +937,7 @@ impl StackCore {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for StackCore {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused
@@ -1066,7 +1066,7 @@ impl Component for StackCore {
 
 macro_rules! define_stack {
     ($name:ident, $axis:expr) => {
-        #[derive(ComponentProps)]
+        #[derive(ComponentProperties)]
         pub struct $name {
             #[component(delegate)]
             core: StackCore,
@@ -1152,7 +1152,7 @@ macro_rules! define_stack {
             }
         }
 
-        #[component_props]
+        #[component_properties]
         impl Component for $name {
             fn focused_child(&self) -> Option<ComponentId> {
                 self.core.focused_child()

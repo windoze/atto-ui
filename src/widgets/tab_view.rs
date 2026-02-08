@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
 use crate::runtime::CallbackHandle;
@@ -18,11 +18,21 @@ pub enum TabHeaderPosition {
     Bottom,
 }
 
+impl TabHeaderPosition {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "Top" | "top" => Some(Self::Top),
+            "Bottom" | "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+}
+
 struct HeaderLayout {
     tab_ranges: Vec<(u16, u16)>,
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct TabView {
     id: ComponentId,
     children: Vec<ComponentNode>,
@@ -375,7 +385,7 @@ impl TabView {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for TabView {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused

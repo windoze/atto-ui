@@ -6,20 +6,25 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext};
+use crate::reactive::Binding;
 
 /// Text view (renders a single line of text; will clip if the area is too small).
-#[derive(Clone, ComponentProps)]
+#[derive(Clone, ComponentProperties)]
 pub struct Text {
+    #[component(rename = "text")]
+    text: Option<Binding<String>>,
     content: TextContent,
     style: Option<Style>,
 }
 
 impl Text {
     pub fn new(content: impl Into<String>) -> Self {
+        let text = content.into();
         Self {
-            content: TextContent::Static(content.into()),
+            text: Some(Binding::new(text.clone())),
+            content: TextContent::Static(text),
             style: None,
         }
     }
@@ -29,9 +34,15 @@ impl Text {
         F: Fn() -> String + Send + Sync + 'static,
     {
         Self {
+            text: None,
             content: TextContent::Dynamic(Arc::new(f)),
             style: None,
         }
+    }
+
+    pub fn text(mut self, text: impl Into<Binding<String>>) -> Self {
+        self.text = Some(text.into());
+        self
     }
 
     pub fn style(mut self, style: Style) -> Self {
@@ -55,16 +66,24 @@ impl Text {
             TextContent::Dynamic(f) => (f)(),
         }
     }
+
+    fn text_value(&self) -> String {
+        if let Some(text) = &self.text {
+            text.get()
+        } else {
+            self.resolve()
+        }
+    }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Text {
     fn desired_height(&self) -> Option<u16> {
         Some(1)
     }
 
     fn desired_width(&self) -> Option<u16> {
-        Some(self.resolve().len().min(u16::MAX as usize) as u16)
+        Some(self.text_value().len().min(u16::MAX as usize) as u16)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
@@ -72,7 +91,7 @@ impl Component for Text {
             return;
         }
         let style = self.style.unwrap_or(ctx.theme.widget.normal);
-        frame.render_widget(Paragraph::new(Line::styled(self.resolve(), style)), area);
+        frame.render_widget(Paragraph::new(Line::styled(self.text_value(), style)), area);
     }
 }
 
@@ -80,7 +99,7 @@ impl Component for Text {
 ///
 /// This exists primarily to make `Text::from_fn` usable from the `view_builder!` macro, which
 /// expects a `Type::new(...)` constructor form.
-#[derive(Clone, ComponentProps)]
+#[derive(Clone, ComponentProperties)]
 pub struct TextFn {
     inner: Text,
 }
@@ -111,7 +130,7 @@ impl TextFn {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for TextFn {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
@@ -133,7 +152,7 @@ enum TextContent {
 }
 
 /// Spacer view (takes space, renders nothing).
-#[derive(Clone, Debug, Default, ComponentProps)]
+#[derive(Clone, Debug, Default, ComponentProperties)]
 pub struct Spacer;
 
 impl Spacer {
@@ -142,28 +161,56 @@ impl Spacer {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Spacer {
     fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DividerOrientation {
+    Horizontal,
+    Vertical,
+}
+
+impl DividerOrientation {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "Horizontal" | "horizontal" => Some(Self::Horizontal),
+            "Vertical" | "vertical" => Some(Self::Vertical),
+            _ => None,
+        }
+    }
+}
+
 /// Divider view (horizontal or vertical line).
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 pub struct Divider {
-    horizontal: bool,
+    #[component(rename = "orientation")]
+    orientation: Binding<DividerOrientation>,
 }
 
 impl Divider {
+    pub fn new(orientation: DividerOrientation) -> Self {
+        Self {
+            orientation: orientation.into(),
+        }
+    }
+
     pub fn horizontal() -> Self {
-        Self { horizontal: true }
+        Self::new(DividerOrientation::Horizontal)
     }
 
     pub fn vertical() -> Self {
-        Self { horizontal: false }
+        Self::new(DividerOrientation::Vertical)
+    }
+
+    pub fn orientation(mut self, orientation: impl Into<Binding<DividerOrientation>>) -> Self {
+        self.orientation = orientation.into();
+        self
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Divider {
     fn desired_height(&self) -> Option<u16> {
         Some(1)
@@ -178,7 +225,7 @@ impl Component for Divider {
             return;
         }
         let style = ctx.theme.widget.normal;
-        if self.horizontal {
+        if matches!(self.orientation.get(), DividerOrientation::Horizontal) {
             let line = "─".repeat(area.width as usize);
             frame.render_widget(Paragraph::new(Line::styled(line, style)), area);
             return;

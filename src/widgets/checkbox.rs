@@ -4,12 +4,12 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 pub struct Checkbox {
     label: Binding<String>,
     #[component(rename = "checked")]
@@ -50,7 +50,7 @@ impl Checkbox {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Checkbox {
     fn min_width(&self) -> u16 {
         3

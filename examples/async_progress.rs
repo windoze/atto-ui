@@ -17,9 +17,10 @@ use atto_ui::app::{
     AppControl, CrosstermAppConfig, Desktop, MenuBar, run_crossterm_desktop_with_actions,
 };
 use atto_ui::composable::{Component, ComponentContext, EventOutcome, EventResult};
-use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -28,17 +29,22 @@ enum AppAction {
     DownloadComplete(String), // 完成消息
 }
 
+#[derive(Clone, ComponentProperties)]
 struct ProgressView {
-    progress: Property<f64>,
-    status: Property<String>,
+    progress: Binding<f64>,
+    status: Binding<String>,
 }
 
 impl ProgressView {
-    fn new(progress: Property<f64>, status: Property<String>) -> Self {
-        Self { progress, status }
+    fn new(progress: impl Into<Binding<f64>>, status: impl Into<Binding<String>>) -> Self {
+        Self {
+            progress: progress.into(),
+            status: status.into(),
+        }
     }
 }
 
+#[component_properties]
 impl Component for ProgressView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
@@ -97,8 +103,8 @@ fn main() -> Result<()> {
     // Shared UI state (updated on the main thread in `on_action`).
     let progress = Property::new(0.0);
     let status = Property::new("Ready to download".to_string());
-    let progress_for_view = progress.clone();
-    let status_for_view = status.clone();
+    let progress_for_view = progress.binding();
+    let status_for_view = status.binding();
     let progress_for_actions = progress;
     let status_for_actions = status;
 

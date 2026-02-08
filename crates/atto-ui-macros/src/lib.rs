@@ -6,7 +6,7 @@
 use proc_macro::TokenStream;
 
 mod reactive;
-mod component_props;
+mod component_properties;
 mod view_builder;
 
 /// Generates convenience accessors around `atto_ui::reactive::Property<_>` fields.
@@ -20,15 +20,15 @@ pub fn derive_reactive(input: TokenStream) -> TokenStream {
 }
 
 /// Derive component property accessors for components with `Binding<_>` fields.
-#[proc_macro_derive(ComponentProps, attributes(component))]
-pub fn derive_component_props(input: TokenStream) -> TokenStream {
-    component_props::derive_component_props_impl(input)
+#[proc_macro_derive(ComponentProperties, attributes(component))]
+pub fn derive_component_properties(input: TokenStream) -> TokenStream {
+    component_properties::derive_component_properties_impl(input)
 }
 
 /// Injects property accessors into a `impl Component for ...` block.
 #[proc_macro_attribute]
-pub fn component_props(attr: TokenStream, item: TokenStream) -> TokenStream {
-    component_props::component_props_impl(attr, item)
+pub fn component_properties(attr: TokenStream, item: TokenStream) -> TokenStream {
+    component_properties::component_properties_impl(attr, item)
 }
 
 /// SwiftUI-ish composable builder DSL.

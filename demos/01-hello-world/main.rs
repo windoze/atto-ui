@@ -4,19 +4,35 @@ use anyhow::Result;
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 /// 最简单的视图 - 显示 "Hello, World!" 文本
-struct HelloView;
+#[derive(Clone, ComponentProperties)]
+struct HelloView {
+    headline: Binding<String>,
+    footer: Binding<String>,
+}
 
+impl HelloView {
+    fn new(headline: impl Into<Binding<String>>, footer: impl Into<Binding<String>>) -> Self {
+        Self {
+            headline: headline.into(),
+            footer: footer.into(),
+        }
+    }
+}
+
+#[component_properties]
 impl Component for HelloView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
@@ -31,11 +47,11 @@ impl Component for HelloView {
         // 创建文本内容
         let lines = vec![
             Line::raw(""),
-            Line::raw("  Welcome to Chatty Framework!"),
+            Line::raw(format!("  {}", self.headline.get())),
             Line::raw(""),
             Line::raw("  This is your first Chatty application."),
             Line::raw(""),
-            Line::raw("  Press 'q' or Ctrl+Q to quit."),
+            Line::raw(format!("  {}", self.footer.get())),
         ];
 
         let paragraph = Paragraph::new(lines)
@@ -66,7 +82,10 @@ fn main() -> Result<()> {
                 width: 50,
                 height: 12,
             },
-            Box::new(HelloView),
+            Box::new(HelloView::new(
+                "Welcome to Chatty Framework!",
+                "Press 'q' or Ctrl+Q to quit.",
+            )),
         );
         desktop.add_window(window, screen);
 

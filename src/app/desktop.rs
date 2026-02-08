@@ -8,6 +8,7 @@ use crate::app::status::Fill;
 use crate::composable::{ComponentAction, EventOutcome};
 use crate::theme::Theme;
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode};
+use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 use super::menu::{MenuAction, MenuBar};
 use super::status::StatusBar;
@@ -131,6 +132,31 @@ impl Desktop {
     pub fn add_window(&mut self, window: Window, screen: Rect) -> WindowId {
         let layout = Self::layout(screen);
         self.wm.add_window(window, layout.work_area)
+    }
+
+    pub fn add_dynamic_window(
+        &mut self,
+        kind: WindowKind,
+        title: impl Into<crate::reactive::Binding<String>>,
+        rect: impl Into<crate::reactive::Binding<Rect>>,
+        root: ComponentSpec,
+        callbacks: CallbackRegistry,
+        screen: Rect,
+    ) -> Result<WindowId, TreeError> {
+        let window = Window::new_dynamic(kind, title, rect, root, callbacks)?;
+        Ok(self.add_window(window, screen))
+    }
+
+    pub fn apply_tree_ops(
+        &mut self,
+        window_id: WindowId,
+        ops: &[TreeOp],
+    ) -> Result<bool, TreeError> {
+        self.wm.apply_tree_ops(window_id, ops)
+    }
+
+    pub fn rebuild_dynamic_window(&mut self, window_id: WindowId) -> Result<(), TreeError> {
+        self.wm.rebuild_dynamic_window(window_id)
     }
 
     pub fn handle_event(&mut self, event: &Event, screen: Rect) -> DesktopEventResult {

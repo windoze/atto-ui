@@ -11,21 +11,28 @@ use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 /// 事件日志视图 - 显示所有接收到的事件
+#[derive(Clone, ComponentProperties)]
 struct EventLogView {
+    title: Binding<String>,
+    #[component(skip)]
     events: Vec<String>,
+    #[component(skip)]
     max_events: usize,
 }
 
 impl EventLogView {
     fn new() -> Self {
         Self {
+            title: Binding::new("Event Log".to_string()),
             events: vec![
                 "Welcome to Event Handling Demo!".to_string(),
                 "Try the following:".to_string(),
@@ -83,6 +90,7 @@ impl EventLogView {
     }
 }
 
+#[component_properties]
 impl Component for EventLogView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         // 记录事件
@@ -128,9 +136,10 @@ impl Component for EventLogView {
         let mut lines: Vec<Line> = Vec::new();
 
         // 标题
+        let title = self.title.get();
         lines.push(Line::from(vec![
             Span::styled(
-                "Event Log ",
+                format!("{title} "),
                 Style::default()
                     .fg(Color::LightBlue)
                     .add_modifier(Modifier::BOLD),
@@ -171,27 +180,30 @@ impl Component for EventLogView {
 }
 
 /// 交互式演示视图 - 展示可点击的按钮
+#[derive(Clone, ComponentProperties)]
 struct InteractiveView {
-    click_count: usize,
-    last_click_pos: Option<(u16, u16)>,
+    click_count: Binding<usize>,
+    last_click_pos: Binding<String>,
 }
 
 impl InteractiveView {
     fn new() -> Self {
         Self {
-            click_count: 0,
-            last_click_pos: None,
+            click_count: Binding::new(0),
+            last_click_pos: Binding::new(String::new()),
         }
     }
 }
 
+#[component_properties]
 impl Component for InteractiveView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Mouse(mouse) = event
             && mouse.kind == MouseEventKind::Down(MouseButton::Left)
         {
-            self.click_count += 1;
-            self.last_click_pos = Some((mouse.column, mouse.row));
+            self.click_count.update(|v| *v = v.saturating_add(1));
+            self.last_click_pos
+                .set(format!("{}, {}", mouse.column, mouse.row));
 
             // 消费此事件，阻止传播
             return EventResult::consumed();
@@ -201,6 +213,13 @@ impl Component for InteractiveView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let click_count = self.click_count.get();
+        let last_click = self.last_click_pos.get();
+        let last_click = if last_click.is_empty() {
+            "None".to_string()
+        } else {
+            last_click
+        };
         let lines = vec![
             Line::raw(""),
             Line::styled(
@@ -213,7 +232,7 @@ impl Component for InteractiveView {
             Line::from(vec![
                 Span::styled("Click Count: ", Style::default().fg(Color::Gray)),
                 Span::styled(
-                    self.click_count.to_string(),
+                    click_count.to_string(),
                     Style::default()
                         .fg(Color::LightGreen)
                         .add_modifier(Modifier::BOLD),
@@ -223,11 +242,7 @@ impl Component for InteractiveView {
             Line::from(vec![
                 Span::styled("Last Click: ", Style::default().fg(Color::Gray)),
                 Span::styled(
-                    if let Some((x, y)) = self.last_click_pos {
-                        format!("({}, {})", x, y)
-                    } else {
-                        "None".to_string()
-                    },
+                    last_click,
                     Style::default().fg(Color::LightYellow),
                 ),
             ]),

@@ -5,13 +5,13 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
 
-#[derive(Clone, Debug, ComponentProps)]
+#[derive(Clone, Debug, ComponentProperties)]
 pub struct RadioGroup {
     label: Binding<String>,
     options: Binding<Vec<String>>,
@@ -82,7 +82,7 @@ impl RadioGroup {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for RadioGroup {
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {

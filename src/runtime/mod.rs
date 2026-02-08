@@ -2,19 +2,24 @@
 
 use std::fmt;
 
+use crossterm::event::Event;
+use ratatui::Frame;
+use ratatui::layout::Rect;
+
 use atto_ui_runtime::{
     ActionMeta, AlignSpec, AnchorPlacementSpec, AnchorSpec, CallbackId, CallbackInvocation,
     CallbackRegistry, ComponentRegistry, ComponentSchema, ComponentSpec, ComponentSpecChild,
-    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec, PropertyMeta,
+    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec,
     SizeSpec, TreeError, TreeOp, ValueType, apply_tree_ops,
 };
 
 use crate::composable::{
-    Align, Anchor, AnchorPlacement, Border, Component, ComponentNode, Divider, EdgeInsets, Grid,
-    HStack, Label, LayoutParams, Size, Spacer, Splitter, SplitterOrientation, TabView, Text,
-    TextBox, VStack, Visibility,
+    Align, Anchor, AnchorPlacement, Border, Component, ComponentContext, ComponentId, ComponentNode,
+    Divider, DividerOrientation, EdgeInsets, EventResult, Grid, HStack, Label, LayoutParams,
+    ScrollConfig, Size, Spacer, Splitter, SplitterOrientation, TabView, Text, TextBox,
+    TitleBarContent, TitleBarContext, VStack, Visibility,
 };
-use crate::ComponentError;
+use crate::{ComponentError, ComponentPropertySchema};
 use crate::reactive::Binding;
 use crate::widgets::{
     Button, Checkbox, ListBox, ProgressBar, RadioGroup, Slider, Spinner, StyledLabel, TableView,
@@ -74,7 +79,7 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
     register_button(&mut registry, callbacks.clone());
     register_checkbox(&mut registry, callbacks.clone());
     register_label(&mut registry);
-    register_styled_label(&mut registry);
+    register_styled_label(&mut registry, callbacks.clone());
     register_text(&mut registry);
     register_textbox(&mut registry, callbacks.clone());
     register_slider(&mut registry, callbacks.clone());
@@ -278,6 +283,152 @@ impl ComponentTree {
         }
 
         Ok(structural)
+    }
+}
+
+impl Component for ComponentTree {
+    fn type_name(&self) -> &'static str {
+        self.view.type_name()
+    }
+
+    fn tag(&self) -> Option<&str> {
+        self.view.tag()
+    }
+
+    fn property_names(&self) -> Vec<&'static str> {
+        self.view.property_names()
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        self.view.get_property(name)
+    }
+
+    fn set_property(
+        &mut self,
+        name: &str,
+        value: ComponentValue,
+    ) -> Result<(), ComponentError> {
+        self.view.set_property(name, value)
+    }
+
+    fn apply_command(&mut self, command: crate::ComponentCommand) -> EventResult {
+        self.view.apply_command(command)
+    }
+
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.view.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.view.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.view.focus_last()
+    }
+
+    fn min_width(&self) -> u16 {
+        self.view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.view.min_height()
+    }
+
+    fn min_size(&self) -> (u16, u16) {
+        self.view.min_size()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.view.desired_height()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.view.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.view.children_mut()
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event(event, ctx)
+    }
+
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.view.titlebar(ctx)
+    }
+
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.view.handle_titlebar_event(event, ctx)
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.view.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.view.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.view.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.view.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.view.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.view.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to(&mut self, x: u16, y: u16) {
+        self.view.scroll_to(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
+        self.view.scroll_to_child(child_id);
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.apply_ops_incremental(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.rebuild()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        Some(self.root_spec())
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        Some(self.callbacks())
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.view.draw(frame, area, ctx);
     }
 }
 
@@ -542,15 +693,17 @@ enum StackAxis {
     Horizontal,
 }
 
+fn component_schema<T: ComponentPropertySchema>(type_name: &str) -> ComponentSchema {
+    let mut schema = ComponentSchema::new(type_name).with_properties(T::property_schema());
+    schema.dedup_properties();
+    schema
+}
+
 fn register_button(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("Button")
-        .with_properties(vec![
-            PropertyMeta::new("label", ValueType::String),
-            PropertyMeta::new("enabled", ValueType::Bool),
-        ])
+    let schema = component_schema::<Button>("Button")
         .with_event(EventMeta::new("click"))
         .with_action(ActionMeta::new("click"))
         .allow_children(false);
@@ -570,12 +723,7 @@ fn register_checkbox(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("Checkbox")
-        .with_properties(vec![
-            PropertyMeta::new("label", ValueType::String),
-            PropertyMeta::new("checked", ValueType::Bool),
-            PropertyMeta::new("enabled", ValueType::Bool),
-        ])
+    let schema = component_schema::<Checkbox>("Checkbox")
         .with_event(EventMeta::new("change"))
         .with_action(ActionMeta::new("toggle"))
         .allow_children(false);
@@ -593,11 +741,7 @@ fn register_checkbox(
 }
 
 fn register_label(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Label").with_properties(vec![
-        PropertyMeta::new("text", ValueType::String),
-        PropertyMeta::new("enabled", ValueType::Bool),
-    ])
-    .allow_children(false);
+    let schema = component_schema::<Label>("Label").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
         let text = prop_string(spec, "text")?.unwrap_or_default();
@@ -607,25 +751,27 @@ fn register_label(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     });
 }
 
-fn register_styled_label(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("StyledLabel").with_properties(vec![
-        PropertyMeta::new("text", ValueType::String),
-        PropertyMeta::new("enabled", ValueType::Bool),
-    ])
-    .allow_children(false);
+fn register_styled_label(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<StyledLabel>("StyledLabel")
+        .with_event(EventMeta::new("link").with_payload(ValueType::String))
+        .allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
         let text = prop_string(spec, "text")?.unwrap_or_default();
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
-        let label = StyledLabel::new(text).enabled(enabled);
+        let mut label = StyledLabel::new(text).enabled(enabled);
+        if let Some(cb) = event_handle(spec, "link", callbacks.clone()) {
+            label = label.on_link_callback(cb);
+        }
         Ok(wrap_with_id(spec, Box::new(label)))
     });
 }
 
 fn register_text(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Text")
-        .with_properties(vec![PropertyMeta::new("text", ValueType::String)])
-        .allow_children(false);
+    let schema = component_schema::<Text>("Text").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
         let text = prop_string(spec, "text")?.unwrap_or_default();
@@ -638,14 +784,7 @@ fn register_textbox(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("TextBox")
-        .with_properties(vec![
-            PropertyMeta::new("title", ValueType::String),
-            PropertyMeta::new("placeholder", ValueType::String),
-            PropertyMeta::new("text", ValueType::String),
-            PropertyMeta::new("enabled", ValueType::Bool),
-            PropertyMeta::new("clipboard", ValueType::String),
-        ])
+    let schema = component_schema::<TextBox>("TextBox")
         .with_event(EventMeta::new("change"))
         .with_event(EventMeta::new("submit"))
         .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
@@ -678,14 +817,7 @@ fn register_slider(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("Slider")
-        .with_properties(vec![
-            PropertyMeta::new("min", ValueType::F64),
-            PropertyMeta::new("max", ValueType::F64),
-            PropertyMeta::new("value", ValueType::F64),
-            PropertyMeta::new("step", ValueType::F64),
-            PropertyMeta::new("enabled", ValueType::Bool),
-        ])
+    let schema = component_schema::<Slider>("Slider")
         .with_event(EventMeta::new("change"))
         .allow_children(false);
 
@@ -706,16 +838,7 @@ fn register_slider(
 }
 
 fn register_progress_bar(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("ProgressBar")
-        .with_properties(vec![
-            PropertyMeta::new("min", ValueType::F64),
-            PropertyMeta::new("max", ValueType::F64),
-            PropertyMeta::new("value", ValueType::F64),
-            PropertyMeta::new("enabled", ValueType::Bool),
-            PropertyMeta::new("show_text", ValueType::Bool),
-            PropertyMeta::new("text", ValueType::String),
-        ])
-        .allow_children(false);
+    let schema = component_schema::<ProgressBar>("ProgressBar").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
         let min = prop_f64(spec, "min")?.unwrap_or(0.0);
@@ -738,14 +861,7 @@ fn register_radio_group(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("RadioGroup")
-        .with_properties(vec![
-            PropertyMeta::new("label", ValueType::String),
-            PropertyMeta::new("options", ValueType::StringList),
-            PropertyMeta::new("selection", ValueType::U64),
-            PropertyMeta::new("enabled", ValueType::Bool),
-            PropertyMeta::new("height", ValueType::U64),
-        ])
+    let schema = component_schema::<RadioGroup>("RadioGroup")
         .with_event(EventMeta::new("change"))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
@@ -773,14 +889,7 @@ fn register_list_box(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("ListBox")
-        .with_properties(vec![
-            PropertyMeta::new("title", ValueType::String),
-            PropertyMeta::new("items", ValueType::StringList),
-            PropertyMeta::new("selection", ValueType::U64),
-            PropertyMeta::new("enabled", ValueType::Bool),
-            PropertyMeta::new("height", ValueType::U64),
-        ])
+    let schema = component_schema::<ListBox>("ListBox")
         .with_event(EventMeta::new("change"))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
@@ -808,15 +917,7 @@ fn register_table_view(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("TableView")
-        .with_properties(vec![
-            PropertyMeta::new("title", ValueType::String),
-            PropertyMeta::new("headers", ValueType::StringList),
-            PropertyMeta::new("rows", ValueType::Table),
-            PropertyMeta::new("selection", ValueType::U64),
-            PropertyMeta::new("enabled", ValueType::Bool),
-            PropertyMeta::new("height", ValueType::U64),
-        ])
+    let schema = component_schema::<TableView>("TableView")
         .with_event(EventMeta::new("change"))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
@@ -847,12 +948,7 @@ fn register_table_view(
 }
 
 fn register_spinner(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Spinner").with_properties(vec![
-        PropertyMeta::new("text", ValueType::String),
-        PropertyMeta::new("enabled", ValueType::Bool),
-        PropertyMeta::new("running", ValueType::Bool),
-    ])
-    .allow_children(false);
+    let schema = component_schema::<Spinner>("Spinner").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
         let text = prop_string(spec, "text")?.unwrap_or_default();
@@ -867,11 +963,7 @@ fn register_tab_view(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     callbacks: CallbackRegistry,
 ) {
-    let schema = ComponentSchema::new("TabView")
-        .with_properties(vec![
-            PropertyMeta::new("selection", ValueType::U64),
-            PropertyMeta::new("header_position", ValueType::String),
-        ])
+    let schema = component_schema::<TabView>("TabView")
         .with_event(EventMeta::new("change"))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(true);
@@ -879,7 +971,7 @@ fn register_tab_view(
     registry.register(schema, move |spec, registry| {
         let selection = prop_usize(spec, "selection")?.unwrap_or(0);
         let header_position = prop_string(spec, "header_position")
-            ?.and_then(parse_tab_header_position)
+            ?.and_then(|value| TabHeaderPosition::parse(&value))
             .unwrap_or(TabHeaderPosition::Top);
 
         let mut tabs = TabView::new()
@@ -904,18 +996,12 @@ fn register_tab_view(
     });
 }
 
-fn register_stack<T: StackBuilder + Component + 'static>(
+fn register_stack<T: StackBuilder + Component + ComponentPropertySchema + 'static>(
     registry: &mut ComponentRegistry<Box<dyn Component>>,
     name: &str,
     axis: StackAxis,
 ) {
-    let schema = ComponentSchema::new(name)
-        .with_properties(vec![
-            PropertyMeta::new("spacing", ValueType::U64),
-            PropertyMeta::new("padding", ValueType::Map),
-            PropertyMeta::new("scrollable", ValueType::Bool),
-        ])
-        .allow_children(true);
+    let schema = component_schema::<T>(name).allow_children(true);
 
     registry.register(schema, move |spec, registry| {
         let spacing = prop_u16(spec, "spacing")?.unwrap_or(0);
@@ -944,15 +1030,7 @@ fn register_stack<T: StackBuilder + Component + 'static>(
 }
 
 fn register_grid(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Grid")
-        .with_properties(vec![
-            PropertyMeta::new("columns", ValueType::U64),
-            PropertyMeta::new("row_gap", ValueType::U64),
-            PropertyMeta::new("column_gap", ValueType::U64),
-            PropertyMeta::new("padding", ValueType::Map),
-            PropertyMeta::new("scrollable", ValueType::Bool),
-        ])
-        .allow_children(true);
+    let schema = component_schema::<Grid>("Grid").allow_children(true);
 
     registry.register(schema, move |spec, registry| {
         let columns = prop_usize(spec, "columns")?.unwrap_or(1);
@@ -983,19 +1061,11 @@ fn register_grid(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 }
 
 fn register_splitter(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Splitter")
-        .with_properties(vec![
-            PropertyMeta::new("orientation", ValueType::String),
-            PropertyMeta::new("split_pos", ValueType::U64),
-            PropertyMeta::new("min_first", ValueType::U64),
-            PropertyMeta::new("min_second", ValueType::U64),
-            PropertyMeta::new("border", ValueType::Bool),
-        ])
-        .allow_children(true);
+    let schema = component_schema::<Splitter>("Splitter").allow_children(true);
 
     registry.register(schema, move |spec, registry| {
         let orientation = prop_string(spec, "orientation")
-            ?.and_then(parse_splitter_orientation)
+            ?.and_then(|value| SplitterOrientation::parse(&value))
             .unwrap_or(SplitterOrientation::Vertical);
 
         let first = spec
@@ -1030,30 +1100,25 @@ fn register_splitter(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 }
 
 fn register_divider(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Divider")
-        .with_properties(vec![PropertyMeta::new("orientation", ValueType::String)])
-        .allow_children(false);
+    let schema = component_schema::<Divider>("Divider").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
-        let orientation = prop_string(spec, "orientation")?;
-        let view = match orientation.as_deref() {
-            Some("vertical") => Divider::vertical(),
-            _ => Divider::horizontal(),
-        };
+        let orientation = prop_string(spec, "orientation")
+            ?.and_then(|value| DividerOrientation::parse(&value))
+            .unwrap_or(DividerOrientation::Horizontal);
+        let view = Divider::new(orientation);
         Ok(wrap_with_id(spec, Box::new(view)))
     });
 }
 
 fn register_spacer(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Spacer").allow_children(false);
+    let schema = component_schema::<Spacer>("Spacer").allow_children(false);
 
     registry.register(schema, move |spec, _registry| Ok(wrap_with_id(spec, Box::new(Spacer::new()))));
 }
 
 fn register_border(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Border")
-        .with_properties(vec![PropertyMeta::new("border", ValueType::Bool)])
-        .allow_children(true);
+    let schema = component_schema::<Border>("Border").allow_children(true);
 
     registry.register(schema, move |spec, registry| {
         let inner = spec
@@ -1069,9 +1134,7 @@ fn register_border(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 }
 
 fn register_visibility(registry: &mut ComponentRegistry<Box<dyn Component>>) {
-    let schema = ComponentSchema::new("Visibility")
-        .with_properties(vec![PropertyMeta::new("visible", ValueType::Bool)])
-        .allow_children(true);
+    let schema = component_schema::<Visibility>("Visibility").allow_children(true);
 
     registry.register(schema, move |spec, registry| {
         let visible = prop_bool(spec, "visible")?.unwrap_or(true);
@@ -1314,22 +1377,6 @@ fn edge_insets_from_value(
             })
         }
         _ => Err(invalid_prop(spec, name, "padding", value)),
-    }
-}
-
-fn parse_tab_header_position(value: String) -> Option<TabHeaderPosition> {
-    match value.as_str() {
-        "Top" | "top" => Some(TabHeaderPosition::Top),
-        "Bottom" | "bottom" => Some(TabHeaderPosition::Bottom),
-        _ => None,
-    }
-}
-
-fn parse_splitter_orientation(value: String) -> Option<SplitterOrientation> {
-    match value.as_str() {
-        "Vertical" | "vertical" => Some(SplitterOrientation::Vertical),
-        "Horizontal" | "horizontal" => Some(SplitterOrientation::Horizontal),
-        _ => None,
     }
 }
 
@@ -1750,5 +1797,29 @@ mod tests {
             .events
             .iter()
             .any(|event| event.name == "click"));
+    }
+
+    #[test]
+    fn builtin_schema_includes_stack_padding() {
+        let registry = builtin_registry(CallbackRegistry::new());
+        let schema = registry.schema("VStack").expect("schema");
+        let padding = schema
+            .properties
+            .iter()
+            .find(|prop| prop.name == "padding")
+            .expect("padding");
+        assert_eq!(padding.value_type, ValueType::Map);
+    }
+
+    #[test]
+    fn builtin_schema_includes_styled_label_link_event() {
+        let registry = builtin_registry(CallbackRegistry::new());
+        let schema = registry.schema("StyledLabel").expect("schema");
+        let link = schema
+            .events
+            .iter()
+            .find(|event| event.name == "link")
+            .expect("link");
+        assert_eq!(link.payload, Some(ValueType::String));
     }
 }

@@ -151,13 +151,31 @@ impl WindowManager {
         window.set_view(view);
         true
     }
+
+    pub fn apply_tree_ops(
+        &mut self,
+        id: WindowId,
+        ops: &[crate::TreeOp],
+    ) -> Result<bool, crate::TreeError> {
+        let Some(window) = self.window_mut(id) else {
+            return Err(crate::TreeError::NotFound(format!("window:{}", id.0)));
+        };
+        window.apply_tree_ops(ops)
+    }
+
+    pub fn rebuild_dynamic_window(&mut self, id: WindowId) -> Result<(), crate::TreeError> {
+        let Some(window) = self.window_mut(id) else {
+            return Err(crate::TreeError::NotFound(format!("window:{}", id.0)));
+        };
+        window.rebuild_dynamic()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::WindowManager;
     use super::draw::draw_shadow;
-    use crate::ComponentValue;
+    use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};
     use crate::composable::{
         Component, ComponentContext, EventResult, Label, ScrollConfig, ScrollbarVisibility,
     };
@@ -912,6 +930,43 @@ mod tests {
                 .symbol(),
             "═",
             "expected minimize button to be hidden for fixed-size windows"
+        );
+    }
+
+    #[test]
+    fn window_manager_apply_tree_ops_updates_dynamic_root() {
+        let callbacks = CallbackRegistry::new();
+        let root = ComponentSpec::new("Label")
+            .with_id("root")
+            .with_prop("text", ComponentValue::String("hello".into()));
+        let window = Window::new_dynamic(
+            WindowKind::Normal,
+            "Dynamic",
+            Rect::new(0, 0, 20, 5),
+            root,
+            callbacks,
+        )
+        .expect("dynamic window");
+
+        let mut wm = WindowManager::new();
+        let screen = Rect::new(0, 0, 80, 24);
+        let id = wm.add_window(window, screen);
+
+        wm.apply_tree_ops(
+            id,
+            &[TreeOp::SetProp {
+                id: "root".into(),
+                name: "text".into(),
+                value: ComponentValue::String("bye".into()),
+            }],
+        )
+        .expect("apply");
+
+        let window = wm.window(id).expect("window");
+        let root_spec = window.dynamic_root_spec().expect("dynamic root");
+        assert_eq!(
+            root_spec.props.get("text"),
+            Some(&ComponentValue::String("bye".into()))
         );
     }
 }

@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::{ComponentCommand, ComponentError, ComponentValue};
+use atto_ui_runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::theme::Theme;
@@ -325,6 +326,26 @@ pub trait Component: Send {
     /// Default: no-op.
     fn scroll_to_child(&mut self, _child_id: ComponentId) {}
 
+    fn apply_tree_ops(&mut self, _ops: &[TreeOp]) -> Result<bool, TreeError> {
+        Err(TreeError::InvalidTreeOp(
+            "component does not support tree operations".to_string(),
+        ))
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        Err(TreeError::InvalidTreeOp(
+            "component does not support tree operations".to_string(),
+        ))
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        None
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        None
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>);
 }
 
@@ -451,6 +472,22 @@ impl Component for Box<dyn Component> {
 
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.as_mut().scroll_to_child(child_id);
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.as_mut().apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.as_mut().rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.as_ref().dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.as_ref().dynamic_callbacks()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

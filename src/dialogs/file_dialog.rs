@@ -6,15 +6,16 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{
     Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack,
     LayoutParams, Size, VStack,
 };
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::widgets::{Button, Label, ListBox, TextBox};
+use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
-#[derive(Clone, ComponentProps)]
+#[derive(Clone, ComponentProperties)]
 struct FocusBindingComponent<T> {
     inner: T,
     focused: Binding<bool>,
@@ -26,7 +27,7 @@ impl<T> FocusBindingComponent<T> {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl<T> Component for FocusBindingComponent<T>
 where
     T: Component + Clone + Send + 'static,
@@ -179,7 +180,7 @@ impl Entry {
 ///   - In the file name field: submit.
 /// - `Backspace`: go to parent directory (when the file list is focused).
 /// - `Esc`: cancel and close.
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct FileDialog {
     mode: FileDialogMode,
     result: Binding<Option<PathBuf>>,
@@ -591,7 +592,7 @@ impl FileDialog {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for FileDialog {
     fn is_focusable(&self) -> bool {
         self.inner.is_focusable()
@@ -724,6 +725,22 @@ impl Component for FileDialog {
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.inner.draw(frame, area, ctx);
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
     }
 }
 

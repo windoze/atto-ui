@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, TabMode};
 use super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
@@ -20,6 +20,16 @@ pub enum SplitterOrientation {
     Horizontal,
 }
 
+impl SplitterOrientation {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "Vertical" | "vertical" => Some(Self::Vertical),
+            "Horizontal" | "horizontal" => Some(Self::Horizontal),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct SplitLayout {
     area: Rect,
@@ -33,10 +43,10 @@ struct DragState {
     grab_offset: u16,
 }
 
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct Splitter {
     children: Vec<ComponentNode>,
-    orientation: SplitterOrientation,
+    orientation: Binding<SplitterOrientation>,
     split_pos: Binding<u16>,
     min_first: Binding<u16>,
     min_second: Binding<u16>,
@@ -73,7 +83,7 @@ impl Splitter {
 
         Self {
             children,
-            orientation,
+            orientation: orientation.into(),
             split_pos: 0u16.into(),
             min_first: 0u16.into(),
             min_second: 0u16.into(),
@@ -93,6 +103,11 @@ impl Splitter {
 
     pub fn horizontal(first: impl Component + 'static, second: impl Component + 'static) -> Self {
         Self::new(SplitterOrientation::Horizontal, first, second)
+    }
+
+    pub fn orientation(mut self, orientation: impl Into<Binding<SplitterOrientation>>) -> Self {
+        self.orientation = orientation.into();
+        self
     }
 
     /// Set initial sizes for the panels (used the first time layout runs).
@@ -146,6 +161,10 @@ impl Splitter {
         self
     }
 
+    fn orientation_value(&self) -> SplitterOrientation {
+        self.orientation.get()
+    }
+
     fn divider_thickness(&self) -> u16 {
         1
     }
@@ -153,7 +172,8 @@ impl Splitter {
     fn axis_min_first(&self) -> u16 {
         let configured = self.min_first.get();
         let child = self.children.first();
-        let child_min = match (self.orientation, child) {
+        let orientation = self.orientation_value();
+        let child_min = match (orientation, child) {
             (SplitterOrientation::Vertical, Some(node)) => node.view.min_width(),
             (SplitterOrientation::Horizontal, Some(node)) => node.view.min_height(),
             _ => 0,
@@ -164,7 +184,8 @@ impl Splitter {
     fn axis_min_second(&self) -> u16 {
         let configured = self.min_second.get();
         let child = self.children.get(1);
-        let child_min = match (self.orientation, child) {
+        let orientation = self.orientation_value();
+        let child_min = match (orientation, child) {
             (SplitterOrientation::Vertical, Some(node)) => node.view.min_width(),
             (SplitterOrientation::Horizontal, Some(node)) => node.view.min_height(),
             _ => 0,
@@ -175,7 +196,7 @@ impl Splitter {
     fn cross_min_size(&self) -> u16 {
         let first = self.children.first();
         let second = self.children.get(1);
-        match self.orientation {
+        match self.orientation_value() {
             SplitterOrientation::Vertical => {
                 let a = first.map(|c| c.view.min_height()).unwrap_or(0);
                 let b = second.map(|c| c.view.min_height()).unwrap_or(0);
@@ -222,7 +243,8 @@ impl Splitter {
 
     fn layout_for_area(&mut self, area: Rect) -> SplitLayout {
         let divider = self.divider_thickness();
-        let span = match self.orientation {
+        let orientation = self.orientation_value();
+        let span = match orientation {
             SplitterOrientation::Vertical => area.width,
             SplitterOrientation::Horizontal => area.height,
         };
@@ -247,7 +269,7 @@ impl Splitter {
         let first_len = clamped.min(available);
         let second_len = available.saturating_sub(first_len);
 
-        let (first, divider_rect, second) = match self.orientation {
+        let (first, divider_rect, second) = match orientation {
             SplitterOrientation::Vertical => {
                 let first = Rect {
                     x: 0,
@@ -387,12 +409,13 @@ impl Splitter {
             return false;
         };
 
-        let axis_pos = match self.orientation {
+        let orientation = self.orientation_value();
+        let axis_pos = match orientation {
             SplitterOrientation::Vertical => local_x.saturating_sub(drag.grab_offset),
             SplitterOrientation::Horizontal => local_y.saturating_sub(drag.grab_offset),
         };
 
-        let span = match self.orientation {
+        let span = match orientation {
             SplitterOrientation::Vertical => layout.area.width,
             SplitterOrientation::Horizontal => layout.area.height,
         };
@@ -409,7 +432,7 @@ impl Splitter {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Splitter {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused
@@ -450,7 +473,7 @@ impl Component for Splitter {
     }
 
     fn min_width(&self) -> u16 {
-        match self.orientation {
+        match self.orientation_value() {
             SplitterOrientation::Vertical => self
                 .axis_min_first()
                 .saturating_add(self.axis_min_second())
@@ -460,7 +483,7 @@ impl Component for Splitter {
     }
 
     fn min_height(&self) -> u16 {
-        match self.orientation {
+        match self.orientation_value() {
             SplitterOrientation::Horizontal => self
                 .axis_min_first()
                 .saturating_add(self.axis_min_second())
@@ -472,7 +495,7 @@ impl Component for Splitter {
     fn desired_width(&self) -> Option<u16> {
         let first = self.children.first();
         let second = self.children.get(1);
-        match self.orientation {
+        match self.orientation_value() {
             SplitterOrientation::Vertical => {
                 let w1 = first
                     .map(|c| c.view.desired_width().unwrap_or(c.view.min_width()))
@@ -500,7 +523,7 @@ impl Component for Splitter {
     fn desired_height(&self) -> Option<u16> {
         let first = self.children.first();
         let second = self.children.get(1);
-        match self.orientation {
+        match self.orientation_value() {
             SplitterOrientation::Horizontal => {
                 let h1 = first
                     .map(|c| c.view.desired_height().unwrap_or(c.view.min_height()))
@@ -576,7 +599,7 @@ impl Component for Splitter {
             if let MouseEventKind::Down(MouseButton::Left) = m.kind
                 && contains(layout.divider, local_x, local_y)
             {
-                let grab_offset = match self.orientation {
+                let grab_offset = match self.orientation_value() {
                     SplitterOrientation::Vertical => local_x.saturating_sub(layout.divider.x),
                     SplitterOrientation::Horizontal => local_y.saturating_sub(layout.divider.y),
                 };
@@ -724,7 +747,7 @@ impl Component for Splitter {
         if self.border.get() && layout.divider.width > 0 && layout.divider.height > 0 {
             let style = self.border_style.unwrap_or(ctx.theme.widget.dim);
             let border_set = ctx.theme.border_set(false);
-            let symbol = match self.orientation {
+            let symbol = match self.orientation_value() {
                 SplitterOrientation::Vertical => border_set.vertical_left,
                 SplitterOrientation::Horizontal => border_set.horizontal_top,
             };

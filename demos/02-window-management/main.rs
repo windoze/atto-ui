@@ -11,43 +11,52 @@ use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
 use atto_ui::composable::{Component, ComponentContext, EventOutcome, EventResult};
+use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 /// 显示窗口信息的视图
+#[derive(Clone, ComponentProperties)]
 struct WindowInfoView {
-    window_type: String,
-    window_number: usize,
+    window_type: Binding<String>,
+    window_number: Binding<usize>,
 }
 
 impl WindowInfoView {
-    fn new(window_type: &str, window_number: usize) -> Self {
+    fn new(
+        window_type: impl Into<Binding<String>>,
+        window_number: impl Into<Binding<usize>>,
+    ) -> Self {
         Self {
-            window_type: window_type.to_string(),
-            window_number,
+            window_type: window_type.into(),
+            window_number: window_number.into(),
         }
     }
 }
 
+#[component_properties]
 impl Component for WindowInfoView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let window_type = self.window_type.get();
+        let window_number = self.window_number.get();
         let lines = vec![
             Line::raw(""),
             Line::from(vec![
                 Span::styled("Window Type: ", Style::default().fg(Color::Gray)),
-                Span::styled(&self.window_type, Style::default().fg(Color::LightBlue)),
+                Span::styled(window_type, Style::default().fg(Color::LightBlue)),
             ]),
             Line::from(vec![
                 Span::styled("Window #", Style::default().fg(Color::Gray)),
                 Span::styled(
-                    self.window_number.to_string(),
+                    window_number.to_string(),
                     Style::default().fg(Color::LightBlue),
                 ),
             ]),
@@ -163,7 +172,10 @@ fn main() -> Result<()> {
                             width: dialog_width,
                             height: dialog_height,
                         },
-                        Box::new(ModalView),
+                        Box::new(ModalView::new(
+                            "This is a Modal Dialog",
+                            "Modal windows block interaction",
+                        )),
                     );
                     desktop.add_window(window, screen);
                 }
@@ -184,8 +196,22 @@ fn main() -> Result<()> {
 }
 
 /// 模态对话框视图
-struct ModalView;
+#[derive(Clone, ComponentProperties)]
+struct ModalView {
+    title: Binding<String>,
+    subtitle: Binding<String>,
+}
 
+impl ModalView {
+    fn new(title: impl Into<Binding<String>>, subtitle: impl Into<Binding<String>>) -> Self {
+        Self {
+            title: title.into(),
+            subtitle: subtitle.into(),
+        }
+    }
+}
+
+#[component_properties]
 impl Component for ModalView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         // 按 Esc 或 Enter 关闭对话框
@@ -201,15 +227,17 @@ impl Component for ModalView {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let title = self.title.get();
+        let subtitle = self.subtitle.get();
         let lines = vec![
             Line::raw(""),
             Line::styled(
-                "  This is a Modal Dialog",
+                format!("  {title}"),
                 Style::default().fg(Color::White),
             ),
             Line::raw(""),
             Line::styled(
-                "  Modal windows block interaction",
+                format!("  {subtitle}"),
                 Style::default().fg(Color::Gray),
             ),
             Line::styled("  with other windows.", Style::default().fg(Color::Gray)),

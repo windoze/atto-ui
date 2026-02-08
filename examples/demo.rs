@@ -20,26 +20,29 @@ use atto_ui::composable::{
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
     ScrollContentContext, Size, Splitter, TabWindow, VStack,
 };
-use atto_ui::reactive::{EventQueue, Property, set_global_tick_rate, tick_global_timers};
+use atto_ui::reactive::{Binding, EventQueue, Property, set_global_tick_rate, tick_global_timers};
 use atto_ui::theme::{Theme, ThemeConfig, ThemeConfigFormat};
 use atto_ui::widgets::{
     Button, Checkbox, FlowDirection, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner,
     SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, TableView, TextBox,
 };
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
-use atto_ui_macros::{Reactive, view_builder};
+use atto_ui_macros::{ComponentProperties, component_properties, Reactive, view_builder};
 
-#[derive(Default)]
+#[derive(ComponentProperties)]
 struct TextView {
-    lines: Vec<String>,
+    lines: Binding<Vec<String>>,
 }
 
 impl TextView {
     fn new(lines: Vec<String>) -> Self {
-        Self { lines }
+        Self {
+            lines: Binding::new(lines),
+        }
     }
 }
 
+#[component_properties]
 impl Component for TextView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
@@ -59,7 +62,7 @@ impl Component for TextView {
         } else {
             ctx.theme.widget.normal
         };
-        let text = self.lines.to_vec().join("\n");
+        let text = self.lines.get().join("\n");
         frame.render_widget(
             Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
             area,
@@ -67,7 +70,9 @@ impl Component for TextView {
     }
 }
 
+#[derive(ComponentProperties)]
 struct DialogView {
+    title: Binding<String>,
     root: VStack,
 }
 
@@ -78,12 +83,10 @@ impl DialogView {
             ..LayoutParams::default()
         };
 
+        let title = Binding::new("Chatty demo (Turbo Vision-inspired).".to_string());
         let root = VStack::new()
             .spacing(0)
-            .child_with_layout(
-                Label::new("Chatty demo (Turbo Vision-inspired)."),
-                row_layout,
-            )
+            .child_with_layout(Label::new(title.clone()), row_layout)
             .child_with_layout(Label::new(""), row_layout)
             .child_with_layout(Label::new("Keys:"), row_layout)
             .child_with_layout(
@@ -117,10 +120,11 @@ impl DialogView {
             .child_with_layout(Label::new(""), row_layout)
             .child_with_layout(Button::new("Close (Enter)"), row_layout);
 
-        Self { root }
+        Self { title, root }
     }
 }
 
+#[component_properties]
 impl Component for DialogView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -205,7 +209,10 @@ impl WidgetsModel {
     }
 }
 
+#[derive(ComponentProperties)]
 struct WidgetsView {
+    title: Binding<String>,
+    #[component(skip)]
     _model: WidgetsModel,
     root: VStack,
 }
@@ -232,9 +239,11 @@ impl WidgetsView {
         let model_for_state = model.clone();
         let progress = model.progress_binding();
         let loading = model.loading_binding();
+        let title = Binding::new("Widgets demo (property-enabled view)".to_string());
 
         let labels = view_builder! {
             VStack {
+                Label(title.clone())
                 Text("Try mouse drag on title bar; click × to close.")
                 Text("Try bracketed paste into textbox: 你好👋 / 👩‍💻")
             }
@@ -434,12 +443,14 @@ impl WidgetsView {
             .padding(1);
 
         Self {
+            title,
             _model: model,
             root,
         }
     }
 }
 
+#[component_properties]
 impl Component for WidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -474,7 +485,9 @@ impl Component for WidgetsView {
     }
 }
 
+#[derive(ComponentProperties)]
 struct LoadingWidgetsView {
+    title: Binding<String>,
     root: VStack,
 }
 
@@ -482,6 +495,7 @@ impl LoadingWidgetsView {
     fn new() -> Self {
         let progress = Property::new(35.0);
         let loading = Property::new(true);
+        let title = Binding::new("Loading widgets demo (Esc closes)".to_string());
 
         let row_layout = LayoutParams {
             height: Size::Content,
@@ -491,7 +505,7 @@ impl LoadingWidgetsView {
         let root = VStack::new()
             .spacing(1)
             .padding(1)
-            .child_with_layout(Label::new("Loading widgets demo (Esc closes)"), row_layout)
+            .child_with_layout(Label::new(title.clone()), row_layout)
             .child_with_layout(
                 Slider::new(0.0, 100.0, progress.binding()).step(1.0),
                 row_layout,
@@ -514,10 +528,11 @@ impl LoadingWidgetsView {
                 row_layout,
             );
 
-        Self { root }
+        Self { title, root }
     }
 }
 
+#[component_properties]
 impl Component for LoadingWidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -560,8 +575,10 @@ impl Component for LoadingWidgetsView {
     }
 }
 
+#[derive(ComponentProperties)]
 struct TabWindowDemo {
     tabs: TabWindow,
+    #[component(skip)]
     next_id: usize,
 }
 
@@ -605,6 +622,7 @@ impl TabWindowDemo {
     }
 }
 
+#[component_properties]
 impl Component for TabWindowDemo {
     fn is_focusable(&self) -> bool {
         self.tabs.is_focusable()
@@ -789,26 +807,28 @@ fn build_tab_demo_scroll() -> Box<dyn Component> {
     Box::new(root)
 }
 
+#[derive(ComponentProperties)]
 struct MarkdownDemoView {
+    title: Binding<String>,
     root: VStack,
 }
 
 impl MarkdownDemoView {
     fn new() -> Self {
+        let title = Binding::new("Markdown demo (moved to atto-ui-markdown)".to_string());
         let root = VStack::new()
             .padding_insets(EdgeInsets::all(1))
             .spacing(1)
-            .child(Label::new(
-                "MarkdownViewer has moved to the atto-ui-markdown crate.",
-            ))
+            .child(Label::new(title.clone()))
             .child(Label::new(
                 "Run: cargo run -p atto-ui-markdown --example markdown_viewer",
             ));
 
-        Self { root }
+        Self { title, root }
     }
 }
 
+#[component_properties]
 impl Component for MarkdownDemoView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -843,7 +863,9 @@ impl Component for MarkdownDemoView {
     }
 }
 
+#[derive(ComponentProperties)]
 struct DisabledWidgetsView {
+    title: Binding<String>,
     root: VStack,
 }
 
@@ -856,6 +878,7 @@ impl DisabledWidgetsView {
         let table_selection = Property::new(0usize);
         let progress = Property::new(65.0);
 
+        let title = Binding::new("Disabled widgets (Esc closes)".to_string());
         let row_layout = LayoutParams {
             height: Size::Content,
             ..LayoutParams::default()
@@ -864,7 +887,7 @@ impl DisabledWidgetsView {
         let root = VStack::new()
             .spacing(0)
             .child_with_layout(
-                Label::new("Disabled widgets (not focusable/clickable; Esc closes)"),
+                Label::new(title.clone()),
                 row_layout,
             )
             .child_with_layout(
@@ -944,10 +967,11 @@ impl DisabledWidgetsView {
                 row_layout,
             );
 
-        Self { root }
+        Self { title, root }
     }
 }
 
+#[component_properties]
 impl Component for DisabledWidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -991,21 +1015,22 @@ impl Component for DisabledWidgetsView {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, ComponentProperties)]
 struct TooltipView {
-    text: String,
+    text: Binding<String>,
 }
 
 impl TooltipView {
-    fn new(text: impl Into<String>) -> Self {
+    fn new(text: impl Into<Binding<String>>) -> Self {
         Self { text: text.into() }
     }
 }
 
+#[component_properties]
 impl Component for TooltipView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         frame.render_widget(
-            Paragraph::new(self.text.clone()).style(ctx.theme.widget.normal),
+            Paragraph::new(self.text.get()).style(ctx.theme.widget.normal),
             area,
         );
     }

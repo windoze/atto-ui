@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use atto_ui_macros::{ComponentProps, component_props};
+use atto_ui_macros::{ComponentProperties, component_properties};
+use crate::ComponentValue;
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
 use crate::text::styled_text::{
     hit_test_link, inline_display_width, parse_inline, spans_from_segments,
 };
@@ -24,11 +26,12 @@ type LinkCallback = Arc<dyn Fn(&str) + Send + Sync>;
 /// - `[link text](url)` (link text is underlined; clicking calls `on_link(url)`)
 ///
 /// Parsing is intentionally simple (no full markdown support).
-#[derive(Clone, ComponentProps)]
+#[derive(Clone, ComponentProperties)]
 pub struct StyledLabel {
     text: Binding<String>,
     enabled: Binding<bool>,
     on_link: Option<LinkCallback>,
+    on_link_callback: Option<CallbackHandle>,
     last_area: Option<Rect>,
 }
 
@@ -38,6 +41,7 @@ impl StyledLabel {
             text: text.into(),
             enabled: true.into(),
             on_link: None,
+            on_link_callback: None,
             last_area: None,
         }
     }
@@ -59,9 +63,14 @@ impl StyledLabel {
         self.on_link = Some(Arc::new(callback));
         self
     }
+
+    pub fn on_link_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_link_callback = Some(callback);
+        self
+    }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for StyledLabel {
     fn is_focusable(&self) -> bool {
         false
@@ -90,10 +99,13 @@ impl Component for StyledLabel {
         }
 
         let segments = parse_inline(&self.text.get());
-        if let Some(url) = hit_test_link(&segments, local_x)
-            && let Some(cb) = &self.on_link
-        {
-            cb(url);
+        if let Some(url) = hit_test_link(&segments, local_x) {
+            if let Some(cb) = &self.on_link {
+                cb(url);
+            }
+            if let Some(cb) = &self.on_link_callback {
+                cb.emit_with(Some(ComponentValue::String(url.to_string())));
+            }
             return EventResult::consumed();
         }
 

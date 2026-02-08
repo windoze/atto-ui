@@ -3,6 +3,8 @@ use ratatui::layout::Rect;
 use super::min_size_view::WindowMinSizeView;
 use crate::composable::Component;
 use crate::reactive::Binding;
+use crate::runtime::ComponentTree;
+use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u64);
@@ -59,6 +61,17 @@ pub enum WindowMinSizeMode {
     Clip,
     /// Allow resizing below the minimum size; content can be accessed via scrollbars.
     Scroll,
+}
+
+impl WindowMinSizeMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "Enforce" | "enforce" => Some(Self::Enforce),
+            "Clip" | "clip" => Some(Self::Clip),
+            "Scroll" | "scroll" => Some(Self::Scroll),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,6 +155,17 @@ impl Window {
         }
     }
 
+    pub fn new_dynamic(
+        kind: WindowKind,
+        title: impl Into<Binding<String>>,
+        rect: impl Into<Binding<Rect>>,
+        root: ComponentSpec,
+        callbacks: CallbackRegistry,
+    ) -> Result<Self, TreeError> {
+        let tree = ComponentTree::new(root, callbacks)?;
+        Ok(Self::new(kind, title, rect, Box::new(tree)))
+    }
+
     pub fn with_tag(mut self, id: impl Into<String>) -> Self {
         self.tag = Some(id.into());
         self
@@ -177,6 +201,22 @@ impl Window {
     pub fn set_view(&mut self, view: Box<dyn Component>) {
         let min_size_mode = self.min_size_mode.clone();
         self.view = Box::new(WindowMinSizeView::new(view, min_size_mode));
+    }
+
+    pub fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.view.apply_tree_ops(ops)
+    }
+
+    pub fn rebuild_dynamic(&mut self) -> Result<(), TreeError> {
+        self.view.rebuild_tree()
+    }
+
+    pub fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.view.dynamic_root_spec()
+    }
+
+    pub fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.view.dynamic_callbacks()
     }
 
     pub fn inner_rect(&self) -> Rect {

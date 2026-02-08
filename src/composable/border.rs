@@ -3,8 +3,11 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
-use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueExt};
-use atto_ui_macros::{ComponentProps, component_props};
+use crate::{
+    CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
+    ComponentValueCodec, TreeError, TreeOp,
+};
+use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use super::geom::{contains, mouse_coords_local_to_area};
 use super::node::ComponentId;
@@ -31,7 +34,7 @@ fn inset(area: Rect, n: u16) -> Rect {
 /// Adds an optional border around an arbitrary [`Component`].
 ///
 /// This is the generic mechanism behind “all components can have optional borders”.
-#[derive(ComponentProps)]
+#[derive(ComponentProperties)]
 pub struct Border {
     inner: Box<dyn Component>,
     border: Binding<bool>,
@@ -55,7 +58,7 @@ impl Border {
     }
 }
 
-#[component_props]
+#[component_properties]
 impl Component for Border {
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
@@ -77,7 +80,7 @@ impl Component for Border {
     ) -> Result<(), ComponentError> {
         match name {
             "border" => {
-                let v = value.try_into_bool(name)?;
+                let v: bool = ComponentValueCodec::from_component_value(value, name)?;
                 self.border.set(v);
                 Ok(())
             }
@@ -159,6 +162,22 @@ impl Component for Border {
 
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id);
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
