@@ -6,6 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Debug, Automatable)]
@@ -19,6 +20,7 @@ pub struct Slider {
     empty_char: char,
     thumb_char: char,
     last_area: Option<Rect>,
+    on_change_callback: Option<CallbackHandle>,
 }
 
 impl Slider {
@@ -37,6 +39,7 @@ impl Slider {
             empty_char: '-',
             thumb_char: '|',
             last_area: None,
+            on_change_callback: None,
         }
     }
 
@@ -77,6 +80,11 @@ impl Slider {
 
     pub fn thumb_char(mut self, ch: char) -> Self {
         self.thumb_char = ch;
+        self
+    }
+
+    pub fn on_change_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_change_callback = Some(callback);
         self
     }
 
@@ -145,14 +153,23 @@ impl Slider {
             return EventResult::ignored();
         };
         let value = self.value_from_pos(local_x, area.width);
-        self.value.set(value);
-        EventResult::changed()
+        self.set_value_and_emit(value)
     }
 
     fn adjust_by_step(&mut self, delta: f64) -> EventResult {
         let value = self.value.get();
         let next = self.snap_value(value + delta);
-        self.value.set(next);
+        self.set_value_and_emit(next)
+    }
+
+    fn set_value_and_emit(&mut self, value: f64) -> EventResult {
+        let prev = self.value.get();
+        self.value.set(value);
+        if (prev - value).abs() > f64::EPSILON {
+            if let Some(cb) = &self.on_change_callback {
+                cb.emit();
+            }
+        }
         EventResult::changed()
     }
 }
@@ -193,13 +210,11 @@ impl Component for Slider {
                 KeyCode::Right => self.adjust_by_step(self.step.get().abs()),
                 KeyCode::Home => {
                     let (min, _max) = self.normalized_range();
-                    self.value.set(min);
-                    EventResult::changed()
+                    self.set_value_and_emit(min)
                 }
                 KeyCode::End => {
                     let (_min, max) = self.normalized_range();
-                    self.value.set(max);
-                    EventResult::changed()
+                    self.set_value_and_emit(max)
                 }
                 _ => EventResult::ignored(),
             },

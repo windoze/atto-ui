@@ -7,6 +7,7 @@ pub mod automation;
 pub mod cache;
 pub mod composable;
 pub mod dialogs;
+pub mod dynamic;
 pub mod reactive;
 pub mod text;
 pub mod theme;

@@ -143,14 +143,23 @@ impl WindowManager {
             false
         }
     }
+
+    pub fn set_view(&mut self, id: WindowId, view: Box<dyn crate::composable::Component>) -> bool {
+        let Some(window) = self.window_mut(id) else {
+            return false;
+        };
+        window.set_view(view);
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::WindowManager;
     use super::draw::draw_shadow;
+    use crate::automation::AutomationValue;
     use crate::composable::{
-        Component, ComponentContext, EventResult, ScrollConfig, ScrollbarVisibility,
+        Component, ComponentContext, EventResult, Label, ScrollConfig, ScrollbarVisibility,
     };
     use crate::theme::Theme;
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
@@ -189,6 +198,33 @@ mod tests {
         }
 
         fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    #[test]
+    fn window_manager_can_replace_view() {
+        let bounds = Rect::new(0, 0, 80, 24);
+        let mut wm = WindowManager::new();
+        let id = wm.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Win",
+                Rect::new(1, 1, 10, 5),
+                Box::new(Label::new("A")),
+            ),
+            bounds,
+        );
+        let before = wm
+            .window_mut(id)
+            .and_then(|w| w.view.automation_get_property("text"))
+            .expect("before text");
+        assert_eq!(before, AutomationValue::String("A".into()));
+
+        assert!(wm.set_view(id, Box::new(Label::new("B"))));
+        let after = wm
+            .window_mut(id)
+            .and_then(|w| w.view.automation_get_property("text"))
+            .expect("after text");
+        assert_eq!(after, AutomationValue::String("B".into()));
     }
 
     #[test]

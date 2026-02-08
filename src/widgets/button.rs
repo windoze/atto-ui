@@ -8,12 +8,14 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Automatable)]
 pub struct Button {
     label: Binding<String>,
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
+    on_click_callback: Option<CallbackHandle>,
     enabled: Binding<bool>,
 }
 
@@ -22,6 +24,7 @@ impl Button {
         Self {
             label: label.into(),
             on_click: None,
+            on_click_callback: None,
             enabled: true.into(),
         }
     }
@@ -31,6 +34,11 @@ impl Button {
         F: Fn() + Send + Sync + 'static,
     {
         self.on_click = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn on_click_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_click_callback = Some(callback);
         self
     }
 
@@ -47,6 +55,9 @@ impl Button {
     fn trigger(&self) {
         if let Some(cb) = &self.on_click {
             cb();
+        }
+        if let Some(cb) = &self.on_click_callback {
+            cb.emit();
         }
     }
 }

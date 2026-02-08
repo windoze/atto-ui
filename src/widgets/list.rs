@@ -14,6 +14,7 @@ use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
     ScrollContainerHost, ScrollContent, ScrollContentContext,
 };
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Debug, Automatable)]
@@ -23,6 +24,8 @@ struct ListBoxBindings {
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
+    #[automation(skip)]
+    on_change: Option<CallbackHandle>,
 }
 
 #[derive(Automatable)]
@@ -74,6 +77,7 @@ impl ListBox {
             enabled: true.into(),
             selection,
             height: 7.into(),
+            on_change: None,
         }));
         Self {
             scroll: build_scroll_container(bindings.clone()),
@@ -107,6 +111,11 @@ impl ListBox {
 
     pub fn height(self, height: impl Into<Binding<u16>>) -> Self {
         self.bindings.write().height = height.into();
+        self
+    }
+
+    pub fn on_change_callback(self, callback: CallbackHandle) -> Self {
+        self.bindings.write().on_change = Some(callback);
         self
     }
 
@@ -318,6 +327,9 @@ impl ScrollContent for ListBoxContent {
                     bindings.selection.set(idx);
                     self.ensure_selection_visible(idx, host);
                     self.last_selection = Some(idx);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     return EventResult::changed();
                 }
                 EventResult::ignored()
@@ -332,6 +344,9 @@ impl ScrollContent for ListBoxContent {
                     bindings.selection.set(next);
                     self.ensure_selection_visible(next, host);
                     self.last_selection = Some(next);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     EventResult::changed()
                 }
                 KeyCode::Down => {
@@ -339,6 +354,9 @@ impl ScrollContent for ListBoxContent {
                     bindings.selection.set(next);
                     self.ensure_selection_visible(next, host);
                     self.last_selection = Some(next);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     EventResult::changed()
                 }
                 _ => EventResult::ignored(),

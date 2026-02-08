@@ -174,6 +174,11 @@ impl Window {
         self
     }
 
+    pub fn set_view(&mut self, view: Box<dyn Component>) {
+        let min_size_mode = self.min_size_mode.clone();
+        self.view = Box::new(WindowMinSizeView::new(view, min_size_mode));
+    }
+
     pub fn inner_rect(&self) -> Rect {
         let decorations = self.decorations.get();
         let rect = self.rect.get();

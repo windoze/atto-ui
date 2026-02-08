@@ -327,3 +327,133 @@ pub trait Component: Send {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>);
 }
+
+impl Component for Box<dyn Component> {
+    fn automation_type_name(&self) -> &'static str {
+        self.as_ref().automation_type_name()
+    }
+
+    fn automation_id(&self) -> Option<&str> {
+        self.as_ref().automation_id()
+    }
+
+    fn automation_properties(&self) -> Vec<&'static str> {
+        self.as_ref().automation_properties()
+    }
+
+    fn automation_get_property(&self, name: &str) -> Option<AutomationValue> {
+        self.as_ref().automation_get_property(name)
+    }
+
+    fn automation_set_property(
+        &mut self,
+        name: &str,
+        value: AutomationValue,
+    ) -> Result<(), AutomationError> {
+        self.as_mut().automation_set_property(name, value)
+    }
+
+    fn automation_action(&mut self, action: AutomationAction) -> EventResult {
+        self.as_mut().automation_action(action)
+    }
+
+    fn automation_focused_child(&self) -> Option<ComponentId> {
+        self.as_ref().automation_focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.as_ref().is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.as_mut().focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.as_mut().focus_last()
+    }
+
+    fn min_width(&self) -> u16 {
+        self.as_ref().min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.as_ref().min_height()
+    }
+
+    fn min_size(&self) -> (u16, u16) {
+        self.as_ref().min_size()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.as_ref().desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.as_ref().desired_height()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.as_ref().children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.as_mut().children_mut()
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event(event, ctx)
+    }
+
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.as_mut().titlebar(ctx)
+    }
+
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.as_mut().handle_titlebar_event(event, ctx)
+    }
+
+    fn is_scrollable(&self) -> bool {
+        self.as_ref().is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.as_ref().content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.as_ref().scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.as_ref().viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.as_ref().scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.as_mut().set_scroll_offset(x, y);
+    }
+
+    fn scroll_to(&mut self, x: u16, y: u16) {
+        self.as_mut().scroll_to(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
+        self.as_mut().scroll_to_child(child_id);
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.as_mut().draw(frame, area, ctx);
+    }
+}

@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 use atto_ui_macros::{Automatable, automate_component};
 use crate::automation::AutomationAction;
 use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +32,7 @@ pub struct TabView {
     last_area: Option<Rect>,
     last_header: Option<HeaderLayout>,
     focused: Option<ComponentId>,
+    on_change_callback: Option<CallbackHandle>,
 }
 
 impl Default for TabView {
@@ -50,6 +52,7 @@ impl TabView {
             last_area: None,
             last_header: None,
             focused: None,
+            on_change_callback: None,
         }
     }
 
@@ -163,6 +166,17 @@ impl TabView {
             self.selection.set(selected);
         }
         Some(selected)
+    }
+
+    pub fn on_change_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_change_callback = Some(callback);
+        self
+    }
+
+    fn emit_change(&self) {
+        if let Some(cb) = &self.on_change_callback {
+            cb.emit();
+        }
     }
 
     fn header_and_content(area: Rect, position: TabHeaderPosition) -> (Rect, Rect) {
@@ -489,6 +503,7 @@ impl Component for TabView {
                     let prev = self.selection.get();
                     if prev != idx {
                         self.selection.set(idx);
+                        self.emit_change();
                         self.normalize_selection();
                         if let Some(child) = self.children.get_mut(idx) {
                             if child.view.is_focusable() {

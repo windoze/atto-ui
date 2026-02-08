@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 use crate::text::TextBuffer;
 
@@ -51,6 +52,8 @@ pub struct TextBox {
     last_click_at: Option<Instant>,
     last_click_col: Option<u16>,
     click_count: u8,
+    on_change_callback: Option<CallbackHandle>,
+    on_submit_callback: Option<CallbackHandle>,
 }
 
 impl TextBox {
@@ -69,6 +72,8 @@ impl TextBox {
             last_click_at: None,
             last_click_col: None,
             click_count: 0,
+            on_change_callback: None,
+            on_submit_callback: None,
         }
     }
 
@@ -90,6 +95,39 @@ impl TextBox {
     pub fn clipboard(mut self, clipboard: impl Into<Binding<String>>) -> Self {
         self.clipboard = clipboard.into();
         self
+    }
+
+    pub fn on_change_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_change_callback = Some(callback);
+        self
+    }
+
+    pub fn on_submit_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_submit_callback = Some(callback);
+        self
+    }
+
+    fn emit_change(&self) {
+        if let Some(cb) = &self.on_change_callback {
+            cb.emit();
+        }
+    }
+
+    fn emit_submit(&self) {
+        if let Some(cb) = &self.on_submit_callback {
+            cb.emit();
+        }
+    }
+
+    fn set_binding_text(&mut self, text: String) {
+        self.binding.set(text);
+        self.emit_change();
+    }
+
+    fn sync_binding_from_buffer(&mut self) {
+        let text = self.buffer.text().to_string();
+        self.binding.set(text);
+        self.emit_change();
     }
 }
 
@@ -181,7 +219,7 @@ impl Component for TextBox {
             Event::Paste(s) => {
                 self.replace_selection_if_any();
                 self.buffer.insert_str(s);
-                self.binding.set(self.buffer.text().to_string());
+                    self.sync_binding_from_buffer();
                 self.selection_anchor = None;
                 EventResult::changed()
             }
@@ -205,7 +243,7 @@ impl Component for TextBox {
                         if let Some(text) = self.selected_text() {
                             self.clipboard.set(text);
                             if self.delete_selection() {
-                                self.binding.set(self.buffer.text().to_string());
+                                self.sync_binding_from_buffer();
                                 return EventResult::changed();
                             }
                         }
@@ -216,7 +254,7 @@ impl Component for TextBox {
                         if !text.is_empty() {
                             self.replace_selection_if_any();
                             self.buffer.insert_str(&text);
-                            self.binding.set(self.buffer.text().to_string());
+                            self.sync_binding_from_buffer();
                             self.selection_anchor = None;
                             return EventResult::changed();
                         }
@@ -224,27 +262,27 @@ impl Component for TextBox {
                     }
                     KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
                         self.buffer.set_text("");
-                        self.binding.set(String::new());
+                        self.set_binding_text(String::new());
                         self.selection_anchor = None;
                         EventResult::changed()
                     }
                     KeyCode::Backspace => {
                         if self.delete_selection() {
-                            self.binding.set(self.buffer.text().to_string());
+                            self.sync_binding_from_buffer();
                             return EventResult::changed();
                         }
                         self.buffer.backspace();
-                        self.binding.set(self.buffer.text().to_string());
+                        self.sync_binding_from_buffer();
                         self.selection_anchor = None;
                         EventResult::changed()
                     }
                     KeyCode::Delete => {
                         if self.delete_selection() {
-                            self.binding.set(self.buffer.text().to_string());
+                            self.sync_binding_from_buffer();
                             return EventResult::changed();
                         }
                         self.buffer.delete();
-                        self.binding.set(self.buffer.text().to_string());
+                        self.sync_binding_from_buffer();
                         self.selection_anchor = None;
                         EventResult::changed()
                     }
@@ -292,14 +330,17 @@ impl Component for TextBox {
                         }
                         EventResult::consumed()
                     }
-                    KeyCode::Enter => EventResult::submitted(),
+                    KeyCode::Enter => {
+                        self.emit_submit();
+                        EventResult::submitted()
+                    }
                     KeyCode::Char(c)
                         if !mods.contains(KeyModifiers::CONTROL)
                             && !mods.contains(KeyModifiers::ALT) =>
                     {
                         self.replace_selection_if_any();
                         self.buffer.insert_char(*c);
-                        self.binding.set(self.buffer.text().to_string());
+                        self.sync_binding_from_buffer();
                         self.selection_anchor = None;
                         EventResult::changed()
                     }

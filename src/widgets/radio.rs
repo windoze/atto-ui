@@ -8,6 +8,7 @@ use ratatui::widgets::Paragraph;
 use atto_ui_macros::{Automatable, automate_component};
 use crate::automation::AutomationAction;
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Debug, Automatable)]
@@ -19,6 +20,7 @@ pub struct RadioGroup {
     enabled: Binding<bool>,
     height: Option<Binding<u16>>,
     last_area: Option<Rect>,
+    on_change_callback: Option<CallbackHandle>,
 }
 
 impl RadioGroup {
@@ -40,6 +42,7 @@ impl RadioGroup {
             enabled: true.into(),
             height: None,
             last_area: None,
+            on_change_callback: None,
         }
     }
 
@@ -65,6 +68,17 @@ impl RadioGroup {
 
     pub fn selected_index(&self) -> usize {
         self.binding.get()
+    }
+
+    pub fn on_change_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_change_callback = Some(callback);
+        self
+    }
+
+    fn emit_change(&self) {
+        if let Some(cb) = &self.on_change_callback {
+            cb.emit();
+        }
     }
 }
 
@@ -128,6 +142,7 @@ impl Component for RadioGroup {
                 if idx < options.len() {
                     selected = idx;
                     self.binding.set(selected);
+                    self.emit_change();
                     return EventResult::changed();
                 }
                 EventResult::ignored()
@@ -138,11 +153,13 @@ impl Component for RadioGroup {
                     KeyCode::Up => {
                         selected = if selected == 0 { len - 1 } else { selected - 1 };
                         self.binding.set(selected);
+                        self.emit_change();
                         EventResult::changed()
                     }
                     KeyCode::Down => {
                         selected = (selected + 1) % len;
                         self.binding.set(selected);
+                        self.emit_change();
                         EventResult::changed()
                     }
                     _ => EventResult::ignored(),

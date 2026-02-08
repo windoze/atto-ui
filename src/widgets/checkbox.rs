@@ -6,6 +6,7 @@ use ratatui::widgets::Paragraph;
 
 use atto_ui_macros::{Automatable, automate_component};
 use crate::composable::{Component, ComponentContext, EventResult};
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 
 #[derive(Clone, Debug, Automatable)]
@@ -14,6 +15,7 @@ pub struct Checkbox {
     #[automation(rename = "checked")]
     binding: Binding<bool>,
     enabled: Binding<bool>,
+    on_change_callback: Option<CallbackHandle>,
 }
 
 impl Checkbox {
@@ -22,6 +24,7 @@ impl Checkbox {
             label: label.into(),
             binding,
             enabled: true.into(),
+            on_change_callback: None,
         }
     }
 
@@ -33,6 +36,17 @@ impl Checkbox {
     pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
         self
+    }
+
+    pub fn on_change_callback(mut self, callback: CallbackHandle) -> Self {
+        self.on_change_callback = Some(callback);
+        self
+    }
+
+    fn emit_change(&self) {
+        if let Some(cb) = &self.on_change_callback {
+            cb.emit();
+        }
     }
 }
 
@@ -61,6 +75,7 @@ impl Component for Checkbox {
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
                     self.binding.update(|v| *v = !*v);
+                    self.emit_change();
                     return EventResult::changed();
                 }
                 EventResult::ignored()
@@ -70,6 +85,7 @@ impl Component for Checkbox {
                 ..
             }) => {
                 self.binding.update(|v| *v = !*v);
+                self.emit_change();
                 EventResult::changed()
             }
             Event::Key(KeyEvent { .. }) => EventResult::ignored(),

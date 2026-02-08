@@ -44,6 +44,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atto-ui-macros",
+ "atto-ui-runtime",
  "atto-ui-test-host",
  "crossterm 0.28.1",
  "once_cell",
@@ -95,6 +96,14 @@ dependencies = [
  "ratatui",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "atto-ui-runtime"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde",
 ]
 
 [[package]]

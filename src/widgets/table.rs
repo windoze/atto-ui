@@ -18,6 +18,7 @@ use crate::composable::{
     ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
     ScrollbarVisibility, should_show_scrollbar,
 };
+use crate::dynamic::CallbackHandle;
 use crate::reactive::Binding;
 use crate::text::styled_text::spans_from_inline;
 
@@ -29,6 +30,8 @@ struct TableViewBindings {
     enabled: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
+    #[automation(skip)]
+    on_change: Option<CallbackHandle>,
 }
 
 #[derive(Automatable)]
@@ -86,6 +89,7 @@ impl TableView {
             enabled: true.into(),
             selection,
             height: 8.into(),
+            on_change: None,
         }));
         Self {
             scroll: build_scroll_container(bindings.clone()),
@@ -103,6 +107,11 @@ impl TableView {
 
     pub fn headers(self, headers: impl Into<Binding<Vec<String>>>) -> Self {
         self.bindings.write().headers = headers.into();
+        self
+    }
+
+    pub fn on_change_callback(self, callback: CallbackHandle) -> Self {
+        self.bindings.write().on_change = Some(callback);
         self
     }
 
@@ -537,6 +546,9 @@ impl ScrollContent for TableBodyContent {
                     bindings.selection.set(idx);
                     self.ensure_selection_visible(idx, host);
                     self.last_selection = Some(idx);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     return EventResult::changed();
                 }
                 EventResult::ignored()
@@ -551,6 +563,9 @@ impl ScrollContent for TableBodyContent {
                     bindings.selection.set(next);
                     self.ensure_selection_visible(next, host);
                     self.last_selection = Some(next);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     EventResult::changed()
                 }
                 KeyCode::Down => {
@@ -558,6 +573,9 @@ impl ScrollContent for TableBodyContent {
                     bindings.selection.set(next);
                     self.ensure_selection_visible(next, host);
                     self.last_selection = Some(next);
+                    if let Some(cb) = &bindings.on_change {
+                        cb.emit();
+                    }
                     EventResult::changed()
                 }
                 _ => EventResult::ignored(),
