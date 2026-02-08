@@ -1,5 +1,5 @@
 // Demo: 06-data-binding
-// 演示 Chatty 的反应式数据绑定：Property / Binding + 双向同步 + 禁用状态。
+// 演示 Atto-UI 的反应式数据绑定：Property / Binding + 双向同步 + 禁用状态。
 
 use std::time::Duration;
 

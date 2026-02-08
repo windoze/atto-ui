@@ -4,9 +4,9 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct ProgressBar {

@@ -27,7 +27,7 @@ use atto_ui::widgets::{
     SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, TableView, TextBox,
 };
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
-use atto_ui_macros::{ComponentProperties, component_properties, Reactive, view_builder};
+use atto_ui_macros::{ComponentProperties, Reactive, component_properties, view_builder};
 
 #[derive(ComponentProperties)]
 struct TextView {
@@ -83,7 +83,7 @@ impl DialogView {
             ..LayoutParams::default()
         };
 
-        let title = Binding::new("Chatty demo (Turbo Vision-inspired).".to_string());
+        let title = Binding::new("Atto-UI demo (Turbo Vision-inspired).".to_string());
         let root = VStack::new()
             .spacing(0)
             .child_with_layout(Label::new(title.clone()), row_layout)
@@ -886,10 +886,7 @@ impl DisabledWidgetsView {
 
         let root = VStack::new()
             .spacing(0)
-            .child_with_layout(
-                Label::new(title.clone()),
-                row_layout,
-            )
+            .child_with_layout(Label::new(title.clone()), row_layout)
             .child_with_layout(
                 TextBox::new("Text (disabled)", text.binding()).enabled(false),
                 row_layout,

@@ -7,8 +7,7 @@ use anyhow::Result;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{
-    AppControl, CrosstermAppConfig, Desktop, MenuBar, MenuItem, MenuSpec,
-    run_crossterm_desktop,
+    AppControl, CrosstermAppConfig, Desktop, MenuBar, MenuItem, MenuSpec, run_crossterm_desktop,
 };
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
@@ -55,33 +54,31 @@ fn main() -> Result<()> {
             }
         });
 
-    let input_panel = input_handle
-        .panel()
-        .on_submit({
-            let store = store.clone();
-            let ai = ai.clone();
-            let input_handle = input_handle.clone();
-            move |resp| match resp {
-                ChatInputResponse::Text(text) => {
-                    if handle_command(&input_handle, &text) {
-                        return;
-                    }
-                    push_user_message(&store, text.clone());
-                    ai.respond(text);
+    let input_panel = input_handle.panel().on_submit({
+        let store = store.clone();
+        let ai = ai.clone();
+        let input_handle = input_handle.clone();
+        move |resp| match resp {
+            ChatInputResponse::Text(text) => {
+                if handle_command(&input_handle, &text) {
+                    return;
                 }
-                ChatInputResponse::Choice { index, label } => {
-                    let text = format!("选择：{label} (#{index})");
-                    input_handle.set_mode(default_text_mode());
-                    push_user_message(&store, text.clone());
-                    ai.respond(text);
-                }
-                ChatInputResponse::Custom(text) => {
-                    input_handle.set_mode(default_text_mode());
-                    push_user_message(&store, text.clone());
-                    ai.respond(text);
-                }
+                push_user_message(&store, text.clone());
+                ai.respond(text);
             }
-        });
+            ChatInputResponse::Choice { index, label } => {
+                let text = format!("选择：{label} (#{index})");
+                input_handle.set_mode(default_text_mode());
+                push_user_message(&store, text.clone());
+                ai.respond(text);
+            }
+            ChatInputResponse::Custom(text) => {
+                input_handle.set_mode(default_text_mode());
+                push_user_message(&store, text.clone());
+                ai.respond(text);
+            }
+        }
+    });
 
     let panel = ChatPanel::new(list, input_panel);
 
@@ -198,7 +195,7 @@ impl MockAiServer {
         thread::spawn(move || {
             let (delay_ms, stream, file_reply, reply) = {
                 let mut rng = rng.lock().expect("rng lock");
-                let delay = rng.gen_range(600, 1500) as u64;
+                let delay = rng.gen_range(600, 1500);
                 let stream = rng.gen_range(0, 100) < 80;
                 let file = rng.gen_range(0, 100) < 20;
                 let reply = rng.pick_reply(&prompt);
@@ -224,8 +221,8 @@ impl MockAiServer {
                 stream_reply(&store, reply);
             } else {
                 let id = store.next_message_id();
-                let message = ChatMessage::text(id, ChatSender::Assistant, reply)
-                    .with_timestamp(now_label());
+                let message =
+                    ChatMessage::text(id, ChatSender::Assistant, reply).with_timestamp(now_label());
                 store.push(message);
             }
         });
@@ -251,7 +248,7 @@ fn stream_reply(store: &ChatMessageStore, reply: String) {
         }
         store.update_text(id, acc.clone());
         idx = end;
-        let pause = rng.gen_range(120, 260) as u64;
+        let pause = rng.gen_range(120, 260);
         thread::sleep(Duration::from_millis(pause));
     }
 
@@ -280,7 +277,11 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> Self {
-        let seed = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+        let seed = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
         Self { state: seed }
     }
 

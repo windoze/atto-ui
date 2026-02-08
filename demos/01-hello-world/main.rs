@@ -49,7 +49,7 @@ impl Component for HelloView {
             Line::raw(""),
             Line::raw(format!("  {}", self.headline.get())),
             Line::raw(""),
-            Line::raw("  This is your first Chatty application."),
+            Line::raw("  This is your first Atto-UI application."),
             Line::raw(""),
             Line::raw(format!("  {}", self.footer.get())),
         ];
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
                 height: 12,
             },
             Box::new(HelloView::new(
-                "Welcome to Chatty Framework!",
+                "Welcome to Atto-UI Framework!",
                 "Press 'q' or Ctrl+Q to quit.",
             )),
         );

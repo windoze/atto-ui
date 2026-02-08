@@ -1,11 +1,11 @@
-# Chatty Framework Demos
+# Atto-UI Framework Demos
 
-欢迎来到 Chatty 框架的教学演示！这些演示从简单到复杂，循序渐进地展示框架的各个特性。
+欢迎来到 Atto-UI 框架的教学演示！这些演示从简单到复杂，循序渐进地展示框架的各个特性。
 
 ## 演示列表
 
 ### 1. [Hello World](./01-hello-world/) ⭐ 入门必看
-学习 Chatty 应用的基本结构：终端初始化、Desktop 创建、窗口创建和事件循环。
+学习 Atto-UI 应用的基本结构：终端初始化、Desktop 创建、窗口创建和事件循环。
 
 ```bash
 cargo run --bin demo-01-hello-world

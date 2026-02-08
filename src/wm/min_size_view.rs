@@ -8,7 +8,6 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
@@ -17,6 +16,7 @@ use crate::composable::{
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
 use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Debug, Clone)]
 struct OffscreenBackend {
@@ -349,10 +349,7 @@ impl Component for WindowMinSizeView {
         props
     }
 
-    fn get_property(
-        &self,
-        name: &str,
-    ) -> Option<::atto_ui::ComponentValue> {
+    fn get_property(&self, name: &str) -> Option<::atto_ui::ComponentValue> {
         self.__component_get_property(name)
             .or_else(|| self.inner.get_property(name))
     }

@@ -2,14 +2,16 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
-use super::component::{Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext};
+use super::component::{
+    Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext,
+};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::{
     CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue, TreeError,
     TreeOp,
 };
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(ComponentProperties)]
 pub struct ComponentTag {
@@ -67,11 +69,7 @@ impl Component for ComponentTag {
         self.inner.get_property(name)
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.inner.set_property(name, value)
     }
 

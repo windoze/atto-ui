@@ -211,8 +211,8 @@ impl LabeledField {
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
-        self.view = TextBox::new(self.title.clone(), self.value.clone())
-            .enabled(self.enabled.clone());
+        self.view =
+            TextBox::new(self.title.clone(), self.value.clone()).enabled(self.enabled.clone());
         self
     }
 }
@@ -244,7 +244,8 @@ impl CounterRow {
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
-        self.view = build_counter_row_view(self.title.clone(), self.value.clone(), self.enabled.clone());
+        self.view =
+            build_counter_row_view(self.title.clone(), self.value.clone(), self.enabled.clone());
         self
     }
 }
@@ -324,7 +325,11 @@ impl SearchBar {
 
     fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
-        self.view = build_search_view(self.query.clone(), self.enabled.clone(), self.on_search.clone());
+        self.view = build_search_view(
+            self.query.clone(),
+            self.enabled.clone(),
+            self.on_search.clone(),
+        );
         self
     }
 }
@@ -411,13 +416,11 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                 .spacing(1)
                 .child_with_layout(Text::new("Profile"), content_height())
                 .child_with_layout(
-                    LabeledField::new("Name", model.name.binding())
-                        .enabled(enabled.clone()),
+                    LabeledField::new("Name", model.name.binding()).enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
-                    LabeledField::new("Email", model.email.binding())
-                        .enabled(enabled.clone()),
+                    LabeledField::new("Email", model.email.binding()).enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
@@ -436,8 +439,7 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                 .spacing(1)
                 .child_with_layout(Text::new("Tuning"), content_height())
                 .child_with_layout(
-                    CounterRow::new("Volume", model.volume.binding())
-                        .enabled(enabled.clone()),
+                    CounterRow::new("Volume", model.volume.binding()).enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(
@@ -459,8 +461,7 @@ fn build_components_view(model: DemoModel) -> Box<dyn Component> {
                     content_height(),
                 )
                 .child_with_layout(
-                    SearchBar::new(search_callback)
-                        .enabled(enabled.clone()),
+                    SearchBar::new(search_callback).enabled(enabled.clone()),
                     content_height(),
                 )
                 .child_with_layout(status_line, content_height()),

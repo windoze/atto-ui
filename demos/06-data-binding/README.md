@@ -2,7 +2,7 @@
 
 ## 目标
 
-演示 Chatty 的反应式数据绑定（`Property` / `Binding`）如何做到：
+演示 Atto-UI 的反应式数据绑定（`Property` / `Binding`）如何做到：
 
 - 控件与数据 **双向同步**（TextBox/Checkbox/RadioGroup 等）
 - **同一份数据** 被多个窗口/组件共享（任何一处修改都会实时更新）

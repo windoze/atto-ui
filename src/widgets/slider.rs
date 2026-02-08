@@ -4,10 +4,10 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct Slider {
@@ -165,10 +165,10 @@ impl Slider {
     fn set_value_and_emit(&mut self, value: f64) -> EventResult {
         let prev = self.value.get();
         self.value.set(value);
-        if (prev - value).abs() > f64::EPSILON {
-            if let Some(cb) = &self.on_change_callback {
-                cb.emit();
-            }
+        if (prev - value).abs() > f64::EPSILON
+            && let Some(cb) = &self.on_change_callback
+        {
+            cb.emit();
         }
         EventResult::changed()
     }

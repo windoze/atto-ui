@@ -10,9 +10,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::{Binding, TimerHandle, cancel_timer, register_timer_with_duration};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpinnerLayout {

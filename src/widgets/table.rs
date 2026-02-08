@@ -8,7 +8,6 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table, TableState};
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
@@ -18,9 +17,10 @@ use crate::composable::{
     ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
     ScrollbarVisibility, should_show_scrollbar,
 };
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
 use crate::text::styled_text::spans_from_inline;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct TableViewBindings {
@@ -162,9 +162,7 @@ impl Component for TableView {
                 let bindings = self.bindings.write();
                 let row_count = bindings.rows.get().len();
                 if row_count > 0 {
-                    bindings
-                        .selection
-                        .set(idx.min(row_count.saturating_sub(1)));
+                    bindings.selection.set(idx.min(row_count.saturating_sub(1)));
                     EventResult::changed()
                 } else {
                     EventResult::ignored()

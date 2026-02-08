@@ -231,15 +231,9 @@ impl Component for ModalView {
         let subtitle = self.subtitle.get();
         let lines = vec![
             Line::raw(""),
-            Line::styled(
-                format!("  {title}"),
-                Style::default().fg(Color::White),
-            ),
+            Line::styled(format!("  {title}"), Style::default().fg(Color::White)),
             Line::raw(""),
-            Line::styled(
-                format!("  {subtitle}"),
-                Style::default().fg(Color::Gray),
-            ),
+            Line::styled(format!("  {subtitle}"), Style::default().fg(Color::Gray)),
             Line::styled("  with other windows.", Style::default().fg(Color::Gray)),
             Line::raw(""),
             Line::styled(

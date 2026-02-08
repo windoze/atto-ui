@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{
     Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack,
     LayoutParams, Size, VStack,
@@ -14,6 +13,7 @@ use crate::composable::{
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::widgets::{Button, Label, ListBox, TextBox};
 use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, ComponentProperties)]
 struct FocusBindingComponent<T> {

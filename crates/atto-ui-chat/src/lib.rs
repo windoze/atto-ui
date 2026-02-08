@@ -7,8 +7,8 @@ mod panel;
 mod store;
 
 pub use input::{
-    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
-    ChatInputPanel, ChatInputResponse, ChatTextInputConfig,
+    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputPanel,
+    ChatInputResponse, ChatTextInputConfig,
 };
 pub use list::ChatMessageList;
 pub use message::{

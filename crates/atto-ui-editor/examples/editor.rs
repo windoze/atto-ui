@@ -65,10 +65,10 @@ fn main() -> Result<()> {
     }
 
     // Optional LSP wiring via env vars:
-    // - `CHATTY_EDITOR_LSP_CMD`: server command (e.g. "rust-analyzer")
-    // - `CHATTY_EDITOR_LSP_LANGUAGE_ID`: override language id (optional)
-    if let (Some(path), Some(cmd)) = (file_path.as_ref(), parse_cmd_env("CHATTY_EDITOR_LSP_CMD")) {
-        let language_id = env::var("CHATTY_EDITOR_LSP_LANGUAGE_ID")
+    // - `ATTO_UI_EDITOR_LSP_CMD`: server command (e.g. "rust-analyzer")
+    // - `ATTO_UI_EDITOR_LSP_LANGUAGE_ID`: override language id (optional)
+    if let (Some(path), Some(cmd)) = (file_path.as_ref(), parse_cmd_env("ATTO_UI_EDITOR_LSP_CMD")) {
+        let language_id = env::var("ATTO_UI_EDITOR_LSP_LANGUAGE_ID")
             .ok()
             .unwrap_or_else(|| guess_language_id(path));
         let lsp_cfg = EditorLspConfig::for_file_path(path, language_id, cmd);

@@ -3,16 +3,16 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 
-use crate::{
-    CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
-    ComponentValueCodec, TreeError, TreeOp,
-};
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use super::geom::{contains, mouse_coords_local_to_area};
 use super::node::ComponentId;
 use super::scroll::ScrollConfig;
 use crate::reactive::Binding;
+use crate::{
+    CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
+    ComponentValueCodec, TreeError, TreeOp,
+};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::scroll::{
     ScrollbarDrag, ScrollbarHit, scroll_offset_from_thumb_start, scrollbar_hit_test,
@@ -73,11 +73,7 @@ impl Component for Border {
         }
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         match name {
             "border" => {
                 let v: bool = ComponentValueCodec::from_component_value(value, name)?;

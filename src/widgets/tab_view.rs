@@ -6,11 +6,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabHeaderPosition {

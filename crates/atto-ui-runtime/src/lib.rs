@@ -2,13 +2,14 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::{Deserialize, Serialize};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 
-type Factory<T> = dyn Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, TreeError> + Send + Sync;
+type Factory<T> =
+    dyn Fn(&ComponentSpec, &ComponentRegistry<T>) -> Result<T, TreeError> + Send + Sync;
 
 struct ComponentFactory<T> {
     schema: ComponentSchema,
@@ -576,8 +577,7 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 new_parent_id,
                 index,
             } => {
-                let node = take_by_id(root, id)
-                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+                let node = take_by_id(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 let parent = find_by_id_mut(root, new_parent_id)
                     .ok_or_else(|| TreeError::NotFound(new_parent_id.clone()))?;
                 let idx = (*index).min(parent.children.len());
@@ -585,18 +585,22 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 structural = true;
             }
             TreeOp::SetProp { id, name, value } => {
-                let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+                let node =
+                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.props.insert(name.clone(), value.clone());
             }
-            TreeOp::BindEvent { id, event, callback } => {
-                let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            TreeOp::BindEvent {
+                id,
+                event,
+                callback,
+            } => {
+                let node =
+                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.events.insert(event.clone(), *callback);
             }
             TreeOp::ClearEvent { id, event } => {
-                let node = find_by_id_mut(root, id)
-                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+                let node =
+                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
                 node.events.remove(event);
             }
         }
@@ -680,8 +684,12 @@ mod tests {
     fn sample_tree() -> ComponentSpec {
         ComponentSpec::new("VStack")
             .with_id("root")
-            .with_child(ComponentSpecChild::new(ComponentSpec::new("Label").with_id("a")))
-            .with_child(ComponentSpecChild::new(ComponentSpec::new("Label").with_id("b")))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("b"),
+            ))
     }
 
     #[test]
@@ -697,7 +705,9 @@ mod tests {
         assert_eq!(tree.children.len(), 3);
         assert_eq!(tree.children[1].node.id.as_deref(), Some("c"));
 
-        let ops = vec![TreeOp::Remove { id: "a".to_string() }];
+        let ops = vec![TreeOp::Remove {
+            id: "a".to_string(),
+        }];
         assert!(apply_tree_ops(&mut tree, &ops).unwrap());
         assert_eq!(tree.children.len(), 2);
 
@@ -762,7 +772,13 @@ mod tests {
     fn component_registry_builds_by_type() {
         let mut registry = ComponentRegistry::<String>::new();
         let schema = ComponentSchema::new("Label");
-        registry.register(schema.clone(), |spec, _| Ok(format!("{}:{}", spec.type_name, spec.id.clone().unwrap_or_default())));
+        registry.register(schema.clone(), |spec, _| {
+            Ok(format!(
+                "{}:{}",
+                spec.type_name,
+                spec.id.clone().unwrap_or_default()
+            ))
+        });
 
         let spec = ComponentSpec::new("Label").with_id("x");
         let built = registry.build(&spec).expect("build");

@@ -6,9 +6,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext};
 use crate::reactive::Binding;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 /// Text view (renders a single line of text; will clip if the area is too small).
 #[derive(Clone, ComponentProperties)]

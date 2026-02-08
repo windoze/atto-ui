@@ -2,7 +2,7 @@
 
 ## 目标
 
-用最少的代码展示一个 Chatty 应用的骨架：
+用最少的代码展示一个 Atto-UI 应用的骨架：
 
 - 终端初始化（raw mode + alternate screen）
 - 创建 `Desktop`（含主题 + 菜单栏）

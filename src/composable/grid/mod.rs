@@ -6,13 +6,13 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::{ScrollConfig, ScrollOffset, ScrollbarDrag, Scrollbars};
 use crate::reactive::Binding;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 fn desired_size_for_slot(view: &dyn Component, slot: Rect, layout: LayoutParams) -> (u16, u16) {
     let min_w = view.min_width();

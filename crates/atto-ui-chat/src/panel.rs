@@ -1,6 +1,4 @@
-use atto_ui::composable::{
-    Component, ComponentContext, EventResult, LayoutParams, Size, VStack,
-};
+use atto_ui::composable::{Component, ComponentContext, EventResult, LayoutParams, Size, VStack};
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;

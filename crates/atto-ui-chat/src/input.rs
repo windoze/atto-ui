@@ -140,7 +140,10 @@ pub struct ChatInputHandle {
 impl ChatInputHandle {
     pub fn new() -> Self {
         Self {
-            mode: Property::new(ChatInputMode::text("Message", Some("Type a message...".into()))),
+            mode: Property::new(ChatInputMode::text(
+                "Message",
+                Some("Type a message...".into()),
+            )),
             draft: Property::new(String::new()),
             custom: Property::new(String::new()),
             selection: Property::new(0),
@@ -267,12 +270,16 @@ impl ChatInputPanel {
             }
             ChatInputMode::Choice(cfg) => {
                 if !cfg.options.is_empty() {
-                    let idx = self.selection.get().min(cfg.options.len().saturating_sub(1));
+                    let idx = self
+                        .selection
+                        .get()
+                        .min(cfg.options.len().saturating_sub(1));
                     self.selection.set(idx);
                 }
                 let options_binding: Binding<Vec<String>> = cfg.options.clone().into();
-                let radio = RadioGroup::new(cfg.prompt.clone(), options_binding, self.selection.clone())
-                    .enabled(self.enabled.clone());
+                let radio =
+                    RadioGroup::new(cfg.prompt.clone(), options_binding, self.selection.clone())
+                        .enabled(self.enabled.clone());
                 let mut column = VStack::new().with_spacing(1);
                 column = column.child_with_layout(radio, content_layout);
                 if cfg.allow_custom {
@@ -392,7 +399,10 @@ impl ChatInputPanel {
                 if cfg.options.is_empty() {
                     return false;
                 }
-                let idx = self.selection.get().min(cfg.options.len().saturating_sub(1));
+                let idx = self
+                    .selection
+                    .get()
+                    .min(cfg.options.len().saturating_sub(1));
                 let label = cfg.options.get(idx).cloned().unwrap_or_default();
                 cb(ChatInputResponse::Choice { index: idx, label });
                 if self.clear_on_submit.get() {
@@ -409,7 +419,7 @@ impl ChatInputPanel {
                     }
                     return true;
                 }
-                let labels = vec![cfg.yes_label, cfg.no_label];
+                let labels = [cfg.yes_label, cfg.no_label];
                 let idx = self.selection.get().min(labels.len().saturating_sub(1));
                 let label = labels.get(idx).cloned().unwrap_or_default();
                 cb(ChatInputResponse::Choice { index: idx, label });
@@ -438,7 +448,7 @@ impl ChatInputPanel {
                     parts += 1;
                     total = total.saturating_add(TEXTBOX_HEIGHT);
                 }
-                total.saturating_add(SPACING.saturating_mul(parts.saturating_sub(1) as u16))
+                total.saturating_add(SPACING.saturating_mul(parts.saturating_sub(1)))
             }
             ChatInputMode::Confirm(cfg) => {
                 let mut parts: u16 = 2; // prompt + buttons
@@ -447,7 +457,7 @@ impl ChatInputPanel {
                     parts += 1;
                     total = total.saturating_add(TEXTBOX_HEIGHT);
                 }
-                total.saturating_add(SPACING.saturating_mul(parts.saturating_sub(1) as u16))
+                total.saturating_add(SPACING.saturating_mul(parts.saturating_sub(1)))
             }
             ChatInputMode::Custom => {
                 if let Some(view) = &self.custom_view {

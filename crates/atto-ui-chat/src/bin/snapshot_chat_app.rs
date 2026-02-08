@@ -1,6 +1,6 @@
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -111,33 +111,32 @@ fn main() -> Result<()> {
             modifiers,
             ..
         }) = ev
+            && modifiers.is_empty()
         {
-            if modifiers.is_empty() {
-                match cmd {
-                    'c' => {
-                        input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
-                            "请选择一种回应方式",
-                            vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
-                        )));
-                        continue;
-                    }
-                    'f' => {
-                        input_handle.set_mode(ChatInputMode::Confirm(
-                            ChatConfirmInputConfig::new("是否继续执行?")
-                                .yes_label("继续")
-                                .no_label("停止"),
-                        ));
-                        continue;
-                    }
-                    't' => {
-                        input_handle.set_mode(ChatInputMode::text(
-                            "Message",
-                            Some("Type a message...".into()),
-                        ));
-                        continue;
-                    }
-                    _ => {}
+            match cmd {
+                'c' => {
+                    input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
+                        "请选择一种回应方式",
+                        vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
+                    )));
+                    continue;
                 }
+                'f' => {
+                    input_handle.set_mode(ChatInputMode::Confirm(
+                        ChatConfirmInputConfig::new("是否继续执行?")
+                            .yes_label("继续")
+                            .no_label("停止"),
+                    ));
+                    continue;
+                }
+                't' => {
+                    input_handle.set_mode(ChatInputMode::text(
+                        "Message",
+                        Some("Type a message...".into()),
+                    ));
+                    continue;
+                }
+                _ => {}
             }
         }
 
@@ -177,11 +176,7 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         } else {
             ChatSender::Assistant
         };
-        let message = ChatMessage::text(
-            store.next_message_id(),
-            sender,
-            format!("MSG-{idx:02}"),
-        );
+        let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
 }

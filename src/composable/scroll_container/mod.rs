@@ -5,10 +5,10 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueCodec};
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use crate::reactive::Binding;
+use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueCodec};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::layout::{EdgeInsets, add_signed, apply_padding};
 use super::scroll::{
@@ -252,11 +252,7 @@ impl Component for ScrollContainer {
         }
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         match name {
             "scroll_x" => {
                 let x: usize = ComponentValueCodec::from_component_value(value, name)?;

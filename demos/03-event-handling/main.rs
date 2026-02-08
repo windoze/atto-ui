@@ -241,10 +241,7 @@ impl Component for InteractiveView {
             Line::raw(""),
             Line::from(vec![
                 Span::styled("Last Click: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    last_click,
-                    Style::default().fg(Color::LightYellow),
-                ),
+                Span::styled(last_click, Style::default().fg(Color::LightYellow)),
             ]),
             Line::raw(""),
             Line::styled(

@@ -175,12 +175,12 @@ impl WindowManager {
 mod tests {
     use super::WindowManager;
     use super::draw::draw_shadow;
-    use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};
     use crate::composable::{
         Component, ComponentContext, EventResult, Label, ScrollConfig, ScrollbarVisibility,
     };
     use crate::theme::Theme;
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
+    use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
         MouseEvent, MouseEventKind,

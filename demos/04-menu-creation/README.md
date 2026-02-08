@@ -2,7 +2,7 @@
 
 ## 目标
 
-学习如何用 Chatty 的新菜单 API 构建菜单栏，并用回调（callback）驱动应用行为：
+学习如何用 Atto-UI 的新菜单 API 构建菜单栏，并用回调（callback）驱动应用行为：
 
 - `MenuBar` / `MenuSpec` / `MenuItem` 的构建方式
 - 菜单激活/导航/选择

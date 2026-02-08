@@ -453,7 +453,7 @@ fn option_binding_inner_type(ty: &Type) -> Option<Type> {
 fn value_type_for(ty: &Type) -> Option<TokenStream2> {
     let Type::Path(tp) = ty else { return None };
     let seg = tp.path.segments.last().map(|s| s.ident.to_string());
-    let Some(name) = seg else { return None };
+    let name = seg?;
 
     match name.as_str() {
         "String" => Some(quote! { ::atto_ui::ValueType::String }),
@@ -473,10 +473,7 @@ fn value_type_for(ty: &Type) -> Option<TokenStream2> {
 }
 
 fn vec_value_type(tp: &syn::TypePath) -> Option<TokenStream2> {
-    let seg = match tp.path.segments.last() {
-        Some(seg) => seg,
-        None => return None,
-    };
+    let seg = tp.path.segments.last()?;
     let PathArguments::AngleBracketed(args) = &seg.arguments else {
         return None;
     };
@@ -493,7 +490,7 @@ fn vec_value_type(tp: &syn::TypePath) -> Option<TokenStream2> {
     }
     if inner_seg.as_deref() == Some("Vec") {
         // Vec<Vec<String>>
-        return vec_value_type(&inner_tp).map(|_| quote! { ::atto_ui::ValueType::Table });
+        return vec_value_type(inner_tp).map(|_| quote! { ::atto_ui::ValueType::Table });
     }
     None
 }

@@ -86,11 +86,11 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let mut moved = false;
     while Instant::now() < deadline {
         let screen = host.screen_contents().unwrap_or_default();
-        if let Some((_, Some(updated))) = rects_from_screen(&screen) {
-            if updated.x != tools_rect.x || updated.y != tools_rect.y {
-                moved = true;
-                break;
-            }
+        if let Some((_, Some(updated))) = rects_from_screen(&screen)
+            && (updated.x != tools_rect.x || updated.y != tools_rect.y)
+        {
+            moved = true;
+            break;
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -100,8 +100,12 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let screen = host.screen_contents().unwrap_or_default();
     let (_, tools_rect) = rects_from_screen(&screen).expect("read rects");
     let tools_rect = tools_rect.expect("tools rect");
-    let resize_from_x = tools_rect.x.saturating_add(tools_rect.width.saturating_sub(1));
-    let resize_from_y = tools_rect.y.saturating_add(tools_rect.height.saturating_sub(1));
+    let resize_from_x = tools_rect
+        .x
+        .saturating_add(tools_rect.width.saturating_sub(1));
+    let resize_from_y = tools_rect
+        .y
+        .saturating_add(tools_rect.height.saturating_sub(1));
     let resize_to_x = resize_from_x.saturating_add(3).min(78);
     let resize_to_y = resize_from_y.saturating_add(2).min(22);
     host.drag_left(resize_from_x, resize_from_y, resize_to_x, resize_to_y)
@@ -111,11 +115,11 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let mut resized = false;
     while Instant::now() < deadline {
         let screen = host.screen_contents().unwrap_or_default();
-        if let Some((_, Some(updated))) = rects_from_screen(&screen) {
-            if updated.width != tools_rect.width || updated.height != tools_rect.height {
-                resized = true;
-                break;
-            }
+        if let Some((_, Some(updated))) = rects_from_screen(&screen)
+            && (updated.width != tools_rect.width || updated.height != tools_rect.height)
+        {
+            resized = true;
+            break;
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -131,7 +135,9 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let screen = host.screen_contents().unwrap_or_default();
     let (term_rect, _) = rects_from_screen(&screen).expect("read rects");
     let term_rect = term_rect.expect("term rect");
-    let close_x = term_rect.x.saturating_add(term_rect.width.saturating_sub(2));
+    let close_x = term_rect
+        .x
+        .saturating_add(term_rect.width.saturating_sub(2));
     let close_y = term_rect.y;
     host.click(close_x, close_y).expect("click close button");
     wait_for_text(&host, "TERM=CLOSED");

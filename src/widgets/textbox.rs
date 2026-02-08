@@ -8,11 +8,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::composable::{Component, ComponentContext, EventResult};
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
 use crate::text::TextBuffer;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {
@@ -219,7 +219,7 @@ impl Component for TextBox {
             Event::Paste(s) => {
                 self.replace_selection_if_any();
                 self.buffer.insert_str(s);
-                    self.sync_binding_from_buffer();
+                self.sync_binding_from_buffer();
                 self.selection_anchor = None;
                 EventResult::changed()
             }

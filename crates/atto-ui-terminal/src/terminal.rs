@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use anyhow::Result;
@@ -9,7 +9,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use parking_lot::Mutex;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -34,8 +34,7 @@ impl TerminalShortcut {
     fn matches(&self, event: KeyEvent) -> bool {
         if event.code != self.code {
             match (event.code, self.code) {
-                (KeyCode::Char(a), KeyCode::Char(b))
-                    if a.to_ascii_lowercase() == b.to_ascii_lowercase() => {}
+                (KeyCode::Char(a), KeyCode::Char(b)) if a.eq_ignore_ascii_case(&b) => {}
                 _ => return false,
             }
         }
@@ -412,7 +411,7 @@ impl TerminalEmulator {
         let max = shared.max_scrollback();
         let current = shared.parser.screen().scrollback();
         let desired = if delta.is_negative() {
-            let amount = i32::from(delta).abs() as usize;
+            let amount = i32::from(delta).unsigned_abs() as usize;
             current.saturating_add(amount).min(max)
         } else {
             current.saturating_sub(delta as usize)
@@ -629,13 +628,11 @@ impl Component for TerminalEmulator {
                 let cell = screen.cell(y, x);
                 let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
                 let symbol = cell
-                    .and_then(|c| {
-                        if c.is_wide_continuation() {
-                            Some(" ")
-                        } else if c.contents().is_empty() {
-                            Some(" ")
+                    .map(|c| {
+                        if c.is_wide_continuation() || c.contents().is_empty() {
+                            " "
                         } else {
-                            Some(c.contents())
+                            c.contents()
                         }
                     })
                     .unwrap_or(" ");
@@ -1133,12 +1130,13 @@ fn encode_mouse_event(
             _ => None,
         },
         MouseEventKind::Drag(button) => match screen.mouse_protocol_mode() {
-            vt100::MouseProtocolMode::ButtonMotion
-            | vt100::MouseProtocolMode::AnyMotion => match button {
-                MouseButton::Left => Some(32),
-                MouseButton::Middle => Some(33),
-                MouseButton::Right => Some(34),
-            },
+            vt100::MouseProtocolMode::ButtonMotion | vt100::MouseProtocolMode::AnyMotion => {
+                match button {
+                    MouseButton::Left => Some(32),
+                    MouseButton::Middle => Some(33),
+                    MouseButton::Right => Some(34),
+                }
+            }
             _ => None,
         },
         MouseEventKind::Moved => match screen.mouse_protocol_mode() {

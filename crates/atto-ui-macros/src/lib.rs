@@ -1,12 +1,12 @@
-//! Procedural macros for Chatty.
+//! Procedural macros for Atto-UI.
 //!
-//! This crate is intentionally small: it provides optional ergonomics on top of Chatty's
+//! This crate is intentionally small: it provides optional ergonomics on top of Atto-UI's
 //! composable component API without being required for the core library to function.
 
 use proc_macro::TokenStream;
 
-mod reactive;
 mod component_properties;
+mod reactive;
 mod view_builder;
 
 /// Generates convenience accessors around `atto_ui::reactive::Property<_>` fields.

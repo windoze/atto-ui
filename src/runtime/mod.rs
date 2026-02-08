@@ -9,22 +9,22 @@ use ratatui::layout::Rect;
 use atto_ui_runtime::{
     ActionMeta, AlignSpec, AnchorPlacementSpec, AnchorSpec, CallbackId, CallbackInvocation,
     CallbackRegistry, ComponentRegistry, ComponentSchema, ComponentSpec, ComponentSpecChild,
-    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec,
-    SizeSpec, TreeError, TreeOp, ValueType, apply_tree_ops,
+    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec, SizeSpec, TreeError, TreeOp, ValueType,
+    apply_tree_ops,
 };
 
 use crate::composable::{
-    Align, Anchor, AnchorPlacement, Border, Component, ComponentContext, ComponentId, ComponentNode,
-    Divider, DividerOrientation, EdgeInsets, EventResult, Grid, HStack, Label, LayoutParams,
-    ScrollConfig, Size, Spacer, Splitter, SplitterOrientation, TabView, Text, TextBox,
-    TitleBarContent, TitleBarContext, VStack, Visibility,
+    Align, Anchor, AnchorPlacement, Border, Component, ComponentContext, ComponentId,
+    ComponentNode, Divider, DividerOrientation, EdgeInsets, EventResult, Grid, HStack, Label,
+    LayoutParams, ScrollConfig, Size, Spacer, Splitter, SplitterOrientation, TabView, Text,
+    TextBox, TitleBarContent, TitleBarContext, VStack, Visibility,
 };
-use crate::{ComponentError, ComponentPropertySchema};
 use crate::reactive::Binding;
 use crate::widgets::{
-    Button, Checkbox, ListBox, ProgressBar, RadioGroup, Slider, Spinner, StyledLabel, TableView,
-    TabHeaderPosition,
+    Button, Checkbox, ListBox, ProgressBar, RadioGroup, Slider, Spinner, StyledLabel,
+    TabHeaderPosition, TableView,
 };
+use crate::{ComponentError, ComponentPropertySchema};
 
 #[derive(Clone)]
 pub struct CallbackHandle {
@@ -168,8 +168,7 @@ impl ComponentTree {
                 TreeOp::SetTree(_) => {}
                 TreeOp::SetProp { id, name, value } => {
                     if id_matches_root(&self.view, id) {
-                        let applied =
-                            apply_property_to_view(self.view.as_mut(), id, name, value)?;
+                        let applied = apply_property_to_view(self.view.as_mut(), id, name, value)?;
                         if applied == PropertyApply::NeedsRebuild {
                             self.rebuild()?;
                             return Ok(true);
@@ -247,12 +246,8 @@ impl ComponentTree {
                         self.rebuild()?;
                         return Ok(true);
                     }
-                    if !replace_node_with_child_spec(
-                        self.view.as_mut(),
-                        id,
-                        node,
-                        &self.registry,
-                    )? {
+                    if !replace_node_with_child_spec(self.view.as_mut(), id, node, &self.registry)?
+                    {
                         self.rebuild()?;
                         return Ok(true);
                     }
@@ -268,12 +263,7 @@ impl ComponentTree {
                             "cannot move root node".to_string(),
                         ));
                     }
-                    if !move_node(
-                        self.view.as_mut(),
-                        id,
-                        new_parent_id,
-                        *index,
-                    ) {
+                    if !move_node(self.view.as_mut(), id, new_parent_id, *index) {
                         self.rebuild()?;
                         return Ok(true);
                     }
@@ -303,11 +293,7 @@ impl Component for ComponentTree {
         self.view.get_property(name)
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.view.set_property(name, value)
     }
 
@@ -486,10 +472,7 @@ fn is_tab_view(view: &dyn Component) -> bool {
         .is_some_and(|name| name == "TabView")
 }
 
-fn find_child_spec_by_id<'a>(
-    root: &'a ComponentSpec,
-    id: &str,
-) -> Option<&'a ComponentSpecChild> {
+fn find_child_spec_by_id<'a>(root: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpecChild> {
     for child in &root.children {
         if child.node.id.as_deref() == Some(id) {
             return Some(child);
@@ -587,10 +570,7 @@ fn remove_node(view: &mut dyn Component, id: &str) -> bool {
         return false;
     };
     if tab_view {
-        if children
-            .iter()
-            .any(|child| child.view.tag() == Some(id))
-        {
+        if children.iter().any(|child| child.view.tag() == Some(id)) {
             return false;
         }
     } else if let Some(idx) = children
@@ -610,12 +590,7 @@ fn remove_node(view: &mut dyn Component, id: &str) -> bool {
     false
 }
 
-fn move_node(
-    view: &mut dyn Component,
-    id: &str,
-    new_parent_id: &str,
-    index: usize,
-) -> bool {
+fn move_node(view: &mut dyn Component, id: &str, new_parent_id: &str, index: usize) -> bool {
     let Some(node) = take_node(view, id) else {
         return false;
     };
@@ -628,9 +603,7 @@ fn move_node(
 
 fn take_node(view: &mut dyn Component, id: &str) -> Option<ComponentNode> {
     let tab_view = is_tab_view(view);
-    let Some(children) = view.children_mut() else {
-        return None;
-    };
+    let children = view.children_mut()?;
     if !tab_view {
         if let Some(idx) = children
             .iter()
@@ -638,10 +611,7 @@ fn take_node(view: &mut dyn Component, id: &str) -> Option<ComponentNode> {
         {
             return Some(children.remove(idx));
         }
-    } else if children
-        .iter()
-        .any(|child| child.view.tag() == Some(id))
-    {
+    } else if children.iter().any(|child| child.view.tag() == Some(id)) {
         return None;
     }
 
@@ -873,8 +843,8 @@ fn register_radio_group(
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
         let height = prop_u16(spec, "height")?;
 
-        let mut radio = RadioGroup::new(label, Binding::new(options), Binding::new(selection))
-            .enabled(enabled);
+        let mut radio =
+            RadioGroup::new(label, Binding::new(options), Binding::new(selection)).enabled(enabled);
         if let Some(height) = height {
             radio = radio.height(height);
         }
@@ -901,8 +871,8 @@ fn register_list_box(
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
         let height = prop_u16(spec, "height")?;
 
-        let mut list = ListBox::new(title, Binding::new(items), Binding::new(selection))
-            .enabled(enabled);
+        let mut list =
+            ListBox::new(title, Binding::new(items), Binding::new(selection)).enabled(enabled);
         if let Some(height) = height {
             list = list.height(height);
         }
@@ -970,8 +940,8 @@ fn register_tab_view(
 
     registry.register(schema, move |spec, registry| {
         let selection = prop_usize(spec, "selection")?.unwrap_or(0);
-        let header_position = prop_string(spec, "header_position")
-            ?.and_then(|value| TabHeaderPosition::parse(&value))
+        let header_position = prop_string(spec, "header_position")?
+            .and_then(|value| TabHeaderPosition::parse(&value))
             .unwrap_or(TabHeaderPosition::Top);
 
         let mut tabs = TabView::new()
@@ -1064,13 +1034,13 @@ fn register_splitter(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     let schema = component_schema::<Splitter>("Splitter").allow_children(true);
 
     registry.register(schema, move |spec, registry| {
-        let orientation = prop_string(spec, "orientation")
-            ?.and_then(|value| SplitterOrientation::parse(&value))
+        let orientation = prop_string(spec, "orientation")?
+            .and_then(|value| SplitterOrientation::parse(&value))
             .unwrap_or(SplitterOrientation::Vertical);
 
         let first = spec
             .children
-            .get(0)
+            .first()
             .map(|child| registry.build(&child.node))
             .transpose()?
             .unwrap_or_else(|| Box::new(Spacer::new()));
@@ -1103,8 +1073,8 @@ fn register_divider(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     let schema = component_schema::<Divider>("Divider").allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
-        let orientation = prop_string(spec, "orientation")
-            ?.and_then(|value| DividerOrientation::parse(&value))
+        let orientation = prop_string(spec, "orientation")?
+            .and_then(|value| DividerOrientation::parse(&value))
             .unwrap_or(DividerOrientation::Horizontal);
         let view = Divider::new(orientation);
         Ok(wrap_with_id(spec, Box::new(view)))
@@ -1114,7 +1084,9 @@ fn register_divider(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 fn register_spacer(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     let schema = component_schema::<Spacer>("Spacer").allow_children(false);
 
-    registry.register(schema, move |spec, _registry| Ok(wrap_with_id(spec, Box::new(Spacer::new()))));
+    registry.register(schema, move |spec, _registry| {
+        Ok(wrap_with_id(spec, Box::new(Spacer::new())))
+    });
 }
 
 fn register_border(registry: &mut ComponentRegistry<Box<dyn Component>>) {
@@ -1123,7 +1095,7 @@ fn register_border(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     registry.register(schema, move |spec, registry| {
         let inner = spec
             .children
-            .get(0)
+            .first()
             .map(|child| registry.build(&child.node))
             .transpose()?
             .unwrap_or_else(|| Box::new(Spacer::new()));
@@ -1140,7 +1112,7 @@ fn register_visibility(registry: &mut ComponentRegistry<Box<dyn Component>>) {
         let visible = prop_bool(spec, "visible")?.unwrap_or(true);
         let inner = spec
             .children
-            .get(0)
+            .first()
             .map(|child| registry.build(&child.node))
             .transpose()?
             .unwrap_or_else(|| Box::new(Spacer::new()));
@@ -1277,10 +1249,7 @@ fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> 
     }
 }
 
-fn prop_vec_string(
-    spec: &ComponentSpec,
-    name: &str,
-) -> Result<Option<Vec<String>>, TreeError> {
+fn prop_vec_string(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<String>>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::StringList(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "string list", other)),
@@ -1288,10 +1257,7 @@ fn prop_vec_string(
     }
 }
 
-fn prop_table(
-    spec: &ComponentSpec,
-    name: &str,
-) -> Result<Option<Vec<Vec<String>>>, TreeError> {
+fn prop_table(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<Vec<String>>>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::Table(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "table", other)),
@@ -1299,10 +1265,7 @@ fn prop_table(
     }
 }
 
-fn prop_edge_insets(
-    spec: &ComponentSpec,
-    name: &str,
-) -> Result<Option<EdgeInsets>, TreeError> {
+fn prop_edge_insets(spec: &ComponentSpec, name: &str) -> Result<Option<EdgeInsets>, TreeError> {
     let Some(value) = spec.props.get(name) else {
         return Ok(None);
     };
@@ -1387,10 +1350,7 @@ fn invalid_prop(
     value: &ComponentValue,
 ) -> TreeError {
     TreeError::InvalidProperty {
-        id: spec
-            .id
-            .clone()
-            .unwrap_or_else(|| spec.type_name.clone()),
+        id: spec.id.clone().unwrap_or_else(|| spec.type_name.clone()),
         name: name.to_string(),
         reason: format!("expected {expected}, got {value:?}"),
     }
@@ -1451,10 +1411,10 @@ impl StackBuilder for HStack {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atto_ui_runtime::ComponentSpecChild;
     use crate::composable::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
     use crate::theme::Theme;
     use crate::wm::WindowId;
+    use atto_ui_runtime::ComponentSpecChild;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     #[test]
@@ -1533,9 +1493,8 @@ mod tests {
     #[test]
     fn component_tree_ops_rebuild_children() {
         let callbacks = CallbackRegistry::new();
-        let mut tree =
-            ComponentTree::new(ComponentSpec::new("VStack").with_id("root"), callbacks)
-                .expect("tree");
+        let mut tree = ComponentTree::new(ComponentSpec::new("VStack").with_id("root"), callbacks)
+            .expect("tree");
 
         let child = ComponentSpecChild::new(
             ComponentSpec::new("Label")
@@ -1569,13 +1528,14 @@ mod tests {
     #[test]
     fn component_tree_incremental_set_prop_updates_view() {
         let callbacks = CallbackRegistry::new();
-        let root = ComponentSpec::new("VStack")
-            .with_id("root")
-            .with_child(ComponentSpecChild::new(
-                ComponentSpec::new("Label")
-                    .with_id("title")
-                    .with_prop("text", ComponentValue::String("A".into())),
-            ));
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label")
+                        .with_id("title")
+                        .with_prop("text", ComponentValue::String("A".into())),
+                ));
         let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let changed = tree
@@ -1680,21 +1640,19 @@ mod tests {
         assert!(changed);
 
         let children = tree.view().children();
-        let ids: Vec<Option<&str>> = children
-            .iter()
-            .map(|child| child.view.tag())
-            .collect();
+        let ids: Vec<Option<&str>> = children.iter().map(|child| child.view.tag()).collect();
         assert_eq!(ids, vec![Some("c"), Some("a"), Some("b")]);
     }
 
     #[test]
     fn component_tree_incremental_replace_child() {
         let callbacks = CallbackRegistry::new();
-        let root = ComponentSpec::new("VStack")
-            .with_id("root")
-            .with_child(ComponentSpecChild::new(
-                ComponentSpec::new("Label").with_id("a"),
-            ));
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("a"),
+                ));
         let mut tree = ComponentTree::new(root, callbacks).expect("tree");
 
         let node = ComponentSpecChild::new(
@@ -1730,13 +1688,14 @@ mod tests {
     fn component_tree_incremental_bind_and_clear_event() {
         let callbacks = CallbackRegistry::new();
         let cb = callbacks.register();
-        let root = ComponentSpec::new("VStack")
-            .with_id("root")
-            .with_child(ComponentSpecChild::new(
-                ComponentSpec::new("Button")
-                    .with_id("btn")
-                    .with_prop("label", ComponentValue::String("Go".into())),
-            ));
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Button")
+                        .with_id("btn")
+                        .with_prop("label", ComponentValue::String("Go".into())),
+                ));
         let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
 
         let changed = tree
@@ -1789,14 +1748,8 @@ mod tests {
     fn builtin_schema_includes_button_props() {
         let registry = builtin_registry(CallbackRegistry::new());
         let schema = registry.schema("Button").expect("schema");
-        assert!(schema
-            .properties
-            .iter()
-            .any(|prop| prop.name == "label"));
-        assert!(schema
-            .events
-            .iter()
-            .any(|event| event.name == "click"));
+        assert!(schema.properties.iter().any(|prop| prop.name == "label"));
+        assert!(schema.events.iter().any(|event| event.name == "click"));
     }
 
     #[test]

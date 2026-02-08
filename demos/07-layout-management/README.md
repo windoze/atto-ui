@@ -2,7 +2,7 @@
 
 ## 目标
 
-演示 Chatty 的声明式布局能力（SwiftUI 风格）：
+演示 Atto-UI 的声明式布局能力（SwiftUI 风格）：
 
 - `VStack` / `HStack` / `Grid`
 - `Spacer`

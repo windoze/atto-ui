@@ -277,10 +277,10 @@ impl ChatMessageRow {
             ..LayoutParams::default()
         };
 
-        if config.show_timestamps {
-            if let Some(ts) = &message.timestamp {
-                column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
-            }
+        if config.show_timestamps
+            && let Some(ts) = &message.timestamp
+        {
+            column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
         }
 
         let bubble = build_aligned_bubble(&message, &config);
@@ -409,12 +409,7 @@ impl Component for ChatTimestampDivider {
             let padding = width.saturating_sub(label.len());
             let left = padding / 2;
             let right = padding.saturating_sub(left);
-            format!(
-                "{}{}{}",
-                "─".repeat(left),
-                label,
-                "─".repeat(right)
-            )
+            format!("{}{}{}", "─".repeat(left), label, "─".repeat(right))
         };
         let style = ctx.theme.widget.dim;
         frame.render_widget(Paragraph::new(Line::styled(line, style)), area);

@@ -8,14 +8,14 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
     ScrollContainerHost, ScrollContent, ScrollContentContext,
 };
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct ListBoxBindings {
@@ -153,9 +153,7 @@ impl Component for ListBox {
                 let bindings = self.bindings.write();
                 let items_len = bindings.items.get().len();
                 if items_len > 0 {
-                    bindings
-                        .selection
-                        .set(idx.min(items_len.saturating_sub(1)));
+                    bindings.selection.set(idx.min(items_len.saturating_sub(1)));
                     EventResult::changed()
                 } else {
                     EventResult::ignored()

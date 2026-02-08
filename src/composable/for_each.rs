@@ -6,7 +6,6 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult};
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -14,6 +13,7 @@ use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use super::stack::VStack;
 use crate::reactive::{Binding, DirtyObserver};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 pub type BuilderFn<T, V> = dyn Fn(&T, usize) -> V + Send + Sync;
 

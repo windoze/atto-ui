@@ -5,9 +5,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
-use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
 use crate::composable::{Component, EventResult};
 use crate::wm::{Window, WindowId};
+use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
 use atto_ui_runtime::ComponentValue;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,11 +89,7 @@ impl<'a> DesktopInspector<'a> {
         Ok(InspectSnapshot { buffer, tree })
     }
 
-    pub fn get_property(
-        &mut self,
-        id: &str,
-        name: &str,
-    ) -> Result<ComponentValue, ComponentError> {
+    pub fn get_property(&mut self, id: &str, name: &str) -> Result<ComponentValue, ComponentError> {
         if let Some(value) = menu_get_property(&self.desktop.menu, id, name) {
             return Ok(value);
         }
@@ -171,13 +167,12 @@ impl<'a> DesktopInspector<'a> {
             }
         }
 
-        if let Some(name) = custom_name {
-            if menu_exists(&self.desktop.menu, id)
+        if let Some(name) = custom_name
+            && (menu_exists(&self.desktop.menu, id)
                 || window_exists(&self.desktop.wm, id)
-                || component_exists(&self.desktop.wm, id)
-            {
-                return Err(ComponentError::action_not_supported(name));
-            }
+                || component_exists(&self.desktop.wm, id))
+        {
+            return Err(ComponentError::action_not_supported(name));
         }
 
         match action {
@@ -237,10 +232,7 @@ impl<'a> DesktopInspector<'a> {
         }
     }
 
-    fn action_focused(
-        &mut self,
-        action: ComponentCommand,
-    ) -> Result<EventResult, ComponentError> {
+    fn action_focused(&mut self, action: ComponentCommand) -> Result<EventResult, ComponentError> {
         let Some(focused) = focused_component_mut(&mut self.desktop.wm) else {
             return Err(ComponentError::not_found("focused"));
         };
@@ -680,9 +672,7 @@ fn window_action(
 }
 
 fn window_find<'a>(wm: &'a crate::wm::WindowManager, id: &str) -> Option<&'a Window> {
-    wm.windows()
-        .iter()
-        .find(|w| w.tag.as_deref() == Some(id))
+    wm.windows().iter().find(|w| w.tag.as_deref() == Some(id))
 }
 
 fn window_find_mut<'a>(wm: &'a mut crate::wm::WindowManager, id: &str) -> Option<&'a mut Window> {
@@ -751,16 +741,12 @@ fn focused_component_mut(wm: &mut crate::wm::WindowManager) -> Option<&mut dyn C
     focused_component_in_view(window.view.as_mut())
 }
 
-fn focused_component_in_view<'a>(view: &'a mut dyn Component) -> Option<&'a mut dyn Component> {
+fn focused_component_in_view(view: &mut dyn Component) -> Option<&mut dyn Component> {
     let mut current: &mut dyn Component = view;
     loop {
         if let Some(child_id) = current.focused_child() {
-            let Some(children) = current.children_mut() else {
-                return None;
-            };
-            let Some(idx) = children.iter().position(|child| child.id == child_id) else {
-                return None;
-            };
+            let children = current.children_mut()?;
+            let idx = children.iter().position(|child| child.id == child_id)?;
             current = children[idx].view.as_mut();
             continue;
         }

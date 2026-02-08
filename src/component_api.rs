@@ -233,7 +233,10 @@ impl ComponentValueCodec for EdgeInsets {
         let mut map = std::collections::BTreeMap::new();
         map.insert("top".to_string(), ComponentValue::U64(self.top as u64));
         map.insert("right".to_string(), ComponentValue::U64(self.right as u64));
-        map.insert("bottom".to_string(), ComponentValue::U64(self.bottom as u64));
+        map.insert(
+            "bottom".to_string(),
+            ComponentValue::U64(self.bottom as u64),
+        );
         map.insert("left".to_string(), ComponentValue::U64(self.left as u64));
         ComponentValue::Map(map)
     }
@@ -254,10 +257,7 @@ impl ComponentValueCodec for EdgeInsets {
             }
             ComponentValue::List(values) => {
                 if values.len() != 4 {
-                    return Err(ComponentError::invalid_value(
-                        name,
-                        "edge insets list of 4",
-                    ));
+                    return Err(ComponentError::invalid_value(name, "edge insets list of 4"));
                 }
                 let to_u16 = |idx: usize| -> Result<u16, ComponentError> {
                     values

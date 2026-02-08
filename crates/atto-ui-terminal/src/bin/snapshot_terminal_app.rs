@@ -67,7 +67,12 @@ fn main() -> Result<()> {
     let handle = terminal_view.handle();
 
     desktop.add_window(
-        Window::new(WindowKind::Normal, "Terminal", window_rect, Box::new(terminal_view)),
+        Window::new(
+            WindowKind::Normal,
+            "Terminal",
+            window_rect,
+            Box::new(terminal_view),
+        ),
         screen,
     );
 

@@ -5,11 +5,11 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentCommand;
 use crate::composable::{Component, ComponentContext, EventResult};
-use crate::runtime::CallbackHandle;
 use crate::reactive::Binding;
+use crate::runtime::CallbackHandle;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct RadioGroup {

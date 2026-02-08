@@ -1,9 +1,8 @@
 //! Composable component system (single component model).
 
 mod border;
-mod component_tag;
 mod component;
-mod visibility;
+mod component_tag;
 mod for_each;
 mod geom;
 mod grid;
@@ -16,6 +15,7 @@ mod scroll_container;
 mod splitter;
 mod stack;
 mod tab_window;
+mod visibility;
 
 pub use crate::widgets::{
     Button, Checkbox, FlowDirection, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner,
@@ -23,12 +23,11 @@ pub use crate::widgets::{
     TableView, TextBox,
 };
 pub use border::Border;
-pub use component_tag::{ComponentTag, ComponentTagExt};
-pub use visibility::{Visibility, VisibilityExt};
 pub use component::{
     Component, ComponentAction, ComponentContext, EventOutcome, EventResult, ScrollbarHost,
     TabMode, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
+pub use component_tag::{ComponentTag, ComponentTagExt};
 pub use for_each::{ForEach, ForEachIdentifiable};
 pub use grid::Grid;
 pub use identifiable::Identifiable;
@@ -47,6 +46,7 @@ pub use scroll_container::{
 pub use splitter::{Splitter, SplitterOrientation};
 pub use stack::{HStack, VStack};
 pub use tab_window::TabWindow;
+pub use visibility::{Visibility, VisibilityExt};
 
 #[cfg(test)]
 mod tests;

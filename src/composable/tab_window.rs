@@ -5,11 +5,11 @@ use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::{
     Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(ComponentProperties)]
 pub struct TabWindowTab {

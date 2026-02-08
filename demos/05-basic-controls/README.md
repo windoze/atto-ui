@@ -2,7 +2,7 @@
 
 ## 目标
 
-演示 Chatty 内置控件（widgets）如何和反应式绑定（`Property`/`Binding`）配合使用：
+演示 Atto-UI 内置控件（widgets）如何和反应式绑定（`Property`/`Binding`）配合使用：
 
 - `Button`
 - `TextBox`（单行编辑，Unicode/grapheme-aware）
@@ -28,7 +28,7 @@ cargo run --bin demo-05-basic-controls
 
 ## 控件与绑定（核心用法）
 
-Chatty 的控件普遍使用 **双向绑定**：
+Atto-UI 的控件普遍使用 **双向绑定**：
 
 ### TextBox（文本输入）
 

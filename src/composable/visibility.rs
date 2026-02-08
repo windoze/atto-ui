@@ -2,16 +2,16 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use crate::composable::{
+    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
+    TitleBarContent, TitleBarContext,
+};
+use crate::reactive::Binding;
 use crate::{
     CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
     ComponentValueCodec, TreeError, TreeOp,
 };
 use atto_ui_macros::{ComponentProperties, component_properties};
-use crate::composable::{
-    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig, TitleBarContent,
-    TitleBarContext,
-};
-use crate::reactive::Binding;
 
 #[derive(ComponentProperties)]
 pub struct Visibility {
@@ -69,11 +69,7 @@ impl Component for Visibility {
         }
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         match name {
             "visible" => {
                 let v: bool = ComponentValueCodec::from_component_value(value, name)?;

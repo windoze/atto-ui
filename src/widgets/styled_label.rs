@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use crate::ComponentValue;
 use crate::composable::{Component, ComponentContext, EventResult};
 use crate::reactive::Binding;
@@ -8,6 +7,7 @@ use crate::runtime::CallbackHandle;
 use crate::text::styled_text::{
     hit_test_link, inline_display_width, parse_inline, spans_from_segments,
 };
+use atto_ui_macros::{ComponentProperties, component_properties};
 use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;

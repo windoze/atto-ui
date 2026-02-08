@@ -1,6 +1,6 @@
 //! Content caching and incremental rendering primitives.
 //!
-//! These utilities are not yet integrated into Chatty's main render loop, but provide the
+//! These utilities are not yet integrated into Atto-UI's main render loop, but provide the
 //! building blocks for dirty checking and efficient terminal updates.
 
 mod buffer;

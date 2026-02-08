@@ -591,7 +591,14 @@ impl MenuBar {
                 return MenuAction::None;
             };
 
-            let mut hit: Option<(usize, bool, Option<MenuCallback>, bool, Option<WindowId>)> = None;
+            #[allow(clippy::type_complexity)]
+            let mut hit: Option<(
+                usize,
+                bool,
+                Option<MenuCallback>,
+                bool,
+                Option<WindowId>,
+            )> = None;
             for (idx, item) in items.iter().enumerate() {
                 let enabled = item.enabled.get();
                 if !enabled {

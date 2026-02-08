@@ -33,7 +33,7 @@ cargo run --bin demo-08-foreach-demo
 
 当你的数据类型实现了 `Identifiable`，可以启用 `.with_id()`：
 
-- 列表重排/插入时，Chatty 会按 ID 复用已有子视图
+- 列表重排/插入时，Atto-UI 会按 ID 复用已有子视图
 - 这对于包含 TextBox 等“有 view-local 状态”的控件尤其重要
 
 ### 虚拟滚动（不在 ForEach 内）

@@ -44,6 +44,7 @@ fn find_window_rect(desktop: &Desktop, id: WindowId) -> Option<Rect> {
         .map(|w| w.rect.get())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_status_lines(
     desktop: &Desktop,
     term_id: WindowId,
@@ -67,7 +68,11 @@ fn update_status_lines(
     let tools_rect = rect_text(find_window_rect(desktop, tools_id));
     rect_line.set(format!("RECT TERM={term_rect} TOOLS={tools_rect}"));
 
-    let menu_state = if desktop.menu.is_active() { "ON" } else { "OFF" };
+    let menu_state = if desktop.menu.is_active() {
+        "ON"
+    } else {
+        "OFF"
+    };
     menu_line.set(format!("MENU={} ACTIVE={menu_state}", menu_action.get()));
 }
 
@@ -103,7 +108,8 @@ fn main() -> Result<()> {
     let rect_line = Binding::new(String::new());
     let menu_line = Binding::new(String::new());
 
-    let status_view = build_status_view(&[focus_line.clone(), rect_line.clone(), menu_line.clone()]);
+    let status_view =
+        build_status_view(&[focus_line.clone(), rect_line.clone(), menu_line.clone()]);
 
     let term_view = TerminalEmulator::new();
     let term_handle = term_view.handle();
@@ -128,11 +134,21 @@ fn main() -> Result<()> {
     };
 
     let term_id = desktop.add_window(
-        Window::new(WindowKind::Normal, "Terminal", term_rect, Box::new(term_view)),
+        Window::new(
+            WindowKind::Normal,
+            "Terminal",
+            term_rect,
+            Box::new(term_view),
+        ),
         screen,
     );
     let tools_id = desktop.add_window(
-        Window::new(WindowKind::Normal, "Tools", tools_rect, Box::new(Label::new("Tools"))),
+        Window::new(
+            WindowKind::Normal,
+            "Tools",
+            tools_rect,
+            Box::new(Label::new("Tools")),
+        ),
         screen,
     );
     let _status_id = desktop.add_window(

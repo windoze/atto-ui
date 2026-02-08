@@ -30,11 +30,10 @@ fn main() -> Result<()> {
         let menu = MenuBar::new(vec![]);
         let mut desktop = Desktop::new(theme, menu);
 
-        let mut terminal = TerminalEmulator::new()
-            .release_shortcut(TerminalShortcut::new(
-                KeyCode::Char('l'),
-                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-            ));
+        let mut terminal = TerminalEmulator::new().release_shortcut(TerminalShortcut::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
         terminal.spawn_process(&command, &command_args)?;
         let handle = terminal.handle();
 

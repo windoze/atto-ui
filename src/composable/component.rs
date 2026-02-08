@@ -3,12 +3,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::{ComponentCommand, ComponentError, ComponentValue};
-use atto_ui_runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::theme::Theme;
 use crate::wm::WindowId;
+use crate::{ComponentCommand, ComponentError, ComponentValue};
+use atto_ui_runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EventOutcome {
@@ -181,11 +181,7 @@ pub trait Component: Send {
         None
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        _value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, _value: ComponentValue) -> Result<(), ComponentError> {
         Err(ComponentError::unsupported_property(name))
     }
 
@@ -386,11 +382,7 @@ impl Component for Box<dyn Component> {
         self.as_ref().get_property(name)
     }
 
-    fn set_property(
-        &mut self,
-        name: &str,
-        value: ComponentValue,
-    ) -> Result<(), ComponentError> {
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.as_mut().set_property(name, value)
     }
 

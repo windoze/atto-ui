@@ -3,7 +3,6 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use atto_ui_macros::{ComponentProperties, component_properties};
 use super::component::{Component, ComponentContext, EventResult, TabMode};
 use super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
@@ -11,6 +10,7 @@ use super::geom::{
 };
 use super::node::{ComponentId, ComponentNode};
 use crate::reactive::Binding;
+use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplitterOrientation {
