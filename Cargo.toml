@@ -79,4 +79,5 @@ members = [
     "crates/atto-ui-terminal",
     "crates/atto-ui-runtime",
     "crates/atto-ui-python",
+    "crates/atto-ui-file-tree",
 ]
