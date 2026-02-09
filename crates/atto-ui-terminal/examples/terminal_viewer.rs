@@ -127,7 +127,8 @@ fn spawn_terminal_window(
 
     let banner = format!("Terminal Emulator ({window_number})\r\n");
     handle.process_output_str(&banner);
-    handle.process_output_str("Menu: click the menu bar, or press F10 after releasing capture.\r\n");
+    handle
+        .process_output_str("Menu: click the menu bar, or press F10 after releasing capture.\r\n");
     handle.process_output_str("Ctrl+Shift+L: release capture; click terminal to recapture.\r\n");
     handle.process_output_str("\x1b[?1000h\x1b[?1006h");
 

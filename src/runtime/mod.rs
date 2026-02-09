@@ -111,6 +111,14 @@ pub struct ComponentTree {
 impl ComponentTree {
     pub fn new(root: ComponentSpec, callbacks: CallbackRegistry) -> Result<Self, TreeError> {
         let registry = builtin_registry(callbacks.clone());
+        Self::new_with_registry(root, callbacks, registry)
+    }
+
+    pub fn new_with_registry(
+        root: ComponentSpec,
+        callbacks: CallbackRegistry,
+        registry: ComponentRegistry<Box<dyn Component>>,
+    ) -> Result<Self, TreeError> {
         let view = registry.build(&root)?;
         Ok(Self {
             root,

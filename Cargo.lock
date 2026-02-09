@@ -88,6 +88,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-ui-file-tree"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-test-host",
+ "crossterm",
+ "parking_lot",
+ "ratatui",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "atto-ui-macros"
 version = "0.1.0"
 dependencies = [
