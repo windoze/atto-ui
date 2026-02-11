@@ -21,6 +21,7 @@ pub struct TabWindowTab {
 pub struct TabWindow {
     tabs: Vec<TabWindowTab>,
     active: usize,
+    title_scroll: u16,
 }
 
 impl TabWindow {
@@ -28,6 +29,7 @@ impl TabWindow {
         Self {
             tabs: Vec::new(),
             active: 0,
+            title_scroll: 0,
         }
     }
 
@@ -121,6 +123,52 @@ impl TabWindow {
         true
     }
 
+    fn clamp_title_scroll(&mut self, total_width: u16, view_width: u16) {
+        let max_scroll = total_width.saturating_sub(view_width);
+        if self.title_scroll > max_scroll {
+            self.title_scroll = max_scroll;
+        }
+    }
+
+    fn scroll_title_left(
+        &mut self,
+        ranges: &[(u16, u16)],
+        view_width: u16,
+        total_width: u16,
+    ) -> bool {
+        let prev = self.title_scroll;
+        if let Some(first) = first_visible_tab(ranges, self.title_scroll) {
+            if ranges[first].0 < self.title_scroll {
+                self.title_scroll = ranges[first].0;
+            } else if first > 0 {
+                self.title_scroll = ranges[first - 1].0;
+            } else {
+                self.title_scroll = 0;
+            }
+        }
+        self.clamp_title_scroll(total_width, view_width);
+        self.title_scroll != prev
+    }
+
+    fn scroll_title_right(
+        &mut self,
+        ranges: &[(u16, u16)],
+        view_width: u16,
+        total_width: u16,
+    ) -> bool {
+        let prev = self.title_scroll;
+        let view_right = self.title_scroll.saturating_add(view_width);
+        if let Some(last) = last_visible_tab(ranges, self.title_scroll, view_width) {
+            if ranges[last].1 > view_right {
+                self.title_scroll = ranges[last].1.saturating_sub(view_width);
+            } else if last + 1 < ranges.len() {
+                self.title_scroll = ranges[last + 1].1.saturating_sub(view_width);
+            }
+        }
+        self.clamp_title_scroll(total_width, view_width);
+        self.title_scroll != prev
+    }
+
     fn active_view(&self) -> Option<&(dyn Component + '_)> {
         if let Some(tab) = self.tabs.get(self.active) {
             Some(tab.view.as_ref())
@@ -151,7 +199,7 @@ impl TabWindow {
         Ok(active.view.as_mut())
     }
 
-    fn titlebar_layout(&self, ctx: &TitleBarContext<'_>) -> Option<TabTitlebarLayout> {
+    fn titlebar_layout(&mut self, ctx: &TitleBarContext<'_>) -> Option<TabTitlebarLayout> {
         if self.tabs.is_empty() || ctx.area.width == 0 {
             return None;
         }
@@ -160,6 +208,8 @@ impl TabWindow {
         let sep = theme.glyph("tab-separator").unwrap_or("|");
         let active_left = theme.glyph("tab-active-left").unwrap_or(">");
         let active_right = theme.glyph("tab-active-right").unwrap_or("<");
+        let overflow_left_marker = theme.glyph("scrollbar-left-arrow").unwrap_or("\u{25C4}");
+        let overflow_right_marker = theme.glyph("scrollbar-right-arrow").unwrap_or("\u{25BA}");
 
         let fallback_active = if ctx.is_focused {
             theme.window_title_focused
@@ -186,15 +236,78 @@ impl TabWindow {
         let sep_style = theme.window_bg.patch(sep_style);
         let marker_style = theme.window_bg.patch(marker_style);
 
-        let mut builder = TitleBarBuilder::new(ctx.area.width);
-        let mut hits = Vec::new();
+        let (full_spans, tab_ranges, total_width) = self.build_titlebar_line(
+            sep,
+            active_left,
+            active_right,
+            active_style,
+            inactive_style,
+            sep_style,
+            marker_style,
+        );
+        self.clamp_title_scroll(total_width, ctx.area.width);
 
-        if !builder.push_sep(sep, sep_style) {
-            return Some(TabTitlebarLayout {
-                content: builder.finish(),
-                hits,
-            });
+        let view_width = ctx.area.width;
+        let mut visible_spans = if total_width > view_width {
+            slice_titlebar_spans(&full_spans, self.title_scroll, view_width)
+        } else {
+            full_spans
+        };
+
+        let overflow_left = self.title_scroll > 0;
+        let overflow_right = self.title_scroll.saturating_add(view_width) < total_width;
+        if overflow_left || overflow_right {
+            visible_spans = apply_titlebar_markers(
+                visible_spans,
+                view_width,
+                overflow_left,
+                overflow_right,
+                overflow_left_marker,
+                overflow_right_marker,
+                marker_style,
+            );
         }
+
+        Some(TabTitlebarLayout {
+            content: TitleBarContent {
+                spans: visible_spans,
+            },
+            tab_ranges,
+            total_width,
+        })
+    }
+
+    fn build_titlebar_line(
+        &self,
+        separator: &str,
+        active_left: &str,
+        active_right: &str,
+        active_style: Style,
+        inactive_style: Style,
+        separator_style: Style,
+        marker_style: Style,
+    ) -> (Vec<TitleBarSpan>, Vec<(u16, u16)>, u16) {
+        let mut spans = Vec::new();
+        let mut ranges = Vec::with_capacity(self.tabs.len());
+        let mut cursor: u16 = 0;
+
+        fn push_text(spans: &mut Vec<TitleBarSpan>, cursor: &mut u16, text: &str, style: Style) {
+            spans.push(TitleBarSpan::styled(text.to_string(), style));
+            *cursor = cursor.saturating_add(UnicodeWidthStr::width(text) as u16);
+        }
+
+        fn push_sep(spans: &mut Vec<TitleBarSpan>, cursor: &mut u16, glyph: &str, style: Style) {
+            let text = format!(" {} ", glyph);
+            spans.push(TitleBarSpan::styled(text.clone(), style));
+            *cursor = cursor.saturating_add(UnicodeWidthStr::width(text.as_str()) as u16);
+        }
+
+        if self.tabs.is_empty() {
+            push_sep(&mut spans, &mut cursor, separator, separator_style);
+            return (spans, ranges, cursor);
+        }
+
+        push_sep(&mut spans, &mut cursor, separator, separator_style);
 
         for (idx, tab) in self.tabs.iter().enumerate() {
             if idx > 0 {
@@ -203,11 +316,9 @@ impl TabWindow {
                 } else if idx == self.active.saturating_add(1) {
                     (active_right, marker_style)
                 } else {
-                    (sep, sep_style)
+                    (separator, separator_style)
                 };
-                if !builder.push_sep(glyph, style) {
-                    break;
-                }
+                push_sep(&mut spans, &mut cursor, glyph, style);
             }
 
             let label_style = if idx == self.active {
@@ -215,17 +326,15 @@ impl TabWindow {
             } else {
                 inactive_style
             };
-            if !builder.push_label(&tab.title, label_style, idx, &mut hits) {
-                break;
-            }
+            let start = cursor;
+            push_text(&mut spans, &mut cursor, &tab.title, label_style);
+            let end = cursor;
+            ranges.push((start, end));
         }
 
-        let _ = builder.push_sep(sep, sep_style);
+        push_sep(&mut spans, &mut cursor, separator, separator_style);
 
-        Some(TabTitlebarLayout {
-            content: builder.finish(),
-            hits,
-        })
+        (spans, ranges, cursor)
     }
 }
 
@@ -311,15 +420,32 @@ impl Component for TabWindow {
             return EventResult::ignored();
         };
         let local_x = m.column.saturating_sub(ctx.area.x);
-        for hit in layout.hits {
-            if local_x >= hit.start && local_x <= hit.end {
-                let changed = self.select_tab(hit.index);
-                return if changed {
-                    EventResult::changed()
-                } else {
-                    EventResult::consumed()
-                };
-            }
+        let header_width = ctx.area.width;
+        let overflow_left = self.title_scroll > 0;
+        let overflow_right = self.title_scroll.saturating_add(header_width) < layout.total_width;
+
+        if overflow_left && local_x == 0 {
+            let _ = self.scroll_title_left(&layout.tab_ranges, header_width, layout.total_width);
+            return EventResult::consumed();
+        }
+        if overflow_right && local_x == header_width.saturating_sub(1) {
+            let _ = self.scroll_title_right(&layout.tab_ranges, header_width, layout.total_width);
+            return EventResult::consumed();
+        }
+
+        let full_x = local_x.saturating_add(self.title_scroll);
+        if let Some((idx, _)) = layout
+            .tab_ranges
+            .iter()
+            .enumerate()
+            .find(|(_, (start, end))| full_x >= *start && full_x < *end)
+        {
+            let changed = self.select_tab(idx);
+            return if changed {
+                EventResult::changed()
+            } else {
+                EventResult::consumed()
+            };
         }
         EventResult::ignored()
     }
@@ -385,105 +511,147 @@ impl Component for TabWindow {
     }
 }
 
-struct TabTitleHit {
-    index: usize,
-    start: u16,
-    end: u16,
-}
-
 struct TabTitlebarLayout {
     content: TitleBarContent,
-    hits: Vec<TabTitleHit>,
+    tab_ranges: Vec<(u16, u16)>,
+    total_width: u16,
 }
 
-struct TitleBarBuilder {
-    max_width: u16,
-    pos: u16,
+#[derive(Clone)]
+struct StyledGrapheme {
+    text: String,
+    style: Option<Style>,
+    width: u16,
+}
+
+fn first_visible_tab(ranges: &[(u16, u16)], scroll: u16) -> Option<usize> {
+    ranges.iter().position(|(_, end)| *end > scroll)
+}
+
+fn last_visible_tab(ranges: &[(u16, u16)], scroll: u16, width: u16) -> Option<usize> {
+    let right = scroll.saturating_add(width);
+    ranges.iter().rposition(|(start, _)| *start < right)
+}
+
+fn slice_titlebar_spans(spans: &[TitleBarSpan], start: u16, width: u16) -> Vec<TitleBarSpan> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let end = start.saturating_add(width);
+    let mut col: u16 = 0;
+    let mut out: Vec<TitleBarSpan> = Vec::new();
+
+    for span in spans {
+        let style = span.style;
+        let mut buf = String::new();
+        for g in span.text.graphemes(true) {
+            let w = (UnicodeWidthStr::width(g) as u16).max(1);
+            let next = col.saturating_add(w);
+            if next <= start {
+                col = next;
+                continue;
+            }
+            if col >= end {
+                break;
+            }
+            buf.push_str(g);
+            col = next;
+            if col >= end {
+                break;
+            }
+        }
+        if !buf.is_empty() {
+            out.push(TitleBarSpan { text: buf, style });
+        }
+        if col >= end {
+            break;
+        }
+    }
+    out
+}
+
+fn apply_titlebar_markers(
     spans: Vec<TitleBarSpan>,
-}
-
-impl TitleBarBuilder {
-    fn new(max_width: u16) -> Self {
-        Self {
-            max_width,
-            pos: 0,
-            spans: Vec::new(),
-        }
+    width: u16,
+    overflow_left: bool,
+    overflow_right: bool,
+    left_marker: &str,
+    right_marker: &str,
+    marker_style: Style,
+) -> Vec<TitleBarSpan> {
+    if spans.is_empty() || width == 0 {
+        return spans;
     }
 
-    fn finish(self) -> TitleBarContent {
-        TitleBarContent { spans: self.spans }
-    }
-
-    fn push_sep(&mut self, glyph: &str, style: Style) -> bool {
-        if !self.push_text(" ", style) {
-            return false;
-        }
-        if !self.push_text(glyph, style) {
-            return false;
-        }
-        if !self.push_text(" ", style) {
-            return false;
-        }
-        true
-    }
-
-    fn push_label(
-        &mut self,
-        text: &str,
-        style: Style,
-        index: usize,
-        hits: &mut Vec<TabTitleHit>,
-    ) -> bool {
-        let mut start: Option<u16> = None;
-        let mut end: u16 = 0;
-        let mut fully_written = true;
-
-        for g in text.graphemes(true) {
+    let mut cells: Vec<StyledGrapheme> = Vec::new();
+    for span in &spans {
+        for g in span.text.graphemes(true) {
             let w = (UnicodeWidthStr::width(g) as u16).max(1);
-            if self.pos.saturating_add(w) > self.max_width {
-                fully_written = false;
-                break;
-            }
-            if start.is_none() {
-                start = Some(self.pos);
-            }
-            end = self.pos.saturating_add(w).saturating_sub(1);
-            self.push_grapheme(g, style);
+            cells.push(StyledGrapheme {
+                text: g.to_string(),
+                style: span.style,
+                width: w,
+            });
         }
-
-        if let Some(start) = start {
-            hits.push(TabTitleHit { index, start, end });
-        }
-
-        fully_written
     }
 
-    fn push_text(&mut self, text: &str, style: Style) -> bool {
-        let mut fully_written = true;
-        for g in text.graphemes(true) {
-            let w = (UnicodeWidthStr::width(g) as u16).max(1);
-            if self.pos.saturating_add(w) > self.max_width {
-                fully_written = false;
-                break;
-            }
-            self.push_grapheme(g, style);
+    let current_width: u16 = cells.iter().map(|c| c.width).sum();
+    if current_width < width {
+        let pad = width - current_width;
+        for _ in 0..pad {
+            cells.push(StyledGrapheme {
+                text: " ".to_string(),
+                style: None,
+                width: 1,
+            });
         }
-        fully_written
     }
 
-    fn push_grapheme(&mut self, g: &str, style: Style) {
-        if self.pos >= self.max_width {
-            return;
+    if overflow_left && !cells.is_empty() {
+        let w = cells[0].width;
+        let mut text = left_marker.to_string();
+        if w > 1 {
+            text.push_str(&" ".repeat((w - 1) as usize));
         }
-        if let Some(last) = self.spans.last_mut()
-            && last.style == Some(style)
-        {
-            last.text.push_str(g);
+        cells[0].text = text;
+        cells[0].style = Some(marker_style);
+    }
+
+    if overflow_right && !cells.is_empty() {
+        let idx = cells.len().saturating_sub(1);
+        let w = cells[idx].width;
+        let mut text = String::new();
+        if w > 1 {
+            text.push_str(&" ".repeat((w - 1) as usize));
+        }
+        text.push_str(right_marker);
+        cells[idx].text = text;
+        cells[idx].style = Some(marker_style);
+    }
+
+    let mut out: Vec<TitleBarSpan> = Vec::new();
+    let mut current_style = cells[0].style;
+    let mut current_text = String::new();
+    for cell in cells {
+        if cell.style == current_style {
+            current_text.push_str(&cell.text);
         } else {
-            self.spans.push(TitleBarSpan::styled(g, style));
+            if !current_text.is_empty() {
+                out.push(TitleBarSpan {
+                    text: current_text,
+                    style: current_style,
+                });
+            }
+            current_style = cell.style;
+            current_text = cell.text;
         }
-        let w = (UnicodeWidthStr::width(g) as u16).max(1);
-        self.pos = self.pos.saturating_add(w);
     }
+    if !current_text.is_empty() {
+        out.push(TitleBarSpan {
+            text: current_text,
+            style: current_style,
+        });
+    }
+
+    out
 }

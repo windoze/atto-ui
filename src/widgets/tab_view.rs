@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::ComponentCommand;
@@ -30,6 +31,7 @@ impl TabHeaderPosition {
 
 struct HeaderLayout {
     tab_ranges: Vec<(u16, u16)>,
+    total_width: u16,
 }
 
 #[derive(ComponentProperties)]
@@ -39,6 +41,7 @@ pub struct TabView {
     titles: Vec<Binding<String>>,
     selection: Binding<usize>,
     header_position: Binding<TabHeaderPosition>,
+    header_scroll: u16,
     last_area: Option<Rect>,
     last_header: Option<HeaderLayout>,
     focused: Option<ComponentId>,
@@ -59,6 +62,7 @@ impl TabView {
             titles: Vec::new(),
             selection: 0usize.into(),
             header_position: TabHeaderPosition::Top.into(),
+            header_scroll: 0,
             last_area: None,
             last_header: None,
             focused: None,
@@ -243,7 +247,7 @@ impl TabView {
         &self,
         ctx: ComponentContext<'_>,
         selected: Option<usize>,
-    ) -> (Line<'static>, Vec<(u16, u16)>) {
+    ) -> (Vec<Span<'static>>, Vec<(u16, u16)>, u16) {
         let separator = ctx.theme.glyph("tab-separator").unwrap_or("|");
         let active_left = ctx.theme.glyph("tab-active-left").unwrap_or(">");
         let active_right = ctx.theme.glyph("tab-active-right").unwrap_or("<");
@@ -278,7 +282,7 @@ impl TabView {
 
         if self.children.is_empty() {
             push_sep(&mut spans, &mut cursor, separator, separator_style);
-            return (Line::from(spans), ranges);
+            return (spans, ranges, cursor);
         }
 
         push_sep(&mut spans, &mut cursor, separator, separator_style);
@@ -309,7 +313,7 @@ impl TabView {
 
         push_sep(&mut spans, &mut cursor, separator, separator_style);
 
-        (Line::from(spans), ranges)
+        (spans, ranges, cursor)
     }
 
     fn set_selection(&mut self, idx: usize) -> EventResult {
@@ -382,6 +386,105 @@ impl TabView {
             }
         }
         width.saturating_add(sep)
+    }
+
+    fn clamp_header_scroll(&mut self, total_width: u16, view_width: u16) {
+        let max_scroll = total_width.saturating_sub(view_width);
+        if self.header_scroll > max_scroll {
+            self.header_scroll = max_scroll;
+        }
+    }
+
+    fn scroll_header_left(
+        &mut self,
+        ranges: &[(u16, u16)],
+        view_width: u16,
+        total_width: u16,
+    ) -> bool {
+        let prev = self.header_scroll;
+        if let Some(first) = first_visible_tab(ranges, self.header_scroll) {
+            if ranges[first].0 < self.header_scroll {
+                self.header_scroll = ranges[first].0;
+            } else if first > 0 {
+                self.header_scroll = ranges[first - 1].0;
+            } else {
+                self.header_scroll = 0;
+            }
+        }
+        self.clamp_header_scroll(total_width, view_width);
+        self.header_scroll != prev
+    }
+
+    fn scroll_header_right(
+        &mut self,
+        ranges: &[(u16, u16)],
+        view_width: u16,
+        total_width: u16,
+    ) -> bool {
+        let prev = self.header_scroll;
+        let view_right = self.header_scroll.saturating_add(view_width);
+        if let Some(last) = last_visible_tab(ranges, self.header_scroll, view_width) {
+            if ranges[last].1 > view_right {
+                self.header_scroll = ranges[last].1.saturating_sub(view_width);
+            } else if last + 1 < ranges.len() {
+                self.header_scroll = ranges[last + 1].1.saturating_sub(view_width);
+            }
+        }
+        self.clamp_header_scroll(total_width, view_width);
+        self.header_scroll != prev
+    }
+}
+
+fn first_visible_tab(ranges: &[(u16, u16)], scroll: u16) -> Option<usize> {
+    ranges.iter().position(|(_, end)| *end > scroll)
+}
+
+fn last_visible_tab(ranges: &[(u16, u16)], scroll: u16, width: u16) -> Option<usize> {
+    let right = scroll.saturating_add(width);
+    ranges.iter().rposition(|(start, _)| *start < right)
+}
+
+fn slice_spans(spans: &[Span<'static>], start: u16, width: u16) -> Vec<Span<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let end = start.saturating_add(width);
+    let mut col: u16 = 0;
+    let mut out: Vec<Span<'static>> = Vec::new();
+
+    for span in spans {
+        let style = span.style;
+        let mut buf = String::new();
+        for g in span.content.graphemes(true) {
+            let w = (UnicodeWidthStr::width(g) as u16).max(1);
+            let next = col.saturating_add(w);
+            if next <= start {
+                col = next;
+                continue;
+            }
+            if col >= end {
+                break;
+            }
+            buf.push_str(g);
+            col = next;
+            if col >= end {
+                break;
+            }
+        }
+        if !buf.is_empty() {
+            out.push(Span::styled(buf, style));
+        }
+        if col >= end {
+            break;
+        }
+    }
+    out
+}
+
+fn draw_marker(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &str, style: Style) {
+    if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+        cell.set_symbol(symbol);
+        cell.set_style(style);
     }
 }
 
@@ -504,28 +607,51 @@ impl Component for TabView {
             if contains(header_local, local_x, local_y) {
                 if m.kind == MouseEventKind::Down(MouseButton::Left)
                     && let Some(layout) = &self.last_header
-                    && let Some((idx, _)) = layout
-                        .tab_ranges
+                {
+                    let header_width = header_local.width;
+                    let total_width = layout.total_width;
+                    let ranges = layout.tab_ranges.clone();
+                    let overflow_left = self.header_scroll > 0;
+                    let overflow_right =
+                        self.header_scroll.saturating_add(header_width) < total_width;
+
+                    if overflow_left && local_x == header_local.x {
+                        let _ = self.scroll_header_left(&ranges, header_width, total_width);
+                        return EventResult::consumed();
+                    }
+                    if overflow_right
+                        && local_x
+                            == header_local
+                                .x
+                                .saturating_add(header_width.saturating_sub(1))
+                    {
+                        let _ = self.scroll_header_right(&ranges, header_width, total_width);
+                        return EventResult::consumed();
+                    }
+
+                    let full_x = local_x.saturating_add(self.header_scroll);
+                    if let Some((idx, _)) = ranges
                         .iter()
                         .enumerate()
-                        .find(|(_, (start, end))| local_x >= *start && local_x < *end)
-                {
-                    let prev = self.selection.get();
-                    if prev != idx {
-                        self.selection.set(idx);
-                        self.emit_change();
-                        self.normalize_selection();
-                        if let Some(child) = self.children.get_mut(idx) {
-                            if child.view.is_focusable() {
-                                self.focused = Some(child.id);
-                                let _ = child.view.focus_first();
-                            } else {
-                                self.focused = None;
+                        .find(|(_, (start, end))| full_x >= *start && full_x < *end)
+                    {
+                        let prev = self.selection.get();
+                        if prev != idx {
+                            self.selection.set(idx);
+                            self.emit_change();
+                            self.normalize_selection();
+                            if let Some(child) = self.children.get_mut(idx) {
+                                if child.view.is_focusable() {
+                                    self.focused = Some(child.id);
+                                    let _ = child.view.focus_first();
+                                } else {
+                                    self.focused = None;
+                                }
                             }
+                            return EventResult::changed();
                         }
-                        return EventResult::changed();
+                        return EventResult::consumed();
                     }
-                    return EventResult::consumed();
                 }
                 return EventResult::ignored();
             }
@@ -586,15 +712,51 @@ impl Component for TabView {
         let (header_abs, content_abs) = Self::header_and_content(area, position);
 
         if header_abs.height > 0 && header_abs.width > 0 {
-            let (line, ranges) = self.build_header_line(ctx, selected);
-            self.last_header = Some(HeaderLayout { tab_ranges: ranges });
+            let (line, ranges, total_width) = self.build_header_line(ctx, selected);
+            let header_width = header_abs.width;
+            self.clamp_header_scroll(total_width, header_width);
+
+            let visible = if total_width > header_width {
+                slice_spans(&line, self.header_scroll, header_width)
+            } else {
+                line
+            };
 
             let base_style = ctx
                 .theme
                 .named_style("tab-header")
                 .unwrap_or(ctx.theme.widget.normal);
-            let paragraph = Paragraph::new(line).style(base_style);
+            let paragraph = Paragraph::new(Line::from(visible)).style(base_style);
             frame.render_widget(paragraph, header_abs);
+
+            let overflow_left = self.header_scroll > 0;
+            let overflow_right = self.header_scroll.saturating_add(header_width) < total_width;
+            let marker_style = ctx
+                .theme
+                .named_style("tab-title-marker")
+                .or_else(|| ctx.theme.named_style("scrollbar-arrow"))
+                .unwrap_or(ctx.theme.widget.accent);
+
+            if overflow_left {
+                let symbol = ctx
+                    .theme
+                    .glyph("scrollbar-left-arrow")
+                    .unwrap_or("\u{25C4}");
+                draw_marker(frame, header_abs.x, header_abs.y, symbol, marker_style);
+            }
+            if overflow_right {
+                let symbol = ctx
+                    .theme
+                    .glyph("scrollbar-right-arrow")
+                    .unwrap_or("\u{25BA}");
+                let x = header_abs.x.saturating_add(header_width.saturating_sub(1));
+                draw_marker(frame, x, header_abs.y, symbol, marker_style);
+            }
+
+            self.last_header = Some(HeaderLayout {
+                tab_ranges: ranges,
+                total_width,
+            });
         } else {
             self.last_header = None;
         }
