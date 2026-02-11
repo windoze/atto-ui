@@ -11,6 +11,7 @@ use ratatui::layout::Rect;
 
 use ::atto_ui as atto_ui_crate;
 use atto_ui_crate::app::{AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar};
+use atto_ui_crate::DesktopInspector;
 use atto_ui_crate::runtime::builtin_registry;
 use atto_ui_crate::theme::Theme;
 use atto_ui_crate::wm::{WindowId, WindowKind};
@@ -103,6 +104,19 @@ impl PyAppHost {
         Ok(list.into_any().unbind())
     }
 
+    fn get_property(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+    ) -> PyResult<PyObject> {
+        let mut inspector = DesktopInspector::new(self.host.desktop());
+        let value = inspector
+            .get_property(&id, &name)
+            .map_err(|err| to_py_err(format!("{err:?}")))?;
+        component_value_to_py(py, &value)
+    }
+
     fn schemas(&self, py: Python<'_>) -> PyResult<PyObject> {
         let registry = builtin_registry(self.callbacks.clone());
         let list = PyList::empty(py);
@@ -114,7 +128,7 @@ impl PyAppHost {
 }
 
 #[pymodule]
-fn atto_ui(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAppHost>()?;
     Ok(())
 }

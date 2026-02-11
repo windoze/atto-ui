@@ -9,4 +9,4 @@ description = "Python bindings for atto-ui"
 requires-python = ">=3.9"
 
 [tool.maturin]
-module-name = "atto_ui"
+module-name = "atto_ui._native"

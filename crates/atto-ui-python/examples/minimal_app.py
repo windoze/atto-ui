@@ -1,35 +1,25 @@
-import time
 import atto_ui
 
 
+def on_click(event: atto_ui.Event, source: atto_ui.ComponentRef):
+    if source is None:
+        return
+    source.window.elements["text1"].set_text("Button Clicked")
+
+
 def main():
-    app = atto_ui.AppHost()
+    app = atto_ui.App()
 
-    root = {
-        "type": "VStack",
-        "id": "root",
-        "props": {"spacing": 1},
-        "children": [
-            {"type": "Label", "id": "title", "props": {"text": "Hello from Python"}},
-            {"type": "Button", "id": "ok", "props": {"label": "OK"}},
-            {"type": "TextBox", "id": "input", "props": {"title": "Name"}},
-        ],
-    }
-
-    win_id = app.add_dynamic_window("Python Demo", (2, 2, 50, 14), root)
-
-    app.apply_tree_ops(
-        win_id,
-        [
-            {"op": "bind_event", "id": "ok", "event": "click", "callback": 1},
-            {"op": "bind_event", "id": "input", "event": "submit", "callback": 2},
+    root = atto_ui.VStack(
+        spacing=1,
+        children=[
+            atto_ui.Button(label="Click me", on_click=on_click, disabled=False),
+            atto_ui.Text("Hello World", cid="text1"),
         ],
     )
 
-    while app.step():
-        for ev in app.drain_callbacks():
-            print("callback", ev)
-        time.sleep(0.0)
+    app.add_dynamic_window(title="My Window", content=root)
+    app.run()
 
 
 if __name__ == "__main__":
