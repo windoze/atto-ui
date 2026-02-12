@@ -4,11 +4,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    Component, ComponentContext, ComponentTag, EdgeInsets, EventResult, ScrollConfig,
-    ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
+    Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
+    ScrollContainerHost, ScrollContent, ScrollContentContext,
 };
 use atto_ui::reactive::Binding;
-use atto_ui::runtime::CallbackHandle;
+use atto_ui::runtime::{
+    CallbackHandle, component_schema, event_handle, invalid_prop, prop_bool, prop_string, prop_u16,
+    prop_u64, register_registry_extension, wrap_with_id,
+};
 use atto_ui::text::TextBuffer;
 use atto_ui::{
     CallbackRegistry, ComponentError, ComponentPropertySchema, ComponentRegistry, ComponentSchema,
@@ -1383,12 +1386,30 @@ fn parse_node_value(value: &ComponentValue) -> Result<FileTreeNode, String> {
 }
 
 pub fn file_tree_schema() -> ComponentSchema {
-    ComponentSchema::new("FileTree")
-        .with_properties(FileTree::property_schema())
+    component_schema::<FileTree>("FileTree")
         .with_event(EventMeta::new("select").with_payload(ValueType::U64))
         .with_event(EventMeta::new("rename").with_payload(ValueType::Map))
         .with_event(EventMeta::new("delete").with_payload(ValueType::Map))
         .allow_children(false)
+}
+
+fn register_file_tree_extension(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    register_file_tree(registry, callbacks);
+}
+
+/// 将 `FileTree` 组件注册到 `atto-ui` 的全局动态组件注册表中。
+///
+/// 这使得 `Window::new_dynamic` / `Desktop::add_dynamic_window` 等基础框架入口
+/// 在构建动态树时能够识别 `{"type": "FileTree", ...}`。
+///
+/// 返回：
+/// - `true`：本次注册成功
+/// - `false`：已注册过（幂等）
+pub fn register_runtime_components() -> bool {
+    register_registry_extension("atto-ui-file-tree", register_file_tree_extension)
 }
 
 pub fn register_file_tree(
@@ -1424,82 +1445,12 @@ pub fn register_file_tree(
     });
 }
 
-fn wrap_with_id(spec: &ComponentSpec, view: Box<dyn Component>) -> Box<dyn Component> {
-    match &spec.id {
-        Some(id) => Box::new(ComponentTag::boxed(id.clone(), view)),
-        None => view,
-    }
-}
-
-fn event_handle(
-    spec: &ComponentSpec,
-    name: &str,
-    callbacks: CallbackRegistry,
-) -> Option<CallbackHandle> {
-    let callback = spec.events.get(name).copied()?;
-    Some(CallbackHandle::new(
-        callbacks,
-        callback,
-        spec.id.clone(),
-        name.to_string(),
-    ))
-}
-
-fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, TreeError> {
-    match spec.props.get(name) {
-        Some(ComponentValue::String(v)) => Ok(Some(v.clone())),
-        Some(other) => Err(invalid_prop(spec, name, "string", other)),
-        None => Ok(None),
-    }
-}
-
-fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, TreeError> {
-    match spec.props.get(name) {
-        Some(ComponentValue::Bool(v)) => Ok(Some(*v)),
-        Some(other) => Err(invalid_prop(spec, name, "bool", other)),
-        None => Ok(None),
-    }
-}
-
-fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, TreeError> {
-    match spec.props.get(name) {
-        Some(value) => match value.as_u64() {
-            Some(v) => Ok(Some(v.min(u16::MAX as u64) as u16)),
-            None => Err(invalid_prop(spec, name, "u16", value)),
-        },
-        None => Ok(None),
-    }
-}
-
-fn prop_u64(spec: &ComponentSpec, name: &str) -> Result<Option<u64>, TreeError> {
-    match spec.props.get(name) {
-        Some(value) => match value.as_u64() {
-            Some(v) => Ok(Some(v)),
-            None => Err(invalid_prop(spec, name, "u64", value)),
-        },
-        None => Ok(None),
-    }
-}
-
 fn prop_nodes(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<FileTreeNode>>, TreeError> {
     match spec.props.get(name) {
         Some(value) => parse_nodes_value(value)
             .map(Some)
             .map_err(|reason| invalid_prop(spec, name, &reason, value)),
         None => Ok(None),
-    }
-}
-
-fn invalid_prop(
-    spec: &ComponentSpec,
-    name: &str,
-    expected: &str,
-    value: &ComponentValue,
-) -> TreeError {
-    TreeError::InvalidProperty {
-        id: spec.id.clone().unwrap_or_else(|| spec.type_name.clone()),
-        name: name.to_string(),
-        reason: format!("expected {expected}, got {value:?}"),
     }
 }
 

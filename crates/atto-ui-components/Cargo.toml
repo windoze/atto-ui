@@ -1,0 +1,20 @@
+[package]
+name = "atto-ui-components"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+atto-ui-chat = { path = "../atto-ui-chat", optional = true }
+atto-ui-editor = { path = "../atto-ui-editor", optional = true }
+atto-ui-file-tree = { path = "../atto-ui-file-tree", optional = true }
+atto-ui-markdown = { path = "../atto-ui-markdown", optional = true }
+atto-ui-terminal = { path = "../atto-ui-terminal", optional = true }
+
+[features]
+default = ["chat", "editor", "file-tree", "markdown", "terminal"]
+
+chat = ["dep:atto-ui-chat"]
+editor = ["dep:atto-ui-editor"]
+file-tree = ["dep:atto-ui-file-tree"]
+markdown = ["dep:atto-ui-markdown"]
+terminal = ["dep:atto-ui-terminal"]

@@ -20,6 +20,7 @@ use std::process::Command as ProcessCommand;
 
 use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig};
 use atto_ui::reactive::{DirtyObserver, EventQueue};
+use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 
 use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode, EditorSyntaxConfig};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
@@ -1553,6 +1554,69 @@ impl EditorView {
 }
 
 impl Component for EditorView {
+    fn property_names(&self) -> Vec<&'static str> {
+        vec![
+            "text",
+            "language_id",
+            "show_line_numbers",
+            "show_folding_markers",
+            "tab_width",
+            "insert_spaces",
+        ]
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        match name {
+            "text" => Some(ComponentValue::String(self.config.text.get())),
+            "language_id" => Some(ComponentValue::String(self.config.language_id.get())),
+            "show_line_numbers" => Some(ComponentValue::Bool(self.config.show_line_numbers.get())),
+            "show_folding_markers" => {
+                Some(ComponentValue::Bool(self.config.show_folding_markers.get()))
+            }
+            "tab_width" => Some(ComponentValue::U64(
+                self.config.indent.tab_width.get() as u64
+            )),
+            "insert_spaces" => Some(ComponentValue::Bool(self.config.indent.insert_spaces.get())),
+            _ => None,
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
+        match name {
+            "text" => {
+                let v = <String as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.text.set(v);
+                Ok(())
+            }
+            "language_id" => {
+                let v = <String as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.language_id.set(v);
+                Ok(())
+            }
+            "show_line_numbers" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.show_line_numbers.set(v);
+                Ok(())
+            }
+            "show_folding_markers" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.show_folding_markers.set(v);
+                Ok(())
+            }
+            "tab_width" => {
+                let v = <usize as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.indent.tab_width.set(v);
+                Ok(())
+            }
+            "insert_spaces" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.indent.insert_spaces.set(v);
+                Ok(())
+            }
+            _ => Err(ComponentError::unsupported_property(name)),
+        }
+    }
+
     fn is_focusable(&self) -> bool {
         true
     }

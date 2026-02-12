@@ -6,6 +6,7 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Spinner, SpinnerIconStyle};
+use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
 use crossterm::event::Event;
 use ratatui::Frame;
@@ -13,6 +14,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus};
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
@@ -190,6 +192,71 @@ impl ChatMessageList {
 }
 
 impl Component for ChatMessageList {
+    fn property_names(&self) -> Vec<&'static str> {
+        vec![
+            "messages",
+            "spacing",
+            "padding",
+            "wrap_width",
+            "show_timestamps",
+            "auto_scroll",
+        ]
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        match name {
+            "messages" => Some(messages_to_component_value(&self.messages.get())),
+            "spacing" => Some(ComponentValue::U64(self.config.spacing.get() as u64)),
+            "padding" => Some(self.config.padding.get().to_component_value()),
+            "wrap_width" => Some(ComponentValue::U64(self.config.wrap_width as u64)),
+            "show_timestamps" => Some(ComponentValue::Bool(self.config.show_timestamps)),
+            "auto_scroll" => Some(ComponentValue::Bool(self.auto_scroll)),
+            _ => None,
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
+        match name {
+            "messages" => {
+                let messages = parse_messages_value(&value)
+                    .map_err(|_| ComponentError::invalid_value(name, "chat messages"))?;
+                self.messages.set(messages);
+                Ok(())
+            }
+            "spacing" => {
+                let spacing = <u16 as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.spacing.set(spacing);
+                self.rebuild_list();
+                Ok(())
+            }
+            "padding" => {
+                let padding =
+                    <EdgeInsets as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.padding.set(padding);
+                self.rebuild_list();
+                Ok(())
+            }
+            "wrap_width" => {
+                let width = <u16 as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.wrap_width = width.max(1);
+                self.rebuild_list();
+                Ok(())
+            }
+            "show_timestamps" => {
+                let show = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.show_timestamps = show;
+                self.rebuild_list();
+                Ok(())
+            }
+            "auto_scroll" => {
+                let enabled = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.auto_scroll = enabled;
+                Ok(())
+            }
+            _ => Err(ComponentError::unsupported_property(name)),
+        }
+    }
+
     fn min_width(&self) -> u16 {
         self.list.min_width()
     }

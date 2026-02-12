@@ -71,6 +71,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-ui-components"
+version = "0.1.0"
+dependencies = [
+ "atto-ui-chat",
+ "atto-ui-editor",
+ "atto-ui-file-tree",
+ "atto-ui-markdown",
+ "atto-ui-terminal",
+]
+
+[[package]]
 name = "atto-ui-editor"
 version = "0.1.0"
 dependencies = [
@@ -130,6 +141,7 @@ name = "atto-ui-python"
 version = "0.1.0"
 dependencies = [
  "atto-ui",
+ "atto-ui-components",
  "atto-ui-runtime",
  "pyo3",
  "pyo3-build-config",

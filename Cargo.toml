@@ -74,6 +74,7 @@ members = [
     "crates/atto-ui-test-host",
     "crates/atto-ui-macros",
     "crates/atto-ui-chat",
+    "crates/atto-ui-components",
     "crates/atto-ui-markdown",
     "crates/atto-ui-editor",
     "crates/atto-ui-terminal",

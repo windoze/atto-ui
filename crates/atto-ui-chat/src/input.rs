@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use atto_ui::composable::{
@@ -6,6 +7,7 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{Binding, DirtyObserver, Property};
 use atto_ui::widgets::{Button, RadioGroup, TextBox};
+use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -125,6 +127,262 @@ pub enum ChatInputResponse {
     Text(String),
     Choice { index: usize, label: String },
     Custom(String),
+}
+
+fn normalize_mode_kind(kind: &str) -> String {
+    kind.chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' '))
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+pub(crate) fn chat_input_mode_to_component_value(mode: &ChatInputMode) -> ComponentValue {
+    let mut map = BTreeMap::<String, ComponentValue>::new();
+    match mode {
+        ChatInputMode::Text(cfg) => {
+            map.insert(
+                "type".to_string(),
+                ComponentValue::String("text".to_string()),
+            );
+            map.insert(
+                "title".to_string(),
+                ComponentValue::String(cfg.title.clone()),
+            );
+            map.insert(
+                "placeholder".to_string(),
+                cfg.placeholder
+                    .as_ref()
+                    .map(|ph| ComponentValue::String(ph.clone()))
+                    .unwrap_or(ComponentValue::Null),
+            );
+        }
+        ChatInputMode::Choice(cfg) => {
+            map.insert(
+                "type".to_string(),
+                ComponentValue::String("choice".to_string()),
+            );
+            map.insert(
+                "prompt".to_string(),
+                ComponentValue::String(cfg.prompt.clone()),
+            );
+            map.insert(
+                "options".to_string(),
+                ComponentValue::StringList(cfg.options.clone()),
+            );
+            map.insert(
+                "allow_custom".to_string(),
+                ComponentValue::Bool(cfg.allow_custom),
+            );
+            map.insert(
+                "submit_label".to_string(),
+                ComponentValue::String(cfg.submit_label.clone()),
+            );
+        }
+        ChatInputMode::Confirm(cfg) => {
+            map.insert(
+                "type".to_string(),
+                ComponentValue::String("confirm".to_string()),
+            );
+            map.insert(
+                "prompt".to_string(),
+                ComponentValue::String(cfg.prompt.clone()),
+            );
+            map.insert(
+                "yes_label".to_string(),
+                ComponentValue::String(cfg.yes_label.clone()),
+            );
+            map.insert(
+                "no_label".to_string(),
+                ComponentValue::String(cfg.no_label.clone()),
+            );
+            map.insert(
+                "allow_custom".to_string(),
+                ComponentValue::Bool(cfg.allow_custom),
+            );
+        }
+        ChatInputMode::Custom => {
+            map.insert(
+                "type".to_string(),
+                ComponentValue::String("custom".to_string()),
+            );
+        }
+    }
+    ComponentValue::Map(map)
+}
+
+fn parse_string_list_value(value: &ComponentValue) -> Result<Vec<String>, String> {
+    match value {
+        ComponentValue::StringList(values) => Ok(values.clone()),
+        ComponentValue::List(values) => {
+            let mut out = Vec::with_capacity(values.len());
+            for cell in values {
+                let Some(s) = cell.as_str() else {
+                    return Err(format!("options list must contain strings, got {cell:?}"));
+                };
+                out.push(s.to_string());
+            }
+            Ok(out)
+        }
+        other => Err(format!("expected string list, got {other:?}")),
+    }
+}
+
+fn parse_optional_string_value(
+    value: &ComponentValue,
+    field: &str,
+) -> Result<Option<String>, String> {
+    match value {
+        ComponentValue::Null => Ok(None),
+        ComponentValue::String(v) => Ok(Some(v.clone())),
+        other => Err(format!(
+            "expected string or null for '{field}', got {other:?}"
+        )),
+    }
+}
+
+fn parse_string_value(value: &ComponentValue, field: &str) -> Result<String, String> {
+    value
+        .as_str()
+        .map(|v| v.to_string())
+        .ok_or_else(|| format!("expected string for '{field}', got {value:?}"))
+}
+
+fn parse_bool_value(value: &ComponentValue, field: &str) -> Result<bool, String> {
+    match value {
+        ComponentValue::Bool(v) => Ok(*v),
+        other => Err(format!("expected bool for '{field}', got {other:?}")),
+    }
+}
+
+pub(crate) fn parse_chat_input_mode_value(value: &ComponentValue) -> Result<ChatInputMode, String> {
+    match value {
+        ComponentValue::Null => Ok(ChatInputMode::text(
+            "Message",
+            Some("Type a message...".to_string()),
+        )),
+        ComponentValue::String(raw) => match normalize_mode_kind(raw).as_str() {
+            "text" => Ok(ChatInputMode::text(
+                "Message",
+                Some("Type a message...".to_string()),
+            )),
+            "choice" => Ok(ChatInputMode::choice("Choose", Vec::new())),
+            "confirm" => Ok(ChatInputMode::confirm("Confirm")),
+            "custom" => Ok(ChatInputMode::Custom),
+            _ => Err(format!("unknown mode '{raw}'")),
+        },
+        ComponentValue::Map(map) => {
+            let kind_raw = map
+                .get("type")
+                .and_then(ComponentValue::as_str)
+                .ok_or_else(|| "mode map must contain string field 'type'".to_string())?;
+            match normalize_mode_kind(kind_raw).as_str() {
+                "text" => {
+                    let title = map
+                        .get("title")
+                        .map(|v| parse_string_value(v, "title"))
+                        .transpose()?
+                        .unwrap_or_else(|| "Message".to_string());
+                    let placeholder = if let Some(v) = map.get("placeholder") {
+                        parse_optional_string_value(v, "placeholder")?
+                    } else {
+                        Some("Type a message...".to_string())
+                    };
+                    Ok(ChatInputMode::Text(ChatTextInputConfig {
+                        title,
+                        placeholder,
+                    }))
+                }
+                "choice" => {
+                    let prompt = map
+                        .get("prompt")
+                        .map(|v| parse_string_value(v, "prompt"))
+                        .transpose()?
+                        .unwrap_or_else(|| "Choose".to_string());
+                    let options = map
+                        .get("options")
+                        .map(parse_string_list_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    let allow_custom = map
+                        .get("allow_custom")
+                        .map(|v| parse_bool_value(v, "allow_custom"))
+                        .transpose()?
+                        .unwrap_or(false);
+                    let submit_label = map
+                        .get("submit_label")
+                        .map(|v| parse_string_value(v, "submit_label"))
+                        .transpose()?
+                        .unwrap_or_else(|| "Submit".to_string());
+                    Ok(ChatInputMode::Choice(ChatChoiceInputConfig {
+                        prompt,
+                        options,
+                        allow_custom,
+                        submit_label,
+                    }))
+                }
+                "confirm" => {
+                    let prompt = map
+                        .get("prompt")
+                        .map(|v| parse_string_value(v, "prompt"))
+                        .transpose()?
+                        .unwrap_or_else(|| "Confirm".to_string());
+                    let yes_label = map
+                        .get("yes_label")
+                        .map(|v| parse_string_value(v, "yes_label"))
+                        .transpose()?
+                        .unwrap_or_else(|| "Yes".to_string());
+                    let no_label = map
+                        .get("no_label")
+                        .map(|v| parse_string_value(v, "no_label"))
+                        .transpose()?
+                        .unwrap_or_else(|| "No".to_string());
+                    let allow_custom = map
+                        .get("allow_custom")
+                        .map(|v| parse_bool_value(v, "allow_custom"))
+                        .transpose()?
+                        .unwrap_or(false);
+                    Ok(ChatInputMode::Confirm(ChatConfirmInputConfig {
+                        prompt,
+                        yes_label,
+                        no_label,
+                        allow_custom,
+                    }))
+                }
+                "custom" => Ok(ChatInputMode::Custom),
+                other => Err(format!("unknown mode type '{other}'")),
+            }
+        }
+        other => Err(format!("expected string or map, got {other:?}")),
+    }
+}
+
+pub(crate) fn chat_input_response_to_component_value(resp: ChatInputResponse) -> ComponentValue {
+    let mut out = BTreeMap::<String, ComponentValue>::new();
+    match resp {
+        ChatInputResponse::Text(text) => {
+            out.insert(
+                "type".to_string(),
+                ComponentValue::String("text".to_string()),
+            );
+            out.insert("text".to_string(), ComponentValue::String(text));
+        }
+        ChatInputResponse::Choice { index, label } => {
+            out.insert(
+                "type".to_string(),
+                ComponentValue::String("choice".to_string()),
+            );
+            out.insert("index".to_string(), ComponentValue::U64(index as u64));
+            out.insert("label".to_string(), ComponentValue::String(label));
+        }
+        ChatInputResponse::Custom(text) => {
+            out.insert(
+                "type".to_string(),
+                ComponentValue::String("custom".to_string()),
+            );
+            out.insert("text".to_string(), ComponentValue::String(text));
+        }
+    }
+    ComponentValue::Map(out)
 }
 
 #[derive(Clone, Debug)]
@@ -472,6 +730,74 @@ impl ChatInputPanel {
 }
 
 impl Component for ChatInputPanel {
+    fn property_names(&self) -> Vec<&'static str> {
+        vec![
+            "mode",
+            "draft",
+            "custom",
+            "selection",
+            "enabled",
+            "clear_on_submit",
+        ]
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        match name {
+            "mode" => Some(chat_input_mode_to_component_value(&self.mode.get())),
+            "draft" => Some(ComponentValue::String(self.draft.get())),
+            "custom" => Some(ComponentValue::String(self.custom.get())),
+            "selection" => Some(ComponentValue::U64(self.selection.get() as u64)),
+            "enabled" => Some(ComponentValue::Bool(self.enabled.get())),
+            "clear_on_submit" => Some(ComponentValue::Bool(self.clear_on_submit.get())),
+            _ => None,
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
+        match name {
+            "mode" => {
+                let mode = parse_chat_input_mode_value(&value)
+                    .map_err(|_| ComponentError::invalid_value(name, "chat input mode"))?;
+                self.mode.set(mode);
+                self.sync_mode();
+                Ok(())
+            }
+            "draft" => {
+                let draft = <String as ComponentValueCodec>::from_component_value(value, name)?;
+                self.draft.set(draft);
+                Ok(())
+            }
+            "custom" => {
+                let custom = <String as ComponentValueCodec>::from_component_value(value, name)?;
+                self.custom.set(custom);
+                Ok(())
+            }
+            "selection" => {
+                let selection = <usize as ComponentValueCodec>::from_component_value(value, name)?;
+                let selection = match &self.mode.get() {
+                    ChatInputMode::Choice(cfg) if !cfg.options.is_empty() => {
+                        selection.min(cfg.options.len().saturating_sub(1))
+                    }
+                    ChatInputMode::Confirm(_) => selection.min(1),
+                    _ => selection,
+                };
+                self.selection.set(selection);
+                Ok(())
+            }
+            "enabled" => {
+                let enabled = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.enabled.set(enabled);
+                Ok(())
+            }
+            "clear_on_submit" => {
+                let clear = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.clear_on_submit.set(clear);
+                Ok(())
+            }
+            _ => Err(ComponentError::unsupported_property(name)),
+        }
+    }
+
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.sync_mode();
         match &mut self.view {

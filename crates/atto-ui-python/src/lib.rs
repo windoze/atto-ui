@@ -10,9 +10,10 @@ use pyo3::{Bound, IntoPyObjectExt, Py};
 use ratatui::layout::Rect;
 
 use ::atto_ui as atto_ui_crate;
-use atto_ui_crate::app::{AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar};
+use atto_ui_components::register_all_runtime_components;
 use atto_ui_crate::DesktopInspector;
-use atto_ui_crate::runtime::builtin_registry;
+use atto_ui_crate::app::{AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar};
+use atto_ui_crate::runtime::global_registry;
 use atto_ui_crate::theme::Theme;
 use atto_ui_crate::wm::{WindowId, WindowKind};
 use atto_ui_crate::{
@@ -35,6 +36,8 @@ struct PyAppHost {
 impl PyAppHost {
     #[new]
     fn new() -> PyResult<Self> {
+        register_all_runtime_components();
+
         let config = CrosstermAppConfig::default()
             .tick_rate(Duration::from_millis(16))
             .mouse_capture(true)
@@ -104,12 +107,7 @@ impl PyAppHost {
         Ok(list.into_any().unbind())
     }
 
-    fn get_property(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-    ) -> PyResult<PyObject> {
+    fn get_property(&mut self, py: Python<'_>, id: String, name: String) -> PyResult<PyObject> {
         let mut inspector = DesktopInspector::new(self.host.desktop());
         let value = inspector
             .get_property(&id, &name)
@@ -118,7 +116,7 @@ impl PyAppHost {
     }
 
     fn schemas(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let registry = builtin_registry(self.callbacks.clone());
+        let registry = global_registry(self.callbacks.clone());
         let list = PyList::empty(py);
         for schema in registry.schemas() {
             list.append(component_schema_to_py(py, schema)?)?;

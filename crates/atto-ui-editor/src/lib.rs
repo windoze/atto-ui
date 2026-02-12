@@ -11,6 +11,7 @@
 //! `atto_ui::theme::Theme` for text styling.
 
 mod config;
+mod dynamic;
 mod keymap;
 mod popup;
 mod theme;
@@ -20,6 +21,7 @@ pub use config::{
     EditorCompletionConfig, EditorConfig, EditorHoverConfig, EditorIndentConfig, EditorLspConfig,
     EditorLspGotoKind, EditorLspMode, EditorScrollConfig, EditorSyntaxConfig,
 };
+pub use dynamic::{editor_schema, register_editor, register_runtime_components};
 pub use keymap::{EditorAction, EditorKeymap, KeyChord};
 pub use popup::{
     CompletionItem, CompletionPopupModel, EditorPopupWindows, HoverPopupModel,

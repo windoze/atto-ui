@@ -1,8 +1,11 @@
 //! Runtime integration layer.
 
+use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::OnceLock;
 
 use crossterm::event::Event;
+use parking_lot::Mutex;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
@@ -73,6 +76,46 @@ impl fmt::Debug for CallbackHandle {
     }
 }
 
+/// 全局组件注册表扩展。
+///
+/// 通过扩展注册，可以让上层 crate（例如 `atto-ui-file-tree`）在不修改基础框架的情况下
+/// 将自己的组件注册到动态系统中。
+pub type RegistryExtension = fn(&mut ComponentRegistry<Box<dyn Component>>, CallbackRegistry);
+
+static REGISTRY_EXTENSIONS: OnceLock<Mutex<BTreeMap<String, RegistryExtension>>> = OnceLock::new();
+
+fn registry_extensions() -> &'static Mutex<BTreeMap<String, RegistryExtension>> {
+    REGISTRY_EXTENSIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// 注册一个全局组件注册表扩展（幂等）。
+///
+/// 返回：
+/// - `true`：本次注册成功（此前没有同名扩展）
+/// - `false`：已存在同名扩展，本次调用不会覆盖
+pub fn register_registry_extension(name: impl Into<String>, register: RegistryExtension) -> bool {
+    let name = name.into();
+    let mut guard = registry_extensions().lock();
+    if guard.contains_key(&name) {
+        return false;
+    }
+    guard.insert(name, register);
+    true
+}
+
+/// 动态组件注册表：内置组件 + 全局扩展组件。
+pub fn global_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dyn Component>> {
+    let mut registry = builtin_registry(callbacks.clone());
+    let extensions = {
+        let guard = registry_extensions().lock();
+        guard.values().copied().collect::<Vec<_>>()
+    };
+    for register in extensions {
+        register(&mut registry, callbacks.clone());
+    }
+    registry
+}
+
 pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dyn Component>> {
     let mut registry = ComponentRegistry::new();
 
@@ -110,7 +153,7 @@ pub struct ComponentTree {
 
 impl ComponentTree {
     pub fn new(root: ComponentSpec, callbacks: CallbackRegistry) -> Result<Self, TreeError> {
-        let registry = builtin_registry(callbacks.clone());
+        let registry = global_registry(callbacks.clone());
         Self::new_with_registry(root, callbacks, registry)
     }
 
@@ -671,7 +714,7 @@ enum StackAxis {
     Horizontal,
 }
 
-fn component_schema<T: ComponentPropertySchema>(type_name: &str) -> ComponentSchema {
+pub fn component_schema<T: ComponentPropertySchema>(type_name: &str) -> ComponentSchema {
     let mut schema = ComponentSchema::new(type_name).with_properties(T::property_schema());
     schema.dedup_properties();
     schema
@@ -1129,14 +1172,14 @@ fn register_visibility(registry: &mut ComponentRegistry<Box<dyn Component>>) {
     });
 }
 
-fn wrap_with_id(spec: &ComponentSpec, view: Box<dyn Component>) -> Box<dyn Component> {
+pub fn wrap_with_id(spec: &ComponentSpec, view: Box<dyn Component>) -> Box<dyn Component> {
     match &spec.id {
         Some(id) => Box::new(crate::composable::ComponentTag::boxed(id.clone(), view)),
         None => view,
     }
 }
 
-fn event_handle(
+pub fn event_handle(
     spec: &ComponentSpec,
     name: &str,
     callbacks: CallbackRegistry,
@@ -1211,7 +1254,7 @@ fn edge_insets_from_spec(spec: EdgeInsetsSpec) -> EdgeInsets {
     }
 }
 
-fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, TreeError> {
+pub fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::String(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "string", other)),
@@ -1219,7 +1262,7 @@ fn prop_string(spec: &ComponentSpec, name: &str) -> Result<Option<String>, TreeE
     }
 }
 
-fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, TreeError> {
+pub fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::Bool(v)) => Ok(Some(*v)),
         Some(other) => Err(invalid_prop(spec, name, "bool", other)),
@@ -1227,7 +1270,7 @@ fn prop_bool(spec: &ComponentSpec, name: &str) -> Result<Option<bool>, TreeError
     }
 }
 
-fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, TreeError> {
+pub fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_u64() {
             Some(v) => Ok(Some(v.min(u16::MAX as u64) as u16)),
@@ -1237,7 +1280,17 @@ fn prop_u16(spec: &ComponentSpec, name: &str) -> Result<Option<u16>, TreeError> 
     }
 }
 
-fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, TreeError> {
+pub fn prop_u64(spec: &ComponentSpec, name: &str) -> Result<Option<u64>, TreeError> {
+    match spec.props.get(name) {
+        Some(value) => match value.as_u64() {
+            Some(v) => Ok(Some(v)),
+            None => Err(invalid_prop(spec, name, "u64", value)),
+        },
+        None => Ok(None),
+    }
+}
+
+pub fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_u64() {
             Some(v) => Ok(Some(v as usize)),
@@ -1247,7 +1300,7 @@ fn prop_usize(spec: &ComponentSpec, name: &str) -> Result<Option<usize>, TreeErr
     }
 }
 
-fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> {
+pub fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> {
     match spec.props.get(name) {
         Some(value) => match value.as_f64() {
             Some(v) => Ok(Some(v)),
@@ -1257,7 +1310,7 @@ fn prop_f64(spec: &ComponentSpec, name: &str) -> Result<Option<f64>, TreeError> 
     }
 }
 
-fn prop_vec_string(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<String>>, TreeError> {
+pub fn prop_vec_string(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<String>>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::StringList(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "string list", other)),
@@ -1265,7 +1318,7 @@ fn prop_vec_string(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<String
     }
 }
 
-fn prop_table(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<Vec<String>>>, TreeError> {
+pub fn prop_table(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<Vec<String>>>, TreeError> {
     match spec.props.get(name) {
         Some(ComponentValue::Table(v)) => Ok(Some(v.clone())),
         Some(other) => Err(invalid_prop(spec, name, "table", other)),
@@ -1351,7 +1404,7 @@ fn edge_insets_from_value(
     }
 }
 
-fn invalid_prop(
+pub fn invalid_prop(
     spec: &ComponentSpec,
     name: &str,
     expected: &str,
@@ -1361,6 +1414,18 @@ fn invalid_prop(
         id: spec.id.clone().unwrap_or_else(|| spec.type_name.clone()),
         name: name.to_string(),
         reason: format!("expected {expected}, got {value:?}"),
+    }
+}
+
+pub fn invalid_prop_reason(
+    spec: &ComponentSpec,
+    name: &str,
+    reason: impl Into<String>,
+) -> TreeError {
+    TreeError::InvalidProperty {
+        id: spec.id.clone().unwrap_or_else(|| spec.type_name.clone()),
+        name: name.to_string(),
+        reason: reason.into(),
     }
 }
 
