@@ -39,6 +39,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-editor",
+ "atto-ui-file-tree",
+ "atto-ui-test-host",
+ "crossterm",
+ "editor-core",
+ "parking_lot",
+ "ratatui",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+]
+
+[[package]]
 name = "atto-ui"
 version = "0.1.0"
 dependencies = [
@@ -93,8 +115,10 @@ dependencies = [
  "editor-core-highlight-simple",
  "editor-core-lsp",
  "editor-core-sublime",
+ "editor-core-treesitter",
  "ratatui",
  "serde_json",
+ "tree-sitter",
  "unicode-width",
 ]
 
@@ -493,10 +517,11 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "editor-core"
-version = "0.1.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72faa45f254aca11b5d162846b8aa0492be2ceac111e158779d8bb80930844f9"
+checksum = "f4c94af58f4d30543aa1cd854bdbc7cc0411b1a26227f964f565e0b50b931cbc"
 dependencies = [
+ "editor-core-lang",
  "regex",
  "ropey",
  "unicode-segmentation",
@@ -505,19 +530,25 @@ dependencies = [
 
 [[package]]
 name = "editor-core-highlight-simple"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "703e2e68c77a2f8f4af5ecca3ce6ec7357e821512b179f57044d0433a516bc1b"
+checksum = "70b5e3bde3ed1b73dbe07f9879d039052e815e3261f5ce17cc8fce3596d6b425"
 dependencies = [
  "editor-core",
  "regex",
 ]
 
 [[package]]
-name = "editor-core-lsp"
-version = "0.1.0"
+name = "editor-core-lang"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5c7d2ac1f77aac55cbd05a4f32f2f5327f8c986d0db3920f74dd0615d59229b"
+checksum = "f82ef178ab5c4042ead9adc239990e8c899859ccbd7d413357aca2075544a7d8"
+
+[[package]]
+name = "editor-core-lsp"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ef25bf367e594ce0648555327c3f08074b29667b971d472e97bfad404a75c8c"
 dependencies = [
  "editor-core",
  "serde_json",
@@ -525,9 +556,9 @@ dependencies = [
 
 [[package]]
 name = "editor-core-sublime"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1ffd664cdf498c47b502a045efc691e9c68a63163379f855c23d2f3f68dabaf"
+checksum = "d3b8beab7186a241682304cbc89f5178ee9c1b007514feecd04f728cf9624d18"
 dependencies = [
  "editor-core",
  "onig",
@@ -535,6 +566,17 @@ dependencies = [
  "serde",
  "serde_yaml",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "editor-core-treesitter"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "942e85cad5e23df86f31fd449799ef467d9c01f3cc1ac80c6c9e301a3e3dfec1"
+dependencies = [
+ "editor-core",
+ "streaming-iterator",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -1496,6 +1538,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -1614,6 +1657,12 @@ name = "str_indices"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
+
+[[package]]
+name = "streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "strsim"
@@ -1793,6 +1842,96 @@ name = "time-core"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
+
+[[package]]
+name = "tree-sitter"
+version = "0.26.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13f456d2108c3fef07342ba4689a8503ec1fb5beed245e2b9be93096ef394848"
+dependencies = [
+ "cc",
+ "regex",
+ "regex-syntax",
+ "serde_json",
+ "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-javascript"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68204f2abc0627a90bdf06e605f5c470aa26fdcb2081ea553a04bdad756693f5"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-json"
+version = "0.24.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d727acca406c0020cffc6cf35516764f36c8e3dc4408e5ebe2cb35a947ec471"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-language"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+
+[[package]]
+name = "tree-sitter-python"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-toml-ng"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9adc2c898ae49730e857d75be403da3f92bb81d8e37a2f918a08dd10de5ebb1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-typescript"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-yaml"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "typenum"

@@ -1,0 +1,26 @@
+[package]
+name = "atto-editor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+atto-ui = { path = "../.." }
+atto-ui-editor = { path = "../atto-ui-editor" }
+atto-ui-file-tree = { path = "../atto-ui-file-tree" }
+crossterm = "0.29.0"
+parking_lot = "0.12.5"
+ratatui = "0.30.0"
+
+editor-core = "0.3.0"
+
+tree-sitter-rust = "0.24"
+tree-sitter-json = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
+
+[dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }

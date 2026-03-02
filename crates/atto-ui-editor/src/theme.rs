@@ -7,6 +7,35 @@ use editor_core_highlight_simple::{
 };
 use ratatui::style::{Color, Modifier, Style};
 
+// --- Additional style ids used by atto-ui-editor
+//
+// These ids are intentionally kept in a separate numeric range from:
+// - editor-core built-ins (e.g. `FOLD_PLACEHOLDER_STYLE_ID`)
+// - editor-core-highlight-simple ids
+// - editor-core-lsp semantic token encoding (< 0x0100_0000)
+
+/// Tree-sitter: comment capture style id.
+pub const TS_STYLE_COMMENT: u32 = 0x0500_0001;
+/// Tree-sitter: string capture style id.
+pub const TS_STYLE_STRING: u32 = 0x0500_0002;
+/// Tree-sitter: number capture style id.
+pub const TS_STYLE_NUMBER: u32 = 0x0500_0003;
+/// Tree-sitter: keyword capture style id.
+pub const TS_STYLE_KEYWORD: u32 = 0x0500_0004;
+/// Tree-sitter: function/method capture style id.
+pub const TS_STYLE_FUNCTION: u32 = 0x0500_0005;
+/// Tree-sitter: type/struct/enum capture style id.
+pub const TS_STYLE_TYPE: u32 = 0x0500_0006;
+/// Tree-sitter: variable/identifier capture style id.
+pub const TS_STYLE_VARIABLE: u32 = 0x0500_0007;
+/// Tree-sitter: constant capture style id.
+pub const TS_STYLE_CONSTANT: u32 = 0x0500_0008;
+
+/// Find/replace: match highlight style id.
+pub const SEARCH_MATCH_STYLE_ID: u32 = 0x0600_0001;
+/// Find/replace: "current match" highlight style id (optional).
+pub const SEARCH_CURRENT_STYLE_ID: u32 = 0x0600_0002;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SemanticTokenTheme {
     pub token_types: HashMap<String, Style>,
@@ -138,6 +167,36 @@ impl EditorTheme {
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC),
+        );
+
+        // Tree-sitter styles (host-provided capture -> these ids).
+        style_ids.insert(
+            TS_STYLE_COMMENT,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        );
+        style_ids.insert(TS_STYLE_STRING, Style::default().fg(Color::Green));
+        style_ids.insert(TS_STYLE_NUMBER, Style::default().fg(Color::Yellow));
+        style_ids.insert(TS_STYLE_KEYWORD, Style::default().fg(Color::LightBlue));
+        style_ids.insert(TS_STYLE_FUNCTION, Style::default().fg(Color::Cyan));
+        style_ids.insert(
+            TS_STYLE_TYPE,
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        );
+        style_ids.insert(TS_STYLE_VARIABLE, Style::default().fg(Color::White));
+        style_ids.insert(TS_STYLE_CONSTANT, Style::default().fg(Color::Magenta));
+
+        // Find/replace match highlights.
+        style_ids.insert(
+            SEARCH_MATCH_STYLE_ID,
+            Style::default().bg(Color::DarkGray).fg(Color::White),
+        );
+        style_ids.insert(
+            SEARCH_CURRENT_STYLE_ID,
+            Style::default().bg(Color::LightYellow).fg(Color::Black),
         );
 
         // A small out-of-the-box Sublime scope theme. This intentionally uses broad prefix keys

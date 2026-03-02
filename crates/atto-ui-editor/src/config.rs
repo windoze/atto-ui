@@ -1,11 +1,58 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use atto_ui::composable::ScrollConfig;
 use atto_ui::reactive::Binding;
+use editor_core::intervals::{StyleId, StyleLayerId};
+use tree_sitter::Language;
 
 use super::keymap::EditorKeymap;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorTreeSitterConfig {
+    /// Tree-sitter language.
+    pub language: Language,
+    /// Syntax highlighting query (`.scm`).
+    pub highlights_query: String,
+    /// Optional folding query (`.scm`). Each capture becomes a fold candidate.
+    pub folds_query: Option<String>,
+    /// Mapping from capture name (e.g. `"comment"`) to an `editor-core` `StyleId`.
+    pub capture_styles: BTreeMap<String, StyleId>,
+    /// Target style layer id to replace (defaults to `StyleLayerId::TREE_SITTER`).
+    pub style_layer: StyleLayerId,
+    /// Preserve collapsed state when replacing fold regions.
+    pub preserve_collapsed_folds: bool,
+}
+
+impl EditorTreeSitterConfig {
+    pub fn new(language: Language, highlights_query: impl Into<String>) -> Self {
+        Self {
+            language,
+            highlights_query: highlights_query.into(),
+            folds_query: None,
+            capture_styles: BTreeMap::new(),
+            style_layer: StyleLayerId::TREE_SITTER,
+            preserve_collapsed_folds: true,
+        }
+    }
+
+    pub fn with_folds_query(mut self, query: impl Into<String>) -> Self {
+        self.folds_query = Some(query.into());
+        self
+    }
+
+    pub fn with_capture_style(mut self, capture: impl Into<String>, style_id: StyleId) -> Self {
+        self.capture_styles.insert(capture.into(), style_id);
+        self
+    }
+
+    pub fn with_capture_styles(mut self, styles: BTreeMap<String, StyleId>) -> Self {
+        self.capture_styles = styles;
+        self
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum EditorSyntaxConfig {
@@ -15,6 +62,8 @@ pub enum EditorSyntaxConfig {
     SimpleJson,
     /// Regex-based lightweight highlighting (no folding).
     SimpleIni,
+    /// Tree-sitter highlighting + folding (incremental parsing).
+    TreeSitter(EditorTreeSitterConfig),
     /// Sublime Text `.sublime-syntax` highlighting + folding.
     Sublime {
         /// Path to the primary `.sublime-syntax` file.

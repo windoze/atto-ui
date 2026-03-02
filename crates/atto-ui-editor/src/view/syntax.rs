@@ -17,6 +17,17 @@ impl EditorView {
                     .ok()
                     .map(SyntaxProcessor::Regex)
             }
+            EditorSyntaxConfig::TreeSitter(cfg) => {
+                let mut ts = TreeSitterProcessorConfig::new(cfg.language, cfg.highlights_query);
+                ts.folds_query = cfg.folds_query;
+                ts.capture_styles = cfg.capture_styles;
+                ts.style_layer = cfg.style_layer;
+                ts.preserve_collapsed_folds = cfg.preserve_collapsed_folds;
+
+                TreeSitterProcessor::new(ts)
+                    .ok()
+                    .map(SyntaxProcessor::TreeSitter)
+            }
             EditorSyntaxConfig::Sublime {
                 syntax_file,
                 include_paths,
@@ -40,9 +51,6 @@ impl EditorView {
     }
 
     pub(super) fn maybe_apply_syntax_highlighting(&mut self) {
-        if self.lsp.session.is_some() {
-            return;
-        }
         if let Some(processor) = self.syntax_processor.as_mut() {
             processor.apply(&mut self.state_manager);
         }

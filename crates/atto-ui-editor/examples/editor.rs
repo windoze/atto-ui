@@ -10,9 +10,7 @@ use atto_ui::app::{
 };
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowKind};
-use atto_ui_editor::{
-    EditorConfig, EditorLspConfig, EditorLspMode, EditorPopupWindows, EditorThemeSet, EditorView,
-};
+use atto_ui_editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorThemeSet, EditorView};
 
 fn guess_language_id(path: &Path) -> String {
     let ext = path
@@ -76,7 +74,6 @@ fn main() -> Result<()> {
     }
 
     let (editor_view, editor_handle) = EditorView::new(editor_config, theme.clone());
-    let mut popups = EditorPopupWindows::new(&editor_handle);
     let editor_events = editor_handle.events.clone();
 
     let app_cfg = CrosstermAppConfig::default()
@@ -106,11 +103,7 @@ fn main() -> Result<()> {
 
             Ok(desktop)
         },
-        move |desktop: &mut Desktop, screen: Rect| {
-            // Keep hover/completion tooltip windows in sync.
-            let bounds = Desktop::layout(screen).work_area;
-            popups.sync(&mut desktop.wm, bounds);
-
+        move |_desktop: &mut Desktop, _screen: Rect| {
             // Drain goto results (host callback hook).
             for ev in editor_events.drain() {
                 let atto_ui_editor::EditorEvent::LspGoto { kind: _, locations } = ev;

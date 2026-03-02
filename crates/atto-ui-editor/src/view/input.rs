@@ -8,6 +8,10 @@ impl EditorView {
             return EventResult::ignored();
         };
 
+        if self.search_is_active() {
+            return self.handle_search_key_event(key);
+        }
+
         // Completion popup keyboard navigation/accept (editor keeps focus, popup stays non-modal).
         if let Some(popup) = self.completion_popup.get() {
             match key.code {

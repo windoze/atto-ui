@@ -10,6 +10,7 @@ use editor_core::{
 use editor_core_highlight_simple::{RegexHighlightProcessor, SimpleIniStyles, SimpleJsonStyles};
 use editor_core_lsp::{LspContentChange, LspSession, locations_from_value};
 use editor_core_sublime::{SublimeProcessor, SublimeSyntaxSet};
+use editor_core_treesitter::{TreeSitterProcessor, TreeSitterProcessorConfig};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -30,6 +31,7 @@ use super::theme::{EditorTheme, EditorThemeSet};
 mod input;
 mod lsp;
 mod render;
+mod search;
 mod selection;
 mod syntax;
 
@@ -72,10 +74,10 @@ struct ClickState {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
 enum SyntaxProcessor {
     Regex(RegexHighlightProcessor),
     Sublime(SublimeProcessor),
+    TreeSitter(TreeSitterProcessor),
 }
 
 impl SyntaxProcessor {
@@ -85,6 +87,9 @@ impl SyntaxProcessor {
                 let _ = state.apply_processor(p);
             }
             SyntaxProcessor::Sublime(p) => {
+                let _ = state.apply_processor(p);
+            }
+            SyntaxProcessor::TreeSitter(p) => {
                 let _ = state.apply_processor(p);
             }
         }
@@ -134,6 +139,7 @@ pub struct EditorView {
 
     syntax_processor: Option<SyntaxProcessor>,
     lsp: EditorLspController,
+    search: search::SearchState,
 
     // Mouse + selection
     mouse_drag: Option<MouseDrag>,
@@ -185,6 +191,7 @@ impl EditorView {
             content_size: (0, 0),
             syntax_processor: None,
             lsp: EditorLspController::default(),
+            search: search::SearchState::default(),
             mouse_drag: None,
             rect_selection_mode: false,
             rect_selection_anchor: None,
@@ -1149,6 +1156,37 @@ impl EditorView {
             }
             EditorAction::SelectAll => {
                 self.select_all();
+                true
+            }
+
+            EditorAction::Find => {
+                self.hide_popups();
+                let seed = self.search_seed_from_selection();
+                self.open_find(seed.as_deref());
+                true
+            }
+            EditorAction::Replace => {
+                self.hide_popups();
+                let seed = self.search_seed_from_selection();
+                self.open_replace(seed.as_deref());
+                true
+            }
+            EditorAction::FindNext => {
+                self.hide_popups();
+                if self.search_query_is_empty() {
+                    self.open_find(None);
+                } else {
+                    self.search_find_next();
+                }
+                true
+            }
+            EditorAction::FindPrev => {
+                self.hide_popups();
+                if self.search_query_is_empty() {
+                    self.open_find(None);
+                } else {
+                    self.search_find_prev();
+                }
                 true
             }
 

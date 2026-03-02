@@ -34,6 +34,12 @@ pub enum EditorAction {
     Paste,
     SelectAll,
 
+    // --- Find / replace
+    Find,
+    Replace,
+    FindNext,
+    FindPrev,
+
     Backspace,
     DeleteForward,
     InsertNewline,
@@ -215,6 +221,25 @@ impl EditorKeymap {
             KeyChord::new(KeyCode::Esc, KeyModifiers::NONE),
             A::CancelPopup,
         );
+
+        // --- Find / replace
+        map.insert(
+            KeyChord::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            A::Find,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+            A::Replace,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::F(3), KeyModifiers::NONE),
+            A::FindNext,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::F(3), KeyModifiers::SHIFT),
+            A::FindPrev,
+        );
+
         map.insert(
             KeyChord::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
             A::ToggleRectSelection,

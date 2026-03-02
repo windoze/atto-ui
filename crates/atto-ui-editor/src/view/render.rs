@@ -9,20 +9,144 @@ impl EditorView {
         let theme = self.editor_theme();
         frame.render_widget(Block::default().style(theme.background), area);
 
-        let (gutter_area, text_area) = self.layout_rects(area);
-        if text_area.width == 0 || text_area.height == 0 || area.height == 0 || area.width == 0 {
+        let bar_height = self.search_bar_height().min(area.height);
+        let content_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height.saturating_sub(bar_height),
+        };
+        let search_area = Rect {
+            x: area.x,
+            y: area.y + content_area.height,
+            width: area.width,
+            height: bar_height,
+        };
+
+        let (gutter_area, text_area) = self.layout_rects(content_area);
+        if text_area.width > 0 && text_area.height > 0 && area.height > 0 && area.width > 0 {
+            self.ensure_viewport(text_area);
+
+            // Render gutter (line numbers + folding markers).
+            if gutter_area.width > 0 {
+                self.render_gutter(frame, gutter_area, &theme);
+            }
+
+            // Render text viewport.
+            self.render_text(
+                frame,
+                text_area,
+                ctx.is_focused && !self.search_is_active(),
+                &theme,
+            );
+
+            // Inline popups (hover/completion) are rendered on top of the editor viewport.
+            self.render_inline_popups(frame, content_area, &theme);
+        }
+
+        // Render find/replace bar (and put the cursor there when active).
+        if bar_height > 0 {
+            self.render_search_bar(frame, search_area, ctx.is_focused, &theme);
+        }
+    }
+
+    fn render_inline_popups(&mut self, frame: &mut Frame<'_>, bounds: Rect, theme: &EditorTheme) {
+        // Completion tends to be more interactive and should take precedence visually.
+        self.render_inline_completion_popup(frame, bounds, theme);
+        self.render_inline_hover_popup(frame, bounds, theme);
+    }
+
+    fn render_inline_hover_popup(
+        &mut self,
+        frame: &mut Frame<'_>,
+        bounds: Rect,
+        theme: &EditorTheme,
+    ) {
+        let Some(model) = self.hover_popup.get() else {
+            return;
+        };
+
+        let rect = intersect_rect(model.rect, bounds);
+        if rect.width == 0 || rect.height == 0 {
             return;
         }
 
-        self.ensure_viewport(text_area);
+        let lines: Vec<Line<'static>> = model
+            .contents
+            .lines()
+            .iter()
+            .map(|l| Line::from(l.clone()))
+            .collect();
 
-        // Render gutter (line numbers + folding markers).
-        if gutter_area.width > 0 {
-            self.render_gutter(frame, gutter_area, &theme);
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(ratatui::widgets::Clear, rect);
+        frame.render_widget(Paragraph::new(lines).style(theme.popup).block(block), rect);
+    }
+
+    fn render_inline_completion_popup(
+        &mut self,
+        frame: &mut Frame<'_>,
+        bounds: Rect,
+        theme: &EditorTheme,
+    ) {
+        let Some(model) = self.completion_popup.get() else {
+            return;
+        };
+
+        let rect = intersect_rect(model.rect, bounds);
+        if rect.width == 0 || rect.height == 0 {
+            return;
         }
 
-        // Render text viewport.
-        self.render_text(frame, text_area, ctx.is_focused, &theme);
+        let inner_height = rect.height.saturating_sub(2) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner_height);
+
+        for row in 0..inner_height {
+            let idx = model.scroll.saturating_add(row);
+            if idx >= model.items.len() {
+                lines.push(Line::from(""));
+                continue;
+            }
+
+            let item = &model.items[idx];
+            let mut style = theme.popup;
+            if idx == model.selected {
+                style = theme.popup_selected;
+            }
+
+            let mut line = item.label.clone();
+            if let Some(detail) = &item.detail
+                && !detail.is_empty()
+            {
+                line.push_str("  ");
+                line.push_str(detail);
+            }
+
+            // Hard truncate to avoid excessive allocations for wide terminals.
+            let max_w = rect.width.saturating_sub(2) as usize;
+            let line = if line.chars().count() > max_w && max_w >= 1 {
+                line.chars()
+                    .take(max_w.saturating_sub(1))
+                    .collect::<String>()
+                    + "…"
+            } else {
+                line
+            };
+
+            lines.push(Line::from(Span::styled(line, style)));
+        }
+
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(ratatui::widgets::Clear, rect);
+        frame.render_widget(Paragraph::new(lines).style(theme.popup).block(block), rect);
     }
 
     fn render_gutter(&self, frame: &mut Frame<'_>, area: Rect, theme: &EditorTheme) {
@@ -232,5 +356,29 @@ impl EditorView {
         if focused && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+    }
+}
+
+fn intersect_rect(a: Rect, b: Rect) -> Rect {
+    if a.width == 0 || a.height == 0 || b.width == 0 || b.height == 0 {
+        return Rect::default();
+    }
+
+    let x1 = a.x.max(b.x);
+    let y1 = a.y.max(b.y);
+    let x2 = a.x.saturating_add(a.width).min(b.x.saturating_add(b.width));
+    let y2 =
+        a.y.saturating_add(a.height)
+            .min(b.y.saturating_add(b.height));
+
+    if x2 <= x1 || y2 <= y1 {
+        return Rect::default();
+    }
+
+    Rect {
+        x: x1,
+        y: y1,
+        width: x2 - x1,
+        height: y2 - y1,
     }
 }
