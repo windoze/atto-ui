@@ -80,8 +80,12 @@ pub enum ScrollbarVisibility {
     Never,
 }
 
+/// Concrete scrollbar geometry for a scrollable view.
+///
+/// This is used by view-hosted scrollbars as well as by higher-level components that want to
+/// "mount" a child's scrollbars onto a parent border (e.g. split panes, bordered widgets).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Scrollbars {
+pub struct Scrollbars {
     /// Viewport area (relative to the view's origin) that is reserved for content (including padding).
     pub viewport: Rect,
     /// Content area (relative to the view's origin) after padding is applied.
@@ -152,7 +156,7 @@ pub(crate) fn scroll_by_delta(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_scrollbar_mouse_event(
+pub fn handle_scrollbar_mouse_event(
     cfg: ScrollConfig,
     scrollbars: Scrollbars,
     content_size: (u16, u16),
@@ -454,7 +458,7 @@ pub(crate) fn resolve_scroll_view(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_scrollbars(
+pub fn draw_scrollbars(
     frame: &mut Frame<'_>,
     area: Rect,
     scrollbars: Scrollbars,

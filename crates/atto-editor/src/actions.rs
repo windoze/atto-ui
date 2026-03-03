@@ -20,6 +20,7 @@ pub enum AppAction {
     SplitHorizontal,
     CloseSplit,
 
+    /// Toggles the standalone Explorer window (file tree) visibility.
     ToggleExplorer,
     ExplorerLeft,
     ExplorerRight,
@@ -28,6 +29,9 @@ pub enum AppAction {
     SubmitOpenFolderDialog,
     CancelOpenFolderDialog,
 
-    // Requests emitted from within a window (e.g. file tree Ctrl+Enter).
-    OpenFileInNewWindow(PathBuf),
+    // Requests emitted from within a window (e.g. explorer Enter / Ctrl+Enter).
+    OpenPath {
+        path: PathBuf,
+        target: OpenTarget,
+    },
 }

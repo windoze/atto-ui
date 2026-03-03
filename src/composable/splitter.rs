@@ -3,12 +3,16 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use super::component::{Component, ComponentContext, EventResult, TabMode};
+use super::component::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
 use super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
     tab_direction_for_event,
 };
 use super::node::{ComponentId, ComponentNode};
+use super::scroll::{
+    ScrollOffset, ScrollbarDrag, ScrollbarHit, Scrollbars, draw_scrollbars,
+    handle_scrollbar_mouse_event, scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
+};
 use crate::reactive::Binding;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -54,6 +58,7 @@ pub struct Splitter {
     border_style: Option<Style>,
     last_layout: Option<SplitLayout>,
     drag: Option<DragState>,
+    scrollbar_drag: Option<(usize, ScrollbarDrag)>,
     split_auto: bool,
     initial_sizes: Option<(u16, u16)>,
     focused: Option<ComponentId>,
@@ -91,6 +96,7 @@ impl Splitter {
             border_style: None,
             last_layout: None,
             drag: None,
+            scrollbar_drag: None,
             split_auto: true,
             initial_sizes: None,
             focused,
@@ -167,6 +173,275 @@ impl Splitter {
 
     fn divider_thickness(&self) -> u16 {
         1
+    }
+
+    fn child_bounds(layout: &SplitLayout, child_idx: usize) -> Option<Rect> {
+        match child_idx {
+            0 => Some(layout.first),
+            1 => Some(layout.second),
+            _ => None,
+        }
+    }
+
+    fn child_scrollbars(
+        &self,
+        layout: &SplitLayout,
+        child_idx: usize,
+        child_bounds: Rect,
+        viewport_size: (u16, u16),
+        show_v: bool,
+        show_h: bool,
+    ) -> Scrollbars {
+        let orientation = self.orientation_value();
+
+        // Prefer mounting scrollbars on "real" split borders when we have a dedicated divider:
+        // - left pane vertical scrollbar uses the vertical divider column
+        // - top pane horizontal scrollbar uses the horizontal divider row
+        //
+        // This avoids stealing a content column/row from the pane itself.
+        let vbar_x = match (orientation, child_idx) {
+            (SplitterOrientation::Vertical, 0) => layout.divider.x,
+            _ => child_bounds
+                .x
+                .saturating_add(child_bounds.width)
+                .saturating_sub(1),
+        };
+        let hbar_y = match (orientation, child_idx) {
+            (SplitterOrientation::Horizontal, 0) => layout.divider.y,
+            _ => child_bounds
+                .y
+                .saturating_add(child_bounds.height)
+                .saturating_sub(1),
+        };
+
+        let vbar = show_v
+            .then(|| {
+                if child_bounds.width == 0 || child_bounds.height == 0 {
+                    return None;
+                }
+                Some(Rect {
+                    x: vbar_x,
+                    y: child_bounds.y,
+                    width: 1,
+                    height: child_bounds.height,
+                })
+            })
+            .flatten();
+
+        let hbar = show_h
+            .then(|| {
+                if child_bounds.width == 0 || child_bounds.height == 0 {
+                    return None;
+                }
+                Some(Rect {
+                    x: child_bounds.x,
+                    y: hbar_y,
+                    width: child_bounds.width,
+                    height: 1,
+                })
+            })
+            .flatten();
+
+        // `draw_scrollbars` assumes a dedicated bottom-right "corner" cell when both bars are
+        // present (like classic scrollbars). When we mount bars on split borders, the vertical
+        // and horizontal bars can otherwise overlap and cause the corner fill to overwrite arrow
+        // glyphs. Shrink bars so the corner cell is outside both rectangles.
+        let (vbar, hbar) = match (vbar, hbar) {
+            (Some(mut v), Some(mut h)) => {
+                // Reserve the horizontal scrollbar row from the vertical bar if it overlaps.
+                if h.y >= v.y && h.y < v.y.saturating_add(v.height) {
+                    v.height = h.y.saturating_sub(v.y);
+                }
+
+                // Reserve the vertical scrollbar column from the horizontal bar if it overlaps.
+                if v.x >= h.x && v.x < h.x.saturating_add(h.width) {
+                    h.width = v.x.saturating_sub(h.x);
+                }
+
+                let v = (v.width > 0 && v.height > 0).then_some(v);
+                let h = (h.width > 0 && h.height > 0).then_some(h);
+                (v, h)
+            }
+            other => other,
+        };
+
+        // `handle_scrollbar_mouse_event` derives `viewport_size` from `scrollbars.content`, but
+        // for generic child views the viewport may differ from absolute bounds (gutters/padding).
+        let content = Rect {
+            x: 0,
+            y: 0,
+            width: viewport_size.0,
+            height: viewport_size.1,
+        };
+
+        Scrollbars {
+            viewport: content,
+            content,
+            vbar,
+            hbar,
+            thickness: 1,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_child_border_scrollbar_event(
+        &mut self,
+        layout: &SplitLayout,
+        child_idx: usize,
+        child_bounds: Rect,
+        allow_track_clicks: bool,
+        local_x: u16,
+        local_y: u16,
+        kind: MouseEventKind,
+    ) -> Option<ScrollOffset> {
+        let child = self.children.get_mut(child_idx)?;
+        if !child.view.is_scrollable() {
+            return None;
+        }
+
+        let cfg = child.view.scroll_config();
+        let (content_w, content_h) = child.view.content_size();
+        let (viewport_w, viewport_h) = child.view.viewport_size();
+        let (scroll_x, scroll_y) = child.view.scroll_offset();
+
+        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+        let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+        if !show_v && !show_h {
+            return None;
+        }
+
+        let scroll = ScrollOffset {
+            x: scroll_x,
+            y: scroll_y,
+        };
+
+        let scrollbars = self.child_scrollbars(
+            layout,
+            child_idx,
+            child_bounds,
+            (viewport_w, viewport_h),
+            show_v,
+            show_h,
+        );
+
+        let mut drag = self
+            .scrollbar_drag
+            .and_then(|(idx, drag)| (idx == child_idx).then_some(drag));
+
+        // When a scrollbar is mounted on the divider, don't steal divider drags for page
+        // navigation (track clicks). Arrow clicks and thumb drags remain available.
+        if !allow_track_clicks
+            && drag.is_none()
+            && matches!(kind, MouseEventKind::Down(MouseButton::Left))
+        {
+            if let Some(vbar) = scrollbars.vbar
+                && contains(vbar, local_x, local_y)
+                && vbar.height > 0
+            {
+                let pos = local_y.saturating_sub(vbar.y);
+                let layout_1d =
+                    scrollbar_layout_1d(vbar.height, viewport_h, content_h, scroll.y, cfg.arrows);
+                match scrollbar_hit_test(layout_1d, pos) {
+                    ScrollbarHit::ArrowDec
+                    | ScrollbarHit::ArrowInc
+                    | ScrollbarHit::Thumb { .. } => {}
+                    ScrollbarHit::TrackDec | ScrollbarHit::TrackInc | ScrollbarHit::None => {
+                        return None;
+                    }
+                }
+            }
+
+            if let Some(hbar) = scrollbars.hbar
+                && contains(hbar, local_x, local_y)
+                && hbar.width > 0
+            {
+                let pos = local_x.saturating_sub(hbar.x);
+                let layout_1d =
+                    scrollbar_layout_1d(hbar.width, viewport_w, content_w, scroll.x, cfg.arrows);
+                match scrollbar_hit_test(layout_1d, pos) {
+                    ScrollbarHit::ArrowDec
+                    | ScrollbarHit::ArrowInc
+                    | ScrollbarHit::Thumb { .. } => {}
+                    ScrollbarHit::TrackDec | ScrollbarHit::TrackInc | ScrollbarHit::None => {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        let next = handle_scrollbar_mouse_event(
+            cfg,
+            scrollbars,
+            (content_w, content_h),
+            scroll,
+            &mut drag,
+            local_x,
+            local_y,
+            kind,
+        )?;
+
+        self.scrollbar_drag = drag.map(|d| (child_idx, d));
+        Some(next)
+    }
+
+    fn draw_child_border_scrollbars(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ComponentContext<'_>,
+    ) {
+        let Some(layout) = self.last_layout else {
+            return;
+        };
+
+        for child_idx in 0..self.children.len().min(2) {
+            let Some(bounds) = Self::child_bounds(&layout, child_idx) else {
+                continue;
+            };
+            if bounds.width == 0 || bounds.height == 0 {
+                continue;
+            }
+            let Some(child) = self.children.get(child_idx) else {
+                continue;
+            };
+            if !child.view.is_scrollable() {
+                continue;
+            }
+
+            let cfg = child.view.scroll_config();
+            let (content_w, content_h) = child.view.content_size();
+            let (viewport_w, viewport_h) = child.view.viewport_size();
+            let (scroll_x, scroll_y) = child.view.scroll_offset();
+
+            let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+            let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+            if !show_v && !show_h {
+                continue;
+            }
+
+            let scrollbars = self.child_scrollbars(
+                &layout,
+                child_idx,
+                bounds,
+                (viewport_w, viewport_h),
+                show_v,
+                show_h,
+            );
+
+            draw_scrollbars(
+                frame,
+                area,
+                scrollbars,
+                (viewport_w, viewport_h),
+                (content_w, content_h),
+                ScrollOffset {
+                    x: scroll_x,
+                    y: scroll_y,
+                },
+                cfg,
+                ctx.theme,
+            );
+        }
     }
 
     fn axis_min_first(&self) -> u16 {
@@ -578,6 +853,54 @@ impl Component for Splitter {
                 return EventResult::ignored();
             };
 
+            // Border-mounted scrollbars for children (mounted on each child's right/bottom edge).
+            // If we're currently dragging a scrollbar thumb, keep routing events there.
+            if let Some((child_idx, _)) = self.scrollbar_drag
+                && let Some(bounds) = Self::child_bounds(&layout, child_idx)
+                && let Some(next) = self.handle_child_border_scrollbar_event(
+                    &layout, child_idx, bounds, true, local_x, local_y, m.kind,
+                )
+            {
+                if let Some(child) = self.children.get_mut(child_idx) {
+                    child.view.set_scroll_offset(next.x, next.y);
+                    if child.view.is_focusable() {
+                        self.focused = Some(child.id);
+                    }
+                }
+                return EventResult::consumed();
+            }
+
+            // Otherwise, mouse-down on any visible child scrollbar should be handled before the
+            // child view receives the event (so clicks in the scrollbar column don't become
+            // content interactions).
+            if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                for child_idx in 0..self.children.len().min(2) {
+                    let Some(bounds) = Self::child_bounds(&layout, child_idx) else {
+                        continue;
+                    };
+                    let allow_track_clicks =
+                        !(child_idx == 0 && contains(layout.divider, local_x, local_y));
+                    let Some(next) = self.handle_child_border_scrollbar_event(
+                        &layout,
+                        child_idx,
+                        bounds,
+                        allow_track_clicks,
+                        local_x,
+                        local_y,
+                        m.kind,
+                    ) else {
+                        continue;
+                    };
+                    if let Some(child) = self.children.get_mut(child_idx) {
+                        child.view.set_scroll_offset(next.x, next.y);
+                        if child.view.is_focusable() {
+                            self.focused = Some(child.id);
+                        }
+                    }
+                    return EventResult::consumed();
+                }
+            }
+
             if self.drag.is_some() {
                 match m.kind {
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
@@ -644,7 +967,7 @@ impl Component for Splitter {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
-                scrollbar_host: ctx.scrollbar_host.for_child(),
+                scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
             };
 
@@ -671,7 +994,7 @@ impl Component for Splitter {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
-                scrollbar_host: ctx.scrollbar_host.for_child(),
+                scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
@@ -717,7 +1040,7 @@ impl Component for Splitter {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
-                scrollbar_host: ctx.scrollbar_host.for_child(),
+                scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
             };
             first.view.draw(frame, abs, child_ctx);
@@ -738,7 +1061,7 @@ impl Component for Splitter {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: child_focused,
-                scrollbar_host: ctx.scrollbar_host.for_child(),
+                scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
             };
             second.view.draw(frame, abs, child_ctx);
@@ -761,5 +1084,8 @@ impl Component for Splitter {
                 }
             }
         }
+
+        // Draw child scrollbars on the split borders (each child gets its own right/bottom edge).
+        self.draw_child_border_scrollbars(frame, area, ctx);
     }
 }

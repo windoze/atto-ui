@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::text::styled_text::{inline_display_width, parse_inline, slice_spans_from_segments};
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,9 +9,13 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
 use crate::ComponentCommand;
+use crate::composable::scroll::{
+    ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
+};
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext,
+    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
+    should_show_scrollbar,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -34,6 +38,8 @@ pub struct ListBox {
     bindings: Arc<RwLock<ListBoxBindings>>,
     scroll: ScrollContainer,
     min_size: (u16, u16),
+    last_area: Option<Rect>,
+    scrollbar_drag: Option<ScrollbarDrag>,
 }
 
 impl Clone for ListBox {
@@ -43,6 +49,8 @@ impl Clone for ListBox {
             scroll: build_scroll_container(bindings.clone()),
             bindings,
             min_size: self.min_size,
+            last_area: None,
+            scrollbar_drag: None,
         }
     }
 }
@@ -83,6 +91,8 @@ impl ListBox {
             scroll: build_scroll_container(bindings.clone()),
             bindings,
             min_size: (3, 3),
+            last_area: None,
+            scrollbar_drag: None,
         }
     }
 
@@ -184,10 +194,32 @@ impl Component for ListBox {
         if !self.bindings.read().enabled.get() {
             return EventResult::ignored();
         }
-        self.scroll.handle_event(event, ctx)
+
+        // Border-mounted scrollbars (right + bottom) so the list content doesn't lose space.
+        if let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+        {
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
+        }
+
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.handle_event(event, body_ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
         let style = if !enabled {
@@ -205,7 +237,122 @@ impl Component for ListBox {
         frame.render_widget(block, area);
         drop(bindings);
 
-        self.scroll.draw(frame, area, ctx);
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.draw(frame, area, body_ctx);
+
+        self.draw_border_scrollbar(frame, area, ctx);
+    }
+}
+
+impl ListBox {
+    fn border_scrollbars(&self, area: Rect) -> Option<Scrollbars> {
+        if area.width < 3 || area.height < 3 {
+            return None;
+        }
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+
+        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
+        let show_h =
+            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
+        if !show_v && !show_h {
+            return None;
+        }
+
+        let content_local = Rect {
+            x: 1,
+            y: 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if content_local.width == 0 || content_local.height == 0 {
+            return None;
+        }
+
+        let vbar = show_v.then_some(Rect {
+            x: area.width.saturating_sub(1),
+            y: content_local.y,
+            width: 1,
+            height: content_local.height,
+        });
+        let hbar = show_h.then_some(Rect {
+            x: content_local.x,
+            y: area.height.saturating_sub(1),
+            width: content_local.width,
+            height: 1,
+        });
+
+        Some(Scrollbars {
+            viewport: content_local,
+            content: content_local,
+            vbar,
+            hbar,
+            thickness: 1,
+        })
+    }
+
+    fn draw_border_scrollbar(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ComponentContext<'_>,
+    ) {
+        let Some(scrollbars) = self.border_scrollbars(area) else {
+            self.scrollbar_drag = None;
+            return;
+        };
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+        let scroll = self.scroll.scroll_offset();
+
+        draw_scrollbars(
+            frame,
+            area,
+            scrollbars,
+            viewport_size,
+            content_size,
+            ScrollOffset {
+                x: scroll.0,
+                y: scroll.1,
+            },
+            cfg,
+            ctx.theme,
+        );
+    }
+
+    fn handle_border_scrollbar_event(&mut self, m: MouseEvent, area: Rect) -> Option<ScrollOffset> {
+        let Some(scrollbars) = self.border_scrollbars(area) else {
+            self.scrollbar_drag = None;
+            return None;
+        };
+
+        let local_x = m.column.saturating_sub(area.x);
+        let local_y = m.row.saturating_sub(area.y);
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let scroll = self.scroll.scroll_offset();
+
+        handle_scrollbar_mouse_event(
+            cfg,
+            scrollbars,
+            content_size,
+            ScrollOffset {
+                x: scroll.0,
+                y: scroll.1,
+            },
+            &mut self.scrollbar_drag,
+            local_x,
+            local_y,
+            m.kind,
+        )
     }
 }
 
@@ -423,4 +570,29 @@ fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollConta
     ScrollContainer::new(Box::new(ListBoxContent::new(bindings)))
         .with_padding(EdgeInsets::all(1))
         .with_scroll_config(ScrollConfig::default())
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if contains(area, m.column, m.row) {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    // Nested containers receive mouse coordinates already relative to their own origin.
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
 }

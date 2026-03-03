@@ -8,7 +8,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::ComponentCommand;
-use crate::composable::{Component, ComponentContext, ComponentId, ComponentNode, EventResult};
+use crate::composable::{
+    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
+    ScrollbarHost,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -584,6 +587,52 @@ impl Component for TabView {
         Some(&mut self.children)
     }
 
+    fn is_scrollable(&self) -> bool {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .is_some_and(|c| c.view.is_scrollable())
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .map_or((0, 0), |c| c.view.content_size())
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .map_or((0, 0), |c| c.view.scroll_offset())
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .map_or((0, 0), |c| c.view.viewport_size())
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .map_or_else(ScrollConfig::default, |c| c.view.scroll_config())
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        if let Some(idx) = self.selected()
+            && let Some(child) = self.children.get_mut(idx)
+        {
+            child.view.set_scroll_offset(x, y);
+        }
+    }
+
+    fn scroll_to_child(&mut self, child_id: ComponentId) {
+        if let Some(idx) = self.selected()
+            && let Some(child) = self.children.get_mut(idx)
+        {
+            child.view.scroll_to_child(child_id);
+        }
+    }
+
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.normalize_selection();
         let Some(area) = self.last_area else {
@@ -674,7 +723,11 @@ impl Component for TabView {
                     theme: ctx.theme,
                     window_id: ctx.window_id,
                     is_focused: ctx.is_focused && self.focused == Some(child.id),
-                    scrollbar_host: ctx.scrollbar_host.for_child(),
+                    scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                        ScrollbarHost::Window
+                    } else {
+                        ctx.scrollbar_host.for_child()
+                    },
                     tab_mode: ctx.tab_mode.for_child(),
                 };
                 return child.view.handle_event(&child_event, child_ctx);
@@ -692,7 +745,11 @@ impl Component for TabView {
                 theme: ctx.theme,
                 window_id: ctx.window_id,
                 is_focused: ctx.is_focused && self.focused == Some(child.id),
-                scrollbar_host: ctx.scrollbar_host.for_child(),
+                scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                    ScrollbarHost::Window
+                } else {
+                    ctx.scrollbar_host.for_child()
+                },
                 tab_mode: ctx.tab_mode.for_child(),
             };
             let res = child.view.handle_event(event, child_ctx);
@@ -776,7 +833,11 @@ impl Component for TabView {
                     theme: ctx.theme,
                     window_id: ctx.window_id,
                     is_focused: ctx.is_focused && self.focused == Some(child.id),
-                    scrollbar_host: ctx.scrollbar_host.for_child(),
+                    scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                        ScrollbarHost::Window
+                    } else {
+                        ctx.scrollbar_host.for_child()
+                    },
                     tab_mode: ctx.tab_mode.for_child(),
                 };
                 child.view.draw(frame, content_abs, child_ctx);

@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use atto_ui::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext,
+    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarDrag,
+    ScrollbarHost, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
+    should_show_scrollbar,
 };
 use atto_ui::reactive::Binding;
 use atto_ui::runtime::{
@@ -19,7 +21,7 @@ use atto_ui::{
     ValueType,
 };
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use parking_lot::RwLock;
 use ratatui::Frame;
@@ -175,10 +177,10 @@ impl FileTreeGlyphProvider for FileTreeGlyphs {
             }
             return self.directory_closed.clone();
         }
-        if let Some(ext) = node.extension() {
-            if let Some(glyph) = self.by_extension.get(&ext.to_ascii_lowercase()) {
-                return glyph.clone();
-            }
+        if let Some(ext) = node.extension()
+            && let Some(glyph) = self.by_extension.get(&ext.to_ascii_lowercase())
+        {
+            return glyph.clone();
         }
         self.file.clone()
     }
@@ -187,6 +189,8 @@ impl FileTreeGlyphProvider for FileTreeGlyphs {
 pub struct FileTree {
     bindings: Arc<RwLock<FileTreeBindings>>,
     scroll: ScrollContainer,
+    scrollbar_drag: Option<ScrollbarDrag>,
+    last_area: Option<Rect>,
     min_size: (u16, u16),
 }
 
@@ -231,6 +235,8 @@ impl FileTree {
         Self {
             scroll: build_scroll_container(bindings.clone()),
             bindings,
+            scrollbar_drag: None,
+            last_area: None,
             min_size: (4, 4),
         }
     }
@@ -328,6 +334,8 @@ impl Clone for FileTree {
         Self {
             scroll: build_scroll_container(bindings.clone()),
             bindings,
+            scrollbar_drag: None,
+            last_area: None,
             min_size: self.min_size,
         }
     }
@@ -406,6 +414,30 @@ impl Component for FileTree {
         self.bindings.read().enabled.get()
     }
 
+    fn is_scrollable(&self) -> bool {
+        self.scroll.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.scroll.content_size()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.scroll.viewport_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.scroll.scroll_offset()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.scroll.set_scroll_offset(x, y);
+    }
+
     fn desired_height(&self) -> Option<u16> {
         let height = self.bindings.read().height.get();
         Some(height.max(self.min_size.1))
@@ -415,10 +447,36 @@ impl Component for FileTree {
         if !self.bindings.read().enabled.get() {
             return EventResult::ignored();
         }
-        self.scroll.handle_event(event, ctx)
+
+        // Border-mounted scrollbars (right + bottom) so tree content doesn't lose space.
+        // When a parent hosts scrollbars (e.g. window chrome / splitter border), we skip this and
+        // rely on the parent to handle scrollbar input.
+        if matches!(ctx.scrollbar_host, ScrollbarHost::Component)
+            && let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+        {
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
+        }
+
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.handle_event(event, body_ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
         let style = if !enabled {
@@ -436,8 +494,152 @@ impl Component for FileTree {
         frame.render_widget(block, area);
         drop(bindings);
 
-        self.scroll.draw(frame, area, ctx);
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.draw(frame, area, body_ctx);
+
+        if matches!(ctx.scrollbar_host, ScrollbarHost::Component) {
+            self.draw_border_scrollbar(frame, area, ctx);
+        } else {
+            self.scrollbar_drag = None;
+        }
     }
+}
+
+impl FileTree {
+    fn border_scrollbars(&self, area: Rect) -> Option<Scrollbars> {
+        if area.width < 3 || area.height < 3 {
+            return None;
+        }
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+
+        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
+        let show_h =
+            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
+        if !show_v && !show_h {
+            return None;
+        }
+
+        let content_local = Rect {
+            x: 1,
+            y: 1,
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if content_local.width == 0 || content_local.height == 0 {
+            return None;
+        }
+
+        let vbar = show_v.then_some(Rect {
+            x: area.width.saturating_sub(1),
+            y: content_local.y,
+            width: 1,
+            height: content_local.height,
+        });
+        let hbar = show_h.then_some(Rect {
+            x: content_local.x,
+            y: area.height.saturating_sub(1),
+            width: content_local.width,
+            height: 1,
+        });
+
+        Some(Scrollbars {
+            viewport: content_local,
+            content: content_local,
+            vbar,
+            hbar,
+            thickness: 1,
+        })
+    }
+
+    fn draw_border_scrollbar(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ComponentContext<'_>,
+    ) {
+        let Some(scrollbars) = self.border_scrollbars(area) else {
+            self.scrollbar_drag = None;
+            return;
+        };
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+        let scroll = self.scroll.scroll_offset();
+
+        draw_scrollbars(
+            frame,
+            area,
+            scrollbars,
+            viewport_size,
+            content_size,
+            ScrollOffset {
+                x: scroll.0,
+                y: scroll.1,
+            },
+            cfg,
+            ctx.theme,
+        );
+    }
+
+    fn handle_border_scrollbar_event(&mut self, m: MouseEvent, area: Rect) -> Option<ScrollOffset> {
+        let Some(scrollbars) = self.border_scrollbars(area) else {
+            self.scrollbar_drag = None;
+            return None;
+        };
+
+        let local_x = m.column.saturating_sub(area.x);
+        let local_y = m.row.saturating_sub(area.y);
+
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let scroll = self.scroll.scroll_offset();
+
+        handle_scrollbar_mouse_event(
+            cfg,
+            scrollbars,
+            content_size,
+            ScrollOffset {
+                x: scroll.0,
+                y: scroll.1,
+            },
+            &mut self.scrollbar_drag,
+            local_x,
+            local_y,
+            m.kind,
+        )
+    }
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
+    if contains(area, m.column, m.row) {
+        return Some((
+            m.column.saturating_sub(area.x),
+            m.row.saturating_sub(area.y),
+        ));
+    }
+
+    // Nested containers may forward mouse coordinates already relative to this view.
+    if m.column < area.width && m.row < area.height {
+        return Some((m.column, m.row));
+    }
+
+    None
 }
 
 struct FileTreeContent {
@@ -514,10 +716,10 @@ impl FileTreeContent {
             return None;
         }
 
-        if let Some(id) = selection {
-            if let Some(idx) = visible.iter().position(|entry| entry.id == id) {
-                return Some(idx);
-            }
+        if let Some(id) = selection
+            && let Some(idx) = visible.iter().position(|entry| entry.id == id)
+        {
+            return Some(idx);
         }
 
         let next_id = visible[0].id;
@@ -544,10 +746,10 @@ impl FileTreeContent {
     }
 
     fn maybe_reset_rename(&mut self, selection: Option<FileTreeNodeId>) {
-        if let Some(rename) = &self.rename {
-            if selection != Some(rename.id) {
-                self.rename = None;
-            }
+        if let Some(rename) = &self.rename
+            && selection != Some(rename.id)
+        {
+            self.rename = None;
         }
     }
 
@@ -574,16 +776,16 @@ impl FileTreeContent {
     fn line_text(&self, entry: &VisibleEntry) -> String {
         let mut line = String::new();
         line.push_str(&entry.prefix);
-        if let Some(rename) = &self.rename {
-            if rename.id == entry.id {
-                let text = rename.buffer.text();
-                let cursor = rename.buffer.cursor_byte_index().min(text.len());
-                let (left, right) = text.split_at(cursor);
-                line.push_str(left);
-                line.push('|');
-                line.push_str(right);
-                return line;
-            }
+        if let Some(rename) = &self.rename
+            && rename.id == entry.id
+        {
+            let text = rename.buffer.text();
+            let cursor = rename.buffer.cursor_byte_index().min(text.len());
+            let (left, right) = text.split_at(cursor);
+            line.push_str(left);
+            line.push('|');
+            line.push_str(right);
+            return line;
         }
         line.push_str(&entry.name);
         line
@@ -638,11 +840,11 @@ impl FileTreeContent {
         let roots = self.roots_binding();
         let mut changed = false;
         roots.update(|nodes| {
-            if let Some(node) = find_node_mut(nodes, id) {
-                if node.is_dir() {
-                    node.is_expanded = !node.is_expanded;
-                    changed = true;
-                }
+            if let Some(node) = find_node_mut(nodes, id)
+                && node.is_dir()
+            {
+                node.is_expanded = !node.is_expanded;
+                changed = true;
             }
         });
         changed
@@ -652,11 +854,12 @@ impl FileTreeContent {
         let roots = self.roots_binding();
         let mut changed = false;
         roots.update(|nodes| {
-            if let Some(node) = find_node_mut(nodes, id) {
-                if node.is_dir() && !node.is_expanded {
-                    node.is_expanded = true;
-                    changed = true;
-                }
+            if let Some(node) = find_node_mut(nodes, id)
+                && node.is_dir()
+                && !node.is_expanded
+            {
+                node.is_expanded = true;
+                changed = true;
             }
         });
         changed
@@ -666,11 +869,12 @@ impl FileTreeContent {
         let roots = self.roots_binding();
         let mut changed = false;
         roots.update(|nodes| {
-            if let Some(node) = find_node_mut(nodes, id) {
-                if node.is_dir() && node.is_expanded {
-                    node.is_expanded = false;
-                    changed = true;
-                }
+            if let Some(node) = find_node_mut(nodes, id)
+                && node.is_dir()
+                && node.is_expanded
+            {
+                node.is_expanded = false;
+                changed = true;
             }
         });
         changed
@@ -814,18 +1018,16 @@ impl ScrollContent for FileTreeContent {
                     }
                     KeyCode::Enter => {
                         let rename_id = self.rename.as_ref().map(|r| r.id);
-                        if let Some(rename_id) = rename_id {
-                            if let Some((old_name, new_name, kind)) = self.commit_rename(rename_id)
-                            {
-                                if old_name != new_name {
-                                    if let Some(cb) = &snapshot.on_rename {
-                                        cb.emit_with(Some(rename_payload(
-                                            rename_id, kind, &old_name, &new_name,
-                                        )));
-                                    }
-                                    return EventResult::changed();
-                                }
+                        if let Some(rename_id) = rename_id
+                            && let Some((old_name, new_name, kind)) = self.commit_rename(rename_id)
+                            && old_name != new_name
+                        {
+                            if let Some(cb) = &snapshot.on_rename {
+                                cb.emit_with(Some(rename_payload(
+                                    rename_id, kind, &old_name, &new_name,
+                                )));
                             }
+                            return EventResult::changed();
                         }
                         return EventResult::consumed();
                     }
@@ -898,10 +1100,8 @@ impl ScrollContent for FileTreeContent {
                 let idx = host.scroll_offset().y as usize + row;
                 if let Some(entry) = entries.get(idx) {
                     let res = self.select_index(idx, &entries, host, snapshot.on_select.as_ref());
-                    if entry.is_dir() {
-                        if self.toggle_directory(entry.id) {
-                            return EventResult::changed();
-                        }
+                    if entry.is_dir() && self.toggle_directory(entry.id) {
+                        return EventResult::changed();
                     }
                     return res;
                 }
@@ -917,18 +1117,13 @@ impl ScrollContent for FileTreeContent {
                         if entries.is_empty() {
                             return EventResult::ignored();
                         }
-                        return self.move_selection(
-                            -1,
-                            &entries,
-                            host,
-                            snapshot.on_select.as_ref(),
-                        );
+                        self.move_selection(-1, &entries, host, snapshot.on_select.as_ref())
                     }
                     KeyCode::Down => {
                         if entries.is_empty() {
                             return EventResult::ignored();
                         }
-                        return self.move_selection(1, &entries, host, snapshot.on_select.as_ref());
+                        self.move_selection(1, &entries, host, snapshot.on_select.as_ref())
                     }
                     KeyCode::Left => {
                         let Some(idx) = selection_idx else {
@@ -941,15 +1136,15 @@ impl ScrollContent for FileTreeContent {
                             }
                             return EventResult::consumed();
                         }
-                        if let Some(parent) = entry.parent_id {
-                            if let Some(parent_idx) = entries.iter().position(|e| e.id == parent) {
-                                return self.select_index(
-                                    parent_idx,
-                                    &entries,
-                                    host,
-                                    snapshot.on_select.as_ref(),
-                                );
-                            }
+                        if let Some(parent) = entry.parent_id
+                            && let Some(parent_idx) = entries.iter().position(|e| e.id == parent)
+                        {
+                            return self.select_index(
+                                parent_idx,
+                                &entries,
+                                host,
+                                snapshot.on_select.as_ref(),
+                            );
                         }
                         EventResult::consumed()
                     }
@@ -1005,7 +1200,7 @@ impl ScrollContent for FileTreeContent {
                         };
                         let entry = &entries[idx];
                         self.start_rename(entry.id, &entry.name);
-                        return EventResult::consumed();
+                        EventResult::consumed()
                     }
                     KeyCode::Delete | KeyCode::Backspace | KeyCode::Char('d') => {
                         let Some(idx) = selection_idx else {
@@ -1220,10 +1415,7 @@ fn slice_by_display_width(text: &str, start: u16, width: u16) -> String {
     out
 }
 
-fn find_node_mut<'a>(
-    nodes: &'a mut [FileTreeNode],
-    id: FileTreeNodeId,
-) -> Option<&'a mut FileTreeNode> {
+fn find_node_mut(nodes: &mut [FileTreeNode], id: FileTreeNodeId) -> Option<&mut FileTreeNode> {
     for node in nodes {
         if node.id == id {
             return Some(node);
@@ -1297,10 +1489,7 @@ fn kind_label(kind: FileTreeNodeKind) -> String {
 }
 
 fn nodes_to_component_value(nodes: &[FileTreeNode]) -> ComponentValue {
-    let items = nodes
-        .iter()
-        .map(|node| node_to_component_value(node))
-        .collect();
+    let items = nodes.iter().map(node_to_component_value).collect();
     ComponentValue::List(items)
 }
 

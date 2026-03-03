@@ -277,6 +277,7 @@ impl TabWindow {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_titlebar_line(
         &self,
         separator: &str,

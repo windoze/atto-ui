@@ -34,9 +34,9 @@ cargo run -p atto-editor -- path/to/project path/to/other/file.py
 
 ## Features
 
-- Workspace roots (multiple folders) + file explorer sidebar
-  - Toggle sidebar visibility
-  - Stick sidebar to the left or right
+- Workspace roots (multiple folders) + file explorer window
+  - Toggle Explorer visibility (`Ctrl+E` / View menu)
+  - Dock Explorer left or right (View menu)
   - Open files from the explorer into tabs
   - `Ctrl+Enter` opens a file in a new window
 - Multi-file editing via window tabs (`atto_ui::composable::TabWindow`)
@@ -57,9 +57,9 @@ cargo run -p atto-editor -- path/to/project path/to/other/file.py
 - `Ctrl+O` — Open File… (opens in a new tab in the focused editor window)
 - `Ctrl+S` — Save active tab
 - `Ctrl+W` — Close active tab
-- `Ctrl+E` — Toggle explorer sidebar
+- `Ctrl+E` — Toggle Explorer window
 
-### Explorer Sidebar
+### Explorer Window
 
 - `Enter` — Open the selected file in a new tab
 - `Ctrl+Enter` — Open the selected file in a new window
@@ -131,4 +131,3 @@ fn main() -> Result<()> {
     })
 }
 ```
-

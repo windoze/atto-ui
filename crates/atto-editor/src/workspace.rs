@@ -136,18 +136,15 @@ fn read_dir_sorted(dir: &Path, options: &WorkspaceTreeOptions) -> Vec<PathBuf> {
 }
 
 fn should_skip_entry(path: &Path, options: &WorkspaceTreeOptions) -> bool {
-    if !options.show_hidden {
-        if let Some(name) = path.file_name().and_then(OsStr::to_str)
-            && name.starts_with('.')
-        {
-            return true;
-        }
+    if !options.show_hidden
+        && let Some(name) = path.file_name().and_then(OsStr::to_str)
+        && name.starts_with('.')
+    {
+        return true;
     }
 
-    if options.ignore_git_dir {
-        if path.file_name() == Some(OsStr::new(".git")) {
-            return true;
-        }
+    if options.ignore_git_dir && path.file_name() == Some(OsStr::new(".git")) {
+        return true;
     }
 
     false
@@ -217,7 +214,10 @@ mod tests {
         fs::write(root.path.join(".hidden"), "secret\n").unwrap();
         fs::write(root.path.join(".git").join("config"), "ignore\n").unwrap();
 
-        let tree = build_workspace_tree(&[root.path.clone()], WorkspaceTreeOptions::default());
+        let tree = build_workspace_tree(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+        );
         assert_eq!(tree.roots.len(), 1);
 
         let names = collect_child_names(&tree.roots[0]);
@@ -235,7 +235,10 @@ mod tests {
         fs::write(root.path.join("b_file.txt"), "b\n").unwrap();
         fs::write(root.path.join("a_file.txt"), "a\n").unwrap();
 
-        let tree = build_workspace_tree(&[root.path.clone()], WorkspaceTreeOptions::default());
+        let tree = build_workspace_tree(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+        );
         assert_eq!(tree.roots.len(), 1);
 
         let names = collect_child_names(&tree.roots[0]);
@@ -256,9 +259,11 @@ mod tests {
         fs::create_dir_all(root.path.join("a").join("b")).unwrap();
         fs::write(root.path.join("a").join("b").join("file.txt"), "hi\n").unwrap();
 
-        let mut options = WorkspaceTreeOptions::default();
-        options.max_depth = 0;
-        let tree = build_workspace_tree(&[root.path.clone()], options);
+        let options = WorkspaceTreeOptions {
+            max_depth: 0,
+            ..Default::default()
+        };
+        let tree = build_workspace_tree(std::slice::from_ref(&root.path), options);
         assert_eq!(tree.roots.len(), 1);
         assert!(tree.roots[0].children.is_empty());
     }

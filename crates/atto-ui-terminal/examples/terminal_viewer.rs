@@ -96,8 +96,8 @@ fn terminal_release_shortcut() -> TerminalShortcut {
 }
 
 fn terminal_window_rect(work_area: Rect, index: usize) -> Rect {
-    let base_width = work_area.width.saturating_sub(6).min(110).max(30);
-    let base_height = work_area.height.saturating_sub(6).min(32).max(10);
+    let base_width = work_area.width.saturating_sub(6).clamp(30, 110);
+    let base_height = work_area.height.saturating_sub(6).clamp(10, 32);
 
     let index = index.max(1) as u16;
     let offset_x = (index.saturating_sub(1) * 2) % 10;

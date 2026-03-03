@@ -4,7 +4,7 @@
 //!
 //! This crate provides an interactive editor application with:
 //! - workspace roots (folders + individual files)
-//! - a collapsible file explorer sidebar (left/right)
+//! - a standalone file explorer window (toggle + dock left/right)
 //! - multi-file editing with window tabs (via `atto_ui::composable::TabWindow`)
 //! - split views for the same document (vertical/horizontal)
 //! - syntax highlighting + folding via Tree-sitter (`editor-core-treesitter` through `atto-ui-editor`)
@@ -16,6 +16,7 @@
 
 pub mod actions;
 pub mod app;
+pub mod explorer_window;
 pub mod language;
 pub mod window;
 pub mod workspace;
