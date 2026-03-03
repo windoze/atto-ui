@@ -267,6 +267,8 @@ impl EditorView {
     }
 
     fn ensure_viewport(&mut self, text_area: Rect) {
+        let viewport_changed = self.viewport_size != (text_area.width, text_area.height);
+
         let viewport_height = text_area.height as usize;
         self.state_manager.set_viewport_height(viewport_height);
 
@@ -285,7 +287,12 @@ impl EditorView {
             if current_scroll_top > max_scroll_top {
                 self.state_manager.set_scroll_top(max_scroll_top);
             }
-            self.adjust_scroll();
+            // Auto-scroll to keep the cursor visible when the viewport geometry changes
+            // (e.g. terminal resize). When the viewport is stable, allow user-driven scrolling
+            // (mouse wheel / scrollbars) without snapping back to the cursor every frame.
+            if viewport_changed {
+                self.adjust_scroll();
+            }
         }
 
         self.viewport_size = (text_area.width, text_area.height);
@@ -1793,6 +1800,19 @@ impl Component for EditorView {
 mod tests {
     use super::*;
 
+    fn buffer_row_string(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        y: u16,
+    ) -> String {
+        let buf = terminal.backend().buffer();
+        let width = buf.area.width;
+        let mut out = String::new();
+        for x in 0..width {
+            out.push_str(buf[(x, y)].symbol());
+        }
+        out
+    }
+
     #[test]
     fn editor_view_applies_simple_json_highlighting_on_new() {
         let text: atto_ui::reactive::Binding<String> =
@@ -1862,6 +1882,90 @@ mod tests {
             cell.style().fg,
             Some(ratatui::style::Color::Green),
             "expected syntax-highlighted string cell to be green"
+        );
+    }
+
+    #[test]
+    fn editor_view_mouse_wheel_scrolls_even_at_viewport_edge() {
+        let text: atto_ui::reactive::Binding<String> = (0..80)
+            .map(|i| format!("LINE {:02}", i))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into();
+
+        let cfg = EditorConfig::new(text);
+
+        let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+        let (mut view, _handle) = EditorView::new(cfg, theme);
+
+        let backend = ratatui::backend::TestBackend::new(40, 8);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+
+        let app_theme = atto_ui::theme::Theme::dark();
+        let ctx = atto_ui::composable::ComponentContext {
+            theme: &app_theme,
+            window_id: atto_ui::wm::WindowId::default(),
+            is_focused: true,
+            scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+            tab_mode: atto_ui::composable::TabMode::Cycle,
+        };
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 40, 8);
+                view.draw(f, area, ctx);
+            })
+            .expect("draw");
+
+        let row0 = buffer_row_string(&terminal, 0);
+        assert!(
+            row0.contains("LINE 00"),
+            "expected initial top line to be visible; got row0={row0:?}"
+        );
+
+        // Scroll while the pointer is over the text area.
+        let (_gutter, text_area) = view.layout_rects(Rect::new(0, 0, 40, 8));
+        let ev = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: text_area.x.saturating_add(1),
+            row: text_area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        let _ = view.handle_event(&ev, ctx);
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 40, 8);
+                view.draw(f, area, ctx);
+            })
+            .expect("draw after scroll");
+
+        let row0 = buffer_row_string(&terminal, 0);
+        assert!(
+            row0.contains("LINE 03"),
+            "expected wheel scroll to advance content by 3 rows; got row0={row0:?}"
+        );
+
+        // Scroll again while the pointer is over the gutter (should still scroll).
+        let ev = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: text_area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        let _ = view.handle_event(&ev, ctx);
+
+        terminal
+            .draw(|f| {
+                let area = Rect::new(0, 0, 40, 8);
+                view.draw(f, area, ctx);
+            })
+            .expect("draw after second scroll");
+
+        let row0 = buffer_row_string(&terminal, 0);
+        assert!(
+            row0.contains("LINE 06"),
+            "expected second wheel scroll to advance content again; got row0={row0:?}"
         );
     }
 }

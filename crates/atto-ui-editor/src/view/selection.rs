@@ -125,6 +125,37 @@ impl EditorView {
         let show_line_numbers = self.config.show_line_numbers.get();
         let show_folding_markers = self.config.show_folding_markers.get();
 
+        // Mouse wheel scrolling should work anywhere inside the editor viewport (including the
+        // gutter), not just over the text area.
+        match m.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let step = self.scroll_config().wheel_step.max(1) as isize;
+                let delta = if matches!(m.kind, MouseEventKind::ScrollUp) {
+                    -step
+                } else {
+                    step
+                };
+                self.scroll_by_rows(delta);
+
+                // Keep hover anchor reasonably accurate when scrolling over the text area.
+                if local_x >= text_area.x && local_y >= text_area.y {
+                    let x_in_text = local_x.saturating_sub(text_area.x);
+                    let y_in_text = local_y.saturating_sub(text_area.y);
+                    if x_in_text < text_area.width && y_in_text < text_area.height {
+                        let pos = self.position_at_text_point(x_in_text, y_in_text);
+                        let screen = (
+                            area.x.saturating_add(local_x),
+                            area.y.saturating_add(local_y),
+                        );
+                        self.update_hover_anchor(pos, screen);
+                    }
+                }
+
+                return EventResult::consumed();
+            }
+            _ => {}
+        }
+
         // Folding marker hit testing (gutter-local coordinates).
         if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
             && show_folding_markers
@@ -265,28 +296,6 @@ impl EditorView {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.mouse_drag = None;
-                EventResult::consumed()
-            }
-            MouseEventKind::ScrollUp => {
-                let step = self.scroll_config().wheel_step.max(1) as isize;
-                self.scroll_by_rows(-step);
-                let pos = self.position_at_text_point(x_in_text, y_in_text);
-                let screen = (
-                    area.x.saturating_add(local_x),
-                    area.y.saturating_add(local_y),
-                );
-                self.update_hover_anchor(pos, screen);
-                EventResult::consumed()
-            }
-            MouseEventKind::ScrollDown => {
-                let step = self.scroll_config().wheel_step.max(1) as isize;
-                self.scroll_by_rows(step);
-                let pos = self.position_at_text_point(x_in_text, y_in_text);
-                let screen = (
-                    area.x.saturating_add(local_x),
-                    area.y.saturating_add(local_y),
-                );
-                self.update_hover_anchor(pos, screen);
                 EventResult::consumed()
             }
             _ => EventResult::ignored(),
