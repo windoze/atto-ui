@@ -78,7 +78,7 @@ cargo fmt
                     ↓
 ┌─────────────────────────────────────────────────┐
 │   支持模块                                       │
-│   Theme / Text / Reactive / Cache              │
+│   Theme / Text / Reactive                      │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -123,15 +123,10 @@ cargo fmt
   - `mod.rs` - `Theme` 主题定义 (深色/浅色主题,字形映射,样式表)
   - `config.rs` - `ThemeConfig` 主题配置文件格式 (支持 JSON/YAML)
   - `tests.rs` - 主题测试
-- **`reactive/`**: 反应式状态管理系统
+- **`reactive/`**: 反应式属性和事件队列支持
   - `property.rs` - `Property<T>` 和 `Binding<T>` 反应式属性
-  - `observable.rs` - `Observable` 可观察对象
-  - `dirty.rs` - `DirtyFlag` 脏标记系统
+  - `dirty.rs` - `DirtyFlag` 内部状态标记工具
   - `queue.rs` - `EventQueue` 事件队列
-- **`cache/`**: 缓存和增量渲染
-  - `buffer.rs` - `VirtualBuffer` 虚拟缓冲区
-  - `diff.rs` - 增量差异计算
-  - `scheduler.rs` - 渲染调度器
 - **`macros/`**: 过程宏支持 (`crates/atto-ui-macros/`)
   - `reactive.rs` - `#[reactive]` 宏 - 自动生成反应式属性
   - `view_builder.rs` - `view_builder!` 宏 - 组合式组件构建助手
@@ -213,13 +208,13 @@ assert!(screen.contains("Expected"));
 **当前正在开发**:
 - 声明式 API 的完善和优化
 - 反应式状态管理的集成
-- 增量渲染和缓存系统
+- 运行时动态更新路径与测试覆盖的完善
 
 查看 `IMPLEMENTATION_PLAN.md` 和 `SWIFTUI_STYLE_REFACTOR.md` 了解详细的功能清单和未来计划。
 
 ## 声明式 API (SwiftUI 风格)
 
-项目使用 SwiftUI 风格的声明式 API 构建 UI。
+项目提供 SwiftUI 风格的声明式 API 来构建容器组合和常规 UI。
 
 **注意**: 早期版本曾有命令式 API (VBox/HBox/Grid),现已完全移除并迁移到声明式 API。
 
@@ -242,6 +237,10 @@ VStack::new()
 - 自动处理布局参数和类型转换
 - 与 SwiftUI/Jetpack Compose 等现代框架理念一致
 
+**分层约定**:
+- 容器组合优先使用 `VStack`、`HStack`、`Grid` 等声明式 API。
+- 叶子级高频重绘组件可以手写 `impl Component`,例如 editor/file-tree 这类需要精细控制绘制、命中测试或状态更新的组件。
+
 **声明式组件**:
 - `VStack` / `HStack` - 垂直/水平堆栈布局
 - `Grid` - 网格布局
@@ -251,12 +250,11 @@ VStack::new()
 
 ## 反应式状态管理
 
-项目提供了反应式状态管理系统,支持自动 UI 更新:
+项目提供反应式状态管理基础设施,用于属性通知、绑定和宏辅助:
 
 - `Property<T>` - 反应式属性,值变化时自动通知观察者
 - `Binding<T>` - 双向绑定,连接数据模型和 UI 组件
-- `Observable` - 可观察对象协议
-- `DirtyFlag` - 脏标记系统,跟踪需要重新渲染的部分
+- `DirtyFlag` - 内部状态标记工具
 - `#[reactive]` 宏 - 自动为结构体生成反应式属性
 
 ## 代码约定
@@ -270,7 +268,7 @@ VStack::new()
 - 布局坐标系统使用父视图相对坐标 (不是绝对屏幕坐标)
 - 滚动容器使用 0-based 偏移量表示滚动位置
 - 布局权重使用 `f32` 类型,表示相对比例 (如 1.0, 2.0 表示 1:2 的空间分配)
-- **使用声明式 API** (VStack/HStack/Grid) 构建所有 UI 组件
+- **容器组合优先使用声明式 API** (`VStack`/`HStack`/`Grid`);叶子级高频重绘组件可手写 `impl Component`
 
 ## 关键依赖
 
@@ -354,9 +352,8 @@ VStack::new()
 
 ### 2. 高性能渲染
 - 虚拟滚动支持数千行数据的流畅渲染
-- 增量差异计算减少不必要的重绘
-- 脏标记系统精确追踪需要更新的区域
-- 渲染调度器优化渲染时机
+- 渲染输出依赖 Ratatui 的双缓冲 diff 机制减少终端更新
+- 滚动视口只渲染可见区域,适配大规模列表和表格
 
 ### 3. Unicode 完整支持
 - 基于 grapheme cluster 的文本处理
@@ -371,9 +368,9 @@ VStack::new()
 
 ### 5. 现代 UI 范式
 - SwiftUI 风格的声明式 API
-- 反应式状态管理
+- 反应式属性与绑定基础设施
 - 过程宏简化常见模式
-- 纯声明式编程风格,无需手动管理视图层次
+- 容器组合优先声明式,叶子级高频组件可手写 `impl Component`
 
 ### 6. 灵活的主题系统
 - 深色/浅色主题内置支持

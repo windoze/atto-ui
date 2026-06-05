@@ -1,5 +1,7 @@
 # Async Integration Plan
 
+> 状态：计划中（未落地）。当前 `src` 中暂无 async/tokio 实现；现有异步示例仍通过标准库线程和通道自行桥接后台更新。
+
 ## Context
 
 The current async pattern is demonstrated in `examples/async_progress.rs`. It uses a
@@ -113,4 +115,3 @@ feature-gated follow-up if there is strong demand for native async/await.
   component?
 - Is a feature-gated tokio integration worth the extra API surface, or should we
   stay with thread-based async only?
-

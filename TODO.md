@@ -198,7 +198,7 @@
 - 复核保留 reactive 成员：`Property`/`Binding`/`DirtyFlag`/`DirtyObserver` 仍由 `src/reactive/mod.rs` 导出，且在主库与 workspace crate 中继续被使用，未被误删。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T6 — 文档对齐（M7 / L8 / cache/Observable）
+### [DONE] T6 — 文档对齐（M7 / L8 / cache/Observable）
 **文件**：`CLAUDE.md`、`ASYNC.md`（如存在）
 **步骤**：
 1. CLAUDE.md「技术亮点 / 高性能渲染」：删除/修正「增量差异计算减少重绘」「脏标记系统精确追踪」等表述，改为「依赖 ratatui 双缓冲 diff 渲染」。移除对 cache 模块的描述（已删除）。
@@ -206,6 +206,13 @@
 3. CLAUDE.md「代码约定」新增分层约定：**叶子级高频重绘组件可手写 `impl Component`，容器组合优先用声明式 API（VStack/HStack/Grid）**——解释 editor/file-tree 手写 Component 的合理性。
 4. `ASYNC.md`（若存在）顶部标注「计划中（未落地），src 中暂无 async/tokio 实现」。
 **验收**：文档与代码事实一致，无 cache/Observable 残留描述、无增量渲染误导。
+
+**完成记录（2026-06-06）**：
+- `CLAUDE.md` 的架构图和支持模块清单已移除已删除的 `cache/` 模块与 `reactive/observable.rs` / `Observable` 描述。
+- `CLAUDE.md` 的高性能渲染说明已从“增量差异计算/脏标记精确追踪/渲染调度器”改为依赖 Ratatui 双缓冲 diff 与可见区渲染，避免继续承诺未接线机制。
+- `CLAUDE.md` 新增分层约定：容器组合优先使用 `VStack`/`HStack`/`Grid` 声明式 API，叶子级高频重绘组件可手写 `impl Component`，以匹配 editor/file-tree 等实际实现。
+- `ASYNC.md` 顶部已标注“计划中（未落地）”，并明确当前 `src` 中暂无 async/tokio 实现。
+- 验证：复查 `CLAUDE.md`/`ASYNC.md` 中无 `cache`/`Observable` 残留描述；本任务仅修改 Markdown 文档，未重跑 `cargo fmt`/`cargo clippy`/`cargo test`，复用 R5 完成记录中的全量绿色结果。
 
 ### [TODO] R6 — 审阅 T6
 审阅 T6 改动：
