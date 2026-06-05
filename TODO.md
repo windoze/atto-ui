@@ -185,12 +185,18 @@
 - 同步删除两处模块自带单元测试，无悬空模块声明或导出。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R5 — 审阅 T5
+### [DONE] R5 — 审阅 T5
 审阅 T5 改动：
 - 复核删除前的 grep 确实零引用（含 examples/tests/其他 crate）。
 - 确认无悬空 `mod`/`pub use`、无 dead_code 警告残留。
 - 确认未误删仍被使用的 `reactive` 其他成员（`Property`/`DirtyFlag`）。
 - 运行全量 `cargo test`。
+
+**完成记录（2026-06-06）**：
+- 复核 T5 最新提交删除范围：`src/cache/**` 与 `src/reactive/observable.rs` 已删除，`src/lib.rs` 无 `pub mod cache`，`src/reactive/mod.rs` 无 `mod observable`/`pub use observable::Observable`。
+- 按要求搜索 `src`、`crates`、`examples`、`tests`，确认 `VirtualBuffer|crate::cache|cache::|Observable|observable::` 无代码引用残留。
+- 复核保留 reactive 成员：`Property`/`Binding`/`DirtyFlag`/`DirtyObserver` 仍由 `src/reactive/mod.rs` 导出，且在主库与 workspace crate 中继续被使用，未被误删。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T6 — 文档对齐（M7 / L8 / cache/Observable）
 **文件**：`CLAUDE.md`、`ASYNC.md`（如存在）
