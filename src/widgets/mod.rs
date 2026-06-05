@@ -15,6 +15,7 @@ mod styled_label;
 mod tab_view;
 mod table;
 mod textbox;
+mod util;
 
 pub use button::Button;
 pub use checkbox::Checkbox;

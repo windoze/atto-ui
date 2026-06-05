@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -16,28 +16,7 @@ use crate::runtime::CallbackHandle;
 use crate::text::TextBuffer;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if area.width == 0 || area.height == 0 {
-        return None;
-    }
-
-    if m.column >= area.x
-        && m.column < area.x.saturating_add(area.width)
-        && m.row >= area.y
-        && m.row < area.y.saturating_add(area.height)
-    {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
-}
+use super::util::{mouse_coords_local_to_area, widget_style};
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct TextBox {
@@ -147,13 +126,7 @@ impl Component for TextBox {
             self.scroll = 0;
         }
         let enabled = self.enabled.get();
-        let style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
-        } else {
-            ctx.theme.widget.normal
-        };
+        let style = widget_style(ctx.theme, enabled, ctx.is_focused);
 
         let block = Block::default()
             .borders(Borders::ALL)

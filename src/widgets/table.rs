@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, MouseEvent};
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -21,6 +21,8 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::text::styled_text::spans_from_inline;
 use atto_ui_macros::{ComponentProperties, component_properties};
+
+use super::util::{SelectionScroll, contains, mouse_coords_local_to_area, widget_style};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct TableViewBindings {
@@ -176,13 +178,7 @@ impl Component for TableView {
         self.last_area = Some(area);
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
-        let base_style: Style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
-        } else {
-            ctx.theme.widget.normal
-        };
+        let base_style: Style = widget_style(ctx.theme, enabled, ctx.is_focused);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_set(ctx.theme.border_set(false))
@@ -419,7 +415,7 @@ impl TableView {
 
     fn handle_border_scrollbar_event(
         &mut self,
-        m: crossterm::event::MouseEvent,
+        m: MouseEvent,
         area: Rect,
         body_area: Rect,
         header_height: u16,
@@ -452,7 +448,7 @@ impl TableView {
 struct TableBodyContent {
     bindings: Arc<RwLock<TableViewBindings>>,
     state: TableState,
-    last_selection: Option<usize>,
+    selection_scroll: SelectionScroll,
 }
 
 impl TableBodyContent {
@@ -460,43 +456,12 @@ impl TableBodyContent {
         Self {
             bindings,
             state: TableState::default(),
-            last_selection: None,
+            selection_scroll: SelectionScroll::default(),
         }
     }
 
     fn bindings(&self) -> TableViewBindings {
         self.bindings.read().clone()
-    }
-
-    fn normalize_selection(&mut self, row_count: usize) -> Option<usize> {
-        if row_count == 0 {
-            return None;
-        }
-        let bindings = self.bindings();
-        let mut selection = bindings.selection.get();
-        if selection >= row_count {
-            selection = row_count.saturating_sub(1);
-            bindings.selection.set(selection);
-        }
-        Some(selection)
-    }
-
-    fn ensure_selection_visible(&mut self, selection: usize, host: &mut ScrollContainerHost) {
-        let viewport_h = host.viewport_size().1;
-        if viewport_h == 0 {
-            return;
-        }
-        let scroll = host.scroll_offset();
-        let sel = selection.min(u16::MAX as usize) as u16;
-        let mut next_y = scroll.y;
-        if sel < scroll.y {
-            next_y = sel;
-        } else if sel >= scroll.y.saturating_add(viewport_h) {
-            next_y = sel.saturating_add(1).saturating_sub(viewport_h);
-        }
-        if next_y != scroll.y {
-            host.set_scroll_offset(scroll.x, next_y);
-        }
     }
 }
 
@@ -516,14 +481,10 @@ impl ScrollContent for TableBodyContent {
     }
 
     fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, host: &mut ScrollContainerHost) {
-        let rows = self.bindings().rows.get();
-        let selection = self.normalize_selection(rows.len());
-        if selection != self.last_selection {
-            if let Some(sel) = selection {
-                self.ensure_selection_visible(sel, host);
-            }
-            self.last_selection = selection;
-        }
+        let bindings = self.bindings();
+        let rows = bindings.rows.get();
+        self.selection_scroll
+            .sync_selection_visible(&bindings.selection, rows.len(), host);
     }
 
     fn handle_event(
@@ -537,57 +498,13 @@ impl ScrollContent for TableBodyContent {
             return EventResult::ignored();
         }
         let rows = bindings.rows.get();
-        let Some(selection) = self.normalize_selection(rows.len()) else {
-            return EventResult::ignored();
-        };
-
-        match event {
-            Event::Mouse(m) => {
-                if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return EventResult::ignored();
-                }
-                let row = m.row as usize;
-                let idx = host.scroll_offset().y as usize + row;
-                if idx < rows.len() {
-                    bindings.selection.set(idx);
-                    self.ensure_selection_visible(idx, host);
-                    self.last_selection = Some(idx);
-                    if let Some(cb) = &bindings.on_change {
-                        cb.emit();
-                    }
-                    return EventResult::changed();
-                }
-                EventResult::ignored()
-            }
-            Event::Key(KeyEvent { code, .. }) => match code {
-                KeyCode::Up => {
-                    let next = if selection == 0 {
-                        rows.len() - 1
-                    } else {
-                        selection.saturating_sub(1)
-                    };
-                    bindings.selection.set(next);
-                    self.ensure_selection_visible(next, host);
-                    self.last_selection = Some(next);
-                    if let Some(cb) = &bindings.on_change {
-                        cb.emit();
-                    }
-                    EventResult::changed()
-                }
-                KeyCode::Down => {
-                    let next = (selection + 1) % rows.len();
-                    bindings.selection.set(next);
-                    self.ensure_selection_visible(next, host);
-                    self.last_selection = Some(next);
-                    if let Some(cb) = &bindings.on_change {
-                        cb.emit();
-                    }
-                    EventResult::changed()
-                }
-                _ => EventResult::ignored(),
-            },
-            _ => EventResult::ignored(),
-        }
+        self.selection_scroll.handle_event(
+            event,
+            &bindings.selection,
+            rows.len(),
+            host,
+            bindings.on_change.as_ref(),
+        )
     }
 
     fn draw(
@@ -599,13 +516,8 @@ impl ScrollContent for TableBodyContent {
     ) {
         let bindings = self.bindings();
         let enabled = bindings.enabled.get();
-        let base_style: Style = if !enabled {
-            ctx.component.theme.widget.disabled
-        } else if ctx.component.is_focused {
-            ctx.component.theme.widget.focused
-        } else {
-            ctx.component.theme.widget.normal
-        };
+        let base_style: Style =
+            widget_style(ctx.component.theme, enabled, ctx.component.is_focused);
         let highlight_style = if enabled {
             ctx.component.theme.selection
         } else {
@@ -618,7 +530,9 @@ impl ScrollContent for TableBodyContent {
         let headers = bindings.headers.get();
         let rows = bindings.rows.get();
         let link_overlay = ctx.component.theme.named_style("markdown-link");
-        let selection = self.normalize_selection(rows.len());
+        let selection = self
+            .selection_scroll
+            .normalize_selection(&bindings.selection, rows.len());
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
 
@@ -683,29 +597,4 @@ fn row_cells(
 fn styled_cell(text: &str, base_style: Style, link_overlay: Option<Style>) -> Cell<'static> {
     let spans = spans_from_inline(text, base_style, link_overlay);
     Cell::from(Line::from(spans))
-}
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    // Nested containers receive mouse coordinates already relative to their own origin.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }

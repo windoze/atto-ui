@@ -11,6 +11,8 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
+use super::util::widget_style;
+
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct Checkbox {
     label: Binding<String>,
@@ -56,13 +58,7 @@ impl Checkbox {
 impl Component for Checkbox {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let enabled = self.enabled.get();
-        let style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
-        } else {
-            ctx.theme.widget.normal
-        };
+        let style = widget_style(ctx.theme, enabled, ctx.is_focused);
         let mark = if self.binding.get() {
             ctx.theme.glyph("checkbox-checked").unwrap_or("[x]")
         } else {

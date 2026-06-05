@@ -306,13 +306,20 @@
 - 复查 `KeyCode::Up/Down/Left/Right/PageUp/PageDown/Home/End` 与 `MouseEventKind::Scroll*` 搜索结果，滚动容器路径无遗漏的重复滚动输入映射；其他命中属于文本框、菜单、窗口管理、列表/表格选择等非滚动容器逻辑。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test scroll_input --lib`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T10 — 控件层共享抽象（M10）
+### [DONE] T10 — 控件层共享抽象（M10）
 **文件**：`src/widgets/textbox.rs`、`table.rs`、`list.rs`、`button.rs`、新增 widgets 公共 util。
 **步骤**：
 1. 抽 `pub(crate) fn widget_style(theme, enabled, focused) -> Style`（三态样式），替换 5 个 widget 重复实现。
 2. 抽共享 `mouse_coords_local_to_area`/`contains` 到公共 util（textbox/table/list 三处去重）。
 3. ListBox/TableView 的 selection/scroll 抽 mixin。
 **测试**：各 widget 现有 PTY 测试回归。
+
+**完成记录（2026-06-06）**：
+- 新增 `src/widgets/util.rs`，提供 widgets 内部共享的 `widget_style`、`contains`、`mouse_coords_local_to_area` 与 row-based `SelectionScroll`。
+- `Button`、`Checkbox`、`TextBox`、`ListBox`、`TableView` 的标准 disabled/focused/normal 三态样式切换已改为调用 `widget_style`。
+- `TextBox`、`ListBox`、`TableView` 的重复鼠标坐标转换与区域命中逻辑已收敛到 widgets 公共 util，保留绝对坐标和嵌套容器本地坐标两种输入语义。
+- `ListBoxContent` 与 `TableBodyContent` 已共享 `SelectionScroll`，统一 selection clamp、滚动到可见区域、鼠标点击选择、Up/Down wrap 选择与 `on_change` 触发行为。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_mouse_support`；`cargo test --test pty_textbox_selection`；`cargo test --test pty_virtual_scrolling`；`cargo test --test pty_desktop`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R10 — 审阅 T10
 审阅抽象：共享函数语义覆盖各 widget 原有差异、无回归、命名清晰。
