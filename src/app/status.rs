@@ -110,6 +110,30 @@ mod tests {
     }
 
     #[test]
+    fn status_line_right_aligns_ascii() {
+        let line = build_status_line("left", "right", 12);
+
+        assert_eq!(line, "left   right");
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 12);
+    }
+
+    #[test]
+    fn status_line_right_aligns_cjk() {
+        let line = build_status_line("左", "右", 10);
+
+        assert_eq!(line, "左      右");
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 10);
+    }
+
+    #[test]
+    fn status_line_right_aligns_mixed_width_text() {
+        let line = build_status_line("A你", "B🦀", 10);
+
+        assert_eq!(line, "A你    B🦀");
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 10);
+    }
+
+    #[test]
     fn status_line_truncates_left_on_grapheme_boundary() {
         let line = build_status_line("你好你好", "", 5);
 

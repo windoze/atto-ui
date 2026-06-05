@@ -34,13 +34,20 @@
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_status_bar`；`cargo test --all --all-targets` 全部通过。
 - 为满足当前 `-D warnings` 验收，顺带修复 3 个既有 clippy 阻塞项：`src/composable/splitter.rs`、`crates/atto-ui-file-tree/src/lib.rs`、`crates/atto-ui-editor/src/bin/mock_lsp_server.rs`。
 
-### [TODO] R1 — 审阅 T1
+### [DONE] R1 — 审阅 T1
 审阅 T1 改动：
 - 确认彻底移除了 `.len()` 作为列宽的用法，全部改为 `UnicodeWidthStr::width`。
 - 确认截断在 grapheme 边界，构造极端输入（emoji ZWJ 序列、混合 CJK）人工/测试验证不 panic。
 - 确认右对齐在纯 ASCII、纯 CJK、混合三种情况下都正确，背景样式铺满整行无空洞。
 - 确认测试真实覆盖 panic 路径（width 落在多字节字符中间）。
 - 运行 `cargo test` 与 demo 目视检查。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/app/status.rs`：状态栏布局路径已使用 `UnicodeWidthStr::width` 计算列宽，未继续用 `.len()` 作为显示宽度；超长左侧文本在 grapheme 边界截断并补空格铺满宽度。
+- 审阅 `src/bin/snapshot_app.rs` 与 `tests/pty_status_bar.rs`：fixture 覆盖中文/emoji 右对齐和宽度落在 CJK 字符中间时的无 panic 截断路径。
+- 补充 `status_line_right_aligns_ascii`、`status_line_right_aligns_cjk`、`status_line_right_aligns_mixed_width_text` 单元测试，固定验证纯 ASCII、纯 CJK、混合宽度文本右对齐。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test status_line`；`cargo test --test pty_status_bar`；`cargo test --all --all-targets` 全部通过。
+- demo 检查：以 100x30 伪终端运行 `cargo run --example demo`，确认示例绘制状态栏并可用 `q` 正常退出。
 
 ### [TODO] T2 — 修复 `move_node` 重插入失败丢节点（S2）
 **文件**：`src/runtime/mod.rs`
