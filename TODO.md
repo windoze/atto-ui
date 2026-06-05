@@ -214,11 +214,18 @@
 - `ASYNC.md` 顶部已标注“计划中（未落地）”，并明确当前 `src` 中暂无 async/tokio 实现。
 - 验证：复查 `CLAUDE.md`/`ASYNC.md` 中无 `cache`/`Observable` 残留描述；本任务仅修改 Markdown 文档，未重跑 `cargo fmt`/`cargo clippy`/`cargo test`，复用 R5 完成记录中的全量绿色结果。
 
-### [TODO] R6 — 审阅 T6
+### [DONE] R6 — 审阅 T6
 审阅 T6 改动：
 - 逐条核对 CLAUDE.md 不再有与实现脱节的承诺（增量渲染、脏标记、cache、Observable）。
 - 确认分层约定表述清晰、与实际 18 处 `impl Component` 现状一致。
 - 确认 ASYNC.md 标注准确。
+
+**完成记录（2026-06-06）**：
+- 审阅 `CLAUDE.md`：高性能渲染说明已限定为 Ratatui 双缓冲 diff 与可见区渲染，未继续承诺未接线的增量渲染/脏标记精确追踪；支持模块清单中无 `cache/`、`reactive/observable.rs`、`Observable` 残留描述。
+- 审阅分层约定：`CLAUDE.md` 明确容器组合优先使用 `VStack`/`HStack`/`Grid`，叶子级高频组件可手写 `impl Component`，与当前 widgets、editor/file-tree 等手写实现现状一致，且未写死易漂移的数量。
+- 审阅并修正 `ASYNC.md`：发现当前代码已提供标准库通道式入口 `EventQueue::channel()` 与 `run_crossterm_desktop_with_actions()`，并有 `tests/pty_async_actions.rs` 覆盖；文档已从“计划中（未落地）”改为“部分已落地”，仅保留 tokio/native async-await 为后续方向。
+- 验证：`rg -n "计划中（未落地）|run_crossterm_desktop\(\) does not integrate|No code changes yet|manual event loop|no first-class API|暂无 async/tokio|增量差异|脏标记系统|cache/|cache 模块|Observable|observable::|reactive/observable|VirtualBuffer" CLAUDE.md ASYNC.md` 无命中；`rg -n "run_crossterm_desktop_with_actions|EventQueue::channel|pty_async_actions" ASYNC.md src/app/run.rs src/reactive/queue.rs tests/pty_async_actions.rs examples/async_progress.rs` 确认文档与代码入口一致。
+- 本次仅修改 Markdown 文档与任务记录，未改 Rust 编译产物；未重跑 `cargo fmt`/`cargo clippy`/`cargo test`，复用 T6/R5 记录中的既有绿色结果。
 
 ---
 

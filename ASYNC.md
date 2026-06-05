@@ -1,23 +1,27 @@
-# Async Integration Plan
+# Async Integration Notes
 
-> 状态：计划中（未落地）。当前 `src` 中暂无 async/tokio 实现；现有异步示例仍通过标准库线程和通道自行桥接后台更新。
+> 状态：部分已落地。当前已有标准库通道式后台动作入口：`EventQueue::channel()` 与 `run_crossterm_desktop_with_actions()`；`tokio` / native async-await 集成仍未落地，继续作为可选后续方向。
 
 ## Context
 
-The current async pattern is demonstrated in `examples/async_progress.rs`. It uses a
-manual event loop with `std::sync::mpsc::channel`, `try_recv`, and `event::poll` to
-interleave terminal input with background updates. We also have `reactive::EventQueue`
-and `EventQueue::channel()` plus `drain_channel()` in `src/reactive/queue.rs`, but
-`run_crossterm_desktop()` does not integrate any background action channel.
+The current async pattern is demonstrated in `examples/async_progress.rs`. It uses
+`reactive::EventQueue::channel()` and `run_crossterm_desktop_with_actions()` to bridge
+background `std::thread` work into the main UI loop through `std::sync::mpsc` actions.
+The default `run_crossterm_desktop()` remains input/tick driven; the `with_actions`
+variant drains background actions before each draw.
 
 ## Observations (from async_progress)
 
-- The example re-implements terminal setup/teardown and event loop logic that already
-  exists in `src/app/run.rs`.
-- Background work is bridged through an `AppAction` enum and `mpsc::Sender`.
-- The event loop uses a dynamic timeout to avoid busy polling when idle.
-- There is no first-class API for spawning async work or dispatching results into
-  the main UI loop; each app rolls its own.
+- Background work is bridged through an app-specific action enum and `mpsc::Sender`.
+- `run_crossterm_desktop_with_actions()` drains queued actions on the main UI thread
+  before drawing, so background updates are visible immediately.
+- `examples/async_progress.rs` now reuses the shared crossterm run-loop setup instead
+  of owning terminal setup/teardown itself.
+- `tests/pty_async_actions.rs` covers deterministic dispatch from a background thread
+  into the main UI thread.
+- There is still no tokio-backed event stream or native async-await runtime helper in
+  `src`; users who need async-await can bring their own runtime and dispatch results
+  through the standard-library channel bridge.
 
 ## Goals
 
@@ -29,14 +33,13 @@ and `EventQueue::channel()` plus `drain_channel()` in `src/reactive/queue.rs`, b
 
 ## Integration Options
 
-### Option A: Channel-aware run loop (minimal, std-only)
+### Option A: Channel-aware run loop (implemented, std-only)
 
-- Extend `run_crossterm_desktop()` with an optional action receiver (or a small
-  helper wrapper like `run_crossterm_desktop_with_actions`).
-- Provide a tiny helper type (e.g., `AppActionQueue<T>`) that exposes
-  `(sender, receiver)` and `drain()` for the loop.
-- In the run loop: drain actions before draw, and use a timeout that is the min of
-  `tick_rate` and an action-receiver timeout to avoid busy polling.
+- `run_crossterm_desktop_with_actions()` accepts an action receiver and an `on_action`
+  callback.
+- `EventQueue::channel()` exposes `(sender, receiver)` for background workers.
+- The run loop drains actions before draw, then uses the existing `tick_rate` poll
+  cadence for terminal input.
 
 Pros:
 - No new dependencies.
@@ -76,36 +79,27 @@ Cons:
 
 ## Recommended Direction
 
-Start with Option A to provide a zero-dependency, channel-aware run loop that
-matches the `async_progress` pattern but lives in `src/app/run.rs`. This makes
-async updates first-class while keeping the crate lightweight. Keep Option B as a
-feature-gated follow-up if there is strong demand for native async/await.
+Option A is the current implementation. It keeps the core crate dependency-light and
+provides a first-class path for thread/background-task results to update UI state on
+the main thread. Keep Option B as a feature-gated follow-up if there is strong demand
+for native async/await.
 
-## Proposed Steps (No code changes yet)
+## Remaining Follow-up Steps
 
-1. Define the desired API surface:
-   - A small action-queue type (or reuse `EventQueue::channel`) and a run-loop
-     entry point that accepts a receiver and drains it each tick.
-   - Decide whether actions are typed at the app level (`AppAction`) or whether
-     the API stays generic (`T: Send + 'static`).
+1. Document the current std-only API in user-facing docs:
+   - `EventQueue::channel()` for sender/receiver creation.
+   - `run_crossterm_desktop_with_actions()` for main-thread dispatch.
+   - App-specific action enums for typed UI updates.
 
-2. Update `run_crossterm_desktop()` (or add a new helper) to:
-   - Drain pending actions before `terminal.draw()`.
-   - Use a timeout strategy similar to `async_progress` (fast poll when actions
-     are pending; normal tick rate when idle).
-   - Expose a hook to let the app translate actions into UI state changes.
-
-3. Provide a small runtime handle for background tasks:
+2. Evaluate whether repeated application boilerplate warrants a small runtime handle:
    - `AppHandle::sender()` or `AppHandle::dispatch(action)`.
    - Optional helper `spawn_blocking` that uses `std::thread::spawn` and returns
-     results via the sender.
+     results through the existing sender.
 
-4. Migrate `examples/async_progress.rs` to the new API to validate ergonomics.
-
-5. Update documentation:
-   - `docs/ASYNC_TASKS.md` to prefer the new run-loop integration.
-   - Add a short section to `README.md` or a new doc that explains the default
-     (std-only) async pattern and the optional tokio feature (if added later).
+3. If native async-await demand appears, design Option B behind a feature gate:
+   - Optional tokio runtime helper.
+   - Crossterm `EventStream` integration.
+   - Deterministic PTY testing strategy for feature-gated async behavior.
 
 ## Open Questions
 
