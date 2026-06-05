@@ -346,15 +346,32 @@ pub trait DynamicTree: Send {
 }
 
 /// Event capture, target and bubble hooks for component event dispatch.
+///
+/// The desktop and window manager enter a component tree through [`EventHandling::handle_event`].
+/// They do not call capture or bubble hooks around the root view. A container implementation of
+/// `handle_event` is responsible for its own three-phase dispatch:
+///
+/// 1. Run `handle_event_capture` on itself and stop if it consumes the event.
+/// 2. Dispatch to the target child for mouse events, or the focused child for keyboard/paste events,
+///    by calling that child component's `handle_event`.
+/// 3. If the target did not consume the event, run `handle_event_bubble` on itself as a fallback.
+///
+/// This makes the effective order for nested containers `outer capture -> inner capture -> target
+/// handle -> inner bubble -> outer bubble` for unconsumed target events. Transparent wrappers should
+/// delegate `handle_event` directly to their inner component instead of separately calling the inner
+/// capture and bubble hooks around it, otherwise the inner subtree would be dispatched twice.
 pub trait EventHandling: Send {
+    /// Pre-target hook for container-level interception such as focus traversal.
     fn handle_event_capture(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 
+    /// Post-target fallback hook for unconsumed events, commonly used by scrollable containers.
     fn handle_event_bubble(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
 
+    /// Main event entrypoint. Containers should orchestrate capture, target dispatch and bubble.
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }

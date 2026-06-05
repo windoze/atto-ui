@@ -258,13 +258,21 @@
 - 复核 `impl_component_default_traits!` 用途：仅用于显式补齐等价默认子 trait，未发现应自定义行为却落到默认实现的组件。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过，包含 PTY 集成测试。
 
-### [TODO] T8 — 澄清事件分发 capture/bubble/handle 语义（M2）
+### [DONE] T8 — 澄清事件分发 capture/bubble/handle 语义（M2）
 **文件**：`src/composable/stack/events.rs`（`handle_event_capture_impl:228` 等）、wm/desktop 事件分发处。
 **步骤**：
 1. 先定位框架实际调用顺序（在 desktop/wm 分发入口 grep `handle_event_capture`/`handle_event`/bubble）。
 2. 文档化 `capture → target → bubble` 调用契约（写在 trait 方法注释），或收敛为单一 `handle_event` 内部编排。
 3. 确保包装层不重复分发。
 **测试**：新增事件时序 PTY 测试——点击嵌套容器，断言 capture/bubble 各调用一次且顺序正确。
+
+**完成记录（2026-06-06）**：
+- 定位事件入口：`Desktop::handle_event` 通过 `WindowManager::dispatch_to_focused_view` / `dispatch_to_window_view` 进入根组件 `handle_event`，窗口管理器不会额外包一层 capture/bubble。
+- `EventHandling` trait 注释已明确三阶段契约：容器自己的 `handle_event` 先运行本地 capture，未消费时分发到鼠标目标或焦点子组件的 `handle_event`，目标未消费时再运行本地 bubble。
+- 文档说明嵌套容器的有效顺序为 `outer capture -> inner capture -> target handle -> inner bubble -> outer bubble`，并明确透明包装层应直接委派 `handle_event`，避免重复调用内部 capture/bubble 导致重复分发。
+- `snapshot_app` 新增 `--event-order` PTY 夹具，渲染嵌套事件时序视图并在点击目标后显示实际调用序列。
+- 新增 `tests/pty_event_order.rs`，点击嵌套目标并断言 trace 为 `root-capture>child-capture>target-handle>child-bubble>root-bubble`，覆盖 capture/bubble 各调用一次且顺序正确。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_event_order`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R8 — 审阅 T8
 审阅事件模型：契约文档清晰、无重复/漏分发、时序测试覆盖嵌套场景。

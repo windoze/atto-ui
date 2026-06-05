@@ -1,11 +1,13 @@
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -101,6 +103,218 @@ impl ::atto_ui::composable::EventHandling for LogView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
+}
+
+type TraceLog = Arc<Mutex<Vec<&'static str>>>;
+
+fn is_left_mouse_down(event: &Event) -> bool {
+    matches!(event, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)))
+}
+
+fn push_trace(log: &TraceLog, entry: &'static str) {
+    if let Ok(mut events) = log.lock() {
+        events.push(entry);
+    }
+}
+
+struct TraceContainer {
+    capture_entry: &'static str,
+    bubble_entry: &'static str,
+    inner: Box<dyn Component>,
+    log: TraceLog,
+}
+
+impl TraceContainer {
+    fn new(
+        capture_entry: &'static str,
+        bubble_entry: &'static str,
+        inner: Box<dyn Component>,
+        log: TraceLog,
+    ) -> Self {
+        Self {
+            capture_entry,
+            bubble_entry,
+            inner,
+            log,
+        }
+    }
+}
+
+impl ::atto_ui::composable::Component for TraceContainer {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.inner.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for TraceContainer {
+    fn min_width(&self) -> u16 {
+        self.inner.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.inner.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.inner.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.inner.desired_height()
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for TraceContainer {}
+
+impl ::atto_ui::composable::FocusNav for TraceContainer {}
+
+impl ::atto_ui::composable::DynamicTree for TraceContainer {}
+
+impl ::atto_ui::composable::EventHandling for TraceContainer {
+    fn handle_event_capture(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if is_left_mouse_down(event) {
+            push_trace(&self.log, self.capture_entry);
+        }
+        EventResult::ignored()
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if is_left_mouse_down(event) {
+            push_trace(&self.log, self.bubble_entry);
+        }
+        EventResult::ignored()
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let capture = self.handle_event_capture(event, ctx);
+        if capture.is_consumed() {
+            return capture;
+        }
+
+        let target = self.inner.handle_event(event, ctx);
+        if target.is_consumed() {
+            return target;
+        }
+
+        self.handle_event_bubble(event, ctx)
+    }
+}
+
+struct TraceTarget {
+    log: TraceLog,
+}
+
+impl TraceTarget {
+    fn new(log: TraceLog) -> Self {
+        Self { log }
+    }
+}
+
+impl ::atto_ui::composable::Component for TraceTarget {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        frame.render_widget(
+            Paragraph::new("Target leaf").style(ctx.theme.widget.normal),
+            area,
+        );
+    }
+}
+
+impl ::atto_ui::composable::Layout for TraceTarget {
+    fn min_width(&self) -> u16 {
+        11
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for TraceTarget {}
+
+impl ::atto_ui::composable::FocusNav for TraceTarget {}
+
+impl ::atto_ui::composable::DynamicTree for TraceTarget {}
+
+impl ::atto_ui::composable::EventHandling for TraceTarget {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if is_left_mouse_down(event) {
+            push_trace(&self.log, "target-handle");
+        }
+        EventResult::ignored()
+    }
+}
+
+struct TraceLogView {
+    log: TraceLog,
+}
+
+impl TraceLogView {
+    fn new(log: TraceLog) -> Self {
+        Self { log }
+    }
+}
+
+impl ::atto_ui::composable::Component for TraceLogView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let trace = match self.log.lock() {
+            Ok(events) if events.is_empty() => "TRACE: none".to_string(),
+            Ok(events) => format!("TRACE: {}", events.join(">")),
+            Err(_) => "TRACE: <poisoned>".to_string(),
+        };
+        frame.render_widget(Paragraph::new(trace).style(ctx.theme.widget.normal), area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for TraceLogView {
+    fn min_width(&self) -> u16 {
+        72
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for TraceLogView {}
+
+impl ::atto_ui::composable::FocusNav for TraceLogView {}
+
+impl ::atto_ui::composable::DynamicTree for TraceLogView {}
+
+impl ::atto_ui::composable::EventHandling for TraceLogView {}
+
+fn event_order_demo() -> Box<dyn Component> {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+
+    let child = TraceContainer::new(
+        "child-capture",
+        "child-bubble",
+        Box::new(HStack::new().child_with_layout(
+            TraceTarget::new(Arc::clone(&log)),
+            LayoutParams {
+                width: Size::Fixed(14),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        )),
+        Arc::clone(&log),
+    );
+    let root = VStack::new()
+        .spacing(0)
+        .child_with_layout(Label::new("Event order fixture"), row_layout)
+        .child_with_layout(child, row_layout)
+        .child_with_layout(TraceLogView::new(Arc::clone(&log)), row_layout);
+
+    Box::new(TraceContainer::new(
+        "root-capture",
+        "root-bubble",
+        Box::new(root),
+        log,
+    ))
 }
 
 struct WidgetsView {
@@ -288,10 +502,10 @@ impl ::atto_ui::composable::EventHandling for AboutView {
 }
 
 fn main() -> Result<()> {
-    let mut status_fixture = std::env::args()
-        .skip(1)
-        .find_map(|arg| StatusFixture::from_arg(&arg));
-    let textbox_initial_text = if std::env::args().any(|arg| arg == "--textbox-unicode") {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let event_order_fixture = args.iter().any(|arg| arg == "--event-order");
+    let mut status_fixture = args.iter().find_map(|arg| StatusFixture::from_arg(arg));
+    let textbox_initial_text = if args.iter().any(|arg| arg == "--textbox-unicode") {
         "a你b好c"
     } else {
         "hello"
@@ -356,50 +570,68 @@ fn main() -> Result<()> {
 
     // Create windows after we know the screen bounds.
     let screen: Rect = terminal.size()?.into();
-    let widgets_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Widgets",
-            Rect {
-                x: 2,
-                y: 2,
-                width: 42,
-                height: 20,
-            },
-            Box::new(WidgetsView::new(textbox_initial_text)),
-        ),
-        screen,
-    );
-    let _log_id = desktop.add_window(
-        Window::new(
-            WindowKind::Floating,
-            "Log",
-            Rect {
-                x: 46,
-                y: 4,
-                width: 30,
-                height: 10,
-            },
-            Box::new(LogView::new(Arc::clone(&theme_state))),
-        ),
-        screen,
-    );
+    if event_order_fixture {
+        let event_order_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Event Order",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 76,
+                    height: 8,
+                },
+                event_order_demo(),
+            ),
+            screen,
+        );
+        desktop.wm.focus(event_order_id);
+    } else {
+        let widgets_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Widgets",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 42,
+                    height: 20,
+                },
+                Box::new(WidgetsView::new(textbox_initial_text)),
+            ),
+            screen,
+        );
+        let _log_id = desktop.add_window(
+            Window::new(
+                WindowKind::Floating,
+                "Log",
+                Rect {
+                    x: 46,
+                    y: 4,
+                    width: 30,
+                    height: 10,
+                },
+                Box::new(LogView::new(Arc::clone(&theme_state))),
+            ),
+            screen,
+        );
 
-    let _views_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            "Views",
-            Rect {
-                x: 46,
-                y: 14,
-                width: 30,
-                height: 8,
-            },
-            view_hierarchy_demo(),
-        ),
-        screen,
-    );
-    desktop.wm.focus(widgets_id);
+        let _views_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Views",
+                Rect {
+                    x: 46,
+                    y: 14,
+                    width: 30,
+                    height: 8,
+                },
+                view_hierarchy_demo(),
+            ),
+            screen,
+        );
+        desktop.wm.focus(widgets_id);
+    }
 
     let res = run(
         &mut terminal,
