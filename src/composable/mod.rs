@@ -1,6 +1,7 @@
 //! Composable component system (single component model).
 
 mod border;
+mod clipped;
 mod component;
 mod component_tag;
 mod for_each;

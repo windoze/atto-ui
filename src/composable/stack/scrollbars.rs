@@ -1,6 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use super::super::clipped::{draw_component_region, scrolled_region};
 use super::super::component::{ComponentContext, ScrollbarHost};
 use super::super::scroll::{clamp_scroll_offset, draw_scrollbars, resolve_scroll_view};
 use super::StackCore;
@@ -57,16 +58,6 @@ impl StackCore {
             if r.width == 0 || r.height == 0 {
                 continue;
             }
-            if scrollable && !Self::bounds_fully_visible(r, scroll, viewport_size) {
-                continue;
-            }
-            let abs = Rect {
-                x: inner.x.saturating_add(r.x.saturating_sub(scroll.x)),
-                y: inner.y.saturating_add(r.y.saturating_sub(scroll.y)),
-                width: r.width,
-                height: r.height,
-            };
-
             let child_focused = ctx.is_focused && self.focused == Some(child.id);
             let child_ctx = ComponentContext {
                 theme: ctx.theme,
@@ -75,7 +66,32 @@ impl StackCore {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
             };
-            child.view.draw(frame, abs, child_ctx);
+            if scrollable {
+                let Some(region) = scrolled_region(r, scroll, viewport_size, inner) else {
+                    continue;
+                };
+                let component_area = Rect::new(0, 0, r.width, r.height);
+                if region.source == component_area {
+                    child.view.draw(frame, region.dest, child_ctx);
+                } else {
+                    draw_component_region(
+                        frame,
+                        child.view.as_mut(),
+                        component_area,
+                        region.source,
+                        region.dest,
+                        child_ctx,
+                    );
+                }
+            } else {
+                let abs = Rect {
+                    x: inner.x.saturating_add(r.x),
+                    y: inner.y.saturating_add(r.y),
+                    width: r.width,
+                    height: r.height,
+                };
+                child.view.draw(frame, abs, child_ctx);
+            }
         }
 
         for child in self

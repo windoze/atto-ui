@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
+use super::super::clipped;
 use super::super::component::{ComponentContext, EventResult, TabMode};
 use super::super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
@@ -166,25 +167,12 @@ impl StackCore {
         changed
     }
 
-    pub(super) fn bounds_fully_visible(
+    pub(super) fn bounds_intersects_viewport(
         bounds: Rect,
         scroll: ScrollOffset,
         viewport: (u16, u16),
     ) -> bool {
-        if viewport.0 == 0 || viewport.1 == 0 {
-            return false;
-        }
-        let x0 = bounds.x;
-        let y0 = bounds.y;
-        let x1 = bounds.x.saturating_add(bounds.width);
-        let y1 = bounds.y.saturating_add(bounds.height);
-
-        let vx0 = scroll.x;
-        let vy0 = scroll.y;
-        let vx1 = scroll.x.saturating_add(viewport.0);
-        let vy1 = scroll.y.saturating_add(viewport.1);
-
-        x0 >= vx0 && y0 >= vy0 && x1 <= vx1 && y1 <= vy1
+        clipped::bounds_intersects_viewport(bounds, scroll, viewport)
     }
 
     fn hit_test_child_scrolled(
@@ -215,7 +203,7 @@ impl StackCore {
             .rev()
             .filter(|c| c.layout.anchor.is_none())
         {
-            if !Self::bounds_fully_visible(child.bounds(), scroll, viewport) {
+            if !Self::bounds_intersects_viewport(child.bounds(), scroll, viewport) {
                 continue;
             }
             if contains(child.bounds(), content_x, content_y) {

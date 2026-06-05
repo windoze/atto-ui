@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -11,12 +13,54 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
-use atto_ui::composable::{Component, EdgeInsets, LayoutParams, Size, Text, VStack};
-use atto_ui::reactive::EventQueue;
+use atto_ui::composable::{
+    Component, ComponentContext, EdgeInsets, EventResult, LayoutParams, Size, Text, VStack,
+};
+use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
+
+struct TallClickTarget {
+    status: Binding<String>,
+}
+
+impl TallClickTarget {
+    fn new() -> Self {
+        Self {
+            status: Binding::new("idle".to_string()),
+        }
+    }
+}
+
+impl Component for TallClickTarget {
+    fn desired_height(&self) -> Option<u16> {
+        Some(40)
+    }
+
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        let Event::Mouse(m) = event else {
+            return EventResult::ignored();
+        };
+        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+            self.status.set(format!("clicked row {:02}", m.row));
+            return EventResult::changed();
+        }
+        EventResult::ignored()
+    }
+
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let status = self.status.get();
+        let style = ctx.theme.widget.normal;
+        let lines: Vec<Line<'_>> = (0..area.height)
+            .map(|row| Line::styled(format!("Tall child row {row:02} | {status}"), style))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
 
 fn build_scroll_test_view() -> Box<dyn Component> {
     let root = (0..80u16).fold(
@@ -43,6 +87,22 @@ fn build_scroll_test_view() -> Box<dyn Component> {
     );
 
     Box::new(root)
+}
+
+fn build_long_child_test_view() -> Box<dyn Component> {
+    Box::new(
+        VStack::new()
+            .padding_insets(EdgeInsets::symmetric(1, 1))
+            .spacing(0u16)
+            .scrollable(true)
+            .child_with_layout(
+                TallClickTarget::new(),
+                LayoutParams {
+                    height: Size::Fixed(40),
+                    ..LayoutParams::default()
+                },
+            ),
+    )
 }
 
 fn main() -> Result<()> {
@@ -75,6 +135,13 @@ fn main() -> Result<()> {
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
 
+    let long_child_mode = std::env::args().any(|arg| arg == "--long-child");
+    let view = if long_child_mode {
+        build_long_child_test_view()
+    } else {
+        build_scroll_test_view()
+    };
+
     desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -85,7 +152,7 @@ fn main() -> Result<()> {
                 width: 50.min(work.width.saturating_sub(2)).max(20),
                 height: 14.min(work.height.saturating_sub(2)).max(8),
             },
-            build_scroll_test_view(),
+            view,
         ),
         screen,
     );

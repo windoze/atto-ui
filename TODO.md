@@ -127,7 +127,7 @@
 
 ## 阶段二：P1（滚动失效 + 死代码清除 + 文档对齐）
 
-### [TODO] T4 — 滚动容器相交裁剪渲染与命中（S3）
+### [DONE] T4 — 滚动容器相交裁剪渲染与命中（S3）
 **文件**：`src/composable/stack/scrollbars.rs`、`src/composable/stack/events.rs`
 **相关符号**：绘制处 `scrollbars.rs:60`（`bounds_fully_visible` 判断 + `abs` Rect 计算 63-68）；命中处 `events.rs:218`；`bounds_fully_visible` 定义 `events.rs:169`（grid 同名 `grid/events.rs:169`）。
 **现状**：`if scrollable && !Self::bounds_fully_visible(r, scroll, viewport_size) { continue; }` 导致高度 > 视口或部分滚出的子项被整块跳过 → 既不渲染也不可点击。
@@ -144,6 +144,14 @@
 - 用例 A：向下滚动，断言长子项下半部分随滚动出现（非整块消失）。
 - 用例 B：部分可见子项上的点击能命中（返回正确 child id / 触发交互）。
 **验收**：长内容滚动可见可交互；现有 `pty_scrolling.rs`/`pty_horizontal_scrolling.rs` 不回归。
+
+**完成记录（2026-06-06）**：
+- 新增 `src/composable/clipped.rs`，提供滚动视口相交计算、离屏渲染与可见区域拷贝，支持子组件顶部/左侧滚出视口时只绘制交集并保留可见区域背景与光标映射。
+- `StackCore` 与 `Grid` 的滚动绘制路径从“必须完全可见”改为“与视口相交即可绘制”，部分可见子项会按 `inner` 内容区裁剪，不覆盖滚动条预留区域或窗口边框。
+- `StackCore` 与 `Grid` 的鼠标命中路径改用相交判断，点击部分可见子项时按内容坐标映射到正确 child-local 坐标。
+- `snapshot_scroll_app` 新增 `--long-child` fixture，包含单个高于视口的可点击长子项，用于覆盖原本整块跳过的渲染和命中路径。
+- `tests/pty_scrolling.rs` 新增长子项滚动可见与部分可见点击命中测试；现有滚动条、键盘、鼠标滚轮测试保持通过。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R4 — 审阅 T4
 审阅 T4 改动：

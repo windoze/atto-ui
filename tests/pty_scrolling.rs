@@ -149,3 +149,51 @@ fn pty_scrollbar_arrow_buttons_scroll_by_one_line() {
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
+
+#[test]
+fn pty_scrolls_single_child_taller_than_viewport() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_scroll_app");
+    let mut host = PtyTestHost::spawn(bin, &["--long-child"], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Tall child row 00 | idle", Duration::from_secs(2))
+        .expect("initial tall child content visible");
+
+    for _ in 0..5 {
+        host.send_str("\x1b[B").expect("ArrowDown");
+    }
+    host.wait_for_text("Tall child row 22 | idle", Duration::from_secs(2))
+        .expect("lower part of tall child visible after scroll");
+    assert_text_absent_for(
+        &host,
+        "Tall child row 00 | idle",
+        Duration::from_millis(200),
+    );
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_clicks_partially_visible_tall_child() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_scroll_app");
+    let mut host = PtyTestHost::spawn(bin, &["--long-child"], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Tall child row 00 | idle", Duration::from_secs(2))
+        .expect("initial tall child content visible");
+
+    for _ in 0..5 {
+        host.send_str("\x1b[B").expect("ArrowDown");
+    }
+    host.wait_for_text("Tall child row 05 | idle", Duration::from_secs(2))
+        .expect("tall child scrolled to row 05");
+
+    // Stable point on the first visible content row for an 80x24 PTY; after five rows of scroll
+    // this corresponds to row 05 inside the tall child.
+    host.click(4, 3)
+        .expect("click partially visible tall child");
+    host.wait_for_text("clicked row 05", Duration::from_secs(2))
+        .expect("click reached the partially visible child");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
