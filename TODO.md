@@ -248,8 +248,15 @@
 - 为降低外部/示例组件默认实现样板，新增 `impl_component_default_traits!` 宏，用于只绘制或只覆盖少数组职责的组件显式实现默认子 trait。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R7 — 审阅 T7
+### [DONE] R7 — 审阅 T7
 审阅 trait 拆分：分组是否合理、supertrait 组合无遗漏方法、`Box<dyn>` 透传完整、全量 PTY 测试通过、无行为变更。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/composable/component.rs`：原 `Component` 方法已按职责拆入 `Layout`、`Scrollable`、`FocusNav`、`DynamicTree`、`EventHandling`，核心 `Component` 保留类型名、属性、命令、标题栏与 `draw` 入口，supertrait 组合无遗漏。
+- 审阅 `Box<dyn Component>`：布局、滚动、焦点、动态树、事件与核心方法均有对应透传实现，未发现丢失的默认行为。
+- 抽查主要包装/容器委派：`ComponentTag`、`Border`、`WindowMinSizeView`、`ComponentTree`、`StackCore`/`VStack`/`HStack`、`Grid` 均保留 T7 前的布局、滚动、焦点、动态树与事件分发语义。
+- 复核 `impl_component_default_traits!` 用途：仅用于显式补齐等价默认子 trait，未发现应自定义行为却落到默认实现的组件。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过，包含 PTY 集成测试。
 
 ### [TODO] T8 — 澄清事件分发 capture/bubble/handle 语义（M2）
 **文件**：`src/composable/stack/events.rs`（`handle_event_capture_impl:228` 等）、wm/desktop 事件分发处。
