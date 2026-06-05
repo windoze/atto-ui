@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use super::super::clipped;
@@ -7,9 +7,8 @@ use super::super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
     tab_direction_for_event,
 };
-use super::super::layout::add_signed;
 use super::super::node::ComponentId;
-use super::super::scroll::{ScrollOffset, clamp_scroll_offset, max_scroll_offset};
+use super::super::scroll::{ScrollOffset, clamp_scroll_offset, scroll_offset_for_input_event};
 use super::StackCore;
 
 impl StackCore {
@@ -139,22 +138,6 @@ impl StackCore {
         EventResult::ignored()
     }
 
-    fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
-        if !self.scrollable.get() {
-            return false;
-        }
-
-        let scroll = self.scroll.get();
-        let desired = ScrollOffset {
-            x: add_signed(scroll.x, dx),
-            y: add_signed(scroll.y, dy),
-        };
-        let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != scroll;
-        self.scroll.set(clamped);
-        changed
-    }
-
     pub(super) fn scroll_to_clamped(&mut self, x: u16, y: u16) -> bool {
         if !self.scrollable.get() {
             return false;
@@ -231,58 +214,31 @@ impl StackCore {
             return EventResult::ignored();
         }
 
-        let cfg = self.scroll_config.get();
-        match event {
-            Event::Key(KeyEvent { code, kind, .. }) => {
-                if matches!(kind, KeyEventKind::Release) {
-                    return EventResult::ignored();
-                }
-
-                let viewport_h = self.viewport_size.1;
-                let max = max_scroll_offset(self.content_size, self.viewport_size);
-
-                let changed = match code {
-                    KeyCode::Up => self.scroll_by(0, -1),
-                    KeyCode::Down => self.scroll_by(0, 1),
-                    KeyCode::Left => self.scroll_by(-1, 0),
-                    KeyCode::Right => self.scroll_by(1, 0),
-                    KeyCode::PageUp => self.scroll_by(0, -(viewport_h as i16)),
-                    KeyCode::PageDown => self.scroll_by(0, viewport_h as i16),
-                    KeyCode::Home => self.scroll_to_clamped(0, 0),
-                    KeyCode::End => self.scroll_to_clamped(max.x, max.y),
-                    _ => false,
-                };
-
-                if changed {
-                    EventResult::consumed()
-                } else {
-                    EventResult::ignored()
-                }
+        if let Event::Mouse(m) = event {
+            let Some(area) = self.last_area else {
+                return EventResult::ignored();
+            };
+            if mouse_coords_local_to_area(area, *m).is_none() {
+                return EventResult::ignored();
             }
-            Event::Mouse(m) => {
-                let Some(area) = self.last_area else {
-                    return EventResult::ignored();
-                };
-                if mouse_coords_local_to_area(area, *m).is_none() {
-                    return EventResult::ignored();
-                }
+        }
 
-                let step = cfg.wheel_step as i16;
-                let changed = match m.kind {
-                    MouseEventKind::ScrollUp => self.scroll_by(0, -step),
-                    MouseEventKind::ScrollDown => self.scroll_by(0, step),
-                    MouseEventKind::ScrollLeft => self.scroll_by(-step, 0),
-                    MouseEventKind::ScrollRight => self.scroll_by(step, 0),
-                    _ => false,
-                };
+        let scroll = self.scroll.get();
+        let Some(new_scroll) = scroll_offset_for_input_event(
+            self.scroll_config.get(),
+            self.content_size,
+            self.viewport_size,
+            scroll,
+            event,
+        ) else {
+            return EventResult::ignored();
+        };
 
-                if changed {
-                    EventResult::consumed()
-                } else {
-                    EventResult::ignored()
-                }
-            }
-            _ => EventResult::ignored(),
+        if new_scroll == scroll {
+            EventResult::ignored()
+        } else {
+            self.scroll.set(new_scroll);
+            EventResult::consumed()
         }
     }
 

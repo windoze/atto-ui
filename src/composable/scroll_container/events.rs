@@ -1,25 +1,10 @@
 use super::super::component::{ComponentContext, EventResult, ScrollbarHost};
 use super::super::geom::{contains, mouse_coords_local_to_area};
-use super::super::layout::add_signed;
-use super::super::scroll::{ScrollOffset, clamp_scroll_offset, max_scroll_offset};
+use super::super::scroll::{ScrollOffset, clamp_scroll_offset, scroll_offset_for_input_event};
 use super::{ScrollContainer, ScrollContainerHost, ScrollContentContext};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent};
+use crossterm::event::{Event, MouseEvent};
 
 impl ScrollContainer {
-    fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
-        let scroll = self.scroll.get();
-        let content_size = self.content_size.get();
-        let viewport_size = self.viewport_size.get();
-        let desired = ScrollOffset {
-            x: add_signed(scroll.x, dx),
-            y: add_signed(scroll.y, dy),
-        };
-        let clamped = clamp_scroll_offset(content_size, viewport_size, desired);
-        let changed = clamped != scroll;
-        self.scroll.set(clamped);
-        changed
-    }
-
     pub(super) fn scroll_to_clamped(&mut self, x: u16, y: u16) -> bool {
         let desired = ScrollOffset { x, y };
         let scroll = self.scroll.get();
@@ -32,60 +17,33 @@ impl ScrollContainer {
     }
 
     fn handle_event_bubble_impl(&mut self, event: &Event) -> EventResult {
-        let cfg = self.scroll_config.get();
-        let viewport_size = self.viewport_size.get();
+        if let Event::Mouse(m) = event {
+            let Some(area) = self.last_area else {
+                return EventResult::ignored();
+            };
+            if mouse_coords_local_to_area(area, *m).is_none() {
+                return EventResult::ignored();
+            }
+        }
+
+        let scroll = self.scroll.get();
         let content_size = self.content_size.get();
-        match event {
-            Event::Key(KeyEvent { code, kind, .. }) => {
-                if matches!(kind, KeyEventKind::Release) {
-                    return EventResult::ignored();
-                }
+        let viewport_size = self.viewport_size.get();
+        let Some(new_scroll) = scroll_offset_for_input_event(
+            self.scroll_config.get(),
+            content_size,
+            viewport_size,
+            scroll,
+            event,
+        ) else {
+            return EventResult::ignored();
+        };
 
-                let viewport_h = viewport_size.1;
-                let max = max_scroll_offset(content_size, viewport_size);
-
-                let changed = match code {
-                    KeyCode::Up => self.scroll_by(0, -1),
-                    KeyCode::Down => self.scroll_by(0, 1),
-                    KeyCode::Left => self.scroll_by(-1, 0),
-                    KeyCode::Right => self.scroll_by(1, 0),
-                    KeyCode::PageUp => self.scroll_by(0, -(viewport_h as i16)),
-                    KeyCode::PageDown => self.scroll_by(0, viewport_h as i16),
-                    KeyCode::Home => self.scroll_to_clamped(0, 0),
-                    KeyCode::End => self.scroll_to_clamped(max.x, max.y),
-                    _ => false,
-                };
-
-                if changed {
-                    EventResult::consumed()
-                } else {
-                    EventResult::ignored()
-                }
-            }
-            Event::Mouse(m) => {
-                let Some(area) = self.last_area else {
-                    return EventResult::ignored();
-                };
-                if mouse_coords_local_to_area(area, *m).is_none() {
-                    return EventResult::ignored();
-                }
-
-                let step = cfg.wheel_step as i16;
-                let changed = match m.kind {
-                    crossterm::event::MouseEventKind::ScrollUp => self.scroll_by(0, -step),
-                    crossterm::event::MouseEventKind::ScrollDown => self.scroll_by(0, step),
-                    crossterm::event::MouseEventKind::ScrollLeft => self.scroll_by(-step, 0),
-                    crossterm::event::MouseEventKind::ScrollRight => self.scroll_by(step, 0),
-                    _ => false,
-                };
-
-                if changed {
-                    EventResult::consumed()
-                } else {
-                    EventResult::ignored()
-                }
-            }
-            _ => EventResult::ignored(),
+        if new_scroll == scroll {
+            EventResult::ignored()
+        } else {
+            self.scroll.set(new_scroll);
+            EventResult::consumed()
         }
     }
 

@@ -284,10 +284,17 @@
 - 审阅 `src/bin/snapshot_app.rs` 与 `tests/pty_event_order.rs`：`--event-order` fixture 构造两层嵌套容器，目标叶子返回未消费事件以触发内外 bubble，PTY 测试精确断言 `root-capture>child-capture>target-handle>child-bubble>root-bubble`，覆盖 capture/bubble 各一次且顺序正确。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_event_order`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T9 — 抽取共享滚动逻辑（M3）
+### [DONE] T9 — 抽取共享滚动逻辑（M3）
 **文件**：`stack/events.rs:141`、`grid/events.rs:141`、`scroll_container/events.rs:9`；复用 `scroll.rs:141` 的 `scroll_by_delta`。
 **步骤**：在 `ScrollState`/`scroll.rs` 提供统一方法处理方向键/PageUp/PageDown/Home/End/滚轮 → delta → `scroll_by_delta`。三处改为调用共享方法，删除重复实现。
 **测试**：`pty_scrolling.rs`/`pty_horizontal_scrolling.rs` 回归。
+
+**完成记录（2026-06-06）**：
+- `src/composable/scroll.rs` 新增 `scroll_offset_for_input_event`，统一将方向键、PageUp/PageDown、Home/End 与鼠标滚轮转换为新的 `ScrollOffset`，并复用 `scroll_by_delta` 处理增量滚动。
+- `StackCore`、`Grid`、`ScrollContainer` 的事件冒泡路径已删除重复按键/滚轮 match，统一调用共享滚动输入转换函数，并保留原有鼠标命中区域检查与“仅实际滚动才消费事件”的行为。
+- 发现 `WindowMinSizeView` 存在同类滚动映射重复，已一并改为调用共享函数，避免窗口最小尺寸滚动模式与容器滚动行为分叉。
+- 新增 `scroll_input_*` 单元测试覆盖方向键、PageUp/PageDown、Home/End、鼠标滚轮步长、键盘 Release 与未处理输入。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test scroll_input --lib`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R9 — 审阅 T9
 审阅去重：三处行为与原实现完全一致、无遗漏按键、滚动测试全绿。

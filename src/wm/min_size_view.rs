@@ -1,6 +1,6 @@
 use core::convert::Infallible;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, MouseEvent};
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, WindowSize};
@@ -8,7 +8,7 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::Style;
 
-use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
+use crate::composable::scroll::{clamp_scroll_offset, scroll_offset_for_input_event};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
     EventResult, FocusNav, Layout, ScrollConfig, ScrollOffset, Scrollable, TitleBarContent,
@@ -308,30 +308,6 @@ impl WindowMinSizeView {
 
         self.inner.handle_event(event, inner_ctx)
     }
-
-    fn scroll_by(&mut self, dx: i16, dy: i16) -> bool {
-        let max = max_scroll_offset(self.content_size, self.viewport_size);
-        let scroll = self.scroll;
-        let desired = ScrollOffset {
-            x: if dx.is_negative() {
-                scroll.x.saturating_sub(dx.wrapping_abs() as u16)
-            } else {
-                scroll.x.saturating_add(dx as u16)
-            },
-            y: if dy.is_negative() {
-                scroll.y.saturating_sub(dy.wrapping_abs() as u16)
-            } else {
-                scroll.y.saturating_add(dy as u16)
-            },
-        };
-        let clamped = clamp_scroll_offset(self.content_size, self.viewport_size, desired);
-        let changed = clamped != scroll;
-        self.scroll = clamped;
-        if self.scroll.x > max.x || self.scroll.y > max.y {
-            self.scroll = max;
-        }
-        changed
-    }
 }
 
 #[component_properties]
@@ -532,60 +508,27 @@ impl EventHandling for WindowMinSizeView {
                     return forwarded;
                 }
 
-                match event {
-                    Event::Key(KeyEvent { code, kind, .. }) => {
-                        if matches!(kind, KeyEventKind::Release) {
-                            return EventResult::ignored();
-                        }
+                if let Event::Mouse(m) = event
+                    && mouse_coords_local_to_area(area, *m).is_none()
+                {
+                    return EventResult::ignored();
+                }
 
-                        let max = max_scroll_offset(self.content_size, self.viewport_size);
-                        let changed = match code {
-                            KeyCode::Up => self.scroll_by(0, -1),
-                            KeyCode::Down => self.scroll_by(0, 1),
-                            KeyCode::Left => self.scroll_by(-1, 0),
-                            KeyCode::Right => self.scroll_by(1, 0),
-                            KeyCode::PageUp => self.scroll_by(0, -(self.viewport_size.1 as i16)),
-                            KeyCode::PageDown => self.scroll_by(0, self.viewport_size.1 as i16),
-                            KeyCode::Home => {
-                                let before = self.scroll;
-                                self.scroll = ScrollOffset::ZERO;
-                                before != self.scroll
-                            }
-                            KeyCode::End => {
-                                let before = self.scroll;
-                                self.scroll = max;
-                                before != self.scroll
-                            }
-                            _ => false,
-                        };
+                let Some(new_scroll) = scroll_offset_for_input_event(
+                    self.scroll_config,
+                    self.content_size,
+                    self.viewport_size,
+                    self.scroll,
+                    event,
+                ) else {
+                    return EventResult::ignored();
+                };
 
-                        if changed {
-                            EventResult::consumed()
-                        } else {
-                            EventResult::ignored()
-                        }
-                    }
-                    Event::Mouse(m) => {
-                        if mouse_coords_local_to_area(area, *m).is_none() {
-                            return EventResult::ignored();
-                        }
-
-                        let step = self.scroll_config.wheel_step as i16;
-                        let changed = match m.kind {
-                            MouseEventKind::ScrollUp => self.scroll_by(0, -step),
-                            MouseEventKind::ScrollDown => self.scroll_by(0, step),
-                            MouseEventKind::ScrollLeft => self.scroll_by(-step, 0),
-                            MouseEventKind::ScrollRight => self.scroll_by(step, 0),
-                            _ => false,
-                        };
-
-                        if changed {
-                            EventResult::consumed()
-                        } else {
-                            EventResult::ignored()
-                        }
-                    }
-                    _ => EventResult::ignored(),
+                if new_scroll == self.scroll {
+                    EventResult::ignored()
+                } else {
+                    self.scroll = new_scroll;
+                    EventResult::consumed()
                 }
             }
             Some(WindowMinSizeMode::Enforce) | None => self.inner.handle_event(event, ctx),

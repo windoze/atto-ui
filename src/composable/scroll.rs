@@ -1,6 +1,6 @@
 use std::cmp;
 
-use crossterm::event::{MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
@@ -153,6 +153,67 @@ pub(crate) fn scroll_by_delta(
             y: add_signed(scroll.y, dy),
         },
     )
+}
+
+pub(crate) fn scroll_offset_for_input_event(
+    cfg: ScrollConfig,
+    content_size: (u16, u16),
+    viewport_size: (u16, u16),
+    scroll: ScrollOffset,
+    event: &Event,
+) -> Option<ScrollOffset> {
+    match event {
+        Event::Key(KeyEvent { code, kind, .. }) => {
+            if matches!(kind, KeyEventKind::Release) {
+                return None;
+            }
+
+            let next = match code {
+                KeyCode::Up => scroll_by_delta(content_size, viewport_size, scroll, 0, -1),
+                KeyCode::Down => scroll_by_delta(content_size, viewport_size, scroll, 0, 1),
+                KeyCode::Left => scroll_by_delta(content_size, viewport_size, scroll, -1, 0),
+                KeyCode::Right => scroll_by_delta(content_size, viewport_size, scroll, 1, 0),
+                KeyCode::PageUp => scroll_by_delta(
+                    content_size,
+                    viewport_size,
+                    scroll,
+                    0,
+                    -(viewport_size.1 as i16),
+                ),
+                KeyCode::PageDown => scroll_by_delta(
+                    content_size,
+                    viewport_size,
+                    scroll,
+                    0,
+                    viewport_size.1 as i16,
+                ),
+                KeyCode::Home => ScrollOffset::ZERO,
+                KeyCode::End => max_scroll_offset(content_size, viewport_size),
+                _ => return None,
+            };
+            Some(next)
+        }
+        Event::Mouse(m) => {
+            let step = cfg.wheel_step as i16;
+            let next = match m.kind {
+                MouseEventKind::ScrollUp => {
+                    scroll_by_delta(content_size, viewport_size, scroll, 0, -step)
+                }
+                MouseEventKind::ScrollDown => {
+                    scroll_by_delta(content_size, viewport_size, scroll, 0, step)
+                }
+                MouseEventKind::ScrollLeft => {
+                    scroll_by_delta(content_size, viewport_size, scroll, -step, 0)
+                }
+                MouseEventKind::ScrollRight => {
+                    scroll_by_delta(content_size, viewport_size, scroll, step, 0)
+                }
+                _ => return None,
+            };
+            Some(next)
+        }
+        _ => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -776,6 +837,9 @@ pub fn scroll_offset_from_thumb_start(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    };
 
     #[test]
     fn scroll_offset_clamps_to_content_minus_viewport() {
@@ -802,6 +866,129 @@ mod tests {
 
         let clamped = clamp_scroll_offset(content, viewport, ScrollOffset { x: 5, y: 5 });
         assert_eq!(clamped, ScrollOffset::ZERO);
+    }
+
+    #[test]
+    fn scroll_input_keys_map_to_shared_delta_logic() {
+        let cfg = ScrollConfig::default();
+        let content = (100, 80);
+        let viewport = (10, 5);
+        let scroll = ScrollOffset { x: 5, y: 10 };
+
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::Up)),
+            Some(ScrollOffset { x: 5, y: 9 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::Down)),
+            Some(ScrollOffset { x: 5, y: 11 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::Left)),
+            Some(ScrollOffset { x: 4, y: 10 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::Right)),
+            Some(ScrollOffset { x: 6, y: 10 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::PageUp)),
+            Some(ScrollOffset { x: 5, y: 5 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::PageDown)),
+            Some(ScrollOffset { x: 5, y: 15 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::Home)),
+            Some(ScrollOffset::ZERO)
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &key(KeyCode::End)),
+            Some(ScrollOffset { x: 90, y: 75 })
+        );
+    }
+
+    #[test]
+    fn scroll_input_ignores_key_release_and_unhandled_events() {
+        let cfg = ScrollConfig::default();
+        let content = (100, 80);
+        let viewport = (10, 5);
+        let scroll = ScrollOffset { x: 5, y: 10 };
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        let unhandled = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &release),
+            None
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(cfg, content, viewport, scroll, &unhandled),
+            None
+        );
+    }
+
+    #[test]
+    fn scroll_input_mouse_wheel_uses_configured_step() {
+        let cfg = ScrollConfig::default().wheel_step(4);
+        let content = (100, 80);
+        let viewport = (10, 5);
+        let scroll = ScrollOffset { x: 5, y: 10 };
+        let mouse = |kind| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+
+        assert_eq!(
+            scroll_offset_for_input_event(
+                cfg,
+                content,
+                viewport,
+                scroll,
+                &mouse(MouseEventKind::ScrollUp),
+            ),
+            Some(ScrollOffset { x: 5, y: 6 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(
+                cfg,
+                content,
+                viewport,
+                scroll,
+                &mouse(MouseEventKind::ScrollDown),
+            ),
+            Some(ScrollOffset { x: 5, y: 14 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(
+                cfg,
+                content,
+                viewport,
+                scroll,
+                &mouse(MouseEventKind::ScrollLeft),
+            ),
+            Some(ScrollOffset { x: 1, y: 10 })
+        );
+        assert_eq!(
+            scroll_offset_for_input_event(
+                cfg,
+                content,
+                viewport,
+                scroll,
+                &mouse(MouseEventKind::ScrollRight),
+            ),
+            Some(ScrollOffset { x: 9, y: 10 })
+        );
     }
 
     #[test]
