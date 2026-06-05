@@ -109,13 +109,19 @@
 - `atto-ui-test-host` 新增 `shift_click`，新增 `tests/pty_textbox_selection.rs` 覆盖 Shift+点击 CJK 右半格后 Delete、拖拽跨 CJK 后 Delete，断言删除完整 grapheme 范围且不 panic。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test align_to_grapheme_boundary --lib`；`cargo test --test pty_textbox_selection`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R3 — 审阅 T3
+### [DONE] R3 — 审阅 T3
 审阅 T3 改动：
 - 确认 `align_to_grapheme_boundary` 边界正确：byte=0、byte=len、byte 落在宽字符中间、空字符串。
 - 确认 textbox 所有 anchor 写入点都已对齐，无遗漏路径（grep `selection_anchor = Some`）。
 - 确认 `delete_selection` 的 `replace_range` 不可能切在 grapheme 内部。
 - 检查测试是否真实触发了原 panic 场景。
 - 运行 `cargo test`。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/text/buffer.rs`：`align_to_grapheme_boundary` 覆盖空字符串、0、len、CJK 内部 byte、emoji grapheme 内部 byte 与超大 offset，返回不大于输入位置的 grapheme 起始边界或 `text.len()`。
+- 审阅 `src/widgets/textbox.rs`：`selection_anchor` 写入收敛到 `set_selection_anchor`，`selection_range` 与 `delete_selection` 均重新对齐边界，`replace_range` 不会切入 grapheme 内部。
+- 审阅 `tests/pty_textbox_selection.rs` 与 `src/bin/snapshot_app.rs`：`--textbox-unicode` fixture 使用 `a你b好c`，PTY 测试真实覆盖 Shift+点击宽字符内部删除与拖拽跨宽字符删除路径。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test align_to_grapheme_boundary --lib`；`cargo test --test pty_textbox_selection`；`cargo test --all --all-targets` 全部通过。
 
 ---
 
