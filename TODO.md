@@ -169,7 +169,7 @@
 - demo 检查：以 100x30 伪终端运行 `cargo run --example demo`，打开滚动 demo，确认滚动内容可见并可正常退出。
 - 验证：`cargo fmt`；`cargo test scrolled_region --lib`；`cargo test --test pty_scrolling`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T5 — 删除 cache + Observable 死代码（M4 + M5）
+### [DONE] T5 — 删除 cache + Observable 死代码（M4 + M5）
 **文件**：`src/cache/`（整目录）、`src/lib.rs:6`、`src/reactive/observable.rs`、`src/reactive/mod.rs:7,13`
 **步骤**：
 1. 先确认零引用：`grep -rn "VirtualBuffer\|crate::cache\|cache::\|Observable\|observable::" src crates examples tests`。若有任何生产引用则停止并上报（计划假定为零）。
@@ -177,6 +177,13 @@
 3. 删除 `src/reactive/observable.rs`；移除 `src/reactive/mod.rs:7` 的 `mod observable;` 与 `:13` 的 `pub use observable::Observable;`。
 4. 删除两模块自带的测试（若有）。
 **验收**：`cargo build`/`cargo test`/`cargo clippy` 全绿。
+
+**完成记录（2026-06-06）**：
+- 删除前按要求确认引用：`VirtualBuffer|crate::cache|cache::|Observable|observable::` 在 `src crates examples tests` 中仅命中待删除模块自身及其自带测试，`crates/examples/tests` 无外部引用；删除后复查无命中。
+- 删除 `src/cache/` 整目录，并移除 `src/lib.rs` 中的 `pub mod cache;`。
+- 删除 `src/reactive/observable.rs`，并移除 `src/reactive/mod.rs` 中的 `mod observable;` 与 `pub use observable::Observable;`。
+- 同步删除两处模块自带单元测试，无悬空模块声明或导出。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R5 — 审阅 T5
 审阅 T5 改动：

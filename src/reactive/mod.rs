@@ -4,13 +4,11 @@
 //! Atto-UI's composable `Component` API.
 
 mod dirty;
-mod observable;
 mod property;
 mod queue;
 mod timer;
 
 pub use dirty::{DirtyFlag, DirtyObserver};
-pub use observable::Observable;
 pub use property::{Binding, Property};
 pub use queue::{EventQueue, drain_channel};
 pub use timer::{
