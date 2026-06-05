@@ -9,7 +9,7 @@
 
 ## 阶段一：P0（可触发 panic 的正确性 bug）
 
-### [TODO] T1 — 修复状态栏字节宽度（S1）
+### [DONE] T1 — 修复状态栏字节宽度（S1）
 **文件**：`src/app/status.rs`（`StatusBar::draw`，第 24-45 行）
 **现状**：`draw` 用 `self.left.clone()` + `line.len()`（UTF-8 字节数）与 `width`（列数）比较；超长时 `line.truncate(width)`。`String::truncate` 落在非 char 边界 panic；CJK/emoji 列宽 ≠ 字节数导致右对齐错位。
 **依赖**：`unicode-width` 0.2 已在依赖中；`menu.rs`/`chrome.rs` 已用 `UnicodeWidthStr`，可参考其用法。
@@ -25,6 +25,14 @@
 - 用例 A：left=中文、right=emoji，断言屏幕中 right 贴右边界、无 panic。
 - 用例 B：left 为超长 CJK，窗口宽度故意落在宽字符中间，断言不 panic 且不出现半个字。
 **验收**：两用例通过；`cargo run --example demo` 状态栏中文显示正确对齐。
+
+**完成记录（2026-06-06）**：
+- `StatusBar::draw` 改为基于 `UnicodeWidthStr::width` 计算列宽，移除状态栏布局中的 `.len()` 字节宽度判断。
+- 新增 grapheme 边界截断逻辑，超长左侧文本会按完整 grapheme 累加到不超过状态栏宽度，并补空格铺满整行。
+- `snapshot_app` 新增 `--status-unicode` / `--status-long-cjk` fixture 和 F3/F4/F5 状态栏切换入口，便于 PTY 覆盖中文、emoji 与宽字符截断路径。
+- 新增 `tests/pty_status_bar.rs` 覆盖中文 left + emoji right 的右边界对齐，以及宽度落在 CJK 字符中间时不 panic、不出现半个字符。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_status_bar`；`cargo test --all --all-targets` 全部通过。
+- 为满足当前 `-D warnings` 验收，顺带修复 3 个既有 clippy 阻塞项：`src/composable/splitter.rs`、`crates/atto-ui-file-tree/src/lib.rs`、`crates/atto-ui-editor/src/bin/mock_lsp_server.rs`。
 
 ### [TODO] R1 — 审阅 T1
 审阅 T1 改动：
@@ -215,7 +223,7 @@
 - **L6**：`crates/atto-ui-macros/src/view_builder.rs:85` 硬编码 `::atto_ui::`。改用可配置 crate 路径方案；未知类型加 `compile_error!`。
 - **L7**：`src/theme/config.rs:118` `parse_color`。支持 3 位 hex `#fff` → 扩展为 `#ffffff`。
 - **L9**：`src/app/menu.rs:868` 与 `src/wm/manager/draw.rs:114` `draw_shadow` 完全重复。提取到共享位置，二者调用同一函数。
-- **L10**：`cargo clippy --workspace --all-targets --fix` 修复 3 条告警，人工复核。
+- **L10**：`cargo clippy --workspace --all-targets --fix` 修复 3 条告警，人工复核。（3 条既有告警已在 T1 验收中提前修复；T12 执行时复核 clippy 仍全清。）
 
 ### [TODO] R12 — 审阅 T12
 逐项审阅 P3 清理：每项改动正确且不引入回归；L5 trait 方法替换无遗漏 TabView 识别点；M6 增量路径不再误触发全量 rebuild；clippy 全清；`cargo test` 全绿。

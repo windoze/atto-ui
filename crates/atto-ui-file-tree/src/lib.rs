@@ -1073,17 +1073,15 @@ impl ScrollContent for FileTreeContent {
                         }
                         return EventResult::consumed();
                     }
-                    KeyCode::Char(ch) => {
-                        if !modifiers.contains(KeyModifiers::CONTROL) {
-                            if let Some(rename) = &mut self.rename {
-                                if rename.replace_on_input {
-                                    rename.buffer.set_text("");
-                                    rename.replace_on_input = false;
-                                }
-                                rename.buffer.insert_char(*ch);
+                    KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(rename) = &mut self.rename {
+                            if rename.replace_on_input {
+                                rename.buffer.set_text("");
+                                rename.replace_on_input = false;
                             }
-                            return EventResult::changed();
+                            rename.buffer.insert_char(*ch);
                         }
+                        return EventResult::changed();
                     }
                     _ => {}
                 }

@@ -34,11 +34,7 @@ fn main() -> io::Result<()> {
     let mut reader = BufReader::new(stdin.lock());
     let mut stdout = io::stdout();
 
-    loop {
-        let Some(msg) = editor_core_lsp::read_lsp_message(&mut reader)? else {
-            break;
-        };
-
+    while let Some(msg) = editor_core_lsp::read_lsp_message(&mut reader)? {
         let Some(method) = msg.get("method").and_then(Value::as_str) else {
             continue;
         };

@@ -16,7 +16,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
-use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec, StatusBar};
 use atto_ui::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack,
 };
@@ -31,6 +31,29 @@ enum SnapshotAppAction {
     OpenAbout,
     SetThemeDark,
     SetThemeLight,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StatusFixture {
+    Unicode,
+    LongCjk,
+}
+
+impl StatusFixture {
+    fn from_arg(arg: &str) -> Option<Self> {
+        match arg {
+            "--status-unicode" => Some(Self::Unicode),
+            "--status-long-cjk" => Some(Self::LongCjk),
+            _ => None,
+        }
+    }
+
+    fn parts(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("状态栏", "🦀"),
+            Self::LongCjk => ("你好你好你好你好", ""),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -235,6 +258,10 @@ impl Component for AboutView {
 }
 
 fn main() -> Result<()> {
+    let mut status_fixture = std::env::args()
+        .skip(1)
+        .find_map(|arg| StatusFixture::from_arg(&arg));
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -345,6 +372,7 @@ fn main() -> Result<()> {
         &actions,
         &mut is_dark,
         &theme_state,
+        &mut status_fixture,
     );
 
     disable_raw_mode()?;
@@ -365,9 +393,20 @@ fn run(
     actions: &EventQueue<SnapshotAppAction>,
     is_dark: &mut bool,
     theme_state: &Arc<AtomicBool>,
+    status_fixture: &mut Option<StatusFixture>,
 ) -> Result<()> {
     loop {
-        terminal.draw(|f| desktop.draw(f))?;
+        terminal.draw(|f| {
+            desktop.draw(f);
+            if let Some(fixture) = *status_fixture {
+                let layout = Desktop::layout(f.area());
+                let (left, right) = fixture.parts();
+                let mut status = StatusBar::default();
+                status.set_left(left);
+                status.set_right(right);
+                status.draw(f, layout.status_bar, &desktop.theme);
+            }
+        })?;
 
         if !event::poll(Duration::from_millis(50))? {
             continue;
@@ -393,6 +432,29 @@ fn run(
         }) = ev
         {
             break;
+        }
+
+        if let Event::Key(KeyEvent {
+            code,
+            kind: KeyEventKind::Press,
+            ..
+        }) = ev
+        {
+            match code {
+                KeyCode::F(3) => {
+                    *status_fixture = Some(StatusFixture::Unicode);
+                    continue;
+                }
+                KeyCode::F(4) => {
+                    *status_fixture = Some(StatusFixture::LongCjk);
+                    continue;
+                }
+                KeyCode::F(5) => {
+                    *status_fixture = None;
+                    continue;
+                }
+                _ => {}
+            }
         }
 
         let screen: Rect = terminal.size()?.into();

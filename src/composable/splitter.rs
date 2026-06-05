@@ -492,8 +492,8 @@ impl Splitter {
 
         if let Some((first, second)) = self.initial_sizes {
             let total = first.saturating_add(second) as u32;
-            if total > 0 {
-                return ((available as u32) * (first as u32) / total).min(u16::MAX as u32) as u16;
+            if let Some(split) = ((available as u32) * (first as u32)).checked_div(total) {
+                return split.min(u16::MAX as u32) as u16;
             }
         }
 

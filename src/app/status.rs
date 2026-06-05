@@ -3,6 +3,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
@@ -26,23 +28,51 @@ impl StatusBar {
             return;
         }
         let width = area.width as usize;
-        let mut line = self.left.clone();
-        if line.len() < width {
-            let remaining = width.saturating_sub(line.len());
-            let right = self.right.clone();
-            if right.len() < remaining {
-                line.push_str(&" ".repeat(remaining.saturating_sub(right.len())));
-                line.push_str(&right);
-            } else {
-                line.push_str(&" ".repeat(remaining));
-            }
-        } else if line.len() > width {
-            line.truncate(width);
-        }
+        let line = build_status_line(&self.left, &self.right, width);
 
         let p = Paragraph::new(Line::from(vec![Span::styled(line, theme.status_bar)]));
         frame.render_widget(p, area);
     }
+}
+
+fn build_status_line(left: &str, right: &str, width: usize) -> String {
+    let left_w = UnicodeWidthStr::width(left);
+    let right_w = UnicodeWidthStr::width(right);
+    let mut line = String::new();
+
+    if left_w >= width {
+        let used = push_graphemes_up_to_width(&mut line, left, width);
+        line.push_str(&" ".repeat(width.saturating_sub(used)));
+        return line;
+    }
+
+    line.push_str(left);
+    let remaining = width.saturating_sub(left_w);
+    if right_w <= remaining {
+        line.push_str(&" ".repeat(remaining.saturating_sub(right_w)));
+        line.push_str(right);
+    } else {
+        line.push_str(&" ".repeat(remaining));
+    }
+    line
+}
+
+fn push_graphemes_up_to_width(out: &mut String, text: &str, max_width: usize) -> usize {
+    if max_width == 0 {
+        return 0;
+    }
+
+    let mut used = 0usize;
+    for (_, grapheme) in text.grapheme_indices(true) {
+        let grapheme_w = UnicodeWidthStr::width(grapheme);
+        let next = used.saturating_add(grapheme_w);
+        if next > max_width {
+            break;
+        }
+        out.push_str(grapheme);
+        used = next;
+    }
+    used
 }
 
 /// Utility widget for filling areas with a style.
@@ -63,5 +93,35 @@ impl Widget for Fill {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_line_aligns_right_text_by_display_width() {
+        let line = build_status_line("状态", "🦀", 12);
+
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 12);
+        assert!(line.starts_with("状态"));
+        assert!(line.ends_with("🦀"));
+    }
+
+    #[test]
+    fn status_line_truncates_left_on_grapheme_boundary() {
+        let line = build_status_line("你好你好", "", 5);
+
+        assert_eq!(line, "你好 ");
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 5);
+    }
+
+    #[test]
+    fn status_line_truncates_emoji_sequence_on_grapheme_boundary() {
+        let line = build_status_line("👨‍👩‍👧‍👦abc", "", 1);
+
+        assert_eq!(line, " ");
+        assert_eq!(UnicodeWidthStr::width(line.as_str()), 1);
     }
 }
