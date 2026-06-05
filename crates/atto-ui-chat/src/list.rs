@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    Component, ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams,
-    ScrollConfig, ScrollbarVisibility, Size, Spacer, Text, VStack,
+    ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, ScrollConfig,
+    Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Spinner, SpinnerIconStyle};
@@ -191,7 +191,7 @@ impl ChatMessageList {
     }
 }
 
-impl Component for ChatMessageList {
+impl ::atto_ui::composable::Component for ChatMessageList {
     fn property_names(&self) -> Vec<&'static str> {
         vec![
             "messages",
@@ -257,6 +257,14 @@ impl Component for ChatMessageList {
         }
     }
 
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.track_message_changes();
+        self.list.draw(frame, area, ctx);
+        self.apply_pending_scroll();
+    }
+}
+
+impl ::atto_ui::composable::Layout for ChatMessageList {
     fn min_width(&self) -> u16 {
         self.list.min_width()
     }
@@ -272,7 +280,9 @@ impl Component for ChatMessageList {
     fn desired_height(&self) -> Option<u16> {
         self.list.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for ChatMessageList {
     fn is_scrollable(&self) -> bool {
         self.list.is_scrollable()
     }
@@ -286,7 +296,7 @@ impl Component for ChatMessageList {
     }
 
     fn scroll_config(&self) -> ScrollConfig {
-        Component::scroll_config(&self.list)
+        Scrollable::scroll_config(&self.list)
     }
 
     fn scroll_offset(&self) -> (u16, u16) {
@@ -296,7 +306,13 @@ impl Component for ChatMessageList {
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
         self.list.set_scroll_offset(x, y);
     }
+}
 
+impl ::atto_ui::composable::FocusNav for ChatMessageList {}
+
+impl ::atto_ui::composable::DynamicTree for ChatMessageList {}
+
+impl ::atto_ui::composable::EventHandling for ChatMessageList {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.track_message_changes();
         let mut res = self.list.handle_event(event, ctx);
@@ -304,12 +320,6 @@ impl Component for ChatMessageList {
             res = EventResult::changed();
         }
         res
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.track_message_changes();
-        self.list.draw(frame, area, ctx);
-        self.apply_pending_scroll();
     }
 }
 
@@ -357,7 +367,13 @@ impl ChatMessageRow {
     }
 }
 
-impl Component for ChatMessageRow {
+impl ::atto_ui::composable::Component for ChatMessageRow {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.view.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for ChatMessageRow {
     fn min_width(&self) -> u16 {
         self.view.min_width()
     }
@@ -373,13 +389,17 @@ impl Component for ChatMessageRow {
     fn desired_height(&self) -> Option<u16> {
         self.view.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for ChatMessageRow {}
+
+impl ::atto_ui::composable::FocusNav for ChatMessageRow {}
+
+impl ::atto_ui::composable::DynamicTree for ChatMessageRow {}
+
+impl ::atto_ui::composable::EventHandling for ChatMessageRow {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.view.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.view.draw(frame, area, ctx);
     }
 }
 
@@ -455,15 +475,7 @@ impl ChatTimestampDivider {
     }
 }
 
-impl Component for ChatTimestampDivider {
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn min_height(&self) -> u16 {
-        1
-    }
-
+impl ::atto_ui::composable::Component for ChatTimestampDivider {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -482,6 +494,24 @@ impl Component for ChatTimestampDivider {
         frame.render_widget(Paragraph::new(Line::styled(line, style)), area);
     }
 }
+
+impl ::atto_ui::composable::Layout for ChatTimestampDivider {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for ChatTimestampDivider {}
+
+impl ::atto_ui::composable::FocusNav for ChatTimestampDivider {}
+
+impl ::atto_ui::composable::DynamicTree for ChatTimestampDivider {}
+
+impl ::atto_ui::composable::EventHandling for ChatTimestampDivider {}
 
 enum ChatMessageBody {
     Markdown(MarkdownViewer),
@@ -516,7 +546,16 @@ impl ChatMessageBody {
     }
 }
 
-impl Component for ChatMessageBody {
+impl ::atto_ui::composable::Component for ChatMessageBody {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        match self {
+            ChatMessageBody::Markdown(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::File(view) => view.draw(frame, area, ctx),
+        }
+    }
+}
+
+impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn min_width(&self) -> u16 {
         match self {
             ChatMessageBody::Markdown(view) => view.min_width(),
@@ -544,18 +583,19 @@ impl Component for ChatMessageBody {
             ChatMessageBody::File(view) => view.desired_height(),
         }
     }
+}
 
+impl ::atto_ui::composable::Scrollable for ChatMessageBody {}
+
+impl ::atto_ui::composable::FocusNav for ChatMessageBody {}
+
+impl ::atto_ui::composable::DynamicTree for ChatMessageBody {}
+
+impl ::atto_ui::composable::EventHandling for ChatMessageBody {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         match self {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
             ChatMessageBody::File(view) => view.handle_event(event, ctx),
-        }
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        match self {
-            ChatMessageBody::Markdown(view) => view.draw(frame, area, ctx),
-            ChatMessageBody::File(view) => view.draw(frame, area, ctx),
         }
     }
 }

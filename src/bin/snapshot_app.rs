@@ -67,11 +67,7 @@ impl LogView {
     }
 }
 
-impl Component for LogView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for LogView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
@@ -90,6 +86,20 @@ impl Component for LogView {
             ]),
             area,
         );
+    }
+}
+
+impl ::atto_ui::composable::Layout for LogView {}
+
+impl ::atto_ui::composable::Scrollable for LogView {}
+
+impl ::atto_ui::composable::FocusNav for LogView {}
+
+impl ::atto_ui::composable::DynamicTree for LogView {}
+
+impl ::atto_ui::composable::EventHandling for LogView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 
@@ -163,7 +173,13 @@ impl WidgetsView {
     }
 }
 
-impl Component for WidgetsView {
+impl ::atto_ui::composable::Component for WidgetsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for WidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -179,7 +195,13 @@ impl Component for WidgetsView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for WidgetsView {}
+
+impl ::atto_ui::composable::FocusNav for WidgetsView {}
+
+impl ::atto_ui::composable::DynamicTree for WidgetsView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -187,13 +209,11 @@ impl Component for WidgetsView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for WidgetsView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.root.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -233,7 +253,27 @@ fn view_hierarchy_demo() -> Box<dyn Component> {
 #[derive(Default)]
 struct AboutView;
 
-impl Component for AboutView {
+impl ::atto_ui::composable::Component for AboutView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                "About modal (Esc to close).",
+                ctx.theme.widget.normal,
+            )),
+            area,
+        );
+    }
+}
+
+impl ::atto_ui::composable::Layout for AboutView {}
+
+impl ::atto_ui::composable::Scrollable for AboutView {}
+
+impl ::atto_ui::composable::FocusNav for AboutView {}
+
+impl ::atto_ui::composable::DynamicTree for AboutView {}
+
+impl ::atto_ui::composable::EventHandling for AboutView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc | KeyCode::Enter,
@@ -244,16 +284,6 @@ impl Component for AboutView {
             return EventResult::close_window();
         }
         EventResult::ignored()
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                "About modal (Esc to close).",
-                ctx.theme.widget.normal,
-            )),
-            area,
-        );
     }
 }
 

@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop,
 };
-use atto_ui::composable::{Component, ComponentContext, EventOutcome, EventResult};
+use atto_ui::composable::{ComponentContext, EventOutcome, EventResult};
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -39,11 +39,7 @@ impl WindowInfoView {
 }
 
 #[component_properties]
-impl Component for WindowInfoView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for WindowInfoView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let window_type = self.window_type.get();
         let window_number = self.window_number.get();
@@ -73,6 +69,20 @@ impl Component for WindowInfoView {
         let paragraph = Paragraph::new(lines).style(ctx.theme.window_bg);
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for WindowInfoView {}
+
+impl ::atto_ui::composable::Scrollable for WindowInfoView {}
+
+impl ::atto_ui::composable::FocusNav for WindowInfoView {}
+
+impl ::atto_ui::composable::DynamicTree for WindowInfoView {}
+
+impl ::atto_ui::composable::EventHandling for WindowInfoView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 
@@ -212,20 +222,7 @@ impl ModalView {
 }
 
 #[component_properties]
-impl Component for ModalView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        // 按 Esc 或 Enter 关闭对话框
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Esc | KeyCode::Enter,
-            kind: KeyEventKind::Press,
-            ..
-        }) = event
-        {
-            return EventResult::close_window();
-        }
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for ModalView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let title = self.title.get();
         let subtitle = self.subtitle.get();
@@ -245,5 +242,28 @@ impl Component for ModalView {
         let paragraph = Paragraph::new(lines).style(ctx.theme.window_bg);
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for ModalView {}
+
+impl ::atto_ui::composable::Scrollable for ModalView {}
+
+impl ::atto_ui::composable::FocusNav for ModalView {}
+
+impl ::atto_ui::composable::DynamicTree for ModalView {}
+
+impl ::atto_ui::composable::EventHandling for ModalView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        // 按 Esc 或 Enter 关闭对话框
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc | KeyCode::Enter,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return EventResult::close_window();
+        }
+        EventResult::ignored()
     }
 }

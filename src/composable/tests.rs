@@ -15,9 +15,10 @@ use super::geom::{
     tab_direction_for_event,
 };
 use super::{
-    Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, EdgeInsets,
-    EventOutcome, EventResult, Grid, HStack, LayoutParams, ScrollConfig, ScrollbarHost,
-    ScrollbarVisibility, Size, Splitter, SplitterOrientation, TabMode, VStack,
+    Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, DynamicTree,
+    EdgeInsets, EventHandling, EventOutcome, EventResult, FocusNav, Grid, HStack, Layout,
+    LayoutParams, ScrollConfig, ScrollbarHost, ScrollbarVisibility, Size, Splitter,
+    SplitterOrientation, TabMode, VStack,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +49,10 @@ impl SizedView {
 }
 
 impl Component for SizedView {
+    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+}
+
+impl Layout for SizedView {
     fn min_width(&self) -> u16 {
         self.min_w
     }
@@ -55,9 +60,9 @@ impl Component for SizedView {
     fn min_height(&self) -> u16 {
         self.min_h
     }
-
-    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
+
+crate::impl_component_default_traits!(SizedView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
 impl RecordingView {
     fn new(events: Arc<Mutex<Vec<RecordedEvent>>>) -> Self {
@@ -92,10 +97,10 @@ impl RecordingView {
 }
 
 impl Component for RecordingView {
-    fn is_focusable(&self) -> bool {
-        self.focusable
-    }
+    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+}
 
+impl Layout for RecordingView {
     fn desired_width(&self) -> Option<u16> {
         self.desired_width
     }
@@ -103,7 +108,15 @@ impl Component for RecordingView {
     fn desired_height(&self) -> Option<u16> {
         self.desired_height
     }
+}
 
+impl FocusNav for RecordingView {
+    fn is_focusable(&self) -> bool {
+        self.focusable
+    }
+}
+
+impl EventHandling for RecordingView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         match event {
             Event::Key(KeyEvent { code, .. }) => {
@@ -129,9 +142,9 @@ impl Component for RecordingView {
             action: ComponentAction::None,
         }
     }
-
-    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
+
+crate::impl_component_default_traits!(RecordingView => Scrollable, DynamicTree);
 
 fn draw_view(view: &mut dyn Component, area: Rect) {
     let theme = Theme::dark();
@@ -939,14 +952,6 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
     }
 
     impl Component for MinHeightView {
-        fn min_height(&self) -> u16 {
-            self.min_h
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            self.desired_h
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -955,6 +960,18 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
         ) {
         }
     }
+
+    impl Layout for MinHeightView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+    }
+
+    crate::impl_component_default_traits!(MinHeightView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut vstack = VStack::new()
         .with_padding(EdgeInsets {
@@ -1047,14 +1064,6 @@ fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
     }
 
     impl Component for SizedView {
-        fn min_height(&self) -> u16 {
-            self.min_h
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            self.desired_h
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1063,6 +1072,18 @@ fn vstack_min_height_uses_children_min_heights_not_desired_heights() {
         ) {
         }
     }
+
+    impl Layout for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+    }
+
+    crate::impl_component_default_traits!(SizedView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut vstack = VStack::new().with_spacing(1u16);
     vstack.add_child_with_layout(
@@ -1102,14 +1123,6 @@ fn vstack_layout_at_min_height_keeps_all_children_visible() {
     }
 
     impl Component for SizedView {
-        fn min_height(&self) -> u16 {
-            self.min_h
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            self.desired_h
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1118,6 +1131,18 @@ fn vstack_layout_at_min_height_keeps_all_children_visible() {
         ) {
         }
     }
+
+    impl Layout for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+    }
+
+    crate::impl_component_default_traits!(SizedView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut vstack = VStack::new().with_spacing(1u16);
     vstack.add_child_with_layout(
@@ -1165,14 +1190,6 @@ fn hstack_layout_at_min_width_keeps_all_children_visible() {
     }
 
     impl Component for SizedView {
-        fn min_width(&self) -> u16 {
-            self.min_w
-        }
-
-        fn desired_width(&self) -> Option<u16> {
-            self.desired_w
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1181,6 +1198,18 @@ fn hstack_layout_at_min_width_keeps_all_children_visible() {
         ) {
         }
     }
+
+    impl Layout for SizedView {
+        fn min_width(&self) -> u16 {
+            self.min_w
+        }
+
+        fn desired_width(&self) -> Option<u16> {
+            self.desired_w
+        }
+    }
+
+    crate::impl_component_default_traits!(SizedView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut hstack = HStack::new().with_spacing(1u16);
     hstack.add_child_with_layout(
@@ -1224,14 +1253,6 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
     }
 
     impl Component for SizedView {
-        fn min_height(&self) -> u16 {
-            self.min_h
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            self.desired_h
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1240,6 +1261,18 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
         ) {
         }
     }
+
+    impl Layout for SizedView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+    }
+
+    crate::impl_component_default_traits!(SizedView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut grid = Grid::new().with_columns(1usize).with_row_gap(1u16);
     grid.add_child_with_layout(
@@ -1283,14 +1316,6 @@ fn hstack_desired_height_is_max_child_height_plus_padding() {
     }
 
     impl Component for MinHeightView {
-        fn min_height(&self) -> u16 {
-            self.min_h
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            self.desired_h
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1299,6 +1324,18 @@ fn hstack_desired_height_is_max_child_height_plus_padding() {
         ) {
         }
     }
+
+    impl Layout for MinHeightView {
+        fn min_height(&self) -> u16 {
+            self.min_h
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            self.desired_h
+        }
+    }
+
+    crate::impl_component_default_traits!(MinHeightView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut hstack = HStack::new().with_padding(EdgeInsets {
         top: 1,
@@ -1346,14 +1383,6 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
     struct BlankLineView;
 
     impl Component for BlankLineView {
-        fn desired_width(&self) -> Option<u16> {
-            Some(1)
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            Some(1)
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1362,6 +1391,18 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         ) {
         }
     }
+
+    impl Layout for BlankLineView {
+        fn desired_width(&self) -> Option<u16> {
+            Some(1)
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            Some(1)
+        }
+    }
+
+    crate::impl_component_default_traits!(BlankLineView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut vstack = VStack::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()
@@ -1416,14 +1457,6 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
     struct BlankCellView;
 
     impl Component for BlankCellView {
-        fn desired_width(&self) -> Option<u16> {
-            Some(2)
-        }
-
-        fn desired_height(&self) -> Option<u16> {
-            Some(1)
-        }
-
         fn draw(
             &mut self,
             _frame: &mut ratatui::Frame<'_>,
@@ -1432,6 +1465,18 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         ) {
         }
     }
+
+    impl Layout for BlankCellView {
+        fn desired_width(&self) -> Option<u16> {
+            Some(2)
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            Some(1)
+        }
+    }
+
+    crate::impl_component_default_traits!(BlankCellView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     let mut hstack = HStack::new().with_scrollable(true).with_scroll_config(
         ScrollConfig::default()

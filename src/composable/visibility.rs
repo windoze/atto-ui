@@ -55,7 +55,7 @@ pub trait VisibilityExt: Component + Sized + 'static {
 impl<T> VisibilityExt for T where T: Component + Sized + 'static {}
 
 #[component_properties]
-impl Component for Visibility {
+impl ::atto_ui::composable::Component for Visibility {
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
         props.push("visible");
@@ -87,31 +87,29 @@ impl Component for Visibility {
         self.inner.apply_command(action)
     }
 
-    fn focused_child(&self) -> Option<ComponentId> {
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
         if !self.visible.get() {
             return None;
         }
-        self.inner.focused_child()
+        self.inner.titlebar(ctx)
     }
 
-    fn is_focusable(&self) -> bool {
-        self.visible.get() && self.inner.is_focusable()
-    }
-
-    fn focus_first(&mut self) -> bool {
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
         if !self.visible.get() {
-            return false;
+            return EventResult::ignored();
         }
-        self.inner.focus_first()
+        self.inner.handle_titlebar_event(event, ctx)
     }
 
-    fn focus_last(&mut self) -> bool {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if !self.visible.get() {
-            return false;
+            return;
         }
-        self.inner.focus_last()
+        self.inner.draw(frame, area, ctx);
     }
+}
 
+impl ::atto_ui::composable::Layout for Visibility {
     fn min_width(&self) -> u16 {
         if self.visible.get() {
             self.inner.min_width()
@@ -143,50 +141,9 @@ impl Component for Visibility {
             Some(0)
         }
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.inner.children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.inner.children_mut()
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.visible.get() {
-            return EventResult::ignored();
-        }
-        self.inner.handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.visible.get() {
-            return EventResult::ignored();
-        }
-        self.inner.handle_event_bubble(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.visible.get() {
-            return EventResult::ignored();
-        }
-        self.inner.handle_event(event, ctx)
-    }
-
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        if !self.visible.get() {
-            return None;
-        }
-        self.inner.titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        if !self.visible.get() {
-            return EventResult::ignored();
-        }
-        self.inner.handle_titlebar_event(event, ctx)
-    }
-
+impl ::atto_ui::composable::Scrollable for Visibility {
     fn is_scrollable(&self) -> bool {
         self.visible.get() && self.inner.is_scrollable()
     }
@@ -240,6 +197,43 @@ impl Component for Visibility {
             self.inner.scroll_to_child(child_id);
         }
     }
+}
+
+impl ::atto_ui::composable::FocusNav for Visibility {
+    fn focused_child(&self) -> Option<ComponentId> {
+        if !self.visible.get() {
+            return None;
+        }
+        self.inner.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.visible.get() && self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        if !self.visible.get() {
+            return false;
+        }
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        if !self.visible.get() {
+            return false;
+        }
+        self.inner.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for Visibility {
+    fn children(&self) -> &[ComponentNode] {
+        self.inner.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.inner.children_mut()
+    }
 
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.inner.apply_tree_ops(ops)
@@ -256,11 +250,27 @@ impl Component for Visibility {
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
         self.inner.dynamic_callbacks()
     }
+}
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+impl ::atto_ui::composable::EventHandling for Visibility {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.visible.get() {
-            return;
+            return EventResult::ignored();
         }
-        self.inner.draw(frame, area, ctx);
+        self.inner.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.visible.get() {
+            return EventResult::ignored();
+        }
+        self.inner.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.visible.get() {
+            return EventResult::ignored();
+        }
+        self.inner.handle_event(event, ctx)
     }
 }

@@ -231,7 +231,7 @@
 
 ## 阶段三：P2（架构/性能重构）
 
-### [TODO] T7 — 拆分 `Component` god trait（M1）
+### [DONE] T7 — 拆分 `Component` god trait（M1）
 **文件**：`src/composable/component.rs:167-508`、`Box<dyn Component>` 的 impl、全工作区调用点。
 **步骤**：
 1. 先按职责给 37 个方法分组（不改签名）：`Layout`（布局/尺寸协商）、`Scrollable`（8 个滚动方法）、`FocusNav`（焦点）、`DynamicTree`（children_mut/tag/动态树操作）、`EventHandling`（capture/bubble/handle）、属性反射/命令/标题栏归核心。
@@ -240,6 +240,13 @@
 4. 编译驱动修复所有调用点。
 **说明**：改动面大，必须在 T1–T6 合入稳定后单独大 PR。
 **测试**：全量 PTY 回归，确保零行为变更。
+
+**完成记录（2026-06-06）**：
+- `src/composable/component.rs` 已按职责拆出 `Layout`、`Scrollable`、`FocusNav`、`DynamicTree`、`EventHandling`，并将 `Component` 收敛为这些子 trait 的 supertrait 组合加核心属性/命令/标题栏/绘制入口。
+- `Box<dyn Component>` 的布局、滚动、焦点、动态树、事件与核心方法透传已拆分到对应 trait impl。
+- 全工作区组件实现已迁移到对应子 trait，包含主库、workspace crates、examples、demos、snapshot binaries 与测试假组件；需要调用子 trait 方法的位置已补充相应 trait 作用域或使用完全限定调用。
+- 为降低外部/示例组件默认实现样板，新增 `impl_component_default_traits!` 宏，用于只绘制或只覆盖少数组职责的组件显式实现默认子 trait。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R7 — 审阅 T7
 审阅 trait 拆分：分组是否合理、supertrait 组合无遗漏方法、`Box<dyn>` 透传完整、全量 PTY 测试通过、无行为变更。

@@ -9,7 +9,7 @@ use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     run_crossterm_desktop,
 };
-use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult};
 use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -142,11 +142,7 @@ impl StatusView {
 }
 
 #[component_properties]
-impl Component for StatusView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for StatusView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let mut lines: Vec<Line> = Vec::new();
 
@@ -246,6 +242,20 @@ impl Component for StatusView {
         let paragraph = Paragraph::new(lines).style(ctx.theme.window_bg);
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for StatusView {}
+
+impl ::atto_ui::composable::Scrollable for StatusView {}
+
+impl ::atto_ui::composable::FocusNav for StatusView {}
+
+impl ::atto_ui::composable::DynamicTree for StatusView {}
+
+impl ::atto_ui::composable::EventHandling for StatusView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 

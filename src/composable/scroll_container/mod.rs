@@ -5,7 +5,7 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
+use super::component::{ComponentContext, EventResult, ScrollbarHost};
 use crate::reactive::Binding;
 use crate::{ComponentCommand, ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -228,7 +228,7 @@ impl ScrollContainer {
 }
 
 #[component_properties]
-impl Component for ScrollContainer {
+impl ::atto_ui::composable::Component for ScrollContainer {
     fn property_names(&self) -> Vec<&'static str> {
         vec![
             "scroll_x",
@@ -258,14 +258,14 @@ impl Component for ScrollContainer {
                 let x: usize = ComponentValueCodec::from_component_value(value, name)?;
                 let x = x as u16;
                 let scroll = self.scroll.get();
-                self.set_scroll_offset(x, scroll.y);
+                ::atto_ui::composable::Scrollable::set_scroll_offset(self, x, scroll.y);
                 Ok(())
             }
             "scroll_y" => {
                 let y: usize = ComponentValueCodec::from_component_value(value, name)?;
                 let y = y as u16;
                 let scroll = self.scroll.get();
-                self.set_scroll_offset(scroll.x, y);
+                ::atto_ui::composable::Scrollable::set_scroll_offset(self, scroll.x, y);
                 Ok(())
             }
             _ => Err(ComponentError::unsupported_property(name)),
@@ -274,49 +274,6 @@ impl Component for ScrollContainer {
 
     fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
         EventResult::ignored()
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.content.is_focusable()
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        let w = self.content.desired_width()?;
-        Some(w.saturating_add(self.padding.get().sum_horizontal()))
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        let h = self.content.desired_height()?;
-        Some(h.saturating_add(self.padding.get().sum_vertical()))
-    }
-
-    fn is_scrollable(&self) -> bool {
-        true
-    }
-
-    fn content_size(&self) -> (u16, u16) {
-        self.content_size.get()
-    }
-
-    fn viewport_size(&self) -> (u16, u16) {
-        self.viewport_size.get()
-    }
-
-    fn scroll_config(&self) -> ScrollConfig {
-        self.scroll_config.get()
-    }
-
-    fn scroll_offset(&self) -> (u16, u16) {
-        let scroll = self.scroll.get();
-        (scroll.x, scroll.y)
-    }
-
-    fn set_scroll_offset(&mut self, x: u16, y: u16) {
-        let _ = self.scroll_to_clamped(x, y);
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.handle_event_impl(event, ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
@@ -500,6 +457,59 @@ impl Component for ScrollContainer {
     }
 }
 
+impl ::atto_ui::composable::Layout for ScrollContainer {
+    fn desired_width(&self) -> Option<u16> {
+        let w = self.content.desired_width()?;
+        Some(w.saturating_add(self.padding.get().sum_horizontal()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        let h = self.content.desired_height()?;
+        Some(h.saturating_add(self.padding.get().sum_vertical()))
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for ScrollContainer {
+    fn is_scrollable(&self) -> bool {
+        true
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.content_size.get()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport_size.get()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll_config.get()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        let scroll = self.scroll.get();
+        (scroll.x, scroll.y)
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        let _ = self.scroll_to_clamped(x, y);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for ScrollContainer {
+    fn is_focusable(&self) -> bool {
+        self.content.is_focusable()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for ScrollContainer {}
+
+impl ::atto_ui::composable::EventHandling for ScrollContainer {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.handle_event_impl(event, ctx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -507,7 +517,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::composable::{ComponentContext, ScrollbarHost, TabMode};
+    use crate::composable::{Component, ComponentContext, ScrollbarHost, TabMode};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 

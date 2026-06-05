@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult};
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -33,11 +33,7 @@ impl HelloView {
 }
 
 #[component_properties]
-impl Component for HelloView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for HelloView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         // 创建带边框的块
         let block = Block::default()
@@ -59,6 +55,20 @@ impl Component for HelloView {
             .style(ctx.theme.window_bg);
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for HelloView {}
+
+impl ::atto_ui::composable::Scrollable for HelloView {}
+
+impl ::atto_ui::composable::FocusNav for HelloView {}
+
+impl ::atto_ui::composable::DynamicTree for HelloView {}
+
+impl ::atto_ui::composable::EventHandling for HelloView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 

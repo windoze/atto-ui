@@ -3,7 +3,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use super::component::{
-    Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext,
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable, TitleBarContent, TitleBarContext,
 };
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
@@ -53,14 +54,6 @@ impl Component for ComponentTag {
         self.inner.type_name()
     }
 
-    fn tag(&self) -> Option<&str> {
-        Some(self.id.as_str())
-    }
-
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.inner.focused_child()
-    }
-
     fn property_names(&self) -> Vec<&'static str> {
         self.inner.property_names()
     }
@@ -77,18 +70,20 @@ impl Component for ComponentTag {
         self.inner.apply_command(command)
     }
 
-    fn is_focusable(&self) -> bool {
-        self.inner.is_focusable()
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.inner.titlebar(ctx)
     }
 
-    fn focus_first(&mut self) -> bool {
-        self.inner.focus_first()
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.inner.handle_titlebar_event(event, ctx)
     }
 
-    fn focus_last(&mut self) -> bool {
-        self.inner.focus_last()
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.inner.draw(frame, area, ctx)
     }
+}
 
+impl Layout for ComponentTag {
     fn min_width(&self) -> u16 {
         self.inner.min_width()
     }
@@ -108,35 +103,9 @@ impl Component for ComponentTag {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.inner.children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.inner.children_mut()
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.handle_event_bubble(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.handle_event(event, ctx)
-    }
-
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        self.inner.titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        self.inner.handle_titlebar_event(event, ctx)
-    }
-
+impl Scrollable for ComponentTag {
     fn is_scrollable(&self) -> bool {
         self.inner.is_scrollable()
     }
@@ -168,6 +137,38 @@ impl Component for ComponentTag {
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id)
     }
+}
+
+impl FocusNav for ComponentTag {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+}
+
+impl DynamicTree for ComponentTag {
+    fn tag(&self) -> Option<&str> {
+        Some(self.id.as_str())
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.inner.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.inner.children_mut()
+    }
 
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.inner.apply_tree_ops(ops)
@@ -184,9 +185,19 @@ impl Component for ComponentTag {
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
         self.inner.dynamic_callbacks()
     }
+}
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.inner.draw(frame, area, ctx)
+impl EventHandling for ComponentTag {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event(event, ctx)
     }
 }
 

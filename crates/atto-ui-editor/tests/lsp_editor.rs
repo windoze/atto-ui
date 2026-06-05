@@ -7,7 +7,7 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use atto_ui::composable::{Component, ComponentContext, ScrollbarHost, TabMode};
+use atto_ui::composable::{Component, ComponentContext, EventHandling, ScrollbarHost, TabMode};
 use atto_ui::wm::WindowId;
 use atto_ui_editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
 use atto_ui_editor::{EditorThemeSet, EditorView};

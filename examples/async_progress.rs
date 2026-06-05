@@ -16,7 +16,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, Desktop, MenuBar, run_crossterm_desktop_with_actions,
 };
-use atto_ui::composable::{Component, ComponentContext, EventOutcome, EventResult};
+use atto_ui::composable::{ComponentContext, EventOutcome, EventResult};
 use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -45,11 +45,7 @@ impl ProgressView {
 }
 
 #[component_properties]
-impl Component for ProgressView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for ProgressView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let progress = self.progress.get();
         let status = self.status.get();
@@ -92,6 +88,20 @@ impl Component for ProgressView {
 
             frame.render_widget(gauge, gauge_area);
         }
+    }
+}
+
+impl ::atto_ui::composable::Layout for ProgressView {}
+
+impl ::atto_ui::composable::Scrollable for ProgressView {}
+
+impl ::atto_ui::composable::FocusNav for ProgressView {}
+
+impl ::atto_ui::composable::DynamicTree for ProgressView {}
+
+impl ::atto_ui::composable::EventHandling for ProgressView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 

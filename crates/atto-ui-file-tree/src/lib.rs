@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use atto_ui::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarDrag,
-    ScrollbarHost, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
+    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, Scrollable,
+    ScrollbarDrag, ScrollbarHost, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
     should_show_scrollbar,
 };
 use atto_ui::reactive::Binding;
@@ -341,7 +341,7 @@ impl Clone for FileTree {
     }
 }
 
-impl Component for FileTree {
+impl ::atto_ui::composable::Component for FileTree {
     fn property_names(&self) -> Vec<&'static str> {
         vec!["title", "enabled", "height", "selection", "nodes"]
     }
@@ -402,78 +402,6 @@ impl Component for FileTree {
         }
     }
 
-    fn min_width(&self) -> u16 {
-        self.min_size.0
-    }
-
-    fn min_height(&self) -> u16 {
-        self.min_size.1
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.bindings.read().enabled.get()
-    }
-
-    fn is_scrollable(&self) -> bool {
-        self.scroll.is_scrollable()
-    }
-
-    fn content_size(&self) -> (u16, u16) {
-        self.scroll.content_size()
-    }
-
-    fn viewport_size(&self) -> (u16, u16) {
-        self.scroll.viewport_size()
-    }
-
-    fn scroll_offset(&self) -> (u16, u16) {
-        self.scroll.scroll_offset()
-    }
-
-    fn scroll_config(&self) -> ScrollConfig {
-        self.scroll.scroll_config()
-    }
-
-    fn set_scroll_offset(&mut self, x: u16, y: u16) {
-        self.scroll.set_scroll_offset(x, y);
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        let height = self.bindings.read().height.get();
-        Some(height.max(self.min_size.1))
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.bindings.read().enabled.get() {
-            return EventResult::ignored();
-        }
-
-        // Border-mounted scrollbars (right + bottom) so tree content doesn't lose space.
-        // When a parent hosts scrollbars (e.g. window chrome / splitter border), we skip this and
-        // rely on the parent to handle scrollbar input.
-        if matches!(ctx.scrollbar_host, ScrollbarHost::Component)
-            && let Event::Mouse(m) = event
-            && let Some(area) = self.last_area
-            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
-        {
-            let abs_event = MouseEvent {
-                column: area.x.saturating_add(local_x),
-                row: area.y.saturating_add(local_y),
-                ..*m
-            };
-            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
-                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
-                return EventResult::consumed();
-            }
-        }
-
-        let body_ctx = ComponentContext {
-            scrollbar_host: ScrollbarHost::Window,
-            ..ctx
-        };
-        self.scroll.handle_event(event, body_ctx)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
 
@@ -505,6 +433,88 @@ impl Component for FileTree {
         } else {
             self.scrollbar_drag = None;
         }
+    }
+}
+
+impl ::atto_ui::composable::Layout for FileTree {
+    fn min_width(&self) -> u16 {
+        self.min_size.0
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_size.1
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        let height = self.bindings.read().height.get();
+        Some(height.max(self.min_size.1))
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for FileTree {
+    fn is_scrollable(&self) -> bool {
+        self.scroll.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.scroll.content_size()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.scroll.viewport_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.scroll.scroll_offset()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.scroll.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.scroll.set_scroll_offset(x, y);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for FileTree {
+    fn is_focusable(&self) -> bool {
+        self.bindings.read().enabled.get()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for FileTree {}
+
+impl ::atto_ui::composable::EventHandling for FileTree {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.bindings.read().enabled.get() {
+            return EventResult::ignored();
+        }
+
+        // Border-mounted scrollbars (right + bottom) so tree content doesn't lose space.
+        // When a parent hosts scrollbars (e.g. window chrome / splitter border), we skip this and
+        // rely on the parent to handle scrollbar input.
+        if matches!(ctx.scrollbar_host, ScrollbarHost::Component)
+            && let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+        {
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
+        }
+
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.handle_event(event, body_ctx)
     }
 }
 

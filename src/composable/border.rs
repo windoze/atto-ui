@@ -59,7 +59,7 @@ impl Border {
 }
 
 #[component_properties]
-impl Component for Border {
+impl ::atto_ui::composable::Component for Border {
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
         props.push("border");
@@ -88,22 +88,144 @@ impl Component for Border {
         self.inner.apply_command(command)
     }
 
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.inner.focused_child()
-    }
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
 
-    fn is_focusable(&self) -> bool {
-        self.inner.is_focusable()
-    }
+        let border = self.border.get();
 
-    fn focus_first(&mut self) -> bool {
-        self.inner.focus_first()
-    }
+        let inner_area = if border { inset(area, 1) } else { area };
 
-    fn focus_last(&mut self) -> bool {
-        self.inner.focus_last()
-    }
+        if border && area.width > 0 && area.height > 0 {
+            let border_style = ctx.theme.window_bg.patch(if ctx.is_focused {
+                ctx.theme.window_border_focused
+            } else {
+                ctx.theme.window_border
+            });
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .border_set(ctx.theme.border_set(false));
+            frame.render_widget(block, area);
+        }
 
+        if inner_area.width == 0 || inner_area.height == 0 {
+            return;
+        }
+
+        let host_scrollbars = border
+            && matches!(ctx.scrollbar_host, ScrollbarHost::Component)
+            && self.inner.is_scrollable();
+        let inner_ctx = ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: if host_scrollbars {
+                ScrollbarHost::Window
+            } else {
+                ctx.scrollbar_host
+            },
+            tab_mode: ctx.tab_mode,
+        };
+
+        self.inner.draw(frame, inner_area, inner_ctx);
+
+        if !host_scrollbars {
+            return;
+        }
+
+        // Border-mounted scrollbars (right + bottom) for scrollable inner views.
+        let cfg = self.inner.scroll_config();
+        let (content_w, content_h) = self.inner.content_size();
+        let (viewport_w, viewport_h) = self.inner.viewport_size();
+        let (scroll_x, scroll_y) = self.inner.scroll_offset();
+
+        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+        let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+
+        let local_area = Rect {
+            x: 0,
+            y: 0,
+            width: area.width,
+            height: area.height,
+        };
+        let inner_local = inset(local_area, 1);
+        if inner_local.width == 0 || inner_local.height == 0 {
+            return;
+        }
+
+        let buf = frame.buffer_mut();
+        let thumb_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_thumb);
+        let arrow_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_arrow);
+
+        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
+        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
+        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
+        let arrow_left = ctx.theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
+        let arrow_right = ctx.theme.glyph("scrollbar-right-arrow").unwrap_or("►");
+
+        if show_v && inner_local.height > 0 {
+            let layout = scrollbar_layout_1d(
+                inner_local.height,
+                viewport_h,
+                content_h,
+                scroll_y,
+                cfg.arrows,
+            );
+            let x = local_area.width.saturating_sub(1);
+            for i in 0..inner_local.height {
+                let (symbol, style) = if layout.has_arrows && i == 0 {
+                    (arrow_up, arrow_style)
+                } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
+                    (arrow_down, arrow_style)
+                } else if i >= layout.thumb_start
+                    && i < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (thumb, thumb_style)
+                } else {
+                    continue;
+                };
+                buf[(
+                    area.x.saturating_add(x),
+                    area.y.saturating_add(inner_local.y).saturating_add(i),
+                )]
+                    .set_symbol(symbol)
+                    .set_style(style);
+            }
+        }
+
+        if show_h && inner_local.width > 0 {
+            let layout = scrollbar_layout_1d(
+                inner_local.width,
+                viewport_w,
+                content_w,
+                scroll_x,
+                cfg.arrows,
+            );
+            let y = local_area.height.saturating_sub(1);
+            for i in 0..inner_local.width {
+                let (symbol, style) = if layout.has_arrows && i == 0 {
+                    (arrow_left, arrow_style)
+                } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
+                    (arrow_right, arrow_style)
+                } else if i >= layout.thumb_start
+                    && i < layout.thumb_start.saturating_add(layout.thumb_len)
+                {
+                    (thumb, thumb_style)
+                } else {
+                    continue;
+                };
+                buf[(
+                    area.x.saturating_add(inner_local.x).saturating_add(i),
+                    area.y.saturating_add(y),
+                )]
+                    .set_symbol(symbol)
+                    .set_style(style);
+            }
+        }
+    }
+}
+
+impl ::atto_ui::composable::Layout for Border {
     fn min_width(&self) -> u16 {
         let inner = self.inner.min_width();
         if self.border.get() {
@@ -131,7 +253,9 @@ impl Component for Border {
         let h = self.inner.desired_height()?;
         Some(h.saturating_add(if self.border.get() { 2 } else { 0 }))
     }
+}
 
+impl ::atto_ui::composable::Scrollable for Border {
     fn is_scrollable(&self) -> bool {
         self.inner.is_scrollable()
     }
@@ -159,7 +283,27 @@ impl Component for Border {
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id);
     }
+}
 
+impl ::atto_ui::composable::FocusNav for Border {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for Border {
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.inner.apply_tree_ops(ops)
     }
@@ -175,7 +319,9 @@ impl Component for Border {
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
         self.inner.dynamic_callbacks()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for Border {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let border = self.border.get();
         let host_scrollbars = border
@@ -427,141 +573,5 @@ impl Component for Border {
         }
 
         self.inner.handle_event(event, inner_ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-
-        let border = self.border.get();
-
-        let inner_area = if border { inset(area, 1) } else { area };
-
-        if border && area.width > 0 && area.height > 0 {
-            let border_style = ctx.theme.window_bg.patch(if ctx.is_focused {
-                ctx.theme.window_border_focused
-            } else {
-                ctx.theme.window_border
-            });
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .border_set(ctx.theme.border_set(false));
-            frame.render_widget(block, area);
-        }
-
-        if inner_area.width == 0 || inner_area.height == 0 {
-            return;
-        }
-
-        let host_scrollbars = border
-            && matches!(ctx.scrollbar_host, ScrollbarHost::Component)
-            && self.inner.is_scrollable();
-        let inner_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused,
-            scrollbar_host: if host_scrollbars {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host
-            },
-            tab_mode: ctx.tab_mode,
-        };
-
-        self.inner.draw(frame, inner_area, inner_ctx);
-
-        if !host_scrollbars {
-            return;
-        }
-
-        // Border-mounted scrollbars (right + bottom) for scrollable inner views.
-        let cfg = self.inner.scroll_config();
-        let (content_w, content_h) = self.inner.content_size();
-        let (viewport_w, viewport_h) = self.inner.viewport_size();
-        let (scroll_x, scroll_y) = self.inner.scroll_offset();
-
-        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
-        let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
-
-        let local_area = Rect {
-            x: 0,
-            y: 0,
-            width: area.width,
-            height: area.height,
-        };
-        let inner_local = inset(local_area, 1);
-        if inner_local.width == 0 || inner_local.height == 0 {
-            return;
-        }
-
-        let buf = frame.buffer_mut();
-        let thumb_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_thumb);
-        let arrow_style = ctx.theme.window_bg.patch(ctx.theme.scrollbar_arrow);
-
-        let thumb = ctx.theme.glyph("scrollbar-thumb").unwrap_or("█");
-        let arrow_up = ctx.theme.glyph("scrollbar-up-arrow").unwrap_or("▲");
-        let arrow_down = ctx.theme.glyph("scrollbar-down-arrow").unwrap_or("▼");
-        let arrow_left = ctx.theme.glyph("scrollbar-left-arrow").unwrap_or("◄");
-        let arrow_right = ctx.theme.glyph("scrollbar-right-arrow").unwrap_or("►");
-
-        if show_v && inner_local.height > 0 {
-            let layout = scrollbar_layout_1d(
-                inner_local.height,
-                viewport_h,
-                content_h,
-                scroll_y,
-                cfg.arrows,
-            );
-            let x = local_area.width.saturating_sub(1);
-            for i in 0..inner_local.height {
-                let (symbol, style) = if layout.has_arrows && i == 0 {
-                    (arrow_up, arrow_style)
-                } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                    (arrow_down, arrow_style)
-                } else if i >= layout.thumb_start
-                    && i < layout.thumb_start.saturating_add(layout.thumb_len)
-                {
-                    (thumb, thumb_style)
-                } else {
-                    continue;
-                };
-                buf[(
-                    area.x.saturating_add(x),
-                    area.y.saturating_add(inner_local.y).saturating_add(i),
-                )]
-                    .set_symbol(symbol)
-                    .set_style(style);
-            }
-        }
-
-        if show_h && inner_local.width > 0 {
-            let layout = scrollbar_layout_1d(
-                inner_local.width,
-                viewport_w,
-                content_w,
-                scroll_x,
-                cfg.arrows,
-            );
-            let y = local_area.height.saturating_sub(1);
-            for i in 0..inner_local.width {
-                let (symbol, style) = if layout.has_arrows && i == 0 {
-                    (arrow_left, arrow_style)
-                } else if layout.has_arrows && i == layout.bar_len.saturating_sub(1) {
-                    (arrow_right, arrow_style)
-                } else if i >= layout.thumb_start
-                    && i < layout.thumb_start.saturating_add(layout.thumb_len)
-                {
-                    (thumb, thumb_style)
-                } else {
-                    continue;
-                };
-                buf[(
-                    area.x.saturating_add(inner_local.x).saturating_add(i),
-                    area.y.saturating_add(y),
-                )]
-                    .set_symbol(symbol)
-                    .set_style(style);
-            }
-        }
     }
 }

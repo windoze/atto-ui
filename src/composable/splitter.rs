@@ -3,7 +3,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use super::component::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
+use super::component::{
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable, ScrollbarHost, TabMode,
+};
 use super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
     tab_direction_for_event,
@@ -709,44 +712,91 @@ impl Splitter {
 
 #[component_properties]
 impl Component for Splitter {
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.focused
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.children.iter().any(|c| c.view.is_focusable())
-    }
-
-    fn focus_first(&mut self) -> bool {
-        let Some(child_id) = focusable_children_in_tab_order(&self.children)
-            .first()
-            .copied()
-        else {
-            self.focused = None;
-            return false;
-        };
-
-        self.focused = Some(child_id);
-        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
-            let _ = self.children[child_idx].view.focus_first();
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            self.last_layout = Some(SplitLayout {
+                area,
+                ..SplitLayout::default()
+            });
+            return;
         }
-        true
-    }
 
-    fn focus_last(&mut self) -> bool {
-        let focusable = focusable_children_in_tab_order(&self.children);
-        let Some(&child_id) = focusable.last() else {
-            self.focused = None;
-            return false;
-        };
+        let layout = self.layout_for_area(area);
+        self.last_layout = Some(layout);
 
-        self.focused = Some(child_id);
-        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
-            let _ = self.children[child_idx].view.focus_last();
+        if let Some(first) = self.children.get_mut(0) {
+            first.set_bounds(layout.first);
         }
-        true
-    }
+        if let Some(second) = self.children.get_mut(1) {
+            second.set_bounds(layout.second);
+        }
 
+        if let Some(first) = self.children.get_mut(0)
+            && layout.first.width > 0
+            && layout.first.height > 0
+        {
+            let abs = Rect {
+                x: area.x.saturating_add(layout.first.x),
+                y: area.y.saturating_add(layout.first.y),
+                width: layout.first.width,
+                height: layout.first.height,
+            };
+            let child_focused = ctx.is_focused && self.focused == Some(first.id);
+            let child_ctx = ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: child_focused,
+                scrollbar_host: ScrollbarHost::Window,
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+            first.view.draw(frame, abs, child_ctx);
+        }
+
+        if let Some(second) = self.children.get_mut(1)
+            && layout.second.width > 0
+            && layout.second.height > 0
+        {
+            let abs = Rect {
+                x: area.x.saturating_add(layout.second.x),
+                y: area.y.saturating_add(layout.second.y),
+                width: layout.second.width,
+                height: layout.second.height,
+            };
+            let child_focused = ctx.is_focused && self.focused == Some(second.id);
+            let child_ctx = ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: child_focused,
+                scrollbar_host: ScrollbarHost::Window,
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+            second.view.draw(frame, abs, child_ctx);
+        }
+
+        if self.border.get() && layout.divider.width > 0 && layout.divider.height > 0 {
+            let style = self.border_style.unwrap_or(ctx.theme.widget.dim);
+            let border_set = ctx.theme.border_set(false);
+            let symbol = match self.orientation_value() {
+                SplitterOrientation::Vertical => border_set.vertical_left,
+                SplitterOrientation::Horizontal => border_set.horizontal_top,
+            };
+
+            let buf = frame.buffer_mut();
+            for dy in 0..layout.divider.height {
+                for dx in 0..layout.divider.width {
+                    let x = area.x.saturating_add(layout.divider.x).saturating_add(dx);
+                    let y = area.y.saturating_add(layout.divider.y).saturating_add(dy);
+                    buf[(x, y)].set_symbol(symbol).set_style(style);
+                }
+            }
+        }
+
+        // Draw child scrollbars on the split borders (each child gets its own right/bottom edge).
+        self.draw_child_border_scrollbars(frame, area, ctx);
+    }
+}
+
+impl Layout for Splitter {
     fn min_width(&self) -> u16 {
         match self.orientation_value() {
             SplitterOrientation::Vertical => self
@@ -822,7 +872,51 @@ impl Component for Splitter {
             }
         }
     }
+}
 
+impl Scrollable for Splitter {}
+
+impl FocusNav for Splitter {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.focused
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.children.iter().any(|c| c.view.is_focusable())
+    }
+
+    fn focus_first(&mut self) -> bool {
+        let Some(child_id) = focusable_children_in_tab_order(&self.children)
+            .first()
+            .copied()
+        else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(child_id);
+        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
+            let _ = self.children[child_idx].view.focus_first();
+        }
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        let focusable = focusable_children_in_tab_order(&self.children);
+        let Some(&child_id) = focusable.last() else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(child_id);
+        if let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) {
+            let _ = self.children[child_idx].view.focus_last();
+        }
+        true
+    }
+}
+
+impl DynamicTree for Splitter {
     fn children(&self) -> &[ComponentNode] {
         &self.children
     }
@@ -830,7 +924,9 @@ impl Component for Splitter {
     fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         Some(&mut self.children)
     }
+}
 
+impl EventHandling for Splitter {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let tab = self.handle_tab_navigation(event, ctx);
         if tab.is_consumed() {
@@ -1004,88 +1100,5 @@ impl Component for Splitter {
         }
 
         EventResult::ignored()
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        if area.width == 0 || area.height == 0 {
-            self.last_layout = Some(SplitLayout {
-                area,
-                ..SplitLayout::default()
-            });
-            return;
-        }
-
-        let layout = self.layout_for_area(area);
-        self.last_layout = Some(layout);
-
-        if let Some(first) = self.children.get_mut(0) {
-            first.set_bounds(layout.first);
-        }
-        if let Some(second) = self.children.get_mut(1) {
-            second.set_bounds(layout.second);
-        }
-
-        if let Some(first) = self.children.get_mut(0)
-            && layout.first.width > 0
-            && layout.first.height > 0
-        {
-            let abs = Rect {
-                x: area.x.saturating_add(layout.first.x),
-                y: area.y.saturating_add(layout.first.y),
-                width: layout.first.width,
-                height: layout.first.height,
-            };
-            let child_focused = ctx.is_focused && self.focused == Some(first.id);
-            let child_ctx = ComponentContext {
-                theme: ctx.theme,
-                window_id: ctx.window_id,
-                is_focused: child_focused,
-                scrollbar_host: ScrollbarHost::Window,
-                tab_mode: ctx.tab_mode.for_child(),
-            };
-            first.view.draw(frame, abs, child_ctx);
-        }
-
-        if let Some(second) = self.children.get_mut(1)
-            && layout.second.width > 0
-            && layout.second.height > 0
-        {
-            let abs = Rect {
-                x: area.x.saturating_add(layout.second.x),
-                y: area.y.saturating_add(layout.second.y),
-                width: layout.second.width,
-                height: layout.second.height,
-            };
-            let child_focused = ctx.is_focused && self.focused == Some(second.id);
-            let child_ctx = ComponentContext {
-                theme: ctx.theme,
-                window_id: ctx.window_id,
-                is_focused: child_focused,
-                scrollbar_host: ScrollbarHost::Window,
-                tab_mode: ctx.tab_mode.for_child(),
-            };
-            second.view.draw(frame, abs, child_ctx);
-        }
-
-        if self.border.get() && layout.divider.width > 0 && layout.divider.height > 0 {
-            let style = self.border_style.unwrap_or(ctx.theme.widget.dim);
-            let border_set = ctx.theme.border_set(false);
-            let symbol = match self.orientation_value() {
-                SplitterOrientation::Vertical => border_set.vertical_left,
-                SplitterOrientation::Horizontal => border_set.horizontal_top,
-            };
-
-            let buf = frame.buffer_mut();
-            for dy in 0..layout.divider.height {
-                for dx in 0..layout.divider.width {
-                    let x = area.x.saturating_add(layout.divider.x).saturating_add(dx);
-                    let y = area.y.saturating_add(layout.divider.y).saturating_add(dy);
-                    buf[(x, y)].set_symbol(symbol).set_style(style);
-                }
-            }
-        }
-
-        // Draw child scrollbars on the split borders (each child gets its own right/bottom edge).
-        self.draw_child_border_scrollbars(frame, area, ctx);
     }
 }

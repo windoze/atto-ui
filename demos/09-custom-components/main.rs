@@ -32,23 +32,25 @@ fn content_height() -> LayoutParams {
 macro_rules! delegate_component {
     ($ty:ty, $inner:ident) => {
         #[component_properties]
-        impl Component for $ty {
-            fn focused_child(&self) -> Option<ComponentId> {
-                self.$inner.focused_child()
+        impl ::atto_ui::composable::Component for $ty {
+            fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+                self.$inner.titlebar(ctx)
             }
 
-            fn is_focusable(&self) -> bool {
-                self.$inner.is_focusable()
+            fn handle_titlebar_event(
+                &mut self,
+                event: &Event,
+                ctx: TitleBarContext<'_>,
+            ) -> EventResult {
+                self.$inner.handle_titlebar_event(event, ctx)
             }
 
-            fn focus_first(&mut self) -> bool {
-                self.$inner.focus_first()
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+                self.$inner.draw(frame, area, ctx)
             }
+        }
 
-            fn focus_last(&mut self) -> bool {
-                self.$inner.focus_last()
-            }
-
+        impl ::atto_ui::composable::Layout for $ty {
             fn min_width(&self) -> u16 {
                 self.$inner.min_width()
             }
@@ -68,7 +70,61 @@ macro_rules! delegate_component {
             fn desired_height(&self) -> Option<u16> {
                 self.$inner.desired_height()
             }
+        }
 
+        impl ::atto_ui::composable::Scrollable for $ty {
+            fn is_scrollable(&self) -> bool {
+                self.$inner.is_scrollable()
+            }
+
+            fn content_size(&self) -> (u16, u16) {
+                self.$inner.content_size()
+            }
+
+            fn scroll_offset(&self) -> (u16, u16) {
+                self.$inner.scroll_offset()
+            }
+
+            fn viewport_size(&self) -> (u16, u16) {
+                self.$inner.viewport_size()
+            }
+
+            fn scroll_config(&self) -> ScrollConfig {
+                ::atto_ui::composable::Scrollable::scroll_config(&self.$inner)
+            }
+
+            fn set_scroll_offset(&mut self, x: u16, y: u16) {
+                self.$inner.set_scroll_offset(x, y)
+            }
+
+            fn scroll_to(&mut self, x: u16, y: u16) {
+                self.$inner.scroll_to(x, y)
+            }
+
+            fn scroll_to_child(&mut self, child_id: ComponentId) {
+                self.$inner.scroll_to_child(child_id)
+            }
+        }
+
+        impl ::atto_ui::composable::FocusNav for $ty {
+            fn focused_child(&self) -> Option<ComponentId> {
+                self.$inner.focused_child()
+            }
+
+            fn is_focusable(&self) -> bool {
+                self.$inner.is_focusable()
+            }
+
+            fn focus_first(&mut self) -> bool {
+                self.$inner.focus_first()
+            }
+
+            fn focus_last(&mut self) -> bool {
+                self.$inner.focus_last()
+            }
+        }
+
+        impl ::atto_ui::composable::DynamicTree for $ty {
             fn children(&self) -> &[ComponentNode] {
                 self.$inner.children()
             }
@@ -76,7 +132,9 @@ macro_rules! delegate_component {
             fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
                 self.$inner.children_mut()
             }
+        }
 
+        impl ::atto_ui::composable::EventHandling for $ty {
             fn handle_event_capture(
                 &mut self,
                 event: &Event,
@@ -95,54 +153,6 @@ macro_rules! delegate_component {
 
             fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
                 self.$inner.handle_event(event, ctx)
-            }
-
-            fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-                self.$inner.titlebar(ctx)
-            }
-
-            fn handle_titlebar_event(
-                &mut self,
-                event: &Event,
-                ctx: TitleBarContext<'_>,
-            ) -> EventResult {
-                self.$inner.handle_titlebar_event(event, ctx)
-            }
-
-            fn is_scrollable(&self) -> bool {
-                self.$inner.is_scrollable()
-            }
-
-            fn content_size(&self) -> (u16, u16) {
-                self.$inner.content_size()
-            }
-
-            fn scroll_offset(&self) -> (u16, u16) {
-                self.$inner.scroll_offset()
-            }
-
-            fn viewport_size(&self) -> (u16, u16) {
-                self.$inner.viewport_size()
-            }
-
-            fn scroll_config(&self) -> ScrollConfig {
-                Component::scroll_config(&self.$inner)
-            }
-
-            fn set_scroll_offset(&mut self, x: u16, y: u16) {
-                self.$inner.set_scroll_offset(x, y)
-            }
-
-            fn scroll_to(&mut self, x: u16, y: u16) {
-                self.$inner.scroll_to(x, y)
-            }
-
-            fn scroll_to_child(&mut self, child_id: ComponentId) {
-                self.$inner.scroll_to_child(child_id)
-            }
-
-            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-                self.$inner.draw(frame, area, ctx)
             }
         }
     };

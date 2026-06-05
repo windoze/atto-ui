@@ -6,7 +6,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    Component, ComponentContext, EventResult, TitleBarContent, TitleBarContext, TitleBarSpan,
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -347,55 +348,6 @@ impl Default for TabWindow {
 
 #[component_properties]
 impl Component for TabWindow {
-    fn is_focusable(&self) -> bool {
-        self.active_view().is_some_and(|v| v.is_focusable())
-    }
-
-    fn focus_first(&mut self) -> bool {
-        self.active_view_mut().is_some_and(|v| v.focus_first())
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.active_view_mut().is_some_and(|v| v.focus_last())
-    }
-
-    fn min_width(&self) -> u16 {
-        self.tabs
-            .iter()
-            .map(|t| t.view.min_width())
-            .max()
-            .unwrap_or(0)
-    }
-
-    fn min_height(&self) -> u16 {
-        self.tabs
-            .iter()
-            .map(|t| t.view.min_height())
-            .max()
-            .unwrap_or(0)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Some(view) = self.active_view_mut() else {
-            return EventResult::ignored();
-        };
-        view.handle_event(event, ctx)
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Some(view) = self.active_view_mut() else {
-            return EventResult::ignored();
-        };
-        view.handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Some(view) = self.active_view_mut() else {
-            return EventResult::ignored();
-        };
-        view.handle_event_bubble(event, ctx)
-    }
-
     fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
         self.titlebar_layout(&ctx).map(|layout| layout.content)
     }
@@ -451,6 +403,33 @@ impl Component for TabWindow {
         EventResult::ignored()
     }
 
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let Some(view) = self.active_view_mut() else {
+            return;
+        };
+        view.draw(frame, area, ctx);
+    }
+}
+
+impl Layout for TabWindow {
+    fn min_width(&self) -> u16 {
+        self.tabs
+            .iter()
+            .map(|t| t.view.min_width())
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn min_height(&self) -> u16 {
+        self.tabs
+            .iter()
+            .map(|t| t.view.min_height())
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+impl Scrollable for TabWindow {
     fn is_scrollable(&self) -> bool {
         self.active_view().is_some_and(|v| v.is_scrollable())
     }
@@ -483,7 +462,23 @@ impl Component for TabWindow {
             view.scroll_to_child(child_id);
         }
     }
+}
 
+impl FocusNav for TabWindow {
+    fn is_focusable(&self) -> bool {
+        self.active_view().is_some_and(|v| v.is_focusable())
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.active_view_mut().is_some_and(|v| v.focus_first())
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.active_view_mut().is_some_and(|v| v.focus_last())
+    }
+}
+
+impl DynamicTree for TabWindow {
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.active_dynamic_view()?.apply_tree_ops(ops)
     }
@@ -503,12 +498,28 @@ impl Component for TabWindow {
             .get(self.active)
             .and_then(|tab| tab.view.dynamic_callbacks())
     }
+}
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+impl EventHandling for TabWindow {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let Some(view) = self.active_view_mut() else {
-            return;
+            return EventResult::ignored();
         };
-        view.draw(frame, area, ctx);
+        view.handle_event(event, ctx)
+    }
+
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Some(view) = self.active_view_mut() else {
+            return EventResult::ignored();
+        };
+        view.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Some(view) = self.active_view_mut() else {
+            return EventResult::ignored();
+        };
+        view.handle_event_bubble(event, ctx)
     }
 }
 

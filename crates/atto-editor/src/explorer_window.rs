@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig, ScrollbarHost};
+use atto_ui::composable::{ComponentContext, EventResult, ScrollConfig, ScrollbarHost};
 use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui_file_tree::{FileTree, FileTreeGlyphs, FileTreeNode, FileTreeNodeId, FileTreeNodeKind};
 use crossterm::event::{
@@ -146,11 +146,28 @@ impl ExplorerWindowView {
     }
 }
 
-impl Component for ExplorerWindowView {
-    fn is_focusable(&self) -> bool {
-        true
-    }
+impl ::atto_ui::composable::Component for ExplorerWindowView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.handle_commands();
 
+        let child_ctx = ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                ScrollbarHost::Window
+            } else {
+                ctx.scrollbar_host.for_child()
+            },
+            tab_mode: ctx.tab_mode.for_child(),
+        };
+        self.file_tree.draw(frame, area, child_ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for ExplorerWindowView {}
+
+impl ::atto_ui::composable::Scrollable for ExplorerWindowView {
     fn is_scrollable(&self) -> bool {
         self.file_tree.is_scrollable()
     }
@@ -174,7 +191,17 @@ impl Component for ExplorerWindowView {
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
         self.file_tree.set_scroll_offset(x, y);
     }
+}
 
+impl ::atto_ui::composable::FocusNav for ExplorerWindowView {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for ExplorerWindowView {}
+
+impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_commands();
 
@@ -253,22 +280,5 @@ impl Component for ExplorerWindowView {
         }
 
         self.file_tree.handle_event(event, child_ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.handle_commands();
-
-        let child_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused,
-            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host.for_child()
-            },
-            tab_mode: ctx.tab_mode.for_child(),
-        };
-        self.file_tree.draw(frame, area, child_ctx);
     }
 }

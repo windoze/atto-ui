@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::ComponentValue;
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{Component, ComponentContext, EventHandling, EventResult, Layout};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::text::styled_text::{
@@ -72,10 +72,36 @@ impl StyledLabel {
 
 #[component_properties]
 impl Component for StyledLabel {
-    fn is_focusable(&self) -> bool {
-        false
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let base = if self.enabled.get() {
+            ctx.theme.widget.dim
+        } else {
+            ctx.theme.widget.disabled
+        };
+        let link_overlay = ctx.theme.named_style("markdown-link");
+
+        let segments = parse_inline(&self.text.get());
+        let spans = spans_from_segments(&segments, base, link_overlay);
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+}
+
+impl Layout for StyledLabel {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
     }
 
+    fn desired_width(&self) -> Option<u16> {
+        Some(inline_display_width(&self.text.get()))
+    }
+}
+
+impl EventHandling for StyledLabel {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
@@ -111,33 +137,9 @@ impl Component for StyledLabel {
 
         EventResult::ignored()
     }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        Some(inline_display_width(&self.text.get()))
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let base = if self.enabled.get() {
-            ctx.theme.widget.dim
-        } else {
-            ctx.theme.widget.disabled
-        };
-        let link_overlay = ctx.theme.named_style("markdown-link");
-
-        let segments = parse_inline(&self.text.get());
-        let spans = spans_from_segments(&segments, base, link_overlay);
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    }
 }
+
+crate::impl_component_default_traits!(StyledLabel => Scrollable, FocusNav, DynamicTree);
 
 fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {

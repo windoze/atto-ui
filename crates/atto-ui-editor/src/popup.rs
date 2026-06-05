@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
-use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult};
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
 
@@ -92,25 +92,7 @@ impl HoverPopupView {
     }
 }
 
-impl Component for HoverPopupView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if matches!(
-            event,
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                ..
-            })
-        ) {
-            // Clicking a hover tooltip should always dismiss it.
-            if let Some(model) = self.model.get() {
-                self.dismissed.set(Some(model.anchor));
-            }
-            self.model.set(None);
-            return EventResult::consumed();
-        }
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for HoverPopupView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let Some(model) = self.model.get() else {
@@ -129,6 +111,34 @@ impl Component for HoverPopupView {
             .border_style(theme.popup_border)
             .style(theme.popup);
         frame.render_widget(Paragraph::new(lines).style(theme.popup).block(block), area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for HoverPopupView {}
+
+impl ::atto_ui::composable::Scrollable for HoverPopupView {}
+
+impl ::atto_ui::composable::FocusNav for HoverPopupView {}
+
+impl ::atto_ui::composable::DynamicTree for HoverPopupView {}
+
+impl ::atto_ui::composable::EventHandling for HoverPopupView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if matches!(
+            event,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                ..
+            })
+        ) {
+            // Clicking a hover tooltip should always dismiss it.
+            if let Some(model) = self.model.get() {
+                self.dismissed.set(Some(model.anchor));
+            }
+            self.model.set(None);
+            return EventResult::consumed();
+        }
+        EventResult::ignored()
     }
 }
 
@@ -161,7 +171,62 @@ impl CompletionPopupView {
     }
 }
 
-impl Component for CompletionPopupView {
+impl ::atto_ui::composable::Component for CompletionPopupView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        let Some(model) = self.model.get() else {
+            return;
+        };
+        let theme = self.editor_theme();
+
+        let inner_height = area.height.saturating_sub(2) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner_height);
+
+        for row in 0..inner_height {
+            let idx = model.scroll.saturating_add(row);
+            if idx >= model.items.len() {
+                lines.push(Line::from(""));
+                continue;
+            }
+
+            let item = &model.items[idx];
+            let mut style = theme.popup;
+            if idx == model.selected {
+                style = theme.popup_selected;
+            }
+
+            let label = item.label.clone();
+            let detail = item.detail.clone().unwrap_or_default();
+            let line = if detail.is_empty() {
+                Line::from(vec![Span::styled(label, style)])
+            } else {
+                Line::from(vec![
+                    Span::styled(label, style),
+                    Span::styled(" ", style),
+                    Span::styled(detail, style.add_modifier(ratatui::style::Modifier::DIM)),
+                ])
+            };
+            lines.push(line);
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for CompletionPopupView {}
+
+impl ::atto_ui::composable::Scrollable for CompletionPopupView {}
+
+impl ::atto_ui::composable::FocusNav for CompletionPopupView {}
+
+impl ::atto_ui::composable::DynamicTree for CompletionPopupView {}
+
+impl ::atto_ui::composable::EventHandling for CompletionPopupView {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         let Some(mut model) = self.model.get() else {
             return EventResult::ignored();
@@ -235,51 +300,6 @@ impl Component for CompletionPopupView {
             }
             _ => EventResult::ignored(),
         }
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        let Some(model) = self.model.get() else {
-            return;
-        };
-        let theme = self.editor_theme();
-
-        let inner_height = area.height.saturating_sub(2) as usize;
-        let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner_height);
-
-        for row in 0..inner_height {
-            let idx = model.scroll.saturating_add(row);
-            if idx >= model.items.len() {
-                lines.push(Line::from(""));
-                continue;
-            }
-
-            let item = &model.items[idx];
-            let mut style = theme.popup;
-            if idx == model.selected {
-                style = theme.popup_selected;
-            }
-
-            let label = item.label.clone();
-            let detail = item.detail.clone().unwrap_or_default();
-            let line = if detail.is_empty() {
-                Line::from(vec![Span::styled(label, style)])
-            } else {
-                Line::from(vec![
-                    Span::styled(label, style),
-                    Span::styled(" ", style),
-                    Span::styled(detail, style.add_modifier(ratatui::style::Modifier::DIM)),
-                ])
-            };
-            lines.push(line);
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.popup_border)
-            .style(theme.popup);
-
-        frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 }
 

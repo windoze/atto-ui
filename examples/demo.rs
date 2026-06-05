@@ -43,19 +43,7 @@ impl TextView {
 }
 
 #[component_properties]
-impl Component for TextView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if let Event::Key(KeyEvent {
-            code: KeyCode::Esc,
-            kind: KeyEventKind::Press,
-            ..
-        }) = event
-        {
-            return EventResult::close_window();
-        }
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for TextView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
@@ -67,6 +55,28 @@ impl Component for TextView {
             Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
             area,
         );
+    }
+}
+
+impl ::atto_ui::composable::Layout for TextView {}
+
+impl ::atto_ui::composable::Scrollable for TextView {}
+
+impl ::atto_ui::composable::FocusNav for TextView {}
+
+impl ::atto_ui::composable::DynamicTree for TextView {}
+
+impl ::atto_ui::composable::EventHandling for TextView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if let Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            ..
+        }) = event
+        {
+            return EventResult::close_window();
+        }
+        EventResult::ignored()
     }
 }
 
@@ -125,7 +135,13 @@ impl DialogView {
 }
 
 #[component_properties]
-impl Component for DialogView {
+impl ::atto_ui::composable::Component for DialogView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for DialogView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -141,7 +157,13 @@ impl Component for DialogView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for DialogView {}
+
+impl ::atto_ui::composable::FocusNav for DialogView {}
+
+impl ::atto_ui::composable::DynamicTree for DialogView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -149,17 +171,15 @@ impl Component for DialogView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for DialogView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let res = self.root.handle_event(event, ctx);
         if res.action == atto_ui::composable::ComponentAction::Submitted {
             return EventResult::close_window();
         }
         res
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -451,7 +471,13 @@ impl WidgetsView {
 }
 
 #[component_properties]
-impl Component for WidgetsView {
+impl ::atto_ui::composable::Component for WidgetsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for WidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -467,7 +493,13 @@ impl Component for WidgetsView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for WidgetsView {}
+
+impl ::atto_ui::composable::FocusNav for WidgetsView {}
+
+impl ::atto_ui::composable::DynamicTree for WidgetsView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -475,13 +507,11 @@ impl Component for WidgetsView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for WidgetsView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.root.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -533,7 +563,13 @@ impl LoadingWidgetsView {
 }
 
 #[component_properties]
-impl Component for LoadingWidgetsView {
+impl ::atto_ui::composable::Component for LoadingWidgetsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for LoadingWidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -549,7 +585,13 @@ impl Component for LoadingWidgetsView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for LoadingWidgetsView {}
+
+impl ::atto_ui::composable::FocusNav for LoadingWidgetsView {}
+
+impl ::atto_ui::composable::DynamicTree for LoadingWidgetsView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -557,7 +599,9 @@ impl Component for LoadingWidgetsView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for LoadingWidgetsView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
@@ -568,10 +612,6 @@ impl Component for LoadingWidgetsView {
             return EventResult::close_window();
         }
         self.root.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -623,19 +663,28 @@ impl TabWindowDemo {
 }
 
 #[component_properties]
-impl Component for TabWindowDemo {
-    fn is_focusable(&self) -> bool {
-        self.tabs.is_focusable()
+impl ::atto_ui::composable::Component for TabWindowDemo {
+    fn titlebar(
+        &mut self,
+        ctx: atto_ui::composable::TitleBarContext<'_>,
+    ) -> Option<atto_ui::composable::TitleBarContent> {
+        self.tabs.titlebar(ctx)
     }
 
-    fn focus_first(&mut self) -> bool {
-        self.tabs.focus_first()
+    fn handle_titlebar_event(
+        &mut self,
+        event: &Event,
+        ctx: atto_ui::composable::TitleBarContext<'_>,
+    ) -> EventResult {
+        self.tabs.handle_titlebar_event(event, ctx)
     }
 
-    fn focus_last(&mut self) -> bool {
-        self.tabs.focus_last()
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.tabs.draw(frame, area, ctx);
     }
+}
 
+impl ::atto_ui::composable::Layout for TabWindowDemo {
     fn min_width(&self) -> u16 {
         self.tabs.min_width()
     }
@@ -651,7 +700,53 @@ impl Component for TabWindowDemo {
     fn desired_height(&self) -> Option<u16> {
         self.tabs.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for TabWindowDemo {
+    fn is_scrollable(&self) -> bool {
+        self.tabs.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.tabs.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.tabs.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.tabs.viewport_size()
+    }
+
+    fn scroll_config(&self) -> atto_ui::composable::ScrollConfig {
+        self.tabs.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.tabs.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: atto_ui::composable::ComponentId) {
+        self.tabs.scroll_to_child(child_id);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for TabWindowDemo {
+    fn is_focusable(&self) -> bool {
+        self.tabs.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.tabs.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.tabs.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for TabWindowDemo {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.tabs.children()
     }
@@ -659,7 +754,9 @@ impl Component for TabWindowDemo {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.tabs.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for TabWindowDemo {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.tabs.handle_event_capture(event, ctx)
     }
@@ -688,53 +785,6 @@ impl Component for TabWindowDemo {
         }
 
         self.tabs.handle_event(event, ctx)
-    }
-
-    fn titlebar(
-        &mut self,
-        ctx: atto_ui::composable::TitleBarContext<'_>,
-    ) -> Option<atto_ui::composable::TitleBarContent> {
-        self.tabs.titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(
-        &mut self,
-        event: &Event,
-        ctx: atto_ui::composable::TitleBarContext<'_>,
-    ) -> EventResult {
-        self.tabs.handle_titlebar_event(event, ctx)
-    }
-
-    fn is_scrollable(&self) -> bool {
-        self.tabs.is_scrollable()
-    }
-
-    fn content_size(&self) -> (u16, u16) {
-        self.tabs.content_size()
-    }
-
-    fn scroll_offset(&self) -> (u16, u16) {
-        self.tabs.scroll_offset()
-    }
-
-    fn viewport_size(&self) -> (u16, u16) {
-        self.tabs.viewport_size()
-    }
-
-    fn scroll_config(&self) -> atto_ui::composable::ScrollConfig {
-        self.tabs.scroll_config()
-    }
-
-    fn set_scroll_offset(&mut self, x: u16, y: u16) {
-        self.tabs.set_scroll_offset(x, y);
-    }
-
-    fn scroll_to_child(&mut self, child_id: atto_ui::composable::ComponentId) {
-        self.tabs.scroll_to_child(child_id);
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.tabs.draw(frame, area, ctx);
     }
 }
 
@@ -829,7 +879,13 @@ impl MarkdownDemoView {
 }
 
 #[component_properties]
-impl Component for MarkdownDemoView {
+impl ::atto_ui::composable::Component for MarkdownDemoView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for MarkdownDemoView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -845,7 +901,13 @@ impl Component for MarkdownDemoView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for MarkdownDemoView {}
+
+impl ::atto_ui::composable::FocusNav for MarkdownDemoView {}
+
+impl ::atto_ui::composable::DynamicTree for MarkdownDemoView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -853,13 +915,11 @@ impl Component for MarkdownDemoView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for MarkdownDemoView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.root.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -969,7 +1029,13 @@ impl DisabledWidgetsView {
 }
 
 #[component_properties]
-impl Component for DisabledWidgetsView {
+impl ::atto_ui::composable::Component for DisabledWidgetsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.root.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for DisabledWidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
     }
@@ -985,7 +1051,13 @@ impl Component for DisabledWidgetsView {
     fn desired_height(&self) -> Option<u16> {
         self.root.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for DisabledWidgetsView {}
+
+impl ::atto_ui::composable::FocusNav for DisabledWidgetsView {}
+
+impl ::atto_ui::composable::DynamicTree for DisabledWidgetsView {
     fn children(&self) -> &[atto_ui::composable::ComponentNode] {
         self.root.children()
     }
@@ -993,7 +1065,9 @@ impl Component for DisabledWidgetsView {
     fn children_mut(&mut self) -> Option<&mut Vec<atto_ui::composable::ComponentNode>> {
         self.root.children_mut()
     }
+}
 
+impl ::atto_ui::composable::EventHandling for DisabledWidgetsView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if let Event::Key(KeyEvent {
             code: KeyCode::Esc,
@@ -1005,10 +1079,6 @@ impl Component for DisabledWidgetsView {
         }
 
         self.root.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.root.draw(frame, area, ctx);
     }
 }
 
@@ -1032,6 +1102,8 @@ impl Component for TooltipView {
         );
     }
 }
+
+atto_ui::impl_component_default_traits!(TooltipView => Layout, Scrollable, FocusNav, DynamicTree, EventHandling);
 
 fn build_layout_demo_view() -> Box<dyn Component> {
     let toolbar = HStack::new()

@@ -116,6 +116,18 @@ pub enum ComponentAction {
     Submitted,
 }
 
+/// Implements default component subtraits for a concrete component type.
+///
+/// Use this when a component only needs `Component::draw` and core hooks for the listed
+/// responsibilities; components with custom behavior should implement the corresponding subtrait
+/// explicitly instead of listing it here.
+#[macro_export]
+macro_rules! impl_component_default_traits {
+    ($ty:ty => $($trait_name:ident),+ $(,)?) => {
+        $(impl $crate::composable::$trait_name for $ty {})+
+    };
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EventResult {
     pub outcome: EventOutcome,
@@ -164,55 +176,8 @@ impl EventResult {
     }
 }
 
-pub trait Component: Send {
-    fn type_name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
-    fn tag(&self) -> Option<&str> {
-        None
-    }
-
-    fn property_names(&self) -> Vec<&'static str> {
-        Vec::new()
-    }
-
-    fn get_property(&self, _name: &str) -> Option<ComponentValue> {
-        None
-    }
-
-    fn set_property(&mut self, name: &str, _value: ComponentValue) -> Result<(), ComponentError> {
-        Err(ComponentError::unsupported_property(name))
-    }
-
-    fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn focused_child(&self) -> Option<ComponentId> {
-        None
-    }
-
-    fn is_focusable(&self) -> bool {
-        false
-    }
-
-    /// Focus the first focusable descendant in this view subtree.
-    ///
-    /// Container views should override this to set their internal focused child and recurse.
-    ///
-    /// Returns `true` if this view (or one of its descendants) is focusable.
-    fn focus_first(&mut self) -> bool {
-        self.is_focusable()
-    }
-
-    /// Focus the last focusable descendant in this view subtree.
-    ///
-    /// Returns `true` if this view (or one of its descendants) is focusable.
-    fn focus_last(&mut self) -> bool {
-        self.is_focusable()
-    }
-
+/// Layout and size negotiation hooks used by containers and windows.
+pub trait Layout: Send {
     /// Minimum width required for this view to be usable.
     ///
     /// This is used by layout containers (and optionally windows) to avoid rendering focusable
@@ -241,35 +206,10 @@ pub trait Component: Send {
     fn desired_height(&self) -> Option<u16> {
         None
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        &[]
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        None
-    }
-
-    fn handle_event_capture(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn handle_event_bubble(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn titlebar(&mut self, _ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        None
-    }
-
-    fn handle_titlebar_event(&mut self, _event: &Event, _ctx: TitleBarContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+/// Scroll offset, viewport and scrollbar hooks for scrollable components.
+pub trait Scrollable: Send {
     /// Returns whether this view supports scroll offsets and scrollbars.
     ///
     /// Default: `false` (non-scrollable, overflow is clipped by the parent).
@@ -321,6 +261,48 @@ pub trait Component: Send {
     ///
     /// Default: no-op.
     fn scroll_to_child(&mut self, _child_id: ComponentId) {}
+}
+
+/// Focus traversal hooks for focusable leaves and focus-managing containers.
+pub trait FocusNav: Send {
+    fn focused_child(&self) -> Option<ComponentId> {
+        None
+    }
+
+    fn is_focusable(&self) -> bool {
+        false
+    }
+
+    /// Focus the first focusable descendant in this view subtree.
+    ///
+    /// Container views should override this to set their internal focused child and recurse.
+    ///
+    /// Returns `true` if this view (or one of its descendants) is focusable.
+    fn focus_first(&mut self) -> bool {
+        self.is_focusable()
+    }
+
+    /// Focus the last focusable descendant in this view subtree.
+    ///
+    /// Returns `true` if this view (or one of its descendants) is focusable.
+    fn focus_last(&mut self) -> bool {
+        self.is_focusable()
+    }
+}
+
+/// Child tree and dynamic runtime update hooks.
+pub trait DynamicTree: Send {
+    fn tag(&self) -> Option<&str> {
+        None
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        None
+    }
 
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         let Some(children) = self.children_mut() else {
@@ -361,51 +343,56 @@ pub trait Component: Send {
             .iter()
             .find_map(|child| child.view.dynamic_callbacks())
     }
+}
+
+/// Event capture, target and bubble hooks for component event dispatch.
+pub trait EventHandling: Send {
+    fn handle_event_capture(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn handle_event_bubble(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+}
+
+pub trait Component: Layout + Scrollable + FocusNav + DynamicTree + EventHandling + Send {
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    fn property_names(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    fn get_property(&self, _name: &str) -> Option<ComponentValue> {
+        None
+    }
+
+    fn set_property(&mut self, name: &str, _value: ComponentValue) -> Result<(), ComponentError> {
+        Err(ComponentError::unsupported_property(name))
+    }
+
+    fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
+        EventResult::ignored()
+    }
+
+    fn titlebar(&mut self, _ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        None
+    }
+
+    fn handle_titlebar_event(&mut self, _event: &Event, _ctx: TitleBarContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>);
 }
 
-impl Component for Box<dyn Component> {
-    fn type_name(&self) -> &'static str {
-        self.as_ref().type_name()
-    }
-
-    fn tag(&self) -> Option<&str> {
-        self.as_ref().tag()
-    }
-
-    fn property_names(&self) -> Vec<&'static str> {
-        self.as_ref().property_names()
-    }
-
-    fn get_property(&self, name: &str) -> Option<ComponentValue> {
-        self.as_ref().get_property(name)
-    }
-
-    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
-        self.as_mut().set_property(name, value)
-    }
-
-    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
-        self.as_mut().apply_command(command)
-    }
-
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.as_ref().focused_child()
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.as_ref().is_focusable()
-    }
-
-    fn focus_first(&mut self) -> bool {
-        self.as_mut().focus_first()
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.as_mut().focus_last()
-    }
-
+impl Layout for Box<dyn Component> {
     fn min_width(&self) -> u16 {
         self.as_ref().min_width()
     }
@@ -425,35 +412,9 @@ impl Component for Box<dyn Component> {
     fn desired_height(&self) -> Option<u16> {
         self.as_ref().desired_height()
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.as_ref().children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.as_mut().children_mut()
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.as_mut().handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.as_mut().handle_event_bubble(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.as_mut().handle_event(event, ctx)
-    }
-
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        self.as_mut().titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        self.as_mut().handle_titlebar_event(event, ctx)
-    }
-
+impl Scrollable for Box<dyn Component> {
     fn is_scrollable(&self) -> bool {
         self.as_ref().is_scrollable()
     }
@@ -485,6 +446,38 @@ impl Component for Box<dyn Component> {
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.as_mut().scroll_to_child(child_id);
     }
+}
+
+impl FocusNav for Box<dyn Component> {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.as_ref().focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.as_ref().is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.as_mut().focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.as_mut().focus_last()
+    }
+}
+
+impl DynamicTree for Box<dyn Component> {
+    fn tag(&self) -> Option<&str> {
+        self.as_ref().tag()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.as_ref().children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.as_mut().children_mut()
+    }
 
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.as_mut().apply_tree_ops(ops)
@@ -500,6 +493,50 @@ impl Component for Box<dyn Component> {
 
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
         self.as_ref().dynamic_callbacks()
+    }
+}
+
+impl EventHandling for Box<dyn Component> {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.as_mut().handle_event(event, ctx)
+    }
+}
+
+impl Component for Box<dyn Component> {
+    fn type_name(&self) -> &'static str {
+        self.as_ref().type_name()
+    }
+
+    fn property_names(&self) -> Vec<&'static str> {
+        self.as_ref().property_names()
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        self.as_ref().get_property(name)
+    }
+
+    fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
+        self.as_mut().set_property(name, value)
+    }
+
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        self.as_mut().apply_command(command)
+    }
+
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.as_mut().titlebar(ctx)
+    }
+
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.as_mut().handle_titlebar_event(event, ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {

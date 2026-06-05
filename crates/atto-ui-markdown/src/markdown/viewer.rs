@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use atto_ui::composable::{
-    Component, ComponentContext, EventResult, ScrollConfig, ScrollContainer, ScrollContainerHost,
+    ComponentContext, EventResult, ScrollConfig, ScrollContainer, ScrollContainerHost,
     ScrollContent, ScrollContentContext, ScrollbarVisibility,
 };
 use atto_ui::reactive::Binding;
@@ -122,19 +122,13 @@ impl MarkdownViewer {
     }
 }
 
-impl Component for MarkdownViewer {
-    fn is_focusable(&self) -> bool {
-        self.scroll.is_focusable()
+impl ::atto_ui::composable::Component for MarkdownViewer {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.scroll.draw(frame, area, ctx);
     }
+}
 
-    fn focus_first(&mut self) -> bool {
-        self.scroll.focus_first()
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.scroll.focus_last()
-    }
-
+impl ::atto_ui::composable::Layout for MarkdownViewer {
     fn min_width(&self) -> u16 {
         self.scroll.min_width()
     }
@@ -150,7 +144,9 @@ impl Component for MarkdownViewer {
     fn desired_height(&self) -> Option<u16> {
         self.scroll.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for MarkdownViewer {
     fn is_scrollable(&self) -> bool {
         self.scroll.is_scrollable()
     }
@@ -174,13 +170,27 @@ impl Component for MarkdownViewer {
     fn set_scroll_offset(&mut self, x: u16, y: u16) {
         self.scroll.set_scroll_offset(x, y);
     }
+}
 
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.scroll.handle_event(event, ctx)
+impl ::atto_ui::composable::FocusNav for MarkdownViewer {
+    fn is_focusable(&self) -> bool {
+        self.scroll.is_focusable()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.scroll.draw(frame, area, ctx);
+    fn focus_first(&mut self) -> bool {
+        self.scroll.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.scroll.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for MarkdownViewer {}
+
+impl ::atto_ui::composable::EventHandling for MarkdownViewer {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.scroll.handle_event(event, ctx)
     }
 }
 

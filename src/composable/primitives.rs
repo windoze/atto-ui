@@ -6,7 +6,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use super::component::{Component, ComponentContext};
+use super::component::{Component, ComponentContext, Layout};
 use crate::reactive::Binding;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -78,14 +78,6 @@ impl Text {
 
 #[component_properties]
 impl Component for Text {
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        Some(self.text_value().len().min(u16::MAX as usize) as u16)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -94,6 +86,18 @@ impl Component for Text {
         frame.render_widget(Paragraph::new(Line::styled(self.text_value(), style)), area);
     }
 }
+
+impl Layout for Text {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.text_value().len().min(u16::MAX as usize) as u16)
+    }
+}
+
+crate::impl_component_default_traits!(Text => Scrollable, FocusNav, DynamicTree, EventHandling);
 
 /// Dynamic text view (constructed from a closure).
 ///
@@ -132,6 +136,12 @@ impl TextFn {
 
 #[component_properties]
 impl Component for TextFn {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.inner.draw(frame, area, ctx);
+    }
+}
+
+impl Layout for TextFn {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
     }
@@ -139,11 +149,9 @@ impl Component for TextFn {
     fn desired_width(&self) -> Option<u16> {
         self.inner.desired_width()
     }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.inner.draw(frame, area, ctx);
-    }
 }
+
+crate::impl_component_default_traits!(TextFn => Scrollable, FocusNav, DynamicTree, EventHandling);
 
 #[derive(Clone)]
 enum TextContent {
@@ -165,6 +173,8 @@ impl Spacer {
 impl Component for Spacer {
     fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
 }
+
+crate::impl_component_default_traits!(Spacer => Layout, Scrollable, FocusNav, DynamicTree, EventHandling);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DividerOrientation {
@@ -212,14 +222,6 @@ impl Divider {
 
 #[component_properties]
 impl Component for Divider {
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        Some(1)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -239,3 +241,15 @@ impl Component for Divider {
         }
     }
 }
+
+impl Layout for Divider {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+crate::impl_component_default_traits!(Divider => Scrollable, FocusNav, DynamicTree, EventHandling);

@@ -10,8 +10,9 @@ use ratatui::style::Style;
 
 use crate::composable::scroll::{clamp_scroll_offset, max_scroll_offset};
 use crate::composable::{
-    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
-    ScrollOffset, TitleBarContent, TitleBarContext,
+    Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
+    EventResult, FocusNav, Layout, ScrollConfig, ScrollOffset, Scrollable, TitleBarContent,
+    TitleBarContext,
 };
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
@@ -339,10 +340,6 @@ impl Component for WindowMinSizeView {
         self.inner.type_name()
     }
 
-    fn tag(&self) -> Option<&str> {
-        self.inner.tag()
-    }
-
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.__component_property_names();
         props.extend(self.inner.property_names());
@@ -369,22 +366,35 @@ impl Component for WindowMinSizeView {
         self.inner.apply_command(action)
     }
 
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.inner.focused_child()
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.inner.titlebar(ctx)
     }
 
-    fn is_focusable(&self) -> bool {
-        self.inner.is_focusable()
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.inner.handle_titlebar_event(event, ctx)
     }
 
-    fn focus_first(&mut self) -> bool {
-        self.inner.focus_first()
-    }
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
 
-    fn focus_last(&mut self) -> bool {
-        self.inner.focus_last()
-    }
+        let overflow_now = self.should_overflow(area);
+        self.overflow_active = overflow_now;
 
+        match self.overflow_mode() {
+            Some(WindowMinSizeMode::Clip) => {
+                self.draw_overflow(frame, area, ctx, ScrollOffset::ZERO);
+            }
+            Some(WindowMinSizeMode::Scroll) => {
+                self.draw_overflow(frame, area, ctx, self.scroll);
+            }
+            Some(WindowMinSizeMode::Enforce) | None => {
+                self.inner.draw(frame, area, ctx);
+            }
+        }
+    }
+}
+
+impl Layout for WindowMinSizeView {
     fn min_width(&self) -> u16 {
         self.inner.min_width()
     }
@@ -400,15 +410,9 @@ impl Component for WindowMinSizeView {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.inner.children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.inner.children_mut()
-    }
-
+impl Scrollable for WindowMinSizeView {
     fn is_scrollable(&self) -> bool {
         match self.overflow_mode() {
             Some(WindowMinSizeMode::Scroll) => true,
@@ -460,14 +464,59 @@ impl Component for WindowMinSizeView {
     }
 
     fn scroll_to_child(&mut self, child_id: ComponentId) {
-        if matches!(self.overflow_mode(), Some(WindowMinSizeMode::Scroll)) {
-            // Window-level panning does not know how to target individual descendants; defer.
-            self.inner.scroll_to_child(child_id);
-        } else {
-            self.inner.scroll_to_child(child_id);
-        }
+        self.inner.scroll_to_child(child_id);
+    }
+}
+
+impl FocusNav for WindowMinSizeView {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
     }
 
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+}
+
+impl DynamicTree for WindowMinSizeView {
+    fn tag(&self) -> Option<&str> {
+        self.inner.tag()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.inner.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.inner.children_mut()
+    }
+
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
+    }
+}
+
+impl EventHandling for WindowMinSizeView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let Some(area) = self.last_area else {
             return self.inner.handle_event(event, ctx);
@@ -540,49 +589,6 @@ impl Component for WindowMinSizeView {
                 }
             }
             Some(WindowMinSizeMode::Enforce) | None => self.inner.handle_event(event, ctx),
-        }
-    }
-
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        self.inner.titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        self.inner.handle_titlebar_event(event, ctx)
-    }
-
-    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
-        self.inner.apply_tree_ops(ops)
-    }
-
-    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
-        self.inner.rebuild_tree()
-    }
-
-    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
-        self.inner.dynamic_root_spec()
-    }
-
-    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
-        self.inner.dynamic_callbacks()
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-
-        let overflow_now = self.should_overflow(area);
-        self.overflow_active = overflow_now;
-
-        match self.overflow_mode() {
-            Some(WindowMinSizeMode::Clip) => {
-                self.draw_overflow(frame, area, ctx, ScrollOffset::ZERO);
-            }
-            Some(WindowMinSizeMode::Scroll) => {
-                self.draw_overflow(frame, area, ctx, self.scroll);
-            }
-            Some(WindowMinSizeMode::Enforce) | None => {
-                self.inner.draw(frame, area, ctx);
-            }
         }
     }
 }

@@ -441,7 +441,7 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composable::{Component, ComponentContext, EventResult};
+    use crate::composable::{Component, ComponentContext, EventHandling, EventResult};
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -453,6 +453,10 @@ mod tests {
     struct ConsumeF6View;
 
     impl Component for ConsumeF6View {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for ConsumeF6View {
         fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
             if let Event::Key(KeyEvent { code, .. }) = event
                 && *code == KeyCode::F(6)
@@ -461,9 +465,9 @@ mod tests {
             }
             EventResult::ignored()
         }
-
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
+
+    crate::impl_component_default_traits!(ConsumeF6View => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[derive(Clone)]
     struct CountingMouseView {
@@ -477,6 +481,10 @@ mod tests {
     }
 
     impl Component for CountingMouseView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for CountingMouseView {
         fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
             if let Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -488,9 +496,9 @@ mod tests {
             }
             EventResult::ignored()
         }
-
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
+
+    crate::impl_component_default_traits!(CountingMouseView => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[test]
     fn focused_view_can_consume_event_before_window_manager() {
@@ -549,12 +557,16 @@ mod tests {
         struct IgnoreAllView;
 
         impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for IgnoreAllView {
             fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
                 EventResult::ignored()
             }
-
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
+
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
 
         let screen = Rect {
             x: 0,
@@ -611,12 +623,16 @@ mod tests {
         struct IgnoreAllView;
 
         impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for IgnoreAllView {
             fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
                 EventResult::ignored()
             }
-
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
+
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
 
         let screen = Rect {
             x: 0,

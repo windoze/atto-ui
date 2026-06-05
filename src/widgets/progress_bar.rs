@@ -1,10 +1,9 @@
-use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{Component, ComponentContext, Layout};
 use crate::reactive::Binding;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -103,26 +102,6 @@ impl ProgressBar {
 
 #[component_properties]
 impl Component for ProgressBar {
-    fn min_width(&self) -> u16 {
-        3
-    }
-
-    fn min_height(&self) -> u16 {
-        1
-    }
-
-    fn is_focusable(&self) -> bool {
-        false
-    }
-
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -181,3 +160,19 @@ impl Component for ProgressBar {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 }
+
+impl Layout for ProgressBar {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+crate::impl_component_default_traits!(ProgressBar => Scrollable, FocusNav, DynamicTree, EventHandling);

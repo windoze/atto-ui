@@ -14,7 +14,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig};
+use atto_ui::composable::{ComponentContext, EventResult, ScrollConfig};
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
@@ -452,11 +452,73 @@ impl Default for TerminalEmulator {
     }
 }
 
-impl Component for TerminalEmulator {
-    fn is_focusable(&self) -> bool {
-        true
-    }
+impl ::atto_ui::composable::Component for TerminalEmulator {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
+        let mut shared = self.shared.lock();
+        if !ctx.is_focused && shared.capture {
+            shared.capture = false;
+        }
+        let screen = shared.parser.screen_mut();
+        let (rows, cols) = (area.height, area.width);
+        if screen.size() != (rows, cols) {
+            screen.set_size(rows, cols);
+        }
+        if let Some(process) = &mut self.process {
+            process.resize_if_needed(rows, cols);
+        }
+
+        let base_style = ctx.theme.window_bg;
+        let base_fg = base_style.fg;
+        let base_bg = base_style.bg;
+
+        let buf = frame.buffer_mut();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let cell = screen.cell(y, x);
+                let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
+                let symbol = cell
+                    .map(|c| {
+                        if c.is_wide_continuation() || c.contents().is_empty() {
+                            " "
+                        } else {
+                            c.contents()
+                        }
+                    })
+                    .unwrap_or(" ");
+
+                let style = cell
+                    .map(|c| cell_style(c, base_fg, base_bg))
+                    .unwrap_or(base_style);
+
+                let dst_x = area.x.saturating_add(x);
+                let dst_y = area.y.saturating_add(y);
+                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
+                    dst.set_symbol(symbol);
+                    dst.set_style(style);
+                    dst.set_skip(is_wide_cont);
+                }
+            }
+        }
+
+        if !screen.hide_cursor() && screen.scrollback() == 0 {
+            let (cur_row, cur_col) = screen.cursor_position();
+            if cur_row < area.height && cur_col < area.width {
+                let dst_x = area.x.saturating_add(cur_col);
+                let dst_y = area.y.saturating_add(cur_row);
+                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
+                    dst.set_style(dst.style().add_modifier(Modifier::REVERSED));
+                }
+            }
+        }
+    }
+}
+
+impl ::atto_ui::composable::Layout for TerminalEmulator {
     fn min_width(&self) -> u16 {
         1
     }
@@ -464,7 +526,9 @@ impl Component for TerminalEmulator {
     fn min_height(&self) -> u16 {
         1
     }
+}
 
+impl ::atto_ui::composable::Scrollable for TerminalEmulator {
     fn is_scrollable(&self) -> bool {
         let mut shared = self.shared.lock();
         let max = shared.max_scrollback();
@@ -501,7 +565,17 @@ impl Component for TerminalEmulator {
         let mut shared = self.shared.lock();
         shared.set_scrollback_from_scroll_offset(y);
     }
+}
 
+impl ::atto_ui::composable::FocusNav for TerminalEmulator {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for TerminalEmulator {}
+
+impl ::atto_ui::composable::EventHandling for TerminalEmulator {
     fn handle_event_capture(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         let Event::Key(key) = event else {
             return EventResult::ignored();
@@ -596,70 +670,6 @@ impl Component for TerminalEmulator {
                 EventResult::consumed()
             }
             _ => EventResult::ignored(),
-        }
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let mut shared = self.shared.lock();
-        if !ctx.is_focused && shared.capture {
-            shared.capture = false;
-        }
-        let screen = shared.parser.screen_mut();
-        let (rows, cols) = (area.height, area.width);
-        if screen.size() != (rows, cols) {
-            screen.set_size(rows, cols);
-        }
-        if let Some(process) = &mut self.process {
-            process.resize_if_needed(rows, cols);
-        }
-
-        let base_style = ctx.theme.window_bg;
-        let base_fg = base_style.fg;
-        let base_bg = base_style.bg;
-
-        let buf = frame.buffer_mut();
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let cell = screen.cell(y, x);
-                let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
-                let symbol = cell
-                    .map(|c| {
-                        if c.is_wide_continuation() || c.contents().is_empty() {
-                            " "
-                        } else {
-                            c.contents()
-                        }
-                    })
-                    .unwrap_or(" ");
-
-                let style = cell
-                    .map(|c| cell_style(c, base_fg, base_bg))
-                    .unwrap_or(base_style);
-
-                let dst_x = area.x.saturating_add(x);
-                let dst_y = area.y.saturating_add(y);
-                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
-                    dst.set_symbol(symbol);
-                    dst.set_style(style);
-                    dst.set_skip(is_wide_cont);
-                }
-            }
-        }
-
-        if !screen.hide_cursor() && screen.scrollback() == 0 {
-            let (cur_row, cur_col) = screen.cursor_position();
-            if cur_row < area.height && cur_col < area.width {
-                let dst_x = area.x.saturating_add(cur_col);
-                let dst_y = area.y.saturating_add(cur_row);
-                if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
-                    dst.set_style(dst.style().add_modifier(Modifier::REVERSED));
-                }
-            }
         }
     }
 }

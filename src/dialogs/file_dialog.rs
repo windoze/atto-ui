@@ -7,8 +7,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::layout::Rect;
 
 use crate::composable::{
-    Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, EventResult, HStack,
-    LayoutParams, Size, VStack,
+    Align, Component, ComponentContext, ComponentId, ComponentNode, Divider, DynamicTree,
+    EventHandling, EventResult, FocusNav, HStack, Layout, LayoutParams, Scrollable, Size, VStack,
 };
 use crate::reactive::{Binding, DirtyObserver, Property};
 use crate::widgets::{Button, Label, ListBox, TextBox};
@@ -32,22 +32,16 @@ impl<T> Component for FocusBindingComponent<T>
 where
     T: Component + Clone + Send + 'static,
 {
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.inner.focused_child()
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.focused.set(ctx.is_focused);
+        self.inner.draw(frame, area, ctx);
     }
+}
 
-    fn is_focusable(&self) -> bool {
-        self.inner.is_focusable()
-    }
-
-    fn focus_first(&mut self) -> bool {
-        self.inner.focus_first()
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.inner.focus_last()
-    }
-
+impl<T> Layout for FocusBindingComponent<T>
+where
+    T: Component + Clone + Send + 'static,
+{
     fn min_width(&self) -> u16 {
         self.inner.min_width()
     }
@@ -63,31 +57,12 @@ where
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.inner.children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.inner.children_mut()
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.handle_event_bubble(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let res = self.inner.handle_event(event, ctx);
-        if self.focused.get() != ctx.is_focused {
-            self.focused.set(ctx.is_focused);
-        }
-        res
-    }
-
+impl<T> Scrollable for FocusBindingComponent<T>
+where
+    T: Component + Clone + Send + 'static,
+{
     fn is_scrollable(&self) -> bool {
         self.inner.is_scrollable()
     }
@@ -115,10 +90,60 @@ where
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.inner.scroll_to_child(child_id);
     }
+}
 
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.focused.set(ctx.is_focused);
-        self.inner.draw(frame, area, ctx);
+impl<T> FocusNav for FocusBindingComponent<T>
+where
+    T: Component + Clone + Send + 'static,
+{
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.inner.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.inner.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.focus_last()
+    }
+}
+
+impl<T> DynamicTree for FocusBindingComponent<T>
+where
+    T: Component + Clone + Send + 'static,
+{
+    fn children(&self) -> &[ComponentNode] {
+        self.inner.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.inner.children_mut()
+    }
+}
+
+impl<T> EventHandling for FocusBindingComponent<T>
+where
+    T: Component + Clone + Send + 'static,
+{
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let res = self.inner.handle_event(event, ctx);
+        if self.focused.get() != ctx.is_focused {
+            self.focused.set(ctx.is_focused);
+        }
+        res
     }
 }
 
@@ -594,10 +619,12 @@ impl FileDialog {
 
 #[component_properties]
 impl Component for FileDialog {
-    fn is_focusable(&self) -> bool {
-        self.inner.is_focusable()
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.inner.draw(frame, area, ctx);
     }
+}
 
+impl Layout for FileDialog {
     fn min_width(&self) -> u16 {
         self.inner.min_width().max(44)
     }
@@ -613,7 +640,15 @@ impl Component for FileDialog {
     fn desired_height(&self) -> Option<u16> {
         self.inner.desired_height()
     }
+}
 
+impl FocusNav for FileDialog {
+    fn is_focusable(&self) -> bool {
+        self.inner.is_focusable()
+    }
+}
+
+impl DynamicTree for FileDialog {
     fn children(&self) -> &[ComponentNode] {
         self.inner.children()
     }
@@ -622,6 +657,24 @@ impl Component for FileDialog {
         self.inner.children_mut()
     }
 
+    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        self.inner.apply_tree_ops(ops)
+    }
+
+    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
+        self.inner.rebuild_tree()
+    }
+
+    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
+        self.inner.dynamic_root_spec()
+    }
+
+    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
+        self.inner.dynamic_callbacks()
+    }
+}
+
+impl EventHandling for FileDialog {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.inner.handle_event_capture(event, ctx)
     }
@@ -722,27 +775,9 @@ impl Component for FileDialog {
 
         inner_res
     }
-
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.inner.draw(frame, area, ctx);
-    }
-
-    fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
-        self.inner.apply_tree_ops(ops)
-    }
-
-    fn rebuild_tree(&mut self) -> Result<(), TreeError> {
-        self.inner.rebuild_tree()
-    }
-
-    fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
-        self.inner.dynamic_root_spec()
-    }
-
-    fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
-        self.inner.dynamic_callbacks()
-    }
 }
+
+crate::impl_component_default_traits!(FileDialog => Scrollable);
 
 fn list_dir_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
     let mut out: Vec<Entry> = Vec::new();

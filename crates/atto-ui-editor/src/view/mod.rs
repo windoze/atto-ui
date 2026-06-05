@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Paragraph};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
 
-use atto_ui::composable::{Component, ComponentContext, EventResult, ScrollConfig};
+use atto_ui::composable::{ComponentContext, EventResult, ScrollConfig, Scrollable};
 use atto_ui::reactive::{DirtyObserver, EventQueue};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 
@@ -1598,7 +1598,7 @@ impl EditorView {
     }
 }
 
-impl Component for EditorView {
+impl ::atto_ui::composable::Component for EditorView {
     fn property_names(&self) -> Vec<&'static str> {
         vec![
             "text",
@@ -1662,10 +1662,39 @@ impl Component for EditorView {
         }
     }
 
-    fn is_focusable(&self) -> bool {
-        true
-    }
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        // Sync external text changes and config at draw time too (tick-driven apps).
+        self.sync_external_text_if_dirty();
+        if self.config.syntax.check_dirty(&mut self.syntax_observer) {
+            self.configure_syntax_processor();
+        }
+        self.maybe_start_or_stop_lsp();
 
+        // Hover popup can be dismissed from its own tooltip window; reflect that here.
+        self.consume_hover_popup_dismissed();
+
+        // Poll LSP + hover timers.
+        self.maybe_poll_lsp();
+        self.maybe_end_undo_group_after_idle();
+
+        if ctx.is_focused {
+            if !self.focused_last_frame {
+                self.schedule_hover_after_delay();
+            }
+            self.maybe_fire_hover();
+        } else {
+            self.hide_popups();
+        }
+        self.focused_last_frame = ctx.is_focused;
+
+        // Handle completion accept requested by mouse events on the completion popup window.
+        self.process_completion_accept();
+
+        self.render(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for EditorView {
     fn min_width(&self) -> u16 {
         8
     }
@@ -1673,7 +1702,9 @@ impl Component for EditorView {
     fn min_height(&self) -> u16 {
         3
     }
+}
 
+impl ::atto_ui::composable::Scrollable for EditorView {
     fn is_scrollable(&self) -> bool {
         true
     }
@@ -1704,7 +1735,17 @@ impl Component for EditorView {
     fn scroll_config(&self) -> ScrollConfig {
         self.config.scroll.config.get()
     }
+}
 
+impl ::atto_ui::composable::FocusNav for EditorView {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for EditorView {}
+
+impl ::atto_ui::composable::EventHandling for EditorView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         // Keep internal state in sync with external bindings (without constantly cloning).
         self.sync_external_text_if_dirty();
@@ -1763,42 +1804,12 @@ impl Component for EditorView {
 
         res
     }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        // Sync external text changes and config at draw time too (tick-driven apps).
-        self.sync_external_text_if_dirty();
-        if self.config.syntax.check_dirty(&mut self.syntax_observer) {
-            self.configure_syntax_processor();
-        }
-        self.maybe_start_or_stop_lsp();
-
-        // Hover popup can be dismissed from its own tooltip window; reflect that here.
-        self.consume_hover_popup_dismissed();
-
-        // Poll LSP + hover timers.
-        self.maybe_poll_lsp();
-        self.maybe_end_undo_group_after_idle();
-
-        if ctx.is_focused {
-            if !self.focused_last_frame {
-                self.schedule_hover_after_delay();
-            }
-            self.maybe_fire_hover();
-        } else {
-            self.hide_popups();
-        }
-        self.focused_last_frame = ctx.is_focused;
-
-        // Handle completion accept requested by mouse events on the completion popup window.
-        self.process_completion_accept();
-
-        self.render(frame, area, ctx);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use atto_ui::composable::{Component, EventHandling};
 
     fn buffer_row_string(
         terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,

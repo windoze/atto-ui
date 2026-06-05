@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
-use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult};
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -91,47 +91,7 @@ impl EventLogView {
 }
 
 #[component_properties]
-impl Component for EventLogView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        // 记录事件
-        match event {
-            Event::Key(key) => {
-                // 只记录 Press 事件，避免重复
-                if key.kind == KeyEventKind::Press {
-                    let event_str = self.format_key_event(key);
-                    self.add_event(event_str);
-
-                    // 'c' 键清空日志
-                    if key.code == KeyCode::Char('c') && key.modifiers.is_empty() {
-                        self.clear();
-                        return EventResult::consumed();
-                    }
-                }
-            }
-            Event::Mouse(mouse) => {
-                // 只记录重要的鼠标事件，避免太多 Moved 事件
-                match mouse.kind {
-                    MouseEventKind::Moved => {
-                        // 跳过移动事件，太频繁
-                    }
-                    _ => {
-                        let event_str = self.format_mouse_event(mouse);
-                        self.add_event(event_str);
-                    }
-                }
-            }
-            Event::Resize(width, height) => {
-                self.add_event(format!("Resize: {}x{}", width, height));
-            }
-            _ => {
-                self.add_event(format!("Other: {:?}", event));
-            }
-        }
-
-        // 所有事件都标记为 Ignored，让其他组件也能处理
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for EventLogView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let mut lines: Vec<Line> = Vec::new();
 
@@ -179,6 +139,56 @@ impl Component for EventLogView {
     }
 }
 
+impl ::atto_ui::composable::Layout for EventLogView {}
+
+impl ::atto_ui::composable::Scrollable for EventLogView {}
+
+impl ::atto_ui::composable::FocusNav for EventLogView {}
+
+impl ::atto_ui::composable::DynamicTree for EventLogView {}
+
+impl ::atto_ui::composable::EventHandling for EventLogView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        // 记录事件
+        match event {
+            Event::Key(key) => {
+                // 只记录 Press 事件，避免重复
+                if key.kind == KeyEventKind::Press {
+                    let event_str = self.format_key_event(key);
+                    self.add_event(event_str);
+
+                    // 'c' 键清空日志
+                    if key.code == KeyCode::Char('c') && key.modifiers.is_empty() {
+                        self.clear();
+                        return EventResult::consumed();
+                    }
+                }
+            }
+            Event::Mouse(mouse) => {
+                // 只记录重要的鼠标事件，避免太多 Moved 事件
+                match mouse.kind {
+                    MouseEventKind::Moved => {
+                        // 跳过移动事件，太频繁
+                    }
+                    _ => {
+                        let event_str = self.format_mouse_event(mouse);
+                        self.add_event(event_str);
+                    }
+                }
+            }
+            Event::Resize(width, height) => {
+                self.add_event(format!("Resize: {}x{}", width, height));
+            }
+            _ => {
+                self.add_event(format!("Other: {:?}", event));
+            }
+        }
+
+        // 所有事件都标记为 Ignored，让其他组件也能处理
+        EventResult::ignored()
+    }
+}
+
 /// 交互式演示视图 - 展示可点击的按钮
 #[derive(Clone, ComponentProperties)]
 struct InteractiveView {
@@ -196,22 +206,7 @@ impl InteractiveView {
 }
 
 #[component_properties]
-impl Component for InteractiveView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if let Event::Mouse(mouse) = event
-            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        {
-            self.click_count.update(|v| *v = v.saturating_add(1));
-            self.last_click_pos
-                .set(format!("{}, {}", mouse.column, mouse.row));
-
-            // 消费此事件，阻止传播
-            return EventResult::consumed();
-        }
-
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for InteractiveView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let click_count = self.click_count.get();
         let last_click = self.last_click_pos.get();
@@ -262,6 +257,31 @@ impl Component for InteractiveView {
         let paragraph = Paragraph::new(lines).style(ctx.theme.window_bg);
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for InteractiveView {}
+
+impl ::atto_ui::composable::Scrollable for InteractiveView {}
+
+impl ::atto_ui::composable::FocusNav for InteractiveView {}
+
+impl ::atto_ui::composable::DynamicTree for InteractiveView {}
+
+impl ::atto_ui::composable::EventHandling for InteractiveView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if let Event::Mouse(mouse) = event
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            self.click_count.update(|v| *v = v.saturating_add(1));
+            self.last_click_pos
+                .set(format!("{}, {}", mouse.column, mouse.row));
+
+            // 消费此事件，阻止传播
+            return EventResult::consumed();
+        }
+
+        EventResult::ignored()
     }
 }
 

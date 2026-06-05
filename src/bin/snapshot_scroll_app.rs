@@ -36,11 +36,30 @@ impl TallClickTarget {
     }
 }
 
-impl Component for TallClickTarget {
+impl ::atto_ui::composable::Component for TallClickTarget {
+    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let status = self.status.get();
+        let style = ctx.theme.widget.normal;
+        let lines: Vec<Line<'_>> = (0..area.height)
+            .map(|row| Line::styled(format!("Tall child row {row:02} | {status}"), style))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for TallClickTarget {
     fn desired_height(&self) -> Option<u16> {
         Some(40)
     }
+}
 
+impl ::atto_ui::composable::Scrollable for TallClickTarget {}
+
+impl ::atto_ui::composable::FocusNav for TallClickTarget {}
+
+impl ::atto_ui::composable::DynamicTree for TallClickTarget {}
+
+impl ::atto_ui::composable::EventHandling for TallClickTarget {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         let Event::Mouse(m) = event else {
             return EventResult::ignored();
@@ -50,15 +69,6 @@ impl Component for TallClickTarget {
             return EventResult::changed();
         }
         EventResult::ignored()
-    }
-
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        let status = self.status.get();
-        let style = ctx.theme.widget.normal;
-        let lines: Vec<Line<'_>> = (0..area.height)
-            .map(|row| Line::styled(format!("Tall child row {row:02} | {status}"), style))
-            .collect();
-        frame.render_widget(Paragraph::new(lines), area);
     }
 }
 

@@ -2,14 +2,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use atto_ui::composable::{
-    Component, ComponentContext, EventResult, ScrollConfig, ScrollOffset, ScrollbarDrag,
+    ComponentContext, EventResult, ScrollConfig, ScrollOffset, Scrollable, ScrollbarDrag,
     ScrollbarHost, Scrollbars, TitleBarContent, TitleBarContext, draw_scrollbars,
     handle_scrollbar_mouse_event, should_show_scrollbar,
 };
 use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{Event, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
@@ -52,7 +50,7 @@ struct TabState {
 }
 
 pub struct EditorWindowView {
-    actions: EventQueue<AppAction>,
+    _actions: EventQueue<AppAction>,
     commands: EventQueue<EditorWindowCommand>,
 
     editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
@@ -70,7 +68,7 @@ impl EditorWindowView {
         clipboard: Binding<String>,
     ) -> Self {
         Self {
-            actions,
+            _actions: actions,
             commands,
             editor_theme,
             clipboard,
@@ -692,20 +690,74 @@ impl EditorWindowView {
 }
 
 #[cfg(any())]
-impl Component for EditorWindowView {
-    fn is_focusable(&self) -> bool {
-        true
+impl ::atto_ui::composable::Component for EditorWindowView {
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.tab_window.titlebar(ctx)
     }
 
-    fn focus_first(&mut self) -> bool {
-        self.focused = if self.sidebar_visible.get() {
-            FocusPane::Sidebar
-        } else {
-            FocusPane::Editor
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.tab_window.handle_titlebar_event(event, ctx)
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.handle_commands();
+        self.update_tab_titles();
+
+        self.last_area = Some(area);
+        let layout = self.sidebar_layout(area);
+        self.last_layout = Some(layout);
+
+        if self.sidebar_visible.get() && layout.sidebar.width > 0 {
+            let child_ctx = ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: ctx.is_focused && self.focused == FocusPane::Sidebar,
+                scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                    ScrollbarHost::Window
+                } else {
+                    ctx.scrollbar_host.for_child()
+                },
+                tab_mode: ctx.tab_mode.for_child(),
+            };
+            self.file_tree.draw(frame, layout.sidebar, child_ctx);
+        }
+
+        let child_ctx = ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused && self.focused == FocusPane::Editor,
+            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                ScrollbarHost::Window
+            } else {
+                ctx.scrollbar_host.for_child()
+            },
+            tab_mode: ctx.tab_mode.for_child(),
         };
-        true
-    }
+        self.tab_window.draw(frame, layout.main, child_ctx);
 
+        // Divider between sidebar and editor (also serves as the sidebar scrollbar "mount").
+        if self.sidebar_visible.get() && layout.divider.width > 0 && layout.divider.height > 0 {
+            let style = ctx.theme.widget.dim;
+            let border_set = ctx.theme.border_set(false);
+            let symbol = border_set.vertical_left;
+
+            let buf = frame.buffer_mut();
+            for y in layout.divider.y..layout.divider.y.saturating_add(layout.divider.height) {
+                for x in layout.divider.x..layout.divider.x.saturating_add(layout.divider.width) {
+                    buf[(x, y)].set_symbol(symbol).set_style(style);
+                }
+            }
+        }
+
+        self.draw_split_scrollbars(frame, area, ctx);
+    }
+}
+
+#[cfg(any())]
+impl ::atto_ui::composable::Layout for EditorWindowView {}
+
+#[cfg(any())]
+impl ::atto_ui::composable::Scrollable for EditorWindowView {
     fn is_scrollable(&self) -> bool {
         if !self.sidebar_visible.get() {
             return self.tab_window.is_scrollable();
@@ -769,15 +821,29 @@ impl Component for EditorWindowView {
             SidebarSide::Right => self.file_tree.set_scroll_offset(x, y),
         }
     }
+}
 
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        self.tab_window.titlebar(ctx)
+#[cfg(any())]
+impl ::atto_ui::composable::FocusNav for EditorWindowView {
+    fn is_focusable(&self) -> bool {
+        true
     }
 
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        self.tab_window.handle_titlebar_event(event, ctx)
+    fn focus_first(&mut self) -> bool {
+        self.focused = if self.sidebar_visible.get() {
+            FocusPane::Sidebar
+        } else {
+            FocusPane::Editor
+        };
+        true
     }
+}
 
+#[cfg(any())]
+impl ::atto_ui::composable::DynamicTree for EditorWindowView {}
+
+#[cfg(any())]
+impl ::atto_ui::composable::EventHandling for EditorWindowView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_commands();
 
@@ -948,148 +1014,15 @@ impl Component for EditorWindowView {
             }
         }
     }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.handle_commands();
-        self.update_tab_titles();
-
-        self.last_area = Some(area);
-        let layout = self.sidebar_layout(area);
-        self.last_layout = Some(layout);
-
-        if self.sidebar_visible.get() && layout.sidebar.width > 0 {
-            let child_ctx = ComponentContext {
-                theme: ctx.theme,
-                window_id: ctx.window_id,
-                is_focused: ctx.is_focused && self.focused == FocusPane::Sidebar,
-                scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                    ScrollbarHost::Window
-                } else {
-                    ctx.scrollbar_host.for_child()
-                },
-                tab_mode: ctx.tab_mode.for_child(),
-            };
-            self.file_tree.draw(frame, layout.sidebar, child_ctx);
-        }
-
-        let child_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused && self.focused == FocusPane::Editor,
-            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host.for_child()
-            },
-            tab_mode: ctx.tab_mode.for_child(),
-        };
-        self.tab_window.draw(frame, layout.main, child_ctx);
-
-        // Divider between sidebar and editor (also serves as the sidebar scrollbar "mount").
-        if self.sidebar_visible.get() && layout.divider.width > 0 && layout.divider.height > 0 {
-            let style = ctx.theme.widget.dim;
-            let border_set = ctx.theme.border_set(false);
-            let symbol = border_set.vertical_left;
-
-            let buf = frame.buffer_mut();
-            for y in layout.divider.y..layout.divider.y.saturating_add(layout.divider.height) {
-                for x in layout.divider.x..layout.divider.x.saturating_add(layout.divider.width) {
-                    buf[(x, y)].set_symbol(symbol).set_style(style);
-                }
-            }
-        }
-
-        self.draw_split_scrollbars(frame, area, ctx);
-    }
 }
 
-impl Component for EditorWindowView {
-    fn is_focusable(&self) -> bool {
-        true
-    }
-
-    fn focus_first(&mut self) -> bool {
-        let _ = self.tab_window.focus_first();
-        true
-    }
-
-    fn is_scrollable(&self) -> bool {
-        self.tab_window.is_scrollable()
-    }
-
-    fn content_size(&self) -> (u16, u16) {
-        self.tab_window.content_size()
-    }
-
-    fn viewport_size(&self) -> (u16, u16) {
-        self.tab_window.viewport_size()
-    }
-
-    fn scroll_offset(&self) -> (u16, u16) {
-        self.tab_window.scroll_offset()
-    }
-
-    fn scroll_config(&self) -> ScrollConfig {
-        self.tab_window.scroll_config()
-    }
-
-    fn set_scroll_offset(&mut self, x: u16, y: u16) {
-        self.tab_window.set_scroll_offset(x, y);
-    }
-
+impl ::atto_ui::composable::Component for EditorWindowView {
     fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
         self.tab_window.titlebar(ctx)
     }
 
     fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
         self.tab_window.handle_titlebar_event(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.handle_commands();
-
-        // Keep dirty markers reasonably fresh even if the app runs tick-driven.
-        self.update_tab_titles();
-
-        // Global shortcuts (window scoped).
-        if let Event::Key(KeyEvent {
-            code,
-            modifiers,
-            kind,
-            ..
-        }) = event
-            && matches!(kind, KeyEventKind::Press)
-        {
-            let is_ctrl = modifiers.contains(KeyModifiers::CONTROL);
-            match (code, is_ctrl) {
-                (KeyCode::Char('w'), true) | (KeyCode::Char('W'), true) => {
-                    self.close_active_tab();
-                    return EventResult::consumed();
-                }
-                (KeyCode::Char('s'), true) | (KeyCode::Char('S'), true) => {
-                    let _ = self.save_active();
-                    return EventResult::consumed();
-                }
-                (KeyCode::Char('e'), true) | (KeyCode::Char('E'), true) => {
-                    self.actions.push(AppAction::ToggleExplorer);
-                    return EventResult::consumed();
-                }
-                _ => {}
-            }
-        }
-
-        let child_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused,
-            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host.for_child()
-            },
-            tab_mode: ctx.tab_mode.for_child(),
-        };
-        self.tab_window.handle_event(event, child_ctx)
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
@@ -1108,6 +1041,87 @@ impl Component for EditorWindowView {
             tab_mode: ctx.tab_mode.for_child(),
         };
         self.tab_window.draw(frame, area, child_ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for EditorWindowView {
+    fn min_width(&self) -> u16 {
+        self.tab_window.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.tab_window.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.tab_window.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.tab_window.desired_height()
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for EditorWindowView {
+    fn is_scrollable(&self) -> bool {
+        self.tab_window.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.tab_window.content_size()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.tab_window.scroll_offset()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.tab_window.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.tab_window.scroll_config()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.tab_window.set_scroll_offset(x, y);
+    }
+
+    fn scroll_to_child(&mut self, child_id: atto_ui::composable::ComponentId) {
+        self.tab_window.scroll_to_child(child_id);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for EditorWindowView {
+    fn is_focusable(&self) -> bool {
+        self.tab_window.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.tab_window.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.tab_window.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for EditorWindowView {}
+
+impl ::atto_ui::composable::EventHandling for EditorWindowView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let child_ctx = ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                ScrollbarHost::Window
+            } else {
+                ctx.scrollbar_host.for_child()
+            },
+            tab_mode: ctx.tab_mode.for_child(),
+        };
+        self.tab_window.handle_event(event, child_ctx)
     }
 }
 
@@ -1620,16 +1634,63 @@ impl DocumentTabView {
     }
 }
 
-impl Component for DocumentTabView {
-    fn is_focusable(&self) -> bool {
-        true
-    }
+impl ::atto_ui::composable::Component for DocumentTabView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.handle_commands();
+        self.last_area = Some(area);
+        let layout = self.layout(area);
+        self.last_layout = Some(layout);
 
-    fn focus_first(&mut self) -> bool {
-        self.focused = SplitFocus::Primary;
-        true
-    }
+        let (primary_focused, secondary_focused) = match self.focused {
+            SplitFocus::Primary => (ctx.is_focused, false),
+            SplitFocus::Secondary => (false, ctx.is_focused),
+        };
 
+        let primary_ctx = ComponentContext {
+            is_focused: primary_focused,
+            ..ctx
+        };
+        self.primary.draw(frame, layout.primary, primary_ctx);
+
+        if let Some(r) = layout.secondary
+            && let Some(view) = self.secondary.as_mut()
+        {
+            let secondary_ctx = ComponentContext {
+                is_focused: secondary_focused,
+                ..ctx
+            };
+            view.draw(frame, r, secondary_ctx);
+        }
+
+        if let Some(divider) = layout.divider
+            && divider.width > 0
+            && divider.height > 0
+        {
+            let style = ctx.theme.widget.dim;
+            let border_set = ctx.theme.border_set(false);
+            let symbol = match self
+                .split
+                .unwrap_or(atto_ui::composable::SplitterOrientation::Vertical)
+            {
+                atto_ui::composable::SplitterOrientation::Vertical => border_set.vertical_left,
+                atto_ui::composable::SplitterOrientation::Horizontal => border_set.horizontal_top,
+            };
+
+            let buf = frame.buffer_mut();
+            for y in divider.y..divider.y.saturating_add(divider.height) {
+                for x in divider.x..divider.x.saturating_add(divider.width) {
+                    buf[(x, y)].set_symbol(symbol).set_style(style);
+                }
+            }
+        }
+
+        self.draw_split_scrollbars(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::Layout for DocumentTabView {}
+
+impl ::atto_ui::composable::Scrollable for DocumentTabView {
     fn is_scrollable(&self) -> bool {
         if self.split.is_some() && self.secondary.is_some() {
             return false;
@@ -1700,7 +1761,22 @@ impl Component for DocumentTabView {
             }
         }
     }
+}
 
+impl ::atto_ui::composable::FocusNav for DocumentTabView {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.focused = SplitFocus::Primary;
+        true
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for DocumentTabView {}
+
+impl ::atto_ui::composable::EventHandling for DocumentTabView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_commands();
 
@@ -1765,58 +1841,6 @@ impl Component for DocumentTabView {
                 }
             }
         }
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.handle_commands();
-        self.last_area = Some(area);
-        let layout = self.layout(area);
-        self.last_layout = Some(layout);
-
-        let (primary_focused, secondary_focused) = match self.focused {
-            SplitFocus::Primary => (ctx.is_focused, false),
-            SplitFocus::Secondary => (false, ctx.is_focused),
-        };
-
-        let primary_ctx = ComponentContext {
-            is_focused: primary_focused,
-            ..ctx
-        };
-        self.primary.draw(frame, layout.primary, primary_ctx);
-
-        if let Some(r) = layout.secondary
-            && let Some(view) = self.secondary.as_mut()
-        {
-            let secondary_ctx = ComponentContext {
-                is_focused: secondary_focused,
-                ..ctx
-            };
-            view.draw(frame, r, secondary_ctx);
-        }
-
-        if let Some(divider) = layout.divider
-            && divider.width > 0
-            && divider.height > 0
-        {
-            let style = ctx.theme.widget.dim;
-            let border_set = ctx.theme.border_set(false);
-            let symbol = match self
-                .split
-                .unwrap_or(atto_ui::composable::SplitterOrientation::Vertical)
-            {
-                atto_ui::composable::SplitterOrientation::Vertical => border_set.vertical_left,
-                atto_ui::composable::SplitterOrientation::Horizontal => border_set.horizontal_top,
-            };
-
-            let buf = frame.buffer_mut();
-            for y in divider.y..divider.y.saturating_add(divider.height) {
-                for x in divider.x..divider.x.saturating_add(divider.width) {
-                    buf[(x, y)].set_symbol(symbol).set_style(style);
-                }
-            }
-        }
-
-        self.draw_split_scrollbars(frame, area, ctx);
     }
 }
 

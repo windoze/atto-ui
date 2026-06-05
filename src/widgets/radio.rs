@@ -6,7 +6,9 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::ComponentCommand;
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -99,89 +101,6 @@ impl Component for RadioGroup {
         }
     }
 
-    fn min_width(&self) -> u16 {
-        3
-    }
-
-    fn min_height(&self) -> u16 {
-        // Title row + at least one option row (if any options exist).
-        if self.options.get().is_empty() { 1 } else { 2 }
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.enabled.get() && !self.options.get().is_empty()
-    }
-
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if !self.enabled.get() {
-            return EventResult::ignored();
-        }
-        let options = self.options.get();
-        if options.is_empty() {
-            return EventResult::ignored();
-        }
-        let mut selected = self.binding.get().min(options.len().saturating_sub(1));
-        self.binding.set(selected);
-        match event {
-            Event::Mouse(m) => {
-                use crossterm::event::MouseButton;
-                use crossterm::event::MouseEventKind;
-
-                if m.kind != MouseEventKind::Down(MouseButton::Left) {
-                    return EventResult::ignored();
-                }
-                let Some(area) = self.last_area else {
-                    return EventResult::ignored();
-                };
-
-                let options_y = area.y.saturating_add(1);
-                if m.row < options_y || m.row >= options_y.saturating_add(options.len() as u16) {
-                    return EventResult::ignored();
-                }
-                let idx = m.row.saturating_sub(options_y) as usize;
-                if idx < options.len() {
-                    selected = idx;
-                    self.binding.set(selected);
-                    self.emit_change();
-                    return EventResult::changed();
-                }
-                EventResult::ignored()
-            }
-            Event::Key(KeyEvent { code, .. }) => {
-                let len = options.len();
-                match code {
-                    KeyCode::Up => {
-                        selected = if selected == 0 { len - 1 } else { selected - 1 };
-                        self.binding.set(selected);
-                        self.emit_change();
-                        EventResult::changed()
-                    }
-                    KeyCode::Down => {
-                        selected = (selected + 1) % len;
-                        self.binding.set(selected);
-                        self.emit_change();
-                        EventResult::changed()
-                    }
-                    _ => EventResult::ignored(),
-                }
-            }
-            _ => EventResult::ignored(),
-        }
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        let options_len = self.options.get().len() as u16;
-        let min_height = if options_len == 0 { 1 } else { 2 };
-        let auto_height = options_len.saturating_add(1);
-        let desired_height = self
-            .height
-            .as_ref()
-            .map(|height| height.get())
-            .unwrap_or(auto_height);
-
-        Some(desired_height.max(min_height))
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let enabled = self.enabled.get();
@@ -239,6 +158,97 @@ impl Component for RadioGroup {
         }
     }
 }
+
+impl Layout for RadioGroup {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        // Title row + at least one option row (if any options exist).
+        if self.options.get().is_empty() { 1 } else { 2 }
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        let options_len = self.options.get().len() as u16;
+        let min_height = if options_len == 0 { 1 } else { 2 };
+        let auto_height = options_len.saturating_add(1);
+        let desired_height = self
+            .height
+            .as_ref()
+            .map(|height| height.get())
+            .unwrap_or(auto_height);
+
+        Some(desired_height.max(min_height))
+    }
+}
+
+impl FocusNav for RadioGroup {
+    fn is_focusable(&self) -> bool {
+        self.enabled.get() && !self.options.get().is_empty()
+    }
+}
+
+impl EventHandling for RadioGroup {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if !self.enabled.get() {
+            return EventResult::ignored();
+        }
+        let options = self.options.get();
+        if options.is_empty() {
+            return EventResult::ignored();
+        }
+        let mut selected = self.binding.get().min(options.len().saturating_sub(1));
+        self.binding.set(selected);
+        match event {
+            Event::Mouse(m) => {
+                use crossterm::event::MouseButton;
+                use crossterm::event::MouseEventKind;
+
+                if m.kind != MouseEventKind::Down(MouseButton::Left) {
+                    return EventResult::ignored();
+                }
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
+                };
+
+                let options_y = area.y.saturating_add(1);
+                if m.row < options_y || m.row >= options_y.saturating_add(options.len() as u16) {
+                    return EventResult::ignored();
+                }
+                let idx = m.row.saturating_sub(options_y) as usize;
+                if idx < options.len() {
+                    selected = idx;
+                    self.binding.set(selected);
+                    self.emit_change();
+                    return EventResult::changed();
+                }
+                EventResult::ignored()
+            }
+            Event::Key(KeyEvent { code, .. }) => {
+                let len = options.len();
+                match code {
+                    KeyCode::Up => {
+                        selected = if selected == 0 { len - 1 } else { selected - 1 };
+                        self.binding.set(selected);
+                        self.emit_change();
+                        EventResult::changed()
+                    }
+                    KeyCode::Down => {
+                        selected = (selected + 1) % len;
+                        self.binding.set(selected);
+                        self.emit_change();
+                        EventResult::changed()
+                    }
+                    _ => EventResult::ignored(),
+                }
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+}
+
+crate::impl_component_default_traits!(RadioGroup => Scrollable, DynamicTree);
 
 #[cfg(test)]
 mod tests {

@@ -6,7 +6,10 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use super::component::{Component, ComponentContext, EventResult};
+use super::component::{
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable,
+};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
 use super::node::{ComponentId, ComponentNode};
@@ -422,6 +425,12 @@ impl Grid {
 
 #[component_properties]
 impl Component for Grid {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.draw_impl(frame, area, ctx)
+    }
+}
+
+impl FocusNav for Grid {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused
     }
@@ -459,7 +468,9 @@ impl Component for Grid {
         }
         true
     }
+}
 
+impl Layout for Grid {
     fn min_width(&self) -> u16 {
         let columns = self.columns.get().max(1);
         let padding = self.padding.get();
@@ -549,7 +560,9 @@ impl Component for Grid {
             .saturating_add(padding.bottom)
             .saturating_add(rows_total)
     }
+}
 
+impl DynamicTree for Grid {
     fn children(&self) -> &[ComponentNode] {
         &self.children
     }
@@ -557,7 +570,9 @@ impl Component for Grid {
     fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         Some(&mut self.children)
     }
+}
 
+impl Scrollable for Grid {
     fn is_scrollable(&self) -> bool {
         self.scrollable.get()
     }
@@ -607,7 +622,9 @@ impl Component for Grid {
         let target_y = center_y.saturating_sub(half_vh).min(u16::MAX as u32) as u16;
         let _ = self.scroll_to_clamped(target_x, target_y);
     }
+}
 
+impl EventHandling for Grid {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_event_capture_impl(event, ctx)
     }
@@ -618,9 +635,5 @@ impl Component for Grid {
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_event_impl(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.draw_impl(frame, area, ctx)
     }
 }

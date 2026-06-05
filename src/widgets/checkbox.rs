@@ -4,7 +4,9 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -52,6 +54,26 @@ impl Checkbox {
 
 #[component_properties]
 impl Component for Checkbox {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        let enabled = self.enabled.get();
+        let style = if !enabled {
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
+        } else {
+            ctx.theme.widget.normal
+        };
+        let mark = if self.binding.get() {
+            ctx.theme.glyph("checkbox-checked").unwrap_or("[x]")
+        } else {
+            ctx.theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
+        };
+        let text = format!("{mark} {}", self.label.get());
+        frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
+    }
+}
+
+impl Layout for Checkbox {
     fn min_width(&self) -> u16 {
         3
     }
@@ -60,10 +82,18 @@ impl Component for Checkbox {
         1
     }
 
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+impl FocusNav for Checkbox {
     fn is_focusable(&self) -> bool {
         self.enabled.get()
     }
+}
 
+impl EventHandling for Checkbox {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
@@ -92,26 +122,6 @@ impl Component for Checkbox {
             _ => EventResult::ignored(),
         }
     }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        let enabled = self.enabled.get();
-        let style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
-        } else {
-            ctx.theme.widget.normal
-        };
-        let mark = if self.binding.get() {
-            ctx.theme.glyph("checkbox-checked").unwrap_or("[x]")
-        } else {
-            ctx.theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
-        };
-        let text = format!("{mark} {}", self.label.get());
-        frame.render_widget(Paragraph::new(Line::styled(text, style)), area);
-    }
 }
+
+crate::impl_component_default_traits!(Checkbox => Scrollable, DynamicTree);

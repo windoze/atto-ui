@@ -6,7 +6,10 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use super::component::{Component, ComponentContext, EventResult};
+use super::component::{
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable,
+};
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
 use super::node::{ComponentId, ComponentNode};
@@ -939,6 +942,12 @@ impl StackCore {
 
 #[component_properties]
 impl Component for StackCore {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.draw_impl(frame, area, ctx)
+    }
+}
+
+impl FocusNav for StackCore {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused
     }
@@ -976,7 +985,9 @@ impl Component for StackCore {
         }
         true
     }
+}
 
+impl Layout for StackCore {
     fn min_width(&self) -> u16 {
         self.min_width_flow()
     }
@@ -988,7 +999,9 @@ impl Component for StackCore {
     fn desired_height(&self) -> Option<u16> {
         Some(self.desired_height_flow())
     }
+}
 
+impl DynamicTree for StackCore {
     fn children(&self) -> &[ComponentNode] {
         &self.children
     }
@@ -996,7 +1009,9 @@ impl Component for StackCore {
     fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         Some(&mut self.children)
     }
+}
 
+impl Scrollable for StackCore {
     fn is_scrollable(&self) -> bool {
         self.scrollable.get()
     }
@@ -1046,7 +1061,9 @@ impl Component for StackCore {
         let target_y = center_y.saturating_sub(half_vh).min(u16::MAX as u32) as u16;
         let _ = self.scroll_to_clamped(target_x, target_y);
     }
+}
 
+impl EventHandling for StackCore {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_event_capture_impl(event, ctx)
     }
@@ -1057,10 +1074,6 @@ impl Component for StackCore {
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.handle_event_impl(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.draw_impl(frame, area, ctx)
     }
 }
 
@@ -1154,6 +1167,12 @@ macro_rules! define_stack {
 
         #[component_properties]
         impl Component for $name {
+            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+                self.core.draw(frame, area, ctx)
+            }
+        }
+
+        impl FocusNav for $name {
             fn focused_child(&self) -> Option<ComponentId> {
                 self.core.focused_child()
             }
@@ -1169,7 +1188,9 @@ macro_rules! define_stack {
             fn focus_last(&mut self) -> bool {
                 self.core.focus_last()
             }
+        }
 
+        impl Layout for $name {
             fn min_width(&self) -> u16 {
                 self.core.min_width()
             }
@@ -1181,7 +1202,9 @@ macro_rules! define_stack {
             fn desired_height(&self) -> Option<u16> {
                 self.core.desired_height()
             }
+        }
 
+        impl DynamicTree for $name {
             fn children(&self) -> &[ComponentNode] {
                 self.core.children()
             }
@@ -1189,7 +1212,9 @@ macro_rules! define_stack {
             fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
                 self.core.children_mut()
             }
+        }
 
+        impl Scrollable for $name {
             fn is_scrollable(&self) -> bool {
                 self.core.is_scrollable()
             }
@@ -1207,7 +1232,7 @@ macro_rules! define_stack {
             }
 
             fn scroll_config(&self) -> ScrollConfig {
-                Component::scroll_config(&self.core)
+                Scrollable::scroll_config(&self.core)
             }
 
             fn set_scroll_offset(&mut self, x: u16, y: u16) {
@@ -1217,7 +1242,9 @@ macro_rules! define_stack {
             fn scroll_to_child(&mut self, child_id: ComponentId) {
                 self.core.scroll_to_child(child_id);
             }
+        }
 
+        impl EventHandling for $name {
             fn handle_event_capture(
                 &mut self,
                 event: &Event,
@@ -1236,10 +1263,6 @@ macro_rules! define_stack {
 
             fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
                 self.core.handle_event(event, ctx)
-            }
-
-            fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-                self.core.draw(frame, area, ctx)
             }
         }
     };

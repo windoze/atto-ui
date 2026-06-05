@@ -13,9 +13,9 @@ use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
 };
 use crate::composable::{
-    Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
-    ScrollbarVisibility, should_show_scrollbar,
+    Component, ComponentContext, EdgeInsets, EventHandling, EventResult, FocusNav, Layout,
+    ScrollConfig, ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
+    ScrollOffset, Scrollable, ScrollbarHost, ScrollbarVisibility, should_show_scrollbar,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -172,64 +172,6 @@ impl Component for TableView {
         }
     }
 
-    fn min_width(&self) -> u16 {
-        self.min_size.0
-    }
-
-    fn min_height(&self) -> u16 {
-        self.min_size.1
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.bindings.read().enabled.get()
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        let height = self.bindings.read().height.get();
-        Some(height.max(self.min_size.1))
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.bindings.read().enabled.get() {
-            return EventResult::ignored();
-        }
-        if let Event::Mouse(m) = event
-            && let Some(area) = self.last_area
-            && let Some((_, body_area, header_height)) = self.layout_areas(area)
-        {
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                return EventResult::ignored();
-            };
-            let abs_event = MouseEvent {
-                column: area.x.saturating_add(local_x),
-                row: area.y.saturating_add(local_y),
-                ..*m
-            };
-            if let Some(new_scroll) =
-                self.handle_border_scrollbar_event(abs_event, area, body_area, header_height)
-            {
-                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
-                return EventResult::consumed();
-            }
-
-            let body_local = Rect {
-                x: body_area.x.saturating_sub(area.x),
-                y: body_area.y.saturating_sub(area.y),
-                width: body_area.width,
-                height: body_area.height,
-            };
-            if !contains(body_local, local_x, local_y) {
-                return EventResult::ignored();
-            }
-        }
-
-        let body_ctx = ComponentContext {
-            scrollbar_host: ScrollbarHost::Window,
-            ..ctx
-        };
-        self.scroll.handle_event(event, body_ctx)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let bindings = self.bindings.read();
@@ -306,6 +248,72 @@ impl Component for TableView {
         self.draw_border_scrollbar(frame, area, body_area, header_height, ctx);
     }
 }
+
+impl Layout for TableView {
+    fn min_width(&self) -> u16 {
+        self.min_size.0
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_size.1
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        let height = self.bindings.read().height.get();
+        Some(height.max(self.min_size.1))
+    }
+}
+
+impl FocusNav for TableView {
+    fn is_focusable(&self) -> bool {
+        self.bindings.read().enabled.get()
+    }
+}
+
+impl EventHandling for TableView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.bindings.read().enabled.get() {
+            return EventResult::ignored();
+        }
+        if let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((_, body_area, header_height)) = self.layout_areas(area)
+        {
+            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                return EventResult::ignored();
+            };
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
+            if let Some(new_scroll) =
+                self.handle_border_scrollbar_event(abs_event, area, body_area, header_height)
+            {
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
+
+            let body_local = Rect {
+                x: body_area.x.saturating_sub(area.x),
+                y: body_area.y.saturating_sub(area.y),
+                width: body_area.width,
+                height: body_area.height,
+            };
+            if !contains(body_local, local_x, local_y) {
+                return EventResult::ignored();
+            }
+        }
+
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.handle_event(event, body_ctx)
+    }
+}
+
+crate::impl_component_default_traits!(TableView => Scrollable, DynamicTree);
 
 impl TableView {
     fn layout_areas(&self, area: Rect) -> Option<(Rect, Rect, u16)> {

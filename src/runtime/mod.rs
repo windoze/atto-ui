@@ -18,9 +18,10 @@ use atto_ui_runtime::{
 
 use crate::composable::{
     Align, Anchor, AnchorPlacement, Border, Component, ComponentContext, ComponentId,
-    ComponentNode, Divider, DividerOrientation, EdgeInsets, EventResult, Grid, HStack, Label,
-    LayoutParams, ScrollConfig, Size, Spacer, Splitter, SplitterOrientation, TabView, Text,
-    TextBox, TitleBarContent, TitleBarContext, VStack, Visibility,
+    ComponentNode, Divider, DividerOrientation, DynamicTree, EdgeInsets, EventHandling,
+    EventResult, FocusNav, Grid, HStack, Label, Layout, LayoutParams, ScrollConfig, Scrollable,
+    Size, Spacer, Splitter, SplitterOrientation, TabView, Text, TextBox, TitleBarContent,
+    TitleBarContext, VStack, Visibility,
 };
 use crate::reactive::Binding;
 use crate::widgets::{
@@ -333,10 +334,6 @@ impl Component for ComponentTree {
         self.view.type_name()
     }
 
-    fn tag(&self) -> Option<&str> {
-        self.view.tag()
-    }
-
     fn property_names(&self) -> Vec<&'static str> {
         self.view.property_names()
     }
@@ -353,22 +350,20 @@ impl Component for ComponentTree {
         self.view.apply_command(command)
     }
 
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.view.focused_child()
+    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
+        self.view.titlebar(ctx)
     }
 
-    fn is_focusable(&self) -> bool {
-        self.view.is_focusable()
+    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
+        self.view.handle_titlebar_event(event, ctx)
     }
 
-    fn focus_first(&mut self) -> bool {
-        self.view.focus_first()
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.view.draw(frame, area, ctx);
     }
+}
 
-    fn focus_last(&mut self) -> bool {
-        self.view.focus_last()
-    }
-
+impl Layout for ComponentTree {
     fn min_width(&self) -> u16 {
         self.view.min_width()
     }
@@ -388,35 +383,9 @@ impl Component for ComponentTree {
     fn desired_height(&self) -> Option<u16> {
         self.view.desired_height()
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        self.view.children()
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        self.view.children_mut()
-    }
-
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.view.handle_event_capture(event, ctx)
-    }
-
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.view.handle_event_bubble(event, ctx)
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.view.handle_event(event, ctx)
-    }
-
-    fn titlebar(&mut self, ctx: TitleBarContext<'_>) -> Option<TitleBarContent> {
-        self.view.titlebar(ctx)
-    }
-
-    fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
-        self.view.handle_titlebar_event(event, ctx)
-    }
-
+impl Scrollable for ComponentTree {
     fn is_scrollable(&self) -> bool {
         self.view.is_scrollable()
     }
@@ -448,6 +417,38 @@ impl Component for ComponentTree {
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.view.scroll_to_child(child_id);
     }
+}
+
+impl FocusNav for ComponentTree {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.view.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.view.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.view.focus_last()
+    }
+}
+
+impl DynamicTree for ComponentTree {
+    fn tag(&self) -> Option<&str> {
+        self.view.tag()
+    }
+
+    fn children(&self) -> &[ComponentNode] {
+        self.view.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.view.children_mut()
+    }
 
     fn apply_tree_ops(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         self.apply_ops_incremental(ops)
@@ -464,9 +465,19 @@ impl Component for ComponentTree {
     fn dynamic_callbacks(&self) -> Option<&CallbackRegistry> {
         Some(self.callbacks())
     }
+}
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.view.draw(frame, area, ctx);
+impl EventHandling for ComponentTree {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event_capture(event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event_bubble(event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event(event, ctx)
     }
 }
 

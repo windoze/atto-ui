@@ -1,4 +1,4 @@
-use atto_ui::composable::Component;
+use atto_ui::composable::DynamicTree;
 use atto_ui_macros::view_builder;
 
 #[test]

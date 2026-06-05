@@ -13,8 +13,8 @@ use atto_ui::app::{
     CrosstermAppConfig, CursorMode, Desktop, MenuBar, run_crossterm_desktop_simple,
 };
 use atto_ui::composable::{
-    Checkbox, Component, ComponentContext, EventResult, ListBox, TabHeaderPosition, TabView, Text,
-    TextBox, VStack,
+    Checkbox, ComponentContext, EventHandling, EventResult, ListBox, TabHeaderPosition, TabView,
+    Text, TextBox, VStack,
 };
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
@@ -262,65 +262,7 @@ impl TabDemoView {
 }
 
 #[component_properties]
-impl Component for TabDemoView {
-    fn is_focusable(&self) -> bool {
-        self.tab_view.is_focusable()
-    }
-
-    fn focus_first(&mut self) -> bool {
-        self.tab_view.focus_first()
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.tab_view.focus_last()
-    }
-
-    fn min_width(&self) -> u16 {
-        self.tab_view.min_width()
-    }
-
-    fn min_height(&self) -> u16 {
-        INFO_HEIGHT.saturating_add(self.tab_view.min_height())
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        self.tab_view.desired_width()
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        self.tab_view
-            .desired_height()
-            .map(|h| h.saturating_add(INFO_HEIGHT))
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Some(area) = self.last_area else {
-            return EventResult::ignored();
-        };
-
-        if let Event::Key(key) = event
-            && let Some(result) = self.handle_shortcuts(*key)
-            && result.is_consumed()
-        {
-            return result;
-        }
-
-        if let Event::Mouse(m) = event {
-            return self.forward_mouse(area, *m, ctx);
-        }
-
-        self.tab_view.handle_event(
-            event,
-            ComponentContext {
-                theme: ctx.theme,
-                window_id: ctx.window_id,
-                is_focused: ctx.is_focused,
-                scrollbar_host: ctx.scrollbar_host.for_child(),
-                tab_mode: ctx.tab_mode.for_child(),
-            },
-        )
-    }
-
+impl ::atto_ui::composable::Component for TabDemoView {
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let (info_area, tab_area) = self.layout_areas(area);
@@ -362,6 +304,74 @@ impl Component for TabDemoView {
                 },
             );
         }
+    }
+}
+
+impl ::atto_ui::composable::Layout for TabDemoView {
+    fn min_width(&self) -> u16 {
+        self.tab_view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        INFO_HEIGHT.saturating_add(self.tab_view.min_height())
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.tab_view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.tab_view
+            .desired_height()
+            .map(|h| h.saturating_add(INFO_HEIGHT))
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for TabDemoView {}
+
+impl ::atto_ui::composable::FocusNav for TabDemoView {
+    fn is_focusable(&self) -> bool {
+        self.tab_view.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.tab_view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.tab_view.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for TabDemoView {}
+
+impl ::atto_ui::composable::EventHandling for TabDemoView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Some(area) = self.last_area else {
+            return EventResult::ignored();
+        };
+
+        if let Event::Key(key) = event
+            && let Some(result) = self.handle_shortcuts(*key)
+            && result.is_consumed()
+        {
+            return result;
+        }
+
+        if let Event::Mouse(m) = event {
+            return self.forward_mouse(area, *m, ctx);
+        }
+
+        self.tab_view.handle_event(
+            event,
+            ComponentContext {
+                theme: ctx.theme,
+                window_id: ctx.window_id,
+                is_focused: ctx.is_focused,
+                scrollbar_host: ctx.scrollbar_host.for_child(),
+                tab_mode: ctx.tab_mode.for_child(),
+            },
+        )
     }
 }
 

@@ -1,4 +1,4 @@
-use atto_ui::composable::{Component, ComponentContext, EventResult, LayoutParams, Size, VStack};
+use atto_ui::composable::{ComponentContext, EventResult, LayoutParams, Size, VStack};
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -30,7 +30,13 @@ impl ChatPanel {
     }
 }
 
-impl Component for ChatPanel {
+impl ::atto_ui::composable::Component for ChatPanel {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.view.draw(frame, area, ctx)
+    }
+}
+
+impl ::atto_ui::composable::Layout for ChatPanel {
     fn min_width(&self) -> u16 {
         self.view.min_width()
     }
@@ -46,12 +52,16 @@ impl Component for ChatPanel {
     fn desired_height(&self) -> Option<u16> {
         self.view.desired_height()
     }
+}
 
+impl ::atto_ui::composable::Scrollable for ChatPanel {}
+
+impl ::atto_ui::composable::FocusNav for ChatPanel {}
+
+impl ::atto_ui::composable::DynamicTree for ChatPanel {}
+
+impl ::atto_ui::composable::EventHandling for ChatPanel {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.view.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.view.draw(frame, area, ctx)
     }
 }

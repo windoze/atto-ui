@@ -13,9 +13,9 @@ use crate::composable::scroll::{
     ScrollbarDrag, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
 };
 use crate::composable::{
-    Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, ScrollbarHost,
-    should_show_scrollbar,
+    Component, ComponentContext, EdgeInsets, EventHandling, EventResult, FocusNav, Layout,
+    ScrollConfig, ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
+    ScrollOffset, Scrollable, ScrollbarHost, should_show_scrollbar,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -173,51 +173,6 @@ impl Component for ListBox {
         }
     }
 
-    fn min_width(&self) -> u16 {
-        self.min_size.0
-    }
-
-    fn min_height(&self) -> u16 {
-        self.min_size.1
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.bindings.read().enabled.get()
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        let height = self.bindings.read().height.get();
-        Some(height.max(self.min_size.1))
-    }
-
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        if !self.bindings.read().enabled.get() {
-            return EventResult::ignored();
-        }
-
-        // Border-mounted scrollbars (right + bottom) so the list content doesn't lose space.
-        if let Event::Mouse(m) = event
-            && let Some(area) = self.last_area
-            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
-        {
-            let abs_event = MouseEvent {
-                column: area.x.saturating_add(local_x),
-                row: area.y.saturating_add(local_y),
-                ..*m
-            };
-            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
-                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
-                return EventResult::consumed();
-            }
-        }
-
-        let body_ctx = ComponentContext {
-            scrollbar_host: ScrollbarHost::Window,
-            ..ctx
-        };
-        self.scroll.handle_event(event, body_ctx)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let bindings = self.bindings.read();
@@ -246,6 +201,59 @@ impl Component for ListBox {
         self.draw_border_scrollbar(frame, area, ctx);
     }
 }
+
+impl Layout for ListBox {
+    fn min_width(&self) -> u16 {
+        self.min_size.0
+    }
+
+    fn min_height(&self) -> u16 {
+        self.min_size.1
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        let height = self.bindings.read().height.get();
+        Some(height.max(self.min_size.1))
+    }
+}
+
+impl FocusNav for ListBox {
+    fn is_focusable(&self) -> bool {
+        self.bindings.read().enabled.get()
+    }
+}
+
+impl EventHandling for ListBox {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if !self.bindings.read().enabled.get() {
+            return EventResult::ignored();
+        }
+
+        // Border-mounted scrollbars (right + bottom) so the list content doesn't lose space.
+        if let Event::Mouse(m) = event
+            && let Some(area) = self.last_area
+            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+        {
+            let abs_event = MouseEvent {
+                column: area.x.saturating_add(local_x),
+                row: area.y.saturating_add(local_y),
+                ..*m
+            };
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+                self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
+                return EventResult::consumed();
+            }
+        }
+
+        let body_ctx = ComponentContext {
+            scrollbar_host: ScrollbarHost::Window,
+            ..ctx
+        };
+        self.scroll.handle_event(event, body_ctx)
+    }
+}
+
+crate::impl_component_default_traits!(ListBox => Scrollable, DynamicTree);
 
 impl ListBox {
     fn border_scrollbars(&self, area: Rect) -> Option<Scrollbars> {

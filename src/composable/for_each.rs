@@ -6,7 +6,10 @@ use std::sync::Arc;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use super::component::{Component, ComponentContext, EventResult};
+use super::component::{
+    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
+    Scrollable,
+};
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
 use super::node::{ComponentId, ComponentNode};
@@ -265,10 +268,34 @@ where
     T: Clone + PartialEq + Send + Sync + 'static,
     V: Component + 'static,
 {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.rebuild_children();
+        }
+
+        self.cached_view.draw(frame, area, ctx);
+    }
+}
+
+impl<T, V> FocusNav for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
     fn focused_child(&self) -> Option<ComponentId> {
         self.cached_view.focused_child()
     }
 
+    fn is_focusable(&self) -> bool {
+        self.cached_view.is_focusable()
+    }
+}
+
+impl<T, V> Layout for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
     fn min_width(&self) -> u16 {
         self.cached_view.min_width()
     }
@@ -284,7 +311,13 @@ where
     fn desired_height(&self) -> Option<u16> {
         self.cached_view.desired_height()
     }
+}
 
+impl<T, V> DynamicTree for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
     fn children(&self) -> &[ComponentNode] {
         self.cached_view.children()
     }
@@ -292,7 +325,13 @@ where
     fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         self.cached_view.children_mut()
     }
+}
 
+impl<T, V> Scrollable for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
     fn is_scrollable(&self) -> bool {
         self.cached_view.is_scrollable()
     }
@@ -320,7 +359,13 @@ where
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.cached_view.scroll_to_child(child_id);
     }
+}
 
+impl<T, V> EventHandling for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
     fn handle_event(
         &mut self,
         event: &crossterm::event::Event,
@@ -331,18 +376,6 @@ where
         }
 
         self.cached_view.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        if self.data.check_dirty(&mut self.data_observer) {
-            self.rebuild_children();
-        }
-
-        self.cached_view.draw(frame, area, ctx);
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.cached_view.is_focusable()
     }
 }
 
@@ -435,10 +468,36 @@ where
     T::Id: Hash + Eq + Send + Sync,
     V: Component + 'static,
 {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if self.data.check_dirty(&mut self.data_observer) {
+            self.reconcile_children();
+        }
+
+        self.cached_view.draw(frame, area, ctx);
+    }
+}
+
+impl<T, V> FocusNav for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
     fn focused_child(&self) -> Option<ComponentId> {
         self.cached_view.focused_child()
     }
 
+    fn is_focusable(&self) -> bool {
+        self.cached_view.is_focusable()
+    }
+}
+
+impl<T, V> Layout for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
     fn min_width(&self) -> u16 {
         self.cached_view.min_width()
     }
@@ -454,7 +513,14 @@ where
     fn desired_height(&self) -> Option<u16> {
         self.cached_view.desired_height()
     }
+}
 
+impl<T, V> DynamicTree for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
     fn children(&self) -> &[ComponentNode] {
         self.cached_view.children()
     }
@@ -462,7 +528,14 @@ where
     fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
         self.cached_view.children_mut()
     }
+}
 
+impl<T, V> Scrollable for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
     fn is_scrollable(&self) -> bool {
         self.cached_view.is_scrollable()
     }
@@ -490,7 +563,14 @@ where
     fn scroll_to_child(&mut self, child_id: ComponentId) {
         self.cached_view.scroll_to_child(child_id);
     }
+}
 
+impl<T, V> EventHandling for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
     fn handle_event(
         &mut self,
         event: &crossterm::event::Event,
@@ -501,18 +581,6 @@ where
         }
 
         self.cached_view.handle_event(event, ctx)
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        if self.data.check_dirty(&mut self.data_observer) {
-            self.reconcile_children();
-        }
-
-        self.cached_view.draw(frame, area, ctx);
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.cached_view.is_focusable()
     }
 }
 

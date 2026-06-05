@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{Desktop, MenuBar};
-use atto_ui::composable::{Component, ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
@@ -22,11 +22,7 @@ use atto_ui::wm::{Window, WindowKind};
 /// - `你` is placed so its right half is overlapped by the foreground window border
 struct BgView;
 
-impl Component for BgView {
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
+impl ::atto_ui::composable::Component for BgView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = if ctx.is_focused {
             ctx.theme.widget.focused
@@ -49,17 +45,41 @@ impl Component for BgView {
     }
 }
 
-/// Foreground window content isn't important; the border is what we need.
-struct FgView;
+impl ::atto_ui::composable::Layout for BgView {}
 
-impl Component for FgView {
+impl ::atto_ui::composable::Scrollable for BgView {}
+
+impl ::atto_ui::composable::FocusNav for BgView {}
+
+impl ::atto_ui::composable::DynamicTree for BgView {}
+
+impl ::atto_ui::composable::EventHandling for BgView {
     fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         EventResult::ignored()
     }
+}
 
+/// Foreground window content isn't important; the border is what we need.
+struct FgView;
+
+impl ::atto_ui::composable::Component for FgView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         let style = ctx.theme.widget.normal;
         frame.buffer_mut().set_string(area.x, area.y, "FG", style);
+    }
+}
+
+impl ::atto_ui::composable::Layout for FgView {}
+
+impl ::atto_ui::composable::Scrollable for FgView {}
+
+impl ::atto_ui::composable::FocusNav for FgView {}
+
+impl ::atto_ui::composable::DynamicTree for FgView {}
+
+impl ::atto_ui::composable::EventHandling for FgView {
+    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
     }
 }
 

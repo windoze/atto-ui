@@ -729,7 +729,7 @@ impl ChatInputPanel {
     }
 }
 
-impl Component for ChatInputPanel {
+impl ::atto_ui::composable::Component for ChatInputPanel {
     fn property_names(&self) -> Vec<&'static str> {
         vec![
             "mode",
@@ -798,53 +798,18 @@ impl Component for ChatInputPanel {
         }
     }
 
-    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.sync_mode();
         match &mut self.view {
-            ChatInputView::Text(view) => view.handle_event_capture(event, ctx),
-            ChatInputView::Choice(view) => view.handle_event_capture(event, ctx),
-            ChatInputView::Confirm(view) => view.handle_event_capture(event, ctx),
-            ChatInputView::Custom(view) => view.handle_event_capture(event, ctx),
+            ChatInputView::Text(view) => view.draw(frame, area, ctx),
+            ChatInputView::Choice(view) => view.draw(frame, area, ctx),
+            ChatInputView::Confirm(view) => view.draw(frame, area, ctx),
+            ChatInputView::Custom(view) => view.draw(frame, area, ctx),
         }
     }
+}
 
-    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.sync_mode();
-        match &mut self.view {
-            ChatInputView::Text(view) => view.handle_event_bubble(event, ctx),
-            ChatInputView::Choice(view) => view.handle_event_bubble(event, ctx),
-            ChatInputView::Confirm(view) => view.handle_event_bubble(event, ctx),
-            ChatInputView::Custom(view) => view.handle_event_bubble(event, ctx),
-        }
-    }
-
-    fn is_focusable(&self) -> bool {
-        match &self.view {
-            ChatInputView::Text(view) => view.is_focusable(),
-            ChatInputView::Choice(view) => view.is_focusable(),
-            ChatInputView::Confirm(view) => view.is_focusable(),
-            ChatInputView::Custom(view) => view.is_focusable(),
-        }
-    }
-
-    fn focus_first(&mut self) -> bool {
-        match &mut self.view {
-            ChatInputView::Text(view) => view.focus_first(),
-            ChatInputView::Choice(view) => view.focus_first(),
-            ChatInputView::Confirm(view) => view.focus_first(),
-            ChatInputView::Custom(view) => view.focus_first(),
-        }
-    }
-
-    fn focus_last(&mut self) -> bool {
-        match &mut self.view {
-            ChatInputView::Text(view) => view.focus_last(),
-            ChatInputView::Choice(view) => view.focus_last(),
-            ChatInputView::Confirm(view) => view.focus_last(),
-            ChatInputView::Custom(view) => view.focus_last(),
-        }
-    }
-
+impl ::atto_ui::composable::Layout for ChatInputPanel {
     fn min_width(&self) -> u16 {
         match &self.view {
             ChatInputView::Text(view) => view.min_width(),
@@ -873,6 +838,61 @@ impl Component for ChatInputPanel {
     fn desired_height(&self) -> Option<u16> {
         Some(self.estimated_height_for_mode(&self.mode.get()))
     }
+}
+
+impl ::atto_ui::composable::Scrollable for ChatInputPanel {}
+
+impl ::atto_ui::composable::FocusNav for ChatInputPanel {
+    fn is_focusable(&self) -> bool {
+        match &self.view {
+            ChatInputView::Text(view) => view.is_focusable(),
+            ChatInputView::Choice(view) => view.is_focusable(),
+            ChatInputView::Confirm(view) => view.is_focusable(),
+            ChatInputView::Custom(view) => view.is_focusable(),
+        }
+    }
+
+    fn focus_first(&mut self) -> bool {
+        match &mut self.view {
+            ChatInputView::Text(view) => view.focus_first(),
+            ChatInputView::Choice(view) => view.focus_first(),
+            ChatInputView::Confirm(view) => view.focus_first(),
+            ChatInputView::Custom(view) => view.focus_first(),
+        }
+    }
+
+    fn focus_last(&mut self) -> bool {
+        match &mut self.view {
+            ChatInputView::Text(view) => view.focus_last(),
+            ChatInputView::Choice(view) => view.focus_last(),
+            ChatInputView::Confirm(view) => view.focus_last(),
+            ChatInputView::Custom(view) => view.focus_last(),
+        }
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for ChatInputPanel {}
+
+impl ::atto_ui::composable::EventHandling for ChatInputPanel {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_mode();
+        match &mut self.view {
+            ChatInputView::Text(view) => view.handle_event_capture(event, ctx),
+            ChatInputView::Choice(view) => view.handle_event_capture(event, ctx),
+            ChatInputView::Confirm(view) => view.handle_event_capture(event, ctx),
+            ChatInputView::Custom(view) => view.handle_event_capture(event, ctx),
+        }
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_mode();
+        match &mut self.view {
+            ChatInputView::Text(view) => view.handle_event_bubble(event, ctx),
+            ChatInputView::Choice(view) => view.handle_event_bubble(event, ctx),
+            ChatInputView::Confirm(view) => view.handle_event_bubble(event, ctx),
+            ChatInputView::Custom(view) => view.handle_event_bubble(event, ctx),
+        }
+    }
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.sync_mode();
@@ -889,16 +909,6 @@ impl Component for ChatInputPanel {
 
         res
     }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.sync_mode();
-        match &mut self.view {
-            ChatInputView::Text(view) => view.draw(frame, area, ctx),
-            ChatInputView::Choice(view) => view.draw(frame, area, ctx),
-            ChatInputView::Confirm(view) => view.draw(frame, area, ctx),
-            ChatInputView::Custom(view) => view.draw(frame, area, ctx),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -912,19 +922,13 @@ impl SharedComponent {
     }
 }
 
-impl Component for SharedComponent {
-    fn is_focusable(&self) -> bool {
-        self.inner.lock().unwrap().is_focusable()
+impl ::atto_ui::composable::Component for SharedComponent {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.inner.lock().unwrap().draw(frame, area, ctx)
     }
+}
 
-    fn focus_first(&mut self) -> bool {
-        self.inner.lock().unwrap().focus_first()
-    }
-
-    fn focus_last(&mut self) -> bool {
-        self.inner.lock().unwrap().focus_last()
-    }
-
+impl ::atto_ui::composable::Layout for SharedComponent {
     fn min_width(&self) -> u16 {
         self.inner.lock().unwrap().min_width()
     }
@@ -940,13 +944,29 @@ impl Component for SharedComponent {
     fn desired_height(&self) -> Option<u16> {
         self.inner.lock().unwrap().desired_height()
     }
+}
 
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.inner.lock().unwrap().handle_event(event, ctx)
+impl ::atto_ui::composable::Scrollable for SharedComponent {}
+
+impl ::atto_ui::composable::FocusNav for SharedComponent {
+    fn is_focusable(&self) -> bool {
+        self.inner.lock().unwrap().is_focusable()
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.inner.lock().unwrap().draw(frame, area, ctx)
+    fn focus_first(&mut self) -> bool {
+        self.inner.lock().unwrap().focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.inner.lock().unwrap().focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for SharedComponent {}
+
+impl ::atto_ui::composable::EventHandling for SharedComponent {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.inner.lock().unwrap().handle_event(event, ctx)
     }
 }
 

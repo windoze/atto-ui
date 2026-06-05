@@ -4,7 +4,9 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -176,56 +178,6 @@ impl Slider {
 
 #[component_properties]
 impl Component for Slider {
-    fn min_width(&self) -> u16 {
-        3
-    }
-
-    fn min_height(&self) -> u16 {
-        1
-    }
-
-    fn is_focusable(&self) -> bool {
-        self.enabled.get()
-    }
-
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        if !self.enabled.get() {
-            return EventResult::ignored();
-        }
-
-        match event {
-            Event::Mouse(m) => {
-                if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-                    || matches!(m.kind, MouseEventKind::Drag(MouseButton::Left))
-                {
-                    let Some(area) = self.last_area else {
-                        return EventResult::ignored();
-                    };
-                    return self.set_value_from_mouse(area, *m);
-                }
-                EventResult::ignored()
-            }
-            Event::Key(KeyEvent { code, .. }) => match code {
-                KeyCode::Left => self.adjust_by_step(-self.step.get().abs()),
-                KeyCode::Right => self.adjust_by_step(self.step.get().abs()),
-                KeyCode::Home => {
-                    let (min, _max) = self.normalized_range();
-                    self.set_value_and_emit(min)
-                }
-                KeyCode::End => {
-                    let (_min, max) = self.normalized_range();
-                    self.set_value_and_emit(max)
-                }
-                _ => EventResult::ignored(),
-            },
-            _ => EventResult::ignored(),
-        }
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         if area.width == 0 || area.height == 0 {
@@ -268,6 +220,64 @@ impl Component for Slider {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 }
+
+impl Layout for Slider {
+    fn min_width(&self) -> u16 {
+        3
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+impl FocusNav for Slider {
+    fn is_focusable(&self) -> bool {
+        self.enabled.get()
+    }
+}
+
+impl EventHandling for Slider {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if !self.enabled.get() {
+            return EventResult::ignored();
+        }
+
+        match event {
+            Event::Mouse(m) => {
+                if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+                    || matches!(m.kind, MouseEventKind::Drag(MouseButton::Left))
+                {
+                    let Some(area) = self.last_area else {
+                        return EventResult::ignored();
+                    };
+                    return self.set_value_from_mouse(area, *m);
+                }
+                EventResult::ignored()
+            }
+            Event::Key(KeyEvent { code, .. }) => match code {
+                KeyCode::Left => self.adjust_by_step(-self.step.get().abs()),
+                KeyCode::Right => self.adjust_by_step(self.step.get().abs()),
+                KeyCode::Home => {
+                    let (min, _max) = self.normalized_range();
+                    self.set_value_and_emit(min)
+                }
+                KeyCode::End => {
+                    let (_min, max) = self.normalized_range();
+                    self.set_value_and_emit(max)
+                }
+                _ => EventResult::ignored(),
+            },
+            _ => EventResult::ignored(),
+        }
+    }
+}
+
+crate::impl_component_default_traits!(Slider => Scrollable, DynamicTree);
 
 fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {

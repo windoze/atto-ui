@@ -8,7 +8,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::text::TextBuffer;
@@ -133,6 +135,115 @@ impl TextBox {
 
 #[component_properties]
 impl Component for TextBox {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+        let external = self.binding.get();
+        if external != self.buffer.text() {
+            self.buffer.set_text(external);
+            self.selection_anchor = None;
+            self.scroll = 0;
+        }
+        let enabled = self.enabled.get();
+        let style = if !enabled {
+            ctx.theme.widget.disabled
+        } else if ctx.is_focused {
+            ctx.theme.widget.focused
+        } else {
+            ctx.theme.widget.normal
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(ctx.theme.border_set(false))
+            .title(self.title.get());
+        frame.render_widget(block.border_style(style), area);
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let cursor_col = self.buffer.cursor_display_col();
+        self.adjust_scroll(cursor_col, inner.width);
+        let text = self.buffer.text();
+        let selection = self.selection_range();
+        let placeholder = self
+            .placeholder
+            .as_ref()
+            .map(|binding| binding.get())
+            .filter(|s| !s.is_empty());
+        let line = if text.is_empty() {
+            if let Some(ph) = placeholder {
+                let placeholder_style = if enabled {
+                    ctx.theme.widget.dim
+                } else {
+                    ctx.theme.widget.disabled
+                };
+                Line::from(vec![Span::styled(
+                    slice_by_width(&ph, 0, inner.width),
+                    placeholder_style,
+                )])
+            } else {
+                Line::raw("")
+            }
+        } else {
+            build_visible_line(
+                text,
+                self.scroll,
+                inner.width,
+                style,
+                ctx.theme.selection,
+                selection,
+            )
+        };
+        frame.render_widget(Paragraph::new(line).style(style), inner);
+
+        if !text.is_empty() {
+            let content_width = display_width(text);
+            if self.scroll > 0 {
+                draw_indicator(
+                    frame,
+                    inner.x,
+                    inner.y,
+                    ctx.theme
+                        .glyph("scrollbar-left-arrow")
+                        .unwrap_or("\u{25C4}"),
+                    ctx.theme.widget.accent,
+                );
+            }
+            if content_width > self.scroll.saturating_add(inner.width) {
+                let x = inner.x.saturating_add(inner.width.saturating_sub(1));
+                draw_indicator(
+                    frame,
+                    x,
+                    inner.y,
+                    ctx.theme
+                        .glyph("scrollbar-right-arrow")
+                        .unwrap_or("\u{25BA}"),
+                    ctx.theme.widget.accent,
+                );
+            }
+        }
+
+        if ctx.is_focused {
+            let x = inner
+                .x
+                .saturating_add(cursor_col.saturating_sub(self.scroll).min(inner.width - 1));
+            let y = inner.y;
+            frame.set_cursor_position((x, y));
+        }
+    }
+}
+
+impl Layout for TextBox {
     fn min_width(&self) -> u16 {
         3
     }
@@ -141,14 +252,18 @@ impl Component for TextBox {
         3
     }
 
-    fn is_focusable(&self) -> bool {
-        self.enabled.get()
-    }
-
     fn desired_height(&self) -> Option<u16> {
         Some(3)
     }
+}
 
+impl FocusNav for TextBox {
+    fn is_focusable(&self) -> bool {
+        self.enabled.get()
+    }
+}
+
+impl EventHandling for TextBox {
     fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
@@ -350,114 +465,9 @@ impl Component for TextBox {
             _ => EventResult::ignored(),
         }
     }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        if area.height == 0 || area.width == 0 {
-            return;
-        }
-        let external = self.binding.get();
-        if external != self.buffer.text() {
-            self.buffer.set_text(external);
-            self.selection_anchor = None;
-            self.scroll = 0;
-        }
-        let enabled = self.enabled.get();
-        let style = if !enabled {
-            ctx.theme.widget.disabled
-        } else if ctx.is_focused {
-            ctx.theme.widget.focused
-        } else {
-            ctx.theme.widget.normal
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(self.title.get());
-        frame.render_widget(block.border_style(style), area);
-
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
-        };
-        if inner.width == 0 || inner.height == 0 {
-            return;
-        }
-
-        let cursor_col = self.buffer.cursor_display_col();
-        self.adjust_scroll(cursor_col, inner.width);
-        let text = self.buffer.text();
-        let selection = self.selection_range();
-        let placeholder = self
-            .placeholder
-            .as_ref()
-            .map(|binding| binding.get())
-            .filter(|s| !s.is_empty());
-        let line = if text.is_empty() {
-            if let Some(ph) = placeholder {
-                let placeholder_style = if enabled {
-                    ctx.theme.widget.dim
-                } else {
-                    ctx.theme.widget.disabled
-                };
-                Line::from(vec![Span::styled(
-                    slice_by_width(&ph, 0, inner.width),
-                    placeholder_style,
-                )])
-            } else {
-                Line::raw("")
-            }
-        } else {
-            build_visible_line(
-                text,
-                self.scroll,
-                inner.width,
-                style,
-                ctx.theme.selection,
-                selection,
-            )
-        };
-        frame.render_widget(Paragraph::new(line).style(style), inner);
-
-        if !text.is_empty() {
-            let content_width = display_width(text);
-            if self.scroll > 0 {
-                draw_indicator(
-                    frame,
-                    inner.x,
-                    inner.y,
-                    ctx.theme
-                        .glyph("scrollbar-left-arrow")
-                        .unwrap_or("\u{25C4}"),
-                    ctx.theme.widget.accent,
-                );
-            }
-            if content_width > self.scroll.saturating_add(inner.width) {
-                let x = inner.x.saturating_add(inner.width.saturating_sub(1));
-                draw_indicator(
-                    frame,
-                    x,
-                    inner.y,
-                    ctx.theme
-                        .glyph("scrollbar-right-arrow")
-                        .unwrap_or("\u{25BA}"),
-                    ctx.theme.widget.accent,
-                );
-            }
-        }
-
-        if ctx.is_focused {
-            let x = inner
-                .x
-                .saturating_add(cursor_col.saturating_sub(self.scroll).min(inner.width - 1));
-            let y = inner.y;
-            frame.set_cursor_position((x, y));
-        }
-    }
 }
+
+crate::impl_component_default_traits!(TextBox => Scrollable, DynamicTree);
 
 impl TextBox {
     fn aligned_cursor_byte_index(&self) -> usize {

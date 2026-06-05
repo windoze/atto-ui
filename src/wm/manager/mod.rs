@@ -176,7 +176,8 @@ mod tests {
     use super::WindowManager;
     use super::draw::draw_shadow;
     use crate::composable::{
-        Component, ComponentContext, EventResult, Label, ScrollConfig, ScrollbarVisibility,
+        Component, ComponentContext, EventHandling, EventResult, Label, Layout, ScrollConfig,
+        Scrollable, ScrollbarVisibility,
     };
     use crate::theme::Theme;
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
@@ -197,16 +198,25 @@ mod tests {
 
     impl Component for DummyView {
         fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for DummyView {
         fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
             EventResult::ignored()
         }
     }
+
+    crate::impl_component_default_traits!(DummyView => Layout, Scrollable, FocusNav, DynamicTree);
 
     struct MinSizeView {
         min: (u16, u16),
     }
 
     impl Component for MinSizeView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl Layout for MinSizeView {
         fn min_width(&self) -> u16 {
             self.min.0
         }
@@ -214,9 +224,9 @@ mod tests {
         fn min_height(&self) -> u16 {
             self.min.1
         }
-
-        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
     }
+
+    crate::impl_component_default_traits!(MinSizeView => Scrollable, FocusNav, DynamicTree, EventHandling);
 
     #[test]
     fn window_manager_can_replace_view() {
@@ -529,6 +539,12 @@ mod tests {
         }
 
         impl Component for ScrollableDummyView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+                self.viewport = (area.width, area.height);
+            }
+        }
+
+        impl Scrollable for ScrollableDummyView {
             fn is_scrollable(&self) -> bool {
                 true
             }
@@ -550,11 +566,9 @@ mod tests {
                     .vertical_scrollbar(ScrollbarVisibility::Always)
                     .horizontal_scrollbar(ScrollbarVisibility::Always)
             }
-
-            fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
-                self.viewport = (area.width, area.height);
-            }
         }
+
+        crate::impl_component_default_traits!(ScrollableDummyView => Layout, FocusNav, DynamicTree, EventHandling);
 
         let bounds = Rect {
             x: 0,
@@ -788,10 +802,6 @@ mod tests {
         }
 
         impl Component for UnderlayView {
-            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-                EventResult::ignored()
-            }
-
             fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
                 let (x, y) = self.target;
                 if x >= area.x
@@ -805,16 +815,28 @@ mod tests {
             }
         }
 
+        impl EventHandling for UnderlayView {
+            fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+                EventResult::ignored()
+            }
+        }
+
+        crate::impl_component_default_traits!(UnderlayView => Layout, Scrollable, FocusNav, DynamicTree);
+
         #[derive(Default)]
         struct OverlayView;
 
         impl Component for OverlayView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for OverlayView {
             fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
                 EventResult::ignored()
             }
-
-            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
         }
+
+        crate::impl_component_default_traits!(OverlayView => Layout, Scrollable, FocusNav, DynamicTree);
 
         let theme = Theme::dark();
         let bounds = Rect::new(0, 0, 30, 10);

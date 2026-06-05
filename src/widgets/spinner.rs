@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::event::Event;
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -10,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use crate::composable::{Component, ComponentContext, EventResult};
+use crate::composable::{Component, ComponentContext, Layout};
 use crate::reactive::{Binding, TimerHandle, cancel_timer, register_timer_with_duration};
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -327,35 +326,6 @@ impl Component for Spinner {
         self.__component_set_property(name, value)
     }
 
-    fn is_focusable(&self) -> bool {
-        false
-    }
-
-    fn handle_event(&mut self, _event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn desired_height(&self) -> Option<u16> {
-        Some(1)
-    }
-
-    fn desired_width(&self) -> Option<u16> {
-        let state = self.state.read();
-        let icon_width = state
-            .icon_frames
-            .iter()
-            .map(|frame| frame.width())
-            .max()
-            .unwrap_or(0);
-        let text_width = state.text.get().width();
-        let spacing = if icon_width > 0 && text_width > 0 {
-            state.spacing as usize
-        } else {
-            0
-        };
-        Some((icon_width + spacing + text_width).min(u16::MAX as usize) as u16)
-    }
-
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         if area.width == 0 || area.height == 0 {
             return;
@@ -409,6 +379,31 @@ impl Component for Spinner {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 }
+
+impl Layout for Spinner {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        let state = self.state.read();
+        let icon_width = state
+            .icon_frames
+            .iter()
+            .map(|frame| frame.width())
+            .max()
+            .unwrap_or(0);
+        let text_width = state.text.get().width();
+        let spacing = if icon_width > 0 && text_width > 0 {
+            state.spacing as usize
+        } else {
+            0
+        };
+        Some((icon_width + spacing + text_width).min(u16::MAX as usize) as u16)
+    }
+}
+
+crate::impl_component_default_traits!(Spinner => Scrollable, FocusNav, DynamicTree, EventHandling);
 
 impl SpinnerIconStyle {
     fn frames(&self) -> Vec<String> {

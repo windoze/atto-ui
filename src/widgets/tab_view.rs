@@ -9,8 +9,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::ComponentCommand;
 use crate::composable::{
-    Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
-    ScrollbarHost,
+    Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
+    EventResult, FocusNav, Layout, ScrollConfig, Scrollable, ScrollbarHost,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -493,10 +493,6 @@ fn draw_marker(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &str, style: Style
 
 #[component_properties]
 impl Component for TabView {
-    fn focused_child(&self) -> Option<ComponentId> {
-        self.focused
-    }
-
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::SelectIndex(idx) => self.set_selection(idx),
@@ -504,42 +500,92 @@ impl Component for TabView {
         }
     }
 
-    fn is_focusable(&self) -> bool {
-        self.selected()
-            .and_then(|idx| self.children.get(idx))
-            .is_some_and(|c| c.view.is_focusable())
-    }
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        let selected = self.normalize_selection();
 
-    fn focus_first(&mut self) -> bool {
-        let Some(idx) = self.selected() else {
-            self.focused = None;
-            return false;
-        };
-        let child = &mut self.children[idx];
-        if !child.view.is_focusable() {
-            self.focused = None;
-            return false;
+        let position = self.header_position.get();
+        let (header_abs, content_abs) = Self::header_and_content(area, position);
+
+        if header_abs.height > 0 && header_abs.width > 0 {
+            let (line, ranges, total_width) = self.build_header_line(ctx, selected);
+            let header_width = header_abs.width;
+            self.clamp_header_scroll(total_width, header_width);
+
+            let visible = if total_width > header_width {
+                slice_spans(&line, self.header_scroll, header_width)
+            } else {
+                line
+            };
+
+            let base_style = ctx
+                .theme
+                .named_style("tab-header")
+                .unwrap_or(ctx.theme.widget.normal);
+            let paragraph = Paragraph::new(Line::from(visible)).style(base_style);
+            frame.render_widget(paragraph, header_abs);
+
+            let overflow_left = self.header_scroll > 0;
+            let overflow_right = self.header_scroll.saturating_add(header_width) < total_width;
+            let marker_style = ctx
+                .theme
+                .named_style("tab-title-marker")
+                .or_else(|| ctx.theme.named_style("scrollbar-arrow"))
+                .unwrap_or(ctx.theme.widget.accent);
+
+            if overflow_left {
+                let symbol = ctx
+                    .theme
+                    .glyph("scrollbar-left-arrow")
+                    .unwrap_or("\u{25C4}");
+                draw_marker(frame, header_abs.x, header_abs.y, symbol, marker_style);
+            }
+            if overflow_right {
+                let symbol = ctx
+                    .theme
+                    .glyph("scrollbar-right-arrow")
+                    .unwrap_or("\u{25BA}");
+                let x = header_abs.x.saturating_add(header_width.saturating_sub(1));
+                draw_marker(frame, x, header_abs.y, symbol, marker_style);
+            }
+
+            self.last_header = Some(HeaderLayout {
+                tab_ranges: ranges,
+                total_width,
+            });
+        } else {
+            self.last_header = None;
         }
-        self.focused = Some(child.id);
-        let _ = child.view.focus_first();
-        true
-    }
 
-    fn focus_last(&mut self) -> bool {
-        let Some(idx) = self.selected() else {
-            self.focused = None;
-            return false;
-        };
-        let child = &mut self.children[idx];
-        if !child.view.is_focusable() {
-            self.focused = None;
-            return false;
+        if let Some(idx) = selected
+            && let Some(child) = self.children.get_mut(idx)
+        {
+            child.set_bounds(content_abs);
+            if child.view.is_focusable() {
+                self.focused = Some(child.id);
+            } else {
+                self.focused = None;
+            }
+
+            if content_abs.width > 0 && content_abs.height > 0 {
+                let child_ctx = ComponentContext {
+                    theme: ctx.theme,
+                    window_id: ctx.window_id,
+                    is_focused: ctx.is_focused && self.focused == Some(child.id),
+                    scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                        ScrollbarHost::Window
+                    } else {
+                        ctx.scrollbar_host.for_child()
+                    },
+                    tab_mode: ctx.tab_mode.for_child(),
+                };
+                child.view.draw(frame, content_abs, child_ctx);
+            }
         }
-        self.focused = Some(child.id);
-        let _ = child.view.focus_last();
-        true
     }
+}
 
+impl Layout for TabView {
     fn min_width(&self) -> u16 {
         let header = self.header_min_width();
         let child = self
@@ -578,15 +624,9 @@ impl Component for TabView {
             .and_then(|c| c.view.desired_height())?;
         Some(header.saturating_add(child))
     }
+}
 
-    fn children(&self) -> &[ComponentNode] {
-        &self.children
-    }
-
-    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
-        Some(&mut self.children)
-    }
-
+impl Scrollable for TabView {
     fn is_scrollable(&self) -> bool {
         self.selected()
             .and_then(|idx| self.children.get(idx))
@@ -632,7 +672,61 @@ impl Component for TabView {
             child.view.scroll_to_child(child_id);
         }
     }
+}
 
+impl FocusNav for TabView {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.focused
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.selected()
+            .and_then(|idx| self.children.get(idx))
+            .is_some_and(|c| c.view.is_focusable())
+    }
+
+    fn focus_first(&mut self) -> bool {
+        let Some(idx) = self.selected() else {
+            self.focused = None;
+            return false;
+        };
+        let child = &mut self.children[idx];
+        if !child.view.is_focusable() {
+            self.focused = None;
+            return false;
+        }
+        self.focused = Some(child.id);
+        let _ = child.view.focus_first();
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        let Some(idx) = self.selected() else {
+            self.focused = None;
+            return false;
+        };
+        let child = &mut self.children[idx];
+        if !child.view.is_focusable() {
+            self.focused = None;
+            return false;
+        }
+        self.focused = Some(child.id);
+        let _ = child.view.focus_last();
+        true
+    }
+}
+
+impl DynamicTree for TabView {
+    fn children(&self) -> &[ComponentNode] {
+        &self.children
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        Some(&mut self.children)
+    }
+}
+
+impl EventHandling for TabView {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.normalize_selection();
         let Some(area) = self.last_area else {
@@ -759,89 +853,5 @@ impl Component for TabView {
         }
 
         EventResult::ignored()
-    }
-
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        let selected = self.normalize_selection();
-
-        let position = self.header_position.get();
-        let (header_abs, content_abs) = Self::header_and_content(area, position);
-
-        if header_abs.height > 0 && header_abs.width > 0 {
-            let (line, ranges, total_width) = self.build_header_line(ctx, selected);
-            let header_width = header_abs.width;
-            self.clamp_header_scroll(total_width, header_width);
-
-            let visible = if total_width > header_width {
-                slice_spans(&line, self.header_scroll, header_width)
-            } else {
-                line
-            };
-
-            let base_style = ctx
-                .theme
-                .named_style("tab-header")
-                .unwrap_or(ctx.theme.widget.normal);
-            let paragraph = Paragraph::new(Line::from(visible)).style(base_style);
-            frame.render_widget(paragraph, header_abs);
-
-            let overflow_left = self.header_scroll > 0;
-            let overflow_right = self.header_scroll.saturating_add(header_width) < total_width;
-            let marker_style = ctx
-                .theme
-                .named_style("tab-title-marker")
-                .or_else(|| ctx.theme.named_style("scrollbar-arrow"))
-                .unwrap_or(ctx.theme.widget.accent);
-
-            if overflow_left {
-                let symbol = ctx
-                    .theme
-                    .glyph("scrollbar-left-arrow")
-                    .unwrap_or("\u{25C4}");
-                draw_marker(frame, header_abs.x, header_abs.y, symbol, marker_style);
-            }
-            if overflow_right {
-                let symbol = ctx
-                    .theme
-                    .glyph("scrollbar-right-arrow")
-                    .unwrap_or("\u{25BA}");
-                let x = header_abs.x.saturating_add(header_width.saturating_sub(1));
-                draw_marker(frame, x, header_abs.y, symbol, marker_style);
-            }
-
-            self.last_header = Some(HeaderLayout {
-                tab_ranges: ranges,
-                total_width,
-            });
-        } else {
-            self.last_header = None;
-        }
-
-        if let Some(idx) = selected
-            && let Some(child) = self.children.get_mut(idx)
-        {
-            child.set_bounds(content_abs);
-            if child.view.is_focusable() {
-                self.focused = Some(child.id);
-            } else {
-                self.focused = None;
-            }
-
-            if content_abs.width > 0 && content_abs.height > 0 {
-                let child_ctx = ComponentContext {
-                    theme: ctx.theme,
-                    window_id: ctx.window_id,
-                    is_focused: ctx.is_focused && self.focused == Some(child.id),
-                    scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                        ScrollbarHost::Window
-                    } else {
-                        ctx.scrollbar_host.for_child()
-                    },
-                    tab_mode: ctx.tab_mode.for_child(),
-                };
-                child.view.draw(frame, content_abs, child_ctx);
-            }
-        }
     }
 }
