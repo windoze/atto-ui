@@ -98,8 +98,8 @@ struct WidgetsView {
 }
 
 impl WidgetsView {
-    fn new() -> Self {
-        let text = Property::new("hello".to_string());
+    fn new(initial_text: impl Into<String>) -> Self {
+        let text = Property::new(initial_text.into());
         let enable_feature = Property::new(true);
         let mode = Property::new(0usize);
         let list_selection = Property::new(0usize);
@@ -261,6 +261,11 @@ fn main() -> Result<()> {
     let mut status_fixture = std::env::args()
         .skip(1)
         .find_map(|arg| StatusFixture::from_arg(&arg));
+    let textbox_initial_text = if std::env::args().any(|arg| arg == "--textbox-unicode") {
+        "a你b好c"
+    } else {
+        "hello"
+    };
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -331,7 +336,7 @@ fn main() -> Result<()> {
                 width: 42,
                 height: 20,
             },
-            Box::new(WidgetsView::new()),
+            Box::new(WidgetsView::new(textbox_initial_text)),
         ),
         screen,
     );

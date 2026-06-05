@@ -35,6 +35,22 @@ impl TextBuffer {
         self.cursor
     }
 
+    /// Returns the nearest grapheme start at or before `byte`.
+    pub fn align_to_grapheme_boundary(&self, byte: usize) -> usize {
+        if byte >= self.text.len() {
+            return self.text.len();
+        }
+
+        let mut aligned = 0;
+        for (byte_idx, _) in self.text.grapheme_indices(true) {
+            if byte_idx > byte {
+                break;
+            }
+            aligned = byte_idx;
+        }
+        aligned
+    }
+
     pub fn set_cursor_byte_index(&mut self, idx: usize) {
         self.cursor = idx.min(self.text.len());
         self.clamp_cursor();
@@ -196,6 +212,27 @@ mod tests {
         assert_eq!(&b.text()[..b.cursor_byte_index()], "a👩‍💻");
         b.move_right();
         assert_eq!(b.cursor_byte_index(), b.text().len());
+    }
+
+    #[test]
+    fn align_to_grapheme_boundary_handles_edges_and_middle_bytes() {
+        let b = TextBuffer::with_text("a你👩‍💻b");
+        let cjk_start = "a".len();
+        let emoji_start = "a你".len();
+
+        assert_eq!(b.align_to_grapheme_boundary(0), 0);
+        assert_eq!(b.align_to_grapheme_boundary(b.text().len()), b.text().len());
+        assert_eq!(b.align_to_grapheme_boundary(cjk_start + 1), cjk_start);
+        assert_eq!(b.align_to_grapheme_boundary(emoji_start + 3), emoji_start);
+        assert_eq!(b.align_to_grapheme_boundary(usize::MAX), b.text().len());
+    }
+
+    #[test]
+    fn align_to_grapheme_boundary_handles_empty_text() {
+        let b = TextBuffer::new();
+
+        assert_eq!(b.align_to_grapheme_boundary(0), 0);
+        assert_eq!(b.align_to_grapheme_boundary(42), 0);
     }
 
     #[test]

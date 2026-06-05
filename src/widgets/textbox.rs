@@ -196,19 +196,19 @@ impl Component for TextBox {
                             return EventResult::consumed();
                         }
 
-                        let cursor_before = self.buffer.cursor_byte_index();
+                        let cursor_before = self.aligned_cursor_byte_index();
                         self.buffer.set_cursor_display_col(col);
                         let anchor = if m.modifiers.contains(KeyModifiers::SHIFT) {
                             self.selection_anchor.unwrap_or(cursor_before)
                         } else {
-                            self.buffer.cursor_byte_index()
+                            self.aligned_cursor_byte_index()
                         };
-                        self.selection_anchor = Some(anchor);
+                        self.set_selection_anchor(anchor);
                         EventResult::consumed()
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
                         if self.selection_anchor.is_none() {
-                            self.selection_anchor = Some(self.buffer.cursor_byte_index());
+                            self.set_selection_anchor(self.aligned_cursor_byte_index());
                         }
                         self.buffer.set_cursor_display_col(col);
                         EventResult::consumed()
@@ -460,6 +460,15 @@ impl Component for TextBox {
 }
 
 impl TextBox {
+    fn aligned_cursor_byte_index(&self) -> usize {
+        self.buffer
+            .align_to_grapheme_boundary(self.buffer.cursor_byte_index())
+    }
+
+    fn set_selection_anchor(&mut self, byte: usize) {
+        self.selection_anchor = Some(self.buffer.align_to_grapheme_boundary(byte));
+    }
+
     fn adjust_scroll(&mut self, cursor_col: u16, width: u16) {
         if width == 0 {
             self.scroll = 0;
@@ -473,8 +482,10 @@ impl TextBox {
     }
 
     fn selection_range(&self) -> Option<(usize, usize)> {
-        let anchor = self.selection_anchor?;
-        let cursor = self.buffer.cursor_byte_index();
+        let anchor = self
+            .buffer
+            .align_to_grapheme_boundary(self.selection_anchor?);
+        let cursor = self.aligned_cursor_byte_index();
         if anchor == cursor {
             return None;
         }
@@ -483,7 +494,7 @@ impl TextBox {
 
     fn ensure_selection_anchor(&mut self) {
         if self.selection_anchor.is_none() {
-            self.selection_anchor = Some(self.buffer.cursor_byte_index());
+            self.set_selection_anchor(self.aligned_cursor_byte_index());
         }
     }
 
@@ -508,11 +519,12 @@ impl TextBox {
             return false;
         };
         let mut text = self.buffer.text().to_string();
+        let start = self.buffer.align_to_grapheme_boundary(start);
+        let end = self.buffer.align_to_grapheme_boundary(end).min(text.len());
         if start >= end || start >= text.len() {
             self.selection_anchor = None;
             return false;
         }
-        let end = end.min(text.len());
         text.replace_range(start..end, "");
         self.buffer.set_text(text);
         self.buffer.set_cursor_byte_index(start);
@@ -536,7 +548,7 @@ impl TextBox {
 
     fn select_all(&mut self) {
         let len = self.buffer.text().len();
-        self.selection_anchor = Some(0);
+        self.set_selection_anchor(0);
         self.buffer.set_cursor_byte_index(len);
     }
 
@@ -569,7 +581,7 @@ impl TextBox {
         let Some((start, end)) = word_range_at(text, byte_idx) else {
             return false;
         };
-        self.selection_anchor = Some(start);
+        self.set_selection_anchor(start);
         self.buffer.set_cursor_byte_index(end);
         true
     }

@@ -86,7 +86,7 @@
 - 复核 T2 原测试：目标父不存在、目标父为 `TabView`、正常移动到指定 index 均覆盖并通过。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test -p atto-ui-runtime tree_ops_move`；`cargo test component_tree_incremental_move --lib`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T3 — TextBox 选区锚点 grapheme 对齐（S4）
+### [DONE] T3 — TextBox 选区锚点 grapheme 对齐（S4）
 **文件**：`src/widgets/textbox.rs`、`src/text/buffer.rs`
 **相关符号**：textbox `selection_anchor` 写入点 202/204/206/211、`selection_range`(475)、`delete_selection`(506-519)、`cursor_byte_index`；buffer `set_cursor_display_col`(48-63)。
 **现状**：`set_cursor_display_col` 会对齐到 grapheme 起始字节，但 Shift+点击的 `cursor_before`(199) 与 Drag 初始化(211) 直接存任意 byte index。`selection_range` 按字节取 min/max，`delete_selection` 用 `replace_range(start..end)` 可能切在 grapheme 内部 → panic/乱码。
@@ -101,6 +101,13 @@
 - 用例 A：Shift+点击宽字符右半格 → Delete → 断言不 panic 且删除完整字符。
 - 用例 B：Drag 选区跨宽字符 → Delete → 断言内容正确。
 **验收**：用例通过；模糊点击 CJK/emoji 不再 panic。
+
+**完成记录（2026-06-06）**：
+- `TextBuffer` 新增 `align_to_grapheme_boundary`，按 `grapheme_indices(true)` 将任意 byte offset 对齐到不大于该位置的 grapheme 起始边界，并覆盖空字符串、0、len、CJK/emoji 内部 byte 与超大 offset。
+- `TextBox` 的 `selection_anchor` 写入统一收敛到边界对齐 helper；`selection_range` 与 `delete_selection` 也做防御性对齐，避免 `replace_range` 切入 grapheme 内部。
+- `snapshot_app` 新增 `--textbox-unicode` fixture，默认行为保持 `hello` 不变，测试 fixture 使用 `a你b好c`。
+- `atto-ui-test-host` 新增 `shift_click`，新增 `tests/pty_textbox_selection.rs` 覆盖 Shift+点击 CJK 右半格后 Delete、拖拽跨 CJK 后 Delete，断言删除完整 grapheme 范围且不 panic。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test align_to_grapheme_boundary --lib`；`cargo test --test pty_textbox_selection`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R3 — 审阅 T3
 审阅 T3 改动：

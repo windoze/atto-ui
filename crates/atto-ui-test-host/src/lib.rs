@@ -114,6 +114,19 @@ impl PtyTestHost {
         Ok(())
     }
 
+    /// Sends a Shift + left mouse click using xterm SGR mouse encoding.
+    ///
+    /// Coordinates are **0-based** to match Crossterm's `MouseEvent` positions.
+    pub fn shift_click(&mut self, x: u16, y: u16) -> Result<()> {
+        let x1 = x.saturating_add(1);
+        let y1 = y.saturating_add(1);
+        let press = format!("\x1b[<4;{x1};{y1}M");
+        let release = format!("\x1b[<4;{x1};{y1}m");
+        self.send_str(&press)?;
+        self.send_str(&release)?;
+        Ok(())
+    }
+
     /// Sends a mouse wheel scroll event using xterm SGR mouse encoding.
     ///
     /// Coordinates are **0-based** to match Crossterm's `MouseEvent` positions.
