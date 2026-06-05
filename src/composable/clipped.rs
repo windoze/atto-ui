@@ -258,3 +258,71 @@ fn copy_visible_cursor(frame: &mut Frame<'_>, cursor: Position, source: Rect, de
         frame.set_cursor_position((x, y));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrolled_region_clips_child_above_viewport() {
+        let region = scrolled_region(
+            Rect::new(0, 0, 12, 40),
+            ScrollOffset { x: 0, y: 5 },
+            (12, 8),
+            Rect::new(3, 4, 12, 8),
+        )
+        .expect("tall child intersects viewport");
+
+        assert_eq!(region.source, Rect::new(0, 5, 12, 8));
+        assert_eq!(region.dest, Rect::new(3, 4, 12, 8));
+    }
+
+    #[test]
+    fn scrolled_region_clips_child_left_of_viewport() {
+        let region = scrolled_region(
+            Rect::new(2, 1, 10, 4),
+            ScrollOffset { x: 5, y: 0 },
+            (8, 6),
+            Rect::new(10, 2, 8, 6),
+        )
+        .expect("wide child intersects viewport");
+
+        assert_eq!(region.source, Rect::new(3, 0, 7, 4));
+        assert_eq!(region.dest, Rect::new(10, 3, 7, 4));
+    }
+
+    #[test]
+    fn scrolled_region_rejects_touching_edges() {
+        assert_eq!(
+            scrolled_region(
+                Rect::new(0, 0, 10, 5),
+                ScrollOffset { x: 0, y: 5 },
+                (10, 5),
+                Rect::new(0, 0, 10, 5),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn scrolled_region_rejects_empty_regions() {
+        assert_eq!(
+            scrolled_region(
+                Rect::new(0, 0, 0, 5),
+                ScrollOffset::ZERO,
+                (10, 5),
+                Rect::new(0, 0, 10, 5),
+            ),
+            None,
+        );
+        assert_eq!(
+            scrolled_region(
+                Rect::new(0, 0, 10, 5),
+                ScrollOffset::ZERO,
+                (0, 5),
+                Rect::new(0, 0, 0, 5),
+            ),
+            None,
+        );
+    }
+}

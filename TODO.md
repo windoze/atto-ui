@@ -153,13 +153,21 @@
 - `tests/pty_scrolling.rs` 新增长子项滚动可见与部分可见点击命中测试；现有滚动条、键盘、鼠标滚轮测试保持通过。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R4 — 审阅 T4
+### [DONE] R4 — 审阅 T4
 审阅 T4 改动：
 - 确认相交测试与裁剪逻辑正确，尤其「子项顶部滚出视口」时 `abs.y`/`height` 计算无 off-by-one、无 saturating 归零错位。
 - 目视 demo 滚动演示，确认部分可见内容正确裁剪显示、不覆盖滚动条与边框。
 - 确认命中测试与渲染裁剪坐标系一致。
 - 检查是否遗漏 grid 容器同类问题（`grid/events.rs:169`），如有应一并修或单列任务说明。
 - 运行 `cargo test` + demo 目视。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/composable/clipped.rs`：`scrolled_region` 使用半开区间求交，子项顶部/左侧滚出视口时 `source` 与 `dest` 坐标保持一致，不再依赖 `saturating_sub` 将负向偏移归零。
+- 审阅 `src/composable/stack/scrollbars.rs`、`src/composable/stack/events.rs`：绘制和命中均使用相同的相交/裁剪坐标系，部分可见子项命中后会按 `scroll` 映射为 child-local 鼠标坐标。
+- 审阅 `src/composable/grid/scrollbars.rs`、`src/composable/grid/events.rs`：grid 路径已同步使用共享裁剪 helper 与相交命中逻辑，未遗漏同类问题。
+- 补充 `scrolled_region` 单元测试，覆盖子项顶部滚出、左侧滚出、边界相切不相交、零尺寸区域拒绝，固定 off-by-one 与坐标映射风险。
+- demo 检查：以 100x30 伪终端运行 `cargo run --example demo`，打开滚动 demo，确认滚动内容可见并可正常退出。
+- 验证：`cargo fmt`；`cargo test scrolled_region --lib`；`cargo test --test pty_scrolling`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T5 — 删除 cache + Observable 死代码（M4 + M5）
 **文件**：`src/cache/`（整目录）、`src/lib.rs:6`、`src/reactive/observable.rs`、`src/reactive/mod.rs:7,13`
