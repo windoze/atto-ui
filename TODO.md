@@ -49,7 +49,7 @@
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test status_line`；`cargo test --test pty_status_bar`；`cargo test --all --all-targets` 全部通过。
 - demo 检查：以 100x30 伪终端运行 `cargo run --example demo`，确认示例绘制状态栏并可用 `q` 正常退出。
 
-### [TODO] T2 — 修复 `move_node` 重插入失败丢节点（S2）
+### [DONE] T2 — 修复 `move_node` 重插入失败丢节点（S2）
 **文件**：`src/runtime/mod.rs`
 **相关符号**：`move_node`(644-653)、`take_node`(655-675)、`insert_existing_node`(677-709)、`is_tab_view`(519)、`apply_tree_ops` 中 `TreeOp::Move`(307-322)。
 **现状**：`move_node` 先 `take_node` 摘出节点，再 `insert_existing_node`；若目标父不存在或为 TabView，`node` 在返回后被 drop → 节点永久丢失。`TreeOp::Move`(317) 调用失败时走 `rebuild()`，但此时树已被 `take_node` 破坏。
@@ -63,6 +63,13 @@
 - 用例 B：Move 到 TabView 类型父 → 断言失败且节点未丢失。
 - 用例 C：正常 Move → 断言节点出现在新父指定 index。
 **验收**：三用例通过；现有动态注册/tree-ops 测试不回归。
+
+**完成记录（2026-06-06）**：
+- `move_node` 新增 `can_insert_into` 预校验，目标父不存在或为 `TabView` 时会在摘除节点前直接返回失败。
+- `take_node` 现在记录原父路径与原索引；若后续插入未消费节点，会把节点恢复回原位置并返回失败，避免失败路径 drop 节点。
+- `TreeOp::Move` 调用处补充注释，明确 `move_node` 失败时视图树保持完整，触发 rebuild 仍安全。
+- 新增三条 runtime 单元测试覆盖：移动到不存在父节点、移动到 `TabView` 父节点、正常移动到指定 index。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R2 — 审阅 T2
 审阅 T2 改动：

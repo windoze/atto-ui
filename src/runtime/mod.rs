@@ -314,6 +314,7 @@ impl ComponentTree {
                             "cannot move root node".to_string(),
                         ));
                     }
+                    // `move_node` keeps the view tree intact on failure, so rebuilding remains safe.
                     if !move_node(self.view.as_mut(), id, new_parent_id, *index) {
                         self.rebuild()?;
                         return Ok(true);
@@ -523,6 +524,22 @@ fn is_tab_view(view: &dyn Component) -> bool {
         .is_some_and(|name| name == "TabView")
 }
 
+fn can_insert_into(view: &dyn Component, parent_id: &str) -> bool {
+    if view.tag() == Some(parent_id) {
+        return !is_tab_view(view);
+    }
+
+    view.children()
+        .iter()
+        .any(|child| can_insert_into(child.view.as_ref(), parent_id))
+}
+
+struct TakenNode {
+    node: ComponentNode,
+    parent_path: Vec<usize>,
+    index: usize,
+}
+
 fn find_child_spec_by_id<'a>(root: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpecChild> {
     for child in &root.children {
         if child.node.id.as_deref() == Some(id) {
@@ -642,17 +659,42 @@ fn remove_node(view: &mut dyn Component, id: &str) -> bool {
 }
 
 fn move_node(view: &mut dyn Component, id: &str, new_parent_id: &str, index: usize) -> bool {
-    let Some(node) = take_node(view, id) else {
+    if !can_insert_into(view, new_parent_id) {
+        return false;
+    }
+
+    let Some(taken) = take_node(view, id) else {
         return false;
     };
-    let mut node = Some(node);
-    if insert_existing_node(view, new_parent_id, index, &mut node) {
-        return node.is_none();
+    let restore_path = taken.parent_path;
+    let restore_index = taken.index;
+    let mut node = Some(taken.node);
+    let inserted = insert_existing_node(view, new_parent_id, index, &mut node);
+    debug_assert_eq!(inserted, node.is_none());
+    if inserted && node.is_none() {
+        return true;
     }
+
+    if let Some(node) = node {
+        let restored = restore_node(view, &restore_path, restore_index, node).is_ok();
+        debug_assert!(
+            restored,
+            "failed to restore node after move insertion failure"
+        );
+    }
+
     false
 }
 
-fn take_node(view: &mut dyn Component, id: &str) -> Option<ComponentNode> {
+fn take_node(view: &mut dyn Component, id: &str) -> Option<TakenNode> {
+    take_node_at_path(view, id, &mut Vec::new())
+}
+
+fn take_node_at_path(
+    view: &mut dyn Component,
+    id: &str,
+    parent_path: &mut Vec<usize>,
+) -> Option<TakenNode> {
     let tab_view = is_tab_view(view);
     let children = view.children_mut()?;
     if !tab_view {
@@ -660,18 +702,45 @@ fn take_node(view: &mut dyn Component, id: &str) -> Option<ComponentNode> {
             .iter()
             .position(|child| child.view.tag() == Some(id))
         {
-            return Some(children.remove(idx));
+            return Some(TakenNode {
+                node: children.remove(idx),
+                parent_path: parent_path.clone(),
+                index: idx,
+            });
         }
     } else if children.iter().any(|child| child.view.tag() == Some(id)) {
         return None;
     }
 
-    for child in children.iter_mut() {
-        if let Some(found) = take_node(child.view.as_mut(), id) {
+    for (child_idx, child) in children.iter_mut().enumerate() {
+        parent_path.push(child_idx);
+        let found = take_node_at_path(child.view.as_mut(), id, parent_path);
+        parent_path.pop();
+        if let Some(found) = found {
             return Some(found);
         }
     }
     None
+}
+
+fn restore_node(
+    view: &mut dyn Component,
+    parent_path: &[usize],
+    index: usize,
+    node: ComponentNode,
+) -> Result<(), ComponentNode> {
+    let Some(children) = view.children_mut() else {
+        return Err(node);
+    };
+    let Some((&child_idx, remaining_path)) = parent_path.split_first() else {
+        let idx = index.min(children.len());
+        children.insert(idx, node);
+        return Ok(());
+    };
+    let Some(child) = children.get_mut(child_idx) else {
+        return Err(node);
+    };
+    restore_node(child.view.as_mut(), remaining_path, index, node)
 }
 
 fn insert_existing_node(
@@ -1490,6 +1559,25 @@ mod tests {
     use atto_ui_runtime::ComponentSpecChild;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
+    fn child_tags(view: &dyn Component) -> Vec<Option<&str>> {
+        view.children()
+            .iter()
+            .map(|child| child.view.tag())
+            .collect()
+    }
+
+    fn find_view_by_tag<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
+        if view.tag() == Some(id) {
+            return Some(view);
+        }
+        for child in view.children() {
+            if let Some(found) = find_view_by_tag(child.view.as_ref(), id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
     #[test]
     fn component_button_click_emits_callback() {
         let callbacks = CallbackRegistry::new();
@@ -1715,6 +1803,79 @@ mod tests {
         let children = tree.view().children();
         let ids: Vec<Option<&str>> = children.iter().map(|child| child.view.tag()).collect();
         assert_eq!(ids, vec![Some("c"), Some("a"), Some("b")]);
+    }
+
+    #[test]
+    fn move_node_missing_parent_keeps_node_in_place() {
+        let callbacks = CallbackRegistry::new();
+        let root = ComponentSpec::new("VStack")
+            .with_id("root")
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("VStack")
+                    .with_id("container")
+                    .with_child(ComponentSpecChild::new(
+                        ComponentSpec::new("Label").with_id("b"),
+                    )),
+            ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        assert!(!move_node(tree.view_mut(), "a", "missing", 0));
+
+        assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("container")]);
+        let container = find_view_by_tag(tree.view(), "container").expect("container");
+        assert_eq!(child_tags(container), vec![Some("b")]);
+    }
+
+    #[test]
+    fn move_node_tab_view_parent_keeps_node_in_place() {
+        let callbacks = CallbackRegistry::new();
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("a"),
+                ))
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("TabView").with_id("tabs").with_child(
+                        ComponentSpecChild::new(ComponentSpec::new("Label").with_id("tab-child")),
+                    ),
+                ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        assert!(!move_node(tree.view_mut(), "a", "tabs", 0));
+
+        assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("tabs")]);
+        let tabs = find_view_by_tag(tree.view(), "tabs").expect("tabs");
+        assert_eq!(child_tags(tabs), vec![Some("tab-child")]);
+    }
+
+    #[test]
+    fn move_node_normal_move_inserts_at_target_index() {
+        let callbacks = CallbackRegistry::new();
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("a"),
+                ))
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("VStack").with_id("dest").with_child(
+                        ComponentSpecChild::new(ComponentSpec::new("Label").with_id("b")),
+                    ),
+                ))
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("c"),
+                ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        assert!(move_node(tree.view_mut(), "c", "dest", 0));
+
+        assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("dest")]);
+        let dest = find_view_by_tag(tree.view(), "dest").expect("dest");
+        assert_eq!(child_tags(dest), vec![Some("c"), Some("b")]);
     }
 
     #[test]
