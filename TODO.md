@@ -1,0 +1,254 @@
+# Atto UI 修复任务列表
+
+> 来源：`PLAN.md`（基于 `CODE_REVIEW.md`，审查日期 2026-06-05）
+> 说明：每个「修复任务」(T) 后紧跟一个「审阅任务」(R)，R 用于审阅前一个 T 的质量与正确性。
+> 通用要求（每个 T 完成前必须满足）：`cargo fmt && cargo clippy --workspace --all-targets && cargo test` 全绿。
+> 行号均基于审查时快照，执行前如有偏移以函数名/符号为准。
+
+---
+
+## 阶段一：P0（可触发 panic 的正确性 bug）
+
+### [TODO] T1 — 修复状态栏字节宽度（S1）
+**文件**：`src/app/status.rs`（`StatusBar::draw`，第 24-45 行）
+**现状**：`draw` 用 `self.left.clone()` + `line.len()`（UTF-8 字节数）与 `width`（列数）比较；超长时 `line.truncate(width)`。`String::truncate` 落在非 char 边界 panic；CJK/emoji 列宽 ≠ 字节数导致右对齐错位。
+**依赖**：`unicode-width` 0.2 已在依赖中；`menu.rs`/`chrome.rs` 已用 `UnicodeWidthStr`，可参考其用法。
+**步骤**：
+1. 顶部 `use unicode_width::UnicodeWidthStr;`。
+2. 计算 `left_w = UnicodeWidthStr::width(self.left.as_str())`，`right_w` 同理。
+3. 重写布局逻辑：
+   - 若 `left_w >= width`：按 grapheme 累加列宽截断 left 到不超过 `width`（参考 `src/text/buffer.rs:48-63` `set_cursor_display_col` 的累加循环：`for (byte_idx, g) in s.grapheme_indices(true)` 累加 `UnicodeWidthStr::width(g)`，超出即在该 grapheme 边界切断）。
+   - 否则：`remaining = width - left_w`；若 `right_w <= remaining`，填充 `remaining - right_w` 个空格再接 right；否则填充 `remaining` 个空格（不显示 right，或同样按 grapheme 截断 right）。
+4. 所有减法用 `saturating_sub`。注意宽字符截断后实际列宽可能比 `width` 少 1，需补空格补齐到 `width` 以保证背景样式铺满。
+5. 需要 `unicode-segmentation`（已是依赖）做 `grapheme_indices`。
+**测试**：新增 `tests/pty_status_bar.rs`（或扩展 `tests/pty_desktop.rs`）。需要 snapshot_app 能设置状态栏文本——先检查 `src/bin/snapshot_app.rs` 是否暴露设置入口，若无则在该 app 中加一个可通过按键设置含中文/emoji 状态栏文本的分支。
+- 用例 A：left=中文、right=emoji，断言屏幕中 right 贴右边界、无 panic。
+- 用例 B：left 为超长 CJK，窗口宽度故意落在宽字符中间，断言不 panic 且不出现半个字。
+**验收**：两用例通过；`cargo run --example demo` 状态栏中文显示正确对齐。
+
+### [TODO] R1 — 审阅 T1
+审阅 T1 改动：
+- 确认彻底移除了 `.len()` 作为列宽的用法，全部改为 `UnicodeWidthStr::width`。
+- 确认截断在 grapheme 边界，构造极端输入（emoji ZWJ 序列、混合 CJK）人工/测试验证不 panic。
+- 确认右对齐在纯 ASCII、纯 CJK、混合三种情况下都正确，背景样式铺满整行无空洞。
+- 确认测试真实覆盖 panic 路径（width 落在多字节字符中间）。
+- 运行 `cargo test` 与 demo 目视检查。
+
+### [TODO] T2 — 修复 `move_node` 重插入失败丢节点（S2）
+**文件**：`src/runtime/mod.rs`
+**相关符号**：`move_node`(644-653)、`take_node`(655-675)、`insert_existing_node`(677-709)、`is_tab_view`(519)、`apply_tree_ops` 中 `TreeOp::Move`(307-322)。
+**现状**：`move_node` 先 `take_node` 摘出节点，再 `insert_existing_node`；若目标父不存在或为 TabView，`node` 在返回后被 drop → 节点永久丢失。`TreeOp::Move`(317) 调用失败时走 `rebuild()`，但此时树已被 `take_node` 破坏。
+**步骤**：
+1. 新增 `fn can_insert_into(view: &dyn Component, parent_id: &str) -> bool`：递归查找 tag==parent_id 的节点，存在且 `!is_tab_view(node)` 返回 true。
+2. 改写 `move_node`：先 `if !can_insert_into(view, new_parent_id) { return false; }`，再 `take_node`，再 `insert_existing_node`。
+3. 兜底：`insert_existing_node` 返回后若 `node` 仍为 `Some`（理论不该发生），不能 drop——记录错误并把节点放回（可简单 append 回原 take 处或返回 false 触发上层处理）。因为已先校验，此分支应不可达，加 `debug_assert!(node.is_none())`。
+4. `TreeOp::Move`(317)：因 `move_node` 现在失败前不破坏树，`rebuild()` 兜底仍安全；确认逻辑无需额外改动，但补注释说明「move_node 失败时树保持不变」。
+**测试**：在 `src/runtime/` 增加 Rust 单元测试（无需 PTY）。参考现有 runtime 测试构造一棵小树（用 registry 构建 VStack 含若干带 tag 的子节点）：
+- 用例 A：Move 到不存在的 parent_id → 断言返回 false 且原节点仍在原位、子节点总数不变。
+- 用例 B：Move 到 TabView 类型父 → 断言失败且节点未丢失。
+- 用例 C：正常 Move → 断言节点出现在新父指定 index。
+**验收**：三用例通过；现有动态注册/tree-ops 测试不回归。
+
+### [TODO] R2 — 审阅 T2
+审阅 T2 改动：
+- 确认「先校验后摘除」逻辑正确，所有失败路径都不会 drop 已摘出节点。
+- 检查 `can_insert_into` 与 `take_node`/`insert_existing_node` 的 TabView 判定一致（都走 `is_tab_view`）。
+- 确认 `apply_tree_ops` 的 Move 失败兜底不会基于损坏的树继续。
+- 检查单测是否真实覆盖「目标父不存在」「TabView 父」两条原本丢节点的路径。
+- 运行 `cargo test`。
+
+### [TODO] T3 — TextBox 选区锚点 grapheme 对齐（S4）
+**文件**：`src/widgets/textbox.rs`、`src/text/buffer.rs`
+**相关符号**：textbox `selection_anchor` 写入点 202/204/206/211、`selection_range`(475)、`delete_selection`(506-519)、`cursor_byte_index`；buffer `set_cursor_display_col`(48-63)。
+**现状**：`set_cursor_display_col` 会对齐到 grapheme 起始字节，但 Shift+点击的 `cursor_before`(199) 与 Drag 初始化(211) 直接存任意 byte index。`selection_range` 按字节取 min/max，`delete_selection` 用 `replace_range(start..end)` 可能切在 grapheme 内部 → panic/乱码。
+**步骤**：
+1. `src/text/buffer.rs` 新增 `pub fn align_to_grapheme_boundary(&self, byte: usize) -> usize`：用 `self.text.grapheme_indices(true)` 找到 `<= byte` 的最大 grapheme 起始字节；若 `byte >= text.len()` 返回 `text.len()`。
+2. textbox 中所有写入 `selection_anchor` 的位置统一对齐：
+   - 199：`let cursor_before = self.buffer.align_to_grapheme_boundary(self.buffer.cursor_byte_index());`（或确认 `cursor_byte_index` 已对齐则只需处理裸 byte 来源）。重点是 202/204 存入 anchor 前对齐。
+   - 211：`self.selection_anchor = Some(self.buffer.align_to_grapheme_boundary(self.buffer.cursor_byte_index()));`
+   - 其他 `ensure_selection_anchor`(484) 用的是 `cursor_byte_index`，若该值始终对齐则无需改，但仍建议统一过对齐函数防御。
+3. `delete_selection`(506) 入口对 `start`/`end` 再各 `align_to_grapheme_boundary` 一次作为最终保险。
+**测试**：扩展 `tests/pty_mouse_support.rs` 或新增 `tests/pty_textbox_selection.rs`。需 snapshot_app 有含宽字符的 TextBox（检查现有 app，如无则在 textbox 演示窗口预填 `a你b好c`）。
+- 用例 A：Shift+点击宽字符右半格 → Delete → 断言不 panic 且删除完整字符。
+- 用例 B：Drag 选区跨宽字符 → Delete → 断言内容正确。
+**验收**：用例通过；模糊点击 CJK/emoji 不再 panic。
+
+### [TODO] R3 — 审阅 T3
+审阅 T3 改动：
+- 确认 `align_to_grapheme_boundary` 边界正确：byte=0、byte=len、byte 落在宽字符中间、空字符串。
+- 确认 textbox 所有 anchor 写入点都已对齐，无遗漏路径（grep `selection_anchor = Some`）。
+- 确认 `delete_selection` 的 `replace_range` 不可能切在 grapheme 内部。
+- 检查测试是否真实触发了原 panic 场景。
+- 运行 `cargo test`。
+
+---
+
+## 阶段二：P1（滚动失效 + 死代码清除 + 文档对齐）
+
+### [TODO] T4 — 滚动容器相交裁剪渲染与命中（S3）
+**文件**：`src/composable/stack/scrollbars.rs`、`src/composable/stack/events.rs`
+**相关符号**：绘制处 `scrollbars.rs:60`（`bounds_fully_visible` 判断 + `abs` Rect 计算 63-68）；命中处 `events.rs:218`；`bounds_fully_visible` 定义 `events.rs:169`（grid 同名 `grid/events.rs:169`）。
+**现状**：`if scrollable && !Self::bounds_fully_visible(r, scroll, viewport_size) { continue; }` 导致高度 > 视口或部分滚出的子项被整块跳过 → 既不渲染也不可点击。
+**步骤**：
+1. 在 `events.rs:169` 附近新增 `pub(super) fn bounds_intersects_viewport(r, scroll, viewport) -> bool`（content 坐标系下子项 rect 与 `[scroll, scroll+viewport)` 区间相交）。
+2. 绘制处 `scrollbars.rs:60` 改为 `if scrollable && !Self::bounds_intersects_viewport(r, scroll, viewport_size) { continue; }`。
+3. 裁剪：当前 `abs`(63-68) 用 `saturating_sub(scroll)` 平移，部分滚出顶部时 `r.y < scroll.y` 会因 saturating 归零导致错位——需正确裁剪：
+   - 计算子项在视口内可见的起始偏移，调整 `abs.y`/`abs.height`（及 x/width）使其落在 `inner` 内且不覆盖滚动条预留列。
+   - 用 `inner` 与平移后矩形求交集得到最终绘制 Rect；若子组件自身按传入 Rect 绘制，裁剪交集即可避免越界。
+4. 命中处 `events.rs:218` 改用 `bounds_intersects_viewport` + 在交集区域内 `contains(child.bounds(), content_x, content_y)`。
+5. 检查 `bounds_fully_visible` 是否仍有其他调用点；若仅这两处使用则可移除，否则保留。
+**风险**：裁剪渲染需验证不覆盖滚动条预留列与窗口边框。
+**测试**：扩展 `tests/pty_scrolling.rs`。需 snapshot app 有「单个高度 > 视口的长子项」场景（检查 `snapshot_scroll_app.rs`，如无则添加一个高文本块）。
+- 用例 A：向下滚动，断言长子项下半部分随滚动出现（非整块消失）。
+- 用例 B：部分可见子项上的点击能命中（返回正确 child id / 触发交互）。
+**验收**：长内容滚动可见可交互；现有 `pty_scrolling.rs`/`pty_horizontal_scrolling.rs` 不回归。
+
+### [TODO] R4 — 审阅 T4
+审阅 T4 改动：
+- 确认相交测试与裁剪逻辑正确，尤其「子项顶部滚出视口」时 `abs.y`/`height` 计算无 off-by-one、无 saturating 归零错位。
+- 目视 demo 滚动演示，确认部分可见内容正确裁剪显示、不覆盖滚动条与边框。
+- 确认命中测试与渲染裁剪坐标系一致。
+- 检查是否遗漏 grid 容器同类问题（`grid/events.rs:169`），如有应一并修或单列任务说明。
+- 运行 `cargo test` + demo 目视。
+
+### [TODO] T5 — 删除 cache + Observable 死代码（M4 + M5）
+**文件**：`src/cache/`（整目录）、`src/lib.rs:6`、`src/reactive/observable.rs`、`src/reactive/mod.rs:7,13`
+**步骤**：
+1. 先确认零引用：`grep -rn "VirtualBuffer\|crate::cache\|cache::\|Observable\|observable::" src crates examples tests`。若有任何生产引用则停止并上报（计划假定为零）。
+2. 删除 `src/cache/` 整目录；移除 `src/lib.rs:6` 的 `pub mod cache;`。
+3. 删除 `src/reactive/observable.rs`；移除 `src/reactive/mod.rs:7` 的 `mod observable;` 与 `:13` 的 `pub use observable::Observable;`。
+4. 删除两模块自带的测试（若有）。
+**验收**：`cargo build`/`cargo test`/`cargo clippy` 全绿。
+
+### [TODO] R5 — 审阅 T5
+审阅 T5 改动：
+- 复核删除前的 grep 确实零引用（含 examples/tests/其他 crate）。
+- 确认无悬空 `mod`/`pub use`、无 dead_code 警告残留。
+- 确认未误删仍被使用的 `reactive` 其他成员（`Property`/`DirtyFlag`）。
+- 运行全量 `cargo test`。
+
+### [TODO] T6 — 文档对齐（M7 / L8 / cache/Observable）
+**文件**：`CLAUDE.md`、`ASYNC.md`（如存在）
+**步骤**：
+1. CLAUDE.md「技术亮点 / 高性能渲染」：删除/修正「增量差异计算减少重绘」「脏标记系统精确追踪」等表述，改为「依赖 ratatui 双缓冲 diff 渲染」。移除对 cache 模块的描述（已删除）。
+2. CLAUDE.md「支持模块」中 `cache/`、`reactive/observable.rs` 条目删除。
+3. CLAUDE.md「代码约定」新增分层约定：**叶子级高频重绘组件可手写 `impl Component`，容器组合优先用声明式 API（VStack/HStack/Grid）**——解释 editor/file-tree 手写 Component 的合理性。
+4. `ASYNC.md`（若存在）顶部标注「计划中（未落地），src 中暂无 async/tokio 实现」。
+**验收**：文档与代码事实一致，无 cache/Observable 残留描述、无增量渲染误导。
+
+### [TODO] R6 — 审阅 T6
+审阅 T6 改动：
+- 逐条核对 CLAUDE.md 不再有与实现脱节的承诺（增量渲染、脏标记、cache、Observable）。
+- 确认分层约定表述清晰、与实际 18 处 `impl Component` 现状一致。
+- 确认 ASYNC.md 标注准确。
+
+---
+
+## 阶段三：P2（架构/性能重构）
+
+### [TODO] T7 — 拆分 `Component` god trait（M1）
+**文件**：`src/composable/component.rs:167-508`、`Box<dyn Component>` 的 impl、全工作区调用点。
+**步骤**：
+1. 先按职责给 37 个方法分组（不改签名）：`Layout`（布局/尺寸协商）、`Scrollable`（8 个滚动方法）、`FocusNav`（焦点）、`DynamicTree`（children_mut/tag/动态树操作）、`EventHandling`（capture/bubble/handle）、属性反射/命令/标题栏归核心。
+2. 抽为子 trait，`Component: Layout + Scrollable + FocusNav + DynamicTree + EventHandling`。
+3. 调整 `Box<dyn Component>` 的透传 impl 按子 trait 拆分。
+4. 编译驱动修复所有调用点。
+**说明**：改动面大，必须在 T1–T6 合入稳定后单独大 PR。
+**测试**：全量 PTY 回归，确保零行为变更。
+
+### [TODO] R7 — 审阅 T7
+审阅 trait 拆分：分组是否合理、supertrait 组合无遗漏方法、`Box<dyn>` 透传完整、全量 PTY 测试通过、无行为变更。
+
+### [TODO] T8 — 澄清事件分发 capture/bubble/handle 语义（M2）
+**文件**：`src/composable/stack/events.rs`（`handle_event_capture_impl:228` 等）、wm/desktop 事件分发处。
+**步骤**：
+1. 先定位框架实际调用顺序（在 desktop/wm 分发入口 grep `handle_event_capture`/`handle_event`/bubble）。
+2. 文档化 `capture → target → bubble` 调用契约（写在 trait 方法注释），或收敛为单一 `handle_event` 内部编排。
+3. 确保包装层不重复分发。
+**测试**：新增事件时序 PTY 测试——点击嵌套容器，断言 capture/bubble 各调用一次且顺序正确。
+
+### [TODO] R8 — 审阅 T8
+审阅事件模型：契约文档清晰、无重复/漏分发、时序测试覆盖嵌套场景。
+
+### [TODO] T9 — 抽取共享滚动逻辑（M3）
+**文件**：`stack/events.rs:141`、`grid/events.rs:141`、`scroll_container/events.rs:9`；复用 `scroll.rs:141` 的 `scroll_by_delta`。
+**步骤**：在 `ScrollState`/`scroll.rs` 提供统一方法处理方向键/PageUp/PageDown/Home/End/滚轮 → delta → `scroll_by_delta`。三处改为调用共享方法，删除重复实现。
+**测试**：`pty_scrolling.rs`/`pty_horizontal_scrolling.rs` 回归。
+
+### [TODO] R9 — 审阅 T9
+审阅去重：三处行为与原实现完全一致、无遗漏按键、滚动测试全绿。
+
+### [TODO] T10 — 控件层共享抽象（M10）
+**文件**：`src/widgets/textbox.rs`、`table.rs`、`list.rs`、`button.rs`、新增 widgets 公共 util。
+**步骤**：
+1. 抽 `pub(crate) fn widget_style(theme, enabled, focused) -> Style`（三态样式），替换 5 个 widget 重复实现。
+2. 抽共享 `mouse_coords_local_to_area`/`contains` 到公共 util（textbox/table/list 三处去重）。
+3. ListBox/TableView 的 selection/scroll 抽 mixin。
+**测试**：各 widget 现有 PTY 测试回归。
+
+### [TODO] R10 — 审阅 T10
+审阅抽象：共享函数语义覆盖各 widget 原有差异、无回归、命名清晰。
+
+### [TODO] T11 — 仅可见行 parse + 借用替代 clone（M11）
+**文件**：`src/widgets/list.rs:374-376,543-557`、`table.rs:617`。
+**步骤**：
+1. `bindings()` 用 read guard 局部借用替代整体 clone。
+2. `draw` 仅对可见行区间调 `parse_inline`（结合滚动 offset + 视口高度计算可见范围）。
+**测试**：`tests/pty_virtual_scrolling.rs` 大数据集（1000+ 行）渲染正确性回归。
+
+### [TODO] R11 — 审阅 T11
+审阅性能改动：可见区间计算正确（边界行不漏）、借用无生命周期问题、大数据集渲染正确。
+
+---
+
+## 阶段四：P3（技术债 / 一致性 / 命名）
+
+> 以下为随手清理项，可批量提交。每项较小，统一在 R12 中集中审阅。
+
+### [TODO] T12 — P3 批量清理
+- **M6**：`src/runtime/mod.rs:227-251,473-516`。区分 `PropertyApply::NotFound`（属性不存在）与组件不支持动态 set。当前 `apply_property_to_view`(492-493) 把 `UnsupportedProperty` 和 `NotFound` 都映射为 `NeedsRebuild`。新增 `PropertyApply::UnsupportedProperty` 变体，仅真正 `NotFound` 在 root 触发 rebuild，其余尽量局部替换。
+- **L1**：`src/composable/geom.rs:70-84`。移除 `column<width && row<height` 坐标系猜测，改为调用方显式传坐标系枚举参数。
+- **L2**：`src/widgets/button.rs:88-91`。保存 `last_area`，`Down(Left)` 前做 `contains` 检查（参考其他 widget）。
+- **L3**：`src/composable/layout.rs:95` `Size::Weight(u16)`。低成本方案：修正 CLAUDE.md 称权重为 `u16`（非 `f32`）。如需 `f32` 化另开任务（牵动布局计算）。
+- **L4**：`table.rs:266,612`、`list.rs:542`。缓存 `named_style("markdown-link")` 为字段，主题切换时失效重取。
+- **L5**：`src/runtime/mod.rs:519` `is_tab_view` 用 `type_name().rsplit("::")` 字符串匹配。改为 `Component` trait 方法 `fn is_tab_container(&self) -> bool { false }`，TabView 重写返回 true。
+- **L6**：`crates/atto-ui-macros/src/view_builder.rs:85` 硬编码 `::atto_ui::`。改用可配置 crate 路径方案；未知类型加 `compile_error!`。
+- **L7**：`src/theme/config.rs:118` `parse_color`。支持 3 位 hex `#fff` → 扩展为 `#ffffff`。
+- **L9**：`src/app/menu.rs:868` 与 `src/wm/manager/draw.rs:114` `draw_shadow` 完全重复。提取到共享位置，二者调用同一函数。
+- **L10**：`cargo clippy --workspace --all-targets --fix` 修复 3 条告警，人工复核。
+
+### [TODO] R12 — 审阅 T12
+逐项审阅 P3 清理：每项改动正确且不引入回归；L5 trait 方法替换无遗漏 TabView 识别点；M6 增量路径不再误触发全量 rebuild；clippy 全清；`cargo test` 全绿。
+
+### [TODO] T13 — 命名消歧义（命名建议，需单独评估）
+**说明**：影响 Cargo workspace，改动面大，**执行前需与维护者确认**。
+- `atto-editor` → `atto-editor-app`：改 `Cargo.toml` 包名 + 所有 `[dependencies]` 引用 + import 路径。
+- 评估 `atto-ui-runtime` 定位（仅被 `atto-ui-python` 引用）：作为核心共享 or 合并进 `atto-ui`。
+**测试**：全工作区 `cargo build`/`cargo test`。
+
+### [TODO] R13 — 审阅 T13
+确认改名后全工作区编译通过、无遗漏引用、CI/文档同步更新。
+
+### [TODO] T14 — 巨型文件拆分（M8，长期）
+**文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)、`crates/atto-editor/src/window.rs`(1839)、`src/runtime/mod.rs`(1851)、`src/wm/manager/mod.rs`(972)、`src/app/menu.rs`(923)。
+**说明**：纯机械重构，按职责拆子模块，**逐文件单独 PR**，零行为变更。
+**测试**：每个文件拆分后全量 PTY 回归。
+
+### [TODO] R14 — 审阅 T14
+确认拆分纯机械、无行为变更、模块边界合理、全量测试通过。
+
+### [TODO] T15 — id 索引替代 O(n) 查找（M9，低优先）
+**文件**：`src/wm/manager/events.rs|focus.rs|z_order.rs`、runtime tree-ops。
+**说明**：引入 `id→index/path` 索引替代线性扫描。窗口/节点少时无碍，最低优先级。
+**测试**：现有 wm/runtime 测试回归。
+
+### [TODO] R15 — 审阅 T15
+确认索引与实际数据一致（增删窗口/节点时同步更新）、无悬挂索引、测试全绿。
+
+---
+
+## 执行顺序建议
+1. T1→R1→T2→R2→T3→R3（P0，逐项独立 PR，先红后绿）
+2. T4→R4→T5→R5→T6→R6（P1）
+3. T7..T11（P2 重构，功能稳定后分批）
+4. T12→R12（P3 批量），T13/T14/T15 视资源安排
