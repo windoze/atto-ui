@@ -274,8 +274,15 @@
 - 新增 `tests/pty_event_order.rs`，点击嵌套目标并断言 trace 为 `root-capture>child-capture>target-handle>child-bubble>root-bubble`，覆盖 capture/bubble 各调用一次且顺序正确。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_event_order`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R8 — 审阅 T8
+### [DONE] R8 — 审阅 T8
 审阅事件模型：契约文档清晰、无重复/漏分发、时序测试覆盖嵌套场景。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/composable/component.rs`：`EventHandling` 文档已明确 desktop/window manager 只通过根组件 `handle_event` 进入视图树，不在根外额外调用 capture/bubble；容器的三阶段契约和透明包装层委派要求表述清晰。
+- 审阅 `src/app/desktop.rs` 与 `src/wm/manager/events.rs`：事件入口最终落到 `dispatch_to_focused_view` / `dispatch_to_window_view` 的 `w.view.handle_event(...)`，未发现重复包裹 capture/bubble 的外层分发。
+- 审阅 stack/grid 容器与透明包装层：核心容器由自身 `handle_event` 编排 capture、目标子组件 `handle_event` 和 bubble；包装层直接委派 `handle_event`，未发现会导致同一子树重复分发的路径。
+- 审阅 `src/bin/snapshot_app.rs` 与 `tests/pty_event_order.rs`：`--event-order` fixture 构造两层嵌套容器，目标叶子返回未消费事件以触发内外 bubble，PTY 测试精确断言 `root-capture>child-capture>target-handle>child-bubble>root-bubble`，覆盖 capture/bubble 各一次且顺序正确。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_event_order`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T9 — 抽取共享滚动逻辑（M3）
 **文件**：`stack/events.rs:141`、`grid/events.rs:141`、`scroll_container/events.rs:9`；复用 `scroll.rs:141` 的 `scroll_by_delta`。
