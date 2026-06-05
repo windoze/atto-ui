@@ -1806,6 +1806,39 @@ mod tests {
     }
 
     #[test]
+    fn component_tree_incremental_move_missing_parent_preserves_root_and_view() {
+        let callbacks = CallbackRegistry::new();
+        let root = ComponentSpec::new("VStack")
+            .with_id("root")
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("VStack")
+                    .with_id("container")
+                    .with_child(ComponentSpecChild::new(
+                        ComponentSpec::new("Label").with_id("b"),
+                    )),
+            ));
+        let original = root.clone();
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        let err = tree
+            .apply_ops_incremental(&[TreeOp::Move {
+                id: "a".into(),
+                new_parent_id: "missing".into(),
+                index: 0,
+            }])
+            .expect_err("missing parent should fail");
+
+        assert_eq!(err, TreeError::NotFound("missing".into()));
+        assert_eq!(tree.root_spec(), &original);
+        assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("container")]);
+        let container = find_view_by_tag(tree.view(), "container").expect("container");
+        assert_eq!(child_tags(container), vec![Some("b")]);
+    }
+
+    #[test]
     fn move_node_missing_parent_keeps_node_in_place() {
         let callbacks = CallbackRegistry::new();
         let root = ComponentSpec::new("VStack")
@@ -1850,6 +1883,24 @@ mod tests {
         assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("tabs")]);
         let tabs = find_view_by_tag(tree.view(), "tabs").expect("tabs");
         assert_eq!(child_tags(tabs), vec![Some("tab-child")]);
+    }
+
+    #[test]
+    fn move_node_leaf_parent_restores_taken_node() {
+        let callbacks = CallbackRegistry::new();
+        let root = ComponentSpec::new("VStack")
+            .with_id("root")
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("leaf"),
+            ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        assert!(!move_node(tree.view_mut(), "a", "leaf", 0));
+
+        assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("leaf")]);
     }
 
     #[test]

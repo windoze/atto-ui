@@ -71,13 +71,20 @@
 - 新增三条 runtime 单元测试覆盖：移动到不存在父节点、移动到 `TabView` 父节点、正常移动到指定 index。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R2 — 审阅 T2
+### [DONE] R2 — 审阅 T2
 审阅 T2 改动：
 - 确认「先校验后摘除」逻辑正确，所有失败路径都不会 drop 已摘出节点。
 - 检查 `can_insert_into` 与 `take_node`/`insert_existing_node` 的 TabView 判定一致（都走 `is_tab_view`）。
 - 确认 `apply_tree_ops` 的 Move 失败兜底不会基于损坏的树继续。
 - 检查单测是否真实覆盖「目标父不存在」「TabView 父」两条原本丢节点的路径。
 - 运行 `cargo test`。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/runtime/mod.rs`：`move_node` 已在摘出节点前通过 `can_insert_into` 校验目标父存在且不是 `TabView`；`take_node`、`insert_existing_node`、恢复路径均保留被摘出的节点，不会在失败路径 drop。
+- 审阅并修复 spec 层 Move 原子性缺口：`atto-ui-runtime::apply_tree_ops` 现在会在摘出前校验源节点、目标父存在，并拒绝移入自身/后代，避免 `ComponentTree::apply_ops_incremental` 在失败时留下损坏的 `root` spec。
+- 补充测试覆盖：spec Move 缺失父节点保持树不变、移入后代保持树不变、`ComponentTree::apply_ops_incremental` 缺失父节点保持 root/view 不变、`move_node` 目标为叶子父节点时恢复已摘出节点。
+- 复核 T2 原测试：目标父不存在、目标父为 `TabView`、正常移动到指定 index 均覆盖并通过。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test -p atto-ui-runtime tree_ops_move`；`cargo test component_tree_incremental_move --lib`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T3 — TextBox 选区锚点 grapheme 对齐（S4）
 **文件**：`src/widgets/textbox.rs`、`src/text/buffer.rs`

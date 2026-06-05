@@ -577,9 +577,20 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
                 new_parent_id,
                 index,
             } => {
-                let node = take_by_id(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+                let moving_node = find_child_node_by_id(root, id)
+                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+                if find_by_id(moving_node, new_parent_id).is_some() {
+                    return Err(TreeError::InvalidTreeOp(
+                        "cannot move node into itself or descendant".to_string(),
+                    ));
+                }
+                if find_by_id(root, new_parent_id).is_none() {
+                    return Err(TreeError::NotFound(new_parent_id.clone()));
+                }
+
+                let node = take_by_id(root, id).expect("validated movable child exists");
                 let parent = find_by_id_mut(root, new_parent_id)
-                    .ok_or_else(|| TreeError::NotFound(new_parent_id.clone()))?;
+                    .expect("validated target parent exists outside moved subtree");
                 let idx = (*index).min(parent.children.len());
                 parent.children.insert(idx, node);
                 structural = true;
@@ -607,6 +618,30 @@ pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, 
     }
 
     Ok(structural)
+}
+
+fn find_by_id<'a>(node: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpec> {
+    if node.id.as_deref() == Some(id) {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(found) = find_by_id(child.node.as_ref(), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_child_node_by_id<'a>(node: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpec> {
+    for child in &node.children {
+        if child.node.id.as_deref() == Some(id) {
+            return Some(child.node.as_ref());
+        }
+        if let Some(found) = find_child_node_by_id(child.node.as_ref(), id) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn find_by_id_mut<'a>(node: &'a mut ComponentSpec, id: &str) -> Option<&'a mut ComponentSpec> {
@@ -725,6 +760,51 @@ mod tests {
         }];
         assert!(apply_tree_ops(&mut tree, &ops).unwrap());
         assert_eq!(tree.children[0].node.id.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn tree_ops_move_missing_parent_preserves_tree() {
+        let mut tree = sample_tree();
+        let original = tree.clone();
+
+        let err = apply_tree_ops(
+            &mut tree,
+            &[TreeOp::Move {
+                id: "a".to_string(),
+                new_parent_id: "missing".to_string(),
+                index: 0,
+            }],
+        )
+        .expect_err("missing parent should fail");
+
+        assert_eq!(err, TreeError::NotFound("missing".to_string()));
+        assert_eq!(tree, original);
+    }
+
+    #[test]
+    fn tree_ops_move_into_descendant_preserves_tree() {
+        let mut tree =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("VStack").with_id("parent").with_child(
+                        ComponentSpecChild::new(ComponentSpec::new("Label").with_id("child")),
+                    ),
+                ));
+        let original = tree.clone();
+
+        let err = apply_tree_ops(
+            &mut tree,
+            &[TreeOp::Move {
+                id: "parent".to_string(),
+                new_parent_id: "child".to_string(),
+                index: 0,
+            }],
+        )
+        .expect_err("moving into a descendant should fail");
+
+        assert!(matches!(err, TreeError::InvalidTreeOp(_)));
+        assert_eq!(tree, original);
     }
 
     #[test]
