@@ -296,8 +296,15 @@
 - 新增 `scroll_input_*` 单元测试覆盖方向键、PageUp/PageDown、Home/End、鼠标滚轮步长、键盘 Release 与未处理输入。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test scroll_input --lib`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R9 — 审阅 T9
+### [DONE] R9 — 审阅 T9
 审阅去重：三处行为与原实现完全一致、无遗漏按键、滚动测试全绿。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/composable/scroll.rs`：`scroll_offset_for_input_event` 统一处理方向键、PageUp/PageDown、Home/End 与四向鼠标滚轮，并复用 `scroll_by_delta`/`max_scroll_offset` 保持原有 clamp 语义。
+- 审阅 `src/composable/stack/events.rs`、`src/composable/grid/events.rs`、`src/composable/scroll_container/events.rs`：三处已删除重复按键/滚轮映射，调用共享 helper 后仍保留鼠标坐标在组件区域内才滚动、滚动位置未变化则不消费事件的原有行为。
+- 审阅 `src/wm/min_size_view.rs`：窗口最小尺寸滚动模式同步使用共享 helper，行为与原方向键、分页键、Home/End、滚轮滚动一致。
+- 复查 `KeyCode::Up/Down/Left/Right/PageUp/PageDown/Home/End` 与 `MouseEventKind::Scroll*` 搜索结果，滚动容器路径无遗漏的重复滚动输入映射；其他命中属于文本框、菜单、窗口管理、列表/表格选择等非滚动容器逻辑。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test scroll_input --lib`；`cargo test --test pty_scrolling`；`cargo test --test pty_horizontal_scrolling`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T10 — 控件层共享抽象（M10）
 **文件**：`src/widgets/textbox.rs`、`table.rs`、`list.rs`、`button.rs`、新增 widgets 公共 util。
