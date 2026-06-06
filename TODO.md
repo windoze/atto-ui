@@ -509,8 +509,15 @@
 - 本次为纯机械拆分，未改变菜单行为或公开 `app` re-export 面；`PLAN.md` 未更新，因为阶段级计划没有变化。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R14 — 审阅 T14A–T14E
+### [DONE] R14 — 审阅 T14A–T14E
 确认五个文件拆分均为纯机械重构、无行为变更、模块边界合理、全量测试通过。
+
+**完成记录（2026-06-06）**：
+- 审阅 T14A editor view 拆分：`mod.rs` 保留核心类型与 `EditorView::new`，actions/component/editing/scrolling/state/tests/lsp/render 等模块边界与职责一致，未发现 trait impl 或测试迁移遗漏。
+- 审阅 T14B editor app window 拆分：`window.rs` facade 保留公开命令、句柄与主视图入口，tabs/component/document_tab/util 的事件、绘制、split 与 scrollbar 行为未发现搬移遗漏。
+- 审阅 T14C runtime 拆分与 T14D window manager 拆分：runtime facade re-export 保留，registry/builtins/props/tree/tests 职责清晰；window manager 的类型 re-export、core/events/focus/placement/z-order/draw/chrome/tests 边界合理，未发现非机械行为改变。
+- 审阅 T14E app menu 拆分时发现 facade API 回归：`MenuCallback` 从原 `menu` facade 消失；已将别名恢复到 `src/app/menu.rs`，并让 `model`/`input` 通过 `super::MenuCallback` 使用，保持拆分前路径且不新增顶层 `app` 导出。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T15 — id 索引替代 O(n) 查找（M9，低优先）
 **文件**：`src/wm/manager/events.rs|focus.rs|z_order.rs`、runtime tree-ops。

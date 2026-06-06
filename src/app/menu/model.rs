@@ -1,9 +1,8 @@
 use crate::reactive::Binding;
 use crate::wm::WindowId;
 
+use super::MenuCallback;
 use super::minimized::MINIMIZED_WINDOWS_MENU_ID;
-
-pub type MenuCallback = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone)]
 pub struct MenuItem {

@@ -6,9 +6,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::wm::WindowId;
 
+use super::MenuCallback;
 use super::layout::{contains, dropdown_size, menu_title_x};
 use super::minimized::minimized_window_id;
-use super::model::{MenuAction, MenuBar, MenuCallback, MenuItem};
+use super::model::{MenuAction, MenuBar, MenuItem};
 
 impl MenuBar {
     pub fn handle_event(&mut self, event: &Event) -> MenuAction {
