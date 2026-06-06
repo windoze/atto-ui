@@ -255,10 +255,17 @@
 - `snapshot_chat_app --streaming-markdown` 与 `crates/atto-ui-chat/tests/pty_chat.rs` 新增 PTY 覆盖：逐步追加未闭合代码围栏、闭合围栏、半截表格和完整表格，断言中途稳定渲染且完整后成块。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-markdown`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
-### [ ] R9 — 审阅 T9
+### [DONE] R9 — 审阅 T9
 - 确认容错渲染不误吞已完成内容、闭合后无残留降级。
 - 确认增量解析未引入全量重排。
 - 运行 PTY 快照测试。
+**完成记录（2026-06-06）**：
+- 已审阅 `atto-ui-markdown` 的 streaming tolerant parser/cache/viewer、`atto-ui-chat` 的消息 row key/MarkdownViewer 复用路径、`snapshot_chat_app --streaming-markdown` fixture 与 `pty_chat` 覆盖。
+- 确认未闭合 fenced code block 会稳定按代码块渲染，闭合后完整重新解析为正常代码块；半截表格在流式中降级为纯文本，完整表格恢复为 table block，PTY 覆盖中途和完整状态。
+- 确认 chat 文本 delta 不改变 row key，`ForEachIdentifiable` 复用消息行并只更新 MarkdownViewer 的绑定；markdown cache 对仍未闭合的 fenced code 前缀使用增量替换末尾 code block 文本，避免每个 delta 触发整条消息结构重建。
+- 修复审阅发现的问题：流式表格降级此前会在解析前转义尾部表格片段，即使这些行位于未闭合 fenced code block 内也会污染代码文本；现在存在未闭合 fence 时跳过表格降级，并新增单测断言 table-like code text 保持字面 `|`。
+- 修复验证中暴露的资源敏感 PTY 超时：`pty_markdown_viewer_scrolls_code_blocks_and_tables` 的可见文本等待预算统一提升到 5 秒，断言内容不变，避免并发 cargo 负载下首屏渲染偶发超时。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-markdown`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ### [ ] T10 — chat / terminal 测试补齐（A.2 P1）
 **文件**：`crates/atto-ui-chat/tests/`、`crates/atto-ui-terminal/tests/`

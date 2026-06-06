@@ -83,6 +83,10 @@ fn parse_markdown_input(input: &str, show_markers: bool) -> Vec<MdBlock> {
 }
 
 fn normalize_streaming_input(input: &str) -> Cow<'_, str> {
+    if unclosed_fenced_code_block(input).is_some() {
+        return Cow::Borrowed(input);
+    }
+
     let Some(range) = trailing_incomplete_table_range(input) else {
         return Cow::Borrowed(input);
     };

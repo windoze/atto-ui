@@ -82,6 +82,23 @@ fn tolerant_parser_downgrades_trailing_incomplete_table_to_text() {
 }
 
 #[test]
+fn tolerant_parser_keeps_table_like_text_inside_unclosed_fence() {
+    let blocks = super::parser::parse_markdown_tolerant(
+        "```text\n\n| Name | Value |\n| --- | --- |\n| half |",
+        false,
+    );
+
+    assert_eq!(blocks.len(), 1);
+    let MdBlock::CodeBlock { info, text, .. } = &blocks[0] else {
+        panic!("expected unclosed fence to remain a code block");
+    };
+    assert_eq!(info.as_deref(), Some("text"));
+    assert!(text.contains("| Name | Value |"));
+    assert!(text.contains("| half |"));
+    assert!(!text.contains("\\|"));
+}
+
+#[test]
 fn tolerant_parser_keeps_completed_table_as_table() {
     let blocks = super::parser::parse_markdown_tolerant(
         "| Name | Value |\n| --- | --- |\n| half | stable |\n",

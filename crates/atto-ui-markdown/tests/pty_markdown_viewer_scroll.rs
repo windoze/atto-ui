@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use atto_ui_test_host::PtyTestHost;
 
+const WAIT_FOR_RENDER: Duration = Duration::from_secs(5);
+
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -19,11 +21,11 @@ fn pty_markdown_viewer_scrolls_code_blocks_and_tables() {
     let bin = env!("CARGO_BIN_EXE_snapshot_markdown_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
-    host.wait_for_text("CODE-LINE-00", Duration::from_secs(2))
+    host.wait_for_text("CODE-LINE-00", WAIT_FOR_RENDER)
         .expect("initial code block visible");
-    host.wait_for_text("▲", Duration::from_secs(2))
+    host.wait_for_text("▲", WAIT_FOR_RENDER)
         .expect("embedded vertical scrollbar visible");
-    host.wait_for_text("◄", Duration::from_secs(2))
+    host.wait_for_text("◄", WAIT_FOR_RENDER)
         .expect("embedded horizontal scrollbar visible");
 
     // For an 80x24 PTY:
@@ -36,26 +38,26 @@ fn pty_markdown_viewer_scrolls_code_blocks_and_tables() {
     // Scroll inside the code block (max height is 6; content is longer).
     host.wheel_down(code_x, code_y).expect("wheel down (code)");
     host.wheel_down(code_x, code_y).expect("wheel down (code)");
-    host.wait_for_text("CODE-LINE-08", Duration::from_secs(2))
+    host.wait_for_text("CODE-LINE-08", WAIT_FOR_RENDER)
         .expect("code block scrolled vertically");
     assert_text_absent_for(&host, "CODE-LINE-00", Duration::from_millis(200));
 
     // Bring the long horizontal line back into view, then scroll horizontally.
     host.wheel_up(code_x, code_y).expect("wheel up (code)");
-    host.wait_for_text("CODE-HSCROLL-BEGIN", Duration::from_secs(2))
+    host.wait_for_text("CODE-HSCROLL-BEGIN", WAIT_FOR_RENDER)
         .expect("long code line visible");
     assert_text_absent_for(&host, "CODE-HSCROLL-END", Duration::from_millis(200));
     for _ in 0..24 {
         host.wheel_right(code_x, code_y.saturating_add(1))
             .expect("wheel right (code)");
     }
-    host.wait_for_text("CODE-HSCROLL-END", Duration::from_secs(2))
+    host.wait_for_text("CODE-HSCROLL-END", WAIT_FOR_RENDER)
         .expect("code block scrolled horizontally");
 
     // Table should render with themed (box-drawing) borders instead of ASCII "+-|".
-    host.wait_for_text("ROW-00", Duration::from_secs(2))
+    host.wait_for_text("ROW-00", WAIT_FOR_RENDER)
         .expect("initial table rows visible");
-    host.wait_for_text("┬", Duration::from_secs(2))
+    host.wait_for_text("┬", WAIT_FOR_RENDER)
         .expect("table border uses themed junction glyphs");
 
     let table_x = 4;
@@ -67,7 +69,7 @@ fn pty_markdown_viewer_scrolls_code_blocks_and_tables() {
         host.wheel_down(table_x, table_y)
             .expect("wheel down (table)");
     }
-    host.wait_for_text("ROW-09", Duration::from_secs(2))
+    host.wait_for_text("ROW-09", WAIT_FOR_RENDER)
         .expect("table scrolled vertically");
     assert_text_absent_for(&host, "ROW-00", Duration::from_millis(200));
 
@@ -77,7 +79,7 @@ fn pty_markdown_viewer_scrolls_code_blocks_and_tables() {
         host.wheel_right(table_x, table_y)
             .expect("wheel right (table)");
     }
-    host.wait_for_text("TABLE-HSCROLL-END", Duration::from_secs(2))
+    host.wait_for_text("TABLE-HSCROLL-END", WAIT_FOR_RENDER)
         .expect("table scrolled horizontally");
 
     host.send_ctrl('q').expect("quit");
