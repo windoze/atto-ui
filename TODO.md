@@ -386,8 +386,16 @@
 - L10：复核 clippy，当前 `cargo clippy --workspace --all-targets -- -D warnings` 无告警。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R12 — 审阅 T12
+### [DONE] R12 — 审阅 T12
 逐项审阅 P3 清理：每项改动正确且不引入回归；L5 trait 方法替换无遗漏 TabView 识别点；M6 增量路径不再误触发全量 rebuild；clippy 全清；`cargo test` 全绿。
+
+**完成记录（2026-06-06）**：
+- 审阅 T12 的 M6/L5：确认 `PropertyApply::UnsupportedProperty` 与 `NotFound` 已区分，`Component::is_tab_container` 已替换 `type_name()` 字符串匹配，`TabView` 与透明 wrapper/`Box<dyn Component>` 委派路径无遗漏。
+- 修复审阅发现的 M6 批量增量缺口：`ComponentTree::apply_ops_incremental` 现在先在 scratch root 中逐 op 生成快照并完成校验，局部 `replace_node_with_spec` 使用当前 op 后的 root，避免用最终 root 重建后再重复应用后续 `Insert`/结构 op；新增回归测试覆盖 unsupported set-prop 后接 insert 不重复插入。
+- 审阅并修复 L1/L4 相关缺口：`atto-ui-terminal` 鼠标坐标转换改为使用显式 `MouseCoordinateSpace`，不再同时猜测绝对/本地坐标；`NamedStyleCache` 改用 `Theme` 命名样式 revision 失效，避免同一 `Theme` 存储位置替换时沿用旧 `markdown-link` 样式。
+- 复核 L2/L3/L6/L7/L9/L10：Button 区域外点击不会触发；布局权重文档为 `u16`；`view_builder!` 支持显式 crate path 且未知组件生成 `compile_error!`；3 位 hex 颜色支持同时避免非 ASCII hex panic；菜单和窗口阴影共用 `drawing::draw_shadow`；clippy 无告警。
+- 补充测试覆盖：主题缓存同地址替换刷新、非 ASCII hex 错误返回、终端显式坐标空间、`view_builder!` 使用非 `atto_ui` 假 crate path 的展开路径。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T13 — 命名消歧义（命名建议，需单独评估）
 **说明**：影响 Cargo workspace，改动面大，**执行前需与维护者确认**。

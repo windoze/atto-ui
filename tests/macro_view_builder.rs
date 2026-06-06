@@ -1,6 +1,39 @@
 use atto_ui::composable::DynamicTree;
 use atto_ui_macros::view_builder;
 
+mod fake_atto {
+    pub mod composable {
+        #[derive(Debug)]
+        pub struct Text(pub String);
+
+        #[derive(Debug, Default)]
+        pub struct VStack {
+            children: Vec<Text>,
+        }
+
+        impl Text {
+            pub fn new(text: impl Into<String>) -> Self {
+                Self(text.into())
+            }
+        }
+
+        impl VStack {
+            pub fn new() -> Self {
+                Self::default()
+            }
+
+            pub fn child(mut self, child: Text) -> Self {
+                self.children.push(child);
+                self
+            }
+
+            pub fn children(&self) -> &[Text] {
+                &self.children
+            }
+        }
+    }
+}
+
 #[test]
 fn view_builder_macro_builds_vstack() {
     let view = view_builder! {
@@ -45,6 +78,18 @@ fn view_builder_macro_supports_explicit_crate_path() {
     };
 
     assert_eq!(view.children().len(), 2);
+}
+
+#[test]
+fn view_builder_macro_uses_explicit_crate_path() {
+    let view = view_builder! {
+        crate_path = crate::fake_atto;
+        VStack {
+            Text("Line 1")
+        }
+    };
+
+    assert_eq!(view.children()[0].0, "Line 1");
 }
 
 #[test]

@@ -208,14 +208,20 @@ impl ComponentTree {
 
     pub fn apply_ops_incremental(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
         let has_set_tree = ops.iter().any(|op| matches!(op, TreeOp::SetTree(_)));
-        apply_tree_ops(&mut self.root, ops)?;
+        let mut root_after_ops = Vec::with_capacity(ops.len());
+        let mut next_root = self.root.clone();
+        for op in ops {
+            apply_tree_ops(&mut next_root, std::slice::from_ref(op))?;
+            root_after_ops.push(next_root.clone());
+        }
+        self.root = next_root;
         if has_set_tree {
             self.rebuild()?;
             return Ok(true);
         }
 
         let mut structural = false;
-        for op in ops {
+        for (op, root_after_op) in ops.iter().zip(root_after_ops.iter()) {
             match op {
                 TreeOp::SetTree(_) => {}
                 TreeOp::SetProp { id, name, value } => {
@@ -237,7 +243,7 @@ impl ComponentTree {
                             if !replace_node_with_spec(
                                 self.view.as_mut(),
                                 id,
-                                &self.root,
+                                root_after_op,
                                 &self.registry,
                             )? {
                                 self.rebuild()?;
@@ -256,8 +262,12 @@ impl ComponentTree {
                         self.rebuild()?;
                         return Ok(true);
                     }
-                    if !replace_node_with_spec(self.view.as_mut(), id, &self.root, &self.registry)?
-                    {
+                    if !replace_node_with_spec(
+                        self.view.as_mut(),
+                        id,
+                        root_after_op,
+                        &self.registry,
+                    )? {
                         self.rebuild()?;
                         return Ok(true);
                     }
@@ -1757,6 +1767,50 @@ mod tests {
         )
         .expect("apply missing");
         assert_eq!(missing, PropertyApply::NotFound);
+    }
+
+    #[test]
+    fn component_tree_incremental_uses_current_root_for_local_replace() {
+        let callbacks = CallbackRegistry::new();
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("VStack").with_id("container"),
+                ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        let child = ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("inserted")
+                .with_prop("text", ComponentValue::String("Hello".into())),
+        );
+
+        let changed = tree
+            .apply_ops_incremental(&[
+                TreeOp::SetProp {
+                    id: "container".into(),
+                    name: "unknown".into(),
+                    value: ComponentValue::Bool(true),
+                },
+                TreeOp::Insert {
+                    parent_id: "container".into(),
+                    index: 0,
+                    child,
+                },
+            ])
+            .expect("apply");
+        assert!(changed);
+
+        let container = find_view_by_tag(tree.view(), "container").expect("container");
+        assert_eq!(child_tags(container), vec![Some("inserted")]);
+        let root_container = tree
+            .root_spec()
+            .children
+            .iter()
+            .find(|child| child.node.id.as_deref() == Some("container"))
+            .expect("container spec");
+        assert_eq!(root_container.node.children.len(), 1);
     }
 
     #[test]

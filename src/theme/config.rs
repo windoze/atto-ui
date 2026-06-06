@@ -118,17 +118,18 @@ impl ThemeConfig {
 fn parse_color(s: &str) -> Result<Color> {
     let trimmed = s.trim();
     if let Some(hex) = trimmed.strip_prefix('#') {
-        let (r, g, b) = match hex.len() {
+        let bytes = hex.as_bytes();
+        let (r, g, b) = match bytes.len() {
             3 => {
-                let r = parse_short_hex_channel(&hex[0..1]).context("parse red channel")?;
-                let g = parse_short_hex_channel(&hex[1..2]).context("parse green channel")?;
-                let b = parse_short_hex_channel(&hex[2..3]).context("parse blue channel")?;
+                let r = parse_short_hex_channel(bytes[0]).context("parse red channel")?;
+                let g = parse_short_hex_channel(bytes[1]).context("parse green channel")?;
+                let b = parse_short_hex_channel(bytes[2]).context("parse blue channel")?;
                 (r, g, b)
             }
             6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).context("parse red channel")?;
-                let g = u8::from_str_radix(&hex[2..4], 16).context("parse green channel")?;
-                let b = u8::from_str_radix(&hex[4..6], 16).context("parse blue channel")?;
+                let r = parse_hex_channel(bytes[0], bytes[1]).context("parse red channel")?;
+                let g = parse_hex_channel(bytes[2], bytes[3]).context("parse green channel")?;
+                let b = parse_hex_channel(bytes[4], bytes[5]).context("parse blue channel")?;
                 (r, g, b)
             }
             _ => return Err(anyhow!("expected #RGB or #RRGGBB, got {trimmed:?}")),
@@ -160,9 +161,22 @@ fn parse_color(s: &str) -> Result<Color> {
     Ok(c)
 }
 
-fn parse_short_hex_channel(hex: &str) -> Result<u8> {
-    let v = u8::from_str_radix(hex, 16)?;
+fn parse_short_hex_channel(hex: u8) -> Result<u8> {
+    let v = hex_value(hex)?;
     Ok((v << 4) | v)
+}
+
+fn parse_hex_channel(high: u8, low: u8) -> Result<u8> {
+    Ok((hex_value(high)? << 4) | hex_value(low)?)
+}
+
+fn hex_value(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(anyhow!("invalid hex digit")),
+    }
 }
 
 fn parse_modifiers(mods: &[String]) -> Result<Modifier> {

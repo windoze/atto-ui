@@ -60,6 +60,23 @@ colors:
 }
 
 #[test]
+fn theme_config_rejects_non_ascii_hex_without_panicking() {
+    let yaml = r##"
+colors:
+  desktop:
+    fg: "#€"
+"##;
+
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+
+    let mut theme = Theme::dark();
+    let err = theme
+        .apply_config_overlay(&cfg)
+        .expect_err("invalid hex should be rejected");
+    assert!(err.to_string().contains("invalid fg color"));
+}
+
+#[test]
 fn theme_config_preserves_custom_keys_for_user_widgets() {
     let json = r##"
     {

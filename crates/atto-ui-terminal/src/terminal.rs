@@ -14,7 +14,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use atto_ui::composable::{ComponentContext, EventResult, ScrollConfig};
+use atto_ui::composable::{ComponentContext, EventResult, MouseCoordinateSpace, ScrollConfig};
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
@@ -42,6 +42,42 @@ impl TerminalShortcut {
             return false;
         }
         event.modifiers == self.modifiers
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mouse_at(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_coords_local_uses_explicit_coordinate_space() {
+        let area = Some(Rect::new(10, 5, 4, 3));
+
+        assert_eq!(
+            mouse_coords_local(area, mouse_at(11, 6), MouseCoordinateSpace::Absolute),
+            Some((1, 1))
+        );
+        assert_eq!(
+            mouse_coords_local(area, mouse_at(1, 1), MouseCoordinateSpace::Absolute),
+            None
+        );
+        assert_eq!(
+            mouse_coords_local(area, mouse_at(1, 1), MouseCoordinateSpace::Local),
+            Some((1, 1))
+        );
+        assert_eq!(
+            mouse_coords_local(area, mouse_at(11, 6), MouseCoordinateSpace::Local),
+            None
+        );
     }
 }
 
@@ -597,7 +633,7 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
         }
     }
 
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         match event {
             Event::Key(key) => {
                 let mut shared = self.shared.lock();
@@ -641,7 +677,8 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
             Event::Mouse(m) => {
                 let shared = self.shared.lock();
                 let screen = shared.parser.screen();
-                let inside = mouse_coords_local(self.last_area, *m).is_some();
+                let inside =
+                    mouse_coords_local(self.last_area, *m, ctx.mouse_coordinate_space).is_some();
                 if !inside {
                     return EventResult::ignored();
                 }
@@ -658,7 +695,9 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                     return EventResult::ignored();
                 }
 
-                if let Some(bytes) = encode_mouse_event(screen, *m, self.last_area) {
+                if let Some(bytes) =
+                    encode_mouse_event(screen, *m, self.last_area, ctx.mouse_coordinate_space)
+                {
                     drop(shared);
                     dispatch_input(&self.shared, &bytes);
                     return EventResult::consumed();
@@ -723,7 +762,7 @@ impl TerminalHandle {
                     Some(text.as_bytes().to_vec())
                 }
             }
-            Event::Mouse(m) => encode_mouse_event(screen, *m, None),
+            Event::Mouse(m) => encode_mouse_event(screen, *m, None, MouseCoordinateSpace::Absolute),
             _ => None,
         };
         if let Some(bytes) = bytes {
@@ -815,7 +854,11 @@ impl TerminalSnapshot {
     }
 }
 
-fn mouse_coords_local(area: Option<Rect>, m: MouseEvent) -> Option<(u16, u16)> {
+fn mouse_coords_local(
+    area: Option<Rect>,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
     let Some(area) = area else {
         return Some((m.column, m.row));
     };
@@ -824,19 +867,24 @@ fn mouse_coords_local(area: Option<Rect>, m: MouseEvent) -> Option<(u16, u16)> {
         return None;
     }
 
-    if m.column >= area.x
-        && m.column < area.x.saturating_add(area.width)
-        && m.row >= area.y
-        && m.row < area.y.saturating_add(area.height)
-    {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => {
+            if m.column >= area.x
+                && m.column < area.x.saturating_add(area.width)
+                && m.row >= area.y
+                && m.row < area.y.saturating_add(area.height)
+            {
+                return Some((
+                    m.column.saturating_sub(area.x),
+                    m.row.saturating_sub(area.y),
+                ));
+            }
+        }
+        MouseCoordinateSpace::Local => {
+            if m.column < area.width && m.row < area.height {
+                return Some((m.column, m.row));
+            }
+        }
     }
 
     None
@@ -1112,12 +1160,13 @@ fn encode_mouse_event(
     screen: &vt100::Screen,
     event: MouseEvent,
     area: Option<Rect>,
+    coordinate_space: MouseCoordinateSpace,
 ) -> Option<Vec<u8>> {
     if matches!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None) {
         return None;
     }
 
-    let (col, row) = mouse_coords_local(area, event)?;
+    let (col, row) = mouse_coords_local(area, event, coordinate_space)?;
     let (rows, cols) = screen.size();
     if row >= rows || col >= cols {
         return None;

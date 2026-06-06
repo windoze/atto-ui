@@ -13,15 +13,15 @@ const MARKDOWN_LINK_STYLE: &str = "markdown-link";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct NamedStyleCache {
-    theme_key: Option<usize>,
+    theme_revision: Option<u64>,
     style: Option<Style>,
 }
 
 impl NamedStyleCache {
     pub(crate) fn markdown_link(&mut self, theme: &Theme) -> Option<Style> {
-        let theme_key = theme as *const Theme as usize;
-        if self.theme_key != Some(theme_key) {
-            self.theme_key = Some(theme_key);
+        let theme_revision = theme.named_styles_revision();
+        if self.theme_revision != Some(theme_revision) {
+            self.theme_revision = Some(theme_revision);
             self.style = theme.named_style(MARKDOWN_LINK_STYLE);
         }
         self.style
@@ -236,6 +236,25 @@ mod tests {
         );
         assert_eq!(
             cache.markdown_link(&second).and_then(|s| s.fg),
+            Some(Color::Blue)
+        );
+    }
+
+    #[test]
+    fn named_style_cache_refreshes_when_theme_storage_is_replaced() {
+        let mut theme = Theme::dark();
+        theme.set_named_style("markdown-link", Style::default().fg(Color::Red));
+
+        let mut cache = NamedStyleCache::default();
+        assert_eq!(
+            cache.markdown_link(&theme).and_then(|s| s.fg),
+            Some(Color::Red)
+        );
+
+        theme = Theme::dark();
+        theme.set_named_style("markdown-link", Style::default().fg(Color::Blue));
+        assert_eq!(
+            cache.markdown_link(&theme).and_then(|s| s.fg),
             Some(Color::Blue)
         );
     }

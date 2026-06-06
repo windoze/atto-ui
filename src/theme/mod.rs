@@ -2,6 +2,7 @@ mod config;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use ratatui::style::{Color, Modifier, Style};
@@ -47,6 +48,12 @@ pub struct Theme {
 
     glyphs: HashMap<String, String>,
     named_styles: HashMap<String, Style>,
+    named_styles_revision: u64,
+}
+
+fn next_theme_revision() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Theme {
@@ -108,6 +115,7 @@ impl Theme {
             },
             glyphs: default_glyphs(),
             named_styles: HashMap::new(),
+            named_styles_revision: next_theme_revision(),
         };
         theme.populate_named_styles();
         theme
@@ -179,6 +187,7 @@ impl Theme {
             },
             glyphs: default_glyphs(),
             named_styles: HashMap::new(),
+            named_styles_revision: next_theme_revision(),
         };
         theme.populate_named_styles();
         theme
@@ -205,12 +214,16 @@ impl Theme {
         }
 
         let overlays = cfg.overlay_styles()?;
+        let has_style_overlay = !overlays.is_empty();
         for (k, overlay) in overlays {
             let base = self.named_styles.get(&k).copied().unwrap_or_default();
             self.named_styles.insert(k, base.patch(overlay));
         }
 
         self.refresh_typed_fields_from_named_styles();
+        if has_style_overlay {
+            self.bump_named_styles_revision();
+        }
         Ok(())
     }
 
@@ -222,6 +235,10 @@ impl Theme {
         self.named_styles.get(name).copied()
     }
 
+    pub(crate) fn named_styles_revision(&self) -> u64 {
+        self.named_styles_revision
+    }
+
     pub fn set_glyph(&mut self, name: impl Into<String>, glyph: impl Into<String>) {
         self.glyphs.insert(name.into(), glyph.into());
     }
@@ -229,6 +246,11 @@ impl Theme {
     pub fn set_named_style(&mut self, name: impl Into<String>, style: Style) {
         self.named_styles.insert(name.into(), style);
         self.refresh_typed_fields_from_named_styles();
+        self.bump_named_styles_revision();
+    }
+
+    fn bump_named_styles_revision(&mut self) {
+        self.named_styles_revision = next_theme_revision();
     }
 
     /// Returns a border symbol set backed by themed glyphs.
