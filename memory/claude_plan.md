@@ -24,4 +24,4 @@
 - 已审阅 T2 的 `trybuild` harness、3 个成功 fixture、2 个失败 fixture 和 `.stderr`：覆盖 `Reactive`、`view_builder!`、`ComponentProperties`/`component_properties` 核心路径，失败诊断为明确的 `compile_error!` 文案。
 - 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`。
 - 已更新 `TODO.md`：将 `R2` 标题标记为 `[DONE]`，并补充审阅结论和验证记录。
-- 下一步检查本次 diff，提交 R2 审阅记录后停止。
+- 已提交 R2 审阅记录；当前任务完成，停止，不继续处理 `T3`。
