@@ -341,10 +341,15 @@
 - 新增 `snapshot_clipboard_app` 与 `tests/pty_clipboard.rs`，覆盖跨行拖选、选区高亮和 Ctrl+C 后 OSC52 输出序列；新增单测覆盖 OSC52 base64 编码和 grapheme/display-width 选区文本。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 
-### [ ] R12 — 审阅 T12
+### [DONE] R12 — 审阅 T12
 - 确认 OSC52 编码正确、不在不支持的终端崩溃（降级）。
 - 确认选区实现于 core 通用层、未引入 editor 依赖。
 - 运行 PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `src/clipboard.rs` 的 OSC52 序列构造与写出路径，确认使用标准剪贴板选择 `c`、base64 编码和 BEL 终止；`Text`/`TextBox` 调用点以 best-effort 方式忽略写出错误，终端不支持或写出失败不会导致 UI 崩溃。
+- 已审阅 core `Text` 选区实现、`TextBox` 复制/剪切同步路径与 `runtime` 内置 Text 构造，确认选区复制位于 core 通用层，未引入 editor 依赖。
+- 已审阅 `atto-ui-test-host` raw PTY output 捕获、`snapshot_clipboard_app` 和 `tests/pty_clipboard.rs`，确认 PTY 覆盖跨行拖选、选区高亮和 Ctrl+C 后 OSC52 输出序列。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 
 ### [ ] T13 — chat 工具调用块（消费 disclosure）（C.2）
 **文件**：`crates/atto-ui-chat/src/message.rs`、`list.rs`

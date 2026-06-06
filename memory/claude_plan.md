@@ -2,32 +2,26 @@
 
 ## 范围
 
-以 `TODO.md` 为权威任务列表，本轮只完成第一个未完成任务，验证通过后更新任务记录、提交本轮相关改动，然后停止。
+以 `TODO.md` 为权威任务列表，本轮只完成第一个未完成任务：`R12 — 审阅 T12`。本轮是审阅任务，重点确认 T12 的 OSC52 剪贴板、core 通用文本选区复制、测试覆盖和降级行为；如发现缺陷，优先修复与 R12 直接相关的问题，验证通过后更新 `TODO.md`、提交并停止。
 
 ## 步骤
 
-1. 读取 `TODO.md`，识别标题未带 `[DONE]` 的第一个任务。
-2. 只读取该任务所需的相关上下文；仅在阶段级依赖需要时读取或更新 `PLAN.md`。
-3. 检查与当前任务直接相关的代码和测试。
-4. 按任务原始要求实现，不缩窄范围、不引入 workaround。
-5. 如发现阻塞当前任务的未排期前置问题，更新 `TODO.md` 加入最小前置任务，保持当前任务未完成，提交后停止。
-6. 按顺序验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关测试和完整测试。
-7. 将当前任务标题标记为 `[DONE]`，并补充完成记录。
-8. 检查 `git status`、`git diff` 和最近提交；只提交本轮任务相关文件。
-9. 停止，不处理下一项任务。
+1. 读取 `TODO.md`，确认第一个标题未带 `[DONE]` 的任务是 `R12`。
+2. 检查最新提交信息；若明确提到与 R12 直接相关的未完成问题，将其纳入本轮审阅或作为前置记录到 `TODO.md`。
+3. 审阅 T12 相关实现：`src/clipboard.rs`、core `Text` 选区逻辑、`TextBox` 剪贴板路径、test-host raw output 捕获、`snapshot_clipboard_app` 和 PTY/单测。
+4. 对照 R12 验收点确认：OSC52 编码正确且写出失败安全降级；选区位于 core 通用层且未引入 editor 依赖；PTY 覆盖选区高亮与 OSC52 输出。
+5. 如发现 R12 范围内的缺陷，做最小正确修复并补充测试；如发现阻塞但不能在本轮正确完成，更新 `TODO.md` 加入最小前置任务并停止。
+6. 按要求验证：先 `cargo fmt`，再 `cargo clippy --workspace --all-targets -- -D warnings`，再运行相关 PTY 测试和完整 workspace 测试。
+7. 将 `R12` 标题标记为 `[DONE]`，补充完成记录，必要时仅更新 `TODO.md`；除非阶段计划变化，否则不更新 `PLAN.md`。
+8. 提交本轮相关更改并停止，不处理 `T13`。
 
 ## 进度
 
-- 已在选择任务前记录执行计划。
-- 已识别第一个未完成任务：`T12 — 系统剪贴板 + 文本选区复制（core）`。
-- 已确认最新提交为 R11，未包含与 T12 直接相关的未完成事项。
-- 已确认现状：TextBox 只有应用内剪贴板；core `Text` 没有渲染文本选区复制；项目没有 OSC52 剪贴板模块。
-- 已实现 `src/clipboard.rs` 的 std-only OSC52 编码/写出能力。
-- 已为 core `Text` 增加 opt-in `selectable` 与 `clipboard` binding，支持鼠标拖选、跨行选区高亮、Ctrl+C 写入 binding 并发出 OSC52。
-- 已更新 TextBox 复制/剪切路径，使其保留原有内部 binding 行为并同步发出 OSC52。
-- 已为 `atto-ui-test-host` 增加 raw PTY output 捕获与 `wait_for_output`，用于断言 OSC52 等不可见控制序列。
-- 已新增 `snapshot_clipboard_app` 与 `tests/pty_clipboard.rs`，覆盖跨行拖选、选区高亮和 OSC52 输出。
+- 已读取 `TODO.md` 并确认第一个未完成任务：`R12 — 审阅 T12`。
+- 已写入本轮 R12 审阅计划；下一步检查最新提交与 T12 相关实现。
+- 已检查最新提交：最新提交仅记录 T12 completion plan；T12 实现提交为 `[T12] Add system clipboard selection`，未显示与 R12 直接相关的未完成事项。
+- 已审阅 `src/clipboard.rs`、`src/composable/primitives.rs`、`src/widgets/textbox.rs`、`crates/atto-ui-test-host/src/lib.rs`、`src/bin/snapshot_clipboard_app.rs`、`tests/pty_clipboard.rs`。
+- 当前审阅结论：未发现 R12 范围内缺陷；OSC52 编码路径正确，写出失败由调用点 best-effort 忽略；文本选区实现位于 core 通用 `Text`/`TextBox` 路径，未引入 editor 依赖；PTY 覆盖选区高亮与 OSC52 输出。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
-- 已将 T12 在 `TODO.md` 中标记为 `[DONE]` 并写入完成记录。
-- 已提交本轮 T12 相关文件：`adf6319 [T12] Add system clipboard selection`。
-- 保留工作树中其他既有无关变更不动；本轮到此停止，不处理 R12。
+- 已更新 `TODO.md`，将 R12 标记为 `[DONE]` 并记录审阅与验证结果。
+- 下一步检查本轮 diff/status，提交 R12 相关文件后停止。
