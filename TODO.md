@@ -181,7 +181,7 @@
 - 新增 `running_property_notifies_on_state_edges` 单测，确认运行态 Property 只在 false→true 和 true→false 边界发出 dirty 通知，非边界注册/注销不产生多余通知。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui task::`；`cargo test -p atto-ui app::run::tests::apphost_escape`；`cargo test --test pty_async_actions`；`cargo tree -p atto-ui`；`cargo test --workspace --all-targets`。
 
-### [ ] T7 — 新建 `atto-ui-async` crate（tokio，feature-gated）（C.1 / ASYNC.md Option B）
+### [DONE] T7 — 新建 `atto-ui-async` crate（tokio，feature-gated）（C.1 / ASYNC.md Option B）
 **文件**：新增 `crates/atto-ui-async/`，更新根 `Cargo.toml` workspace members
 **现状**：tokio/async-await 在全工作区命中 0 次（L8）。
 **步骤**：
@@ -192,6 +192,13 @@
 5. `atto-ui-components` 增加可选 `async` feature 透传（默认关闭）。
 **测试**：feature 开启下的 PTY/集成测试，确定性 dispatch；feature 关闭时断言 workspace 不引入 tokio（`cargo tree` 检查或 CI 约束）。
 **验收**：不开 feature 时核心编译零 tokio；开 feature 时 async-await 后台任务能驱动 UI 并可被 Esc 取消。
+**完成记录（2026-06-06）**：
+- 新增 `crates/atto-ui-async` workspace crate，默认 feature 为空；`tokio-runtime` 启用 tokio runtime builder 与 `spawn_async`/`spawn_blocking`，`event-stream` 额外启用 crossterm `EventStream`、ratatui 终端 session 和 async 运行入口。
+- `spawn_async` / `spawn_blocking` 复用 T6 `TaskRegistry` / `CancellationToken`，并通过 core `std::sync::mpsc` action channel 将结果回灌 UI；任务结束、取消或 abort 时通过 guard 自动注销注册表任务。
+- 新增 async 运行入口 `run_crossterm_desktop_with_async_actions` / `_and_tasks`，用 `tokio::select!` 统一等待 terminal `EventStream`、core action channel 桥接消息和 tick；Esc 取消语义与 core run loop 保持一致。
+- `atto-ui-components` 新增默认关闭的 `async` feature，透传并 re-export `atto-ui-async` 为 `async_support`。
+- 新增 feature-gated `snapshot_tokio_app` PTY fixture 与 `tests/pty_tokio_runtime.rs`，覆盖 async task dispatch 到主线程、Esc 取消后台任务和取消后 UI 仍可交互。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo clippy -p atto-ui-async --features event-stream --all-targets -- -D warnings`；`cargo clippy -p atto-ui-components --no-default-features --features async --all-targets -- -D warnings`；`cargo test -p atto-ui-async --features event-stream`；`cargo tree -p atto-ui`；`cargo tree -p atto-ui-async --no-default-features`；`cargo test --workspace --all-targets`。
 
 ### [ ] R7 — 审阅 T7
 - 确认 core crate 依赖图无 tokio（`cargo tree -p atto-ui` 验证）。

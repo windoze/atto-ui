@@ -71,6 +71,7 @@ path = "demos/12-tab-view/main.rs"
 [workspace]
 members = [
     "crates/atto-ui-test-host",
+    "crates/atto-ui-async",
     "crates/atto-ui-macros",
     "crates/atto-ui-chat",
     "crates/atto-ui-components",
