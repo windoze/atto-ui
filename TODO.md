@@ -481,11 +481,18 @@
 - 本次为纯机械拆分，保留原有公开 re-export 与行为；未修改 `runtime/spec.rs` 的语言无关 spec/tree-op 定义。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14D — 拆分 window manager 巨型文件（M8）
+### [DONE] T14D — 拆分 window manager 巨型文件（M8）
 **文件**：`src/wm/manager/mod.rs`(972)。
 **依赖**：T14C。
 **说明**：纯机械重构，按职责拆子模块，零行为变更。
 **测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+**完成记录（2026-06-06）**：
+- 将 `src/wm/manager/mod.rs` 收敛为 window manager facade，仅保留子模块声明、公开 re-export 与内部类型 re-export。
+- 新增 `manager/types.rs` 承载 `WindowManager`、`WindowManagerInputMode`、`WindowManagerAction` 以及拖拽/命中测试等内部状态类型。
+- 新增 `manager/core.rs` 承载构造、窗口列表访问、窗口增删、关闭请求、动态 view 替换与 tree ops/rebuild 入口。
+- 新增 `manager/tests.rs` 承载原 `mod.rs` 内的 window manager 单元测试；现有 `chrome/draw/events/focus/placement/z_order` 职责模块保持行为不变。
+- 验证：`cargo fmt`；`cargo test --lib wm::manager::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T14E — 拆分 app menu 巨型文件（M8）
 **文件**：`src/app/menu.rs`(923)。
