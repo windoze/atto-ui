@@ -200,11 +200,17 @@
 - 新增 feature-gated `snapshot_tokio_app` PTY fixture 与 `tests/pty_tokio_runtime.rs`，覆盖 async task dispatch 到主线程、Esc 取消后台任务和取消后 UI 仍可交互。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo clippy -p atto-ui-async --features event-stream --all-targets -- -D warnings`；`cargo clippy -p atto-ui-components --no-default-features --features async --all-targets -- -D warnings`；`cargo test -p atto-ui-async --features event-stream`；`cargo tree -p atto-ui`；`cargo tree -p atto-ui-async --no-default-features`；`cargo test --workspace --all-targets`。
 
-### [ ] R7 — 审阅 T7
+### [DONE] R7 — 审阅 T7
 - 确认 core crate 依赖图无 tokio（`cargo tree -p atto-ui` 验证）。
 - 确认 feature 关闭时新 crate 不破坏默认构建。
 - 确认 async 任务与 T6 取消注册表正确联动。
 - 确认 PTY 测试在 feature 下仍确定性。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-async` 的 feature gating、runtime helper、`EventStream` 运行入口、`ActionBridge`、Esc 取消路径、`snapshot_tokio_app` fixture 与 `pty_tokio_runtime` 测试。
+- 确认 `atto-ui-async` 默认 feature 为空，默认构建不启用 tokio/EventStream；`event-stream` feature 下才启用 tokio、crossterm EventStream、ratatui terminal session 与 async run loop。
+- 确认 `spawn_async` / `spawn_blocking` 通过 T6 `TaskRegistry` 注册任务，任务结束时 guard 注销，Esc 只在 UI ignored 事件后取消当前任务并标记 consumed；PTY 覆盖 async action 回灌、Esc 取消和取消后 UI 继续交互。
+- 确认 `atto-ui-components` 的 `async` feature 默认关闭，开启时透传并 re-export `atto-ui-async`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo clippy -p atto-ui-async --features event-stream --all-targets -- -D warnings`；`cargo clippy -p atto-ui-components --no-default-features --features async --all-targets -- -D warnings`；`cargo tree -p atto-ui`；`cargo tree -p atto-ui-async --no-default-features`；`cargo test -p atto-ui-async --no-default-features`；`cargo test -p atto-ui-async --features event-stream`；`cargo test --workspace --all-targets`。
 
 ### [ ] T8 — ChatMessageStore 增量流式（C.1）
 **文件**：`crates/atto-ui-chat/src/store.rs`、`message.rs`
