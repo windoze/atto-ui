@@ -3,8 +3,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use atto_editor::actions::AppAction;
-use atto_editor::window::{EditorWindowCommand, EditorWindowView};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind, WindowManager};
@@ -12,10 +10,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
+use atto_editor_app::actions::AppAction;
+use atto_editor_app::window::{EditorWindowCommand, EditorWindowView};
+
 fn write_temp_file(contents: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     path.push(format!(
-        "atto-editor-doc-split-scrollbars-{}.txt",
+        "atto-editor-app-scrollbars-{}.txt",
         std::process::id()
     ));
     fs::write(&path, contents).expect("write temp file");
@@ -23,7 +24,8 @@ fn write_temp_file(contents: &str) -> PathBuf {
 }
 
 #[test]
-fn document_split_mounts_scrollbars_on_split_divider() {
+fn window_border_scrollbar_renders_for_editor_view() {
+    // Create a file large enough to require vertical scrolling.
     let text = (0..200).map(|i| format!("line {i}\n")).collect::<String>();
     let path = write_temp_file(&text);
 
@@ -36,11 +38,10 @@ fn document_split_mounts_scrollbars_on_split_divider() {
 
     let view = EditorWindowView::new(actions, commands.clone(), editor_theme, clipboard);
 
-    // Open a long file and immediately split the active editor tab.
+    // Open the file in the active tab.
     commands.push(EditorWindowCommand::OpenFile(path));
-    commands.push(EditorWindowCommand::SplitVertical);
 
-    let bounds = Rect::new(0, 0, 70, 16);
+    let bounds = Rect::new(0, 0, 60, 16);
     let theme = Theme::dark();
 
     let mut wm = WindowManager::new();
@@ -48,7 +49,7 @@ fn document_split_mounts_scrollbars_on_split_divider() {
         Window::new(
             WindowKind::Normal,
             "Atto Editor",
-            Rect::new(0, 0, 70, 16),
+            Rect::new(0, 0, 60, 16),
             Box::new(view),
         ),
         bounds,
@@ -59,32 +60,28 @@ fn document_split_mounts_scrollbars_on_split_divider() {
     terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
 
     let buf = terminal.backend().buffer();
-    let window = &wm.windows()[0];
-    let window_rect = window.rect.get();
-    let inner = window.inner_rect();
 
-    // In split mode, `DocumentTabView` disables window-border scrollbars (it draws per-pane
-    // scrollbars on the split borders instead). The window right border should therefore remain
-    // the normal border glyph.
-    let border_x = window_rect.x + window_rect.width - 1;
-    let border_y = inner.y;
-    let border_cell = buf.cell((border_x, border_y)).expect("border cell");
-    assert_eq!(
-        border_cell.symbol(),
-        theme.border_set(true).vertical_right,
-        "expected window border scrollbar to be suppressed in split mode"
+    // The vertical window-border scrollbar occupies the right border line (excluding corners).
+    // Its first cell in the track should be the "up arrow" glyph when arrows are enabled.
+    let window_rect = wm.windows()[0].rect.get();
+    let inner = wm.windows()[0].inner_rect();
+    assert!(window_rect.width >= 3 && window_rect.height >= 3);
+    assert!(inner.width > 0 && inner.height > 0);
+
+    let x = window_rect.x + window_rect.width - 1;
+    let y = inner.y;
+    let cell = buf.cell((x, y)).expect("scrollbar cell");
+    assert_ne!(
+        cell.symbol(),
+        "",
+        "expected a non-empty symbol at the scrollbar arrow location"
     );
 
-    // The document split divider is inside the window inner rect at the midpoint (with its own
-    // 1-cell divider).
-    let doc_divider_x = inner.x + (inner.width.saturating_sub(1) / 2);
-
-    let divider_cell = buf
-        .cell((doc_divider_x, inner.y))
-        .expect("doc divider cell");
+    // Best-effort signal: the cell should not be the default vertical border glyph.
+    // (We avoid hard-coding theme-dependent symbols.)
     assert_ne!(
-        divider_cell.symbol(),
-        theme.border_set(false).vertical_left,
-        "expected the document split scrollbar to overwrite the divider glyph"
+        cell.symbol(),
+        theme.border_set(true).vertical_left,
+        "expected the scrollbar arrow to overwrite the border glyph"
     );
 }

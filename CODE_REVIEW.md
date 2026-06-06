@@ -83,7 +83,7 @@
 **建议**：文档中明确「叶子级高性能组件可手写 Component，容器组合用声明式」。
 
 ### M8. 巨型文件职责过载
-`crates/atto-ui-editor/src/view/mod.rs`（1971 行，单 struct 含 5+ 内嵌控制器）、`crates/atto-editor/src/window.rs`（1839 行，两个大组件挤一文件）、`src/runtime/mod.rs`（1851 行，CallbackHandle+注册表+树转发+20 个工厂+tree-ops+解析器）、`src/wm/manager/mod.rs`（972 行）、`src/app/menu.rs`（923 行）。
+`crates/atto-ui-editor/src/view/mod.rs`（1971 行，单 struct 含 5+ 内嵌控制器）、`crates/atto-editor-app/src/window.rs`（1839 行，两个大组件挤一文件）、`src/runtime/mod.rs`（1851 行，CallbackHandle+注册表+树转发+20 个工厂+tree-ops+解析器）、`src/wm/manager/mod.rs`（972 行）、`src/app/menu.rs`（923 行）。
 **建议**：按职责拆分子模块。
 
 ### M9. 窗口/节点查找全为 O(n) 线性扫描，单次事件多次重复扫描
@@ -117,7 +117,7 @@
 
 ## 五、命名建议
 
-`atto-editor`（应用层：窗口/Tab/分屏）与 `atto-ui-editor`（组件库：EditorView）**职责不同、非重复造轮子**，但命名过近极易误导。建议将 `atto-editor` 更名为 `atto-editor-app` 消歧义。`atto-ui-runtime` 当前仅被 `atto-ui-python` 引用，定位悬空，建议明确其是否应作为核心被组件 crate 共享，否则合并进 `atto-ui`。
+`atto-editor-app`（应用层：窗口/Tab/分屏）与 `atto-ui-editor`（组件库：EditorView）**职责不同、非重复造轮子**；原 `atto-editor` 命名已更改为 `atto-editor-app` 消歧义。原独立 runtime crate 已合并为 `atto-ui::runtime`，由核心 crate 与 `atto-ui-python` 共享。
 
 ---
 

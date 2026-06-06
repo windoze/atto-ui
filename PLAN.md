@@ -150,7 +150,7 @@
 > 这些为随手清理项，可批量提交，不阻塞功能。
 
 - **M6. 增量更新退化为全量 rebuild**：`runtime/mod.rs:226-251`。区分 `PropertyApply::NotFound`（属性不存在）与 `UnsupportedProperty`（组件不支持动态 set），仅前者必要时 rebuild。需扩展 `PropertyApply` 枚举并修正分支。
-- **M8. 巨型文件拆分**：`atto-ui-editor/src/view/mod.rs`(1971)、`atto-editor/src/window.rs`(1839)、`runtime/mod.rs`(1851)、`wm/manager/mod.rs`(972)、`app/menu.rs`(923)。按职责拆子模块，纯机械重构，逐文件单独 PR。
+- **M8. 巨型文件拆分**：`atto-ui-editor/src/view/mod.rs`(1971)、`atto-editor-app/src/window.rs`(1839)、`runtime/mod.rs`(1851)、`wm/manager/mod.rs`(972)、`app/menu.rs`(923)。按职责拆子模块，纯机械重构，逐文件单独 PR。
 - **M9. O(n) 查找 → id 索引**：`wm/manager/events.rs|focus.rs|z_order.rs` 与 runtime tree-ops。引入 `HashMap<id, index/path>` 索引。低优先（窗口/节点少时无碍）。
 - **L1. 坐标系启发式不可靠**：`composable/geom.rs:70-84`。改为调用方显式传坐标系（绝对/相对枚举参数），移除 `column<width && row<height` 猜测。
 - **L2. Button 无命中判断**：`widgets/button.rs:88-91`。保存 `last_area`，`Down(Left)` 前做 `contains` 检查，与其他 widget 一致。
@@ -161,7 +161,7 @@
 - **L7. `parse_color` 不支持 3 位 hex**：`theme/config.rs:121`。支持 `#fff` → 扩展为 `#ffffff`。
 - **L9. `draw_shadow` 重复**：`wm/manager/draw.rs:114` 与 `app/menu.rs:868` 完全重复，提取共享函数。
 - **L10. clippy 三条告警**：`cargo clippy --workspace --all-targets --fix` 一键修复（while let 简化、if 并入 match、checked division）。
-- **命名建议**：`atto-editor` → `atto-editor-app` 消歧义；明确 `atto-ui-runtime` 定位（是否作为核心被组件 crate 共享，否则合并进 `atto-ui`）。涉及 Cargo workspace 改名，影响面大，需单独评估。
+- **命名消歧义（已确认并实施，2026-06-06）**：维护者经 T13A 确认后，T13 将应用 crate 改为 `atto-editor-app`，并将原独立 runtime crate 合并为 `atto-ui::runtime` 内部模块；不再保留独立 runtime crate。涉及 Cargo workspace 改名，影响面大，逐步实施并全量回归。
 
 ---
 

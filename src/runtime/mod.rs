@@ -1,5 +1,9 @@
 //! Runtime integration layer.
 
+mod spec;
+
+pub use spec::*;
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::OnceLock;
@@ -7,14 +11,7 @@ use std::sync::OnceLock;
 use crossterm::event::Event;
 use parking_lot::Mutex;
 use ratatui::Frame;
-use ratatui::layout::Rect;
-
-use atto_ui_runtime::{
-    ActionMeta, AlignSpec, AnchorPlacementSpec, AnchorSpec, CallbackId, CallbackInvocation,
-    CallbackRegistry, ComponentRegistry, ComponentSchema, ComponentSpec, ComponentSpecChild,
-    ComponentValue, EdgeInsetsSpec, EventMeta, LayoutSpec, SizeSpec, TreeError, TreeOp, ValueType,
-    apply_tree_ops,
-};
+use ratatui::layout::Rect as RatatuiRect;
 
 use crate::composable::{
     Align, Anchor, AnchorPlacement, Border, Component, ComponentContext, ComponentId,
@@ -371,7 +368,7 @@ impl Component for ComponentTree {
         self.view.handle_titlebar_event(event, ctx)
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: RatatuiRect, ctx: ComponentContext<'_>) {
         self.view.draw(frame, area, ctx);
     }
 }
@@ -1575,7 +1572,6 @@ mod tests {
     };
     use crate::theme::Theme;
     use crate::wm::WindowId;
-    use atto_ui_runtime::ComponentSpecChild;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
     fn child_tags(view: &dyn Component) -> Vec<Option<&str>> {

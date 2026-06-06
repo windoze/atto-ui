@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+//! Language-neutral runtime specs and tree operation primitives.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;

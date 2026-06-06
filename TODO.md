@@ -81,10 +81,10 @@
 
 **完成记录（2026-06-06）**：
 - 审阅 `src/runtime/mod.rs`：`move_node` 已在摘出节点前通过 `can_insert_into` 校验目标父存在且不是 `TabView`；`take_node`、`insert_existing_node`、恢复路径均保留被摘出的节点，不会在失败路径 drop。
-- 审阅并修复 spec 层 Move 原子性缺口：`atto-ui-runtime::apply_tree_ops` 现在会在摘出前校验源节点、目标父存在，并拒绝移入自身/后代，避免 `ComponentTree::apply_ops_incremental` 在失败时留下损坏的 `root` spec。
+- 审阅并修复 spec 层 Move 原子性缺口：`atto-ui::runtime::apply_tree_ops` 现在会在摘出前校验源节点、目标父存在，并拒绝移入自身/后代，避免 `ComponentTree::apply_ops_incremental` 在失败时留下损坏的 `root` spec。
 - 补充测试覆盖：spec Move 缺失父节点保持树不变、移入后代保持树不变、`ComponentTree::apply_ops_incremental` 缺失父节点保持 root/view 不变、`move_node` 目标为叶子父节点时恢复已摘出节点。
 - 复核 T2 原测试：目标父不存在、目标父为 `TabView`、正常移动到指定 index 均覆盖并通过。
-- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test -p atto-ui-runtime tree_ops_move`；`cargo test component_tree_incremental_move --lib`；`cargo test --all --all-targets` 全部通过。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test move_node --lib`；`cargo test tree_ops_move --lib`；`cargo test component_tree_incremental_move --lib`；`cargo test --all --all-targets` 全部通过。
 
 ### [DONE] T3 — TextBox 选区锚点 grapheme 对齐（S4）
 **文件**：`src/widgets/textbox.rs`、`src/text/buffer.rs`
@@ -397,68 +397,41 @@
 - 补充测试覆盖：主题缓存同地址替换刷新、非 ASCII hex 错误返回、终端显式坐标空间、`view_builder!` 使用非 `atto_ui` 假 crate path 的展开路径。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T13A — 确认命名消歧义方案（T13 前置）
+### [DONE] T13A — 确认命名消歧义方案（T13 前置）
 **说明**：T13 影响 Cargo workspace 且原任务明确要求执行前与维护者确认。该确认是 T13 的具体前置条件，必须先明确以下决策后才能实施改名或 runtime 定位调整。
 
 **确认项**：
 - 是否将 `atto-editor` 改名为 `atto-editor-app`。
 - 若改名，是否同步更新所有 workspace `[dependencies]`、import 路径、文档和 CI/发布引用。
-- `atto-ui-runtime` 保持独立核心共享 crate，还是合并进 `atto-ui`。
+- 原独立 runtime crate 保持独立核心共享 crate，还是合并进 `atto-ui`。
 
 **验收**：维护者确认上述决策，并将确认结果写入本任务完成记录；随后 T13 按确认结果执行。
 
-**当前记录（2026-06-06）**：本次执行确认 T13A 是首个未完成任务；因验收要求维护者确认上述三项决策，当前等待维护者答复，任务保持未完成。
+**完成记录（2026-06-06，维护者确认）**：
+- ✅ **确认改名**：`atto-editor` → `atto-editor-app`。
+- ✅ **确认同步更新**：随改名同步更新所有 workspace `[dependencies]` 引用、import 路径、文档和 CI/发布引用。
+- ✅ **确认合并 runtime**：原独立 runtime crate 合并进 `atto-ui`，不再保留为独立 crate。
+- 决策已写入下方 T13，T13 按本确认结果执行。
 
-**当前记录（2026-06-06，本轮复核）**：再次确认 T13A 仍是首个未完成任务；最新提交同样记录等待维护者确认。因尚未收到三项确认结果，T13A 继续保持未完成，且不执行依赖它的 T13。
+### [DONE] T13 — 命名消歧义（按 T13A 确认结果执行）
+**依赖**：T13A（已确认，见上方完成记录）。
+**说明**：影响 Cargo workspace，改动面大；T13A 已确认决策，按下列方案实施。
+- **改名 `atto-editor` → `atto-editor-app`**：改 `crates/atto-editor` 目录名与 `Cargo.toml` 包名 + workspace `members` 路径 + 所有 `[dependencies]` 引用 + import 路径（`atto_editor` → `atto_editor_app`）+ 文档（CLAUDE.md/PLAN.md/TODO.md 等）+ CI/发布引用。
+- **合并原独立 runtime crate 进 `atto-ui`**：将源码并入 `atto-ui`（如 `src/runtime/`），移除该 crate、workspace `members` 与根 dependency 条目，更新 `atto-ui-python` 等引用方改为依赖 `atto-ui` 内对应路径。
+**测试**：全工作区 `cargo build`/`cargo test`；确认无遗漏引用、clippy 全清。
 
-**当前记录（2026-06-06，本轮复核 2）**：本轮再次读取 `TODO.md` 后确认 T13A 仍是首个未完成任务。验收仍依赖维护者确认 `atto-editor` 是否改名、改名同步范围以及 `atto-ui-runtime` 定位；因尚未收到确认，T13A 保持未完成，未执行 T13。
-
-**当前记录（2026-06-06，本轮复核 3）**：本轮确认 T13A 仍是首个未完成任务，且最新提交 `[T13A] Record continued confirmation blocker` 直接记录同一阻塞状态。因维护者尚未确认三项命名/定位决策，T13A 继续保持未完成，未执行依赖它的 T13。
-
-**当前记录（2026-06-06，本轮复核 4）**：本轮再次确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record continued confirmation wait` 继续记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因尚未收到确认，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 5）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation still pending` 直接记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到三项确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 6）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation still blocked` 直接记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到三项确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 7）**：本轮确认 T13A 仍是首个未完成任务；最近提交继续记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到三项确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 8）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation remains pending` 直接记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到三项确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 9）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation still pending` 继续记录同一维护者确认阻塞。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到三项确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 10）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record continued confirmation pending` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、改名同步范围，以及 `atto-ui-runtime` 保持独立还是合并进 `atto-ui`；因本轮仍未收到确认，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 11）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation still required` 直接记录同一维护者确认阻塞，且未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 12）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation still pending` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮仍未收到确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 13）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation remains pending` 仍直接记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 14）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation remains blocked` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 15）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `a6fb7a2 [T13A] Record confirmation still blocked` 直接记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮仍未收到确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 16）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `1a2cdc1 [T13A] Record confirmation still unresolved` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 17）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `7ecd6bd [T13A] Record continued confirmation blocker` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮仍未收到确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 18）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `8446a88 [T13A] Record confirmation remains blocked` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-**当前记录（2026-06-06，本轮复核 19）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `2346e38 [T13A] Record confirmation wait continues` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
-
-### [TODO] T13 — 命名消歧义（命名建议，需单独评估）
-**依赖**：T13A。
-**说明**：影响 Cargo workspace，改动面大，执行前必须完成 T13A 的维护者确认。
-- `atto-editor` → `atto-editor-app`：改 `Cargo.toml` 包名 + 所有 `[dependencies]` 引用 + import 路径。
-- 评估 `atto-ui-runtime` 定位（仅被 `atto-ui-python` 引用）：作为核心共享 or 合并进 `atto-ui`。
-**测试**：全工作区 `cargo build`/`cargo test`。
+**完成记录（2026-06-06）**：
+- 将 `crates/atto-editor` 目录改名为 `crates/atto-editor-app`，并同步更新 package 名、workspace member、二进制测试环境变量、crate import 路径、README 与相关文档引用。
+- 将原独立 runtime crate 的语言无关数据结构与 tree ops 移入 `src/runtime/spec.rs`，通过 `atto_ui::runtime` 导出，并移除 standalone workspace crate 与相关 dependency 条目。
+- 更新 `src/lib.rs`、`src/component_api.rs`、`src/inspect.rs`、`src/composable/component.rs` 与 `crates/atto-ui-python`，改为使用 `atto-ui` 内的 runtime 类型。
+- 更新 Python 集成与路线图文档中的 runtime 落点说明，确认当前入口为 `atto-ui::runtime` / `src/runtime/spec.rs`。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace --all-targets`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R13 — 审阅 T13
 确认改名后全工作区编译通过、无遗漏引用、CI/文档同步更新。
 
 ### [TODO] T14 — 巨型文件拆分（M8，长期）
-**文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)、`crates/atto-editor/src/window.rs`(1839)、`src/runtime/mod.rs`(1851)、`src/wm/manager/mod.rs`(972)、`src/app/menu.rs`(923)。
+**文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)、`crates/atto-editor-app/src/window.rs`(1839)、`src/runtime/mod.rs`(1851)、`src/wm/manager/mod.rs`(972)、`src/app/menu.rs`(923)。
 **说明**：纯机械重构，按职责拆子模块，**逐文件单独 PR**，零行为变更。
 **测试**：每个文件拆分后全量 PTY 回归。
 

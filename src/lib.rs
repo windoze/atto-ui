@@ -15,15 +15,15 @@ pub mod theme;
 pub mod widgets;
 pub mod wm;
 
-pub use atto_ui_runtime::{
-    ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,
-    ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,
-    TreeError, TreeOp, ValueType,
-};
 pub use component_api::{
     ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget, ComponentValueCodec,
 };
 pub use inspect::{DesktopInspector, InspectNode, InspectSnapshot};
+pub use runtime::{
+    ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,
+    ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,
+    TreeError, TreeOp, ValueType,
+};
 pub use wm::{
     Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
     WindowManager, WindowMinSizeMode, WindowState,

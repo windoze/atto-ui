@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use atto_editor::actions::AppAction;
-use atto_editor::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
+use atto_editor_app::actions::AppAction;
+use atto_editor_app::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind, WindowManager};
@@ -15,7 +15,7 @@ use ratatui::layout::Rect;
 fn make_temp_workspace(file_count: usize) -> PathBuf {
     let mut dir = std::env::temp_dir();
     dir.push(format!(
-        "atto-editor-sidebar-scrollbars-{}",
+        "atto-editor-app-sidebar-scrollbars-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);

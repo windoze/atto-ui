@@ -30,7 +30,7 @@
 | atto-ui-terminal | 3 | **严重不足**：鼠标编码/DSR/resize/粘贴几乎未测 |
 | atto-ui-chat | 3 | 不足：流式/输入模式/自动滚动未充分覆盖 |
 | atto-ui-markdown | 4 | 不足：表格/代码块/嵌套未系统覆盖 |
-| atto-ui-runtime | 4 | tree-ops 边界（move 丢节点等）未覆盖 |
+| atto-ui::runtime | 4 | tree-ops 边界（move 丢节点等）未覆盖 |
 | atto-ui-python | 4 | 仅解析层单测，无端到端 |
 | atto-ui-macros | 0 | **完全没有测试** |
 | atto-ui-file-tree | 9 | 尚可 |

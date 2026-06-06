@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! `atto-editor` — a terminal editor app built on `atto-ui` + `editor-core`.
+//! `atto-editor-app` — a terminal editor app built on `atto-ui` + `editor-core`.
 //!
 //! This crate provides an interactive editor application with:
 //! - workspace roots (folders + individual files)

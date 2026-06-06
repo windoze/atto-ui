@@ -3,9 +3,8 @@ use std::sync::Arc;
 use parking_lot::RwLock as ParkingRwLock;
 use ratatui::layout::Rect;
 
-use atto_ui_runtime::ComponentValue;
-
 use crate::composable::EdgeInsets;
+use crate::runtime::{ComponentValue, PropertyMeta, Rect as RuntimeRect};
 
 pub trait ComponentValueCodec: Sized {
     fn to_component_value(&self) -> ComponentValue;
@@ -13,29 +12,29 @@ pub trait ComponentValueCodec: Sized {
 }
 
 pub trait ComponentPropertySchema {
-    fn property_schema() -> Vec<atto_ui_runtime::PropertyMeta>;
+    fn property_schema() -> Vec<PropertyMeta>;
 }
 
 impl<T: ComponentPropertySchema> ComponentPropertySchema for Box<T> {
-    fn property_schema() -> Vec<atto_ui_runtime::PropertyMeta> {
+    fn property_schema() -> Vec<PropertyMeta> {
         T::property_schema()
     }
 }
 
 impl<T: ComponentPropertySchema> ComponentPropertySchema for Arc<T> {
-    fn property_schema() -> Vec<atto_ui_runtime::PropertyMeta> {
+    fn property_schema() -> Vec<PropertyMeta> {
         T::property_schema()
     }
 }
 
 impl<T: ComponentPropertySchema> ComponentPropertySchema for ParkingRwLock<T> {
-    fn property_schema() -> Vec<atto_ui_runtime::PropertyMeta> {
+    fn property_schema() -> Vec<PropertyMeta> {
         T::property_schema()
     }
 }
 
 impl<T: ComponentPropertySchema> ComponentPropertySchema for std::sync::RwLock<T> {
-    fn property_schema() -> Vec<atto_ui_runtime::PropertyMeta> {
+    fn property_schema() -> Vec<PropertyMeta> {
         T::property_schema()
     }
 }
@@ -215,7 +214,7 @@ impl ComponentValueCodec for Vec<Vec<String>> {
 
 impl ComponentValueCodec for Rect {
     fn to_component_value(&self) -> ComponentValue {
-        ComponentValue::Rect(atto_ui_runtime::Rect {
+        ComponentValue::Rect(RuntimeRect {
             x: self.x,
             y: self.y,
             width: self.width,

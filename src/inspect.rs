@@ -6,9 +6,9 @@ use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
 use crate::composable::{Component, EventResult};
+use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::{Window, WindowId};
 use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
-use atto_ui_runtime::ComponentValue;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
@@ -609,7 +609,7 @@ fn window_get_property(
     let window = window_find(wm, id)?;
     match name {
         "title" => Some(ComponentValue::String(window.title.get())),
-        "rect" => Some(ComponentValue::Rect(atto_ui_runtime::Rect {
+        "rect" => Some(ComponentValue::Rect(RuntimeRect {
             x: window.rect.get().x,
             y: window.rect.get().y,
             width: window.rect.get().width,

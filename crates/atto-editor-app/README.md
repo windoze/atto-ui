@@ -1,6 +1,6 @@
-# atto-editor
+# atto-editor-app
 
-`atto-editor` is a terminal editor application built on top of:
+`atto-editor-app` is a terminal editor application built on top of:
 
 - `atto-ui` (window manager + widgets + desktop chrome)
 - `atto-ui-editor` (an `editor-core`-powered editor widget)
@@ -8,28 +8,28 @@
 - `editor-core-lsp` (completion/hover/goto via language servers)
 - `editor-core-sublime` (optional fallback highlighting via `.sublime-syntax`)
 
-This crate is designed as an application crate (`cargo run -p atto-editor`) but is also usable as a
-library via `atto_editor::run(AttoEditorConfig)`.
+This crate is designed as an application crate (`cargo run -p atto-editor-app`) but is also usable as a
+library via `atto_editor_app::run(AttoEditorConfig)`.
 
 ## Quick Start
 
 Run the editor:
 
 ```sh
-cargo run -p atto-editor
+cargo run -p atto-editor-app
 ```
 
 Open one or more files and/or folders at startup:
 
 ```sh
 # Open a folder as a workspace root
-cargo run -p atto-editor -- path/to/project
+cargo run -p atto-editor-app -- path/to/project
 
 # Open a file in a tab (and auto-add its parent folder as a workspace root)
-cargo run -p atto-editor -- path/to/file.rs
+cargo run -p atto-editor-app -- path/to/file.rs
 
 # Mix folders + files
-cargo run -p atto-editor -- path/to/project path/to/other/file.py
+cargo run -p atto-editor-app -- path/to/project path/to/other/file.py
 ```
 
 ## Features
@@ -126,7 +126,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
-    atto_editor::run(atto_editor::AttoEditorConfig {
+    atto_editor_app::run(atto_editor_app::AttoEditorConfig {
         initial_paths: vec![PathBuf::from(".")],
     })
 }

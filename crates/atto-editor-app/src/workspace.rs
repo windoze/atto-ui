@@ -197,7 +197,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("atto_editor_{prefix}_{nanos}"))
+        std::env::temp_dir().join(format!("atto_editor_app_{prefix}_{nanos}"))
     }
 
     fn collect_child_names(node: &FileTreeNode) -> Vec<String> {

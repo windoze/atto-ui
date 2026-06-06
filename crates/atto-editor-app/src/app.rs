@@ -123,7 +123,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                         explorer_rect,
                         Box::new(explorer_view),
                     )
-                    .with_tag("atto-editor-explorer")
+                    .with_tag("atto-editor-app-explorer")
                     .with_close_hook({
                         let state = state.clone();
                         move |id| {
@@ -155,7 +155,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
 
                 let id = desktop.add_window(
                     Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
-                        .with_tag("atto-editor"),
+                        .with_tag("atto-editor-app"),
                     screen,
                 );
                 {
@@ -581,7 +581,7 @@ fn toggle_explorer_window(
     let view = ExplorerWindowView::new(actions.clone(), explorer_cmds, roots);
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Explorer", rect, Box::new(view))
-            .with_tag("atto-editor-explorer")
+            .with_tag("atto-editor-app-explorer")
             .with_close_hook({
                 let state = state.clone();
                 move |id| {
@@ -691,7 +691,7 @@ fn add_editor_window(
     let view = EditorWindowView::new(actions, commands.clone(), editor_theme, clipboard);
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
-            .with_tag("atto-editor"),
+            .with_tag("atto-editor-app"),
         screen,
     );
     {
@@ -893,7 +893,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("atto_editor_{prefix}_{nanos}"))
+        std::env::temp_dir().join(format!("atto_editor_app_{prefix}_{nanos}"))
     }
 
     #[test]
@@ -932,7 +932,7 @@ mod tests {
                 Rect::new(0, 0, 60, 16),
                 Box::new(view),
             )
-            .with_tag("atto-editor"),
+            .with_tag("atto-editor-app"),
             screen,
         );
         {

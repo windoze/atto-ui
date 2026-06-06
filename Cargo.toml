@@ -15,7 +15,6 @@ serde_yaml = "0.9.34"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
 atto-ui-macros = { path = "crates/atto-ui-macros" }
-atto-ui-runtime = { path = "crates/atto-ui-runtime" }
 
 [dev-dependencies]
 atto-ui-test-host = { path = "crates/atto-ui-test-host" }
@@ -78,8 +77,7 @@ members = [
     "crates/atto-ui-markdown",
     "crates/atto-ui-editor",
     "crates/atto-ui-terminal",
-    "crates/atto-ui-runtime",
     "crates/atto-ui-python",
     "crates/atto-ui-file-tree",
-    "crates/atto-editor",
+    "crates/atto-editor-app",
 ]

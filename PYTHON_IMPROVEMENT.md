@@ -221,7 +221,7 @@ Runtime supports actions (`ComponentCommand`) and widgets declare actions in sch
 ## Key File References
 - Python binding: `crates/atto-ui-python/src/lib.rs`
 - Minimal Python example: `crates/atto-ui-python/examples/minimal_app.py`
-- Runtime dynamic tree: `src/runtime/mod.rs` + `crates/atto-ui-runtime/src/lib.rs`
+- Runtime dynamic tree: `src/runtime/mod.rs` + `src/runtime/spec.rs`
 - Inspector APIs (get/set/action): `src/inspect.rs`
 - Window manager: `src/wm/window.rs`, `src/wm/manager/mod.rs`
 

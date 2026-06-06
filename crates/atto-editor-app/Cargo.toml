@@ -1,5 +1,5 @@
 [package]
-name = "atto-editor"
+name = "atto-editor-app"
 version = "0.1.0"
 edition = "2024"
 

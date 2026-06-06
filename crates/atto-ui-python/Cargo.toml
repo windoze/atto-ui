@@ -11,7 +11,6 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.28.0" }
 atto-ui = { path = "../.." }
 atto-ui-components = { path = "../atto-ui-components" }
-atto-ui-runtime = { path = "../atto-ui-runtime" }
 ratatui = "0.30.0"
 
 [build-dependencies]

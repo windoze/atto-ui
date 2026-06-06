@@ -13,15 +13,15 @@ use ::atto_ui as atto_ui_crate;
 use atto_ui_components::register_all_runtime_components;
 use atto_ui_crate::DesktopInspector;
 use atto_ui_crate::app::{AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar};
-use atto_ui_crate::runtime::global_registry;
+use atto_ui_crate::runtime::{
+    AlignSpec, AnchorPlacementSpec, AnchorSpec, EdgeInsetsSpec, LayoutSpec, Rect as RuntimeRect,
+    SizeSpec, global_registry,
+};
 use atto_ui_crate::theme::Theme;
 use atto_ui_crate::wm::{WindowId, WindowKind};
 use atto_ui_crate::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentSchema, ComponentSpec,
     ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta, TreeOp, ValueType,
-};
-use atto_ui_runtime::{
-    AlignSpec, AnchorPlacementSpec, AnchorSpec, EdgeInsetsSpec, LayoutSpec, SizeSpec,
 };
 
 type PyObject = Py<PyAny>;
@@ -723,7 +723,7 @@ fn py_dict_to_component_value(dict: &Bound<'_, PyDict>) -> PyResult<ComponentVal
         && dict.contains("width")?
         && dict.contains("height")?
     {
-        let rect = ComponentValue::Rect(atto_ui_runtime::Rect {
+        let rect = ComponentValue::Rect(RuntimeRect {
             x: py_to_u16(&expect_key(dict, "x")?, "x")?,
             y: py_to_u16(&expect_key(dict, "y")?, "y")?,
             width: py_to_u16(&expect_key(dict, "width")?, "width")?,

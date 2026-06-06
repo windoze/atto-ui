@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use atto_editor::actions::{AppAction, OpenTarget};
-use atto_editor::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
+use atto_editor_app::actions::{AppAction, OpenTarget};
+use atto_editor_app::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind, WindowManager, WindowManagerInputMode};
@@ -19,7 +19,7 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after unix epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("atto_editor_{prefix}_{nanos}"))
+    std::env::temp_dir().join(format!("atto_editor_app_{prefix}_{nanos}"))
 }
 
 #[test]

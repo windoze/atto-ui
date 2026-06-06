@@ -15,7 +15,7 @@
    - `ComponentValueCodec` 解决了“值转换”，但没有统一的 schema 供动态系统查询。
 
 2. **动态组件树能力已有雏形，但未接入 Desktop/WM**
-   - `atto-ui-runtime` 已提供 `ComponentSpec/TreeOp/ComponentRegistry/CallbackRegistry`，`src/runtime` 也有 `ComponentTree` + 增量更新逻辑。
+   - `atto-ui::runtime` 已提供 `ComponentSpec/TreeOp/ComponentRegistry/CallbackRegistry` 与 `ComponentTree` + 增量更新逻辑。
    - 但这些能力尚未与 `Desktop/Window` 对接为“动态窗口根组件”，Python 无法直接驱动 UI。
 
 3. **回调跨语言桥接未打通**
@@ -26,7 +26,7 @@
    - `ComponentSpec.id` 仍可选，动态系统无法保证稳定寻址。
 
 5. **语言无关层已存在，但缺少“面向绑定”的上层 API**
-   - `atto-ui-runtime` 已具备语言无关数据结构，但缺少清晰的 host API（如 `RuntimeHost` / `DynamicWindow`）承接 Python 绑定的调用。
+   - `atto-ui::runtime` 已具备语言无关数据结构，但缺少清晰的 host API（如 `RuntimeHost` / `DynamicWindow`）承接 Python 绑定的调用。
 
 ---
 
@@ -49,7 +49,7 @@
 +-------------+------------+
               |
 +-------------v------------+
-|     atto-ui-runtime       |  (语言无关桥接层)
+|     atto-ui::runtime      |  (语言无关桥接层)
 |  - ComponentValue         |
 |  - ComponentSchema        |
 |  - ComponentRegistry      |
@@ -65,13 +65,13 @@
 +--------------------------+
 ```
 
-> `atto-ui-runtime` 作为语言无关桥接层，Python/其它语言均基于该层实现绑定。
+> `atto-ui::runtime` 作为语言无关桥接层，Python/其它语言均基于该层实现绑定。
 
 ---
 
 ## 4. 核心改造方向与建议
 
-### 4.1 强化运行时桥接层（已有 `atto-ui-runtime`）
+### 4.1 强化运行时桥接层（已有 `atto-ui::runtime`）
 
 目标：把现有 runtime 结构升级为“动态 UI 的事实 API”。
 
@@ -148,7 +148,7 @@ while app.step():
 
 - 新 crate：`crates/atto-ui-python`
 - `pyproject.toml` + `Cargo.toml` 配置 maturin
-- 与核心 crate 通过 `atto-ui-runtime` 交互
+- 与核心 crate 通过 `atto-ui::runtime` 交互
 
 ---
 
@@ -192,7 +192,7 @@ while app.step():
 
 ## 8. 建议的代码落点（便于后续实现）
 
-- `crates/atto-ui-runtime/`：语言无关桥接层
+- `src/runtime/spec.rs`：语言无关桥接数据结构与 tree ops
 - `src/runtime/mod.rs`：动态树构建/更新（`ComponentTree`）
 - `src/component_api.rs`：`ComponentValueCodec` + 动态错误/命令模型
 - `crates/atto-ui-python/`：pyo3 + maturin 绑定

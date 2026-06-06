@@ -5,10 +5,10 @@ use ratatui::style::Style;
 
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
+use crate::runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use crate::theme::Theme;
 use crate::wm::WindowId;
 use crate::{ComponentCommand, ComponentError, ComponentValue};
-use atto_ui_runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EventOutcome {
