@@ -28,4 +28,5 @@
 - 完整 `cargo test --workspace --all-targets` 暴露 `atto-ui-terminal` 的两个 PTY 用例等待 `READY` 超时；该失败未在 TODO 中排期，需在本次 R17 验证中修复后再继续。
 - 已修复 terminal PTY 验证不稳定点：同文件用例串行化，公共 `PTY_WAIT` 提升到 5 秒；下一步复跑格式/lint、terminal PTY、Python e2e 和完整 workspace 测试。
 - 已完成验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；Python `py_compile`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture`；`cargo test --workspace --all-targets`。
-- 已将 `TODO.md` 中 `R17` 标记为 `[DONE]` 并写入完成记录。下一步检查 git 状态/diff/近期提交，确认提交范围后提交。
+- 已将 `TODO.md` 中 `R17` 标记为 `[DONE]` 并写入完成记录。
+- 已创建提交 `[R17] Review Python component coverage`。本次只处理 R17，不继续处理后续任务。
