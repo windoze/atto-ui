@@ -228,10 +228,16 @@
 - 新增 store 单测覆盖 delta 累积、`InProgress`→`Final` 状态配合、非文本 no-op、空 delta no-op 与 5,500 次 token 追加。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [ ] R8 — 审阅 T8
+### [DONE] R8 — 审阅 T8
 - 确认 append_delta 仅作用于 Text 内容、对其他 content 安全 no-op。
 - 确认通知粒度未导致全列表重绘退化。
 - 运行 chat 测试。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-chat/src/store.rs`、`crates/atto-ui-chat/src/list.rs`、`src/reactive/property.rs`、`src/composable/for_each.rs` 与 chat demo 的 T8 改动。
+- 确认 `append_delta` 只对 `ChatMessageContent::Text` 追加 delta；非文本内容和空 delta 不产生 dirty 通知，流式状态由调用方按 `InProgress` → `Final` 控制。
+- 修复审阅发现的问题：`set_status` 重复设置同一状态时不再产生无效 dirty 通知；新增 `update_text` 同文本 no-op、`set_status` 同状态 no-op、`ForEachIdentifiable` 多项列表只重建变更项的回归测试。
+- 确认 chat 列表使用 `ForEachIdentifiable` 按 message id reconcile，delta 更新只重建内容变化的消息行，未回退为全行视图重建。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui foreach_id_rebuilds_only_changed_items`；`cargo test --workspace --all-targets`。
 
 ### [ ] T9 — 流式 markdown 容错增量渲染（C.1）
 **文件**：`crates/atto-ui-chat/src/`、必要时 `crates/atto-ui-markdown/src/`

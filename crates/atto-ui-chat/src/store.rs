@@ -69,7 +69,20 @@ impl ChatMessageStore {
     }
 
     pub fn set_status(&self, id: ChatMessageId, status: ChatMessageStatus) -> bool {
-        self.update_message(id, |item| item.status = status)
+        let mut found = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            found = true;
+            if item.status == status {
+                false
+            } else {
+                item.status = status;
+                true
+            }
+        });
+        found
     }
 
     pub fn update_text(&self, id: ChatMessageId, markdown: impl Into<String>) -> bool {
@@ -197,6 +210,34 @@ mod tests {
         assert!(store.append_delta(id, ""));
 
         assert_eq!(text_for(&store, id), "seed");
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn update_text_same_text_does_not_notify() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::text(id, ChatSender::Assistant, "seed"));
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(store.update_text(id, "seed"));
+
+        assert_eq!(text_for(&store, id), "seed");
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn set_status_same_status_does_not_notify() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::text(id, ChatSender::Assistant, "seed"));
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(store.set_status(id, ChatMessageStatus::Final));
+
+        assert_eq!(status_for(&store, id), ChatMessageStatus::Final);
         assert!(!binding.check_dirty(&mut observer));
     }
 

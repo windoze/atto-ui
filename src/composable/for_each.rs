@@ -799,4 +799,72 @@ mod tests {
         );
         assert_eq!(build_count.load(Ordering::SeqCst), 2);
     }
+
+    #[test]
+    fn foreach_id_rebuilds_only_changed_items() {
+        #[derive(Clone, PartialEq)]
+        struct Item {
+            id: usize,
+            value: String,
+        }
+
+        impl Identifiable for Item {
+            type Id = usize;
+            fn id(&self) -> Self::Id {
+                self.id
+            }
+        }
+
+        let data = Property::new(vec![
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B".to_string(),
+            },
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+        ]);
+
+        let build_count = Arc::new(AtomicUsize::new(0));
+        let build_count_ref = Arc::clone(&build_count);
+        let mut for_each = ForEach::new(data.binding(), move |item, _| {
+            build_count_ref.fetch_add(1, Ordering::SeqCst);
+            Text::new(item.value.clone())
+        })
+        .with_id();
+
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
+        assert_eq!(build_count.load(Ordering::SeqCst), 3);
+
+        data.set(vec![
+            Item {
+                id: 1,
+                value: "A".to_string(),
+            },
+            Item {
+                id: 2,
+                value: "B2".to_string(),
+            },
+            Item {
+                id: 3,
+                value: "C".to_string(),
+            },
+        ]);
+
+        draw_component(
+            &mut for_each,
+            Rect::new(0, 0, 10, 5),
+            ScrollbarHost::Component,
+        );
+        assert_eq!(build_count.load(Ordering::SeqCst), 4);
+    }
 }
