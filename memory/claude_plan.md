@@ -1,34 +1,40 @@
-# Claude Execution Plan
+# Execution Plan
 
-## Scope
+I cannot record private chain-of-thought, but I will keep this file updated with the actionable plan, rationale, progress, blockers, and validation results.
 
-- Work from `TODO.md` as the authoritative task list.
-- First incomplete task selected: `R9 — 审阅 T9`.
-- Complete exactly this review task in this invocation, then stop.
-- This file records the execution plan and progress; it does not include hidden reasoning traces.
+## Current Invocation Plan
 
-## Step-By-Step Plan
-
-1. Check recent Git context for any latest-commit unfinished issue directly relevant to `R9`.
-2. Inspect the T9 implementation areas listed in `TODO.md`: markdown tolerant streaming, chat message rendering/reuse, and PTY coverage.
-3. Review correctness against R9 acceptance points: no completed markdown is swallowed, closed syntax recovers from fallback rendering, and incremental parsing does not reintroduce full structural rebuilds for text deltas.
-4. Run validation in the required order: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted chat/markdown PTY tests as needed, then the full workspace test suite unless unchanged green results can be reused.
-5. If review finds a defect or an unscheduled failing test, fix it within R9 when it is a direct T9 regression; otherwise add the minimum prerequisite/follow-up task in `TODO.md` before marking R9 complete.
-6. Mark `R9` as `[DONE]` in `TODO.md` and add a completion record with review findings and validation commands.
-7. Commit all intended changes, including `TODO.md` and this progress file, with a clear `R9` commit message.
-8. Stop without starting `T10`.
+1. Read `TODO.md` to identify the first task whose title is not prefixed with `[DONE]`.
+2. Review only the context needed for that task, including `PLAN.md` and relevant source/tests if required.
+3. Implement the task exactly as specified, without narrowing scope or using workarounds.
+4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task and repository policy.
+5. Update this file after key milestones or any plan changes.
+6. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record.
+7. Inspect git status/diff/log, commit all intended changes with a task-specific message, and stop without starting the next task.
 
 ## Progress Log
 
-- Read `TODO.md`; selected first incomplete task: `R9 — 审阅 T9`.
-- Reviewed `PLAN.md`; no phase-level change is expected for a routine review task unless a blocker changes dependencies.
-- Updated this execution plan before running build, test, or Git commands.
-- Checked recent Git context: latest commit is `[T9] Add streaming markdown tolerance`; it does not mention an unfinished issue that changes R9 scope.
-- Observed pre-existing working tree changes outside this review (`PLAN.md`, archived docs/scripts); I will not revert or include unrelated changes unless they become directly relevant.
-- Review found a T9 regression: trailing incomplete-table normalization can escape pipe characters inside an unclosed fenced code block, corrupting code text. I will fix this in R9 and add a focused markdown unit test.
-- Implemented the R9 fix: streaming table fallback now skips normalization while a fenced code block is unclosed, with a unit test proving table-like code text keeps literal pipe characters.
-- Validation progress: `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` passed. `cargo test -p atto-ui-chat` passed. `cargo test -p atto-ui-markdown` exposed a PTY timeout in `pty_markdown_viewer_scrolls_code_blocks_and_tables`; I will reproduce and fix or schedule it before completing R9.
-- The markdown PTY timeout reproduced as resource-sensitive startup/render waiting: single-test rerun passed. I increased that test's visible-text wait budget to 5 seconds without weakening assertions, so standard validation is less sensitive to concurrent cargo load.
-- Final validation passed after fixes: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test -p atto-ui-markdown`; `cargo test -p atto-ui-chat`; `cargo test --workspace --all-targets`.
-- Next step: mark `R9` as `[DONE]` in `TODO.md` with review/fix notes, then inspect the intended diff and commit only R9-related files plus this progress file.
-- Marked `R9` as `[DONE]` in `TODO.md` and recorded review conclusions, the fenced-code/table fallback fix, the PTY timeout stabilization, and validation commands.
+- Initial plan recorded before reading project files or running commands.
+- `TODO.md` first incomplete task identified: `T10 — chat / terminal 测试补齐（A.2 P1）`.
+- Latest commit is `[R9] Review streaming markdown tolerance`; it does not explicitly mention an unfinished issue that preempts T10.
+- Working tree already contained unrelated uncommitted changes before T10 work; I will not revert them and will stage only intended T10/progress files unless the task instructions require otherwise.
+
+## T10 Execution Scope
+
+1. Inspect current chat and terminal PTY/integration tests plus the relevant fixtures.
+2. Add coverage for chat streaming append behavior, auto-follow versus paused scroll, and text/choice/confirm input submission callbacks.
+3. Add coverage for terminal mouse encoding matrix, DSR responses including split packets, bracketed paste, resize propagation, and application cursor key encoding.
+4. Prefer existing fixtures and APIs; if a missing test-host capability blocks spec-correct coverage, add the minimum prerequisite task instead of working around it.
+5. Validate with formatting, clippy, targeted tests, then full workspace tests.
+
+## T10 Progress
+
+- Confirmed current chat PTY coverage only checked mode switching, load-more, and streaming markdown tolerance.
+- Confirmed current terminal PTY coverage only checked scrollback/color, capture, one SGR click, and window interactions.
+- Fixed chat auto-follow semantics so message changes follow the tail only while the user remains at the bottom; user scroll-up pauses following and scrolling back to bottom resumes it.
+- Extended the chat snapshot fixture with deterministic submit callback output and streaming/auto-follow append commands.
+- Added chat PTY tests for text/choice/confirm submissions, auto-follow pause/resume, and streaming delta accumulation.
+- Fixed terminal DSR tail handling so complete DSR requests do not remain buffered and repeat on later output.
+- Fixed terminal X10/default mouse release encoding so release events use button code 3 rather than duplicating press bytes.
+- Added terminal integration/unit coverage for mouse protocol/encoding/modifier matrix, split DSR packets, bracketed paste, application cursor keys, and draw-time resize sizing.
+- Validation passed: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test -p atto-ui-chat`; `cargo test -p atto-ui-terminal`; `cargo test --workspace --all-targets`.

@@ -45,6 +45,7 @@ pub struct ChatMessageList {
     on_load_more: Option<Arc<dyn Fn() + Send + Sync>>,
     load_more_armed: bool,
     auto_scroll: bool,
+    follow_tail: bool,
     suppress_auto_scroll_once: bool,
     pending_scroll_to_bottom: bool,
     messages_observer: DirtyObserver,
@@ -73,6 +74,7 @@ impl ChatMessageList {
             on_load_more: None,
             load_more_armed: true,
             auto_scroll: true,
+            follow_tail: true,
             suppress_auto_scroll_once: false,
             pending_scroll_to_bottom: false,
             messages_observer,
@@ -177,9 +179,23 @@ impl ChatMessageList {
             self.suppress_auto_scroll_once = false;
             return;
         }
-        if self.auto_scroll {
+        if self.auto_scroll && self.follow_tail {
             self.pending_scroll_to_bottom = true;
         }
+    }
+
+    fn max_scroll_y(&self) -> u16 {
+        let viewport_h = self.list.viewport_size().1;
+        let content_h = self.list.content_size().1;
+        content_h.saturating_sub(viewport_h)
+    }
+
+    fn is_scrolled_to_bottom(&self) -> bool {
+        self.list.scroll_offset().1 >= self.max_scroll_y()
+    }
+
+    fn sync_follow_tail_from_scroll(&mut self) {
+        self.follow_tail = self.is_scrolled_to_bottom();
     }
 
     fn apply_pending_scroll(&mut self) {
@@ -193,6 +209,7 @@ impl ChatMessageList {
         let content_h = self.list.content_size().1;
         let max_y = content_h.saturating_sub(viewport_h);
         self.list.set_scroll_offset(0, max_y);
+        self.follow_tail = true;
         self.pending_scroll_to_bottom = false;
         self.load_more_armed = true;
     }
@@ -322,8 +339,13 @@ impl ::atto_ui::composable::DynamicTree for ChatMessageList {}
 impl ::atto_ui::composable::EventHandling for ChatMessageList {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.track_message_changes();
+        let before_scroll_y = self.list.scroll_offset().1;
         let mut res = self.list.handle_event(event, ctx);
+        if self.list.scroll_offset().1 != before_scroll_y {
+            self.sync_follow_tail_from_scroll();
+        }
         if self.maybe_trigger_load_more() && matches!(res.action, ComponentAction::None) {
+            self.sync_follow_tail_from_scroll();
             res = EventResult::changed();
         }
         res

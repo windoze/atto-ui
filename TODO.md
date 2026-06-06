@@ -267,7 +267,7 @@
 - 修复验证中暴露的资源敏感 PTY 超时：`pty_markdown_viewer_scrolls_code_blocks_and_tables` 的可见文本等待预算统一提升到 5 秒，断言内容不变，避免并发 cargo 负载下首屏渲染偶发超时。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-markdown`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
-### [ ] T10 — chat / terminal 测试补齐（A.2 P1）
+### [DONE] T10 — chat / terminal 测试补齐（A.2 P1）
 **文件**：`crates/atto-ui-chat/tests/`、`crates/atto-ui-terminal/tests/`
 **现状**：chat 3 测试、terminal 3 测试，覆盖严重不足。
 **步骤**：
@@ -275,6 +275,14 @@
 2. terminal：鼠标编码矩阵（Down/Up/Drag/Move/Scroll × SGR/X10 × modifier × 协议模式）、DSR 应答（CPR/状态，含分包）、bracketed paste、resize 传递、application cursor 方向键编码。
 **测试**：上述 PTY/集成测试。
 **验收**：chat/terminal 关键路径有覆盖；P0 列出的 terminal 编码矩阵成体系。
+**完成记录（2026-06-06）**：
+- chat：补齐 PTY 覆盖，新增流式 delta 累积渲染、自动跟随到底部、用户上滚暂停且回到底部恢复、text/choice/confirm 三种 input 提交回调断言；snapshot fixture 增加确定性提交输出与追加命令。
+- 修复 chat 列表跟随语义：仅在当前跟随尾部时对消息变更自动滚到底部，用户滚离底部后暂停，滚回底部后恢复。
+- terminal：新增集成测试覆盖 Down/Up/Drag/Move/Scroll × SGR/X10 × modifier × PressRelease/ButtonMotion/AnyMotion 矩阵、bracketed paste、application cursor 方向键和 draw resize 后 parser 尺寸更新。
+- 修复 terminal X10/default release 编码：release 事件使用 button code 3，避免与 press 字节不可区分。
+- DSR：新增 split packet/完整 packet 后续不重复响应单测，并修复 DSR tail 只保留未完成请求前缀。
+- chat PTY fixture 运行对并发 PTY 资源敏感，`pty_chat.rs` 内用测试级互斥锁串行化，单个用例仍保持确定性且均低于 1 分钟。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui-terminal`；`cargo test --workspace --all-targets`。
 
 ### [ ] R10 — 审阅 T10
 - 确认编码矩阵覆盖全面（无遗漏协议模式组合）。

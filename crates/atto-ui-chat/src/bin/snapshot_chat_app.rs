@@ -20,8 +20,9 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui_chat::{
-    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatMessage,
-    ChatMessageList, ChatMessageStatus, ChatMessageStore, ChatPanel, ChatSender,
+    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
+    ChatInputResponse, ChatMessage, ChatMessageList, ChatMessageStatus, ChatMessageStore,
+    ChatPanel, ChatSender,
 };
 
 fn main() -> Result<()> {
@@ -86,7 +87,17 @@ fn main() -> Result<()> {
                 store.prepend_many(older);
             }
         });
-    let input_panel = input_handle.panel();
+    let input_panel = input_handle.panel().on_submit({
+        let store = store.clone();
+        move |response| {
+            let text = submit_response_text(response);
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatSender::System,
+                text,
+            ));
+        }
+    });
     let panel = ChatPanel::new(list, input_panel);
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -151,12 +162,47 @@ fn main() -> Result<()> {
                         store.set_status(id, ChatMessageStatus::Final);
                         continue;
                     }
+                    '5' => {
+                        store.update_text(id, "STREAM-DELTA-A");
+                        store.set_status(id, ChatMessageStatus::InProgress);
+                        continue;
+                    }
+                    '6' => {
+                        store.append_delta(id, " + STREAM-DELTA-B");
+                        store.set_status(id, ChatMessageStatus::Final);
+                        continue;
+                    }
                     _ => {}
                 }
             }
 
             match cmd {
+                'a' => {
+                    store.push(ChatMessage::text(
+                        store.next_message_id(),
+                        ChatSender::Assistant,
+                        "FOLLOW-1",
+                    ));
+                    continue;
+                }
+                'b' => {
+                    store.push(ChatMessage::text(
+                        store.next_message_id(),
+                        ChatSender::Assistant,
+                        "FOLLOW-2",
+                    ));
+                    continue;
+                }
+                'd' => {
+                    store.push(ChatMessage::text(
+                        store.next_message_id(),
+                        ChatSender::Assistant,
+                        "FOLLOW-3",
+                    ));
+                    continue;
+                }
                 'c' => {
+                    input_handle.selection_binding().set(0);
                     input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
                         "请选择一种回应方式",
                         vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
@@ -164,6 +210,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 'f' => {
+                    input_handle.selection_binding().set(0);
                     input_handle.set_mode(ChatInputMode::Confirm(
                         ChatConfirmInputConfig::new("是否继续执行?")
                             .yes_label("继续")
@@ -172,6 +219,7 @@ fn main() -> Result<()> {
                     continue;
                 }
                 't' => {
+                    input_handle.draft_binding().set(String::new());
                     input_handle.set_mode(ChatInputMode::text(
                         "Message",
                         Some("Type a message...".into()),
@@ -220,5 +268,15 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         };
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
+    }
+}
+
+fn submit_response_text(response: ChatInputResponse) -> String {
+    match response {
+        ChatInputResponse::Text(text) => format!("SUBMIT: text={text}"),
+        ChatInputResponse::Choice { index, label } => {
+            format!("SUBMIT: choice index={index} label={label}")
+        }
+        ChatInputResponse::Custom(text) => format!("SUBMIT: custom={text}"),
     }
 }

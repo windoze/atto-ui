@@ -49,6 +49,19 @@ impl TerminalShortcut {
 mod tests {
     use super::*;
 
+    fn test_shared() -> TerminalShared {
+        TerminalShared {
+            parser: vt100::Parser::new(24, 80, DEFAULT_SCROLLBACK_LEN),
+            scrollback_len: DEFAULT_SCROLLBACK_LEN,
+            input: VecDeque::new(),
+            on_input: None,
+            input_forward: None,
+            capture: true,
+            release_shortcut: default_release_shortcut(),
+            dsr_tail: Vec::new(),
+        }
+    }
+
     fn mouse_at(column: u16, row: u16) -> MouseEvent {
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -78,6 +91,30 @@ mod tests {
             mouse_coords_local(area, mouse_at(11, 6), MouseCoordinateSpace::Local),
             None
         );
+    }
+
+    #[test]
+    fn dsr_responses_handle_split_packets() {
+        let mut shared = test_shared();
+
+        assert!(collect_dsr_responses(&mut shared, b"\x1b[?6").is_empty());
+        let responses = collect_dsr_responses(&mut shared, b"n");
+        assert_eq!(responses, vec![b"\x1b[?1;1R".to_vec()]);
+
+        assert!(collect_dsr_responses(&mut shared, b"\x1b[?").is_empty());
+        let responses = collect_dsr_responses(&mut shared, b"5n");
+        assert_eq!(responses, vec![b"\x1b[?0n".to_vec()]);
+    }
+
+    #[test]
+    fn dsr_complete_packets_do_not_repeat_on_later_output() {
+        let mut shared = test_shared();
+
+        let responses = collect_dsr_responses(&mut shared, b"\x1b[6n");
+        assert_eq!(responses, vec![b"\x1b[1;1R".to_vec()]);
+
+        assert!(collect_dsr_responses(&mut shared, b"x").is_empty());
+        assert!(shared.dsr_tail.is_empty());
     }
 }
 
@@ -209,45 +246,67 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
 
     let mut responses = Vec::new();
     let mut idx = 0;
-    while idx + 3 < combined.len() {
-        if combined[idx] == 0x1b && combined[idx + 1] == b'[' {
-            if combined[idx + 2] == b'6' && combined[idx + 3] == b'n' {
-                responses.push(DsrResponse::Cursor { private: false });
-                idx += 4;
-                continue;
+    let mut tail_start = combined.len();
+    while idx < combined.len() {
+        if combined[idx] != 0x1b {
+            idx += 1;
+            continue;
+        }
+        if idx + 1 >= combined.len() {
+            tail_start = idx;
+            break;
+        }
+        if combined[idx + 1] != b'[' {
+            idx += 1;
+            continue;
+        }
+        if idx + 2 >= combined.len() {
+            tail_start = idx;
+            break;
+        }
+
+        match combined[idx + 2] {
+            b'6' | b'5' => {
+                if idx + 3 >= combined.len() {
+                    tail_start = idx;
+                    break;
+                }
+                if combined[idx + 3] == b'n' {
+                    responses.push(match combined[idx + 2] {
+                        b'6' => DsrResponse::Cursor { private: false },
+                        _ => DsrResponse::Status { private: false },
+                    });
+                    idx += 4;
+                    continue;
+                }
             }
-            if idx + 4 < combined.len()
-                && combined[idx + 2] == b'?'
-                && combined[idx + 3] == b'6'
-                && combined[idx + 4] == b'n'
-            {
-                responses.push(DsrResponse::Cursor { private: true });
-                idx += 5;
-                continue;
+            b'?' => {
+                if idx + 3 >= combined.len() {
+                    tail_start = idx;
+                    break;
+                }
+                if matches!(combined[idx + 3], b'6' | b'5') {
+                    if idx + 4 >= combined.len() {
+                        tail_start = idx;
+                        break;
+                    }
+                    if combined[idx + 4] == b'n' {
+                        responses.push(match combined[idx + 3] {
+                            b'6' => DsrResponse::Cursor { private: true },
+                            _ => DsrResponse::Status { private: true },
+                        });
+                        idx += 5;
+                        continue;
+                    }
+                }
             }
-            if combined[idx + 2] == b'5' && combined[idx + 3] == b'n' {
-                responses.push(DsrResponse::Status { private: false });
-                idx += 4;
-                continue;
-            }
-            if idx + 4 < combined.len()
-                && combined[idx + 2] == b'?'
-                && combined[idx + 3] == b'5'
-                && combined[idx + 4] == b'n'
-            {
-                responses.push(DsrResponse::Status { private: true });
-                idx += 5;
-                continue;
-            }
+            _ => {}
         }
         idx += 1;
     }
 
-    let keep = combined.len().min(4);
     shared.dsr_tail.clear();
-    shared
-        .dsr_tail
-        .extend_from_slice(&combined[combined.len().saturating_sub(keep)..]);
+    shared.dsr_tail.extend_from_slice(&combined[tail_start..]);
 
     if responses.is_empty() {
         return Vec::new();
@@ -1208,16 +1267,17 @@ fn encode_mouse_event(
         MouseEventKind::ScrollRight => Some(67),
     }?;
 
-    let mut cb = cb;
+    let mut modifier_bits: u16 = 0;
     if event.modifiers.contains(KeyModifiers::SHIFT) {
-        cb += 4;
+        modifier_bits += 4;
     }
     if event.modifiers.contains(KeyModifiers::ALT) {
-        cb += 8;
+        modifier_bits += 8;
     }
     if event.modifiers.contains(KeyModifiers::CONTROL) {
-        cb += 16;
+        modifier_bits += 16;
     }
+    let cb = cb + modifier_bits;
 
     let x = col.saturating_add(1);
     let y = row.saturating_add(1);
@@ -1232,6 +1292,11 @@ fn encode_mouse_event(
             Some(seq.into_bytes())
         }
         vt100::MouseProtocolEncoding::Utf8 | vt100::MouseProtocolEncoding::Default => {
+            let cb = if matches!(event.kind, MouseEventKind::Up(_)) {
+                3 + modifier_bits
+            } else {
+                cb
+            };
             let cb = (cb + 32).min(255);
             let x = (x + 32).min(255);
             let y = (y + 32).min(255);
