@@ -8,7 +8,7 @@
 - 找出第一个标题未带 `[DONE]` 的任务。
 - 完成且只完成该任务，验证后更新 `TODO.md` 并提交。
 
-## 初始执行步骤
+## 通用执行步骤
 
 1. 读取 `TODO.md`，按文件顺序确认第一个未完成任务。
 2. 检查最新提交信息，若明确提到与当前任务直接相关的未完成问题，则把它纳入当前任务或作为先决任务记录。
@@ -21,24 +21,37 @@
 9. 检查 git 状态、diff 和最近提交，提交本轮全部相关改动。
 10. 停止，不继续下一个任务。
 
-## 进度记录
+## 历史进度记录
 
-- 已建立本轮执行计划。下一步读取 `TODO.md` 识别第一个未完成任务。
-- 已读取 `TODO.md`：首个未完成任务为 `T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）`。
-- 已检查最近提交摘要：最新提交为 `[R18] Record completion plan`，未发现直接指向 T19 的未完成阻塞项。
-- 已确认 `Button` 的 L2 命中判断当前已实现；补充 disabled 状态单测以覆盖状态矩阵。
-- 已修复 `RadioGroup` 鼠标命中只看行不看列的问题，改为基于组件区域 contains 后再选择选项。
-- 已补充核心控件/响应式/theme/window manager/Grid 行为单测，并新增 T19 core widgets PTY fixture 与 Markdown block PTY fixture。
-- 验证进展：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui`、`cargo test -p atto-ui-markdown`、`cargo test --workspace --all-targets` 已通过。
-- 覆盖率验证受阻：`cargo llvm-cov -p atto-ui --summary-only` 失败，原因是本机未安装 `cargo-llvm-cov`。下一步尝试安装该工具后复跑覆盖率。
-- 已安装 `cargo-llvm-cov` 并完成覆盖率验证：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'` 通过，核心源码行覆盖率为 70.74%。
+- 已建立上一轮执行计划并完成 T19。
+- T19 首个未完成任务识别为 `T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）`。
+- T19 最新提交检查时最新提交为 `[R18] Record completion plan`，未发现直接指向 T19 的未完成阻塞项。
+- T19 已确认 `Button` 的 L2 命中判断并补充 disabled 状态单测。
+- T19 已修复 `RadioGroup` 鼠标命中只看行不看列的问题，改为基于组件区域 contains 后再选择选项。
+- T19 已补充核心控件/响应式/theme/window manager/Grid 行为单测，并新增 T19 core widgets PTY fixture 与 Markdown block PTY fixture。
+- T19 验证通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui`、`cargo test -p atto-ui-markdown`、`cargo test --workspace --all-targets`。
+- T19 已安装 `cargo-llvm-cov` 并完成覆盖率验证：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'` 通过，核心源码行覆盖率为 70.74%。
 
-## T19 执行计划
+## R19 执行计划
 
-1. 检查当前工作区状态，避免覆盖他人改动。
-2. 阅读 T19 涉及的组件与现有测试：`Button`、ListBox/TableView、Grid/Splitter、Markdown、theme/reactive/window manager 等。
-3. 优先修复 L2：在 `widgets/button.rs` 保存 `last_area` 并在 `Down(Left)` 前执行 contains 命中判断。
-4. 按 T19 验收补足缺口测试，优先选择最小但真实覆盖公开控件行为的单测或 PTY 测试。
-5. 如发现必须先修复的具体测试/fixture 失败或缺失能力，直接修复；若无法正确修复，则更新 `TODO.md` 增加最小先决任务并停止。
-6. 按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关测试、完整 workspace 测试；覆盖率命令按可用情况执行。
-7. 更新 `TODO.md` 将 T19 标记 `[DONE]` 并写入完成记录，随后提交本轮相关改动。
+1. 读取 `TODO.md` 并确认第一个未完成任务。
+2. 检查最新提交信息，确认是否有与 R19 直接相关的未完成问题。
+3. 审阅 T19 相关改动，重点确认覆盖率记录、Button 命中判断和其他 widget 命中一致性。
+4. 如发现审阅问题，做最小正确修复并补充回归测试。
+5. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+6. 运行 `cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，确认核心源码行覆盖率仍不低于 70%。
+7. 将 `R19` 标记为 `[DONE]` 并写入完成记录。
+8. 提交本轮 R19 相关改动并停止。
+
+## R19 进度记录
+
+- 已读取 `TODO.md`：首个未完成任务为 `R19 — 审阅 T19`。
+- 已检查最近提交摘要：最新提交为 `[T19] Add P1 P2 test coverage`，与 R19 直接相关，无额外未完成阻塞项。
+- 已审阅 T19 的覆盖率记录、Button L2 命中判断、core widget PTY/单测、Markdown block 覆盖与 theme/reactive/window manager 测试补齐。
+- 审阅发现同类命中一致性缺口：`Checkbox` 未校验左键事件是否命中自身绘制区域。
+- 已修复 `Checkbox`：保存 `last_area`，左键按下前使用统一命中判断，并新增 `mouse_down_requires_last_area_hit` 单测覆盖区域外点击不切换、区域内点击切换。
+- 验证通过：`cargo fmt`。
+- 验证通过：`cargo clippy --workspace --all-targets -- -D warnings`。
+- 验证通过：`cargo test --workspace --all-targets`。
+- 覆盖率验证通过：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，核心源码行覆盖率为 70.81%。
+- 已将 `R19` 标记为 `[DONE]` 并更新 `TODO.md` 完成记录。

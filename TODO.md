@@ -540,10 +540,16 @@
 - 加固覆盖率插桩下的 PTY 稳定性：`pty_splitter_scrollbars` 在断言边框滚动条 corner cell 前等待目标 cell 稳定，避免覆盖率构建下偶发读取到尚未完整刷新的屏幕。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui`；`cargo test -p atto-ui-markdown`；`cargo test --test pty_splitter_scrollbars -- --nocapture`；`cargo test --workspace --all-targets`；安装 `cargo-llvm-cov v0.8.7` 后执行 `cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，核心源码行覆盖率 70.74%。
 
-### [ ] R19 — 审阅 T19
+### [DONE] R19 — 审阅 T19
 - 确认覆盖率达标（`cargo llvm-cov` 报告）。
 - 确认 Button 命中判断与其他 widget 一致。
 - 运行全 workspace 测试 + clippy。
+**完成记录（2026-06-07）**：
+- 已审阅 T19 新增的 core widget PTY 行为覆盖、Markdown block 覆盖、theme/reactive/window manager 单测、Button L2 命中修复与 `cargo llvm-cov` 覆盖率记录。
+- 修复审阅发现的同类命中一致性缺口：`Checkbox` 现在与 Button/Radio/List/Table/Slider 等组件一致，保存 `last_area` 并在左键按下前校验鼠标事件确实命中自身绘制区域；新增 `mouse_down_requires_last_area_hit` 单测覆盖区域外点击不切换、区域内点击切换。
+- 确认 T19 `Button` 已在 `MouseEventKind::Down(MouseButton::Left)` 前校验 `last_area` 命中，disabled 状态键盘和鼠标均不会触发回调；相关单测与 PTY 覆盖通过。
+- 覆盖率验证通过：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，核心源码行覆盖率 70.81%，满足 ≥70% 要求。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ---
 

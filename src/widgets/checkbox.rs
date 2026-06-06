@@ -11,7 +11,7 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-use super::util::widget_style;
+use super::util::{mouse_coords_local_to_area, widget_style};
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct Checkbox {
@@ -20,6 +20,7 @@ pub struct Checkbox {
     binding: Binding<bool>,
     enabled: Binding<bool>,
     on_change_callback: Option<CallbackHandle>,
+    last_area: Option<Rect>,
 }
 
 impl Checkbox {
@@ -29,6 +30,7 @@ impl Checkbox {
             binding,
             enabled: true.into(),
             on_change_callback: None,
+            last_area: None,
         }
     }
 
@@ -57,6 +59,7 @@ impl Checkbox {
 #[component_properties]
 impl Component for Checkbox {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         let enabled = self.enabled.get();
         let style = widget_style(ctx.theme, enabled, ctx.is_focused);
         let mark = if self.binding.get() {
@@ -90,7 +93,7 @@ impl FocusNav for Checkbox {
 }
 
 impl EventHandling for Checkbox {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -100,6 +103,12 @@ impl EventHandling for Checkbox {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let Some(area) = self.last_area else {
+                        return EventResult::ignored();
+                    };
+                    if mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space).is_none() {
+                        return EventResult::ignored();
+                    }
                     self.binding.update(|v| *v = !*v);
                     self.emit_change();
                     return EventResult::changed();
@@ -121,3 +130,62 @@ impl EventHandling for Checkbox {
 }
 
 crate::impl_component_default_traits!(Checkbox => Scrollable, DynamicTree);
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    #[test]
+    fn mouse_down_requires_last_area_hit() {
+        let checked = Binding::new(false);
+        let mut checkbox = Checkbox::new("Enabled", checked.clone());
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).expect("terminal");
+        terminal
+            .draw(|f| checkbox.draw(f, Rect::new(4, 2, 12, 1), context(&theme)))
+            .expect("draw");
+
+        let outside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            checkbox.handle_event(&outside, context(&theme)),
+            EventResult::ignored()
+        );
+        assert!(!checked.get());
+
+        let inside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            checkbox.handle_event(&inside, context(&theme)),
+            EventResult::changed()
+        );
+        assert!(checked.get());
+    }
+}
