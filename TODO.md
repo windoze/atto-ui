@@ -451,11 +451,19 @@
 - 跨子模块调用仅提升为 `pub(super)`，未新增外部公开 API；本次为纯机械重构，行为保持不变。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14B — 拆分 editor app window 巨型文件（M8）
+### [DONE] T14B — 拆分 editor app window 巨型文件（M8）
 **文件**：`crates/atto-editor-app/src/window.rs`(1839)。
 **依赖**：T14A。
 **说明**：纯机械重构，按职责拆子模块，零行为变更。
 **测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+**完成记录（2026-06-06）**：
+- 将 `crates/atto-editor-app/src/window.rs` 收敛为 editor window 的公开命令、句柄、主视图字段与构造入口。
+- 新增 `window/tabs.rs` 承载文件打开、保存、关闭、dirty title 更新与 window command 分发逻辑。
+- 新增 `window/component_impl.rs` 承载 `EditorWindowView` 的 `Component`、`Layout`、`Scrollable`、`FocusNav`、`DynamicTree`、`EventHandling` 实现。
+- 新增 `window/document_tab.rs` 承载单文档 tab、主/副 split editor view、split layout、split scrollbar 绘制与事件处理。
+- 新增 `window/util.rs` 承载 `contains` 与 `mouse_coords_local_to_area` 共享几何 helper；本次为机械拆分，未改变运行时行为。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T14C — 拆分 runtime 巨型文件（M8）
 **文件**：`src/runtime/mod.rs`(1851)。
