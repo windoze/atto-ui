@@ -1,0 +1,586 @@
+use super::tree::{PropertyApply, apply_property_to_view, move_node};
+use super::*;
+use crate::composable::{
+    Component, ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
+};
+use crate::theme::Theme;
+use crate::wm::WindowId;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+fn child_tags(view: &dyn Component) -> Vec<Option<&str>> {
+    view.children()
+        .iter()
+        .map(|child| child.view.tag())
+        .collect()
+}
+
+fn find_view_by_tag<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
+    if view.tag() == Some(id) {
+        return Some(view);
+    }
+    for child in view.children() {
+        if let Some(found) = find_view_by_tag(child.view.as_ref(), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[test]
+fn component_button_click_emits_callback() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+
+    let mut spec = ComponentSpec::new("Button")
+        .with_id("btn")
+        .with_prop("label", ComponentValue::String("OK".into()));
+    spec.events.insert("click".into(), cb);
+
+    let registry = builtin_registry(callbacks.clone());
+    let mut view = registry.build(&spec).expect("build");
+
+    let ctx = ComponentContext {
+        theme: &Theme::dark(),
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+    };
+    let event = Event::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    let result = view.handle_event(&event, ctx);
+    assert_eq!(result, EventResult::submitted());
+
+    let events = callbacks.drain();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].callback_id, cb);
+    assert_eq!(events[0].target_id.as_deref(), Some("btn"));
+    assert_eq!(events[0].event, "click");
+}
+
+#[test]
+fn component_checkbox_change_emits_callback() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+
+    let mut spec = ComponentSpec::new("Checkbox")
+        .with_id("chk")
+        .with_prop("label", ComponentValue::String("A".into()))
+        .with_prop("checked", ComponentValue::Bool(false));
+    spec.events.insert("change".into(), cb);
+
+    let registry = builtin_registry(callbacks.clone());
+    let mut view = registry.build(&spec).expect("build");
+
+    let ctx = ComponentContext {
+        theme: &Theme::dark(),
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+    };
+    let event = Event::Key(KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    let result = view.handle_event(&event, ctx);
+    assert_eq!(result, EventResult::changed());
+
+    let events = callbacks.drain();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].callback_id, cb);
+    assert_eq!(events[0].target_id.as_deref(), Some("chk"));
+    assert_eq!(events[0].event, "change");
+}
+
+#[test]
+fn component_tree_ops_rebuild_children() {
+    let callbacks = CallbackRegistry::new();
+    let mut tree =
+        ComponentTree::new(ComponentSpec::new("VStack").with_id("root"), callbacks).expect("tree");
+
+    let child = ComponentSpecChild::new(
+        ComponentSpec::new("Label")
+            .with_id("title")
+            .with_prop("text", ComponentValue::String("Hello".into())),
+    )
+    .with_layout(LayoutSpec {
+        width: SizeSpec::Fixed(8),
+        height: SizeSpec::Content,
+        ..LayoutSpec::default()
+    });
+
+    tree.apply_ops(&[TreeOp::Insert {
+        parent_id: "root".into(),
+        index: 0,
+        child,
+    }])
+    .expect("apply ops");
+
+    tree.rebuild().expect("rebuild");
+    let children = tree.view().children();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].layout.width, crate::composable::Size::Fixed(8));
+    let value = children[0]
+        .view
+        .get_property("text")
+        .expect("text property");
+    assert_eq!(value, ComponentValue::String("Hello".into()));
+}
+
+#[test]
+fn component_tree_incremental_set_prop_updates_view() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("title")
+                .with_prop("text", ComponentValue::String("A".into())),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::SetProp {
+            id: "title".into(),
+            name: "text".into(),
+            value: ComponentValue::String("B".into()),
+        }])
+        .expect("apply");
+    assert!(!changed);
+
+    let children = tree.view().children();
+    let value = children[0]
+        .view
+        .get_property("text")
+        .expect("text property");
+    assert_eq!(value, ComponentValue::String("B".into()));
+}
+
+#[test]
+fn apply_property_distinguishes_unsupported_property_from_missing_node() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("title")
+                .with_prop("text", ComponentValue::String("A".into())),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let unsupported = apply_property_to_view(
+        tree.view_mut(),
+        "title",
+        "missing_prop",
+        &ComponentValue::String("B".into()),
+    )
+    .expect("apply unsupported");
+    assert_eq!(unsupported, PropertyApply::UnsupportedProperty);
+
+    let missing = apply_property_to_view(
+        tree.view_mut(),
+        "missing_node",
+        "text",
+        &ComponentValue::String("B".into()),
+    )
+    .expect("apply missing");
+    assert_eq!(missing, PropertyApply::NotFound);
+}
+
+#[test]
+fn component_tree_incremental_uses_current_root_for_local_replace() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("VStack").with_id("container"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let child = ComponentSpecChild::new(
+        ComponentSpec::new("Label")
+            .with_id("inserted")
+            .with_prop("text", ComponentValue::String("Hello".into())),
+    );
+
+    let changed = tree
+        .apply_ops_incremental(&[
+            TreeOp::SetProp {
+                id: "container".into(),
+                name: "unknown".into(),
+                value: ComponentValue::Bool(true),
+            },
+            TreeOp::Insert {
+                parent_id: "container".into(),
+                index: 0,
+                child,
+            },
+        ])
+        .expect("apply");
+    assert!(changed);
+
+    let container = find_view_by_tag(tree.view(), "container").expect("container");
+    assert_eq!(child_tags(container), vec![Some("inserted")]);
+    let root_container = tree
+        .root_spec()
+        .children
+        .iter()
+        .find(|child| child.node.id.as_deref() == Some("container"))
+        .expect("container spec");
+    assert_eq!(root_container.node.children.len(), 1);
+}
+
+#[test]
+fn component_tree_incremental_insert_child() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack").with_id("root");
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let child = ComponentSpecChild::new(
+        ComponentSpec::new("Label")
+            .with_id("a")
+            .with_prop("text", ComponentValue::String("Hello".into())),
+    )
+    .with_layout(LayoutSpec {
+        width: SizeSpec::Fixed(5),
+        height: SizeSpec::Content,
+        ..LayoutSpec::default()
+    });
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::Insert {
+            parent_id: "root".into(),
+            index: 0,
+            child,
+        }])
+        .expect("apply");
+    assert!(changed);
+
+    let children = tree.view().children();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].layout.width, crate::composable::Size::Fixed(5));
+    let value = children[0]
+        .view
+        .get_property("text")
+        .expect("text property");
+    assert_eq!(value, ComponentValue::String("Hello".into()));
+}
+
+#[test]
+fn component_tree_incremental_remove_child() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("b"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::Remove { id: "a".into() }])
+        .expect("apply");
+    assert!(changed);
+
+    let children = tree.view().children();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].view.tag(), Some("b"));
+}
+
+#[test]
+fn component_tree_incremental_move_child() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("b"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("c"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::Move {
+            id: "c".into(),
+            new_parent_id: "root".into(),
+            index: 0,
+        }])
+        .expect("apply");
+    assert!(changed);
+
+    let children = tree.view().children();
+    let ids: Vec<Option<&str>> = children.iter().map(|child| child.view.tag()).collect();
+    assert_eq!(ids, vec![Some("c"), Some("a"), Some("b")]);
+}
+
+#[test]
+fn component_tree_incremental_move_missing_parent_preserves_root_and_view() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("VStack")
+                .with_id("container")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("b"),
+                )),
+        ));
+    let original = root.clone();
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let err = tree
+        .apply_ops_incremental(&[TreeOp::Move {
+            id: "a".into(),
+            new_parent_id: "missing".into(),
+            index: 0,
+        }])
+        .expect_err("missing parent should fail");
+
+    assert_eq!(err, TreeError::NotFound("missing".into()));
+    assert_eq!(tree.root_spec(), &original);
+    assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("container")]);
+    let container = find_view_by_tag(tree.view(), "container").expect("container");
+    assert_eq!(child_tags(container), vec![Some("b")]);
+}
+
+#[test]
+fn move_node_missing_parent_keeps_node_in_place() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("VStack")
+                .with_id("container")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("b"),
+                )),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    assert!(!move_node(tree.view_mut(), "a", "missing", 0));
+
+    assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("container")]);
+    let container = find_view_by_tag(tree.view(), "container").expect("container");
+    assert_eq!(child_tags(container), vec![Some("b")]);
+}
+
+#[test]
+fn move_node_tab_view_parent_keeps_node_in_place() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("TabView")
+                .with_id("tabs")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("tab-child"),
+                )),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    assert!(!move_node(tree.view_mut(), "a", "tabs", 0));
+
+    assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("tabs")]);
+    let tabs = find_view_by_tag(tree.view(), "tabs").expect("tabs");
+    assert_eq!(child_tags(tabs), vec![Some("tab-child")]);
+}
+
+#[test]
+fn move_node_leaf_parent_restores_taken_node() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("leaf"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    assert!(!move_node(tree.view_mut(), "a", "leaf", 0));
+
+    assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("leaf")]);
+}
+
+#[test]
+fn move_node_normal_move_inserts_at_target_index() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("VStack")
+                .with_id("dest")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label").with_id("b"),
+                )),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("c"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    assert!(move_node(tree.view_mut(), "c", "dest", 0));
+
+    assert_eq!(child_tags(tree.view()), vec![Some("a"), Some("dest")]);
+    let dest = find_view_by_tag(tree.view(), "dest").expect("dest");
+    assert_eq!(child_tags(dest), vec![Some("c"), Some("b")]);
+}
+
+#[test]
+fn component_tree_incremental_replace_child() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let node = ComponentSpecChild::new(
+        ComponentSpec::new("Button")
+            .with_id("a")
+            .with_prop("label", ComponentValue::String("OK".into())),
+    )
+    .with_layout(LayoutSpec {
+        width: SizeSpec::Fixed(6),
+        height: SizeSpec::Content,
+        ..LayoutSpec::default()
+    });
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::Replace {
+            id: "a".into(),
+            node,
+        }])
+        .expect("apply");
+    assert!(changed);
+
+    let children = tree.view().children();
+    assert_eq!(children[0].layout.width, crate::composable::Size::Fixed(6));
+    assert!(children[0].view.type_name().ends_with("Button"));
+    let value = children[0]
+        .view
+        .get_property("label")
+        .expect("label property");
+    assert_eq!(value, ComponentValue::String("OK".into()));
+}
+
+#[test]
+fn component_tree_incremental_bind_and_clear_event() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Button")
+                .with_id("btn")
+                .with_prop("label", ComponentValue::String("Go".into())),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::BindEvent {
+            id: "btn".into(),
+            event: "click".into(),
+            callback: cb,
+        }])
+        .expect("bind");
+    assert!(changed);
+
+    let ctx = ComponentContext {
+        theme: &Theme::dark(),
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+    };
+    let event = Event::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    {
+        let children = tree.view_mut().children_mut().expect("children");
+        let result = children[0].view.handle_event(&event, ctx);
+        assert_eq!(result, EventResult::submitted());
+    }
+    let events = callbacks.drain();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].callback_id, cb);
+
+    tree.apply_ops_incremental(&[TreeOp::ClearEvent {
+        id: "btn".into(),
+        event: "click".into(),
+    }])
+    .expect("clear");
+
+    {
+        let children = tree.view_mut().children_mut().expect("children");
+        let result = children[0].view.handle_event(&event, ctx);
+        assert_eq!(result, EventResult::submitted());
+    }
+    let events = callbacks.drain();
+    assert!(events.is_empty());
+}
+
+#[test]
+fn builtin_schema_includes_button_props() {
+    let registry = builtin_registry(CallbackRegistry::new());
+    let schema = registry.schema("Button").expect("schema");
+    assert!(schema.properties.iter().any(|prop| prop.name == "label"));
+    assert!(schema.events.iter().any(|event| event.name == "click"));
+}
+
+#[test]
+fn builtin_schema_includes_stack_padding() {
+    let registry = builtin_registry(CallbackRegistry::new());
+    let schema = registry.schema("VStack").expect("schema");
+    let padding = schema
+        .properties
+        .iter()
+        .find(|prop| prop.name == "padding")
+        .expect("padding");
+    assert_eq!(padding.value_type, ValueType::Map);
+}
+
+#[test]
+fn builtin_schema_includes_styled_label_link_event() {
+    let registry = builtin_registry(CallbackRegistry::new());
+    let schema = registry.schema("StyledLabel").expect("schema");
+    let link = schema
+        .events
+        .iter()
+        .find(|event| event.name == "link")
+        .expect("link");
+    assert_eq!(link.payload, Some(ValueType::String));
+}

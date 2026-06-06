@@ -1,30 +1,27 @@
-# 当前执行计划
+# Execution Plan
 
-## 约束说明
+I will not record private reasoning here. This file will track the actionable plan, progress, and any plan changes for the current invocation.
 
-- `TODO.md` 是任务顺序、要求与完成状态的权威来源。
-- 本轮只完成第一个未标记 `[DONE]` 的任务，然后停止。
-- 不做与当前任务无关的开放式历史问题扫查。
-- 本文件记录可公开的执行计划和进度摘要，不记录私有推理细节。
+## Plan
 
-## 执行步骤
+1. Read `TODO.md` and identify the first task whose title is not prefixed with `[DONE]`.
+2. Check the latest commit message only for unfinished work directly relevant to that task.
+3. Read the relevant task details, requirements, dependencies, and validation instructions.
+4. Inspect the affected code and tests needed for that task.
+5. Implement the smallest correct change that fully satisfies the task, or add a concrete prerequisite task to `TODO.md` if blocked by a missing feature or spec mismatch.
+6. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
+7. Update `TODO.md` by marking the completed task title with `[DONE]` and filling the completion record, or record the blocker/prerequisite if blocked.
+8. Commit all intended changes with a clear task-specific commit message.
+9. Stop without starting the next task.
 
-1. 读取 `TODO.md`，确认首个未完成任务。
-2. 检查最近提交是否包含与该任务直接相关的未完成事项。
-3. 阅读任务涉及的代码和验证要求。
-4. 以最小完整变更实现任务，不引入 workaround 或行为偏移。
-5. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`。
-6. 验证通过后，在 `TODO.md` 将当前任务标题标为 `[DONE]` 并补充完成记录。
-7. 提交本任务相关变更，然后停止。
+## Progress
 
-## 当前状态
-
-- 已确认首个未完成任务为 `T14B — 拆分 editor app window 巨型文件（M8）`。
-- 最新提交为 `[T14A] Split editor view module`，未提示 T14B 相关未完成问题。
-- 已将 `crates/atto-editor-app/src/window.rs` 机械拆分为职责子模块：`component_impl.rs`、`tabs.rs`、`document_tab.rs`、`util.rs`。
-- `window.rs` 现在只保留公开命令、句柄、主视图字段和构造入口。
-- 拆分后 Clippy 仅发现多余 trait 导入，已移除。
-- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
-- `TODO.md` 已将 T14B 标记为 `[DONE]` 并补充完成记录。
-- 工作区存在与本任务无关的未跟踪文件 `notification.sh`、`run_agent.sh`，本次不修改、不提交。
-- 下一步：提交 T14B 相关文件并停止。
+- Plan initialized before reading task files.
+- Identified first incomplete task: `T14C — 拆分 runtime 巨型文件（M8）`, a mechanical split of `src/runtime/mod.rs` after completed `T14B`.
+- Latest commit is `[T14B] Split editor app window module`; no relevant unfinished issue was found.
+- Planned module split: keep `src/runtime/mod.rs` as a facade and move code into `callback_handle.rs`, `registry.rs`, `builtins.rs`, `props.rs`, `tree.rs`, and `tests.rs`, preserving existing public re-exports.
+- Implemented the mechanical split and kept `mod.rs` as a small re-export facade. Next step is formatting, compile/lint, and fixing any module visibility/import issues.
+- Ran `cargo fmt`; first clippy pass found one unused import in `src/runtime/builtins.rs`; removed it and reran `cargo fmt`.
+- `cargo clippy --workspace --all-targets -- -D warnings` now passes. Running full tests next.
+- `cargo test --all --all-targets` passes.
+- Updated `TODO.md` to mark `T14C` as `[DONE]` with a completion record. Next step is reviewing the diff and committing only intended changes.

@@ -465,11 +465,21 @@
 - 新增 `window/util.rs` 承载 `contains` 与 `mouse_coords_local_to_area` 共享几何 helper；本次为机械拆分，未改变运行时行为。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14C — 拆分 runtime 巨型文件（M8）
+### [DONE] T14C — 拆分 runtime 巨型文件（M8）
 **文件**：`src/runtime/mod.rs`(1851)。
 **依赖**：T14B。
 **说明**：纯机械重构，按职责拆子模块，零行为变更。
 **测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+**完成记录（2026-06-06）**：
+- 将 `src/runtime/mod.rs` 收敛为 runtime facade，仅保留子模块声明与现有公开 API 重导出。
+- 新增 `runtime/callback_handle.rs` 承载 `CallbackHandle` 及 emit/debug 逻辑。
+- 新增 `runtime/registry.rs` 承载全局 registry extension 存储、注册入口与 `global_registry` 组合逻辑。
+- 新增 `runtime/builtins.rs` 承载内置组件注册、schema helper、event/wrap helper 与 stack builder 适配。
+- 新增 `runtime/props.rs` 承载 spec 到布局参数转换、动态属性读取与属性错误构造 helper。
+- 新增 `runtime/tree.rs` 承载 `ComponentTree`、trait 委派实现与增量 view tree 更新 helper；相关单元测试移入 `runtime/tests.rs`。
+- 本次为纯机械拆分，保留原有公开 re-export 与行为；未修改 `runtime/spec.rs` 的语言无关 spec/tree-op 定义。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T14D — 拆分 window manager 巨型文件（M8）
 **文件**：`src/wm/manager/mod.rs`(972)。
