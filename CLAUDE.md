@@ -14,7 +14,7 @@ Atto UI 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal U
   - 示例: ~1,800 行
 - **主要模块**: 核心库 50 文件,测试二进制 4 个,集成测试 11 个,示例应用 1 个
 - **测试框架**: 独立的 PTY 测试工具 crate
-- **工作区 Crates**: atto-ui-test-host (测试框架), atto-ui-macros (过程宏)
+- **工作区 Crates**: atto-ui-test-host (测试框架), atto-ui-macros (过程宏), atto-ui-editor, atto-ui-file-tree, atto-ui-chat, atto-ui-markdown, atto-ui-terminal, atto-ui-components, atto-ui-python, atto-editor-app
 
 ## 常用命令
 
@@ -127,9 +127,18 @@ cargo fmt
   - `property.rs` - `Property<T>` 和 `Binding<T>` 反应式属性
   - `dirty.rs` - `DirtyFlag` 内部状态标记工具
   - `queue.rs` - `EventQueue` 事件队列
+- **`runtime/`**: 语言无关动态组件树桥接层
+  - `mod.rs` - 内置组件注册、动态组件构建、回调注册表与增量 tree-ops 应用
+  - `spec.rs` - `ComponentSpec` / `TreeOp` / schema / value 类型；原独立 runtime crate 已合并到 `atto-ui::runtime`
 - **`macros/`**: 过程宏支持 (`crates/atto-ui-macros/`)
   - `reactive.rs` - `#[reactive]` 宏 - 自动生成反应式属性
   - `view_builder.rs` - `view_builder!` 宏 - 组合式组件构建助手
+
+### 6. Workspace 应用与扩展 Crates
+- **`crates/atto-editor-app/`**: 终端编辑器应用 crate,包名 `atto-editor-app`,库入口 `atto_editor_app`
+- **`crates/atto-ui-editor/`**: 基于 `editor-core` 的编辑器组件库
+- **`crates/atto-ui-python/`**: Python 绑定,通过 `atto-ui::runtime` 与核心动态组件树交互
+- **`crates/atto-ui-components/`**: workspace 附加组件的动态注册聚合入口
 
 ## 测试策略
 

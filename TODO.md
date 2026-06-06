@@ -427,8 +427,17 @@
 - 更新 Python 集成与路线图文档中的 runtime 落点说明，确认当前入口为 `atto-ui::runtime` / `src/runtime/spec.rs`。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace --all-targets`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R13 — 审阅 T13
+### [DONE] R13 — 审阅 T13
 确认改名后全工作区编译通过、无遗漏引用、CI/文档同步更新。
+
+**完成记录（2026-06-06）**：
+- 审阅 workspace 配置、`Cargo.lock` 与 `cargo metadata --no-deps --format-version 1`：当前 workspace 成员包含 `crates/atto-editor-app`，不再包含独立 `atto-ui-runtime` package；根 crate 通过 `src/runtime/spec.rs` 暴露 `atto-ui::runtime`。
+- 审阅 Rust 引用与测试环境变量：`atto-editor-app` 的库入口为 `atto_editor_app`、二进制环境变量为 `CARGO_BIN_EXE_atto-editor-app`；Python 绑定与 workspace 扩展组件均改为使用 `atto_ui::runtime`。
+- 复查旧名引用：`rg -n -P --glob '!target/**' --glob '!.git/**' 'atto-editor(?!-app)|atto_editor(?!_app)|crates/atto-editor(?!-app)|atto-ui-runtime|atto_ui_runtime|CARGO_BIN_EXE_atto-editor(?!-app)' .` 仅剩 `TODO.md`/`CODE_REVIEW.md` 中描述历史改名决策的记录，无生产代码、Cargo 配置或 CI 引用残留。
+- 清理本地残留的空 `crates/atto-ui-runtime/` 目录；该目录无 tracked 文件，清理后 `crates/` 下不再保留独立 runtime crate 目录。
+- 修复审阅发现的文档同步遗漏：`CLAUDE.md` 已补充当前 workspace crate 清单、`atto-ui::runtime` 说明、`atto-editor-app` 应用 crate 与 Python/组件聚合入口说明。
+- CI 复核：仓库当前无 `.github` workflow 或其他 CI 配置文件，因此无 CI 引用需要同步更新。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace --all-targets`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T14 — 巨型文件拆分（M8，长期）
 **文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)、`crates/atto-editor-app/src/window.rs`(1839)、`src/runtime/mod.rs`(1851)、`src/wm/manager/mod.rs`(972)、`src/app/menu.rs`(923)。
