@@ -507,7 +507,7 @@
 
 ## 阶段五：M5 依赖就绪后（解锁 C.0 富 diff/code UI）
 
-### [ ] T20 — editor 完整化 → editor-core diff → 富 ArtifactViewer
+### [POSTPONED] T20 — editor 完整化 → editor-core diff → 富 ArtifactViewer
 **文件**：`crates/atto-ui-editor/`、依赖 `editor-core` diff 基础
 **现状**：T14 已提供最简 `TextArtifactViewer` 与稳定接口；本任务待 editor 控件完整化后实现富版本。
 **步骤**：
@@ -518,7 +518,7 @@
 **测试**：PTY：code 视图语法高亮、diff hunk 折叠/展开。
 **验收**：富 viewer 替换最简实现，chat 接口零改动；C.0 解锁。
 
-### [ ] R20 — 审阅 T20
+### [POSTPONED] R20 — 审阅 T20
 - 确认富 viewer 实现的接口与 T14 完全一致（chat 无需改动验证）。
 - 确认 diff hunk 模型来自 editor-core headless 层。
 - 运行 PTY。
