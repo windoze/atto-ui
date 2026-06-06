@@ -1,4 +1,92 @@
+use std::fmt;
+
 use atto_ui::composable::Identifiable;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ArtifactId(String);
+
+impl ArtifactId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ArtifactId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for ArtifactId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<u64> for ArtifactId {
+    fn from(value: u64) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl fmt::Display for ArtifactId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ArtifactKind {
+    Code,
+    Diff,
+    File,
+}
+
+impl ArtifactKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ArtifactKind::Code => "code",
+            ArtifactKind::Diff => "diff",
+            ArtifactKind::File => "file",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ArtifactKind::Code => "Code",
+            ArtifactKind::Diff => "Diff",
+            ArtifactKind::File => "File",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Artifact {
+    pub id: ArtifactId,
+    pub kind: ArtifactKind,
+    pub title: String,
+    pub content: String,
+}
+
+impl Artifact {
+    pub fn new(
+        id: impl Into<ArtifactId>,
+        kind: ArtifactKind,
+        title: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind,
+            title: title.into(),
+            content: content.into(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChatMessageId(pub u64);
@@ -83,6 +171,11 @@ pub enum ChatMessageContent {
         status: ChatToolCallStatus,
         output: String,
     },
+    Artifact {
+        kind: ArtifactKind,
+        anchor: ArtifactId,
+        title: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,6 +238,26 @@ impl ChatMessage {
                 name,
                 status,
                 output: output.into(),
+            },
+        }
+    }
+
+    pub fn artifact(
+        id: impl Into<ChatMessageId>,
+        sender: ChatSender,
+        kind: ArtifactKind,
+        anchor: impl Into<ArtifactId>,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            sender,
+            timestamp: None,
+            status: ChatMessageStatus::Final,
+            content: ChatMessageContent::Artifact {
+                kind,
+                anchor: anchor.into(),
+                title: title.into(),
             },
         }
     }

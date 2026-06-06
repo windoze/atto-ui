@@ -13,8 +13,8 @@ use atto_ui::{
 
 use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
 use crate::{
-    ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageContent, ChatMessageId,
-    ChatMessageList, ChatMessageStatus, ChatSender, ChatToolCallStatus,
+    ArtifactId, ArtifactKind, ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageContent,
+    ChatMessageId, ChatMessageList, ChatMessageStatus, ChatSender, ChatToolCallStatus,
 };
 
 impl ComponentPropertySchema for ChatMessageList {
@@ -46,6 +46,7 @@ impl ComponentPropertySchema for ChatInputPanel {
 pub fn chat_message_list_schema() -> ComponentSchema {
     component_schema::<ChatMessageList>("ChatMessageList")
         .with_event(EventMeta::new("load_more"))
+        .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
         .allow_children(false)
 }
 
@@ -146,6 +147,25 @@ fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
             tool.insert("output".to_string(), ComponentValue::String(output.clone()));
             let mut map = BTreeMap::new();
             map.insert("tool_call".to_string(), ComponentValue::Map(tool));
+            ComponentValue::Map(map)
+        }
+        ChatMessageContent::Artifact {
+            kind,
+            anchor,
+            title,
+        } => {
+            let mut artifact = BTreeMap::new();
+            artifact.insert(
+                "kind".to_string(),
+                ComponentValue::String(kind.as_str().to_string()),
+            );
+            artifact.insert(
+                "anchor".to_string(),
+                ComponentValue::String(anchor.to_string()),
+            );
+            artifact.insert("title".to_string(), ComponentValue::String(title.clone()));
+            let mut map = BTreeMap::new();
+            map.insert("artifact".to_string(), ComponentValue::Map(artifact));
             ComponentValue::Map(map)
         }
     }
@@ -308,9 +328,63 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
                     output,
                 });
             }
-            Err("content must contain 'markdown'/'text', 'file', or 'tool_call'".to_string())
+            if let Some(ComponentValue::Map(artifact)) = map.get("artifact") {
+                let kind = artifact
+                    .get("kind")
+                    .map(parse_artifact_kind_value)
+                    .transpose()?
+                    .unwrap_or(ArtifactKind::File);
+                let anchor = artifact
+                    .get("anchor")
+                    .or_else(|| artifact.get("id"))
+                    .map(parse_artifact_id_value)
+                    .transpose()?
+                    .ok_or_else(|| "artifact missing anchor".to_string())?;
+                let title = artifact
+                    .get("title")
+                    .and_then(ComponentValue::as_str)
+                    .ok_or_else(|| "artifact missing title".to_string())?
+                    .to_string();
+                return Ok(ChatMessageContent::Artifact {
+                    kind,
+                    anchor,
+                    title,
+                });
+            }
+            Err(
+                "content must contain 'markdown'/'text', 'file', 'tool_call', or 'artifact'"
+                    .to_string(),
+            )
         }
         other => Err(format!("content must be string or map, got {other:?}")),
+    }
+}
+
+fn parse_artifact_id_value(value: &ComponentValue) -> Result<ArtifactId, String> {
+    match value {
+        ComponentValue::String(raw) => Ok(ArtifactId::new(raw.clone())),
+        ComponentValue::U64(raw) => Ok(ArtifactId::from(*raw)),
+        ComponentValue::I64(raw) if *raw >= 0 => Ok(ArtifactId::from(*raw as u64)),
+        other => Err(format!(
+            "artifact anchor must be string or u64, got {other:?}"
+        )),
+    }
+}
+
+fn parse_artifact_kind_value(value: &ComponentValue) -> Result<ArtifactKind, String> {
+    match value {
+        ComponentValue::String(raw) => parse_artifact_kind_string(raw),
+        other => Err(format!("artifact kind must be string, got {other:?}")),
+    }
+}
+
+fn parse_artifact_kind_string(raw: &str) -> Result<ArtifactKind, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "code" => Ok(ArtifactKind::Code),
+        "diff" => Ok(ArtifactKind::Diff),
+        "file" => Ok(ArtifactKind::File),
+        _ => Err(format!("unknown artifact kind '{raw}'")),
     }
 }
 
@@ -375,6 +449,12 @@ pub fn register_chat_message_list(
 
         if let Some(cb) = event_handle(spec, "load_more", callbacks.clone()) {
             view = view.on_load_more(move || cb.emit());
+        }
+
+        if let Some(cb) = event_handle(spec, "open_artifact", callbacks.clone()) {
+            view = view.on_open_artifact(move |artifact_id| {
+                cb.emit_with(Some(ComponentValue::String(artifact_id.to_string())));
+            });
         }
 
         Ok(wrap_with_id(spec, Box::new(view)))
@@ -498,6 +578,22 @@ mod tests {
             "build",
             ChatToolCallStatus::Running,
             "cargo test",
+        )];
+
+        let value = messages_to_component_value(&messages);
+        let parsed = parse_messages_value(&value).expect("parse messages");
+
+        assert_eq!(parsed, messages);
+    }
+
+    #[test]
+    fn chat_messages_round_trip_artifact_content() {
+        let messages = vec![ChatMessage::artifact(
+            ChatMessageId(43),
+            ChatSender::Assistant,
+            ArtifactKind::Diff,
+            ArtifactId::new("diff-1"),
+            "main.patch",
         )];
 
         let value = messages_to_component_value(&messages);

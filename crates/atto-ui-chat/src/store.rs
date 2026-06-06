@@ -214,6 +214,7 @@ mod tests {
                 ChatMessageContent::Text { markdown } => Some(markdown),
                 ChatMessageContent::File { .. } => None,
                 ChatMessageContent::ToolCall { .. } => None,
+                ChatMessageContent::Artifact { .. } => None,
             })
             .expect("text message should exist")
     }
@@ -225,7 +226,9 @@ mod tests {
             .find(|message| message.id == id)
             .and_then(|message| match message.content {
                 ChatMessageContent::ToolCall { output, .. } => Some(output),
-                ChatMessageContent::Text { .. } | ChatMessageContent::File { .. } => None,
+                ChatMessageContent::Text { .. }
+                | ChatMessageContent::File { .. }
+                | ChatMessageContent::Artifact { .. } => None,
             })
             .expect("tool message should exist")
     }
@@ -237,7 +240,9 @@ mod tests {
             .find(|message| message.id == id)
             .and_then(|message| match message.content {
                 ChatMessageContent::ToolCall { status, .. } => Some(status),
-                ChatMessageContent::Text { .. } | ChatMessageContent::File { .. } => None,
+                ChatMessageContent::Text { .. }
+                | ChatMessageContent::File { .. }
+                | ChatMessageContent::Artifact { .. } => None,
             })
             .expect("tool message should exist")
     }

@@ -377,7 +377,7 @@
 - 确认 PTY 覆盖 `running -> done -> error` 状态指示、输出追加以及鼠标折叠/展开，且 row key 忽略工具输出/状态以保留 disclosure 折叠状态。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat --test pty_chat`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
-### [ ] T14 — 消息内 Artifact link + 最简文本 viewer（核心方案）（C.0 占位实现）
+### [DONE] T14 — 消息内 Artifact link + 最简文本 viewer（核心方案）（C.0 占位实现）
 **文件**：`crates/atto-ui-chat/src/message.rs`、新增 viewer 模块（仅依赖 core widgets）
 **现状**：editor/diff 富 UI 未就绪；方案为消息列表只放 link，code/diff 在独立窗口呈现。
 **步骤**：
@@ -388,6 +388,12 @@
 5. 点击消息 link → `open()` 弹出独立窗口。
 **测试**：PTY：点击 Code link 打开独立窗口显示源码；点击 Diff link 显示带前缀着色的 diff 文本。
 **验收**：link→独立窗口呈现链路通；接口清晰，后续富 viewer 可替换 `TextArtifactViewer` 而 chat 不改动。
+**完成记录（2026-06-06）**：
+- 新增 `ArtifactId`、`ArtifactKind`、`Artifact` 与 `ChatMessageContent::Artifact { kind, anchor, title }`，消息列表只渲染可点击 artifact link，不内嵌 code/diff 内容。
+- `ChatMessageList` 新增 `on_open_artifact(ArtifactId)` 回调；动态组件 schema 增加 `open_artifact` 事件并支持 artifact content 序列化/解析。
+- 新增 `ArtifactViewer` trait 与最简 `TextArtifactViewer`，通过 `Desktop::add_window(WindowKind::Normal, ...)` 打开独立普通窗口；code/file 以只读文本呈现，diff 以 unified diff 文本呈现并按 `+`/`-`/hunk/header 前缀简单着色。
+- `snapshot_chat_app --artifact-link` 使用事件队列连接 link 点击和 `TextArtifactViewer::open()`；新增 PTY 覆盖点击 Code link 显示源码、点击 Diff link 显示 diff 文本。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ### [ ] R14 — 审阅 T14
 - 确认 chat 不直接依赖 editor，仅通过 `ArtifactViewer` 接口与 `on_open_artifact` 解耦。

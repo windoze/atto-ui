@@ -2,27 +2,33 @@ use std::sync::Arc;
 
 use atto_ui::composable::{
     ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, Identifiable, LayoutParams,
-    ScrollConfig, Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
+    MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarVisibility, Size, Spacer, Text,
+    VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Disclosure, DisclosureStatus, Spinner, SpinnerIconStyle};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
-    ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus, ChatToolCallStatus,
+    ArtifactId, ArtifactKind, ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus,
+    ChatToolCallStatus,
 };
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
 
-#[derive(Clone, Debug)]
+type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
+
+#[derive(Clone)]
 struct ChatMessageListConfig {
     wrap_width: u16,
     in_progress_suffix: String,
@@ -30,13 +36,15 @@ struct ChatMessageListConfig {
     spacing: Binding<u16>,
     padding: Binding<EdgeInsets>,
     scroll_config: Binding<ScrollConfig>,
+    on_open_artifact: Option<ArtifactOpenCallback>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ChatMessageRowConfig {
     wrap_width: u16,
     in_progress_suffix: String,
     show_timestamps: bool,
+    on_open_artifact: Option<ArtifactOpenCallback>,
 }
 
 pub struct ChatMessageList {
@@ -64,6 +72,7 @@ impl ChatMessageList {
             scroll_config: ScrollConfig::default()
                 .horizontal_scrollbar(ScrollbarVisibility::Never)
                 .into(),
+            on_open_artifact: None,
         };
         let row_keys = Binding::new(row_keys_from_messages(&messages.get()));
         let list = build_list(row_keys.clone(), messages.clone(), &config);
@@ -134,6 +143,15 @@ impl ChatMessageList {
         F: Fn() + Send + Sync + 'static,
     {
         self.on_load_more = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn on_open_artifact<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ArtifactId) + Send + Sync + 'static,
+    {
+        self.config.on_open_artifact = Some(Arc::new(callback));
+        self.rebuild_list();
         self
     }
 
@@ -363,6 +381,7 @@ fn build_list(
         wrap_width: config.wrap_width,
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
+        on_open_artifact: config.on_open_artifact.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
         ChatMessageRow::new(key.clone(), messages.clone(), row_config.clone())
@@ -386,8 +405,18 @@ struct ChatMessageRowKey {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ChatMessageContentKey {
     Text,
-    File { name: String, url: Option<String> },
-    ToolCall { name: String },
+    File {
+        name: String,
+        url: Option<String>,
+    },
+    ToolCall {
+        name: String,
+    },
+    Artifact {
+        kind: ArtifactKind,
+        anchor: ArtifactId,
+        title: String,
+    },
 }
 
 impl Identifiable for ChatMessageRowKey {
@@ -418,6 +447,15 @@ impl ChatMessageRowKey {
                     status: ChatToolCallStatus::Running,
                     output: String::new(),
                 },
+                ChatMessageContentKey::Artifact {
+                    kind,
+                    anchor,
+                    title,
+                } => ChatMessageContent::Artifact {
+                    kind: kind.clone(),
+                    anchor: anchor.clone(),
+                    title: title.clone(),
+                },
             },
         }
     }
@@ -440,6 +478,15 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageRowKey> {
                 ChatMessageContent::ToolCall { name, .. } => {
                     ChatMessageContentKey::ToolCall { name: name.clone() }
                 }
+                ChatMessageContent::Artifact {
+                    kind,
+                    anchor,
+                    title,
+                } => ChatMessageContentKey::Artifact {
+                    kind: kind.clone(),
+                    anchor: anchor.clone(),
+                    title: title.clone(),
+                },
             },
         })
         .collect()
@@ -708,6 +755,7 @@ enum ChatMessageBody {
     Markdown(MarkdownViewer),
     File(VStack),
     Tool(Disclosure),
+    Artifact(ArtifactLink),
 }
 
 impl ChatMessageBody {
@@ -763,6 +811,19 @@ impl ChatMessageBody {
                     },
                 )
             }
+            ChatMessageContent::Artifact {
+                kind,
+                anchor,
+                title,
+            } => (
+                ChatMessageBody::Artifact(ArtifactLink::new(
+                    kind.clone(),
+                    anchor.clone(),
+                    title.clone(),
+                    config.on_open_artifact.clone(),
+                )),
+                ChatMessageRowBindings::default(),
+            ),
         }
     }
 }
@@ -781,6 +842,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.draw(frame, area, ctx),
             ChatMessageBody::File(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Tool(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
         }
     }
 }
@@ -791,6 +853,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.min_width(),
             ChatMessageBody::File(view) => view.min_width(),
             ChatMessageBody::Tool(view) => view.min_width(),
+            ChatMessageBody::Artifact(view) => view.min_width(),
         }
     }
 
@@ -799,6 +862,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.min_height(),
             ChatMessageBody::File(view) => view.min_height(),
             ChatMessageBody::Tool(view) => view.min_height(),
+            ChatMessageBody::Artifact(view) => view.min_height(),
         }
     }
 
@@ -807,6 +871,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.desired_width(),
             ChatMessageBody::File(view) => view.desired_width(),
             ChatMessageBody::Tool(view) => view.desired_width(),
+            ChatMessageBody::Artifact(view) => view.desired_width(),
         }
     }
 
@@ -815,6 +880,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.desired_height(),
             ChatMessageBody::File(view) => view.desired_height(),
             ChatMessageBody::Tool(view) => view.desired_height(),
+            ChatMessageBody::Artifact(view) => view.desired_height(),
         }
     }
 }
@@ -831,7 +897,118 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
             ChatMessageBody::File(view) => view.handle_event(event, ctx),
             ChatMessageBody::Tool(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
         }
+    }
+}
+
+struct ArtifactLink {
+    kind: ArtifactKind,
+    anchor: ArtifactId,
+    title: String,
+    on_open: Option<ArtifactOpenCallback>,
+    last_area: Option<Rect>,
+}
+
+impl ArtifactLink {
+    fn new(
+        kind: ArtifactKind,
+        anchor: ArtifactId,
+        title: String,
+        on_open: Option<ArtifactOpenCallback>,
+    ) -> Self {
+        Self {
+            kind,
+            anchor,
+            title,
+            on_open,
+            last_area: None,
+        }
+    }
+
+    fn label(&self) -> String {
+        format!("Artifact {}: {}", self.kind.label(), self.title)
+    }
+
+    fn open(&self) -> EventResult {
+        let Some(on_open) = &self.on_open else {
+            return EventResult::ignored();
+        };
+        on_open(self.anchor.clone());
+        EventResult::submitted()
+    }
+}
+
+impl ::atto_ui::composable::Component for ArtifactLink {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let style = ctx.theme.widget.focused.add_modifier(Modifier::UNDERLINED);
+        frame.render_widget(Paragraph::new(Line::styled(self.label(), style)), area);
+    }
+}
+
+impl ::atto_ui::composable::Layout for ArtifactLink {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.label().width().min(u16::MAX as usize) as u16)
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for ArtifactLink {
+    fn is_focusable(&self) -> bool {
+        self.on_open.is_some()
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for ArtifactLink {}
+impl ::atto_ui::composable::DynamicTree for ArtifactLink {}
+
+impl ::atto_ui::composable::EventHandling for ArtifactLink {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        match event {
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
+                };
+                if mouse_in_area(area, mouse, ctx.mouse_coordinate_space) {
+                    self.open()
+                } else {
+                    EventResult::ignored()
+                }
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter | KeyCode::Char(' '),
+                ..
+            }) => self.open(),
+            _ => EventResult::ignored(),
+        }
+    }
+}
+
+fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordinateSpace) -> bool {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => {
+            mouse.column >= area.x
+                && mouse.column < area.x.saturating_add(area.width)
+                && mouse.row >= area.y
+                && mouse.row < area.y.saturating_add(area.height)
+        }
+        MouseCoordinateSpace::Local => mouse.column < area.width && mouse.row < area.height,
     }
 }
 
@@ -880,5 +1057,27 @@ mod tests {
         };
         let renamed_key = row_keys_from_messages(&[first]);
         assert_ne!(updated_key, renamed_key);
+    }
+
+    #[test]
+    fn row_keys_track_artifact_link_identity() {
+        let id = ChatMessageId::new(9);
+        let mut first = ChatMessage::artifact(
+            id,
+            ChatSender::Assistant,
+            ArtifactKind::Code,
+            ArtifactId::new("code-1"),
+            "main.rs",
+        );
+        let first_key = row_keys_from_messages(&[first.clone()]);
+
+        first.content = ChatMessageContent::Artifact {
+            kind: ArtifactKind::Code,
+            anchor: ArtifactId::new("code-1"),
+            title: "lib.rs".to_string(),
+        };
+        let renamed_key = row_keys_from_messages(&[first]);
+
+        assert_ne!(first_key, renamed_key);
     }
 }

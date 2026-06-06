@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,9 +21,10 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui_chat::{
-    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMessage, ChatMessageList, ChatMessageStatus, ChatMessageStore,
-    ChatPanel, ChatSender, ChatToolCallStatus,
+    Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatChoiceInputConfig,
+    ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
+    ChatMessageList, ChatMessageStatus, ChatMessageStore, ChatPanel, ChatSender,
+    ChatToolCallStatus, TextArtifactViewer,
 };
 
 fn main() -> Result<()> {
@@ -43,6 +45,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let streaming_markdown = args.iter().any(|arg| arg == "--streaming-markdown");
     let tool_call = args.iter().any(|arg| arg == "--tool-call");
+    let artifact_link = args.iter().any(|arg| arg == "--artifact-link");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -55,6 +58,11 @@ fn main() -> Result<()> {
     )]);
 
     let store = ChatMessageStore::new();
+    let artifacts = if artifact_link {
+        seed_artifacts(&store)
+    } else {
+        HashMap::new()
+    };
     let tool_message_id = if tool_call {
         let id = store.next_message_id();
         store.push(ChatMessage::tool_call(
@@ -67,7 +75,7 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let streaming_message_id = if tool_message_id.is_some() {
+    let streaming_message_id = if tool_message_id.is_some() || artifact_link {
         None
     } else if streaming_markdown {
         let id = store.next_message_id();
@@ -83,9 +91,14 @@ fn main() -> Result<()> {
 
     let input_handle = ChatInputHandle::new();
     let load_counter = Arc::new(AtomicU64::new(0));
+    let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let list = ChatMessageList::new(store.binding())
         .wrap_width(56)
         .show_timestamps(false)
+        .on_open_artifact({
+            let open_artifacts = open_artifacts.clone();
+            move |artifact_id| open_artifacts.push(artifact_id)
+        })
         .on_load_more({
             let store = store.clone();
             let counter = load_counter.clone();
@@ -271,6 +284,13 @@ fn main() -> Result<()> {
         let screen: Rect = terminal.size()?.into();
         let _res = desktop.handle_event(&ev, screen);
 
+        for artifact_id in open_artifacts.drain() {
+            if let Some(artifact) = artifacts.get(&artifact_id).cloned() {
+                let mut viewer = TextArtifactViewer::new(&mut desktop, screen);
+                viewer.open(artifact);
+            }
+        }
+
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
             modifiers,
@@ -307,6 +327,47 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_artifacts(store: &ChatMessageStore) -> HashMap<ArtifactId, Artifact> {
+    let code_id = ArtifactId::new("code-main");
+    let diff_id = ArtifactId::new("diff-main");
+
+    store.push(ChatMessage::artifact(
+        store.next_message_id(),
+        ChatSender::Assistant,
+        ArtifactKind::Code,
+        code_id.clone(),
+        "main.rs",
+    ));
+    store.push(ChatMessage::artifact(
+        store.next_message_id(),
+        ChatSender::Assistant,
+        ArtifactKind::Diff,
+        diff_id.clone(),
+        "main.patch",
+    ));
+
+    let mut artifacts = HashMap::new();
+    artifacts.insert(
+        code_id.clone(),
+        Artifact::new(
+            code_id,
+            ArtifactKind::Code,
+            "main.rs",
+            "fn main() {\n    println!(\"CODE-ARTIFACT\");\n}",
+        ),
+    );
+    artifacts.insert(
+        diff_id.clone(),
+        Artifact::new(
+            diff_id,
+            ArtifactKind::Diff,
+            "main.patch",
+            "--- a/main.rs\n+++ b/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    println!(\"old\");\n+    println!(\"DIFF-ARTIFACT\");\n }",
+        ),
+    );
+    artifacts
 }
 
 fn submit_response_text(response: ChatInputResponse) -> String {

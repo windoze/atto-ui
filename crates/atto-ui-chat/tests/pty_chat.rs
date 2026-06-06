@@ -240,3 +240,40 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     host.send_ctrl('q')?;
     Ok(())
 }
+
+#[test]
+fn chat_artifact_code_link_opens_text_viewer_window() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--artifact-link"], 100, 28)?;
+
+    host.wait_for_text("Artifact Code: main.rs", Duration::from_secs(2))?;
+    let (x, y) = find_text_position(&host, "Artifact Code: main.rs").expect("code link");
+    host.click(x, y)?;
+
+    host.wait_for_text("Code: main.rs", Duration::from_secs(2))?;
+    host.wait_for_text("Code Artifact: main.rs", Duration::from_secs(2))?;
+    host.wait_for_text("CODE-ARTIFACT", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_artifact_diff_link_opens_colored_diff_viewer_window() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--artifact-link"], 100, 28)?;
+
+    host.wait_for_text("Artifact Diff: main.patch", Duration::from_secs(2))?;
+    let (x, y) = find_text_position(&host, "Artifact Diff: main.patch").expect("diff link");
+    host.click(x, y)?;
+
+    host.wait_for_text("Diff: main.patch", Duration::from_secs(2))?;
+    host.wait_for_text("Diff Artifact: main.patch", Duration::from_secs(2))?;
+    host.wait_for_text("+    println!(\"DIFF-ARTIFACT\");", Duration::from_secs(2))?;
+    host.wait_for_text("-    println!(\"old\");", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}

@@ -6,6 +6,7 @@ mod list;
 mod message;
 mod panel;
 mod store;
+mod viewer;
 
 pub use dynamic::{
     chat_input_panel_schema, chat_message_list_schema, register_chat_input_panel,
@@ -17,8 +18,9 @@ pub use input::{
 };
 pub use list::ChatMessageList;
 pub use message::{
-    ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageId, ChatMessageStatus, ChatSender,
-    ChatToolCallStatus,
+    Artifact, ArtifactId, ArtifactKind, ChatAlignment, ChatMessage, ChatMessageContent,
+    ChatMessageId, ChatMessageStatus, ChatSender, ChatToolCallStatus,
 };
 pub use panel::ChatPanel;
 pub use store::ChatMessageStore;
+pub use viewer::{ArtifactViewer, TextArtifactViewer};
