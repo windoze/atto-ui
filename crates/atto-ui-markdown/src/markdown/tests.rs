@@ -53,3 +53,62 @@ fn layout_clamps_code_block_height_and_optionally_renders_fences() {
         LayoutBlockKind::Code { .. }
     ));
 }
+
+#[test]
+fn tolerant_parser_renders_unclosed_fence_as_code_block() {
+    let blocks = super::parser::parse_markdown_tolerant("```rust\nfn main() {", false);
+    assert_eq!(blocks.len(), 1);
+    let MdBlock::CodeBlock { info, text, .. } = &blocks[0] else {
+        panic!("expected tolerant code block");
+    };
+    assert_eq!(info.as_deref(), Some("rust"));
+    assert_eq!(text, "fn main() {");
+}
+
+#[test]
+fn tolerant_parser_downgrades_trailing_incomplete_table_to_text() {
+    let blocks =
+        super::parser::parse_markdown_tolerant("| Name | Value |\n| --- | --- |\n| half |", false);
+    assert_eq!(blocks.len(), 1);
+    let MdBlock::Paragraph(spans) = &blocks[0] else {
+        panic!("expected trailing incomplete table to stay plain text");
+    };
+    let rendered = spans
+        .iter()
+        .map(|span| span.text.as_str())
+        .collect::<String>();
+    assert!(rendered.contains("| Name | Value |"));
+    assert!(rendered.contains("| half |"));
+}
+
+#[test]
+fn tolerant_parser_keeps_completed_table_as_table() {
+    let blocks = super::parser::parse_markdown_tolerant(
+        "| Name | Value |\n| --- | --- |\n| half | stable |\n",
+        false,
+    );
+    assert_eq!(blocks.len(), 1);
+    let MdBlock::Table { headers, rows, .. } = &blocks[0] else {
+        panic!("expected completed table block");
+    };
+    assert_eq!(headers.len(), 2);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 2);
+}
+
+#[test]
+fn unclosed_code_block_text_can_be_replaced_incrementally() {
+    let mut blocks = super::parser::parse_markdown_tolerant("```text\none", false);
+    let next = super::parser::unclosed_fenced_code_block("```text\none\ntwo")
+        .expect("unclosed fence should be detected");
+
+    assert!(super::parser::replace_last_code_block_text(
+        &mut blocks,
+        next.text
+    ));
+
+    let MdBlock::CodeBlock { text, .. } = &blocks[0] else {
+        panic!("expected code block");
+    };
+    assert_eq!(text, "one\ntwo");
+}

@@ -64,6 +64,7 @@ struct MarkdownShared {
     markdown: Binding<String>,
     width: Binding<Option<u16>>,
     show_markers: Binding<bool>,
+    streaming_tolerant: Binding<bool>,
     vertical_scrollbar: Binding<ScrollbarVisibility>,
     max_code_height: Binding<u16>,
     max_table_height: Binding<u16>,
@@ -79,6 +80,7 @@ struct MarkdownShared {
 struct MarkdownCache {
     md_dirty: DirtyObserver,
     markers_dirty: DirtyObserver,
+    streaming_tolerant_dirty: DirtyObserver,
     max_code_dirty: DirtyObserver,
     max_table_dirty: DirtyObserver,
 
@@ -87,4 +89,5 @@ struct MarkdownCache {
     tables: Vec<embedded_scrollbar::TableBlockState>,
     layout: Option<layout::Layout>,
     last_wrap_width: Option<u16>,
+    last_markdown: String,
 }

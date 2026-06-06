@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, ScrollConfig,
-    Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
+    ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, Identifiable, LayoutParams,
+    ScrollConfig, Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Spinner, SpinnerIconStyle};
@@ -39,7 +39,8 @@ struct ChatMessageRowConfig {
 
 pub struct ChatMessageList {
     messages: Binding<Vec<ChatMessage>>,
-    list: atto_ui::composable::ForEachIdentifiable<ChatMessage, ChatMessageRow>,
+    row_keys: Binding<Vec<ChatMessageRowKey>>,
+    list: atto_ui::composable::ForEachIdentifiable<ChatMessageRowKey, ChatMessageRow>,
     config: ChatMessageListConfig,
     on_load_more: Option<Arc<dyn Fn() + Send + Sync>>,
     load_more_armed: bool,
@@ -61,10 +62,12 @@ impl ChatMessageList {
                 .horizontal_scrollbar(ScrollbarVisibility::Never)
                 .into(),
         };
-        let list = build_list(messages.clone(), &config);
+        let row_keys = Binding::new(row_keys_from_messages(&messages.get()));
+        let list = build_list(row_keys.clone(), messages.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
             messages,
+            row_keys,
             list,
             config,
             on_load_more: None,
@@ -136,7 +139,9 @@ impl ChatMessageList {
     }
 
     fn rebuild_list(&mut self) {
-        self.list = build_list(self.messages.clone(), &self.config);
+        self.row_keys
+            .set(row_keys_from_messages(&self.messages.get()));
+        self.list = build_list(self.row_keys.clone(), self.messages.clone(), &self.config);
     }
 
     fn maybe_trigger_load_more(&mut self) -> bool {
@@ -166,6 +171,8 @@ impl ChatMessageList {
         if !self.messages.check_dirty(&mut self.messages_observer) {
             return;
         }
+        self.row_keys
+            .set(row_keys_from_messages(&self.messages.get()));
         if self.suppress_auto_scroll_once {
             self.suppress_auto_scroll_once = false;
             return;
@@ -324,16 +331,17 @@ impl ::atto_ui::composable::EventHandling for ChatMessageList {
 }
 
 fn build_list(
+    row_keys: Binding<Vec<ChatMessageRowKey>>,
     messages: Binding<Vec<ChatMessage>>,
     config: &ChatMessageListConfig,
-) -> atto_ui::composable::ForEachIdentifiable<ChatMessage, ChatMessageRow> {
+) -> atto_ui::composable::ForEachIdentifiable<ChatMessageRowKey, ChatMessageRow> {
     let row_config = ChatMessageRowConfig {
         wrap_width: config.wrap_width,
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
     };
-    let list = atto_ui::composable::ForEach::new(messages, move |message, _| {
-        ChatMessageRow::new(message.clone(), row_config.clone())
+    let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
+        ChatMessageRow::new(key.clone(), messages.clone(), row_config.clone())
     })
     .spacing(config.spacing.clone())
     .padding_insets(config.padding.clone())
@@ -342,51 +350,178 @@ fn build_list(
     list.with_id()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChatMessageRowKey {
+    id: crate::message::ChatMessageId,
+    sender: crate::message::ChatSender,
+    timestamp: Option<String>,
+    status: ChatMessageStatus,
+    content: ChatMessageContentKey,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChatMessageContentKey {
+    Text,
+    File { name: String, url: Option<String> },
+}
+
+impl Identifiable for ChatMessageRowKey {
+    type Id = crate::message::ChatMessageId;
+
+    fn id(&self) -> Self::Id {
+        self.id
+    }
+}
+
+impl ChatMessageRowKey {
+    fn placeholder(&self) -> ChatMessage {
+        ChatMessage {
+            id: self.id,
+            sender: self.sender.clone(),
+            timestamp: self.timestamp.clone(),
+            status: self.status.clone(),
+            content: match &self.content {
+                ChatMessageContentKey::Text => ChatMessageContent::Text {
+                    markdown: String::new(),
+                },
+                ChatMessageContentKey::File { name, url } => ChatMessageContent::File {
+                    name: name.clone(),
+                    url: url.clone(),
+                },
+            },
+        }
+    }
+}
+
+fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageRowKey> {
+    messages
+        .iter()
+        .map(|message| ChatMessageRowKey {
+            id: message.id,
+            sender: message.sender.clone(),
+            timestamp: message.timestamp.clone(),
+            status: message.status.clone(),
+            content: match &message.content {
+                ChatMessageContent::Text { .. } => ChatMessageContentKey::Text,
+                ChatMessageContent::File { name, url } => ChatMessageContentKey::File {
+                    name: name.clone(),
+                    url: url.clone(),
+                },
+            },
+        })
+        .collect()
+}
+
 struct ChatMessageRow {
+    message_id: crate::message::ChatMessageId,
+    messages: Binding<Vec<ChatMessage>>,
+    body_markdown: Option<Binding<String>>,
+    config: ChatMessageRowConfig,
     view: VStack,
 }
 
 impl ChatMessageRow {
-    fn new(message: ChatMessage, config: ChatMessageRowConfig) -> Self {
-        let mut column = VStack::new().with_spacing(1);
-        let row_layout = LayoutParams {
-            height: Size::Content,
-            ..LayoutParams::default()
-        };
-
-        if config.show_timestamps
-            && let Some(ts) = &message.timestamp
-        {
-            column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
+    fn new(
+        key: ChatMessageRowKey,
+        messages: Binding<Vec<ChatMessage>>,
+        config: ChatMessageRowConfig,
+    ) -> Self {
+        let message = find_message(&messages.get(), key.id).unwrap_or_else(|| key.placeholder());
+        let (view, body_markdown) = build_row_view(&message, &config);
+        Self {
+            message_id: key.id,
+            messages,
+            body_markdown,
+            config,
+            view,
         }
-
-        let bubble = build_aligned_bubble(&message, &config);
-        column = column.child_with_layout(bubble, row_layout);
-
-        Self { view: column }
     }
+
+    fn sync_body_markdown(&self) {
+        let Some(binding) = &self.body_markdown else {
+            return;
+        };
+        let messages = self.messages.get();
+        let Some(message) = find_message(&messages, self.message_id) else {
+            return;
+        };
+        let Some(markdown) = message_markdown_for_render(&message, &self.config) else {
+            return;
+        };
+        binding.set(markdown);
+    }
+}
+
+fn build_row_view(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (VStack, Option<Binding<String>>) {
+    let mut column = VStack::new().with_spacing(1);
+    let row_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+
+    if config.show_timestamps
+        && let Some(ts) = &message.timestamp
+    {
+        column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
+    }
+
+    let (bubble, body_markdown) = build_aligned_bubble(message, config);
+    column = column.child_with_layout(bubble, row_layout);
+
+    (column, body_markdown)
+}
+
+fn find_message(
+    messages: &[ChatMessage],
+    id: crate::message::ChatMessageId,
+) -> Option<ChatMessage> {
+    messages.iter().find(|message| message.id == id).cloned()
+}
+
+fn message_markdown_for_render(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> Option<String> {
+    let ChatMessageContent::Text { markdown } = &message.content else {
+        return None;
+    };
+    let mut content = markdown.clone();
+    if matches!(message.status, ChatMessageStatus::InProgress)
+        && !config.in_progress_suffix.is_empty()
+    {
+        content.push_str(&config.in_progress_suffix);
+    }
+    Some(content)
 }
 
 impl ::atto_ui::composable::Component for ChatMessageRow {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.sync_body_markdown();
         self.view.draw(frame, area, ctx);
     }
 }
 
 impl ::atto_ui::composable::Layout for ChatMessageRow {
     fn min_width(&self) -> u16 {
+        self.sync_body_markdown();
         self.view.min_width()
     }
 
     fn min_height(&self) -> u16 {
+        self.sync_body_markdown();
         self.view.min_height()
     }
 
     fn desired_width(&self) -> Option<u16> {
+        self.sync_body_markdown();
         self.view.desired_width()
     }
 
     fn desired_height(&self) -> Option<u16> {
+        self.sync_body_markdown();
         self.view.desired_height()
     }
 }
@@ -399,12 +534,16 @@ impl ::atto_ui::composable::DynamicTree for ChatMessageRow {}
 
 impl ::atto_ui::composable::EventHandling for ChatMessageRow {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_body_markdown();
         self.view.handle_event(event, ctx)
     }
 }
 
-fn build_aligned_bubble(message: &ChatMessage, config: &ChatMessageRowConfig) -> HStack {
-    let bubble = build_bubble(message, config);
+fn build_aligned_bubble(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (HStack, Option<Binding<String>>) {
+    let (bubble, body_markdown) = build_bubble(message, config);
     let bubble_layout = LayoutParams {
         width: Size::Weight(3),
         height: Size::Content,
@@ -415,19 +554,23 @@ fn build_aligned_bubble(message: &ChatMessage, config: &ChatMessageRowConfig) ->
         ..LayoutParams::default()
     };
 
-    match message.sender.alignment() {
+    let row = match message.sender.alignment() {
         ChatAlignment::Left => HStack::new()
             .child_with_layout(bubble, bubble_layout)
             .child_with_layout(Spacer::new(), spacer_layout),
         ChatAlignment::Right => HStack::new()
             .child_with_layout(Spacer::new(), spacer_layout)
             .child_with_layout(bubble, bubble_layout),
-    }
+    };
+    (row, body_markdown)
 }
 
-fn build_bubble(message: &ChatMessage, config: &ChatMessageRowConfig) -> VStack {
+fn build_bubble(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (VStack, Option<Binding<String>>) {
     let header = build_header(message);
-    let body = ChatMessageBody::from_message(message, config);
+    let (body, body_markdown) = ChatMessageBody::from_message(message, config);
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -445,7 +588,7 @@ fn build_bubble(message: &ChatMessage, config: &ChatMessageRowConfig) -> VStack 
         bubble = bubble.child_with_layout(spinner, content_layout);
     }
 
-    bubble
+    (bubble, body_markdown)
 }
 
 fn build_header(message: &ChatMessage) -> HStack {
@@ -519,19 +662,22 @@ enum ChatMessageBody {
 }
 
 impl ChatMessageBody {
-    fn from_message(message: &ChatMessage, config: &ChatMessageRowConfig) -> Self {
+    fn from_message(
+        message: &ChatMessage,
+        config: &ChatMessageRowConfig,
+    ) -> (Self, Option<Binding<String>>) {
         match &message.content {
-            ChatMessageContent::Text { markdown } => {
-                let mut content = markdown.clone();
-                if matches!(message.status, ChatMessageStatus::InProgress)
-                    && !config.in_progress_suffix.is_empty()
-                {
-                    content.push_str(&config.in_progress_suffix);
-                }
-                ChatMessageBody::Markdown(
-                    MarkdownViewer::new(content)
-                        .wrap_width(config.wrap_width)
-                        .vertical_scrollbar(ScrollbarVisibility::Never),
+            ChatMessageContent::Text { .. } => {
+                let content =
+                    Binding::new(message_markdown_for_render(message, config).unwrap_or_default());
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content.clone())
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    Some(content),
                 )
             }
             ChatMessageContent::File { name, url } => {
@@ -540,7 +686,7 @@ impl ChatMessageBody {
                 if let Some(url) = url {
                     view = view.child(Text::new(format!("Url: {url}")));
                 }
-                ChatMessageBody::File(view)
+                (ChatMessageBody::File(view), None)
             }
         }
     }
@@ -597,5 +743,29 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
             ChatMessageBody::File(view) => view.handle_event(event, ctx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::{ChatMessageId, ChatSender};
+
+    #[test]
+    fn row_keys_ignore_text_markdown_for_streaming_deltas() {
+        let id = ChatMessageId::new(7);
+        let mut first = ChatMessage::text(id, ChatSender::Assistant, "hello")
+            .with_status(ChatMessageStatus::InProgress);
+        let first_key = row_keys_from_messages(&[first.clone()]);
+
+        first.content = ChatMessageContent::Text {
+            markdown: "hello world".to_string(),
+        };
+        let delta_key = row_keys_from_messages(&[first.clone()]);
+        assert_eq!(first_key, delta_key);
+
+        first.status = ChatMessageStatus::Final;
+        let final_key = row_keys_from_messages(&[first]);
+        assert_ne!(delta_key, final_key);
     }
 }

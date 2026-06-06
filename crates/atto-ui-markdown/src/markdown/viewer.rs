@@ -26,6 +26,7 @@ impl MarkdownViewer {
         let markdown = markdown.into();
         let width = Binding::new(None);
         let show_markers = Binding::new(false);
+        let streaming_tolerant = Binding::new(false);
         let vertical_scrollbar = Binding::new(ScrollbarVisibility::Auto);
         let max_code_height = Binding::new(super::DEFAULT_CODE_BLOCK_MAX_HEIGHT);
         let max_table_height = Binding::new(super::DEFAULT_TABLE_MAX_HEIGHT);
@@ -37,6 +38,7 @@ impl MarkdownViewer {
             markdown.clone(),
             width.clone(),
             show_markers.clone(),
+            streaming_tolerant.clone(),
             vertical_scrollbar.clone(),
             max_code_height.clone(),
             max_table_height.clone(),
@@ -79,6 +81,11 @@ impl MarkdownViewer {
 
     pub fn show_markers(self, show: bool) -> Self {
         self.shared.write().show_markers.set(show);
+        self
+    }
+
+    pub fn streaming_tolerant(self, enabled: bool) -> Self {
+        self.shared.write().streaming_tolerant.set(enabled);
         self
     }
 

@@ -239,7 +239,7 @@
 - 确认 chat 列表使用 `ForEachIdentifiable` 按 message id reconcile，delta 更新只重建内容变化的消息行，未回退为全行视图重建。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui foreach_id_rebuilds_only_changed_items`；`cargo test --workspace --all-targets`。
 
-### [ ] T9 — 流式 markdown 容错增量渲染（C.1）
+### [DONE] T9 — 流式 markdown 容错增量渲染（C.1）
 **文件**：`crates/atto-ui-chat/src/`、必要时 `crates/atto-ui-markdown/src/`
 **现状**：markdown 渲染未针对流式中途的不完整语法（未闭合代码围栏 / 半截表格）做容错。
 **步骤**：
@@ -247,6 +247,13 @@
 2. chat 消息渲染走容错入口，增量解析避免每 token 全量重排。
 **测试**：PTY 快照：逐步追加含未闭合围栏/半截表格的文本，断言中途渲染稳定不报错、闭合后正确成块。
 **验收**：流式途中不完整语法稳定渲染，闭合后转为正确块。
+**完成记录（2026-06-06）**：
+- `atto-ui-markdown` 新增 `MarkdownViewer::streaming_tolerant(true)` 入口；容错解析会将未闭合 fenced code block 按当前代码块渲染，并将尾部半截表格降级为普通文本，完整后恢复为表格块。
+- markdown cache 在 streaming tolerant 模式下对仍未闭合的 fenced code 前缀追加走增量更新路径，复用已解析块并只替换末尾代码块文本；同时修正表头行解析在不同 `pulldown-cmark` 事件顺序下丢失的问题。
+- chat 文本消息改为通过稳定 row key 复用同一个 `MarkdownViewer`/`Binding<String>`；流式 text delta 不再导致每个 token 重建整条消息行，状态/文件等结构性变化仍会重建。
+- 新增 markdown 单测覆盖未闭合围栏、半截表格降级、完整表格恢复、末尾代码块增量替换；新增 chat row key 单测验证 text delta 不触发结构 key 变化。
+- `snapshot_chat_app --streaming-markdown` 与 `crates/atto-ui-chat/tests/pty_chat.rs` 新增 PTY 覆盖：逐步追加未闭合代码围栏、闭合围栏、半截表格和完整表格，断言中途稳定渲染且完整后成块。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-markdown`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ### [ ] R9 — 审阅 T9
 - 确认容错渲染不误吞已完成内容、闭合后无残留降级。

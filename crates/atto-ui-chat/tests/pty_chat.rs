@@ -47,3 +47,32 @@ fn chat_load_more_on_scroll_top() -> anyhow::Result<()> {
     host.send_ctrl('q')?;
     Ok(())
 }
+
+#[test]
+fn chat_streaming_markdown_tolerates_incomplete_blocks() -> anyhow::Result<()> {
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--streaming-markdown"], 80, 24)?;
+
+    host.wait_for_text("STREAMING-MARKDOWN", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_text("STREAMING-CODE", Duration::from_secs(2))?;
+    host.wait_for_text("fn main()", Duration::from_secs(2))?;
+
+    host.send_str("2")?;
+    host.wait_for_text("STREAMING-CODE", Duration::from_secs(2))?;
+
+    host.send_str("3")?;
+    host.wait_for_text("| half |", Duration::from_secs(2))?;
+    let partial = host.screen_snapshot()?;
+    assert!(partial.iter().any(|line| line.contains("| Name | Value |")));
+    assert!(partial.iter().all(|line| !line.contains('┬')));
+
+    host.send_str("4")?;
+    host.wait_for_text("stable", Duration::from_secs(2))?;
+    let complete = host.screen_snapshot()?;
+    assert!(complete.iter().any(|line| line.contains('┬')));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}

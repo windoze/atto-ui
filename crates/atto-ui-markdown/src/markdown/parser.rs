@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use pulldown_cmark::{CodeBlockKind, Event as MdEvent, Options, Parser, Tag, TagEnd};
 
 use super::embedded_scrollbar::{CodeBlockState, TableBlockState};
@@ -57,6 +59,15 @@ pub(super) enum SpanKind {
 }
 
 pub(super) fn parse_markdown(input: &str, show_markers: bool) -> Vec<MdBlock> {
+    parse_markdown_input(input, show_markers)
+}
+
+pub(super) fn parse_markdown_tolerant(input: &str, show_markers: bool) -> Vec<MdBlock> {
+    let input = normalize_streaming_input(input);
+    parse_markdown_input(input.as_ref(), show_markers)
+}
+
+fn parse_markdown_input(input: &str, show_markers: bool) -> Vec<MdBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -69,6 +80,127 @@ pub(super) fn parse_markdown(input: &str, show_markers: bool) -> Vec<MdBlock> {
     }
 
     state.finish()
+}
+
+fn normalize_streaming_input(input: &str) -> Cow<'_, str> {
+    let Some(range) = trailing_incomplete_table_range(input) else {
+        return Cow::Borrowed(input);
+    };
+
+    let mut out = String::with_capacity(input.len().saturating_add(8));
+    out.push_str(&input[..range.start]);
+    for ch in input[range.clone()].chars() {
+        if ch == '|' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push_str(&input[range.end..]);
+    Cow::Owned(out)
+}
+
+fn trailing_incomplete_table_range(input: &str) -> Option<std::ops::Range<usize>> {
+    let lines = line_ranges(input);
+    let end_idx = lines
+        .iter()
+        .rposition(|line| !line.text.trim().is_empty())?;
+    let mut start_idx = end_idx;
+    while start_idx > 0 && !lines[start_idx - 1].text.trim().is_empty() {
+        start_idx -= 1;
+    }
+
+    let candidate = &lines[start_idx..=end_idx];
+    if candidate.len() < 2 {
+        return None;
+    }
+
+    let header_cells = split_table_cells(candidate[0].text);
+    if header_cells.len() < 2 {
+        return None;
+    }
+
+    let delimiter = candidate[1].text;
+    let delimiter_complete = is_table_delimiter(delimiter, header_cells.len());
+    let delimiter_fragment = looks_like_table_delimiter_fragment(delimiter);
+    let incomplete = if delimiter_complete {
+        candidate
+            .last()
+            .is_some_and(|line| is_incomplete_table_row(line.text, header_cells.len(), input))
+    } else {
+        delimiter_fragment
+    };
+
+    incomplete.then_some(candidate[0].start..candidate.last()?.end)
+}
+
+#[derive(Clone, Copy)]
+struct SourceLine<'a> {
+    start: usize,
+    end: usize,
+    text: &'a str,
+}
+
+fn line_ranges(input: &str) -> Vec<SourceLine<'_>> {
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    for part in input.split_inclusive('\n') {
+        let end = start.saturating_add(part.len());
+        let text = part.strip_suffix('\n').unwrap_or(part);
+        let text = text.strip_suffix('\r').unwrap_or(text);
+        lines.push(SourceLine { start, end, text });
+        start = end;
+    }
+    if start < input.len() || input.is_empty() {
+        let text = &input[start..];
+        lines.push(SourceLine {
+            start,
+            end: input.len(),
+            text,
+        });
+    }
+    lines
+}
+
+fn split_table_cells(line: &str) -> Vec<&str> {
+    let mut trimmed = line.trim();
+    if !trimmed.contains('|') {
+        return Vec::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix('|') {
+        trimmed = rest;
+    }
+    if let Some(rest) = trimmed.strip_suffix('|') {
+        trimmed = rest;
+    }
+    trimmed.split('|').collect()
+}
+
+fn is_table_delimiter(line: &str, expected_cells: usize) -> bool {
+    let cells = split_table_cells(line);
+    cells.len() == expected_cells
+        && cells.iter().all(|cell| {
+            let cell = cell.trim();
+            let dash_count = cell.chars().filter(|ch| *ch == '-').count();
+            dash_count >= 3 && cell.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
+        })
+}
+
+fn looks_like_table_delimiter_fragment(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains('|')
+        && trimmed.contains('-')
+        && trimmed
+            .chars()
+            .all(|ch| matches!(ch, '|' | '-' | ':' | ' '))
+}
+
+fn is_incomplete_table_row(line: &str, expected_cells: usize, input: &str) -> bool {
+    let cells = split_table_cells(line);
+    if cells.is_empty() {
+        return false;
+    }
+
+    cells.len() < expected_cells || (!line.trim_end().ends_with('|') && !input.ends_with('\n'))
 }
 
 struct ParserState {
@@ -95,6 +227,10 @@ impl ParserState {
     }
 
     fn finish(mut self) -> Vec<MdBlock> {
+        if let Some(code) = self.code_block.take() {
+            self.push_code_block(code);
+        }
+
         while self.stack.len() > 1 {
             let child = self.stack.pop().unwrap();
             self.push_container(child);
@@ -161,6 +297,7 @@ impl ParserState {
             Tag::TableRow => {
                 if let Some(table) = self.table_state_mut() {
                     table.current_row = Vec::new();
+                    table.current_row_is_head = table.in_head;
                 }
             }
             Tag::TableCell => self.start_block(CurrentBlockKind::TableCell),
@@ -198,13 +335,7 @@ impl ParserState {
             if matches!(tag, TagEnd::CodeBlock)
                 && let Some(code) = self.code_block.take()
             {
-                let id = self.next_code_id;
-                self.next_code_id += 1;
-                self.push_block(MdBlock::CodeBlock {
-                    id,
-                    info: code.info,
-                    text: code.text,
-                });
+                self.push_code_block(code);
             }
             return;
         }
@@ -242,17 +373,26 @@ impl ParserState {
             }
             TagEnd::TableHead => {
                 if let Some(table) = self.table_state_mut() {
+                    if table.headers.is_empty() && !table.current_row.is_empty() {
+                        table.headers = std::mem::take(&mut table.current_row);
+                        table.current_row_is_head = false;
+                    }
                     table.in_head = false;
                 }
             }
             TagEnd::TableRow => {
                 if let Some(table) = self.table_state_mut() {
                     let row = std::mem::take(&mut table.current_row);
-                    if table.in_head && table.headers.is_empty() {
+                    if row.is_empty() {
+                        table.current_row_is_head = false;
+                        return;
+                    }
+                    if table.current_row_is_head && table.headers.is_empty() {
                         table.headers = row;
                     } else {
                         table.rows.push(row);
                     }
+                    table.current_row_is_head = false;
                 }
             }
             TagEnd::TableCell => self.finish_block(),
@@ -343,6 +483,16 @@ impl ParserState {
         }
     }
 
+    fn push_code_block(&mut self, code: CodeBlockBuffer) {
+        let id = self.next_code_id;
+        self.next_code_id += 1;
+        self.push_block(MdBlock::CodeBlock {
+            id,
+            info: code.info,
+            text: code.text,
+        });
+    }
+
     fn text_span(&self, text: &str) -> Option<InlineSpan> {
         if text.is_empty() {
             return None;
@@ -368,7 +518,10 @@ impl ParserState {
                 start: list.start,
                 items: list.items,
             }),
-            Container::Table(table) => {
+            Container::Table(mut table) => {
+                if table.headers.is_empty() && !table.rows.is_empty() {
+                    table.headers = table.rows.remove(0);
+                }
                 let id = self.next_table_id;
                 self.next_table_id += 1;
                 self.push_block(MdBlock::Table {
@@ -487,6 +640,7 @@ struct TableState {
     headers: Vec<Vec<InlineSpan>>,
     rows: Vec<Vec<Vec<InlineSpan>>>,
     current_row: Vec<Vec<InlineSpan>>,
+    current_row_is_head: bool,
     in_head: bool,
 }
 
@@ -496,6 +650,7 @@ impl TableState {
             headers: Vec::new(),
             rows: Vec::new(),
             current_row: Vec::new(),
+            current_row_is_head: false,
             in_head: false,
         }
     }
@@ -504,6 +659,105 @@ impl TableState {
 struct CodeBlockBuffer {
     info: Option<String>,
     text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UnclosedFencedCodeBlock {
+    pub(super) info: Option<String>,
+    pub(super) text: String,
+}
+
+pub(super) fn unclosed_fenced_code_block(input: &str) -> Option<UnclosedFencedCodeBlock> {
+    let mut open: Option<OpenFence> = None;
+
+    for line in line_ranges(input) {
+        if let Some(fence) = &open {
+            if is_closing_fence(line.text, fence) {
+                open = None;
+            }
+            continue;
+        }
+
+        if let Some(fence) = opening_fence(line.text, line.end) {
+            open = Some(fence);
+        }
+    }
+
+    let open = open?;
+    let text = input
+        .get(open.content_start..)
+        .unwrap_or_default()
+        .to_string();
+    Some(UnclosedFencedCodeBlock {
+        info: open.info,
+        text,
+    })
+}
+
+pub(super) fn replace_last_code_block_text(blocks: &mut [MdBlock], text: String) -> bool {
+    for block in blocks.iter_mut().rev() {
+        if match block {
+            MdBlock::CodeBlock { text: old, .. } => {
+                *old = text;
+                return true;
+            }
+            MdBlock::BlockQuote(inner) => replace_last_code_block_text(inner, text.clone()),
+            MdBlock::List { items, .. } => items
+                .iter_mut()
+                .rev()
+                .any(|item| replace_last_code_block_text(&mut item.blocks, text.clone())),
+            _ => false,
+        } {
+            return true;
+        }
+    }
+    false
+}
+
+#[derive(Clone, Debug)]
+struct OpenFence {
+    marker: char,
+    len: usize,
+    info: Option<String>,
+    content_start: usize,
+}
+
+fn opening_fence(line: &str, line_end: usize) -> Option<OpenFence> {
+    let trimmed = trim_fence_indent(line)?;
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = trimmed.chars().take_while(|ch| *ch == marker).count();
+    if len < 3 {
+        return None;
+    }
+    let info = trimmed[len..].trim();
+    if marker == '`' && info.contains('`') {
+        return None;
+    }
+    Some(OpenFence {
+        marker,
+        len,
+        info: (!info.is_empty()).then(|| info.to_string()),
+        content_start: line_end,
+    })
+}
+
+fn is_closing_fence(line: &str, open: &OpenFence) -> bool {
+    let Some(trimmed) = trim_fence_indent(line) else {
+        return false;
+    };
+    let len = trimmed.chars().take_while(|ch| *ch == open.marker).count();
+    len >= open.len && trimmed[len..].trim().is_empty()
+}
+
+fn trim_fence_indent(line: &str) -> Option<&str> {
+    let spaces = line.chars().take_while(|ch| *ch == ' ').count();
+    if spaces > 3 {
+        return None;
+    }
+    Some(&line[spaces..])
 }
 
 pub(super) fn build_block_states(

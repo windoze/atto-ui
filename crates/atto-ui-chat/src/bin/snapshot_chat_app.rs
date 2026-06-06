@@ -21,7 +21,7 @@ use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui_chat::{
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatMessage,
-    ChatMessageList, ChatMessageStore, ChatPanel, ChatSender,
+    ChatMessageList, ChatMessageStatus, ChatMessageStore, ChatPanel, ChatSender,
 };
 
 fn main() -> Result<()> {
@@ -39,6 +39,7 @@ fn main() -> Result<()> {
     terminal.clear()?;
 
     let actions: EventQueue<()> = EventQueue::new();
+    let streaming_markdown = std::env::args().any(|arg| arg == "--streaming-markdown");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -51,7 +52,17 @@ fn main() -> Result<()> {
     )]);
 
     let store = ChatMessageStore::new();
-    seed_messages(&store, 28);
+    let streaming_message_id = if streaming_markdown {
+        let id = store.next_message_id();
+        store.push(
+            ChatMessage::text(id, ChatSender::Assistant, "STREAMING-MARKDOWN")
+                .with_status(ChatMessageStatus::InProgress),
+        );
+        Some(id)
+    } else {
+        seed_messages(&store, 28);
+        None
+    };
 
     let input_handle = ChatInputHandle::new();
     let load_counter = Arc::new(AtomicU64::new(0));
@@ -113,6 +124,37 @@ fn main() -> Result<()> {
         }) = ev
             && modifiers.is_empty()
         {
+            if let Some(id) = streaming_message_id {
+                match cmd {
+                    '1' => {
+                        store.update_text(
+                            id,
+                            "```rust\nfn main() {\n    println!(\"STREAMING-CODE\");",
+                        );
+                        continue;
+                    }
+                    '2' => {
+                        store.append_delta(id, "\n}\n```");
+                        store.set_status(id, ChatMessageStatus::Final);
+                        continue;
+                    }
+                    '3' => {
+                        store.update_text(id, "| Name | Value |\n| --- | --- |\n| half |");
+                        store.set_status(id, ChatMessageStatus::InProgress);
+                        continue;
+                    }
+                    '4' => {
+                        store.update_text(
+                            id,
+                            "| Name | Value |\n| --- | --- |\n| half | stable |\n",
+                        );
+                        store.set_status(id, ChatMessageStatus::Final);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
             match cmd {
                 'c' => {
                     input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
