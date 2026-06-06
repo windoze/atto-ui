@@ -32,4 +32,5 @@
 - 已完成首轮实现与 PTY fixture 编写，下一步执行 `cargo fmt` 并根据编译/lint 结果修正。
 - 已通过验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、新增 PTY 测试、`cargo test --workspace --all-targets`。
 - 已将 `TODO.md` 中 T18 标记为 `[DONE]` 并补充完成记录；未更新 `PLAN.md`，因为阶段级计划未变化。
-- 下一步检查 diff/status，提交本次 T18 相关变更后停止。
+- 已提交 T18 实现：`7d4cc76 [T18] Add notifications windowing multimodal`。
+- 本次任务已完成；提交本计划记录后停止，不继续处理 R18。
