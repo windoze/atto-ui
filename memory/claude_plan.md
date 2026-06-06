@@ -9,26 +9,32 @@
 3. 阅读该任务正文、依赖、验证要求和完成记录要求。
 4. 如果任务需要维护者确认，列出必须确认的具体决策，不代替维护者做决定。
 5. 在确认缺失时保持任务未完成，不执行依赖该确认的后续任务。
-6. 更新本文件和 `TODO.md` 记录当前阻塞状态，并检查工作区状态。
-7. 本轮只涉及 Markdown 任务/计划记录，不运行 Rust 格式化、clippy 或测试；复用上一轮全量绿色结果。
-8. 提交本轮任务记录后停止，不进入 T13。
+6. 更新本文件记录当前阻塞状态，并检查工作区状态。
+7. 本轮只涉及 Markdown 计划/阻塞记录，不运行 Rust 格式化、clippy 或测试；复用上一轮全量绿色结果。
+8. 如有本轮记录变更则提交，随后停止，不进入 T13。
 
 ## 本次进度
 
 - 已读取 `TODO.md`；第一个未完成任务仍是 `T13A — 确认命名消歧义方案（T13 前置）`。
-- 已检查最新提交：`9ff2254 [T13A] Record pending naming confirmation`，该提交本身记录了 T13A 等待维护者确认的状态，不包含可由代码修复直接完成的未完成实现项。
+- 已检查最新提交：`4f5f400 [T13A] Record waiting for maintainer confirmation`，该提交与当前任务直接相关，并确认 T13A 当前等待维护者决策。
 - 当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
 - 在收到确认前，不执行 T13，也不把 T13A 标记为 `[DONE]`。
-- 已在 `TODO.md` 为本轮追加当前等待确认记录，任务保持未完成。
 - 已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，本轮不修改、不纳入提交。
+- 本轮没有代码实现，也没有运行 Rust 验证套件，因为任务仍阻塞在确认输入上。
 
 ## 历史记录
 
 - 上一轮已读取 `TODO.md`；当时第一个未完成任务是 `T13A — 确认命名消歧义方案（T13 前置）`。
-- 上一轮已检查最新提交：`0c3d861 [T13A] Add naming confirmation prerequisite`，该提交本身即为 T13A 前置任务的引入，不包含可由代码修复直接完成的未完成实现项。
+- 上一轮已检查最新提交：`9ff2254 [T13A] Record pending naming confirmation`，该提交本身记录了 T13A 等待维护者确认的状态，不包含可由代码修复直接完成的未完成实现项。
 - 上一轮判断当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
 - 上一轮在收到确认前，未执行 T13，也未把 T13A 标记为 `[DONE]`。
-- 上一轮已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，未修改、未纳入提交。
+- 上一轮已在 `TODO.md` 为本轮追加当前等待确认记录，任务保持未完成。
+- 上一轮已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，本轮不修改、不纳入提交。
+- 更早一轮已读取 `TODO.md`；当时第一个未完成任务是 `T13A — 确认命名消歧义方案（T13 前置）`。
+- 更早一轮已检查最新提交：`0c3d861 [T13A] Add naming confirmation prerequisite`，该提交本身即为 T13A 前置任务的引入，不包含可由代码修复直接完成的未完成实现项。
+- 更早一轮判断当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
+- 更早一轮在收到确认前，未执行 T13，也未把 T13A 标记为 `[DONE]`。
+- 更早一轮已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，未修改、未纳入提交。
 - 更早一轮已读取 `TODO.md`；当时第一个未完成任务是 `T13 — 命名消歧义（命名建议，需单独评估）`。
 - 更早一轮最新提交是 `[R12] Review P3 cleanup`，未声明与 T13 直接相关的未完成事项。
 - 更早一轮判断 T13 正文明确要求执行前与维护者确认，不能直接执行 workspace 改名或 `atto-ui-runtime` 定位调整。
