@@ -600,3 +600,68 @@ fn styled_cell(text: &str, base_style: Style, link_overlay: Option<Style>) -> Ce
     let spans = spans_from_inline(text, base_style, link_overlay);
     Cell::from(Line::from(spans))
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::TabMode;
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn component_context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Window,
+            tab_mode: TabMode::Cycle,
+        }
+    }
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16, height: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn draw_slices_visible_rows_after_vertical_scroll() {
+        let rows: Vec<Vec<String>> = (0..12)
+            .map(|idx| vec![format!("row-{idx:02}"), format!("value-{idx:02}")])
+            .collect();
+        let mut table = TableView::new(
+            "Rows",
+            Binding::new(vec!["name".to_string(), "value".to_string()]),
+            Binding::new(rows),
+            Binding::new(0usize),
+        )
+        .height(7u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(30, 7)).expect("terminal");
+        let area = Rect::new(0, 0, 30, 7);
+
+        terminal
+            .draw(|f| table.draw(f, area, component_context(&theme)))
+            .expect("initial draw");
+        table.scroll.set_scroll_offset(0, 3);
+        terminal
+            .draw(|f| table.draw(f, area, component_context(&theme)))
+            .expect("scrolled draw");
+
+        let screen = screen_contents(&terminal, 30, 7);
+        assert!(!screen.contains("row-02"), "screen was:\n{screen}");
+        assert!(screen.contains("row-03"), "screen was:\n{screen}");
+        assert!(screen.contains("row-06"), "screen was:\n{screen}");
+        assert!(!screen.contains("row-07"), "screen was:\n{screen}");
+    }
+}

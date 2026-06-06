@@ -1,30 +1,44 @@
-# 执行计划
+# Claude Execution Plan
 
-## 当前状态
+## Scope
 
-- 本次调用目标：只完成 `TODO.md` 中第一个未标记 `[DONE]` 的任务，然后停止。
-- 计划文件已在开始执行其他检查前初始化。
-- 已定位当前任务：`T11 — 仅可见行 parse + 借用替代 clone（M11）`。
-- 最近提交 `[R10] Review shared widget abstractions` 未明确提出与 T11 直接相关的未完成阻塞项。
+- Work from `TODO.md` as the authoritative task list.
+- Identify the first task whose title is not prefixed with `[DONE]`.
+- Complete exactly that one task, then stop after committing.
+- Do not perform unrelated historical triage before selecting the current task.
 
-## 步骤
+## Constraints
 
-1. 读取 `TODO.md`，按文件顺序定位第一个标题未以 `[DONE]` 标记的任务。
-2. 检查最近提交信息，只有当它明确提到与当前任务直接相关的未完成问题时，才把该问题纳入当前任务或作为前置任务写入 `TODO.md`。
-3. 阅读当前任务要求、依赖、验证条件和完成记录，必要时查看相关代码与测试。
-4. 实现当前任务；如果发现阻塞当前任务的真实前置缺口，按最小必要范围更新 `TODO.md` 并停止。
-5. 运行格式化、lint 和相关测试；若有未安排的失败，修复或把最小前置任务写入 `TODO.md`。
-6. 将当前任务标题更新为 `[DONE]` 并填写完成记录；仅在阶段计划真实改变时更新 `PLAN.md`。
-7. 检查工作区差异，提交本次任务相关全部变更。
-8. 停止，不继续处理下一个任务。
+- Keep `TODO.md` as the routine task/completion log.
+- Update `PLAN.md` only if phase-level sequencing, dependencies, assumptions, or completion criteria change.
+- Do not use workarounds for spec mismatches. If a blocker prevents the task, add the minimum prerequisite task to `TODO.md`, commit, and stop.
+- Treat any observed unscheduled test or fixture failure as a real project issue: fix it or schedule it before marking the current task done.
+- Mark completion only by prefixing the task title with `[DONE]` and filling its completion record.
 
-## 进度记录
+## Step-by-Step Plan
 
-- 已完成：读取 `TODO.md` 并确定第一个未完成任务为 T11。
-- 已完成：检查 `src/widgets/list.rs`、`src/widgets/table.rs` 中 `bindings()` clone 与 `draw` parse 范围。
-- 已完成：新增共享可见行区间 helper，并将 ListBox/TableView 内容渲染限制为当前可见行。
-- 已完成：移除 ListBox/TableView 内容对象的 `bindings()` 整体 clone helper，改为各方法中的局部 read guard。
-- 已完成：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test visible_row_range --lib`、`cargo test --test pty_virtual_scrolling`、`cargo test --all --all-targets` 均通过。
-- 已完成：`TODO.md` 中 T11 已标记 `[DONE]` 并填写完成记录。
-- 已完成：检查差异；本次待提交文件为 `TODO.md`、`memory/claude_plan.md`、`src/widgets/list.rs`、`src/widgets/table.rs`、`src/widgets/util.rs`。工作区另有未跟踪 `notification.sh`、`run_agent.sh`，本次不触碰。
-- 下一步：提交 T11 相关变更。
+1. Read `TODO.md` and identify the first incomplete task by title prefix.
+2. Inspect recent git history only enough to determine whether the latest commit mentions an unfinished issue directly relevant to that selected task.
+3. Read the selected task details, dependencies, validation requirements, and completion-record format.
+4. Inspect the relevant code and tests for that task, avoiding broad unrelated issue sweeps.
+5. Implement the smallest correct change that satisfies the task requirements.
+6. Run `cargo fmt`.
+7. Run `cargo clippy --all-targets -- -D warnings`.
+8. Run the relevant tests, then the full required test suite if code changes require it.
+9. If failures appear, fix them if in scope or explicitly schedule prerequisite/follow-up tasks in `TODO.md` according to the policy.
+10. Update `TODO.md` by marking the completed task title with `[DONE]` and adding a concise completion record with validation results.
+11. Update this plan file as key steps complete or if the plan changes.
+12. Review git status and diff to ensure only intended files are included.
+13. Commit all required changes with a clear message referencing the task id.
+14. Stop without starting the next task.
+
+## Progress Log
+
+- Initial execution plan recorded before repository inspection.
+- Selected first incomplete task from `TODO.md`: `R11 — 审阅 T11`.
+- R11 scope: review T11's visible-row parsing and borrow changes, verify boundary coverage and large dataset rendering, fix only directly related issues if found, then mark R11 done and commit.
+- Review found that existing virtual-scroll PTY tests exercise the shared scroll container but not the changed `ListBox`/`TableView` row-slicing render paths directly.
+- Added focused unit tests for `ListBox` and `TableView` to verify vertical scroll slicing includes the first and last visible boundary rows and excludes adjacent offscreen rows.
+- Validation completed: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test draw_slices_visible_rows_after_vertical_scroll --lib`; `cargo test visible_row_range --lib`; `cargo test --test pty_virtual_scrolling`; `cargo test --all --all-targets`.
+- Completion record added to `TODO.md` and R11 marked `[DONE]`.
+- Pre-commit diff reviewed. Intended files: `TODO.md`, `memory/claude_plan.md`, `src/widgets/list.rs`, `src/widgets/table.rs`. Untracked `notification.sh` and `run_agent.sh` are unrelated and will not be staged.

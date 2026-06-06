@@ -492,3 +492,60 @@ fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollConta
         .with_padding(EdgeInsets::all(1))
         .with_scroll_config(ScrollConfig::default())
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::TabMode;
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn component_context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Window,
+            tab_mode: TabMode::Cycle,
+        }
+    }
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16, height: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn draw_slices_visible_rows_after_vertical_scroll() {
+        let items: Vec<String> = (0..20).map(|idx| format!("row-{idx:02}")).collect();
+        let mut list = ListBox::new("Rows", Binding::new(items), Binding::new(0usize)).height(7u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 7)).expect("terminal");
+        let area = Rect::new(0, 0, 20, 7);
+
+        terminal
+            .draw(|f| list.draw(f, area, component_context(&theme)))
+            .expect("initial draw");
+        list.scroll.set_scroll_offset(0, 5);
+        terminal
+            .draw(|f| list.draw(f, area, component_context(&theme)))
+            .expect("scrolled draw");
+
+        let screen = screen_contents(&terminal, 20, 7);
+        assert!(!screen.contains("row-04"), "screen was:\n{screen}");
+        assert!(screen.contains("row-05"), "screen was:\n{screen}");
+        assert!(screen.contains("row-09"), "screen was:\n{screen}");
+        assert!(!screen.contains("row-10"), "screen was:\n{screen}");
+    }
+}

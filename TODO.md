@@ -345,8 +345,15 @@
 - `TableBodyContent::draw` 现在只为当前可见表格行构建/解析 cells，并在传入 Ratatui `Table` 的已切片数据上使用 `offset = 0`，保留原选择高亮与列宽计算行为。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test visible_row_range --lib`；`cargo test --test pty_virtual_scrolling`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R11 — 审阅 T11
+### [DONE] R11 — 审阅 T11
 审阅性能改动：可见区间计算正确（边界行不漏）、借用无生命周期问题、大数据集渲染正确。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/widgets/util.rs`：`visible_row_range` 使用 `scroll_y..scroll_y+viewport_height` 半开区间并按 `row_count` clamp，覆盖尾部、空数据与零高度视口；滚动偏移超过行数时返回空区间，不会越界切片。
+- 审阅 `src/widgets/list.rs` 与 `src/widgets/table.rs`：`draw` 路径只对 `visible_row_range` 切出的可见行调用 `parse_inline`/`row_cells`，并将 Ratatui state offset 置为 0；selection 高亮用原始行号 `start + offset`，边界行不会漏高亮或错位。
+- 审阅借用改动：已移除 `bindings()` 对 bindings struct 的整体 clone，改为各方法内持有局部 read guard；guard 生命周期未跨出方法或返回引用，事件回调只进入 `CallbackRegistry` 队列，不会重新写入同一 bindings 锁。
+- 补充 `ListBox` 与 `TableView` 单元测试，滚动后断言首个/最后一个可见边界行出现，前后相邻离屏行不出现，直接覆盖 T11 改动的列表/表格可见行切片路径。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test draw_slices_visible_rows_after_vertical_scroll --lib`；`cargo test visible_row_range --lib`；`cargo test --test pty_virtual_scrolling`；`cargo test --all --all-targets` 全部通过。
 
 ---
 
