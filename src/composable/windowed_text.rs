@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -289,25 +291,77 @@ struct VisibleTextWindow {
 fn visible_lines(text: &str, window: VisibleTextWindow) -> Vec<Line<'static>> {
     let offset = window.scroll_y as usize;
     let limit = window.height as usize;
-    materialized_lines(text, window.expanded, window.soft_limit)
-        .skip(offset)
-        .take(limit)
+    windowed_text_lines(text, window.expanded, window.soft_limit, offset, limit)
+        .into_iter()
         .map(|line| {
             let style = if line.is_footer {
                 window.footer_style
             } else {
                 window.base_style
             };
-            Line::styled(crop_display_start(&line.text, window.scroll_x), style)
+            Line::styled(
+                crop_display_start(line.text.as_ref(), window.scroll_x),
+                style,
+            )
         })
         .collect()
+}
+
+fn windowed_text_lines(
+    text: &str,
+    expanded: bool,
+    soft_limit: usize,
+    offset: usize,
+    limit: usize,
+) -> Vec<TextLine<'_>> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    if expanded {
+        return text
+            .split('\n')
+            .skip(offset)
+            .take(limit)
+            .map(|line| TextLine {
+                text: Cow::Borrowed(line),
+                is_footer: false,
+            })
+            .collect();
+    }
+
+    let total = line_count(text);
+    let visible = total.min(soft_limit);
+    let mut lines = text
+        .split('\n')
+        .take(visible)
+        .skip(offset)
+        .take(limit)
+        .map(|line| TextLine {
+            text: Cow::Borrowed(line),
+            is_footer: false,
+        })
+        .collect::<Vec<_>>();
+
+    let footer_index = visible;
+    if total > soft_limit && offset <= footer_index && footer_index < offset.saturating_add(limit) {
+        lines.push(TextLine {
+            text: Cow::Owned(format!(
+                "... {} more lines - press e to expand all",
+                total.saturating_sub(soft_limit)
+            )),
+            is_footer: true,
+        });
+    }
+
+    lines
 }
 
 fn materialized_lines(
     text: &str,
     expanded: bool,
     soft_limit: usize,
-) -> impl Iterator<Item = TextLine> + '_ {
+) -> impl Iterator<Item = TextLine<'_>> + '_ {
     let total = line_count(text);
     let visible = if expanded {
         total
@@ -315,24 +369,24 @@ fn materialized_lines(
         total.min(soft_limit)
     };
     let footer = (!expanded && total > soft_limit).then(move || TextLine {
-        text: format!(
+        text: Cow::Owned(format!(
             "... {} more lines - press e to expand all",
             total.saturating_sub(soft_limit)
-        ),
+        )),
         is_footer: true,
     });
 
     text.split('\n')
         .take(visible)
         .map(|line| TextLine {
-            text: line.to_string(),
+            text: Cow::Borrowed(line),
             is_footer: false,
         })
         .chain(footer)
 }
 
-struct TextLine {
-    text: String,
+struct TextLine<'a> {
+    text: Cow<'a, str>,
     is_footer: bool,
 }
 
@@ -351,7 +405,7 @@ fn line_count(text: &str) -> usize {
 
 fn content_width(text: &str, expanded: bool, soft_limit: usize) -> u16 {
     materialized_lines(text, expanded, soft_limit)
-        .map(|line| UnicodeWidthStr::width(line.text.as_str()))
+        .map(|line| UnicodeWidthStr::width(line.text.as_ref()))
         .max()
         .unwrap_or(0)
         .min(u16::MAX as usize) as u16
@@ -430,5 +484,27 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(rendered, vec!["line-09990", "line-09991", "line-09992"]);
+    }
+
+    #[test]
+    fn expanded_window_rows_borrow_visible_slice() {
+        let text = (0..10_000)
+            .map(|i| format!("line-{i:05}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let lines = windowed_text_lines(&text, true, 200, 9_990, 3);
+        let rendered = lines
+            .iter()
+            .map(|line| line.text.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, vec!["line-09990", "line-09991", "line-09992"]);
+        assert!(
+            lines
+                .iter()
+                .all(|line| matches!(line.text, Cow::Borrowed(_))),
+            "visible regular lines should be borrowed rather than materialized"
+        );
     }
 }

@@ -511,11 +511,18 @@
 - `snapshot_app --notifications-windowing-multimodal` 与 `tests/pty_notifications_windowing_multimodal.rs` 覆盖 toast 出现/消失、无图片能力时 fallback 文本、OSC8 raw output 序列、超大文本折叠不显示末行、展开后 End 滚到 `line-09999`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_notifications_windowing_multimodal -- --nocapture`；`cargo test --workspace --all-targets`。
 
-### [ ] R18 — 审阅 T18
+### [DONE] R18 — 审阅 T18
 - 确认 toast 队列不阻塞主循环、不与状态栏冲突。
 - 确认超大块 windowing 不丢内容、展开正确。
 - 确认多模态降级安全。
 - 运行 PTY。
+**完成记录（2026-06-07）**：
+- 已审阅 `src/app/toast.rs`、`src/app/desktop.rs`、`src/app/run.rs`、`src/composable/windowed_text.rs`、`src/drawing.rs`、`src/bin/snapshot_app.rs` 与 `tests/pty_notifications_windowing_multimodal.rs` 的 T18 改动。
+- 确认 toast 队列为有界 `VecDeque`，绘制时仅按 `Instant` 剪枝/覆盖绘制，不阻塞主循环；toast overlay 绘制在 `DesktopLayout::work_area` 内，并在 status bar 之后绘制但不覆盖 `status_bar` 区域。
+- 修复审阅发现的问题：`WindowedText` 展开态滚动到超大文本尾部时，原可见行路径会在 `skip` 前为被跳过的行创建 `String`；现改为先定位可见窗口再构造绘制行，常规可见行保持 borrowed slice，并新增单测覆盖大文本尾部窗口。
+- 确认 `WindowedText` 折叠态保留展开 footer，展开后可通过 End 滚到末行，内容不丢失；窗口边框滚动条继续使用完整内容范围。
+- 确认 OSC8 输出与 Kitty/iTerm2/Sixel 图片序列构造均有安全 fallback：无能力或 Sixel 缺少预编码 payload 时返回 fallback 文本，OSC8/图片序列由 raw PTY 输出测试覆盖。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui windowed_text -- --nocapture`；`cargo test --test pty_notifications_windowing_multimodal -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ### [ ] T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）
 **文件**：`tests/`、各 crate tests、`src/widgets/button.rs`
