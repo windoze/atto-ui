@@ -358,6 +358,27 @@ impl Theme {
         self.named_styles
             .insert("tab-header".into(), self.widget.normal);
 
+        self.named_styles
+            .insert("disclosure-title".into(), self.widget.normal);
+        self.named_styles
+            .insert("disclosure-title-focused".into(), self.widget.focused);
+        self.named_styles
+            .insert("disclosure-idle".into(), self.widget.dim);
+        self.named_styles.insert(
+            "disclosure-running".into(),
+            self.widget.accent.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("disclosure-done".into(), self.widget.dim);
+        self.named_styles.insert(
+            "disclosure-error".into(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        );
+        self.named_styles.insert(
+            "disclosure-content".into(),
+            self.window_bg.patch(self.widget.normal),
+        );
+
         let markdown_base = self.window_bg.patch(self.widget.normal);
         self.named_styles
             .insert("markdown-base".into(), markdown_base);
@@ -537,6 +558,12 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("checkbox-checked".into(), "[x]".into());
     g.insert("radio-unselected".into(), "( )".into());
     g.insert("radio-selected".into(), "(*)".into());
+    g.insert("disclosure-collapsed".into(), ">".into());
+    g.insert("disclosure-expanded".into(), "v".into());
+    g.insert("disclosure-idle-indicator".into(), "[ ]".into());
+    g.insert("disclosure-running-indicator".into(), "[~]".into());
+    g.insert("disclosure-done-indicator".into(), "[x]".into());
+    g.insert("disclosure-error-indicator".into(), "[!]".into());
 
     // Scrollbars (default matches current behavior).
     g.insert("scrollbar-track".into(), "░".into());

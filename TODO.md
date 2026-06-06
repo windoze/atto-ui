@@ -299,7 +299,7 @@
 
 ## 阶段三：M3 内容与输入（通用组件下沉 + 工具块 + artifact viewer）
 
-### [ ] T11 — 可折叠 disclosure / accordion 组件（core）（C.2）
+### [DONE] T11 — 可折叠 disclosure / accordion 组件（core）（C.2）
 **文件**：新增 `src/widgets/disclosure.rs`
 **现状**：无通用可折叠块，工具调用块缺底座。
 **步骤**：
@@ -308,6 +308,12 @@
 3. 键盘（Enter/Space 切换）+ 鼠标点击命中。
 **测试**：PTY：展开/折叠切换、状态指示渲染、内容追加可见。
 **验收**：通用 disclosure 可被 chat 复用（T13 依赖）。
+**完成记录（2026-06-06）**：
+- 新增 core `Disclosure` / `DisclosureStatus` 组件，支持绑定的 `title`、`expanded`、`status`、`content`、`enabled` 属性；标题行显示展开/折叠标记和 idle/running/done/error 状态指示。
+- 支持纯文本绑定内容持续追加渲染，也支持可选子组件作为内容区，保持组件通用且不包含 chat 会话语义。
+- 支持 Enter/Space 键盘切换、标题行左键点击切换、可选 toggle callback，并接入内置 runtime registry / schema / `ComponentCommand::Toggle`。
+- 新增 disclosure 主题 glyph 与命名样式，新增 `snapshot_disclosure_app` fixture 和 `tests/pty_disclosure.rs`，覆盖键盘展开、鼠标折叠/展开、状态 running→done→error、绑定内容追加可见。
+- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_disclosure`；`cargo test --workspace --all-targets`。
 
 ### [ ] R11 — 审阅 T11
 - 确认组件通用（不含会话语义）、可独立于 chat 使用。

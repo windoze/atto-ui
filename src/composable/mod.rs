@@ -19,9 +19,9 @@ mod tab_window;
 mod visibility;
 
 pub use crate::widgets::{
-    Button, Checkbox, FlowDirection, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner,
-    SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, StyledLabel, TabHeaderPosition, TabView,
-    TableView, TextBox,
+    Button, Checkbox, Disclosure, DisclosureStatus, FlowDirection, Label, ListBox, ProgressBar,
+    RadioGroup, Slider, Spinner, SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, StyledLabel,
+    TabHeaderPosition, TabView, TableView, TextBox,
 };
 pub use border::Border;
 pub use component::{

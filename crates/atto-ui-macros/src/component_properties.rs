@@ -466,6 +466,7 @@ fn value_type_for(ty: &Type) -> Option<TokenStream2> {
         "DividerOrientation" => Some(quote! { ::atto_ui::ValueType::String }),
         "SplitterOrientation" => Some(quote! { ::atto_ui::ValueType::String }),
         "TabHeaderPosition" => Some(quote! { ::atto_ui::ValueType::String }),
+        "DisclosureStatus" => Some(quote! { ::atto_ui::ValueType::String }),
         "WindowMinSizeMode" => Some(quote! { ::atto_ui::ValueType::String }),
         "Vec" => vec_value_type(tp),
         _ => None,

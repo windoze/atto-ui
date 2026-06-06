@@ -5,6 +5,7 @@
 
 mod button;
 mod checkbox;
+mod disclosure;
 mod label;
 mod list;
 mod progress_bar;
@@ -19,6 +20,7 @@ mod util;
 
 pub use button::Button;
 pub use checkbox::Checkbox;
+pub use disclosure::{Disclosure, DisclosureStatus};
 pub use label::Label;
 pub use list::ListBox;
 pub use progress_bar::ProgressBar;

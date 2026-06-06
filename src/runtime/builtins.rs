@@ -1,8 +1,8 @@
 use crate::ComponentPropertySchema;
 use crate::composable::{
-    Border, Component, ComponentTag, Divider, DividerOrientation, EdgeInsets, Grid, HStack, Label,
-    LayoutParams, Spacer, Splitter, SplitterOrientation, TabView, Text, TextBox, VStack,
-    Visibility,
+    Border, Component, ComponentTag, Disclosure, DisclosureStatus, Divider, DividerOrientation,
+    EdgeInsets, Grid, HStack, Label, LayoutParams, Spacer, Splitter, SplitterOrientation, TabView,
+    Text, TextBox, VStack, Visibility,
 };
 use crate::reactive::Binding;
 use crate::widgets::{
@@ -24,6 +24,7 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
 
     register_button(&mut registry, callbacks.clone());
     register_checkbox(&mut registry, callbacks.clone());
+    register_disclosure(&mut registry, callbacks.clone());
     register_label(&mut registry);
     register_styled_label(&mut registry, callbacks.clone());
     register_text(&mut registry);
@@ -97,6 +98,56 @@ fn register_checkbox(
             checkbox = checkbox.on_change_callback(cb);
         }
         Ok(wrap_with_id(spec, Box::new(checkbox)))
+    });
+}
+
+fn register_disclosure(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<Disclosure>("Disclosure")
+        .with_event(EventMeta::new("toggle"))
+        .with_action(ActionMeta::new("toggle"))
+        .allow_children(true);
+
+    registry.register(schema, move |spec, registry| {
+        let title = prop_string(spec, "title")?.unwrap_or_default();
+        let expanded = prop_bool(spec, "expanded")?.unwrap_or(false);
+        let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let content = prop_string(spec, "content")?;
+        let status = prop_string(spec, "status")?
+            .and_then(|value| DisclosureStatus::parse(&value))
+            .unwrap_or_default();
+
+        let mut disclosure = Disclosure::new(title)
+            .expanded(expanded)
+            .enabled(enabled)
+            .status(status);
+        if let Some(content) = content {
+            disclosure = disclosure.content(content);
+        }
+        if let Some(cb) = event_handle(spec, "toggle", callbacks.clone()) {
+            disclosure = disclosure.on_toggle_callback(cb);
+        }
+
+        if spec.children.len() == 1 {
+            let child = registry.build(&spec.children[0].node)?;
+            disclosure = disclosure.boxed_child(child);
+        } else if !spec.children.is_empty() {
+            let mut stack = VStack::new();
+            for child in &spec.children {
+                let view = registry.build(&child.node)?;
+                let layout = child
+                    .layout
+                    .as_ref()
+                    .map(layout_from_spec)
+                    .unwrap_or_default();
+                stack.add_child_with_layout(view, layout);
+            }
+            disclosure = disclosure.child(stack);
+        }
+
+        Ok(wrap_with_id(spec, Box::new(disclosure)))
     });
 }
 
