@@ -439,13 +439,37 @@
 - CI 复核：仓库当前无 `.github` workflow 或其他 CI 配置文件，因此无 CI 引用需要同步更新。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace --all-targets`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14 — 巨型文件拆分（M8，长期）
-**文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)、`crates/atto-editor-app/src/window.rs`(1839)、`src/runtime/mod.rs`(1851)、`src/wm/manager/mod.rs`(972)、`src/app/menu.rs`(923)。
-**说明**：纯机械重构，按职责拆子模块，**逐文件单独 PR**，零行为变更。
-**测试**：每个文件拆分后全量 PTY 回归。
+### [TODO] T14A — 拆分 editor view 巨型文件（M8）
+**文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)。
+**说明**：从原 T14 拆出；原任务明确要求“逐文件单独 PR”，因此按文件顺序拆成独立可验证任务。纯机械重构，按职责拆子模块，零行为变更。
+**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R14 — 审阅 T14
-确认拆分纯机械、无行为变更、模块边界合理、全量测试通过。
+### [TODO] T14B — 拆分 editor app window 巨型文件（M8）
+**文件**：`crates/atto-editor-app/src/window.rs`(1839)。
+**依赖**：T14A。
+**说明**：纯机械重构，按职责拆子模块，零行为变更。
+**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+### [TODO] T14C — 拆分 runtime 巨型文件（M8）
+**文件**：`src/runtime/mod.rs`(1851)。
+**依赖**：T14B。
+**说明**：纯机械重构，按职责拆子模块，零行为变更。
+**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+### [TODO] T14D — 拆分 window manager 巨型文件（M8）
+**文件**：`src/wm/manager/mod.rs`(972)。
+**依赖**：T14C。
+**说明**：纯机械重构，按职责拆子模块，零行为变更。
+**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+### [TODO] T14E — 拆分 app menu 巨型文件（M8）
+**文件**：`src/app/menu.rs`(923)。
+**依赖**：T14D。
+**说明**：纯机械重构，按职责拆子模块，零行为变更。
+**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+### [TODO] R14 — 审阅 T14A–T14E
+确认五个文件拆分均为纯机械重构、无行为变更、模块边界合理、全量测试通过。
 
 ### [TODO] T15 — id 索引替代 O(n) 查找（M9，低优先）
 **文件**：`src/wm/manager/events.rs|focus.rs|z_order.rs`、runtime tree-ops。
@@ -461,4 +485,4 @@
 1. T1→R1→T2→R2→T3→R3（P0，逐项独立 PR，先红后绿）
 2. T4→R4→T5→R5→T6→R6（P1）
 3. T7..T11（P2 重构，功能稳定后分批）
-4. T12→R12（P3 批量），T13A→T13/T14/T15 视资源安排
+4. T12→R12（P3 批量），T13A→T13→T14A→T14B→T14C→T14D→T14E→R14→T15 视资源安排
