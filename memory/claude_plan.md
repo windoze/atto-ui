@@ -1,57 +1,33 @@
-# Claude 执行计划
+# 执行计划
 
-> 说明：本文件记录可审查的执行计划、关键决策和进度更新；不记录不可见的内部推理链。
+## 当前约束
 
-## 当前目标
+- 先以 `TODO.md` 为唯一任务来源，识别第一个标题未带 `[DONE]` 的任务。
+- 只完成这一个任务，完成后停止，不推进后续任务。
+- 若遇到阻塞当前任务的缺失能力、规格不匹配、失败测试或夹具问题，优先修复；若无法在当前任务内正确修复，则在 `TODO.md` 中加入最小必要前置任务并提交后停止。
+- 不做开放式历史问题扫查，不绕过规格，不通过缩小范围完成任务。
 
-- 以 `TODO.md` 为唯一任务排序与完成状态来源。
-- 找出第一个标题未带 `[DONE]` 的任务。
-- 完成且只完成该任务，验证后更新 `TODO.md` 并提交。
+## 步骤
 
-## 通用执行步骤
+1. 读取 `TODO.md`，定位第一个未完成任务，并确认其要求、依赖、验证条件和完成记录格式。
+2. 检查最新提交是否明确提到与该任务直接相关的未完成问题；如果有，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
+3. 根据任务内容读取相关代码、测试、文档和计划文件，只收集完成当前任务所需的上下文。
+4. 实现当前任务要求；如果必须编辑代码，采用小而明确的补丁分步修改。
+5. 运行要求的验证：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后按任务需要运行完整或相关测试；若完整测试需要运行，使用足够长的超时。
+6. 若验证发现未排期失败，直接修复；若无法正确修复，则更新 `TODO.md` 添加最小前置任务并停止。
+7. 将完成状态写回 `TODO.md`：在任务标题前加 `[DONE]`，并更新完成记录，包含实现摘要和验证结果。
+8. 仅当阶段级计划发生变化时更新 `PLAN.md`；普通任务记录不写入 `PLAN.md`。
+9. 更新本文件记录关键进展。
+10. 检查工作区差异，提交本次任务相关全部改动，提交信息包含任务编号和简明说明。
+11. 停止，不处理下一个任务。
 
-1. 读取 `TODO.md`，按文件顺序确认第一个未完成任务。
-2. 检查最新提交信息，若明确提到与当前任务直接相关的未完成问题，则把它纳入当前任务或作为先决任务记录。
-3. 阅读当前任务的要求、依赖、验证要求和完成记录。
-4. 只检查与当前任务相关的代码、测试和文档，避免开放式历史问题扫描。
-5. 若发现当前任务被具体缺陷、缺失功能或测试/fixture 失败阻塞，则优先修复；若无法在本轮正确修复，则在 `TODO.md` 中添加最小先决任务并停止。
-6. 按仓库风格实施最小正确改动。
-7. 运行格式化、lint 和任务要求的测试；如代码变更影响全局行为，则运行完整测试套件。
-8. 将任务标题标记为 `[DONE]`，更新完成记录；只有文档或计划变更时按要求说明跳过测试的原因。
-9. 检查 git 状态、diff 和最近提交，提交本轮全部相关改动。
-10. 停止，不继续下一个任务。
+## 进度
 
-## 历史进度记录
-
-- 已建立上一轮执行计划并完成 T19。
-- T19 首个未完成任务识别为 `T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）`。
-- T19 最新提交检查时最新提交为 `[R18] Record completion plan`，未发现直接指向 T19 的未完成阻塞项。
-- T19 已确认 `Button` 的 L2 命中判断并补充 disabled 状态单测。
-- T19 已修复 `RadioGroup` 鼠标命中只看行不看列的问题，改为基于组件区域 contains 后再选择选项。
-- T19 已补充核心控件/响应式/theme/window manager/Grid 行为单测，并新增 T19 core widgets PTY fixture 与 Markdown block PTY fixture。
-- T19 验证通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui`、`cargo test -p atto-ui-markdown`、`cargo test --workspace --all-targets`。
-- T19 已安装 `cargo-llvm-cov` 并完成覆盖率验证：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'` 通过，核心源码行覆盖率为 70.74%。
-
-## R19 执行计划
-
-1. 读取 `TODO.md` 并确认第一个未完成任务。
-2. 检查最新提交信息，确认是否有与 R19 直接相关的未完成问题。
-3. 审阅 T19 相关改动，重点确认覆盖率记录、Button 命中判断和其他 widget 命中一致性。
-4. 如发现审阅问题，做最小正确修复并补充回归测试。
-5. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-6. 运行 `cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，确认核心源码行覆盖率仍不低于 70%。
-7. 将 `R19` 标记为 `[DONE]` 并写入完成记录。
-8. 提交本轮 R19 相关改动并停止。
-
-## R19 进度记录
-
-- 已读取 `TODO.md`：首个未完成任务为 `R19 — 审阅 T19`。
-- 已检查最近提交摘要：最新提交为 `[T19] Add P1 P2 test coverage`，与 R19 直接相关，无额外未完成阻塞项。
-- 已审阅 T19 的覆盖率记录、Button L2 命中判断、core widget PTY/单测、Markdown block 覆盖与 theme/reactive/window manager 测试补齐。
-- 审阅发现同类命中一致性缺口：`Checkbox` 未校验左键事件是否命中自身绘制区域。
-- 已修复 `Checkbox`：保存 `last_area`，左键按下前使用统一命中判断，并新增 `mouse_down_requires_last_area_hit` 单测覆盖区域外点击不切换、区域内点击切换。
-- 验证通过：`cargo fmt`。
-- 验证通过：`cargo clippy --workspace --all-targets -- -D warnings`。
-- 验证通过：`cargo test --workspace --all-targets`。
-- 覆盖率验证通过：`cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，核心源码行覆盖率为 70.81%。
-- 已将 `R19` 标记为 `[DONE]` 并更新 `TODO.md` 完成记录。
+- 已创建本执行计划；下一步读取 `TODO.md`。
+- 已读取 `TODO.md`，第一个未完成任务是 `T20 — editor 完整化 → editor-core diff → 富 ArtifactViewer`。`[POSTPONED]` 不等于 `[DONE]`，因此本轮按 T20 执行。
+- 下一步检查最新提交是否含 T20 相关未完成事项，并读取 editor / artifact viewer / diff 相关实现。
+- 已确认最新提交不包含 T20 相关未完成说明。
+- 已确认阻塞点：当前仓库没有本地 `editor-core` crate，`atto-ui-editor` 依赖 crates.io `editor-core = "0.3.0"`，该版本没有 headless diff/hunk API；T20 要求 diff 模型来自 editor-core headless 层，不能用私有临时 diff 或 chat 侧文本 viewer 绕过。
+- 已在 `TODO.md` 中新增最小前置实现任务 `T20A` 和对应审阅任务 `R20A`，并将 `T20` 改为显式依赖 `T20A`；已同步 `PLAN.md` 的 M5 依赖描述。
+- 验证策略：本轮只修改 `*.md` 文档和执行记录，不影响编译产物；跳过 Rust fmt/clippy/test，使用 `git diff --check` 校验文档差异。
+- `git diff --check` 已通过；下一步提交 `PLAN.md`、`TODO.md` 和本执行记录后停止。

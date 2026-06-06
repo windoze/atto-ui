@@ -159,7 +159,7 @@ atto-ui-async  atto-ui-chat              atto-ui-editor
   - A.2 P1/P2 测试补齐；CI 全 workspace + clippy 清零 + `cargo llvm-cov` ≥70%。
 
 - **M5 依赖就绪后（解锁 C.0）**
-  - editor 完整化 → editor-core diff 基础（headless）。
+  - 先显式解锁并审阅 editor-core diff 基础（headless）：升级或引入可维护的 editor-core diff/hunk 模型供 `atto-ui-editor` 消费。
   - `atto-ui-editor` 提供富 `ArtifactViewer`（语法高亮 / hunk diff UI），替换最简文本实现，chat 接口不变。
 
 ---
