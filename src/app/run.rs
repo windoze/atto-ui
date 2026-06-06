@@ -125,6 +125,39 @@ impl TerminalSession {
     }
 }
 
+enum HostSession {
+    Terminal(TerminalSession),
+    Headless { screen: Rect },
+}
+
+impl HostSession {
+    fn screen(&self) -> Result<Rect> {
+        match self {
+            Self::Terminal(session) => Ok(session.terminal.size()?.into()),
+            Self::Headless { screen } => Ok(*screen),
+        }
+    }
+
+    fn draw(&mut self, desktop: &mut Desktop) -> Result<()> {
+        match self {
+            Self::Terminal(session) => {
+                session.terminal.draw(|f| desktop.draw(f))?;
+                Ok(())
+            }
+            Self::Headless { screen } => {
+                DesktopInspector::new(desktop)
+                    .export_snapshot(*screen)
+                    .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+                Ok(())
+            }
+        }
+    }
+
+    fn is_headless(&self) -> bool {
+        matches!(self, Self::Headless { .. })
+    }
+}
+
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
@@ -154,7 +187,7 @@ pub type EventCallBack =
 
 pub struct AppHost {
     config: CrosstermAppConfig,
-    session: TerminalSession,
+    session: HostSession,
     desktop: Desktop,
     on_tick: Option<Box<TickCallBack>>,
     on_event: Option<Box<EventCallBack>>,
@@ -171,7 +204,23 @@ impl AppHost {
         set_global_tick_rate(config.tick_rate);
         Ok(Self {
             config,
-            session,
+            session: HostSession::Terminal(session),
+            desktop,
+            on_tick: None,
+            on_event: None,
+        })
+    }
+
+    pub fn new_headless<B>(screen: Rect, build: B) -> Result<Self>
+    where
+        B: FnOnce(Rect) -> Result<Desktop>,
+    {
+        let config = CrosstermAppConfig::default();
+        let desktop = build(screen)?;
+        set_global_tick_rate(config.tick_rate);
+        Ok(Self {
+            config,
+            session: HostSession::Headless { screen },
             desktop,
             on_tick: None,
             on_event: None,
@@ -187,7 +236,7 @@ impl AppHost {
     }
 
     pub fn screen(&self) -> Result<Rect> {
-        Ok(self.session.terminal.size()?.into())
+        self.session.screen()
     }
 
     pub fn send_event(&mut self, window_id: WindowId, event: Event) -> Result<DesktopEventResult> {
@@ -262,7 +311,7 @@ impl AppHost {
     }
 
     pub fn step(&mut self) -> Result<AppControl> {
-        let screen: Rect = self.session.terminal.size()?.into();
+        let screen = self.screen()?;
 
         tick_global_timers();
         if let Some(handler) = self.on_tick.as_mut()
@@ -271,14 +320,18 @@ impl AppHost {
             return Ok(AppControl::Exit);
         }
 
-        self.session.terminal.draw(|f| self.desktop.draw(f))?;
+        self.session.draw(&mut self.desktop)?;
+
+        if self.session.is_headless() {
+            return Ok(AppControl::Continue);
+        }
 
         if !event::poll(self.config.tick_rate)? {
             return Ok(AppControl::Continue);
         }
 
         let ev = event::read()?;
-        let screen: Rect = self.session.terminal.size()?.into();
+        let screen = self.screen()?;
         let result = self.desktop.handle_event(&ev, screen);
         handle_desktop_action(&mut self.desktop, &result.action);
 
@@ -423,4 +476,47 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::MenuBar;
+    use crate::composable::{ComponentTagExt, Label};
+    use crate::theme::Theme;
+    use crate::wm::{Window, WindowKind};
+
+    #[test]
+    fn headless_apphost_snapshot_uses_in_memory_layout() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut host = AppHost::new_headless(screen, |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let window = Window::new(
+                WindowKind::Normal,
+                "Headless",
+                Rect::new(2, 2, 24, 6),
+                Box::new(Label::new("Hello").tag("message")),
+            )
+            .with_tag("win");
+            desktop.add_window(window, screen);
+            Ok(desktop)
+        })
+        .expect("headless host");
+
+        assert_eq!(host.screen().expect("screen"), screen);
+        assert_eq!(host.step().expect("headless step"), AppControl::Continue);
+
+        let snapshot = host.snapshot().expect("snapshot");
+        let label = snapshot.tree.find_by_id("message").expect("message node");
+        assert_eq!(label.text.as_deref(), Some("Hello"));
+        assert_eq!(
+            label.bounds,
+            Some(crate::runtime::Rect {
+                x: 3,
+                y: 3,
+                width: 22,
+                height: 4,
+            })
+        );
+    }
 }

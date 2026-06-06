@@ -109,10 +109,16 @@
 - 新增单测 `inspect::tests::export_snapshot_contains_serializable_tree_bounds_and_text`，断言菜单/窗口/组件节点 id、tag、type、bounds、text、state、focused 属性以及 `serde_json` 序列化。
 - 验证通过：`cargo fmt`；`cargo test -p atto-ui inspect::tests::export_snapshot_contains_serializable_tree_bounds_and_text`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`；`cargo test --workspace --all-targets`。
 
-### [ ] R4 — 审阅 T4
+### [DONE] R4 — 审阅 T4
 - 确认 snapshot 覆盖断言所需字段（id、bounds、text、状态）。
 - 确认序列化无环、无大对象 clone 性能问题。
 - 运行单测。
+**完成记录（2026-06-06）**：
+- 已审阅 `DesktopSnapshot` / `DesktopSnapshotNode`、`DesktopInspector::export_snapshot()`、`AppHost::snapshot()` 和相关 re-export/test 覆盖。
+- 确认 snapshot 节点覆盖 id/tag、kind/name/type、bounds、text、state、window_id、子树与小型断言元数据，结构为 owning tree，serde 序列化无环且不暴露 `ratatui::Buffer`。
+- 修复审阅发现的问题：新增 `AppHost::new_headless(screen, build)` 与 headless `step()`/`snapshot()` 路径，避免宿主侧 snapshot 必须创建真实 crossterm PTY；组件 snapshot 只采集文本字段和 bounded metadata，避免全量克隆 `rows`/`headers` 等大型集合属性。
+- 新增回归单测覆盖 headless AppHost snapshot 路径，以及 TableView 大集合属性不会进入 snapshot properties。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui export_snapshot`；`cargo test -p atto-ui headless_apphost_snapshot_uses_in_memory_layout`；`cargo test --workspace --all-targets`。
 
 ### [ ] T5 — Python e2e 测试 host 雏形（B.4）
 **文件**：`crates/atto-ui-python/`、新增 Python 测试目录

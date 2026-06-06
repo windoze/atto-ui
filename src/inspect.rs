@@ -646,8 +646,7 @@ fn build_component_snapshot_tree(
     bounds: Rect,
     window_id: WindowId,
 ) -> DesktopSnapshotNode {
-    let properties = component_snapshot_properties(view);
-    let text = text_from_properties(&properties);
+    let (properties, text, state) = component_snapshot_fields(view);
     let tag = view.tag().map(|s| s.to_string());
     let mut node = DesktopSnapshotNode {
         kind: NodeKind::Component,
@@ -657,7 +656,7 @@ fn build_component_snapshot_tree(
         type_name: view.type_name().to_string(),
         bounds: Some(runtime_rect(bounds)),
         text,
-        state: state_from_properties(&properties),
+        state,
         window_id: Some(window_id.raw()),
         properties,
         children: Vec::new(),
@@ -673,14 +672,97 @@ fn build_component_snapshot_tree(
     node
 }
 
-fn component_snapshot_properties(view: &dyn Component) -> BTreeMap<String, ComponentValue> {
+fn component_snapshot_fields(
+    view: &dyn Component,
+) -> (
+    BTreeMap<String, ComponentValue>,
+    Option<String>,
+    Option<String>,
+) {
     let mut properties = BTreeMap::new();
+    let mut text = None;
+    let mut state = None;
+
     for name in view.property_names() {
-        if let Some(value) = view.get_property(name) {
+        if !is_snapshot_component_property(name) {
+            continue;
+        }
+
+        let Some(value) = view.get_property(name) else {
+            continue;
+        };
+
+        if is_text_property(name) {
+            match value {
+                ComponentValue::String(value) if text.is_none() => {
+                    text = Some(value);
+                }
+                value if is_bounded_snapshot_value(&value) => {
+                    properties.insert(name.to_string(), value);
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        if name == "state"
+            && let ComponentValue::String(value) = &value
+        {
+            state = Some(value.clone());
+        }
+
+        if is_bounded_snapshot_value(&value) {
             properties.insert(name.to_string(), value);
         }
     }
-    properties
+
+    (properties, text, state)
+}
+
+fn is_snapshot_component_property(name: &str) -> bool {
+    is_text_property(name)
+        || matches!(
+            name,
+            "active"
+                | "checked"
+                | "disabled"
+                | "enabled"
+                | "focused"
+                | "height"
+                | "index"
+                | "kind"
+                | "max"
+                | "min"
+                | "progress"
+                | "rect"
+                | "selected"
+                | "selected_index"
+                | "selection"
+                | "state"
+                | "visible"
+                | "width"
+        )
+}
+
+fn is_text_property(name: &str) -> bool {
+    matches!(name, "text" | "label" | "value" | "title")
+}
+
+fn is_bounded_snapshot_value(value: &ComponentValue) -> bool {
+    match value {
+        ComponentValue::Null
+        | ComponentValue::Bool(_)
+        | ComponentValue::I64(_)
+        | ComponentValue::U64(_)
+        | ComponentValue::F64(_)
+        | ComponentValue::Rect(_) => true,
+        ComponentValue::String(value) => value.len() <= 1024,
+        ComponentValue::StringList(_)
+        | ComponentValue::Table(_)
+        | ComponentValue::Bytes(_)
+        | ComponentValue::List(_)
+        | ComponentValue::Map(_) => false,
+    }
 }
 
 fn text_from_properties(properties: &BTreeMap<String, ComponentValue>) -> Option<String> {
@@ -1087,7 +1169,7 @@ fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a m
 mod tests {
     use super::*;
     use crate::app::MenuBar;
-    use crate::composable::{ComponentTagExt, Label, TabView, Visibility};
+    use crate::composable::{ComponentTagExt, Label, TabView, TableView, Visibility};
     use crate::reactive::Binding;
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
@@ -1190,10 +1272,7 @@ mod tests {
         assert_eq!(label.name, "Label");
         assert!(label.type_name.ends_with("Label"));
         assert_eq!(label.text.as_deref(), Some("Hello"));
-        assert_eq!(
-            label.properties.get("text"),
-            Some(&ComponentValue::String("Hello".to_string()))
-        );
+        assert!(!label.properties.contains_key("text"));
         assert_eq!(
             label.bounds,
             Some(RuntimeRect {
@@ -1203,6 +1282,46 @@ mod tests {
                 height: 4,
             })
         );
+    }
+
+    #[test]
+    fn export_snapshot_omits_large_collection_properties() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let rows = Binding::new(vec![vec!["a".to_string(), "b".to_string()]; 32]);
+        let table = TableView::new(
+            "Data",
+            vec!["H1".to_string(), "H2".to_string()],
+            rows,
+            Binding::new(0usize),
+        )
+        .tag("table");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Table",
+            Rect::new(1, 1, 40, 10),
+            Box::new(table),
+        );
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let snapshot = inspector.export_snapshot(screen).expect("snapshot");
+        let table = snapshot.tree.find_by_id("table").expect("table node");
+
+        assert_eq!(table.text.as_deref(), Some("Data"));
+        assert_eq!(
+            table.properties.get("enabled"),
+            Some(&ComponentValue::Bool(true))
+        );
+        assert_eq!(
+            table.properties.get("selection"),
+            Some(&ComponentValue::U64(0))
+        );
+        assert!(!table.properties.contains_key("headers"));
+        assert!(!table.properties.contains_key("rows"));
+        assert!(!table.properties.contains_key("title"));
     }
 
     #[test]
