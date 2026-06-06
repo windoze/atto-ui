@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -7,8 +7,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::status::Fill;
 use crate::composable::{ComponentAction, EventOutcome};
 use crate::theme::Theme;
-use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode};
-use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
+use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode, WindowState};
+use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 
 use super::menu::{MenuAction, MenuBar};
 use super::status::StatusBar;
@@ -64,6 +64,17 @@ pub struct DesktopLayout {
     pub menu_bar: Rect,
     pub work_area: Rect,
     pub status_bar: Rect,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowInfo {
+    pub id: WindowId,
+    pub tag: Option<String>,
+    pub title: String,
+    pub kind: WindowKind,
+    pub state: WindowState,
+    pub rect: Rect,
+    pub is_focused: bool,
 }
 
 pub struct Desktop {
@@ -157,6 +168,150 @@ impl Desktop {
 
     pub fn rebuild_dynamic_window(&mut self, window_id: WindowId) -> Result<(), TreeError> {
         self.wm.rebuild_dynamic_window(window_id)
+    }
+
+    pub fn send_event_to_window(
+        &mut self,
+        window_id: WindowId,
+        event: Event,
+        screen: Rect,
+    ) -> DesktopEventResult {
+        if self.wm.window(window_id).is_none() {
+            return DesktopEventResult::ignored();
+        }
+
+        if self.wm.has_active_modal() && self.wm.focused() != Some(window_id) {
+            return DesktopEventResult::consumed();
+        }
+
+        if !self.wm.has_active_modal() {
+            self.focus_window(window_id);
+        }
+
+        let Some(event) = self.window_relative_event(window_id, event) else {
+            return DesktopEventResult::ignored();
+        };
+
+        let layout = Self::layout(screen);
+        let Some((id, res)) =
+            self.wm
+                .dispatch_to_window_view(window_id, &event, layout.work_area, &self.theme)
+        else {
+            return DesktopEventResult::ignored();
+        };
+
+        if res.action == ComponentAction::CloseWindow {
+            if self.wm.request_close(id) {
+                return DesktopEventResult::close_window(id);
+            }
+            return DesktopEventResult::consumed();
+        }
+        if res.is_consumed() {
+            DesktopEventResult::consumed()
+        } else {
+            DesktopEventResult::ignored()
+        }
+    }
+
+    pub fn close_window(&mut self, id: WindowId) -> bool {
+        self.wm.request_close(id)
+    }
+
+    pub fn focus_window(&mut self, id: WindowId) -> bool {
+        if self.wm.has_active_modal() {
+            return self.wm.focused() == Some(id);
+        }
+
+        if !self
+            .wm
+            .window(id)
+            .is_some_and(|w| w.kind.is_focusable() && w.state.get() != WindowState::Minimized)
+        {
+            return false;
+        }
+
+        self.wm.focus(id);
+        self.wm.focused() == Some(id)
+    }
+
+    pub fn move_window(&mut self, id: WindowId, x: u16, y: u16, screen: Rect) -> bool {
+        let layout = Self::layout(screen);
+        self.wm.move_window_to(id, x, y, layout.work_area)
+    }
+
+    pub fn resize_window(&mut self, id: WindowId, width: u16, height: u16, screen: Rect) -> bool {
+        let layout = Self::layout(screen);
+        self.wm
+            .resize_window_to(id, width, height, layout.work_area)
+    }
+
+    pub fn list_windows(&self) -> Vec<WindowInfo> {
+        let focused = self.wm.focused();
+        self.wm
+            .windows()
+            .iter()
+            .map(|w| WindowInfo {
+                id: w.id(),
+                tag: w.tag.clone(),
+                title: w.title.get(),
+                kind: w.kind,
+                state: w.state.get(),
+                rect: w.rect.get(),
+                is_focused: focused == Some(w.id()),
+            })
+            .collect()
+    }
+
+    pub fn set_title(&mut self, id: WindowId, title: impl Into<String>) -> bool {
+        let Some(window) = self.wm.window_mut(id) else {
+            return false;
+        };
+        window.title.set(title.into());
+        true
+    }
+
+    pub fn set_property(
+        &mut self,
+        id: impl Into<String>,
+        name: impl Into<String>,
+        value: ComponentValue,
+    ) -> Result<(), TreeError> {
+        let id = id.into();
+        let name = name.into();
+        let window_ids: Vec<WindowId> = self
+            .wm
+            .windows()
+            .iter()
+            .filter(|w| w.dynamic_root_spec().is_some())
+            .map(Window::id)
+            .collect();
+        let op = TreeOp::SetProp {
+            id: id.clone(),
+            name,
+            value,
+        };
+
+        for window_id in window_ids {
+            match self.apply_tree_ops(window_id, std::slice::from_ref(&op)) {
+                Ok(_) => return Ok(()),
+                Err(TreeError::NotFound(_)) => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(TreeError::NotFound(id))
+    }
+
+    fn window_relative_event(&self, window_id: WindowId, event: Event) -> Option<Event> {
+        let Event::Mouse(mouse) = event else {
+            return Some(event);
+        };
+        let rect = self.wm.window(window_id)?.rect.get();
+        Some(Event::Mouse(MouseEvent {
+            column: rect.x.saturating_add(mouse.column),
+            row: rect.y.saturating_add(mouse.row),
+            ..mouse
+        }))
     }
 
     pub fn handle_event(&mut self, event: &Event, screen: Rect) -> DesktopEventResult {
@@ -446,8 +601,8 @@ mod tests {
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
     struct ConsumeF6View;
@@ -499,6 +654,36 @@ mod tests {
     }
 
     crate::impl_component_default_traits!(CountingMouseView => Layout, Scrollable, FocusNav, DynamicTree);
+
+    #[derive(Clone)]
+    struct RecordingView {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingView {
+        fn new(events: Arc<Mutex<Vec<String>>>) -> Self {
+            Self { events }
+        }
+    }
+
+    impl Component for RecordingView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for RecordingView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            let entry = match event {
+                Event::Key(KeyEvent { code, .. }) => format!("key:{code:?}"),
+                Event::Mouse(mouse) => format!("mouse:{},{}", mouse.column, mouse.row),
+                Event::Paste(text) => format!("paste:{text}"),
+                _ => return EventResult::ignored(),
+            };
+            self.events.lock().expect("events lock").push(entry);
+            EventResult::consumed()
+        }
+    }
+
+    crate::impl_component_default_traits!(RecordingView => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[test]
     fn focused_view_can_consume_event_before_window_manager() {
@@ -760,5 +945,229 @@ mod tests {
         assert_eq!(desktop.wm.focused(), Some(id1));
         assert_eq!(clicks_one.load(Ordering::SeqCst), 1);
         assert_eq!(clicks_two.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn send_event_to_window_routes_to_target_with_relative_mouse_coords() {
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+
+        let events_one = Arc::new(Mutex::new(Vec::new()));
+        let events_two = Arc::new(Mutex::new(Vec::new()));
+
+        let id1 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(RecordingView::new(Arc::clone(&events_one))),
+            ),
+            screen,
+        );
+        let id2 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Two",
+                Rect {
+                    x: 30,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(RecordingView::new(Arc::clone(&events_two))),
+            ),
+            screen,
+        );
+
+        assert_eq!(desktop.wm.focused(), Some(id2));
+
+        let key_result = desktop.send_event_to_window(
+            id1,
+            Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)),
+            screen,
+        );
+        assert!(key_result.is_consumed());
+        assert_eq!(desktop.wm.focused(), Some(id1));
+
+        let paste_result = desktop.send_event_to_window(id1, Event::Paste("hello".into()), screen);
+        assert!(paste_result.is_consumed());
+
+        let mouse_result = desktop.send_event_to_window(
+            id1,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+        assert!(mouse_result.is_consumed());
+
+        assert_eq!(
+            events_one.lock().expect("events one").as_slice(),
+            ["key:Char('k')", "paste:hello", "mouse:4,4"]
+        );
+        assert!(events_two.lock().expect("events two").is_empty());
+    }
+
+    #[test]
+    fn window_management_methods_update_listed_state() {
+        struct IgnoreAllView;
+
+        impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for IgnoreAllView {}
+
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
+
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id1 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+        let id2 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Two",
+                Rect {
+                    x: 30,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+
+        assert!(desktop.focus_window(id1));
+        assert!(desktop.move_window(id1, 5, 6, screen));
+        assert!(desktop.resize_window(id1, 30, 9, screen));
+        assert!(desktop.set_title(id1, "Renamed"));
+
+        let windows = desktop.list_windows();
+        assert_eq!(windows.last().map(|w| w.id), Some(id1));
+        let first = windows.iter().find(|w| w.id == id1).expect("id1 info");
+        assert_eq!(first.title, "Renamed");
+        assert_eq!(first.rect, Rect::new(5, 6, 30, 9));
+        assert!(first.is_focused);
+
+        assert!(desktop.close_window(id2));
+        assert!(!desktop.list_windows().iter().any(|w| w.id == id2));
+    }
+
+    #[test]
+    fn focus_window_respects_modal_and_minimized_state() {
+        struct IgnoreAllView;
+
+        impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for IgnoreAllView {}
+
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
+
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let normal_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Normal",
+                Rect::new(2, 2, 20, 6),
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+        let modal_id = desktop.add_window(
+            Window::new(
+                WindowKind::Modal,
+                "Modal",
+                Rect::new(10, 8, 30, 8),
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+
+        assert!(!desktop.focus_window(normal_id));
+        assert_eq!(desktop.wm.focused(), Some(modal_id));
+        assert!(desktop.focus_window(modal_id));
+
+        desktop.close_window(modal_id);
+        desktop
+            .wm
+            .window_mut(normal_id)
+            .expect("normal window")
+            .state
+            .set(WindowState::Minimized);
+        assert!(!desktop.focus_window(normal_id));
+    }
+
+    #[test]
+    fn set_property_applies_tree_op_to_dynamic_window() {
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let root = ComponentSpec::new("Label")
+            .with_id("message")
+            .with_prop("text", ComponentValue::String("before".into()));
+        let window_id = desktop
+            .add_dynamic_window(
+                WindowKind::Normal,
+                "Dynamic",
+                Rect::new(2, 2, 20, 6),
+                root,
+                CallbackRegistry::new(),
+                screen,
+            )
+            .expect("dynamic window");
+
+        desktop
+            .set_property("message", "text", ComponentValue::String("after".into()))
+            .expect("set property");
+
+        let value = desktop
+            .wm
+            .window(window_id)
+            .and_then(|w| w.view.get_property("text"));
+        assert_eq!(value, Some(ComponentValue::String("after".into())));
     }
 }

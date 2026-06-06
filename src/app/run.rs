@@ -13,9 +13,12 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use crate::app::{Desktop, DesktopAction, DesktopEventResult};
+use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
 use crate::composable::EventOutcome;
+use crate::inspect::DesktopInspector;
 use crate::reactive::{set_global_tick_rate, tick_global_timers};
+use crate::runtime::{ComponentValue, TreeError};
+use crate::{ComponentError, WindowId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorMode {
@@ -185,6 +188,56 @@ impl AppHost {
 
     pub fn screen(&self) -> Result<Rect> {
         Ok(self.session.terminal.size()?.into())
+    }
+
+    pub fn send_event(&mut self, window_id: WindowId, event: Event) -> Result<DesktopEventResult> {
+        let screen = self.screen()?;
+        let result = self.desktop.send_event_to_window(window_id, event, screen);
+        handle_desktop_action(&mut self.desktop, &result.action);
+        Ok(result)
+    }
+
+    pub fn close_window(&mut self, id: WindowId) -> bool {
+        self.desktop.close_window(id)
+    }
+
+    pub fn focus_window(&mut self, id: WindowId) -> bool {
+        self.desktop.focus_window(id)
+    }
+
+    pub fn move_window(&mut self, id: WindowId, x: u16, y: u16) -> Result<bool> {
+        let screen = self.screen()?;
+        Ok(self.desktop.move_window(id, x, y, screen))
+    }
+
+    pub fn resize_window(&mut self, id: WindowId, width: u16, height: u16) -> Result<bool> {
+        let screen = self.screen()?;
+        Ok(self.desktop.resize_window(id, width, height, screen))
+    }
+
+    pub fn list_windows(&self) -> Vec<WindowInfo> {
+        self.desktop.list_windows()
+    }
+
+    pub fn set_title(&mut self, id: WindowId, title: impl Into<String>) -> bool {
+        self.desktop.set_title(id, title)
+    }
+
+    pub fn set_property(
+        &mut self,
+        id: impl Into<String>,
+        name: impl Into<String>,
+        value: ComponentValue,
+    ) -> std::result::Result<(), TreeError> {
+        self.desktop.set_property(id, name, value)
+    }
+
+    pub fn get_property(
+        &mut self,
+        id: &str,
+        name: &str,
+    ) -> std::result::Result<ComponentValue, ComponentError> {
+        DesktopInspector::new(&mut self.desktop).get_property(id, name)
     }
 
     pub fn set_on_tick<F>(&mut self, handler: F)

@@ -1,27 +1,26 @@
-# 当前执行计划
-
-## 范围
-
-- 目标：完成 `TODO.md` 中第一个未完成任务 `R2 — 审阅 T2`，然后停止。
-- 约束：这是审阅任务，只审阅 T2 的宏 trybuild 测试质量与验证结果；不提前实现 T3。
-- 说明：本文件记录可审阅的执行计划、关键决策和进度更新，不记录不可见的私有推理过程。
-
-## 步骤
-
-1. 查看 Git 状态和最近提交，确认是否有与 R2/T2 直接相关的未完成内容或现有改动需要纳入本次任务。
-2. 阅读 `crates/atto-ui-macros` 的宏实现、T2 新增 trybuild harness、成功 fixture、失败 fixture 和 `.stderr`。
-3. 对照 R2 验收项确认：三个宏核心展开路径是否真实覆盖；失败用例是否至少覆盖一类编译失败；错误信息是否为用户友好诊断而非裸 panic。
-4. 如发现阻塞性缺陷，直接修复并更新测试；如发现必须另排前置任务，则更新 `TODO.md` 并停止。
-5. 按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-macros`；若相关代码改变并需要完整回归，再运行更大范围测试。
-6. 更新 `TODO.md`：将 `R2` 标题加 `[DONE]`，补充审阅结论和验证记录。仅在阶段计划变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff`、最近提交，确认只提交 R2 相关文件。
-8. 创建清晰的 Git commit，然后停止，不继续处理 `T3`。
+# 执行计划与进度日志
 
 ## 当前状态
+- 已读取 `TODO.md`，第一个未完成任务为 `T3 — AppHost 事件注入与窗口管理（B.1）`。
+- 最近提交为 R2 记录/审阅相关，未发现直接指向 T3 的未完成提交说明。
+- 本文件记录可审阅的执行计划、关键进度和计划变更；不记录不可公开的隐性推理。
 
-- 已读取 `TODO.md`，确认第一个未完成任务为 `R2 — 审阅 T2`。
-- 已检查 Git 状态和最近提交：工作区存在非本次文档/脚本改动，将避免纳入 R2 提交；最新提交是 T2 完成记录，无需新增前置任务。
-- 已审阅 T2 的 `trybuild` harness、3 个成功 fixture、2 个失败 fixture 和 `.stderr`：覆盖 `Reactive`、`view_builder!`、`ComponentProperties`/`component_properties` 核心路径，失败诊断为明确的 `compile_error!` 文案。
-- 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`。
-- 已更新 `TODO.md`：将 `R2` 标题标记为 `[DONE]`，并补充审阅结论和验证记录。
-- 已提交 R2 审阅记录；当前任务完成，停止，不继续处理 `T3`。
+## 执行计划
+1. 读取 `TODO.md`，按文件顺序识别第一个标题未带 `[DONE]` 的任务。
+2. 检查该任务的要求、依赖、验证方式和完成记录格式；必要时查看相关代码与最近提交，但不做开放式历史问题扫查。
+3. 若任务可直接完成，则实施最小正确改动，并避免影响无关文件。
+4. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，随后运行相关测试；需要完整验证时运行完整测试套件并设置足够超时。
+5. 若发现未被排期且会阻塞当前任务的失败测试、夹具问题或规格缺口，则修复；若无法在当前任务内正确修复，则在 `TODO.md` 中添加最小前置任务并停止。
+6. 完成后在 `TODO.md` 将当前任务标题加上 `[DONE]`，更新完成记录；仅在阶段计划真实变化时更新 `PLAN.md`。
+7. 检查 `git status`、`git diff`、最近提交，确认只提交本次相关改动；用清晰提交信息提交。
+8. 提交后停止，不继续下一个任务。
+
+## 进度记录
+- 已完成：读取 `TODO.md` 并识别当前任务 T3。
+- 已完成：检查 `AppHost`、`Desktop`、`WindowManager`、事件分发入口和现有 PTY fixture 结构。
+- 已完成：在 `Desktop`/`WindowManager` 增加可单测的窗口管理和目标窗口事件注入能力，并由 `AppHost` 公开转发方法；鼠标注入坐标按目标窗口 0-based 相对坐标转为现有绝对坐标分发。
+- 已完成：新增 Rust 单测覆盖目标窗口事件、窗口 close/focus/move/resize/list、模态/最小化焦点约束与 `set_property`；新增 PTY fixture 覆盖 `AppHost::send_event` 点击/按键触发按钮回调。
+- 已完成：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、新增相关测试与完整 `cargo test` 均通过。
+- 已完成：`TODO.md` 中 T3 已标记 `[DONE]`，并补充完成记录与验证命令。
+- 已完成：检查 git 状态、目标 diff、最近提交和 staged diff；确认存在若干非本次无关改动，已仅暂存 T3 相关文件。
+- 待执行：提交 T3 改动并停止。

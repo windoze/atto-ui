@@ -1,12 +1,13 @@
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,7 +19,10 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
 
-use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec, StatusBar};
+use atto_ui::app::{
+    AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
+    StatusBar,
+};
 use atto_ui::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack,
 };
@@ -661,10 +665,77 @@ fn describe_modifiers(modifiers: KeyModifiers) -> String {
     }
 }
 
+fn run_apphost_api_fixture() -> Result<()> {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_button = Arc::clone(&calls);
+    let config = CrosstermAppConfig::default()
+        .tick_rate(Duration::from_millis(16))
+        .mouse_capture(true)
+        .cursor(CursorMode::Hide);
+
+    let mut host = AppHost::new(config, move |screen| {
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "AppHost API",
+                Rect::new(2, 2, 28, 7),
+                Box::new(Button::new("Fire").on_click(move || {
+                    calls_for_button.fetch_add(1, Ordering::SeqCst);
+                })),
+            ),
+            screen,
+        );
+        Ok(desktop)
+    })?;
+
+    let Some(window_id) = host
+        .list_windows()
+        .into_iter()
+        .find(|window| window.title == "AppHost API")
+        .map(|window| window.id)
+    else {
+        anyhow::bail!("AppHost API fixture window missing");
+    };
+
+    host.step()?;
+    host.focus_window(window_id);
+    host.send_event(
+        window_id,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        }),
+    )?;
+    host.send_event(
+        window_id,
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+    )?;
+    host.move_window(window_id, 4, 4)?;
+    host.resize_window(window_id, 34, 8)?;
+    host.set_title(
+        window_id,
+        format!("AppHost API calls: {}", calls.load(Ordering::SeqCst)),
+    );
+
+    loop {
+        if host.step()? == AppControl::Exit {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--input-api") {
         return run_input_api_fixture();
+    }
+    if args.iter().any(|arg| arg == "--apphost-api") {
+        return run_apphost_api_fixture();
     }
 
     let event_order_fixture = args.iter().any(|arg| arg == "--event-order");

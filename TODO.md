@@ -65,7 +65,7 @@
 - 确认失败 fixture 覆盖 `#[reactive]` 非 `Property<T>` 字段和 `view_builder!` 未知组件两类编译失败，诊断均为明确 `compile_error!` 文案，非裸 panic。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`。
 
-### [ ] T3 — AppHost 事件注入与窗口管理（B.1）
+### [DONE] T3 — AppHost 事件注入与窗口管理（B.1）
 **文件**：`src/app/run.rs`（`AppHost`）、必要时 `src/wm/manager/`
 **现状**：`AppHost` 仅有 `add_dynamic_window`/`apply_tree_ops`/`step`/`run`/`drain_callbacks`/`get_property`/`schemas`，加了窗口无法再管理，也无法注入事件。
 **步骤**：
@@ -74,6 +74,13 @@
 3. `set_property(id,name,value)` 便捷方法：内部走 tree-ops `SetProp`，与 `get_property` 对称。
 **测试**：Rust 单测 + 1 个 PTY：注入点击/按键驱动按钮回调；创建窗口后 close/focus/move/resize 并用 `list_windows` 断言状态。
 **验收**：事件注入能触发回调；窗口管理方法均可用且不破坏 Z 序/焦点。
+**完成记录（2026-06-06）**：
+- 新增 `Desktop::send_event_to_window` 与 `AppHost::send_event`，目标窗口鼠标坐标按 0-based 窗口相对坐标转为现有绝对坐标后复用窗口视图分发路径；键盘/粘贴事件直接路由到目标窗口视图。
+- 新增 `close_window`、`focus_window`、`move_window`、`resize_window`、`list_windows`、`set_title`、`set_property`/`get_property` AppHost 入口，并在 Desktop/WindowManager 层复用现有 close hook、焦点、Z 序、work area 归一和动态 tree-op 逻辑。
+- 新增 `WindowInfo` 快照结构，供 `list_windows` 断言窗口 id/tag/title/kind/state/rect/focus 状态。
+- 新增 Rust 单测覆盖目标窗口 key/paste/mouse 注入、相对鼠标坐标转换、窗口 close/focus/move/resize/list、模态焦点陷阱、最小化焦点约束与 `set_property` 往返。
+- 新增 `snapshot_app --apphost-api` fixture 与 `tests/pty_apphost_api.rs`，验证 `AppHost::send_event` 注入点击和 Enter 键均能触发按钮回调。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui app::desktop`；`cargo test --test pty_apphost_api`；`cargo test`。
 
 ### [ ] R3 — 审阅 T3
 - 确认 `send_event` 的坐标系/目标窗口路由正确（0-based、相对窗口）。

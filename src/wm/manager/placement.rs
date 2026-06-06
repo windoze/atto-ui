@@ -9,12 +9,12 @@ use super::{
 impl WindowManager {
     pub fn move_focused(&mut self, dx: i16, dy: i16, bounds: Rect) {
         let Some(id) = self.focused() else { return };
-        self.move_window(id, dx, dy, bounds);
+        self.move_window_by(id, dx, dy, bounds);
     }
 
     pub fn resize_focused(&mut self, dw: i16, dh: i16, bounds: Rect) {
         let Some(id) = self.focused() else { return };
-        self.resize_window(id, dw, dh, bounds);
+        self.resize_window_by(id, dw, dh, bounds);
     }
 
     pub fn toggle_maximize_focused(&mut self, bounds: Rect) {
@@ -25,7 +25,43 @@ impl WindowManager {
         }
     }
 
-    fn move_window(&mut self, id: WindowId, dx: i16, dy: i16, bounds: Rect) {
+    pub fn move_window_to(&mut self, id: WindowId, x: u16, y: u16, bounds: Rect) -> bool {
+        let Some(w) = self.window_mut(id) else {
+            return false;
+        };
+        if !w.movable.get() || w.state.get() == WindowState::Maximized {
+            return false;
+        }
+        let mut rect = w.rect.get();
+        rect.x = x;
+        rect.y = y;
+        w.rect
+            .set(normalize_rect(rect, bounds, window_enforced_min_size(w)));
+        true
+    }
+
+    pub fn resize_window_to(
+        &mut self,
+        id: WindowId,
+        width: u16,
+        height: u16,
+        bounds: Rect,
+    ) -> bool {
+        let Some(w) = self.window_mut(id) else {
+            return false;
+        };
+        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
+            return false;
+        }
+        let enforced_min_size = window_enforced_min_size(w);
+        let mut rect = w.rect.get();
+        rect.width = width.max(enforced_min_size.0);
+        rect.height = height.max(enforced_min_size.1);
+        w.rect.set(normalize_rect(rect, bounds, enforced_min_size));
+        true
+    }
+
+    fn move_window_by(&mut self, id: WindowId, dx: i16, dy: i16, bounds: Rect) {
         let Some(w) = self.window_mut(id) else { return };
         if !w.movable.get() || w.state.get() == WindowState::Maximized {
             return;
@@ -37,7 +73,7 @@ impl WindowManager {
             .set(normalize_rect(rect, bounds, window_enforced_min_size(w)));
     }
 
-    fn resize_window(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
+    fn resize_window_by(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
         let Some(w) = self.window_mut(id) else { return };
         if !w.resizable.get() || w.state.get() == WindowState::Maximized {
             return;
