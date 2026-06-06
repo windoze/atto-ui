@@ -2,6 +2,7 @@ mod desktop;
 mod menu;
 mod run;
 mod status;
+mod toast;
 
 pub use desktop::{
     Desktop, DesktopAction, DesktopEventResult, DesktopLayout, DesktopMode, WindowInfo,
@@ -13,3 +14,4 @@ pub use run::{
     run_crossterm_desktop_with_actions_and_tasks, should_quit_default,
 };
 pub use status::StatusBar;
+pub use toast::{Toast, ToastLevel, ToastQueue};

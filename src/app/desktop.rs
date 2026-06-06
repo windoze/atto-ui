@@ -12,6 +12,7 @@ use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 
 use super::menu::{MenuAction, MenuBar};
 use super::status::StatusBar;
+use super::toast::{Toast, ToastQueue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopMode {
@@ -82,6 +83,7 @@ pub struct Desktop {
     pub wm: WindowManager,
     pub menu: MenuBar,
     pub status: StatusBar,
+    pub toasts: ToastQueue,
     pub mode: DesktopMode,
 }
 
@@ -92,8 +94,17 @@ impl Desktop {
             wm: WindowManager::new(),
             menu,
             status: StatusBar::default(),
+            toasts: ToastQueue::default(),
             mode: DesktopMode::Normal,
         }
+    }
+
+    pub fn push_toast(&mut self, toast: Toast) {
+        self.toasts.push(toast);
+    }
+
+    pub fn notify_background_complete(&mut self, message: impl Into<String>) {
+        self.toasts.notify_background_complete(message);
     }
 
     pub fn layout(area: Rect) -> DesktopLayout {
@@ -542,6 +553,7 @@ impl Desktop {
             .unwrap_or_else(|| "Focus: none".to_string());
         self.status.set_right(focused);
         self.status.draw(frame, layout.status_bar, &self.theme);
+        self.toasts.draw(frame, layout.work_area, &self.theme);
 
         // ratatui's buffer diff assumes buffers are "well-formed": a multi-width glyph is
         // followed only by blank cells. When layered UI elements (e.g., window borders) overwrite

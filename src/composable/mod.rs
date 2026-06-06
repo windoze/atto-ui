@@ -17,6 +17,7 @@ mod splitter;
 mod stack;
 mod tab_window;
 mod visibility;
+mod windowed_text;
 
 pub use crate::widgets::{
     Button, Checkbox, CommandPalette, Disclosure, DisclosureStatus, FlowDirection, Label, ListBox,
@@ -49,6 +50,7 @@ pub use splitter::{Splitter, SplitterOrientation};
 pub use stack::{HStack, VStack};
 pub use tab_window::TabWindow;
 pub use visibility::{Visibility, VisibilityExt};
+pub use windowed_text::WindowedText;
 
 #[cfg(test)]
 mod tests;

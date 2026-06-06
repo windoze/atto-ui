@@ -378,6 +378,35 @@ impl Theme {
             "disclosure-content".into(),
             self.window_bg.patch(self.widget.normal),
         );
+        self.named_styles
+            .insert("windowed-text-footer".into(), self.widget.dim);
+        self.named_styles.insert(
+            "toast-info".into(),
+            self.window_bg.patch(self.widget.accent),
+        );
+        self.named_styles.insert(
+            "toast-success".into(),
+            self.window_bg.patch(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        );
+        self.named_styles.insert(
+            "toast-warning".into(),
+            self.window_bg.patch(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        );
+        self.named_styles.insert(
+            "toast-error".into(),
+            self.window_bg
+                .patch(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        );
+        self.named_styles
+            .insert("image-fallback".into(), self.widget.dim);
 
         let markdown_base = self.window_bg.patch(self.widget.normal);
         self.named_styles

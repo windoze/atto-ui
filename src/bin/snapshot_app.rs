@@ -1,3 +1,4 @@
+use std::fmt::Write as FmtWrite;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,10 +22,15 @@ use ratatui::{Frame, Terminal};
 
 use atto_ui::app::{
     AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
-    StatusBar,
+    StatusBar, Toast, ToastLevel,
 };
 use atto_ui::composable::{
     Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack,
+    WindowedText,
+};
+use atto_ui::drawing::{
+    ImageData, ImageRenderOptions, detect_image_protocol_from_env, image_sequence_or_fallback,
+    write_osc8_hyperlink,
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
@@ -729,8 +735,73 @@ fn run_apphost_api_fixture() -> Result<()> {
     Ok(())
 }
 
+fn run_notifications_windowing_multimodal_fixture() -> Result<()> {
+    let mut host = AppHost::new(
+        CrosstermAppConfig::default()
+            .tick_rate(Duration::from_millis(20))
+            .cursor(CursorMode::Show),
+        |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            desktop.push_toast(Toast::new(
+                "Background task complete",
+                ToastLevel::Success,
+                Duration::from_millis(800),
+            ));
+            desktop.push_toast(Toast::new(
+                "Queued notification",
+                ToastLevel::Info,
+                Duration::from_millis(800),
+            ));
+
+            let image_options = ImageRenderOptions::default()
+                .width_cells(12)
+                .height_cells(4)
+                .name("sample.png");
+            let image_line = image_sequence_or_fallback(
+                detect_image_protocol_from_env(|_| None),
+                ImageData::Binary(b"fake-png"),
+                &image_options,
+                "[image: sample.png unavailable]",
+            );
+            let mut huge = String::new();
+            huge.push_str("T18 fixture\n");
+            huge.push_str(&image_line);
+            for i in 0..10_000 {
+                let _ = write!(&mut huge, "\nline-{i:05}");
+            }
+
+            let text = WindowedText::new(huge).soft_limit(8);
+            let id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Large Text",
+                    Rect {
+                        x: 2,
+                        y: 2,
+                        width: screen.width.saturating_sub(4).min(70),
+                        height: screen.height.saturating_sub(5).min(18),
+                    },
+                    Box::new(text),
+                ),
+                screen,
+            );
+            desktop.wm.focus(id);
+            Ok(desktop)
+        },
+    )?;
+
+    write_osc8_hyperlink(io::stdout(), "https://example.test/docs", "Open docs")?;
+    host.run()
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .iter()
+        .any(|arg| arg == "--notifications-windowing-multimodal")
+    {
+        return run_notifications_windowing_multimodal_fixture();
+    }
     if args.iter().any(|arg| arg == "--input-api") {
         return run_input_api_fixture();
     }

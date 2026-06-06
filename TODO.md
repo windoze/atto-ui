@@ -496,7 +496,7 @@
 - 完整验证中发现 `atto-ui-terminal` 两个 PTY 用例在 workspace 负载下等待 `READY` 偶发超时；已将该测试文件 PTY 用例串行化，并统一使用 5 秒等待预算，定向与完整复跑均通过。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -m py_compile atto_ui/__init__.py tests/test_e2e.py examples/minimal_app.py`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture`；`cargo test --workspace --all-targets`。
 
-### [ ] T18 — 通知队列 + 超大块 windowing + 多模态（C.4）
+### [DONE] T18 — 通知队列 + 超大块 windowing + 多模态（C.4）
 **文件**：`src/app/`（toast）、`src/composable/`（windowing）、`src/drawing.rs`（图片/OSC8）
 **步骤**：
 1. transient toast / 后台完成提醒队列（StatusBar 之外）。
@@ -504,6 +504,12 @@
 3. 多模态：图片协议（sixel/kitty/iterm）+ OSC8 可点击超链接。
 **测试**：PTY：toast 出现/消失；超大块仅渲染可见窗口 + 展开；OSC8 链接序列断言（图片协议按终端能力降级）。
 **验收**：toast/超大块可用；多模态在支持的终端生效、否则降级。
+**完成记录（2026-06-07）**：
+- 新增 `Toast` / `ToastQueue` / `ToastLevel`，`Desktop` 和 `AppHost` 暴露通知入口；`Desktop::draw` 在工作区内绘制 transient toast overlay，独立于 `StatusBar`，支持队列容量、自动过期和后台完成提醒。
+- 新增 core `WindowedText` 组件，默认软截断超大文本块并显示 “press e to expand all”；展开后保留 windowed 可见区域渲染，支持键盘/鼠标滚动、Home/End/PageUp/PageDown，并通过窗口边框滚动条暴露完整内容范围。
+- `drawing` 公开 OSC8 hyperlink 序列写出、Kitty/iTerm2/Sixel 图片协议序列构造、环境能力检测与安全 fallback；Sixel 二进制编码未内置，需调用方提供已编码 sixel payload，避免 core 引入重依赖。
+- `snapshot_app --notifications-windowing-multimodal` 与 `tests/pty_notifications_windowing_multimodal.rs` 覆盖 toast 出现/消失、无图片能力时 fallback 文本、OSC8 raw output 序列、超大文本折叠不显示末行、展开后 End 滚到 `line-09999`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_notifications_windowing_multimodal -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ### [ ] R18 — 审阅 T18
 - 确认 toast 队列不阻塞主循环、不与状态栏冲突。

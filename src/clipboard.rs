@@ -21,7 +21,7 @@ pub fn copy_to_system_clipboard(text: &str) -> io::Result<()> {
     write_osc52(io::stdout(), text)
 }
 
-fn encode_base64(bytes: &[u8]) -> String {
+pub(crate) fn encode_base64(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut chunks = bytes.chunks_exact(3);
 

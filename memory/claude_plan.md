@@ -1,32 +1,35 @@
 # 当前执行计划
 
-## 范围
+## 约束
 
-- 以 `TODO.md` 为唯一任务顺序来源。
-- 只完成第一个未在标题中标记 `[DONE]` 的任务，然后停止。
-- 若发现阻塞当前任务的缺陷、缺失能力或未排期失败测试，按要求在 `TODO.md` 中加入最小必要前置任务并提交后停止。
+- 以 `TODO.md` 为唯一任务排序和完成状态来源。
+- 只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 不做开放式历史问题扫描；只处理会阻塞当前任务或验证的缺陷。
+- 若发现当前任务依赖未跟踪的前置问题，先把最小前置任务插入 `TODO.md`，提交后停止。
+- 完成任务后必须更新 `TODO.md` 的标题与完成记录，并按要求提交 Git commit。
+- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试；仅文档变更且可复用已有绿色结果时才跳过相关套件。
 
 ## 步骤
 
-1. 读取 `TODO.md`，定位第一个未完成任务，并检查该任务的要求、依赖和验证标准。
-2. 检查最新提交信息，只判断其是否明确提到与当前任务直接相关的未完成事项。
-3. 针对当前任务阅读必要代码与测试，避免做无关历史问题扫查。
-4. 实现当前任务，优先做最小且完整的正确改动。
-5. 按任务要求运行验证；若没有更具体要求，则先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件。
-6. 若验证失败，修复当前任务范围内的问题；若失败属于未排期且阻塞完成的项目问题，则按政策更新 `TODO.md` 并停止。
-7. 完成后在 `TODO.md` 的任务标题前加 `[DONE]`，更新完成记录；仅在阶段计划确实变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff` 和近期提交，确认只提交本次相关改动。
-9. 创建清晰提交，提交后停止，不继续处理下一个任务。
+1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务。
+2. 检查最新提交信息是否明确提到与该任务直接相关的未完成事项；若是，将其纳入当前任务或作为前置任务记录。
+3. 根据当前任务读取必要代码、测试、计划文件和相关上下文，避免无关范围扫描。
+4. 实现当前任务，优先采用最小正确改动，避免 workaround 或规格偏离。
+5. 添加或更新直接相关测试，必要时修复阻塞当前任务的失败测试或把未跟踪失败登记为前置任务。
+6. 按要求运行格式化、lint 和测试验证。
+7. 更新 `TODO.md`：给完成任务标题加 `[DONE]`，填写完成记录；只有阶段级计划变化才更新 `PLAN.md`。
+8. 检查 Git 状态和 diff，提交本次任务相关全部未提交变更。
+9. 停止，不继续处理下一个任务。
 
-## 进度记录
+## 进度
 
 - 已创建本计划文件，下一步读取 `TODO.md` 定位第一个未完成任务。
-- 已读取 `TODO.md`，第一个未完成任务是 `R17 — 审阅 T17`。
-- 本次执行范围是审阅 T17：检查 Python 构造助手覆盖、helper 参数与 runtime schema 一致性、`.pyi` 类型声明可用性，并运行 Python e2e 与要求的格式/ lint/ 测试验证。
-- 审阅发现并修复：Python helper/stub/e2e 缺少已注册内置 `Visibility`；e2e 未覆盖 `HStack`；stub 未声明 `ComponentRef.__getattr__` 动态 setter/getter；示例/测试中的 callback source 类型未体现 `None` 可能性；README 高层 wrapper 示例仍使用裸事件 dict。
-- 已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、Python `py_compile`、`cargo test -p atto-ui-python`、`maturin develop`、`python -m unittest discover tests`。
-- 完整 `cargo test --workspace --all-targets` 暴露 `atto-ui-terminal` 的两个 PTY 用例等待 `READY` 超时；该失败未在 TODO 中排期，需在本次 R17 验证中修复后再继续。
-- 已修复 terminal PTY 验证不稳定点：同文件用例串行化，公共 `PTY_WAIT` 提升到 5 秒；下一步复跑格式/lint、terminal PTY、Python e2e 和完整 workspace 测试。
-- 已完成验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；Python `py_compile`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture`；`cargo test --workspace --all-targets`。
-- 已将 `TODO.md` 中 `R17` 标记为 `[DONE]` 并写入完成记录。
-- 已创建提交 `[R17] Review Python component coverage`。本次只处理 R17，不继续处理后续任务。
+- 已定位第一个未完成任务：`T18 — 通知队列 + 超大块 windowing + 多模态（C.4）`。
+- 下一步检查最新提交是否含有与 T18 直接相关的未完成事项，然后读取相关 app/composable/drawing 测试与实现上下文。
+- 最新提交未明确提到与 T18 直接相关的未完成事项。
+- 当前实现方案：在 `src/app` 增加 toast 队列并由 `Desktop::draw` 作为独立 overlay 绘制；在 `src/composable` 增加 `WindowedText`，默认软截断并支持展开后按可见区域 windowed 渲染；在 `src/drawing.rs` 增加 OSC8 链接序列、终端图片协议序列构造与无能力降级。
+- 工作树已有未跟踪 `notification.sh`、`run_agent.sh`，视为非本任务文件，后续不修改也不提交。
+- 已完成首轮实现与 PTY fixture 编写，下一步执行 `cargo fmt` 并根据编译/lint 结果修正。
+- 已通过验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、新增 PTY 测试、`cargo test --workspace --all-targets`。
+- 已将 `TODO.md` 中 T18 标记为 `[DONE]` 并补充完成记录；未更新 `PLAN.md`，因为阶段级计划未变化。
+- 下一步检查 diff/status，提交本次 T18 相关变更后停止。

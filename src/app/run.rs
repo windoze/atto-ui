@@ -17,6 +17,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
+use crate::app::{Toast, ToastLevel};
 use crate::composable::EventOutcome;
 use crate::inspect::{DesktopInspector, DesktopSnapshot};
 use crate::reactive::{set_global_tick_rate, tick_global_timers};
@@ -333,6 +334,25 @@ impl AppHost {
 
     pub fn list_windows(&self) -> Vec<WindowInfo> {
         self.desktop.list_windows()
+    }
+
+    pub fn push_toast(&mut self, toast: Toast) {
+        self.desktop.push_toast(toast);
+    }
+
+    pub fn push_toast_message(
+        &mut self,
+        level: ToastLevel,
+        message: impl Into<String>,
+        duration: Duration,
+    ) {
+        self.desktop
+            .toasts
+            .push_message(level, message.into(), duration);
+    }
+
+    pub fn notify_background_complete(&mut self, message: impl Into<String>) {
+        self.desktop.notify_background_complete(message);
     }
 
     pub fn set_title(&mut self, id: WindowId, title: impl Into<String>) -> bool {
