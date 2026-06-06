@@ -324,14 +324,14 @@ impl EventHandling for TextBox {
                     }
                     KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => {
                         if let Some(text) = self.selected_text() {
-                            self.clipboard.set(text);
+                            self.copy_selection_text(text);
                             return EventResult::consumed();
                         }
                         EventResult::ignored()
                     }
                     KeyCode::Char('x') if mods.contains(KeyModifiers::CONTROL) => {
                         if let Some(text) = self.selected_text() {
-                            self.clipboard.set(text);
+                            self.copy_selection_text(text);
                             if self.delete_selection() {
                                 self.sync_binding_from_buffer();
                                 return EventResult::changed();
@@ -529,6 +529,11 @@ impl TextBox {
         }
         let end = end.min(text.len());
         Some(text[start..end].to_string())
+    }
+
+    fn copy_selection_text(&self, text: String) {
+        self.clipboard.set(text.clone());
+        let _ = crate::clipboard::copy_to_system_clipboard(&text);
     }
 
     fn select_all(&mut self) {

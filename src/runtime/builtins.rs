@@ -186,7 +186,9 @@ fn register_text(registry: &mut ComponentRegistry<Box<dyn Component>>) {
 
     registry.register(schema, move |spec, _registry| {
         let text = prop_string(spec, "text")?.unwrap_or_default();
-        let view = Text::new(text);
+        let selectable = prop_bool(spec, "selectable")?.unwrap_or(false);
+        let clipboard = prop_string(spec, "clipboard")?.unwrap_or_default();
+        let view = Text::new(text).selectable(selectable).clipboard(clipboard);
         Ok(wrap_with_id(spec, Box::new(view)))
     });
 }

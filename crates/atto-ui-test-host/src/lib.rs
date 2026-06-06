@@ -40,6 +40,7 @@ pub struct PtyTestHost {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     parser: Arc<Mutex<vt100::Parser>>,
+    raw_output: Arc<Mutex<Vec<u8>>>,
     read_thread: Option<JoinHandle<Result<()>>>,
     cols: u16,
     rows: u16,
@@ -71,6 +72,8 @@ impl PtyTestHost {
 
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
         let parser_for_thread = Arc::clone(&parser);
+        let raw_output = Arc::new(Mutex::new(Vec::new()));
+        let raw_output_for_thread = Arc::clone(&raw_output);
 
         let read_thread = thread::spawn(move || -> Result<()> {
             let mut buf = [0u8; 16 * 1024];
@@ -79,6 +82,10 @@ impl PtyTestHost {
                 if n == 0 {
                     break;
                 }
+                raw_output_for_thread
+                    .lock()
+                    .map_err(|_| anyhow!("raw output buffer poisoned"))?
+                    .extend_from_slice(&buf[..n]);
                 let mut p = parser_for_thread
                     .lock()
                     .map_err(|_| anyhow!("parser poisoned"))?;
@@ -92,6 +99,7 @@ impl PtyTestHost {
             master: pair.master,
             writer,
             parser,
+            raw_output,
             read_thread: Some(read_thread),
             cols,
             rows,
@@ -315,6 +323,36 @@ impl PtyTestHost {
     pub fn cursor_position(&self) -> Result<(u16, u16)> {
         let p = self.parser.lock().map_err(|_| anyhow!("parser poisoned"))?;
         Ok(p.screen().cursor_position())
+    }
+
+    /// Returns all bytes emitted by the child process since spawn.
+    pub fn raw_output(&self) -> Result<Vec<u8>> {
+        Ok(self
+            .raw_output
+            .lock()
+            .map_err(|_| anyhow!("raw output buffer poisoned"))?
+            .clone())
+    }
+
+    /// Waits until the raw PTY output contains `needle`.
+    pub fn wait_for_output(&self, needle: &[u8], timeout: Duration) -> Result<()> {
+        if needle.is_empty() {
+            return Ok(());
+        }
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let output = self.raw_output().unwrap_or_default();
+            if output.windows(needle.len()).any(|window| window == needle) {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = self.raw_output().unwrap_or_default();
+        Err(anyhow!(
+            "timed out waiting for raw output {:?}.\n--- output ---\n{}",
+            String::from_utf8_lossy(needle),
+            String::from_utf8_lossy(&output)
+        ))
     }
 
     /// Returns the raw contents of the cell at `(x, y)` (0-based).

@@ -326,7 +326,7 @@
 - 确认 PTY 覆盖 Enter 展开、鼠标折叠/展开、running/done/error 状态切换以及绑定内容追加可见。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_disclosure`；`cargo test --workspace --all-targets`。
 
-### [ ] T12 — 系统剪贴板 + 文本选区复制（core）（C.2）
+### [DONE] T12 — 系统剪贴板 + 文本选区复制（core）（C.2）
 **文件**：新增 `src/clipboard.rs`，composable/text 选区
 **现状**：仅应用内 `Binding<String>`，无系统剪贴板；渲染文本无框选复制。
 **步骤**：
@@ -334,6 +334,12 @@
 2. composable/text 层支持框选复制（借鉴 editor 选区，但实现于 core 通用文本）。
 **测试**：PTY：选区后复制触发 OSC52 序列（断言输出序列）；选区渲染高亮。
 **验收**：可框选并经 OSC52 复制；不破坏现有文本渲染。
+**完成记录（2026-06-06）**：
+- 新增 `src/clipboard.rs`，提供 std-only OSC52 序列构造、写出与 best-effort stdout 系统剪贴板复制；不依赖系统剪贴板 API，终端不支持时序列可安全忽略。
+- core `Text` 新增 opt-in `selectable` 与 `clipboard` binding，支持鼠标拖选跨行渲染文本、选区高亮、Ctrl+C 写入应用内 binding 并发出 OSC52；TextBox 复制/剪切继续维护原有内部 binding，同时同步发出 OSC52。
+- `atto-ui-test-host` 新增 raw PTY output 捕获与 `wait_for_output`，用于断言不可见 OSC52 控制序列。
+- 新增 `snapshot_clipboard_app` 与 `tests/pty_clipboard.rs`，覆盖跨行拖选、选区高亮和 Ctrl+C 后 OSC52 输出序列；新增单测覆盖 OSC52 base64 编码和 grapheme/display-width 选区文本。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 
 ### [ ] R12 — 审阅 T12
 - 确认 OSC52 编码正确、不在不支持的终端崩溃（降级）。

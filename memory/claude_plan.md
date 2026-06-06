@@ -1,27 +1,32 @@
-# 执行计划
+# Claude 执行计划
 
-## 约束
-- 以 `TODO.md` 为唯一任务顺序与完成状态来源。
-- 本轮只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
-- 不做开放式历史问题扫描；只处理当前任务相关或验证暴露且未排期的问题。
-- 如果发现阻塞当前任务的未排期问题，先在 `TODO.md` 中加入最小必要前置任务并提交，然后停止。
+## 范围
+
+以 `TODO.md` 为权威任务列表，本轮只完成第一个未完成任务，验证通过后更新任务记录、提交本轮相关改动，然后停止。
 
 ## 步骤
-1. 读取 `TODO.md`，识别第一个未完成任务及其验证要求。
-2. 检查最近提交信息，仅判断是否存在与该任务直接相关的未完成事项。
-3. 阅读当前任务涉及的源码、测试和文档，确定最小实现范围。
-4. 实现任务，保持改动聚焦，避免无关重构。
-5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，通过后运行相关或完整测试。
-6. 若验证失败且未在后续任务明确排期，则修复或在 `TODO.md` 中加入必要前置任务。
-7. 将任务标题标记为 `[DONE]`，更新完成记录；仅在阶段计划实际变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff` 和最近提交，提交本轮相关更改。
-9. 停止，不处理下一个任务。
 
-## 当前状态
-- 已识别本轮任务：`R11 — 审阅 T11`。
-- 最近提交为 `[T11] Add core disclosure component`，未发现提交信息中声明的相关未完成事项。
-- 已审阅 Disclosure 组件实现、主题接入、runtime schema、fixture 与 PTY 测试，未发现阻塞当前任务的实现问题。
-- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --test pty_disclosure`、`cargo test --workspace --all-targets`。
-- 已将 `R11` 在 `TODO.md` 中标记为 `[DONE]` 并写入完成记录。
-- 已检查本轮目标差异；只提交 `TODO.md` 与 `memory/claude_plan.md`，保留工作树中其他既有改动不动。
-- 下一步提交本轮更改后停止。
+1. 读取 `TODO.md`，识别标题未带 `[DONE]` 的第一个任务。
+2. 只读取该任务所需的相关上下文；仅在阶段级依赖需要时读取或更新 `PLAN.md`。
+3. 检查与当前任务直接相关的代码和测试。
+4. 按任务原始要求实现，不缩窄范围、不引入 workaround。
+5. 如发现阻塞当前任务的未排期前置问题，更新 `TODO.md` 加入最小前置任务，保持当前任务未完成，提交后停止。
+6. 按顺序验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关测试和完整测试。
+7. 将当前任务标题标记为 `[DONE]`，并补充完成记录。
+8. 检查 `git status`、`git diff` 和最近提交；只提交本轮任务相关文件。
+9. 停止，不处理下一项任务。
+
+## 进度
+
+- 已在选择任务前记录执行计划。
+- 已识别第一个未完成任务：`T12 — 系统剪贴板 + 文本选区复制（core）`。
+- 已确认最新提交为 R11，未包含与 T12 直接相关的未完成事项。
+- 已确认现状：TextBox 只有应用内剪贴板；core `Text` 没有渲染文本选区复制；项目没有 OSC52 剪贴板模块。
+- 已实现 `src/clipboard.rs` 的 std-only OSC52 编码/写出能力。
+- 已为 core `Text` 增加 opt-in `selectable` 与 `clipboard` binding，支持鼠标拖选、跨行选区高亮、Ctrl+C 写入 binding 并发出 OSC52。
+- 已更新 TextBox 复制/剪切路径，使其保留原有内部 binding 行为并同步发出 OSC52。
+- 已为 `atto-ui-test-host` 增加 raw PTY output 捕获与 `wait_for_output`，用于断言 OSC52 等不可见控制序列。
+- 已新增 `snapshot_clipboard_app` 与 `tests/pty_clipboard.rs`，覆盖跨行拖选、选区高亮和 OSC52 输出。
+- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
+- 已将 T12 在 `TODO.md` 中标记为 `[DONE]` 并写入完成记录。
+- 当前正在只检查和提交 T12 相关文件；保留工作树中其他既有无关变更不动。

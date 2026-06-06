@@ -3,6 +3,7 @@
 extern crate self as atto_ui;
 
 pub mod app;
+pub mod clipboard;
 pub mod component_api;
 pub mod composable;
 pub mod dialogs;
