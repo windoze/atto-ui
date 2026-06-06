@@ -501,8 +501,172 @@ impl ::atto_ui::composable::EventHandling for AboutView {
     }
 }
 
+fn run_input_api_fixture() -> Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        event::EnableMouseCapture,
+        event::EnableBracketedPaste,
+        cursor::Show
+    )?;
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let res = input_api_loop(&mut terminal);
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        event::DisableMouseCapture,
+        event::DisableBracketedPaste
+    )?;
+    terminal.show_cursor()?;
+
+    res
+}
+
+fn input_api_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    let mut last_event = "none".to_string();
+    loop {
+        terminal.draw(|f| {
+            let area = f.area();
+            f.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Input API fixture"),
+                    Line::from(format!("size: {}x{}", area.width, area.height)),
+                    Line::from(format!("last: {last_event}")),
+                    Line::from("Ctrl+Q to quit"),
+                ]),
+                area,
+            );
+        })?;
+
+        if !event::poll(Duration::from_millis(50))? {
+            continue;
+        }
+
+        let ev = event::read()?;
+        if is_quit_event(&ev) {
+            break;
+        }
+        last_event = describe_input_event(&ev);
+    }
+    Ok(())
+}
+
+fn is_quit_event(ev: &Event) -> bool {
+    matches!(
+        ev,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers,
+            kind: KeyEventKind::Press,
+            ..
+        }) if modifiers.contains(KeyModifiers::CONTROL)
+    ) || matches!(
+        ev,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('\u{11}'),
+            kind: KeyEventKind::Press,
+            ..
+        })
+    )
+}
+
+fn describe_input_event(ev: &Event) -> String {
+    match ev {
+        Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind,
+            ..
+        }) => format!(
+            "key:{} kind:{} mods={}",
+            describe_key_code(*code),
+            describe_key_kind(*kind),
+            describe_modifiers(*modifiers)
+        ),
+        Event::Mouse(m) => format!(
+            "mouse:{}@{},{} mods={}",
+            describe_mouse_kind(m.kind),
+            m.column,
+            m.row,
+            describe_modifiers(m.modifiers)
+        ),
+        Event::Resize(cols, rows) => format!("resize:{cols}x{rows}"),
+        Event::Paste(text) => format!("paste:{text}"),
+        Event::FocusGained => "focus:gained".to_string(),
+        Event::FocusLost => "focus:lost".to_string(),
+    }
+}
+
+fn describe_key_code(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(c) => format!("Char({c:?})"),
+        KeyCode::F(n) => format!("F({n})"),
+        other => format!("{other:?}"),
+    }
+}
+
+fn describe_key_kind(kind: KeyEventKind) -> &'static str {
+    match kind {
+        KeyEventKind::Press => "press",
+        KeyEventKind::Repeat => "repeat",
+        KeyEventKind::Release => "release",
+    }
+}
+
+fn describe_mouse_kind(kind: MouseEventKind) -> &'static str {
+    match kind {
+        MouseEventKind::Down(MouseButton::Left) => "down-left",
+        MouseEventKind::Down(MouseButton::Middle) => "down-middle",
+        MouseEventKind::Down(MouseButton::Right) => "down-right",
+        MouseEventKind::Up(MouseButton::Left) => "up-left",
+        MouseEventKind::Up(MouseButton::Middle) => "up-middle",
+        MouseEventKind::Up(MouseButton::Right) => "up-right",
+        MouseEventKind::Drag(MouseButton::Left) => "drag-left",
+        MouseEventKind::Drag(MouseButton::Middle) => "drag-middle",
+        MouseEventKind::Drag(MouseButton::Right) => "drag-right",
+        MouseEventKind::Moved => "moved",
+        MouseEventKind::ScrollUp => "scroll-up",
+        MouseEventKind::ScrollDown => "scroll-down",
+        MouseEventKind::ScrollLeft => "scroll-left",
+        MouseEventKind::ScrollRight => "scroll-right",
+    }
+}
+
+fn describe_modifiers(modifiers: KeyModifiers) -> String {
+    let mut parts = Vec::new();
+    for (modifier, label) in [
+        (KeyModifiers::SHIFT, "SHIFT"),
+        (KeyModifiers::ALT, "ALT"),
+        (KeyModifiers::CONTROL, "CONTROL"),
+        (KeyModifiers::SUPER, "SUPER"),
+        (KeyModifiers::HYPER, "HYPER"),
+        (KeyModifiers::META, "META"),
+    ] {
+        if modifiers.contains(modifier) {
+            parts.push(label);
+        }
+    }
+    if parts.is_empty() {
+        "NONE".to_string()
+    } else {
+        parts.join("|")
+    }
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--input-api") {
+        return run_input_api_fixture();
+    }
+
     let event_order_fixture = args.iter().any(|arg| arg == "--event-order");
     let mut status_fixture = args.iter().find_map(|arg| StatusFixture::from_arg(arg));
     let textbox_initial_text = if args.iter().any(|arg| arg == "--textbox-unicode") {
