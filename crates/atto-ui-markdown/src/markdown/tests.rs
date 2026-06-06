@@ -27,6 +27,40 @@ fn parser_heading_markers_respect_show_markers_flag() {
 }
 
 #[test]
+fn parser_preserves_tight_list_item_text_and_nested_items() {
+    let blocks = super::parser::parse_markdown("- parent item\n  - nested child item\n", false);
+    assert_eq!(blocks.len(), 1);
+    let MdBlock::List { items, .. } = &blocks[0] else {
+        panic!("expected list block");
+    };
+    assert_eq!(items.len(), 1);
+    let MdBlock::Paragraph(spans) = &items[0].blocks[0] else {
+        panic!("expected parent paragraph");
+    };
+    assert_eq!(
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "parent item"
+    );
+
+    let MdBlock::List { items: nested, .. } = &items[0].blocks[1] else {
+        panic!("expected nested list");
+    };
+    let MdBlock::Paragraph(spans) = &nested[0].blocks[0] else {
+        panic!("expected nested paragraph");
+    };
+    assert_eq!(
+        spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<String>(),
+        "nested child item"
+    );
+}
+
+#[test]
 fn layout_clamps_code_block_height_and_optionally_renders_fences() {
     let md = "```txt\nline1\nline2\nline3\n```\n";
 

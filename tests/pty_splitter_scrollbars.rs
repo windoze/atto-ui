@@ -1,6 +1,29 @@
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use atto_ui_test_host::PtyTestHost;
+
+fn wait_for_cell(
+    host: &PtyTestHost,
+    x: u16,
+    y: u16,
+    expected: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let actual = host.cell_contents(x, y)?;
+        if actual == expected {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for cell ({x},{y}) to be {expected:?}; last value was {actual:?}"
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
 
 #[test]
 fn pty_splitter_child_scrollbars_mount_on_split_borders() -> anyhow::Result<()> {
@@ -24,6 +47,8 @@ fn pty_splitter_child_scrollbars_mount_on_split_borders() -> anyhow::Result<()> 
     let right_border_x = inner_x + inner_w - 1;
     let bottom_y = inner_y + inner_h - 1;
     let v_arrow_down_y = inner_y + inner_h - 2;
+
+    wait_for_cell(&host, right_border_x, bottom_y, "░", Duration::from_secs(5))?;
 
     // Left pane vertical scrollbar is hosted on the split divider column.
     assert_eq!(host.cell_contents(divider_x, inner_y)?, "▲");

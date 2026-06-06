@@ -295,4 +295,28 @@ mod tests {
         assert_eq!(binding.get(), vec![1, 2, 3]);
         assert!(binding.is_dirty(), "changed update should mark dirty");
     }
+
+    #[test]
+    fn property_dirty_observer_sees_binding_updates() {
+        let prop = Property::new(0usize);
+        let binding = prop.binding();
+        let mut observer = prop.dirty_observer();
+
+        assert!(!prop.check_dirty(&mut observer));
+        binding.set(1);
+        assert!(prop.check_dirty(&mut observer));
+        assert!(!prop.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn binding_dirty_observer_sees_property_updates() {
+        let prop = Property::new("before".to_string());
+        let binding = prop.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(!binding.check_dirty(&mut observer));
+        prop.set("after".to_string());
+        assert!(binding.check_dirty(&mut observer));
+        assert_eq!(binding.get(), "after");
+    }
 }

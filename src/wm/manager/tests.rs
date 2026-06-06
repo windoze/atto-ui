@@ -5,7 +5,7 @@ use crate::composable::{
 };
 use crate::drawing::draw_shadow;
 use crate::theme::Theme;
-use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
+use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode, WindowState};
 use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
@@ -445,6 +445,96 @@ fn modal_window_blocks_focus_changes() {
     assert_eq!(wm.focused(), Some(modal_id));
     wm.focus_next();
     assert_eq!(wm.focused(), Some(modal_id));
+}
+
+#[test]
+fn normal_window_maximize_and_restore_preserves_rect() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let original = Rect::new(4, 3, 24, 8);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(WindowKind::Normal, "Main", original, Box::new(DummyView)),
+        bounds,
+    );
+
+    wm.toggle_maximize_focused(bounds);
+    let window = wm.window(id).expect("window");
+    assert_eq!(window.state.get(), WindowState::Maximized);
+    assert_eq!(window.rect.get(), bounds);
+
+    wm.toggle_maximize_focused(bounds);
+    let window = wm.window(id).expect("window");
+    assert_eq!(window.state.get(), WindowState::Normal);
+    assert_eq!(window.rect.get(), original);
+}
+
+#[test]
+fn normal_window_minimize_updates_focus_and_restore_refocuses() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let first = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "First",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let second = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Second",
+            Rect::new(4, 4, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    assert_eq!(wm.focused(), Some(second));
+    wm.minimize_focused();
+    assert_eq!(
+        wm.window(second).expect("second").state.get(),
+        WindowState::Minimized
+    );
+    assert_eq!(wm.focused(), Some(first));
+
+    assert!(wm.restore_window(second));
+    assert_eq!(
+        wm.window(second).expect("second").state.get(),
+        WindowState::Normal
+    );
+    assert_eq!(wm.focused(), Some(second));
+}
+
+#[test]
+fn tooltip_windows_do_not_steal_focus_or_accept_focus() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let normal = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Normal",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let tooltip = wm.add_window(
+        Window::new(
+            WindowKind::Tooltip,
+            "Tip",
+            Rect::new(6, 3, 18, 4),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    assert_eq!(wm.focused(), Some(normal));
+    assert_eq!(wm.windows().last().map(|w| w.id), Some(tooltip));
+
+    wm.focus(tooltip);
+    assert_eq!(wm.focused(), Some(normal));
 }
 
 #[test]

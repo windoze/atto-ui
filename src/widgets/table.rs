@@ -611,6 +611,9 @@ fn styled_cell(text: &str, base_style: Style, link_overlay: Option<Style>) -> Ce
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -672,5 +675,55 @@ mod tests {
         assert!(screen.contains("row-03"), "screen was:\n{screen}");
         assert!(screen.contains("row-06"), "screen was:\n{screen}");
         assert!(!screen.contains("row-07"), "screen was:\n{screen}");
+    }
+
+    #[test]
+    fn keyboard_wraps_and_mouse_selection_updates_binding() {
+        let rows: Vec<Vec<String>> = (0..5)
+            .map(|idx| vec![format!("row-{idx}"), format!("value-{idx}")])
+            .collect();
+        let selection = Binding::new(0usize);
+        let mut table = TableView::new(
+            "Rows",
+            Binding::new(vec!["name".to_string(), "value".to_string()]),
+            Binding::new(rows),
+            selection.clone(),
+        )
+        .height(6u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(32, 9)).expect("terminal");
+        let area = Rect::new(1, 1, 30, 6);
+        terminal
+            .draw(|f| table.draw(f, area, component_context(&theme)))
+            .expect("draw");
+
+        let up = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(
+            table.handle_event(&up, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 4);
+
+        let down = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            table.handle_event(&down, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 0);
+
+        terminal
+            .draw(|f| table.draw(f, area, component_context(&theme)))
+            .expect("redraw");
+        let click_row_two = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 2,
+            row: area.y + 4,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            table.handle_event(&click_row_two, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 2);
     }
 }

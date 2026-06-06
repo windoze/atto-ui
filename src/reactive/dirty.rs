@@ -147,4 +147,21 @@ mod tests {
             "observer checks should not clear global dirty state"
         );
     }
+
+    #[test]
+    fn dirty_flag_multiple_observers_advance_independently() {
+        let flag = DirtyFlag::new();
+        let mut first = flag.observer();
+        let mut second = flag.observer();
+
+        flag.mark_dirty();
+        assert!(flag.check(&mut first));
+        assert!(!flag.check(&mut first));
+        assert!(flag.check(&mut second));
+        assert!(!flag.check(&mut second));
+
+        flag.mark_dirty();
+        assert!(flag.check(&mut second));
+        assert!(flag.check(&mut first));
+    }
 }

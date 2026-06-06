@@ -309,3 +309,84 @@ fn mouse_coords_local_to_area(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyModifiers, MouseEvent};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    #[test]
+    fn keyboard_mouse_and_disabled_states_update_value_safely() {
+        let value = Binding::new(5.0);
+        let mut slider = Slider::new(0.0, 10.0, value.clone()).step(2.0);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(24, 4)).expect("terminal");
+        let area = Rect::new(2, 1, 11, 1);
+        terminal
+            .draw(|f| slider.draw(f, area, context(&theme)))
+            .expect("draw");
+
+        let right = Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(
+            slider.handle_event(&right, context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(value.get(), 8.0);
+
+        let end = Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(
+            slider.handle_event(&end, context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(value.get(), 10.0);
+
+        let outside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x.saturating_sub(1),
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            slider.handle_event(&outside, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(value.get(), 10.0);
+
+        let inside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 5,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            slider.handle_event(&inside, context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(value.get(), 6.0);
+
+        let mut disabled = slider.clone().enabled(false);
+        assert_eq!(
+            disabled.handle_event(&right, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(value.get(), 6.0);
+    }
+}

@@ -176,3 +176,52 @@ impl Layout for ProgressBar {
 }
 
 crate::impl_component_default_traits!(ProgressBar => Scrollable, FocusNav, DynamicTree, EventHandling);
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: false,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for x in 0..width {
+            out.push_str(buf[(x, 0)].symbol());
+        }
+        out
+    }
+
+    #[test]
+    fn draw_clamps_range_and_centers_text() {
+        let mut progress = ProgressBar::new(10.0, 0.0, Binding::new(15.0))
+            .fill_char('#')
+            .empty_char('.')
+            .text("Done");
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(12, 1)).expect("terminal");
+
+        terminal
+            .draw(|f| progress.draw(f, Rect::new(0, 0, 12, 1), context(&theme)))
+            .expect("draw");
+
+        let screen = screen_contents(&terminal, 12);
+        assert_eq!(screen, "####Done####");
+    }
+}

@@ -48,8 +48,32 @@ CODE-LINE-09
 | ROW-09 | TABLE-HSCROLL-BEGIN 0123456789 0123456789 0123456789 0123456789 TABLE-HSCROLL-END |
 "#;
 
-fn build_markdown_view() -> Box<dyn Component> {
-    let viewer = MarkdownViewer::new(MARKDOWN)
+const BLOCK_MARKDOWN: &str = r#"
+# T19 Heading
+
+Intro paragraph with **strong text** and *emphasis*.
+
+- parent item
+  - nested child item
+  - nested child two
+
+> quoted line
+> continued quote
+
+```rust
+fn main() {
+    println!("t19");
+}
+```
+
+| Feature | Status |
+| --- | --- |
+| heading | ok |
+| table | ok |
+"#;
+
+fn build_markdown_view(markdown: &'static str) -> Box<dyn Component> {
+    let viewer = MarkdownViewer::new(markdown)
         .wrap_width(32)
         .vertical_scrollbar(ScrollbarVisibility::Never)
         .code_block_max_height(6)
@@ -58,6 +82,14 @@ fn build_markdown_view() -> Box<dyn Component> {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let blocks_fixture = args.iter().any(|arg| arg == "--blocks");
+    let markdown = if blocks_fixture {
+        BLOCK_MARKDOWN
+    } else {
+        MARKDOWN
+    };
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -87,6 +119,7 @@ fn main() -> Result<()> {
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
 
+    let window_height = if blocks_fixture { 24 } else { 18 };
     desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -95,9 +128,9 @@ fn main() -> Result<()> {
                 x: work.x.saturating_add(2),
                 y: work.y.saturating_add(2),
                 width: 70.min(work.width.saturating_sub(2)).max(30),
-                height: 18.min(work.height.saturating_sub(2)).max(10),
+                height: window_height.min(work.height.saturating_sub(2)).max(10),
             },
-            build_markdown_view(),
+            build_markdown_view(markdown),
         ),
         screen,
     );

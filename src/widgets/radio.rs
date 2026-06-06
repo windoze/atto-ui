@@ -13,6 +13,8 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
+use super::util::mouse_coords_local_to_area;
+
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct RadioGroup {
     label: Binding<String>,
@@ -190,7 +192,7 @@ impl FocusNav for RadioGroup {
 }
 
 impl EventHandling for RadioGroup {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -211,12 +213,16 @@ impl EventHandling for RadioGroup {
                 let Some(area) = self.last_area else {
                     return EventResult::ignored();
                 };
+                let Some((_local_x, local_y)) =
+                    mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+                else {
+                    return EventResult::ignored();
+                };
 
-                let options_y = area.y.saturating_add(1);
-                if m.row < options_y || m.row >= options_y.saturating_add(options.len() as u16) {
+                if local_y == 0 || local_y > options.len() as u16 {
                     return EventResult::ignored();
                 }
-                let idx = m.row.saturating_sub(options_y) as usize;
+                let idx = local_y.saturating_sub(1) as usize;
                 if idx < options.len() {
                     selected = idx;
                     self.binding.set(selected);
@@ -252,7 +258,28 @@ crate::impl_component_default_traits!(RadioGroup => Scrollable, DynamicTree);
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
     use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
 
     #[test]
     fn default_height_fits_all_options() {
@@ -287,5 +314,55 @@ mod tests {
         )
         .height(1u16);
         assert_eq!(radio.desired_height(), Some(2));
+    }
+
+    #[test]
+    fn keyboard_wraps_and_mouse_hit_requires_area_contains() {
+        let selected = Binding::new(0usize);
+        let mut radio = RadioGroup::new(
+            "Mode",
+            vec!["Normal".into(), "Insert".into(), "Visual".into()],
+            selected.clone(),
+        );
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(24, 8)).expect("terminal");
+        let area = Rect::new(2, 1, 16, 4);
+
+        terminal
+            .draw(|f| radio.draw(f, area, context(&theme)))
+            .expect("draw");
+
+        assert_eq!(
+            radio.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+                context(&theme)
+            ),
+            EventResult::changed()
+        );
+        assert_eq!(selected.get(), 2);
+
+        let outside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x.saturating_sub(1),
+            row: area.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            radio.handle_event(&outside, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(selected.get(), 2);
+
+        let inside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 1,
+            row: area.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            radio.handle_event(&inside, context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selected.get(), 1);
     }
 }

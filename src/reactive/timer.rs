@@ -291,6 +291,42 @@ mod tests {
     }
 
     #[test]
+    fn timer_wraps_across_wheel_slots() {
+        let mut wheel = TimerWheel::with_slots(2);
+        let fired = Arc::new(AtomicUsize::new(0));
+        let fired_clone = fired.clone();
+
+        wheel.register(5, move || {
+            fired_clone.fetch_add(1, Ordering::SeqCst);
+            false
+        });
+
+        for _ in 0..4 {
+            wheel.tick();
+        }
+        assert_eq!(fired.load(Ordering::SeqCst), 0);
+
+        wheel.tick();
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn timer_zero_interval_fires_on_next_tick() {
+        let mut wheel = TimerWheel::with_slots(4);
+        let fired = Arc::new(AtomicUsize::new(0));
+        let fired_clone = fired.clone();
+
+        wheel.register(0, move || {
+            fired_clone.fetch_add(1, Ordering::SeqCst);
+            false
+        });
+
+        assert_eq!(fired.load(Ordering::SeqCst), 0);
+        wheel.tick();
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn duration_to_ticks_rounds_up() {
         let tick_rate = 16_000_000;
         assert_eq!(ticks_for_duration(Duration::from_millis(16), tick_rate), 1);

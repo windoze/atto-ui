@@ -278,7 +278,10 @@ impl ParserState {
                 }
             }
             Tag::BlockQuote(_) => self.stack.push(Container::BlockQuote(Vec::new())),
-            Tag::List(start) => self.stack.push(Container::List(ListState::new(start))),
+            Tag::List(start) => {
+                self.finish_block();
+                self.stack.push(Container::List(ListState::new(start)));
+            }
             Tag::Item => self
                 .stack
                 .push(Container::ListItem(ListItem { blocks: Vec::new() })),
@@ -358,6 +361,7 @@ impl ParserState {
                 }
             }
             TagEnd::Item => {
+                self.finish_block();
                 if let Some(Container::ListItem(item)) = self.stack.pop() {
                     if let Some(Container::List(list)) = self.stack.last_mut() {
                         list.items.push(item);
@@ -509,6 +513,15 @@ impl ParserState {
     }
 
     fn push_span(&mut self, span: InlineSpan) {
+        if self.current_block.is_none()
+            && self
+                .stack
+                .iter()
+                .rev()
+                .any(|container| matches!(container, Container::ListItem(_)))
+        {
+            self.start_block(CurrentBlockKind::Paragraph);
+        }
         if let Some(block) = &mut self.current_block {
             block.spans.push(span);
         }

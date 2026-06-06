@@ -25,8 +25,8 @@ use atto_ui::app::{
     StatusBar, Toast, ToastLevel,
 };
 use atto_ui::composable::{
-    Component, ComponentContext, EdgeInsets, EventResult, HStack, LayoutParams, Size, VStack,
-    WindowedText,
+    Component, ComponentContext, DynamicTree, EdgeInsets, EventHandling, EventResult, FocusNav,
+    Grid, HStack, Layout, LayoutParams, Scrollable, Size, VStack, WindowedText,
 };
 use atto_ui::drawing::{
     ImageData, ImageRenderOptions, detect_image_protocol_from_env, image_sequence_or_fallback,
@@ -34,7 +34,10 @@ use atto_ui::drawing::{
 };
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
-use atto_ui::widgets::{Button, Checkbox, Label, ListBox, RadioGroup, TableView, TextBox};
+use atto_ui::widgets::{
+    Button, Checkbox, Label, ListBox, ProgressBar, RadioGroup, Slider, Spinner, SpinnerIconStyle,
+    SpinnerLayout, TableView, TextBox,
+};
 use atto_ui::wm::{Window, WindowKind};
 
 #[derive(Clone, Debug)]
@@ -441,6 +444,343 @@ impl ::atto_ui::composable::EventHandling for WidgetsView {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum T19Focus {
+    Button,
+    Radio,
+    List,
+    Table,
+    Slider,
+    Grid,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct T19Layout {
+    status: Rect,
+    button: Rect,
+    disabled_button: Rect,
+    radio: Rect,
+    slider: Rect,
+    progress: Rect,
+    spinner: Rect,
+    list: Rect,
+    table: Rect,
+    grid: Rect,
+}
+
+struct T19WidgetsView {
+    button: Button,
+    disabled_button: Button,
+    radio: RadioGroup,
+    slider: Slider,
+    progress: ProgressBar,
+    spinner: Spinner,
+    list: ListBox,
+    table: TableView,
+    grid: Grid,
+    button_count: Property<usize>,
+    radio_selection: Property<usize>,
+    list_selection: Property<usize>,
+    table_selection: Property<usize>,
+    slider_value: Property<f64>,
+    focus: T19Focus,
+    layout: T19Layout,
+}
+
+impl T19WidgetsView {
+    fn new() -> Self {
+        let button_count = Property::new(0usize);
+        let radio_selection = Property::new(0usize);
+        let list_selection = Property::new(0usize);
+        let table_selection = Property::new(0usize);
+        let slider_value = Property::new(0.0f64);
+
+        let button_count_for_click = button_count.clone();
+        let button = Button::new("Fire").on_click(move || {
+            button_count_for_click.update(|count| *count += 1);
+        });
+        let disabled_button = Button::new("Disabled").enabled(false);
+        let radio = RadioGroup::new(
+            "Mode",
+            vec!["Alpha".into(), "Beta".into(), "Gamma".into()],
+            radio_selection.binding(),
+        );
+        let slider = Slider::new(0.0, 10.0, slider_value.binding()).step(1.0);
+        let progress = ProgressBar::new(0.0, 10.0, slider_value.binding())
+            .fill_char('#')
+            .empty_char('.')
+            .text("Progress");
+        let spinner = Spinner::new("Loading")
+            .icon_style(SpinnerIconStyle::Custom(vec![">".into()]))
+            .layout(SpinnerLayout::IconLeft)
+            .running(false);
+        let list = ListBox::new(
+            "List",
+            (0..20)
+                .map(|idx| format!("item-{idx:02}"))
+                .collect::<Vec<_>>(),
+            list_selection.binding(),
+        )
+        .height(7u16);
+        let table = TableView::new(
+            "Table",
+            vec!["Name".into(), "Value".into()],
+            (0..20)
+                .map(|idx| vec![format!("row-{idx:02}"), format!("value-{idx:02}")])
+                .collect::<Vec<_>>(),
+            table_selection.binding(),
+        )
+        .height(8u16);
+        let mut grid = Grid::new().columns(2usize).scrollable(true).row_gap(0u16);
+        for idx in 0..14 {
+            grid = grid.child_with_layout(
+                Label::new(format!("Grid-{idx:02}")),
+                LayoutParams {
+                    width: Size::Fixed(18),
+                    height: Size::Fixed(1),
+                    ..LayoutParams::default()
+                },
+            );
+        }
+
+        Self {
+            button,
+            disabled_button,
+            radio,
+            slider,
+            progress,
+            spinner,
+            list,
+            table,
+            grid,
+            button_count,
+            radio_selection,
+            list_selection,
+            table_selection,
+            slider_value,
+            focus: T19Focus::Button,
+            layout: T19Layout::default(),
+        }
+    }
+
+    fn compute_layout(area: Rect) -> T19Layout {
+        T19Layout {
+            status: Rect::new(area.x, area.y, area.width, 1),
+            button: Rect::new(area.x, area.y + 2, 14, 3),
+            disabled_button: Rect::new(area.x + 16, area.y + 2, 18, 3),
+            radio: Rect::new(area.x, area.y + 6, 20, 4),
+            slider: Rect::new(area.x + 24, area.y + 6, 20, 1),
+            progress: Rect::new(area.x + 24, area.y + 8, 20, 1),
+            spinner: Rect::new(area.x + 24, area.y + 10, 24, 1),
+            list: Rect::new(area.x, area.y + 11, 24, 7),
+            table: Rect::new(area.x + 26, area.y + 11, 42, 8),
+            grid: Rect::new(area.x, area.y + 20, 42, 6),
+        }
+    }
+
+    fn child_ctx<'a>(ctx: ComponentContext<'a>, focused: bool) -> ComponentContext<'a> {
+        ComponentContext {
+            is_focused: focused,
+            ..ctx
+        }
+    }
+
+    fn status_line(&self) -> String {
+        format!(
+            "T19 status button={} radio={} list={} table={} slider={:.0}",
+            self.button_count.get(),
+            self.radio_selection.get(),
+            self.list_selection.get(),
+            self.table_selection.get(),
+            self.slider_value.get()
+        )
+    }
+
+    fn contains(rect: Rect, x: u16, y: u16) -> bool {
+        rect.width > 0
+            && rect.height > 0
+            && x >= rect.x
+            && x < rect.x.saturating_add(rect.width)
+            && y >= rect.y
+            && y < rect.y.saturating_add(rect.height)
+    }
+
+    fn route_mouse(
+        &mut self,
+        event: &Event,
+        ctx: ComponentContext<'_>,
+        x: u16,
+        y: u16,
+    ) -> EventResult {
+        let layout = self.layout;
+        if Self::contains(layout.button, x, y) {
+            self.focus = T19Focus::Button;
+            return self
+                .button
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Button));
+        }
+        if Self::contains(layout.disabled_button, x, y) {
+            return self
+                .disabled_button
+                .handle_event(event, Self::child_ctx(ctx, false));
+        }
+        if Self::contains(layout.radio, x, y) {
+            self.focus = T19Focus::Radio;
+            return self
+                .radio
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Radio));
+        }
+        if Self::contains(layout.slider, x, y) {
+            self.focus = T19Focus::Slider;
+            return self
+                .slider
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Slider));
+        }
+        if Self::contains(layout.list, x, y) {
+            self.focus = T19Focus::List;
+            return self
+                .list
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::List));
+        }
+        if Self::contains(layout.table, x, y) {
+            self.focus = T19Focus::Table;
+            return self
+                .table
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Table));
+        }
+        if Self::contains(layout.grid, x, y) {
+            self.focus = T19Focus::Grid;
+            return self
+                .grid
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Grid));
+        }
+        EventResult::ignored()
+    }
+}
+
+impl Component for T19WidgetsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.layout = Self::compute_layout(area);
+        frame.render_widget(
+            Paragraph::new(self.status_line()).style(ctx.theme.widget.normal),
+            self.layout.status,
+        );
+        self.button.draw(
+            frame,
+            self.layout.button,
+            Self::child_ctx(ctx, self.focus == T19Focus::Button),
+        );
+        self.disabled_button.draw(
+            frame,
+            self.layout.disabled_button,
+            Self::child_ctx(ctx, false),
+        );
+        self.radio.draw(
+            frame,
+            self.layout.radio,
+            Self::child_ctx(ctx, self.focus == T19Focus::Radio),
+        );
+        self.slider.draw(
+            frame,
+            self.layout.slider,
+            Self::child_ctx(ctx, self.focus == T19Focus::Slider),
+        );
+        self.progress
+            .draw(frame, self.layout.progress, Self::child_ctx(ctx, false));
+        self.spinner
+            .draw(frame, self.layout.spinner, Self::child_ctx(ctx, false));
+        self.list.draw(
+            frame,
+            self.layout.list,
+            Self::child_ctx(ctx, self.focus == T19Focus::List),
+        );
+        self.table.draw(
+            frame,
+            self.layout.table,
+            Self::child_ctx(ctx, self.focus == T19Focus::Table),
+        );
+        self.grid.draw(
+            frame,
+            self.layout.grid,
+            Self::child_ctx(ctx, self.focus == T19Focus::Grid),
+        );
+    }
+}
+
+impl Layout for T19WidgetsView {
+    fn min_width(&self) -> u16 {
+        70
+    }
+
+    fn min_height(&self) -> u16 {
+        26
+    }
+}
+
+impl FocusNav for T19WidgetsView {}
+
+impl Scrollable for T19WidgetsView {}
+
+impl DynamicTree for T19WidgetsView {}
+
+impl EventHandling for T19WidgetsView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Event::Mouse(m) = event {
+            return self.route_mouse(event, ctx, m.column, m.row);
+        }
+
+        match self.focus {
+            T19Focus::Button => self
+                .button
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Button)),
+            T19Focus::Radio => self
+                .radio
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Radio)),
+            T19Focus::List => self
+                .list
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::List)),
+            T19Focus::Table => self
+                .table
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Table)),
+            T19Focus::Slider => self
+                .slider
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Slider)),
+            T19Focus::Grid => self
+                .grid
+                .handle_event(event, Self::child_ctx(ctx, self.focus == T19Focus::Grid)),
+        }
+    }
+}
+
+fn run_t19_widgets_fixture() -> Result<()> {
+    let mut host = AppHost::new(
+        CrosstermAppConfig::default()
+            .tick_rate(Duration::from_millis(20))
+            .cursor(CursorMode::Hide),
+        |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let rect = Rect {
+                x: 1,
+                y: 2,
+                width: screen.width.saturating_sub(2).min(96),
+                height: screen.height.saturating_sub(3).min(29),
+            };
+            let id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "T19 Widgets",
+                    rect,
+                    Box::new(T19WidgetsView::new()),
+                ),
+                screen,
+            );
+            desktop.wm.focus(id);
+            Ok(desktop)
+        },
+    )?;
+    host.run()
+}
+
 fn view_hierarchy_demo() -> Box<dyn Component> {
     let row = HStack::new()
         .spacing(2)
@@ -801,6 +1141,9 @@ fn main() -> Result<()> {
         .any(|arg| arg == "--notifications-windowing-multimodal")
     {
         return run_notifications_windowing_multimodal_fixture();
+    }
+    if args.iter().any(|arg| arg == "--core-widgets-t19") {
+        return run_t19_widgets_fixture();
     }
     if args.iter().any(|arg| arg == "--input-api") {
         return run_input_api_fixture();

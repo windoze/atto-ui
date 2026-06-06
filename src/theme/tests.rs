@@ -126,3 +126,71 @@ fn theme_named_style_can_be_set_programmatically() {
         Some(Color::Red)
     );
 }
+
+#[test]
+fn theme_config_reports_malformed_json_and_yaml_errors() {
+    let json_err = ThemeConfig::from_str("{", ThemeConfigFormat::Json)
+        .expect_err("malformed JSON should fail");
+    assert!(json_err.to_string().contains("parse theme JSON"));
+
+    let yaml_err = ThemeConfig::from_str("colors: [", ThemeConfigFormat::Yaml)
+        .expect_err("malformed YAML should fail");
+    assert!(yaml_err.to_string().contains("parse theme YAML"));
+}
+
+#[test]
+fn theme_config_from_bytes_infer_reports_both_format_failures() {
+    let err = ThemeConfig::from_bytes_infer(b"{ not yaml: [", None)
+        .expect_err("invalid inferred config should fail");
+    let message = err.to_string();
+    assert!(message.contains("failed to parse theme as JSON"));
+    assert!(message.contains("or YAML"));
+}
+
+#[test]
+fn theme_config_rejects_unknown_color_and_modifier_with_key_context() {
+    let yaml = r#"
+colors:
+  widget-token:
+    fg: ultraviolet
+"#;
+
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+    let mut theme = Theme::dark();
+    let err = theme
+        .apply_config_overlay(&cfg)
+        .expect_err("unknown color should fail first");
+    let message = err
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(message.contains("invalid fg color for key \"widget-token\""));
+    assert!(message.contains("unknown color"));
+
+    let yaml = r#"
+styles:
+  other-token: [sparkle]
+"#;
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+    let err = theme
+        .apply_config_overlay(&cfg)
+        .expect_err("unknown modifier should fail");
+    let message = err
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(message.contains("invalid modifiers for key \"other-token\""));
+    assert!(message.contains("unknown modifier"));
+}
+
+#[test]
+fn theme_border_glyphs_fall_back_when_named_tokens_missing() {
+    let mut theme = Theme::dark();
+    theme.glyphs.remove("top-left-corner");
+    theme.glyphs.remove("active-top-left-corner");
+
+    assert_eq!(theme.border_set(false).top_left, "┌");
+    assert_eq!(theme.border_set(true).top_left, "╔");
+}

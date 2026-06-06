@@ -17,8 +17,8 @@ use super::geom::{
 use super::{
     Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, DynamicTree,
     EdgeInsets, EventHandling, EventOutcome, EventResult, FocusNav, Grid, HStack, Layout,
-    LayoutParams, MouseCoordinateSpace, ScrollConfig, ScrollbarHost, ScrollbarVisibility, Size,
-    Splitter, SplitterOrientation, TabMode, VStack,
+    LayoutParams, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarHost,
+    ScrollbarVisibility, Size, Splitter, SplitterOrientation, TabMode, VStack,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1335,6 +1335,45 @@ fn grid_layout_at_min_height_keeps_all_rows_visible() {
     assert_eq!(children[0].bounds().height, 2);
     assert_eq!(children[1].bounds().y, 3);
     assert_eq!(children[1].bounds().height, 2);
+}
+
+#[test]
+fn grid_mouse_hit_routes_to_child_and_wheel_scrolls() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut grid = Grid::new().with_columns(1usize).with_scrollable(true);
+    for _ in 0..6 {
+        grid.add_child_with_layout(
+            Box::new(RecordingView::new(Arc::clone(&events)).with_outcome(EventOutcome::Ignored)),
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    draw_view(&mut grid, Rect::new(0, 0, 20, 3));
+    let click = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 1,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    let result = grid.handle_event(&click, test_context());
+    assert!(result.is_consumed());
+    assert_eq!(
+        events.lock().expect("events lock").as_slice(),
+        &[RecordedEvent::Mouse { column: 1, row: 0 }]
+    );
+
+    let wheel = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 1,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    let result = grid.handle_event(&wheel, test_context());
+    assert!(result.is_consumed());
+    assert!(grid.scroll_offset().1 > 0);
 }
 
 #[test]

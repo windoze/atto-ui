@@ -524,7 +524,7 @@
 - 确认 OSC8 输出与 Kitty/iTerm2/Sixel 图片序列构造均有安全 fallback：无能力或 Sixel 缺少预编码 payload 时返回 fallback 文本，OSC8/图片序列由 raw PTY 输出测试覆盖。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui windowed_text -- --nocapture`；`cargo test --test pty_notifications_windowing_multimodal -- --nocapture`；`cargo test --workspace --all-targets`。
 
-### [ ] T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）
+### [DONE] T19 — A.2 P1/P2 测试补齐 + 一致性收尾（含 L2）
 **文件**：`tests/`、各 crate tests、`src/widgets/button.rs`
 **步骤**：
 1. widget 状态矩阵（focus/disabled/键盘激活/鼠标命中/min_size）；ListBox/TableView 选择环绕/大数据；Grid/Splitter 权重/最小尺寸/拖动/挂载滚动条；markdown 标题/列表/引用/代码/表格/嵌套 + 内嵌滚动条。
@@ -532,6 +532,13 @@
 3. L2：`widgets/button.rs` 保存 `last_area` + `Down(Left)` 前 contains 命中判断。
 **测试**：上述 PTY/单测。
 **验收**：每个公开控件 ≥1 PTY 行为测试 + ≥1 属性/事件单测；clippy 清零；`cargo llvm-cov` 核心 crate 行覆盖 ≥70%。
+**完成记录（2026-06-07）**：
+- 补齐 core widgets 行为覆盖：新增 `snapshot_app --core-widgets-t19` fixture 与 `tests/pty_core_widgets_t19.rs`，从真实 PTY 覆盖 Button、disabled Button、RadioGroup、Slider/ProgressBar、Spinner、ListBox、TableView、Grid 的键盘/鼠标/状态更新路径；既有 PTY 继续覆盖 Checkbox、TextBox、TextArea、Disclosure、TypeAhead、TabView、StyledLabel、Splitter、WindowedText 等公开控件。
+- 补齐属性/事件单测：Button disabled、RadioGroup 键盘环绕/鼠标命中、ListBox/TableView 选择环绕与鼠标选择、Slider 键盘/鼠标/disabled、ProgressBar clamp/text、Spinner layout/running、Border 属性/鼠标转发/边框滚动条、Grid 鼠标命中与滚动、theme 错误处理/回退、Property/Binding dirty observer、DirtyFlag 多 observer、TimerWheel wrap/zero interval、WindowManager 最大化还原/最小化恢复/tooltip 聚焦语义。
+- 完成 L2 一致性收尾：确认 `Button` 已保存 `last_area` 并在 `Down(Left)` 前执行 contains 命中判断；补充 disabled 状态回归。修复同类命中问题：`RadioGroup` 鼠标选择现在先按组件区域做坐标命中，避免同一行区域外点击误选。
+- 修复 Markdown 列表缺口：tight list item 中没有显式 Paragraph 事件时，parser 会自动创建段落并在嵌套 list 前/Item 结束时收束当前 block；新增 parser 单测与 `pty_markdown_viewer_blocks` 覆盖 heading/list/nested list/quote/code/table。
+- 加固覆盖率插桩下的 PTY 稳定性：`pty_splitter_scrollbars` 在断言边框滚动条 corner cell 前等待目标 cell 稳定，避免覆盖率构建下偶发读取到尚未完整刷新的屏幕。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui`；`cargo test -p atto-ui-markdown`；`cargo test --test pty_splitter_scrollbars -- --nocapture`；`cargo test --workspace --all-targets`；安装 `cargo-llvm-cov v0.8.7` 后执行 `cargo llvm-cov -p atto-ui --summary-only --ignore-filename-regex '(^|/)(demos|src/bin)/'`，核心源码行覆盖率 70.74%。
 
 ### [ ] R19 — 审阅 T19
 - 确认覆盖率达标（`cargo llvm-cov` 报告）。

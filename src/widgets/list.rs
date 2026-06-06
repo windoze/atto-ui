@@ -500,6 +500,9 @@ fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollConta
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -553,5 +556,47 @@ mod tests {
         assert!(screen.contains("row-05"), "screen was:\n{screen}");
         assert!(screen.contains("row-09"), "screen was:\n{screen}");
         assert!(!screen.contains("row-10"), "screen was:\n{screen}");
+    }
+
+    #[test]
+    fn keyboard_wraps_and_mouse_selection_updates_binding() {
+        let items: Vec<String> = (0..5).map(|idx| format!("row-{idx}")).collect();
+        let selection = Binding::new(0usize);
+        let mut list = ListBox::new("Rows", Binding::new(items), selection.clone()).height(5u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).expect("terminal");
+        let area = Rect::new(2, 1, 16, 5);
+        terminal
+            .draw(|f| list.draw(f, area, component_context(&theme)))
+            .expect("draw");
+
+        let up = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(
+            list.handle_event(&up, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 4);
+
+        let down = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(
+            list.handle_event(&down, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 0);
+
+        terminal
+            .draw(|f| list.draw(f, area, component_context(&theme)))
+            .expect("redraw");
+        let click_row_one = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 2,
+            row: area.y + 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            list.handle_event(&click_row_one, component_context(&theme)),
+            EventResult::changed()
+        );
+        assert_eq!(selection.get(), 1);
     }
 }

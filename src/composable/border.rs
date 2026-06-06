@@ -583,3 +583,223 @@ impl ::atto_ui::composable::EventHandling for Border {
         self.inner.handle_event(event, inner_ctx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{
+        DynamicTree, EventHandling, FocusNav, Layout, MouseCoordinateSpace, Scrollable, TabMode,
+    };
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct RecordingChild {
+        draw_area: Arc<Mutex<Option<Rect>>>,
+        mouse_events: Arc<Mutex<Vec<(u16, u16)>>>,
+        scroll: Arc<Mutex<(u16, u16)>>,
+        viewport: Arc<Mutex<(u16, u16)>>,
+        scrollable: bool,
+    }
+
+    impl RecordingChild {
+        fn new(scrollable: bool) -> Self {
+            Self {
+                draw_area: Arc::new(Mutex::new(None)),
+                mouse_events: Arc::new(Mutex::new(Vec::new())),
+                scroll: Arc::new(Mutex::new((0, 0))),
+                viewport: Arc::new(Mutex::new((0, 0))),
+                scrollable,
+            }
+        }
+    }
+
+    impl Component for RecordingChild {
+        fn draw(&mut self, _frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+            *self.draw_area.lock().expect("draw lock") = Some(area);
+            *self.viewport.lock().expect("viewport lock") = (area.width, area.height);
+        }
+    }
+
+    impl Layout for RecordingChild {
+        fn min_width(&self) -> u16 {
+            4
+        }
+
+        fn min_height(&self) -> u16 {
+            2
+        }
+
+        fn desired_width(&self) -> Option<u16> {
+            Some(6)
+        }
+
+        fn desired_height(&self) -> Option<u16> {
+            Some(3)
+        }
+    }
+
+    impl Scrollable for RecordingChild {
+        fn is_scrollable(&self) -> bool {
+            self.scrollable
+        }
+
+        fn content_size(&self) -> (u16, u16) {
+            (20, 20)
+        }
+
+        fn viewport_size(&self) -> (u16, u16) {
+            *self.viewport.lock().expect("viewport lock")
+        }
+
+        fn scroll_config(&self) -> ScrollConfig {
+            ScrollConfig::default()
+        }
+
+        fn scroll_offset(&self) -> (u16, u16) {
+            *self.scroll.lock().expect("scroll lock")
+        }
+
+        fn set_scroll_offset(&mut self, x: u16, y: u16) {
+            *self.scroll.lock().expect("scroll lock") = (x, y);
+        }
+    }
+
+    impl FocusNav for RecordingChild {
+        fn is_focusable(&self) -> bool {
+            true
+        }
+    }
+
+    impl DynamicTree for RecordingChild {}
+
+    impl ::atto_ui::composable::EventHandling for RecordingChild {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            if let Event::Mouse(mouse) = event {
+                self.mouse_events
+                    .lock()
+                    .expect("events lock")
+                    .push((mouse.column, mouse.row));
+                return EventResult::consumed();
+            }
+            EventResult::ignored()
+        }
+    }
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    #[test]
+    fn border_property_layout_and_mouse_translation() {
+        let child = RecordingChild::new(false);
+        let draw_area = child.draw_area.clone();
+        let mouse_events = child.mouse_events.clone();
+        let mut border = Border::new(Box::new(child));
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
+        let area = Rect::new(2, 2, 10, 6);
+
+        assert_eq!(
+            border.get_property("border"),
+            Some(ComponentValue::Bool(true))
+        );
+        assert_eq!(border.min_width(), 6);
+        assert_eq!(border.min_height(), 4);
+        assert_eq!(border.desired_width(), Some(8));
+        assert_eq!(border.desired_height(), Some(5));
+
+        terminal
+            .draw(|f| border.draw(f, area, context(&theme)))
+            .expect("draw with border");
+        assert_eq!(
+            *draw_area.lock().expect("draw lock"),
+            Some(Rect::new(3, 3, 8, 4))
+        );
+
+        let border_click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            border.handle_event(&border_click, context(&theme)),
+            EventResult::ignored()
+        );
+
+        let inner_click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            border.handle_event(&inner_click, context(&theme)),
+            EventResult::consumed()
+        );
+        assert_eq!(
+            mouse_events.lock().expect("events lock").as_slice(),
+            &[(1, 1)]
+        );
+
+        border
+            .set_property("border", ComponentValue::Bool(false))
+            .expect("set border");
+        terminal
+            .draw(|f| border.draw(f, area, context(&theme)))
+            .expect("draw without border");
+        assert_eq!(*draw_area.lock().expect("draw lock"), Some(area));
+    }
+
+    #[test]
+    fn border_hosted_scrollbars_update_inner_scroll_offset() {
+        let child = RecordingChild::new(true);
+        let scroll = child.scroll.clone();
+        let mut border = Border::new(Box::new(child));
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
+        let area = Rect::new(2, 2, 8, 6);
+        terminal
+            .draw(|f| border.draw(f, area, context(&theme)))
+            .expect("draw");
+
+        let vertical_down = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + area.width - 1,
+            row: area.y + area.height - 2,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            border.handle_event(&vertical_down, context(&theme)),
+            EventResult::consumed()
+        );
+        assert_eq!(*scroll.lock().expect("scroll lock"), (0, 1));
+
+        let horizontal_right = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + area.width - 2,
+            row: area.y + area.height - 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(
+            border.handle_event(&horizontal_right, context(&theme)),
+            EventResult::consumed()
+        );
+        assert_eq!(*scroll.lock().expect("scroll lock"), (1, 1));
+    }
+}

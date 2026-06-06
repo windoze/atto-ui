@@ -204,4 +204,36 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
+
+    #[test]
+    fn disabled_button_ignores_keyboard_and_mouse() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_button = Arc::clone(&calls);
+        let mut button = Button::new("OK").enabled(false).on_click(move || {
+            calls_for_button.fetch_add(1, Ordering::SeqCst);
+        });
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
+        terminal
+            .draw(|f| button.draw(f, Rect::new(2, 2, 6, 3), context(&theme)))
+            .expect("draw");
+
+        let key = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            button.handle_event(&key, context(&theme)),
+            EventResult::ignored()
+        );
+
+        let mouse = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 3,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(
+            button.handle_event(&mouse, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 }

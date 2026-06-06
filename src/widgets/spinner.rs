@@ -551,3 +551,54 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     let b = b as f32;
     (a + (b - a) * t).round().clamp(0.0, 255.0) as u8
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: false,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for x in 0..width {
+            out.push_str(buf[(x, 0)].symbol());
+        }
+        out
+    }
+
+    #[test]
+    fn draw_respects_layout_spacing_and_running_binding() {
+        let mut spinner = Spinner::new("Run")
+            .icon_style(SpinnerIconStyle::Custom(vec![">".into()]))
+            .layout(SpinnerLayout::IconRight)
+            .spacing(2)
+            .running(false);
+        assert_eq!(spinner.desired_width(), Some(6));
+
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(8, 1)).expect("terminal");
+        terminal
+            .draw(|f| spinner.draw(f, Rect::new(0, 0, 8, 1), context(&theme)))
+            .expect("draw");
+
+        assert_eq!(screen_contents(&terminal, 6), "Run  >");
+        assert!(!spinner.state.read().running.get());
+    }
+}
