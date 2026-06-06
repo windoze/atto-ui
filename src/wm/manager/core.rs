@@ -18,18 +18,20 @@ impl WindowManager {
     }
 
     pub(super) fn window_index_of(&self, id: WindowId) -> Option<usize> {
-        let idx = *self.window_index.get(&id)?;
-        self.windows
-            .get(idx)
-            .filter(|window| window.id == id)
-            .map(|_| idx)
+        if let Some(idx) = self.window_index.get(&id).copied()
+            && self.windows.get(idx).is_some_and(|window| window.id == id)
+        {
+            return Some(idx);
+        }
+
+        self.windows.iter().position(|window| window.id == id)
     }
 
     pub fn windows(&self) -> &[Window] {
         &self.windows
     }
 
-    pub fn windows_mut(&mut self) -> &mut [Window] {
+    pub(crate) fn windows_mut(&mut self) -> &mut [Window] {
         &mut self.windows
     }
 

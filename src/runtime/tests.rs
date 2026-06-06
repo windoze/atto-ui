@@ -399,6 +399,141 @@ fn component_tree_incremental_view_index_tracks_shifted_paths_within_batch() {
 }
 
 #[test]
+fn component_tree_incremental_visibility_bind_event_matches_rebuild_shape() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+    let root = ComponentSpec::new("Visibility")
+        .with_id("vis")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("VStack")
+                .with_id("inner")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Button")
+                        .with_id("leaf")
+                        .with_prop("label", ComponentValue::String("Go".into())),
+                )),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
+
+    assert_eq!(child_tags(tree.view()), vec![Some("leaf")]);
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::BindEvent {
+            id: "leaf".into(),
+            event: "click".into(),
+            callback: cb,
+        }])
+        .expect("bind");
+
+    assert!(changed);
+    assert_eq!(child_tags(tree.view()), vec![Some("leaf")]);
+
+    let rebuilt = ComponentTree::new(tree.root_spec().clone(), callbacks).expect("rebuilt");
+    assert_eq!(child_tags(tree.view()), child_tags(rebuilt.view()));
+}
+
+#[test]
+fn component_tree_incremental_unknown_insert_rolls_back_root_and_view() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack").with_id("root");
+    let original = root.clone();
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let err = tree
+        .apply_ops_incremental(&[TreeOp::Insert {
+            parent_id: "root".into(),
+            index: 0,
+            child: ComponentSpecChild::new(ComponentSpec::new("MissingWidget").with_id("bad")),
+        }])
+        .expect_err("unknown component should fail");
+
+    assert_eq!(err, TreeError::UnknownComponent("MissingWidget".into()));
+    assert_eq!(tree.root_spec(), &original);
+    assert!(tree.view().children().is_empty());
+}
+
+#[test]
+fn component_tree_incremental_batch_failure_rolls_back_partial_view_update() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack").with_id("root");
+    let original = root.clone();
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let err = tree
+        .apply_ops_incremental(&[
+            TreeOp::Insert {
+                parent_id: "root".into(),
+                index: 0,
+                child: ComponentSpecChild::new(
+                    ComponentSpec::new("Label")
+                        .with_id("ok")
+                        .with_prop("text", ComponentValue::String("OK".into())),
+                ),
+            },
+            TreeOp::Insert {
+                parent_id: "root".into(),
+                index: 1,
+                child: ComponentSpecChild::new(ComponentSpec::new("MissingWidget").with_id("bad")),
+            },
+        ])
+        .expect_err("second insert should fail");
+
+    assert_eq!(err, TreeError::UnknownComponent("MissingWidget".into()));
+    assert_eq!(tree.root_spec(), &original);
+    assert!(tree.view().children().is_empty());
+}
+
+#[test]
+fn component_tree_incremental_invalid_set_prop_rolls_back_root_and_view() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("title")
+                .with_prop("text", ComponentValue::String("A".into())),
+        ));
+    let original = root.clone();
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let err = tree
+        .apply_ops_incremental(&[TreeOp::SetProp {
+            id: "title".into(),
+            name: "text".into(),
+            value: ComponentValue::Bool(true),
+        }])
+        .expect_err("invalid property value should fail");
+
+    assert!(matches!(err, TreeError::InvalidProperty { .. }));
+    assert_eq!(tree.root_spec(), &original);
+    let children = tree.view().children();
+    assert_eq!(
+        children[0].view.get_property("text"),
+        Some(ComponentValue::String("A".into()))
+    );
+}
+
+#[test]
+fn component_tree_apply_ops_and_rebuild_failure_preserves_root_and_view() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack").with_id("root");
+    let original = root.clone();
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let err = tree
+        .apply_ops_and_rebuild(&[TreeOp::Insert {
+            parent_id: "root".into(),
+            index: 0,
+            child: ComponentSpecChild::new(ComponentSpec::new("MissingWidget").with_id("bad")),
+        }])
+        .expect_err("unknown component should fail");
+
+    assert_eq!(err, TreeError::UnknownComponent("MissingWidget".into()));
+    assert_eq!(tree.root_spec(), &original);
+    assert!(tree.view().children().is_empty());
+}
+
+#[test]
 fn component_tree_incremental_move_missing_parent_preserves_root_and_view() {
     let callbacks = CallbackRegistry::new();
     let root = ComponentSpec::new("VStack")

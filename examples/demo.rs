@@ -2359,7 +2359,7 @@ fn open_tooltip(
 
     let work = Desktop::layout(screen).work_area;
     let (x, y) = if let Some(focused) = desktop.wm.focused() {
-        if let Some(w) = desktop.wm.windows().iter().find(|w| w.id == focused) {
+        if let Some(w) = desktop.wm.windows().iter().find(|w| w.id() == focused) {
             let rect = w.rect.get();
             (rect.x.saturating_add(2), rect.y.saturating_add(2))
         } else {

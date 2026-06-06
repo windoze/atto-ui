@@ -665,7 +665,7 @@ fn active_editor_commands(
     // Finally, fall back to the topmost editor window in z-order.
     let guard = state.lock();
     for w in desktop.wm.windows().iter().rev() {
-        if let Some(cmds) = guard.editor_windows.get(&w.id) {
+        if let Some(cmds) = guard.editor_windows.get(&w.id()) {
             return Some(cmds.clone());
         }
     }

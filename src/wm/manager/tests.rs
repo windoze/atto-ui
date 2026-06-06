@@ -372,6 +372,39 @@ fn window_index_stays_synced_after_reorder_focus_and_close() {
 }
 
 #[test]
+fn window_index_lookup_recovers_from_internal_slice_reorder() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let id1 = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "One",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let id2 = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Two",
+            Rect::new(3, 3, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.windows_mut().swap(0, 1);
+
+    assert_eq!(wm.window(id1).expect("id1").title.get(), "One");
+    assert_eq!(wm.window(id2).expect("id2").title.get(), "Two");
+
+    wm.bring_to_front(id1);
+    assert_window_index_matches_order(&wm);
+    assert_eq!(wm.windows().last().map(|w| w.id), Some(id1));
+}
+
+#[test]
 fn modal_window_blocks_focus_changes() {
     let bounds = Rect {
         x: 0,

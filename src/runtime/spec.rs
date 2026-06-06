@@ -541,11 +541,13 @@ impl std::error::Error for TreeError {}
 
 pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, TreeError> {
     let mut structural = false;
-    let mut index = SpecPathIndex::new(root);
+    let mut next_root = root.clone();
+    let mut index = SpecPathIndex::new(&next_root);
     for op in ops {
-        structural |= apply_tree_op(root, op, &mut index)?;
+        structural |= apply_tree_op(&mut next_root, op, &mut index)?;
     }
 
+    *root = next_root;
     Ok(structural)
 }
 
@@ -874,6 +876,32 @@ mod tests {
             Some(&ComponentValue::String("updated".into()))
         );
         assert_eq!(tree.children[1].node.type_name, "Button");
+    }
+
+    #[test]
+    fn tree_ops_batch_failure_preserves_tree() {
+        let mut tree = sample_tree();
+        let original = tree.clone();
+
+        let err = apply_tree_ops(
+            &mut tree,
+            &[
+                TreeOp::Insert {
+                    parent_id: "root".into(),
+                    index: 0,
+                    child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("c")),
+                },
+                TreeOp::SetProp {
+                    id: "missing".into(),
+                    name: "text".into(),
+                    value: ComponentValue::String("updated".into()),
+                },
+            ],
+        )
+        .expect_err("missing target should fail");
+
+        assert_eq!(err, TreeError::NotFound("missing".into()));
+        assert_eq!(tree, original);
     }
 
     #[test]

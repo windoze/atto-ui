@@ -151,8 +151,9 @@ fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<Terminal
         .filter(|w| w.state.get() != WindowState::Minimized)
         .map(|w| {
             let title = w.title.get();
-            let is_focused = Some(w.id) == focused;
-            (title, w.id, is_focused)
+            let id = w.id();
+            let is_focused = Some(id) == focused;
+            (title, id, is_focused)
         })
         .collect();
     windows.sort_by(|a, b| a.0.cmp(&b.0));

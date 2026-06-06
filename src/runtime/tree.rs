@@ -73,23 +73,73 @@ impl ComponentTree {
         Ok(())
     }
 
+    fn replace_with_rebuilt_root(&mut self, root: ComponentSpec) -> Result<(), TreeError> {
+        let view = self.registry.build(&root)?;
+        self.root = root;
+        self.view = view;
+        Ok(())
+    }
+
+    fn restore_root_after_incremental_error(&mut self, root: ComponentSpec) {
+        match self.registry.build(&root) {
+            Ok(view) => {
+                self.root = root;
+                self.view = view;
+            }
+            Err(err) => {
+                debug_assert!(false, "failed to rebuild previously valid root: {err}");
+                self.root = root;
+            }
+        }
+    }
+
+    fn rebuild_next_or_restore(
+        &mut self,
+        next_root: ComponentSpec,
+        original_root: &ComponentSpec,
+    ) -> Result<bool, TreeError> {
+        match self.replace_with_rebuilt_root(next_root) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                self.restore_root_after_incremental_error(original_root.clone());
+                Err(err)
+            }
+        }
+    }
+
     pub fn apply_ops_and_rebuild(&mut self, ops: &[TreeOp]) -> Result<(), TreeError> {
-        super::apply_tree_ops(&mut self.root, ops)?;
-        self.rebuild()
+        let mut next_root = self.root.clone();
+        super::apply_tree_ops(&mut next_root, ops)?;
+        self.replace_with_rebuilt_root(next_root)
     }
 
     pub fn apply_ops_incremental(&mut self, ops: &[TreeOp]) -> Result<bool, TreeError> {
+        if ops.is_empty() {
+            return Ok(false);
+        }
+
         let has_set_tree = ops.iter().any(|op| matches!(op, TreeOp::SetTree(_)));
+        let original_root = self.root.clone();
         let mut root_after_ops = Vec::with_capacity(ops.len());
-        let mut next_root = self.root.clone();
+        let mut next_root = original_root.clone();
         for op in ops {
             super::apply_tree_ops(&mut next_root, std::slice::from_ref(op))?;
             root_after_ops.push(next_root.clone());
         }
-        self.root = next_root;
-        if has_set_tree {
-            self.rebuild()?;
-            return Ok(true);
+        if has_set_tree || !view_shape_matches_spec(&original_root, self.view.as_ref()) {
+            return self.rebuild_next_or_restore(next_root, &original_root);
+        }
+
+        macro_rules! try_view_update {
+            ($expr:expr) => {
+                match $expr {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.restore_root_after_incremental_error(original_root.clone());
+                        return Err(err);
+                    }
+                }
+            };
         }
 
         let mut structural = false;
@@ -99,62 +149,66 @@ impl ComponentTree {
                 TreeOp::SetTree(_) => {}
                 TreeOp::SetProp { id, name, value } => {
                     let Some(path) = view_index.path(id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
                     if path.is_empty() {
-                        let applied =
-                            apply_property_at_path(self.view.as_mut(), &path, id, name, value)?;
+                        let applied = try_view_update!(apply_property_at_path(
+                            self.view.as_mut(),
+                            &path,
+                            id,
+                            name,
+                            value,
+                        ));
                         match applied {
                             PropertyApply::Applied => {}
                             PropertyApply::UnsupportedProperty | PropertyApply::NotFound => {
-                                self.rebuild()?;
-                                return Ok(true);
+                                return self.rebuild_next_or_restore(next_root, &original_root);
                             }
                         }
                         continue;
                     }
 
-                    match apply_property_at_path(self.view.as_mut(), &path, id, name, value)? {
+                    match try_view_update!(apply_property_at_path(
+                        self.view.as_mut(),
+                        &path,
+                        id,
+                        name,
+                        value,
+                    )) {
                         PropertyApply::Applied => {}
                         PropertyApply::UnsupportedProperty => {
-                            if !replace_node_with_spec_at_path(
+                            if !try_view_update!(replace_node_with_spec_at_path(
                                 self.view.as_mut(),
                                 &path,
                                 id,
                                 root_after_op,
                                 &self.registry,
-                            )? {
-                                self.rebuild()?;
-                                return Ok(true);
+                            )) {
+                                return self.rebuild_next_or_restore(next_root, &original_root);
                             }
                             view_index.rebuild(self.view.as_ref());
                             structural = true;
                         }
                         PropertyApply::NotFound => {
-                            self.rebuild()?;
-                            return Ok(true);
+                            return self.rebuild_next_or_restore(next_root, &original_root);
                         }
                     }
                 }
                 TreeOp::BindEvent { id, .. } | TreeOp::ClearEvent { id, .. } => {
                     let Some(path) = view_index.path(id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
                     if path.is_empty() {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
-                    if !replace_node_with_spec_at_path(
+                    if !try_view_update!(replace_node_with_spec_at_path(
                         self.view.as_mut(),
                         &path,
                         id,
                         root_after_op,
                         &self.registry,
-                    )? {
-                        self.rebuild()?;
-                        return Ok(true);
+                    )) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
                     view_index.rebuild(self.view.as_ref());
                     structural = true;
@@ -165,27 +219,27 @@ impl ComponentTree {
                     child,
                 } => {
                     let Some(parent_path) = view_index.path(parent_id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
-                    if !insert_child_spec_at_path(
+                    if !try_view_update!(insert_child_spec_at_path(
                         self.view.as_mut(),
                         &parent_path,
                         parent_id,
                         *index,
                         child,
                         &self.registry,
-                    )? {
-                        self.rebuild()?;
-                        return Ok(true);
+                    )) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
                     view_index.rebuild(self.view.as_ref());
+                    if !view_shape_matches_spec(root_after_op, self.view.as_ref()) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
                     structural = true;
                 }
                 TreeOp::Remove { id } => {
                     let Some(path) = view_index.path(id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
                     if path.is_empty() {
                         return Err(TreeError::InvalidTreeOp(
@@ -193,32 +247,34 @@ impl ComponentTree {
                         ));
                     }
                     if !remove_node_at_path(self.view.as_mut(), &path, id) {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
                     view_index.rebuild(self.view.as_ref());
+                    if !view_shape_matches_spec(root_after_op, self.view.as_ref()) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
                     structural = true;
                 }
                 TreeOp::Replace { id, node } => {
                     let Some(path) = view_index.path(id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
                     if path.is_empty() {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
-                    if !replace_node_at_path_with_child_spec(
+                    if !try_view_update!(replace_node_at_path_with_child_spec(
                         self.view.as_mut(),
                         &path,
                         id,
                         node,
                         &self.registry,
-                    )? {
-                        self.rebuild()?;
-                        return Ok(true);
+                    )) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
                     view_index.rebuild(self.view.as_ref());
+                    if !view_shape_matches_spec(root_after_op, self.view.as_ref()) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
                     structural = true;
                 }
                 TreeOp::Move {
@@ -227,8 +283,7 @@ impl ComponentTree {
                     index,
                 } => {
                     let Some(path) = view_index.path(id).cloned() else {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     };
                     if path.is_empty() {
                         return Err(TreeError::InvalidTreeOp(
@@ -243,14 +298,17 @@ impl ComponentTree {
                         *index,
                         &mut view_index,
                     ) {
-                        self.rebuild()?;
-                        return Ok(true);
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
+                    if !view_shape_matches_spec(root_after_op, self.view.as_ref()) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
                     }
                     structural = true;
                 }
             }
         }
 
+        self.root = next_root;
         Ok(structural)
     }
 }
@@ -472,6 +530,24 @@ type ViewPath = Vec<usize>;
 
 struct ViewPathIndex {
     paths: HashMap<String, ViewPath>,
+}
+
+fn view_shape_matches_spec(spec: &ComponentSpec, view: &dyn Component) -> bool {
+    if spec.id.as_deref() != view.tag() {
+        return false;
+    }
+
+    let children = view.children();
+    if spec.children.len() != children.len() {
+        return false;
+    }
+
+    spec.children
+        .iter()
+        .zip(children.iter())
+        .all(|(child_spec, child_view)| {
+            view_shape_matches_spec(child_spec.node.as_ref(), child_view.view.as_ref())
+        })
 }
 
 impl ViewPathIndex {

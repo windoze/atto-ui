@@ -119,7 +119,7 @@ impl Default for WindowDecorations {
 }
 
 pub struct Window {
-    pub id: WindowId,
+    pub(crate) id: WindowId,
     pub tag: Option<String>,
     pub kind: WindowKind,
     pub title: Binding<String>,
@@ -137,6 +137,10 @@ pub struct Window {
 }
 
 impl Window {
+    pub fn id(&self) -> WindowId {
+        self.id
+    }
+
     pub fn new(
         kind: WindowKind,
         title: impl Into<Binding<String>>,

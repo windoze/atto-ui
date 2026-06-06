@@ -532,8 +532,16 @@
 - 新增 spec 与 ComponentTree 批内路径偏移回归测试，覆盖结构变更后继续操作原有 id 时索引同步正确。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R15 — 审阅 T15
+### [DONE] R15 — 审阅 T15
 确认索引与实际数据一致（增删窗口/节点时同步更新）、无悬挂索引、测试全绿。
+
+**完成记录（2026-06-06）**：
+- 审阅 `WindowManager` 的 `window_index`：确认 add/close/bring_to_front/focus 路径会同步重建索引；修复审阅发现的公开可变边界，`Window::id` 改为 crate 内可写并新增只读 `Window::id()`，`windows_mut()` 不再作为公开 API 暴露。
+- `window_index_of` 增加缓存下标校验失败后的线性回退，避免 crate 内部切片重排等异常路径让实际存在窗口不可达；新增 `window_index_lookup_recovers_from_internal_slice_reorder` 回归测试。
+- 审阅 runtime spec/live tree 索引：修复 `ViewPathIndex` 与 spec path 在 `Visibility`/透明 wrapper 下不同构时的增量污染问题；增量更新现在要求 live view 动态子树形状与 spec 一致，不一致时回退为最终 root 全量重建。
+- 修复 tree-op 原子性缺口：`apply_tree_ops` 批内失败不再留下部分 root；`ComponentTree::apply_ops_incremental` 和 `apply_ops_and_rebuild` 在 view build/property 失败时会恢复原 root/view，避免 root spec 与 live view 分裂。
+- 补充回归测试覆盖：透明 `Visibility` 下 BindEvent 与 full rebuild 形状一致、unknown component 增量插入回滚、批内部分 view 更新后失败回滚、invalid SetProp 回滚、`apply_ops_and_rebuild` 失败回滚、spec tree-op 批内失败保持原树。
+- 验证：`cargo fmt`；`cargo test window_index --lib`；`cargo test component_tree_incremental --lib`；`cargo test tree_ops_batch_failure_preserves_tree --lib`；`cargo test component_tree_apply_ops_and_rebuild_failure_preserves_root_and_view --lib`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ---
 

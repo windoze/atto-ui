@@ -40,7 +40,7 @@ fn find_window_rect(desktop: &Desktop, id: WindowId) -> Option<Rect> {
         .wm
         .windows()
         .iter()
-        .find(|w| w.id == id)
+        .find(|w| w.id() == id)
         .map(|w| w.rect.get())
 }
 
