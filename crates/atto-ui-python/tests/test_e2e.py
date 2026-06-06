@@ -111,8 +111,10 @@ class PythonHostE2ETest(unittest.TestCase):
         app = atto_ui.App(headless=True)
         events: List[Tuple[str, str, str]] = []
 
-        def on_click(event: atto_ui.Event, source: atto_ui.ComponentRef) -> None:
-            events.append((event.event, event.target_id, source.cid if source else ""))
+        def on_click(event: atto_ui.Event, source: Optional[atto_ui.ComponentRef]) -> None:
+            assert source is not None
+            assert event.target_id is not None
+            events.append((event.event, event.target_id, source.cid))
             source.window.elements["status"].set_text("Clicked")
 
         window = app.add_dynamic_window(
@@ -216,7 +218,8 @@ class PythonHostE2ETest(unittest.TestCase):
     def test_component_ref_callback_can_mutate_source_window(self) -> None:
         app = atto_ui.App(headless=True)
 
-        def on_click(_event: atto_ui.Event, source: atto_ui.ComponentRef) -> None:
+        def on_click(_event: atto_ui.Event, source: Optional[atto_ui.ComponentRef]) -> None:
+            assert source is not None
             source.set_label("Done")
             source.window.elements["message"].set_text("Callback OK")
 
@@ -283,7 +286,7 @@ class PythonHostE2ETest(unittest.TestCase):
         self.assertEqual(clicked, ["two", "one"])
 
     def test_core_component_helpers_build_all_builtin_widgets(self) -> None:
-        app = atto_ui.App(headless=True, cols=140, rows=60)
+        app = atto_ui.App(headless=True, cols=160, rows=90)
         root = atto_ui.VStack(
             cid="root",
             spacing=1,
@@ -302,6 +305,12 @@ class PythonHostE2ETest(unittest.TestCase):
                     children=[atto_ui.Text("G1", cid="grid_a"), atto_ui.Text("G2", cid="grid_b")],
                 ),
                 atto_ui.Border(atto_ui.Text("Inside", cid="border_text"), cid="border"),
+                atto_ui.HStack(
+                    cid="hstack",
+                    spacing=1,
+                    children=[atto_ui.Text("H1", cid="hstack_a"), atto_ui.Text("H2", cid="hstack_b")],
+                ),
+                atto_ui.Visibility(atto_ui.Text("Shown", cid="visible_text"), visible=True, cid="visibility"),
                 atto_ui.Divider(cid="divider"),
                 atto_ui.Spacer(cid="spacer"),
                 atto_ui.Splitter(
@@ -324,7 +333,7 @@ class PythonHostE2ETest(unittest.TestCase):
             ],
         )
 
-        app.add_dynamic_window("Widgets", root, rect=(2, 2, 110, 52))
+        app.add_dynamic_window("Widgets", root, rect=(2, 2, 130, 80))
         app.step()
         snapshot = app.snapshot()
 
@@ -338,6 +347,8 @@ class PythonHostE2ETest(unittest.TestCase):
             "table",
             "grid",
             "border",
+            "hstack",
+            "visibility",
             "divider",
             "spacer",
             "splitter",
@@ -352,6 +363,7 @@ class PythonHostE2ETest(unittest.TestCase):
 
         self.assertEqual(find_node(snapshot["tree"], "checkbox")["properties"]["checked"], True)
         self.assertEqual(find_node(snapshot["tree"], "progress")["text"], "50%")
+        self.assertEqual(find_node(snapshot["tree"], "visibility")["properties"]["visible"], True)
 
     def test_schema_driven_set_prop_validation(self) -> None:
         app = atto_ui.App(headless=True)
@@ -454,11 +466,15 @@ class PythonHostE2ETest(unittest.TestCase):
         self.assertTrue((package_dir / "_native.pyi").exists())
         self.assertTrue((package_dir / "py.typed").exists())
 
+        stub = (package_dir / "__init__.pyi").read_text()
+        self.assertIn("def __getattr__(self, name: str) -> Any", stub)
+        self.assertIn("def Visibility(", stub)
+
     def test_component_helpers_avoid_bare_dicts_for_interactive_app(self) -> None:
         app = atto_ui.App(headless=True)
         events: List[str] = []
 
-        def on_submit(event: atto_ui.Event, _source: atto_ui.ComponentRef) -> None:
+        def on_submit(event: atto_ui.Event, _source: Optional[atto_ui.ComponentRef]) -> None:
             events.append(event.target_id)
 
         window = app.add_dynamic_window(

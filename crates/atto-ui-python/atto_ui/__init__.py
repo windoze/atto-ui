@@ -1030,6 +1030,10 @@ def Border(child: Component, *, border: bool = True, cid: Optional[str] = None) 
     return Component("Border", cid=cid, props={"border": border}, children=[child])
 
 
+def Visibility(child: Component, *, visible: bool = True, cid: Optional[str] = None) -> Component:
+    return Component("Visibility", cid=cid, props={"visible": visible}, children=[child])
+
+
 def Divider(orientation: str = "horizontal", *, cid: Optional[str] = None) -> Component:
     return Component("Divider", cid=cid, props={"orientation": orientation})
 
@@ -1524,6 +1528,7 @@ __all__ = [
     "TextBox",
     "TypeAhead",
     "VStack",
+    "Visibility",
     "Window",
     "register_all_runtime_components",
 ]

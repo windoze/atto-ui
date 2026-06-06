@@ -484,10 +484,17 @@
 - Python e2e 从 8 个扩到 15 个，新增覆盖 core helper 全量构建、schema set_prop 校验、上层组件 schema 注册、上层 helper 构建、主题切换/主题文件加载、类型声明随包提供，以及无需裸 dict 的交互式高层 helper 应用。
 - 验证通过：`python3 -m py_compile atto_ui/__init__.py tests/test_e2e.py examples/minimal_app.py`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test --workspace --all-targets`。
 
-### [ ] R17 — 审阅 T17
+### [DONE] R17 — 审阅 T17
 - 确认构造助手覆盖全部内置组件、参数与 schema 一致。
 - 确认 `.pyi` 正确、补全可用。
 - 运行 Python e2e（≥15）。
+**完成记录（2026-06-07）**：
+- 已审阅 `crates/atto-ui-python/atto_ui/__init__.py`、`__init__.pyi`、`_native.pyi`、Python README/example、native binding 与 runtime schema 注册路径，确认 T17 高层 App/API、上层组件注册、主题 API 与 schema-driven `set_prop` 路径一致。
+- 修复审阅发现的覆盖缺口：已注册内置 `Visibility` 缺少 Python helper/stub/e2e 覆盖；现新增 `Visibility(...)` helper、stub 声明、`__all__` 导出、README 记录，并在 Python e2e 的全内置 helper 用例中覆盖 `HStack` 与 `Visibility`。
+- 修复 `.pyi` 补全缺口：`ComponentRef` stub 现在声明 `__getattr__` 动态 setter/getter，并补齐公开构造签名；示例和测试 callback source 类型改为 `Optional[ComponentRef]`。
+- 修正 README 高层 wrapper 示例，改用 `window.key("enter")`，避免“无需裸 dict”示例仍传裸事件 dict。
+- 完整验证中发现 `atto-ui-terminal` 两个 PTY 用例在 workspace 负载下等待 `READY` 偶发超时；已将该测试文件 PTY 用例串行化，并统一使用 5 秒等待预算，定向与完整复跑均通过。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -m py_compile atto_ui/__init__.py tests/test_e2e.py examples/minimal_app.py`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ### [ ] T18 — 通知队列 + 超大块 windowing + 多模态（C.4）
 **文件**：`src/app/`（toast）、`src/composable/`（windowing）、`src/drawing.rs`（图片/OSC8）

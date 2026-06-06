@@ -53,10 +53,10 @@ window = app.add_dynamic_window(
 )
 app.step()
 snapshot = app.snapshot()
-app.send_event(window, {"type": "key", "key": "enter"})
+window.key("enter")
 ```
 
-已覆盖的 core helper 包括：`Button`、`Text`、`Label`、`TextBox`、`TextArea`、`Checkbox`、`RadioGroup`、`Slider`、`Spinner`、`ProgressBar`、`ListBox`、`TableView`、`VStack`、`HStack`、`Grid`、`Border`、`Divider`、`Spacer`、`Splitter`、`TabView`、`StyledLabel`、`Disclosure`、`TypeAhead`、`CommandPalette`。
+已覆盖的 core helper 包括：`Button`、`Text`、`Label`、`TextBox`、`TextArea`、`Checkbox`、`RadioGroup`、`Slider`、`Spinner`、`ProgressBar`、`ListBox`、`TableView`、`VStack`、`HStack`、`Grid`、`Border`、`Visibility`、`Divider`、`Spacer`、`Splitter`、`TabView`、`StyledLabel`、`Disclosure`、`TypeAhead`、`CommandPalette`。
 
 附加组件可通过聚合入口注册并直接构造：`register_all_runtime_components()`、`MarkdownViewer`、`TerminalEmulator`、`FileTree`、`ChatMessageList`、`ChatInputPanel`。
 

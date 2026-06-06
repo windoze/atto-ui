@@ -2,33 +2,30 @@
 
 ## 范围
 
-- 本次调用只处理 `TODO.md` 中第一个标题未带 `[DONE]` 前缀的任务。
-- `TODO.md` 是任务顺序、依赖、验收和完成记录的唯一权威来源。
-- `PLAN.md` 只在阶段级计划、依赖或完成标准变化时更新。
+- 以 `TODO.md` 为唯一任务顺序来源。
+- 只完成第一个未在标题中标记 `[DONE]` 的任务，然后停止。
+- 若发现阻塞当前任务的缺陷、缺失能力或未排期失败测试，按要求在 `TODO.md` 中加入最小必要前置任务并提交后停止。
 
-## 执行步骤
+## 步骤
 
-1. 读取 `TODO.md`，按文件顺序识别第一个未完成任务。
-2. 检查最近提交信息；仅当最近提交明确提到与当前任务直接相关的未完成问题时，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
-3. 针对当前任务阅读相关代码、测试和文档，确认实现范围与验收要求。
-4. 如果发现阻塞当前任务的具体缺陷、缺失功能或规格不匹配，优先修复；若无法在本次任务中正确修复，则在 `TODO.md` 中插入最小必要前置任务并停止。
-5. 以最小正确改动实现当前任务，避免规避、夹具专用 hack 或削弱规格。
-6. 按要求运行格式化、lint 和相关/完整测试；如出现未被明确排期的失败测试或夹具，修复或在 `TODO.md` 中加入必要任务。
-7. 任务完成后，在 `TODO.md` 中给任务标题加 `[DONE]` 并更新完成记录。
-8. 如阶段计划未变化，不更新 `PLAN.md`。
-9. 提交本次相关变更，提交信息包含任务编号和清晰描述。
-10. 完成第一个未完成任务后停止，不继续处理后续任务。
+1. 读取 `TODO.md`，定位第一个未完成任务，并检查该任务的要求、依赖和验证标准。
+2. 检查最新提交信息，只判断其是否明确提到与当前任务直接相关的未完成事项。
+3. 针对当前任务阅读必要代码与测试，避免做无关历史问题扫查。
+4. 实现当前任务，优先做最小且完整的正确改动。
+5. 按任务要求运行验证；若没有更具体要求，则先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件。
+6. 若验证失败，修复当前任务范围内的问题；若失败属于未排期且阻塞完成的项目问题，则按政策更新 `TODO.md` 并停止。
+7. 完成后在 `TODO.md` 的任务标题前加 `[DONE]`，更新完成记录；仅在阶段计划确实变化时更新 `PLAN.md`。
+8. 检查 `git status`、`git diff` 和近期提交，确认只提交本次相关改动。
+9. 创建清晰提交，提交后停止，不继续处理下一个任务。
 
 ## 进度记录
 
-- 已创建本计划文件。
-- 已读取 `TODO.md`，首个未完成任务为 `T17 — Python 组件覆盖 + 上层注册 + 主题（B.2/B.3）`。
-- 已查看最近提交：`[R16] Review typeahead command palette`，未发现直接声明与 T17 相关的未完成前置问题。
-- T17 范围：补齐 Python 内置组件构造助手，暴露上层 runtime component 注册，支持主题设置/主题文件加载，补充 `.pyi` 类型声明和 schema 驱动 `set_prop` 校验，扩充 Python e2e 到至少 15 个，并验证 maturin 打包路径和示例。
-- 已审阅 `crates/atto-ui-python` 的 native 绑定、Python wrapper、e2e、README、示例，以及 core runtime/schema/theme 和上层组件注册入口。
-- 已实现 native `register_all_runtime_components`、`AppHost.set_theme()`、`AppHost.load_theme()`；Python 高层 `App` 暴露 `schemas()`、`set_theme()`、`load_theme()`。
-- 已补齐 core 和上层组件 Python helper、schema 驱动 `set_prop` 校验、tree-op `set_prop` 校验、`.pyi` 类型声明和 `py.typed`。
-- 已扩充 Python e2e 到 15 个用例，覆盖 T17 的组件构造、上层注册、主题、typing 和 schema 校验要求。
-- 验证通过：`python3 -m py_compile atto_ui/__init__.py tests/test_e2e.py examples/minimal_app.py`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test --workspace --all-targets`。最后一次 Python helper 微调后已复跑 `python3 -m py_compile ...` 与 `python -m unittest discover tests`。
-- 已将 `TODO.md` 中 T17 标题标记为 `[DONE]`，并写入完成记录与验证命令。
-- 下一步：检查 git status/diff/log，确认仅包含本任务相关改动后提交。
+- 已创建本计划文件，下一步读取 `TODO.md` 定位第一个未完成任务。
+- 已读取 `TODO.md`，第一个未完成任务是 `R17 — 审阅 T17`。
+- 本次执行范围是审阅 T17：检查 Python 构造助手覆盖、helper 参数与 runtime schema 一致性、`.pyi` 类型声明可用性，并运行 Python e2e 与要求的格式/ lint/ 测试验证。
+- 审阅发现并修复：Python helper/stub/e2e 缺少已注册内置 `Visibility`；e2e 未覆盖 `HStack`；stub 未声明 `ComponentRef.__getattr__` 动态 setter/getter；示例/测试中的 callback source 类型未体现 `None` 可能性；README 高层 wrapper 示例仍使用裸事件 dict。
+- 已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、Python `py_compile`、`cargo test -p atto-ui-python`、`maturin develop`、`python -m unittest discover tests`。
+- 完整 `cargo test --workspace --all-targets` 暴露 `atto-ui-terminal` 的两个 PTY 用例等待 `READY` 超时；该失败未在 TODO 中排期，需在本次 R17 验证中修复后再继续。
+- 已修复 terminal PTY 验证不稳定点：同文件用例串行化，公共 `PTY_WAIT` 提升到 5 秒；下一步复跑格式/lint、terminal PTY、Python e2e 和完整 workspace 测试。
+- 已完成验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；Python `py_compile`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture`；`cargo test --workspace --all-targets`。
+- 已将 `TODO.md` 中 `R17` 标记为 `[DONE]` 并写入完成记录。下一步检查 git 状态/diff/近期提交，确认提交范围后提交。

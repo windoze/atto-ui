@@ -1,7 +1,9 @@
+from typing import Optional
+
 import atto_ui
 
 
-def on_click(event: atto_ui.Event, source: atto_ui.ComponentRef):
+def on_click(event: atto_ui.Event, source: Optional[atto_ui.ComponentRef]):
     if source is None:
         return
     source.window.elements["message"].set_text("Button Clicked")

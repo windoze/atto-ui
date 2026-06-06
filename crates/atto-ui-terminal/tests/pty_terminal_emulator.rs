@@ -1,7 +1,18 @@
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::PtyTestHost;
+
+const PTY_WAIT: Duration = Duration::from_secs(5);
+
+static PTY_TERMINAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_terminal_pty() -> MutexGuard<'static, ()> {
+    PTY_TERMINAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
@@ -26,12 +37,13 @@ fn find_text_position(screen: &str, needle: &str) -> Option<(u16, u16)> {
 
 #[test]
 fn pty_terminal_scrollback_and_colors() {
+    let _guard = lock_terminal_pty();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
-    host.wait_for_text("READY", Duration::from_secs(2))
+    host.wait_for_text("READY", PTY_WAIT)
         .expect("terminal ready");
-    host.wait_for_text("RED", Duration::from_secs(2))
+    host.wait_for_text("RED", PTY_WAIT)
         .expect("color line visible");
 
     let screen = host.screen_contents().unwrap_or_default();
@@ -42,7 +54,7 @@ fn pty_terminal_scrollback_and_colors() {
     );
 
     host.send_ctrl('g').expect("release capture");
-    host.wait_for_text("[CAPTURE OFF]", Duration::from_secs(2))
+    host.wait_for_text("[CAPTURE OFF]", PTY_WAIT)
         .expect("capture off");
 
     assert_text_absent_for(&host, "SCROLL-00", Duration::from_millis(200));
@@ -53,28 +65,27 @@ fn pty_terminal_scrollback_and_colors() {
         host.wheel_up(wheel_x, wheel_y)
             .expect("wheel up scrollback");
     }
-    host.wait_for_text("SCROLL-00", Duration::from_secs(2))
+    host.wait_for_text("SCROLL-00", PTY_WAIT)
         .expect("scrollback visible");
 
     host.send_ctrl('q').expect("quit");
-    host.wait_for_exit(Duration::from_secs(2))
-        .expect("clean exit");
+    host.wait_for_exit(PTY_WAIT).expect("clean exit");
 }
 
 #[test]
 fn pty_terminal_capture_and_mouse_input() {
+    let _guard = lock_terminal_pty();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
-    host.wait_for_text("READY", Duration::from_secs(2))
+    host.wait_for_text("READY", PTY_WAIT)
         .expect("terminal ready");
 
     host.send_str("a").expect("send a");
-    host.wait_for_text("IN: a", Duration::from_secs(2))
-        .expect("input echoed");
+    host.wait_for_text("IN: a", PTY_WAIT).expect("input echoed");
 
     host.send_ctrl('g').expect("release capture");
-    host.wait_for_text("[CAPTURE OFF]", Duration::from_secs(2))
+    host.wait_for_text("[CAPTURE OFF]", PTY_WAIT)
         .expect("capture off");
 
     host.send_str("b").expect("send b");
@@ -83,18 +94,16 @@ fn pty_terminal_capture_and_mouse_input() {
     let click_x = 4;
     let click_y = 4;
     host.click(click_x, click_y).expect("click to recapture");
-    host.wait_for_text("[CAPTURE ON]", Duration::from_secs(2))
+    host.wait_for_text("[CAPTURE ON]", PTY_WAIT)
         .expect("capture on");
 
     host.send_str("c").expect("send c");
-    host.wait_for_text("IN: c", Duration::from_secs(2))
-        .expect("input echoed");
+    host.wait_for_text("IN: c", PTY_WAIT).expect("input echoed");
 
     host.click(click_x, click_y).expect("mouse input");
-    host.wait_for_text("IN: <1B>[<0;", Duration::from_secs(2))
+    host.wait_for_text("IN: <1B>[<0;", PTY_WAIT)
         .expect("mouse input encoded");
 
     host.send_ctrl('q').expect("quit");
-    host.wait_for_exit(Duration::from_secs(2))
-        .expect("clean exit");
+    host.wait_for_exit(PTY_WAIT).expect("clean exit");
 }
