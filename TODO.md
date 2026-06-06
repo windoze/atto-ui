@@ -321,8 +321,15 @@
 - `ListBoxContent` 与 `TableBodyContent` 已共享 `SelectionScroll`，统一 selection clamp、滚动到可见区域、鼠标点击选择、Up/Down wrap 选择与 `on_change` 触发行为。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_mouse_support`；`cargo test --test pty_textbox_selection`；`cargo test --test pty_virtual_scrolling`；`cargo test --test pty_desktop`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] R10 — 审阅 T10
+### [DONE] R10 — 审阅 T10
 审阅抽象：共享函数语义覆盖各 widget 原有差异、无回归、命名清晰。
+
+**完成记录（2026-06-06）**：
+- 审阅 `src/widgets/util.rs`：`widget_style` 保持 disabled/focused/normal 三态优先级不变；`contains` 与 `mouse_coords_local_to_area` 保留非空矩形检查、绝对坐标转换和嵌套容器本地坐标兼容语义。
+- 审阅 `src/widgets/button.rs`、`checkbox.rs`、`textbox.rs`、`list.rs`、`table.rs`：共享 helper 替换未改变原有样式选择、鼠标命中转换、边框滚动条处理或 TextBox 单行点击限制。
+- 审阅 `SelectionScroll` 在 `ListBoxContent` 与 `TableBodyContent` 的使用：selection clamp、滚动到可见区域、鼠标点击选择、Up/Down wrap 选择和 `on_change` 触发行为与 T10 前的两份实现一致。
+- 搜索复核共享抽象调用点，确认 T10 只收敛了指定 widgets 的重复逻辑，未误改 slider/tab/styled_label 等未纳入本任务的独立实现。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T11 — 仅可见行 parse + 借用替代 clone（M11）
 **文件**：`src/widgets/list.rs:374-376,543-557`、`table.rs:617`。
