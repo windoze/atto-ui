@@ -437,6 +437,8 @@
 
 **当前记录（2026-06-06，本轮复核 14）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `[T13A] Record confirmation remains blocked` 继续记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮提示仍未提供确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
 
+**当前记录（2026-06-06，本轮复核 15）**：本轮确认 T13A 仍是首个未完成任务；最新提交 `a6fb7a2 [T13A] Record confirmation still blocked` 直接记录同一维护者确认阻塞，未包含三项命名/定位决策结果。验收仍要求维护者确认 `atto-editor` 是否改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用，以及 `atto-ui-runtime` 保持独立核心共享 crate 还是合并进 `atto-ui`；因本轮仍未收到确认结果，T13A 保持未完成，未执行依赖它的 T13。本轮仅更新任务记录与执行计划，未改 Rust 代码，复用 R12 记录中的全量绿色结果。
+
 ### [TODO] T13 — 命名消歧义（命名建议，需单独评估）
 **依赖**：T13A。
 **说明**：影响 Cargo workspace，改动面大，执行前必须完成 T13A 的维护者确认。
