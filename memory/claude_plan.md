@@ -24,4 +24,5 @@
 - 当前审阅结论：未发现 R12 范围内缺陷；OSC52 编码路径正确，写出失败由调用点 best-effort 忽略；文本选区实现位于 core 通用 `Text`/`TextBox` 路径，未引入 editor 依赖；PTY 覆盖选区高亮与 OSC52 输出。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 - 已更新 `TODO.md`，将 R12 标记为 `[DONE]` 并记录审阅与验证结果。
-- 下一步检查本轮 diff/status，提交 R12 相关文件后停止。
+- 已提交 R12 审阅记录：`6bf73a5 [R12] Review system clipboard selection`。
+- 本轮到此停止，不处理 T13。
