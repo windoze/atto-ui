@@ -423,11 +423,16 @@
 - `snapshot_chat_app` 启用键盘增强并调整窗口高度以保持消息列表视口；新增 PTY 覆盖多行编辑、`Shift+Enter` 换行 vs `Enter` 提交、历史 `Up/Down`、kill-ring yank。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui textarea`；`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring -- --nocapture`；`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --nocapture`；`cargo test --workspace --all-targets`。
 
-### [ ] R15 — 审阅 T15
+### [DONE] R15 — 审阅 T15
 - 确认键盘增强标志的启用/恢复（退出时还原终端状态）。
 - 确认不支持增强的终端有合理降级。
 - 确认 textarea 在 core、chat 仅消费。
 - 运行 PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `src/app/run.rs` 与 `crates/atto-ui-async/src/stream.rs` 中同步/async `TerminalSession` 的键盘增强路径；确认默认启用 `DISAMBIGUATE_ESCAPE_CODES`，写出失败时按未激活处理并继续运行，已成功启用时在 `Drop` 中执行 `PopKeyboardEnhancementFlags` 恢复终端状态。
+- 已审阅 `src/widgets/textarea.rs`，确认 `TextArea` 位于 core widgets，支持多行编辑、`Enter` 提交配置、`Shift+Enter` 换行、`Ctrl+J` 降级换行、历史上下翻与 kill-ring，且未引入 chat/session 专用语义。
+- 已审阅 `crates/atto-ui-chat/src/input.rs` 与 `snapshot_chat_app` 接入，确认 chat 仅通过 `atto_ui::widgets::TextArea` 组合消费多行输入，并保留 choice/confirm 自定义输入的单行 `TextBox` 路径。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui textarea`；`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring`；`cargo test --workspace --all-targets`。
 
 ### [ ] T16 — 通用 typeahead / 命令面板 / 模糊匹配（core）（C.3）
 **文件**：新增 `src/widgets/typeahead.rs`、`src/fuzzy.rs`
