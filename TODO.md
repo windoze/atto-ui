@@ -284,10 +284,16 @@
 - chat PTY fixture 运行对并发 PTY 资源敏感，`pty_chat.rs` 内用测试级互斥锁串行化，单个用例仍保持确定性且均低于 1 分钟。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui-terminal`；`cargo test --workspace --all-targets`。
 
-### [ ] R10 — 审阅 T10
+### [DONE] R10 — 审阅 T10
 - 确认编码矩阵覆盖全面（无遗漏协议模式组合）。
 - 确认 chat 自动跟随/暂停边界正确。
 - 运行相关测试。
+**完成记录（2026-06-06）**：
+- 已审阅 T10 的 chat PTY fixture、`ChatMessageList` 跟随尾部逻辑、terminal 输入编码测试和 DSR/bracketed paste/application cursor/resize 覆盖。
+- 修复审阅发现的 terminal 鼠标矩阵覆盖缺口：`terminal_mouse_encoding_matrix_covers_protocol_encoding_and_modifiers` 现覆盖左/中/右键 Down/Up/Drag、Moved、ScrollUp/Down/Left/Right、SGR/X10、PressRelease/ButtonMotion/AnyMotion，以及 8 种 modifier 组合。
+- 确认 chat 自动跟随仅在当前位于尾部时对新增消息滚到底部；用户滚离尾部后暂停，滚回底部后恢复，且 load-more prepend 会抑制一次自动滚动避免跳底。
+- 确认 input 三模式 text/choice/confirm 提交均经 PTY 测试验证，流式 delta 累积渲染和 streaming markdown 容错仍有覆盖。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-terminal`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ---
 

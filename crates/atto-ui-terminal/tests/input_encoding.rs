@@ -102,21 +102,25 @@ fn expected_mouse_input(
     modifiers: KeyModifiers,
 ) -> Vec<u8> {
     let base = match kind {
-        MouseEventKind::Down(MouseButton::Left) => Some(0),
-        MouseEventKind::Up(MouseButton::Left) => Some(match encoding {
-            MouseEncoding::Sgr => 0,
+        MouseEventKind::Down(button) => Some(button_code(button)),
+        MouseEventKind::Up(button) => Some(match encoding {
+            MouseEncoding::Sgr => button_code(button),
             MouseEncoding::X10 => 3,
         }),
-        MouseEventKind::Drag(MouseButton::Left) => match protocol {
+        MouseEventKind::Drag(button) => match protocol {
             MouseProtocol::PressRelease => None,
-            MouseProtocol::ButtonMotion | MouseProtocol::AnyMotion => Some(32),
+            MouseProtocol::ButtonMotion | MouseProtocol::AnyMotion => {
+                Some(32 + button_code(button))
+            }
         },
         MouseEventKind::Moved => match protocol {
             MouseProtocol::AnyMotion => Some(35),
             MouseProtocol::PressRelease | MouseProtocol::ButtonMotion => None,
         },
+        MouseEventKind::ScrollUp => Some(64),
         MouseEventKind::ScrollDown => Some(65),
-        _ => unreachable!("test only covers the terminal mouse matrix cases"),
+        MouseEventKind::ScrollLeft => Some(66),
+        MouseEventKind::ScrollRight => Some(67),
     };
     let Some(base) = base else {
         return Vec::new();
@@ -136,6 +140,14 @@ fn expected_mouse_input(
     }
 }
 
+fn button_code(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
 #[test]
 fn terminal_mouse_encoding_matrix_covers_protocol_encoding_and_modifiers() {
     let protocols = [
@@ -149,14 +161,26 @@ fn terminal_mouse_encoding_matrix_covers_protocol_encoding_and_modifiers() {
         KeyModifiers::SHIFT,
         KeyModifiers::ALT,
         KeyModifiers::CONTROL,
+        KeyModifiers::SHIFT | KeyModifiers::ALT,
+        KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        KeyModifiers::ALT | KeyModifiers::CONTROL,
         KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL,
     ];
     let kinds = [
         MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Down(MouseButton::Middle),
+        MouseEventKind::Down(MouseButton::Right),
         MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Middle),
+        MouseEventKind::Up(MouseButton::Right),
         MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Middle),
+        MouseEventKind::Drag(MouseButton::Right),
         MouseEventKind::Moved,
+        MouseEventKind::ScrollUp,
         MouseEventKind::ScrollDown,
+        MouseEventKind::ScrollLeft,
+        MouseEventKind::ScrollRight,
     ];
 
     for protocol in protocols {
