@@ -397,8 +397,19 @@
 - 补充测试覆盖：主题缓存同地址替换刷新、非 ASCII hex 错误返回、终端显式坐标空间、`view_builder!` 使用非 `atto_ui` 假 crate path 的展开路径。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
+### [TODO] T13A — 确认命名消歧义方案（T13 前置）
+**说明**：T13 影响 Cargo workspace 且原任务明确要求执行前与维护者确认。该确认是 T13 的具体前置条件，必须先明确以下决策后才能实施改名或 runtime 定位调整。
+
+**确认项**：
+- 是否将 `atto-editor` 改名为 `atto-editor-app`。
+- 若改名，是否同步更新所有 workspace `[dependencies]`、import 路径、文档和 CI/发布引用。
+- `atto-ui-runtime` 保持独立核心共享 crate，还是合并进 `atto-ui`。
+
+**验收**：维护者确认上述决策，并将确认结果写入本任务完成记录；随后 T13 按确认结果执行。
+
 ### [TODO] T13 — 命名消歧义（命名建议，需单独评估）
-**说明**：影响 Cargo workspace，改动面大，**执行前需与维护者确认**。
+**依赖**：T13A。
+**说明**：影响 Cargo workspace，改动面大，执行前必须完成 T13A 的维护者确认。
 - `atto-editor` → `atto-editor-app`：改 `Cargo.toml` 包名 + 所有 `[dependencies]` 引用 + import 路径。
 - 评估 `atto-ui-runtime` 定位（仅被 `atto-ui-python` 引用）：作为核心共享 or 合并进 `atto-ui`。
 **测试**：全工作区 `cargo build`/`cargo test`。
@@ -428,4 +439,4 @@
 1. T1→R1→T2→R2→T3→R3（P0，逐项独立 PR，先红后绿）
 2. T4→R4→T5→R5→T6→R6（P1）
 3. T7..T11（P2 重构，功能稳定后分批）
-4. T12→R12（P3 批量），T13/T14/T15 视资源安排
+4. T12→R12（P3 批量），T13A→T13/T14/T15 视资源安排
