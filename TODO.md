@@ -168,11 +168,18 @@
 - 新增单测覆盖 token clone 共享取消、注册表 running property/遍历/当前任务取消、spawn 完成自动注销、AppHost ignored Esc 取消任务、组件 consumed Esc 不触发取消；新增 PTY 覆盖后台线程取消路径。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui task::`；`cargo test -p atto-ui app::run::tests::apphost_escape`；`cargo test --test pty_async_actions`；`cargo test --workspace --all-targets`；`cargo tree -p atto-ui`（确认 core 依赖树无 tokio）。
 
-### [ ] R6 — 审阅 T6
+### [DONE] R6 — 审阅 T6
 - 确认取消抽象不引入 tokio、不引入隐藏全局状态。
 - 确认 Esc 中断与现有事件分发优先级正确（不吞掉其他 Esc 语义）。
 - 确认运行态 Property 通知正确。
 - 运行单测与 PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `src/task/mod.rs`、`src/app/run.rs`、`src/bin/snapshot_async_app.rs`、`tests/pty_async_actions.rs` 的 T6 改动。
+- 确认取消抽象仅使用 `Arc<AtomicBool>`、`parking_lot` 锁和 std thread，不引入 tokio、async-await 或隐藏全局任务状态；`cargo tree -p atto-ui` 确认 core 依赖树无 tokio。
+- 确认 Esc 取消只在 UI/窗口/组件返回 `EventOutcome::Ignored` 后触发，组件已消费的 Esc 不会取消任务；取消后将事件标记为 consumed，避免继续落入默认退出或应用级快捷键。
+- 修复审阅发现的问题：`TaskRegistry::register` / `unregister` 原先在任务列表锁外更新 `running` Property，并发注册/注销时可能与真实任务列表不一致；现已在同一临界区更新运行态。
+- 新增 `running_property_notifies_on_state_edges` 单测，确认运行态 Property 只在 false→true 和 true→false 边界发出 dirty 通知，非边界注册/注销不产生多余通知。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui task::`；`cargo test -p atto-ui app::run::tests::apphost_escape`；`cargo test --test pty_async_actions`；`cargo tree -p atto-ui`；`cargo test --workspace --all-targets`。
 
 ### [ ] T7 — 新建 `atto-ui-async` crate（tokio，feature-gated）（C.1 / ASYNC.md Option B）
 **文件**：新增 `crates/atto-ui-async/`，更新根 `Cargo.toml` workspace members

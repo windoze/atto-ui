@@ -104,21 +104,18 @@ impl TaskRegistry {
     }
 
     pub fn register(&self, name: impl Into<String>) -> TaskHandle {
-        let handle = {
-            let mut inner = self.inner.lock();
-            let id = TaskId(inner.next_id);
-            inner.next_id += 1;
-            let handle = TaskHandle {
-                metadata: TaskMetadata {
-                    id,
-                    name: name.into(),
-                    started_at: Instant::now(),
-                },
-                token: CancellationToken::new(),
-            };
-            inner.tasks.push(handle.clone());
-            handle
+        let mut inner = self.inner.lock();
+        let id = TaskId(inner.next_id);
+        inner.next_id += 1;
+        let handle = TaskHandle {
+            metadata: TaskMetadata {
+                id,
+                name: name.into(),
+                started_at: Instant::now(),
+            },
+            token: CancellationToken::new(),
         };
+        inner.tasks.push(handle.clone());
         self.running.set(true);
         handle
     }
@@ -141,15 +138,12 @@ impl TaskRegistry {
     }
 
     pub fn unregister(&self, id: TaskId) -> bool {
-        let is_running = {
-            let mut inner = self.inner.lock();
-            let Some(pos) = inner.tasks.iter().position(|task| task.id() == id) else {
-                return false;
-            };
-            inner.tasks.remove(pos);
-            !inner.tasks.is_empty()
+        let mut inner = self.inner.lock();
+        let Some(pos) = inner.tasks.iter().position(|task| task.id() == id) else {
+            return false;
         };
-        self.running.set(is_running);
+        inner.tasks.remove(pos);
+        self.running.set(!inner.tasks.is_empty());
         true
     }
 
@@ -247,6 +241,29 @@ mod tests {
         assert!(registry.unregister(first.id()));
         assert!(running.get());
         assert!(registry.unregister(second.id()));
+        assert!(!running.get());
+    }
+
+    #[test]
+    fn running_property_notifies_on_state_edges() {
+        let registry = TaskRegistry::new();
+        let running = registry.running_property();
+        let mut observer = running.dirty_observer();
+
+        let first = registry.register("first");
+        assert!(running.check_dirty(&mut observer));
+        assert!(running.get());
+
+        let second = registry.register("second");
+        assert!(!running.check_dirty(&mut observer));
+        assert!(running.get());
+
+        assert!(registry.unregister(first.id()));
+        assert!(!running.check_dirty(&mut observer));
+        assert!(running.get());
+
+        assert!(registry.unregister(second.id()));
+        assert!(running.check_dirty(&mut observer));
         assert!(!running.get());
     }
 
