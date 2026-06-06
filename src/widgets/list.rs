@@ -21,7 +21,7 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-use super::util::{SelectionScroll, mouse_coords_local_to_area, widget_style};
+use super::util::{SelectionScroll, mouse_coords_local_to_area, visible_row_range, widget_style};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct ListBoxBindings {
@@ -375,10 +375,6 @@ impl ListBoxContent {
         }
     }
 
-    fn bindings(&self) -> ListBoxBindings {
-        self.bindings.read().clone()
-    }
-
     fn content_size_for_items(items: &[String]) -> (u16, u16) {
         let height = items.len().min(u16::MAX as usize) as u16;
         let mut width = 0_u16;
@@ -392,11 +388,11 @@ impl ListBoxContent {
 
 impl ScrollContent for ListBoxContent {
     fn is_focusable(&self) -> bool {
-        self.bindings().enabled.get()
+        self.bindings.read().enabled.get()
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(self.bindings().height.get())
+        Some(self.bindings.read().height.get())
     }
 
     fn content_size(
@@ -404,12 +400,13 @@ impl ScrollContent for ListBoxContent {
         _viewport: (u16, u16),
         _ctx: ScrollContentContext<'_>,
     ) -> (u16, u16) {
-        let items = self.bindings().items.get();
+        let bindings = self.bindings.read();
+        let items = bindings.items.get();
         Self::content_size_for_items(&items)
     }
 
     fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, host: &mut ScrollContainerHost) {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         let items = bindings.items.get();
         self.selection_scroll
             .sync_selection_visible(&bindings.selection, items.len(), host);
@@ -421,7 +418,7 @@ impl ScrollContent for ListBoxContent {
         _ctx: ScrollContentContext<'_>,
         host: &mut ScrollContainerHost,
     ) -> EventResult {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         if !bindings.enabled.get() {
             return EventResult::ignored();
         }
@@ -442,7 +439,7 @@ impl ScrollContent for ListBoxContent {
         ctx: ScrollContentContext<'_>,
         _host: &mut ScrollContainerHost,
     ) {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
         let style = widget_style(ctx.component.theme, enabled, ctx.component.is_focused);
         let highlight_style = if enabled {
@@ -461,10 +458,13 @@ impl ScrollContent for ListBoxContent {
         let scroll = ctx.info.scroll_offset;
         let viewport_w = area.width;
         let link_overlay = ctx.component.theme.named_style("markdown-link");
-        let items: Vec<ListItem> = items
+        let visible = visible_row_range(items.len(), scroll.y, area.height);
+        let start = visible.start;
+        let items: Vec<ListItem> = items[visible]
             .iter()
             .enumerate()
-            .map(|(idx, s)| {
+            .map(|(offset, s)| {
+                let idx = start + offset;
                 let segments = parse_inline(s);
                 let spans =
                     slice_spans_from_segments(&segments, scroll.x, viewport_w, style, link_overlay);
@@ -478,7 +478,7 @@ impl ScrollContent for ListBoxContent {
             .collect();
 
         *self.state.selected_mut() = None;
-        *self.state.offset_mut() = scroll.y as usize;
+        *self.state.offset_mut() = 0;
 
         if area.width > 0 && area.height > 0 {
             let list = List::new(items).style(style);

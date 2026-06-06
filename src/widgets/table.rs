@@ -22,7 +22,9 @@ use crate::runtime::CallbackHandle;
 use crate::text::styled_text::spans_from_inline;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-use super::util::{SelectionScroll, contains, mouse_coords_local_to_area, widget_style};
+use super::util::{
+    SelectionScroll, contains, mouse_coords_local_to_area, visible_row_range, widget_style,
+};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct TableViewBindings {
@@ -459,29 +461,26 @@ impl TableBodyContent {
             selection_scroll: SelectionScroll::default(),
         }
     }
-
-    fn bindings(&self) -> TableViewBindings {
-        self.bindings.read().clone()
-    }
 }
 
 impl ScrollContent for TableBodyContent {
     fn is_focusable(&self) -> bool {
-        self.bindings().enabled.get()
+        self.bindings.read().enabled.get()
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(self.bindings().height.get())
+        Some(self.bindings.read().height.get())
     }
 
     fn content_size(&mut self, viewport: (u16, u16), _ctx: ScrollContentContext<'_>) -> (u16, u16) {
-        let rows = self.bindings().rows.get();
+        let bindings = self.bindings.read();
+        let rows = bindings.rows.get();
         let height = rows.len().min(u16::MAX as usize) as u16;
         (viewport.0, height)
     }
 
     fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, host: &mut ScrollContainerHost) {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         let rows = bindings.rows.get();
         self.selection_scroll
             .sync_selection_visible(&bindings.selection, rows.len(), host);
@@ -493,7 +492,7 @@ impl ScrollContent for TableBodyContent {
         _ctx: ScrollContentContext<'_>,
         host: &mut ScrollContainerHost,
     ) -> EventResult {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         if !bindings.enabled.get() {
             return EventResult::ignored();
         }
@@ -514,7 +513,7 @@ impl ScrollContent for TableBodyContent {
         ctx: ScrollContentContext<'_>,
         _host: &mut ScrollContainerHost,
     ) {
-        let bindings = self.bindings();
+        let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
         let base_style: Style =
             widget_style(ctx.component.theme, enabled, ctx.component.is_focused);
@@ -535,8 +534,11 @@ impl ScrollContent for TableBodyContent {
             .normalize_selection(&bindings.selection, rows.len());
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
+        let visible = visible_row_range(rows.len(), ctx.info.scroll_offset.y, area.height);
+        let start = visible.start;
 
-        let data_rows = rows.iter().enumerate().map(|(idx, row)| {
+        let data_rows = rows[visible].iter().enumerate().map(|(offset, row)| {
+            let idx = start + offset;
             let cells = row_cells(row, column_count, base_style, link_overlay);
             let row = Row::new(cells);
             if selection.is_some_and(|sel| sel == idx) {
@@ -548,7 +550,7 @@ impl ScrollContent for TableBodyContent {
 
         *self.state.selected_mut() = None;
         *self.state.selected_column_mut() = None;
-        *self.state.offset_mut() = ctx.info.scroll_offset.y as usize;
+        *self.state.offset_mut() = 0;
 
         if area.width > 0 && area.height > 0 {
             let table = Table::new(data_rows, widths)

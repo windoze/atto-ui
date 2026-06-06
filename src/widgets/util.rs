@@ -9,6 +9,19 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::theme::Theme;
 
+/// Returns the row range visible in a vertically scrolled viewport.
+pub(crate) fn visible_row_range(
+    row_count: usize,
+    scroll_y: u16,
+    viewport_height: u16,
+) -> std::ops::Range<usize> {
+    let start = usize::from(scroll_y).min(row_count);
+    let end = start
+        .saturating_add(usize::from(viewport_height))
+        .min(row_count);
+    start..end
+}
+
 /// Returns the standard widget style for disabled, focused, and normal states.
 pub(crate) fn widget_style(theme: &Theme, enabled: bool, focused: bool) -> Style {
     if !enabled {
@@ -162,5 +175,24 @@ fn ensure_selection_visible(selection: usize, host: &mut ScrollContainerHost) {
     }
     if next_y != scroll.y {
         host.set_scroll_offset(scroll.x, next_y);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_row_range;
+
+    #[test]
+    fn visible_row_range_clamps_to_rows() {
+        assert_eq!(visible_row_range(10, 0, 3), 0..3);
+        assert_eq!(visible_row_range(10, 8, 5), 8..10);
+        assert_eq!(visible_row_range(10, 10, 5), 10..10);
+        assert_eq!(visible_row_range(10, 99, 5), 10..10);
+    }
+
+    #[test]
+    fn visible_row_range_handles_empty_viewport_or_rows() {
+        assert_eq!(visible_row_range(0, 0, 5), 0..0);
+        assert_eq!(visible_row_range(10, 4, 0), 4..4);
     }
 }

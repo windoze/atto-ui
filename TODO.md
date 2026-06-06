@@ -331,12 +331,19 @@
 - 搜索复核共享抽象调用点，确认 T10 只收敛了指定 widgets 的重复逻辑，未误改 slider/tab/styled_label 等未纳入本任务的独立实现。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T11 — 仅可见行 parse + 借用替代 clone（M11）
+### [DONE] T11 — 仅可见行 parse + 借用替代 clone（M11）
 **文件**：`src/widgets/list.rs:374-376,543-557`、`table.rs:617`。
 **步骤**：
 1. `bindings()` 用 read guard 局部借用替代整体 clone。
 2. `draw` 仅对可见行区间调 `parse_inline`（结合滚动 offset + 视口高度计算可见范围）。
 **测试**：`tests/pty_virtual_scrolling.rs` 大数据集（1000+ 行）渲染正确性回归。
+
+**完成记录（2026-06-06）**：
+- 新增 widgets 共享 `visible_row_range` helper，并补充单元测试覆盖滚动起点、尾部 clamp、空行集与零高度视口。
+- `ListBoxContent` / `TableBodyContent` 移除 `bindings()` 整体 clone helper，改为各方法内局部 read guard 读取绑定字段。
+- `ListBoxContent::draw` 现在只对当前可见行区间调用 `parse_inline`，并在传入 Ratatui `List` 的已切片数据上使用 `offset = 0`，保留原选择高亮和水平切片行为。
+- `TableBodyContent::draw` 现在只为当前可见表格行构建/解析 cells，并在传入 Ratatui `Table` 的已切片数据上使用 `offset = 0`，保留原选择高亮与列宽计算行为。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test visible_row_range --lib`；`cargo test --test pty_virtual_scrolling`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R11 — 审阅 T11
 审阅性能改动：可见区间计算正确（边界行不漏）、借用无生命周期问题、大数据集渲染正确。
