@@ -15,7 +15,7 @@ use ratatui::layout::Rect;
 
 use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
 use crate::composable::EventOutcome;
-use crate::inspect::DesktopInspector;
+use crate::inspect::{DesktopInspector, DesktopSnapshot};
 use crate::reactive::{set_global_tick_rate, tick_global_timers};
 use crate::runtime::{ComponentValue, TreeError};
 use crate::{ComponentError, WindowId};
@@ -238,6 +238,13 @@ impl AppHost {
         name: &str,
     ) -> std::result::Result<ComponentValue, ComponentError> {
         DesktopInspector::new(&mut self.desktop).get_property(id, name)
+    }
+
+    pub fn snapshot(&mut self) -> Result<DesktopSnapshot> {
+        let screen = self.screen()?;
+        DesktopInspector::new(&mut self.desktop)
+            .export_snapshot(screen)
+            .map_err(|err| anyhow::anyhow!("{err:?}"))
     }
 
     pub fn set_on_tick<F>(&mut self, handler: F)

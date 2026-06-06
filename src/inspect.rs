@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
 use crate::composable::{Component, EventResult};
@@ -10,7 +13,7 @@ use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::{Window, WindowId};
 use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeKind {
     Desktop,
     MenuBar,
@@ -53,6 +56,43 @@ pub struct InspectSnapshot {
     pub tree: InspectNode,
 }
 
+/// Serializable desktop snapshot for host-language assertions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DesktopSnapshot {
+    pub bounds: RuntimeRect,
+    pub tree: DesktopSnapshotNode,
+}
+
+/// Serializable node in a desktop snapshot tree.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DesktopSnapshotNode {
+    pub kind: NodeKind,
+    pub id: Option<String>,
+    pub tag: Option<String>,
+    pub name: String,
+    pub type_name: String,
+    pub bounds: Option<RuntimeRect>,
+    pub text: Option<String>,
+    pub state: Option<String>,
+    pub window_id: Option<u64>,
+    pub properties: BTreeMap<String, ComponentValue>,
+    pub children: Vec<DesktopSnapshotNode>,
+}
+
+impl DesktopSnapshotNode {
+    pub fn find_by_id(&self, id: &str) -> Option<&DesktopSnapshotNode> {
+        if self.id.as_deref() == Some(id) {
+            return Some(self);
+        }
+        for child in &self.children {
+            if let Some(found) = child.find_by_id(id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+}
+
 impl InspectSnapshot {
     pub fn contents(&self) -> String {
         buffer_to_string(&self.buffer)
@@ -79,14 +119,18 @@ impl<'a> DesktopInspector<'a> {
     }
 
     pub fn snapshot(&mut self, screen: Rect) -> Result<InspectSnapshot, ComponentError> {
-        let backend = TestBackend::new(screen.width, screen.height);
-        let mut terminal = Terminal::new(backend).map_err(ComponentError::render_failed)?;
-        terminal
-            .draw(|f| self.desktop.draw(f))
-            .map_err(ComponentError::render_failed)?;
+        let terminal = draw_desktop(self.desktop, screen)?;
         let buffer = terminal.backend().buffer().clone();
         let tree = build_desktop_tree(self.desktop, screen);
         Ok(InspectSnapshot { buffer, tree })
+    }
+
+    pub fn export_snapshot(&mut self, screen: Rect) -> Result<DesktopSnapshot, ComponentError> {
+        draw_desktop(self.desktop, screen)?;
+        Ok(DesktopSnapshot {
+            bounds: runtime_rect(screen),
+            tree: build_desktop_snapshot_tree(self.desktop, screen),
+        })
     }
 
     pub fn get_property(&mut self, id: &str, name: &str) -> Result<ComponentValue, ComponentError> {
@@ -282,6 +326,18 @@ fn apply_desktop_action(desktop: &mut Desktop, action: &crate::app::DesktopActio
     }
 }
 
+fn draw_desktop(
+    desktop: &mut Desktop,
+    screen: Rect,
+) -> Result<Terminal<TestBackend>, ComponentError> {
+    let backend = TestBackend::new(screen.width, screen.height);
+    let mut terminal = Terminal::new(backend).map_err(ComponentError::render_failed)?;
+    terminal
+        .draw(|f| desktop.draw(f))
+        .map_err(ComponentError::render_failed)?;
+    Ok(terminal)
+}
+
 fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
     let layout = Desktop::layout(screen);
     let mut root = InspectNode {
@@ -411,6 +467,245 @@ fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId)
     }
 
     node
+}
+
+fn build_desktop_snapshot_tree(desktop: &Desktop, screen: Rect) -> DesktopSnapshotNode {
+    let layout = Desktop::layout(screen);
+    let mut root = DesktopSnapshotNode {
+        kind: NodeKind::Desktop,
+        id: None,
+        tag: None,
+        name: "Desktop".to_string(),
+        type_name: "Desktop".to_string(),
+        bounds: Some(runtime_rect(screen)),
+        text: None,
+        state: None,
+        window_id: None,
+        properties: BTreeMap::new(),
+        children: Vec::new(),
+    };
+
+    root.children
+        .push(build_menu_snapshot_tree(&desktop.menu, layout));
+    root.children.push(DesktopSnapshotNode {
+        kind: NodeKind::StatusBar,
+        id: None,
+        tag: None,
+        name: "StatusBar".to_string(),
+        type_name: "StatusBar".to_string(),
+        bounds: Some(runtime_rect(layout.status_bar)),
+        text: None,
+        state: None,
+        window_id: None,
+        properties: BTreeMap::new(),
+        children: Vec::new(),
+    });
+
+    let focused = desktop.wm.focused();
+    for window in desktop.wm.windows() {
+        root.children.push(build_window_snapshot_tree(
+            window,
+            focused == Some(window.id()),
+        ));
+    }
+
+    root
+}
+
+fn build_menu_snapshot_tree(
+    menu: &crate::app::MenuBar,
+    layout: DesktopLayout,
+) -> DesktopSnapshotNode {
+    let mut node = DesktopSnapshotNode {
+        kind: NodeKind::MenuBar,
+        id: None,
+        tag: None,
+        name: "MenuBar".to_string(),
+        type_name: "MenuBar".to_string(),
+        bounds: Some(runtime_rect(layout.menu_bar)),
+        text: None,
+        state: None,
+        window_id: None,
+        properties: BTreeMap::new(),
+        children: Vec::new(),
+    };
+    for menu in menu.menus() {
+        node.children.push(build_menu_spec_snapshot_tree(menu));
+    }
+    node
+}
+
+fn build_menu_spec_snapshot_tree(menu: &MenuSpec) -> DesktopSnapshotNode {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "title".to_string(),
+        ComponentValue::String(menu.title.get()),
+    );
+    let text = text_from_properties(&properties);
+    let tag = menu.tag.clone();
+    let mut node = DesktopSnapshotNode {
+        kind: NodeKind::Menu,
+        id: tag.clone(),
+        tag,
+        name: menu.title.get(),
+        type_name: "Menu".to_string(),
+        bounds: None,
+        text,
+        state: state_from_properties(&properties),
+        window_id: None,
+        properties,
+        children: Vec::new(),
+    };
+    for item in &menu.items {
+        node.children.push(build_menu_item_snapshot_tree(item));
+    }
+    node
+}
+
+fn build_menu_item_snapshot_tree(item: &MenuItem) -> DesktopSnapshotNode {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "label".to_string(),
+        ComponentValue::String(item.label.get()),
+    );
+    properties.insert(
+        "shortcut".to_string(),
+        ComponentValue::String(item.shortcut.get().unwrap_or_default()),
+    );
+    properties.insert(
+        "enabled".to_string(),
+        ComponentValue::Bool(item.enabled.get()),
+    );
+    let text = text_from_properties(&properties);
+    let tag = item.tag.clone();
+    let mut node = DesktopSnapshotNode {
+        kind: NodeKind::MenuItem,
+        id: tag.clone(),
+        tag,
+        name: item.label.get(),
+        type_name: "MenuItem".to_string(),
+        bounds: None,
+        text,
+        state: state_from_properties(&properties),
+        window_id: None,
+        properties,
+        children: Vec::new(),
+    };
+    for child in &item.submenu {
+        node.children.push(build_menu_item_snapshot_tree(child));
+    }
+    node
+}
+
+fn build_window_snapshot_tree(window: &Window, focused: bool) -> DesktopSnapshotNode {
+    let inner = window.inner_rect();
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "title".to_string(),
+        ComponentValue::String(window.title.get()),
+    );
+    properties.insert(
+        "rect".to_string(),
+        ComponentValue::Rect(runtime_rect(window.rect.get())),
+    );
+    properties.insert(
+        "state".to_string(),
+        ComponentValue::String(format!("{:?}", window.state.get())),
+    );
+    properties.insert(
+        "kind".to_string(),
+        ComponentValue::String(format!("{:?}", window.kind)),
+    );
+    properties.insert("focused".to_string(), ComponentValue::Bool(focused));
+    let text = text_from_properties(&properties);
+    let tag = window.tag.clone();
+    let mut node = DesktopSnapshotNode {
+        kind: NodeKind::Window,
+        id: tag.clone(),
+        tag,
+        name: window.title.get(),
+        type_name: "Window".to_string(),
+        bounds: Some(runtime_rect(window.rect.get())),
+        text,
+        state: state_from_properties(&properties),
+        window_id: Some(window.id().raw()),
+        properties,
+        children: Vec::new(),
+    };
+
+    node.children.push(build_component_snapshot_tree(
+        window.view.as_ref(),
+        inner,
+        window.id(),
+    ));
+    node
+}
+
+fn build_component_snapshot_tree(
+    view: &dyn Component,
+    bounds: Rect,
+    window_id: WindowId,
+) -> DesktopSnapshotNode {
+    let properties = component_snapshot_properties(view);
+    let text = text_from_properties(&properties);
+    let tag = view.tag().map(|s| s.to_string());
+    let mut node = DesktopSnapshotNode {
+        kind: NodeKind::Component,
+        id: tag.clone(),
+        tag,
+        name: short_type_name(view.type_name()),
+        type_name: view.type_name().to_string(),
+        bounds: Some(runtime_rect(bounds)),
+        text,
+        state: state_from_properties(&properties),
+        window_id: Some(window_id.raw()),
+        properties,
+        children: Vec::new(),
+    };
+
+    for child in view.children() {
+        let child_bounds = child.bounds();
+        let child_node =
+            build_component_snapshot_tree(child.view.as_ref(), child_bounds, window_id);
+        node.children.push(child_node);
+    }
+
+    node
+}
+
+fn component_snapshot_properties(view: &dyn Component) -> BTreeMap<String, ComponentValue> {
+    let mut properties = BTreeMap::new();
+    for name in view.property_names() {
+        if let Some(value) = view.get_property(name) {
+            properties.insert(name.to_string(), value);
+        }
+    }
+    properties
+}
+
+fn text_from_properties(properties: &BTreeMap<String, ComponentValue>) -> Option<String> {
+    for key in ["text", "label", "value", "title"] {
+        if let Some(ComponentValue::String(value)) = properties.get(key) {
+            return Some(value.clone());
+        }
+    }
+    None
+}
+
+fn state_from_properties(properties: &BTreeMap<String, ComponentValue>) -> Option<String> {
+    match properties.get("state") {
+        Some(ComponentValue::String(value)) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn runtime_rect(rect: Rect) -> RuntimeRect {
+    RuntimeRect {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    }
 }
 
 fn short_type_name(full: &'static str) -> String {
@@ -825,6 +1120,89 @@ mod tests {
         assert!(tree.find_by_id("menu_open").is_some());
         assert!(tree.find_by_id("win1").is_some());
         assert!(tree.find_by_id("label").is_some());
+    }
+
+    #[test]
+    fn export_snapshot_contains_serializable_tree_bounds_and_text() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![
+            MenuSpec::new(
+                "File",
+                vec![MenuItem::action("Open", || {}).with_tag("menu_open")],
+            )
+            .with_tag("menu_file"),
+        ]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = Label::new("Hello").tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        )
+        .with_tag("win1");
+        let window_id = desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let snapshot = inspector.export_snapshot(screen).expect("snapshot");
+        serde_json::to_string(&snapshot).expect("serializable snapshot");
+
+        assert_eq!(
+            snapshot.bounds,
+            RuntimeRect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            }
+        );
+
+        let menu_item = snapshot
+            .tree
+            .find_by_id("menu_open")
+            .expect("menu item node");
+        assert_eq!(menu_item.kind, NodeKind::MenuItem);
+        assert_eq!(menu_item.text.as_deref(), Some("Open"));
+
+        let win = snapshot.tree.find_by_id("win1").expect("window node");
+        assert_eq!(win.kind, NodeKind::Window);
+        assert_eq!(win.tag.as_deref(), Some("win1"));
+        assert_eq!(win.text.as_deref(), Some("Win"));
+        assert_eq!(win.state.as_deref(), Some("Normal"));
+        assert_eq!(win.window_id, Some(window_id.raw()));
+        assert_eq!(
+            win.bounds,
+            Some(RuntimeRect {
+                x: 2,
+                y: 2,
+                width: 20,
+                height: 6,
+            })
+        );
+        assert_eq!(
+            win.properties.get("focused"),
+            Some(&ComponentValue::Bool(true))
+        );
+
+        let label = snapshot.tree.find_by_id("label").expect("label node");
+        assert_eq!(label.kind, NodeKind::Component);
+        assert_eq!(label.name, "Label");
+        assert!(label.type_name.ends_with("Label"));
+        assert_eq!(label.text.as_deref(), Some("Hello"));
+        assert_eq!(
+            label.properties.get("text"),
+            Some(&ComponentValue::String("Hello".to_string()))
+        );
+        assert_eq!(
+            label.bounds,
+            Some(RuntimeRect {
+                x: 3,
+                y: 3,
+                width: 18,
+                height: 4,
+            })
+        );
     }
 
     #[test]

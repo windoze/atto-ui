@@ -18,7 +18,9 @@ pub mod wm;
 pub use component_api::{
     ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget, ComponentValueCodec,
 };
-pub use inspect::{DesktopInspector, InspectNode, InspectSnapshot};
+pub use inspect::{
+    DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode, InspectSnapshot, NodeKind,
+};
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,
     ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,

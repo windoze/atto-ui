@@ -93,7 +93,7 @@
 - 已审阅 `set_property` 与 `get_property` 往返路径，确认写入走动态窗口 `TreeOp::SetProp`，读取走 `DesktopInspector`，并已有单测覆盖属性更新可见性。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui app::desktop`；`cargo test --test pty_apphost_api`；`cargo test --workspace --all-targets`。
 
-### [ ] T4 — DesktopInspector 快照导出（B.1）
+### [DONE] T4 — DesktopInspector 快照导出（B.1）
 **文件**：`src/inspect.rs`、`src/app/run.rs`
 **现状**：`inspect.rs` 已有 `DesktopInspector`，但未暴露为可供外部断言的快照。
 **步骤**：
@@ -102,6 +102,12 @@
 3. 确保不依赖真实 PTY，纯内存可取。
 **测试**：单测构建小窗口树，断言 snapshot 含预期 id/bounds/文本。
 **验收**：snapshot 结构稳定且足以支撑 Python e2e 断言（T5 依赖）。
+**完成记录（2026-06-06）**：
+- 新增 `DesktopSnapshot` / `DesktopSnapshotNode` 可序列化结构，覆盖节点 kind、id/tag、短名、完整 type、bounds、text、state、window_id、属性值与子树。
+- 新增 `DesktopInspector::export_snapshot(screen)`，通过 `TestBackend` 纯内存渲染刷新布局后生成结构化快照，不克隆/暴露 `ratatui::Buffer` 给外部断言结构。
+- 新增 `AppHost::snapshot()`，使用当前 screen 委托 inspector 生成供宿主侧消费的 serde 快照。
+- 新增单测 `inspect::tests::export_snapshot_contains_serializable_tree_bounds_and_text`，断言菜单/窗口/组件节点 id、tag、type、bounds、text、state、focused 属性以及 `serde_json` 序列化。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui inspect::tests::export_snapshot_contains_serializable_tree_bounds_and_text`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`；`cargo test --workspace --all-targets`。
 
 ### [ ] R4 — 审阅 T4
 - 确认 snapshot 覆盖断言所需字段（id、bounds、text、状态）。
