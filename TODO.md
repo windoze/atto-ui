@@ -55,10 +55,15 @@
 - 新增 2 个失败 fixture 及 `.stderr`：`#[reactive]` 标在非 `Property<T>` 字段时的友好错误、`view_builder!` 未知组件时的友好错误。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`；`cargo test --workspace --all-targets`。
 
-### [ ] R2 — 审阅 T2
+### [DONE] R2 — 审阅 T2
 - 确认 trybuild 用例真实覆盖三个宏的核心展开路径与至少一类编译失败。
 - 确认失败用例的错误信息对用户友好（非裸 panic）。
 - 运行 `cargo test -p atto-ui-macros`。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-macros/tests/trybuild.rs`、`tests/expand/*.rs`、`tests/ui/*.rs` 与对应 `.stderr`。
+- 确认成功 fixture 分别覆盖 `Reactive` 访问器/dirty/binding、`view_builder!` 构树/嵌套/modifier、`ComponentProperties` + `component_properties` 属性反射/schema/set/get。
+- 确认失败 fixture 覆盖 `#[reactive]` 非 `Property<T>` 字段和 `view_builder!` 未知组件两类编译失败，诊断均为明确 `compile_error!` 文案，非裸 panic。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`。
 
 ### [ ] T3 — AppHost 事件注入与窗口管理（B.1）
 **文件**：`src/app/run.rs`（`AppHost`）、必要时 `src/wm/manager/`

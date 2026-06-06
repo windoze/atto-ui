@@ -2,28 +2,26 @@
 
 ## 范围
 
-- 目标：根据 `TODO.md` 找到第一个未完成任务，完整完成该任务后停止。
-- 约束：只完成一个任务；完成后更新 `TODO.md`，必要时更新 `PLAN.md`；运行规定验证；提交一次清晰的 Git commit。
+- 目标：完成 `TODO.md` 中第一个未完成任务 `R2 — 审阅 T2`，然后停止。
+- 约束：这是审阅任务，只审阅 T2 的宏 trybuild 测试质量与验证结果；不提前实现 T3。
 - 说明：本文件记录可审阅的执行计划、关键决策和进度更新，不记录不可见的私有推理过程。
 
 ## 步骤
 
-1. 读取 `TODO.md`，按文件顺序识别第一个标题未带 `[DONE]` 的任务。
-2. 查看当前 Git 状态和最近提交，确认是否有与该任务直接相关的未完成内容或现有改动需要纳入本次任务。
-3. 阅读该任务相关代码、测试和文档，确定最小正确实现范围。
-4. 实现任务；如发现阻塞当前任务的真实缺口，优先修复，或在 `TODO.md` 中插入最小必要前置任务并停止。
-5. 运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，通过后运行相关测试；如代码有变更且需要完整验证，运行完整测试套件。
-6. 更新 `TODO.md`：将完成任务标题加 `[DONE]`，填写完成记录和验证结果。仅在阶段计划确实变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff`、最近提交，确认只提交本任务相关文件。
-8. 创建清晰的 Git commit，然后停止，不继续处理下一个任务。
+1. 查看 Git 状态和最近提交，确认是否有与 R2/T2 直接相关的未完成内容或现有改动需要纳入本次任务。
+2. 阅读 `crates/atto-ui-macros` 的宏实现、T2 新增 trybuild harness、成功 fixture、失败 fixture 和 `.stderr`。
+3. 对照 R2 验收项确认：三个宏核心展开路径是否真实覆盖；失败用例是否至少覆盖一类编译失败；错误信息是否为用户友好诊断而非裸 panic。
+4. 如发现阻塞性缺陷，直接修复并更新测试；如发现必须另排前置任务，则更新 `TODO.md` 并停止。
+5. 按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-macros`；若相关代码改变并需要完整回归，再运行更大范围测试。
+6. 更新 `TODO.md`：将 `R2` 标题加 `[DONE]`，补充审阅结论和验证记录。仅在阶段计划变化时更新 `PLAN.md`。
+7. 检查 `git status`、`git diff`、最近提交，确认只提交 R2 相关文件。
+8. 创建清晰的 Git commit，然后停止，不继续处理 `T3`。
 
 ## 当前状态
 
-- 已读取 `TODO.md`，确认第一个未完成任务为 `T2 — macros trybuild 测试（A.1）`。
-- 已检查 Git 状态和最近提交；现有未提交文档/脚本改动与 T2 无关，将避免纳入本次提交。
-- 已阅读 `crates/atto-ui-macros` 的三个宏实现与现有 `tests/macro_view_builder.rs`。
-- 已添加 `trybuild` harness、3 个成功展开 fixture、2 个失败诊断 fixture，并用 `TRYBUILD=overwrite cargo test -p atto-ui-macros` 生成 `.stderr`。
-- 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`；`cargo test --workspace --all-targets`。
-- 已更新 `TODO.md`：将 T2 标题标记为 `[DONE]`，并补充完成记录和验证结果。
-- 已提交 T2 实现变更：`0ad804f [T2] Add macros trybuild tests`。
-- 当前任务完成；停止，不继续处理 R2。
+- 已读取 `TODO.md`，确认第一个未完成任务为 `R2 — 审阅 T2`。
+- 已检查 Git 状态和最近提交：工作区存在非本次文档/脚本改动，将避免纳入 R2 提交；最新提交是 T2 完成记录，无需新增前置任务。
+- 已审阅 T2 的 `trybuild` harness、3 个成功 fixture、2 个失败 fixture 和 `.stderr`：覆盖 `Reactive`、`view_builder!`、`ComponentProperties`/`component_properties` 核心路径，失败诊断为明确的 `compile_error!` 文案。
+- 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`。
+- 已更新 `TODO.md`：将 `R2` 标题标记为 `[DONE]`，并补充审阅结论和验证记录。
+- 下一步检查本次 diff，提交 R2 审阅记录后停止。
