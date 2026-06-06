@@ -22,7 +22,7 @@ use atto_ui::wm::{Window, WindowKind};
 use atto_ui_chat::{
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMessage, ChatMessageList, ChatMessageStatus, ChatMessageStore,
-    ChatPanel, ChatSender,
+    ChatPanel, ChatSender, ChatToolCallStatus,
 };
 
 fn main() -> Result<()> {
@@ -40,7 +40,9 @@ fn main() -> Result<()> {
     terminal.clear()?;
 
     let actions: EventQueue<()> = EventQueue::new();
-    let streaming_markdown = std::env::args().any(|arg| arg == "--streaming-markdown");
+    let args: Vec<String> = std::env::args().collect();
+    let streaming_markdown = args.iter().any(|arg| arg == "--streaming-markdown");
+    let tool_call = args.iter().any(|arg| arg == "--tool-call");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -53,7 +55,21 @@ fn main() -> Result<()> {
     )]);
 
     let store = ChatMessageStore::new();
-    let streaming_message_id = if streaming_markdown {
+    let tool_message_id = if tool_call {
+        let id = store.next_message_id();
+        store.push(ChatMessage::tool_call(
+            id,
+            "build",
+            ChatToolCallStatus::Running,
+            "TOOL-START",
+        ));
+        Some(id)
+    } else {
+        None
+    };
+    let streaming_message_id = if tool_message_id.is_some() {
+        None
+    } else if streaming_markdown {
         let id = store.next_message_id();
         store.push(
             ChatMessage::text(id, ChatSender::Assistant, "STREAMING-MARKDOWN")
@@ -170,6 +186,28 @@ fn main() -> Result<()> {
                     '6' => {
                         store.append_delta(id, " + STREAM-DELTA-B");
                         store.set_status(id, ChatMessageStatus::Final);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(id) = tool_message_id {
+                match cmd {
+                    '1' => {
+                        store.append_tool_delta(id, "\nTOOL-OUTPUT-1");
+                        continue;
+                    }
+                    '2' => {
+                        store.append_tool_delta(id, "\nTOOL-OUTPUT-2");
+                        continue;
+                    }
+                    '3' => {
+                        store.set_tool_status(id, ChatToolCallStatus::Done);
+                        continue;
+                    }
+                    '4' => {
+                        store.set_tool_status(id, ChatToolCallStatus::Error);
                         continue;
                     }
                     _ => {}

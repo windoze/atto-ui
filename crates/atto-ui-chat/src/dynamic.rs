@@ -14,7 +14,7 @@ use atto_ui::{
 use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
 use crate::{
     ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageContent, ChatMessageId,
-    ChatMessageList, ChatMessageStatus, ChatSender,
+    ChatMessageList, ChatMessageStatus, ChatSender, ChatToolCallStatus,
 };
 
 impl ComponentPropertySchema for ChatMessageList {
@@ -132,6 +132,30 @@ fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
             map.insert("file".to_string(), ComponentValue::Map(file));
             ComponentValue::Map(map)
         }
+        ChatMessageContent::ToolCall {
+            name,
+            status,
+            output,
+        } => {
+            let mut tool = BTreeMap::new();
+            tool.insert("name".to_string(), ComponentValue::String(name.clone()));
+            tool.insert(
+                "status".to_string(),
+                ComponentValue::String(tool_status_to_string(status).to_string()),
+            );
+            tool.insert("output".to_string(), ComponentValue::String(output.clone()));
+            let mut map = BTreeMap::new();
+            map.insert("tool_call".to_string(), ComponentValue::Map(tool));
+            ComponentValue::Map(map)
+        }
+    }
+}
+
+fn tool_status_to_string(status: &ChatToolCallStatus) -> &'static str {
+    match status {
+        ChatToolCallStatus::Running => "running",
+        ChatToolCallStatus::Done => "done",
+        ChatToolCallStatus::Error => "error",
     }
 }
 
@@ -262,9 +286,48 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
                     .map(|s| s.to_string());
                 return Ok(ChatMessageContent::File { name, url });
             }
-            Err("content must contain 'markdown'/'text' or 'file'".to_string())
+            if let Some(ComponentValue::Map(tool)) = map.get("tool_call") {
+                let name = tool
+                    .get("name")
+                    .and_then(ComponentValue::as_str)
+                    .ok_or_else(|| "tool_call missing name".to_string())?
+                    .to_string();
+                let status = tool
+                    .get("status")
+                    .map(parse_tool_status_value)
+                    .transpose()?
+                    .unwrap_or(ChatToolCallStatus::Running);
+                let output = tool
+                    .get("output")
+                    .and_then(ComponentValue::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                return Ok(ChatMessageContent::ToolCall {
+                    name,
+                    status,
+                    output,
+                });
+            }
+            Err("content must contain 'markdown'/'text', 'file', or 'tool_call'".to_string())
         }
         other => Err(format!("content must be string or map, got {other:?}")),
+    }
+}
+
+fn parse_tool_status_value(value: &ComponentValue) -> Result<ChatToolCallStatus, String> {
+    match value {
+        ComponentValue::String(raw) => parse_tool_status_string(raw),
+        other => Err(format!("tool_call status must be string, got {other:?}")),
+    }
+}
+
+fn parse_tool_status_string(raw: &str) -> Result<ChatToolCallStatus, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "running" => Ok(ChatToolCallStatus::Running),
+        "done" => Ok(ChatToolCallStatus::Done),
+        "error" => Ok(ChatToolCallStatus::Error),
+        _ => Err(format!("unknown tool_call status '{raw}'")),
     }
 }
 
@@ -426,5 +489,20 @@ mod tests {
             view.get_property("draft"),
             Some(ComponentValue::String("next".to_string()))
         );
+    }
+
+    #[test]
+    fn chat_messages_round_trip_tool_call_content() {
+        let messages = vec![ChatMessage::tool_call(
+            ChatMessageId(42),
+            "build",
+            ChatToolCallStatus::Running,
+            "cargo test",
+        )];
+
+        let value = messages_to_component_value(&messages);
+        let parsed = parse_messages_value(&value).expect("parse messages");
+
+        assert_eq!(parsed, messages);
     }
 }

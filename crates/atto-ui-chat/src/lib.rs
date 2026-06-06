@@ -18,6 +18,7 @@ pub use input::{
 pub use list::ChatMessageList;
 pub use message::{
     ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageId, ChatMessageStatus, ChatSender,
+    ChatToolCallStatus,
 };
 pub use panel::ChatPanel;
 pub use store::ChatMessageStore;

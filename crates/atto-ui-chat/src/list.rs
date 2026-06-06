@@ -5,7 +5,7 @@ use atto_ui::composable::{
     ScrollConfig, Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
-use atto_ui::widgets::{Spinner, SpinnerIconStyle};
+use atto_ui::widgets::{Disclosure, DisclosureStatus, Spinner, SpinnerIconStyle};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
 use crossterm::event::Event;
@@ -15,7 +15,9 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
-use crate::message::{ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus};
+use crate::message::{
+    ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus, ChatToolCallStatus,
+};
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
@@ -385,6 +387,7 @@ struct ChatMessageRowKey {
 enum ChatMessageContentKey {
     Text,
     File { name: String, url: Option<String> },
+    ToolCall { name: String },
 }
 
 impl Identifiable for ChatMessageRowKey {
@@ -410,6 +413,11 @@ impl ChatMessageRowKey {
                     name: name.clone(),
                     url: url.clone(),
                 },
+                ChatMessageContentKey::ToolCall { name } => ChatMessageContent::ToolCall {
+                    name: name.clone(),
+                    status: ChatToolCallStatus::Running,
+                    output: String::new(),
+                },
             },
         }
     }
@@ -429,15 +437,25 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageRowKey> {
                     name: name.clone(),
                     url: url.clone(),
                 },
+                ChatMessageContent::ToolCall { name, .. } => {
+                    ChatMessageContentKey::ToolCall { name: name.clone() }
+                }
             },
         })
         .collect()
 }
 
+#[derive(Default)]
+struct ChatMessageRowBindings {
+    markdown: Option<Binding<String>>,
+    tool_output: Option<Binding<String>>,
+    tool_status: Option<Binding<DisclosureStatus>>,
+}
+
 struct ChatMessageRow {
     message_id: crate::message::ChatMessageId,
     messages: Binding<Vec<ChatMessage>>,
-    body_markdown: Option<Binding<String>>,
+    body_bindings: ChatMessageRowBindings,
     config: ChatMessageRowConfig,
     view: VStack,
 }
@@ -449,35 +467,43 @@ impl ChatMessageRow {
         config: ChatMessageRowConfig,
     ) -> Self {
         let message = find_message(&messages.get(), key.id).unwrap_or_else(|| key.placeholder());
-        let (view, body_markdown) = build_row_view(&message, &config);
+        let (view, body_bindings) = build_row_view(&message, &config);
         Self {
             message_id: key.id,
             messages,
-            body_markdown,
+            body_bindings,
             config,
             view,
         }
     }
 
-    fn sync_body_markdown(&self) {
-        let Some(binding) = &self.body_markdown else {
-            return;
-        };
+    fn sync_body_bindings(&self) {
         let messages = self.messages.get();
         let Some(message) = find_message(&messages, self.message_id) else {
             return;
         };
-        let Some(markdown) = message_markdown_for_render(&message, &self.config) else {
-            return;
-        };
-        binding.set(markdown);
+
+        if let Some(binding) = &self.body_bindings.markdown
+            && let Some(markdown) = message_markdown_for_render(&message, &self.config)
+        {
+            binding.set(markdown);
+        }
+
+        if let ChatMessageContent::ToolCall { status, output, .. } = &message.content {
+            if let Some(binding) = &self.body_bindings.tool_output {
+                binding.set(output.clone());
+            }
+            if let Some(binding) = &self.body_bindings.tool_status {
+                binding.set(tool_status_to_disclosure(status));
+            }
+        }
     }
 }
 
 fn build_row_view(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
-) -> (VStack, Option<Binding<String>>) {
+) -> (VStack, ChatMessageRowBindings) {
     let mut column = VStack::new().with_spacing(1);
     let row_layout = LayoutParams {
         height: Size::Content,
@@ -490,10 +516,10 @@ fn build_row_view(
         column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
     }
 
-    let (bubble, body_markdown) = build_aligned_bubble(message, config);
+    let (bubble, body_bindings) = build_aligned_bubble(message, config);
     column = column.child_with_layout(bubble, row_layout);
 
-    (column, body_markdown)
+    (column, body_bindings)
 }
 
 fn find_message(
@@ -521,29 +547,29 @@ fn message_markdown_for_render(
 
 impl ::atto_ui::composable::Component for ChatMessageRow {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.draw(frame, area, ctx);
     }
 }
 
 impl ::atto_ui::composable::Layout for ChatMessageRow {
     fn min_width(&self) -> u16 {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.min_width()
     }
 
     fn min_height(&self) -> u16 {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.min_height()
     }
 
     fn desired_width(&self) -> Option<u16> {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.desired_width()
     }
 
     fn desired_height(&self) -> Option<u16> {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.desired_height()
     }
 }
@@ -556,7 +582,7 @@ impl ::atto_ui::composable::DynamicTree for ChatMessageRow {}
 
 impl ::atto_ui::composable::EventHandling for ChatMessageRow {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        self.sync_body_markdown();
+        self.sync_body_bindings();
         self.view.handle_event(event, ctx)
     }
 }
@@ -564,8 +590,8 @@ impl ::atto_ui::composable::EventHandling for ChatMessageRow {
 fn build_aligned_bubble(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
-) -> (HStack, Option<Binding<String>>) {
-    let (bubble, body_markdown) = build_bubble(message, config);
+) -> (HStack, ChatMessageRowBindings) {
+    let (bubble, body_bindings) = build_bubble(message, config);
     let bubble_layout = LayoutParams {
         width: Size::Weight(3),
         height: Size::Content,
@@ -584,15 +610,15 @@ fn build_aligned_bubble(
             .child_with_layout(Spacer::new(), spacer_layout)
             .child_with_layout(bubble, bubble_layout),
     };
-    (row, body_markdown)
+    (row, body_bindings)
 }
 
 fn build_bubble(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
-) -> (VStack, Option<Binding<String>>) {
+) -> (VStack, ChatMessageRowBindings) {
     let header = build_header(message);
-    let (body, body_markdown) = ChatMessageBody::from_message(message, config);
+    let (body, body_bindings) = ChatMessageBody::from_message(message, config);
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -610,7 +636,7 @@ fn build_bubble(
         bubble = bubble.child_with_layout(spinner, content_layout);
     }
 
-    (bubble, body_markdown)
+    (bubble, body_bindings)
 }
 
 fn build_header(message: &ChatMessage) -> HStack {
@@ -681,13 +707,14 @@ impl ::atto_ui::composable::EventHandling for ChatTimestampDivider {}
 enum ChatMessageBody {
     Markdown(MarkdownViewer),
     File(VStack),
+    Tool(Disclosure),
 }
 
 impl ChatMessageBody {
     fn from_message(
         message: &ChatMessage,
         config: &ChatMessageRowConfig,
-    ) -> (Self, Option<Binding<String>>) {
+    ) -> (Self, ChatMessageRowBindings) {
         match &message.content {
             ChatMessageContent::Text { .. } => {
                 let content =
@@ -699,7 +726,10 @@ impl ChatMessageBody {
                             .wrap_width(config.wrap_width)
                             .vertical_scrollbar(ScrollbarVisibility::Never),
                     ),
-                    Some(content),
+                    ChatMessageRowBindings {
+                        markdown: Some(content),
+                        ..ChatMessageRowBindings::default()
+                    },
                 )
             }
             ChatMessageContent::File { name, url } => {
@@ -708,9 +738,40 @@ impl ChatMessageBody {
                 if let Some(url) = url {
                     view = view.child(Text::new(format!("Url: {url}")));
                 }
-                (ChatMessageBody::File(view), None)
+                (
+                    ChatMessageBody::File(view),
+                    ChatMessageRowBindings::default(),
+                )
+            }
+            ChatMessageContent::ToolCall {
+                name,
+                status,
+                output,
+            } => {
+                let output = Binding::new(output.clone());
+                let status = Binding::new(tool_status_to_disclosure(status));
+                let view = Disclosure::new(format!("Tool: {name}"))
+                    .expanded(true)
+                    .status(status.clone())
+                    .content(output.clone());
+                (
+                    ChatMessageBody::Tool(view),
+                    ChatMessageRowBindings {
+                        tool_output: Some(output),
+                        tool_status: Some(status),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
             }
         }
+    }
+}
+
+fn tool_status_to_disclosure(status: &ChatToolCallStatus) -> DisclosureStatus {
+    match status {
+        ChatToolCallStatus::Running => DisclosureStatus::Running,
+        ChatToolCallStatus::Done => DisclosureStatus::Done,
+        ChatToolCallStatus::Error => DisclosureStatus::Error,
     }
 }
 
@@ -719,6 +780,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.draw(frame, area, ctx),
             ChatMessageBody::File(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Tool(view) => view.draw(frame, area, ctx),
         }
     }
 }
@@ -728,6 +790,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.min_width(),
             ChatMessageBody::File(view) => view.min_width(),
+            ChatMessageBody::Tool(view) => view.min_width(),
         }
     }
 
@@ -735,6 +798,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.min_height(),
             ChatMessageBody::File(view) => view.min_height(),
+            ChatMessageBody::Tool(view) => view.min_height(),
         }
     }
 
@@ -742,6 +806,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.desired_width(),
             ChatMessageBody::File(view) => view.desired_width(),
+            ChatMessageBody::Tool(view) => view.desired_width(),
         }
     }
 
@@ -749,6 +814,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.desired_height(),
             ChatMessageBody::File(view) => view.desired_height(),
+            ChatMessageBody::Tool(view) => view.desired_height(),
         }
     }
 }
@@ -764,6 +830,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
         match self {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
             ChatMessageBody::File(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Tool(view) => view.handle_event(event, ctx),
         }
     }
 }
@@ -789,5 +856,29 @@ mod tests {
         first.status = ChatMessageStatus::Final;
         let final_key = row_keys_from_messages(&[first]);
         assert_ne!(delta_key, final_key);
+    }
+
+    #[test]
+    fn row_keys_ignore_tool_output_and_tool_status_for_streaming_updates() {
+        let id = ChatMessageId::new(8);
+        let mut first =
+            ChatMessage::tool_call(id, "build", ChatToolCallStatus::Running, "starting");
+        let first_key = row_keys_from_messages(&[first.clone()]);
+
+        first.content = ChatMessageContent::ToolCall {
+            name: "build".to_string(),
+            status: ChatToolCallStatus::Done,
+            output: "starting\nfinished".to_string(),
+        };
+        let updated_key = row_keys_from_messages(&[first.clone()]);
+        assert_eq!(first_key, updated_key);
+
+        first.content = ChatMessageContent::ToolCall {
+            name: "test".to_string(),
+            status: ChatToolCallStatus::Done,
+            output: "starting\nfinished".to_string(),
+        };
+        let renamed_key = row_keys_from_messages(&[first]);
+        assert_ne!(updated_key, renamed_key);
     }
 }

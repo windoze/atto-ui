@@ -21,6 +21,18 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     }
 }
 
+fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
+    let contents = host.screen_contents().ok()?;
+    contents.lines().enumerate().find_map(|(y, line)| {
+        line.find(needle).map(|x| {
+            (
+                x.min(u16::MAX as usize) as u16,
+                y.min(u16::MAX as usize) as u16,
+            )
+        })
+    })
+}
+
 #[test]
 fn chat_input_modes_switch() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
@@ -174,6 +186,56 @@ fn chat_streaming_delta_append_renders_accumulated_text() -> anyhow::Result<()> 
 
     host.send_str("6")?;
     host.wait_for_text("STREAM-DELTA-A + STREAM-DELTA-B", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--tool-call"], 80, 24)?;
+
+    host.wait_for_text("Tool: build", Duration::from_secs(2))?;
+    host.wait_for_text("[~]", Duration::from_secs(2))?;
+    host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_text("TOOL-OUTPUT-1", Duration::from_secs(2))?;
+
+    host.send_str("2")?;
+    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
+
+    host.send_str("3")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("[x]") && line.contains("Tool: build"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    let (x, y) = find_text_position(&host, "Tool: build").expect("tool header position");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| snapshot.iter().all(|line| !line.contains("TOOL-OUTPUT-1")),
+        Duration::from_secs(2),
+    )?;
+
+    host.click(x, y)?;
+    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
+
+    host.send_str("4")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("[!]") && line.contains("Tool: build"))
+        },
+        Duration::from_secs(2),
+    )?;
 
     host.send_ctrl('q')?;
     Ok(())

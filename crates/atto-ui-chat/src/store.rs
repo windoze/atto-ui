@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use atto_ui::reactive::{Binding, Property};
 
-use crate::message::{ChatMessage, ChatMessageContent, ChatMessageId, ChatMessageStatus};
+use crate::message::{
+    ChatMessage, ChatMessageContent, ChatMessageId, ChatMessageStatus, ChatToolCallStatus,
+};
 
 #[derive(Clone, Debug)]
 pub struct ChatMessageStore {
@@ -124,6 +126,72 @@ impl ChatMessageStore {
         });
         found_text
     }
+
+    pub fn update_tool_output(&self, id: ChatMessageId, output: impl Into<String>) -> bool {
+        let output = output.into();
+        let mut found_tool = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            let ChatMessageContent::ToolCall {
+                output: current, ..
+            } = &mut item.content
+            else {
+                return false;
+            };
+            found_tool = true;
+            if *current == output {
+                false
+            } else {
+                *current = output;
+                true
+            }
+        });
+        found_tool
+    }
+
+    pub fn append_tool_delta(&self, id: ChatMessageId, delta: &str) -> bool {
+        let mut found_tool = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            let ChatMessageContent::ToolCall { output, .. } = &mut item.content else {
+                return false;
+            };
+            found_tool = true;
+            if delta.is_empty() {
+                return false;
+            }
+            output.push_str(delta);
+            true
+        });
+        found_tool
+    }
+
+    pub fn set_tool_status(&self, id: ChatMessageId, status: ChatToolCallStatus) -> bool {
+        let mut found_tool = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            let ChatMessageContent::ToolCall {
+                status: current, ..
+            } = &mut item.content
+            else {
+                return false;
+            };
+            found_tool = true;
+            if *current == status {
+                false
+            } else {
+                *current = status;
+                true
+            }
+        });
+        found_tool
+    }
 }
 
 impl Default for ChatMessageStore {
@@ -145,8 +213,33 @@ mod tests {
             .and_then(|message| match message.content {
                 ChatMessageContent::Text { markdown } => Some(markdown),
                 ChatMessageContent::File { .. } => None,
+                ChatMessageContent::ToolCall { .. } => None,
             })
             .expect("text message should exist")
+    }
+
+    fn tool_output_for(store: &ChatMessageStore, id: ChatMessageId) -> String {
+        store
+            .messages()
+            .into_iter()
+            .find(|message| message.id == id)
+            .and_then(|message| match message.content {
+                ChatMessageContent::ToolCall { output, .. } => Some(output),
+                ChatMessageContent::Text { .. } | ChatMessageContent::File { .. } => None,
+            })
+            .expect("tool message should exist")
+    }
+
+    fn tool_status_for(store: &ChatMessageStore, id: ChatMessageId) -> ChatToolCallStatus {
+        store
+            .messages()
+            .into_iter()
+            .find(|message| message.id == id)
+            .and_then(|message| match message.content {
+                ChatMessageContent::ToolCall { status, .. } => Some(status),
+                ChatMessageContent::Text { .. } | ChatMessageContent::File { .. } => None,
+            })
+            .expect("tool message should exist")
     }
 
     fn status_for(store: &ChatMessageStore, id: ChatMessageId) -> ChatMessageStatus {
@@ -257,5 +350,44 @@ mod tests {
         let text = text_for(&store, id);
         assert_eq!(text.len(), 5_500);
         assert!(text.bytes().all(|byte| byte == b'x'));
+    }
+
+    #[test]
+    fn tool_delta_accumulates_output_and_status_updates() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::tool_call(
+            id,
+            "build",
+            ChatToolCallStatus::Running,
+            "start",
+        ));
+
+        assert!(store.append_tool_delta(id, " -> compile"));
+        assert_eq!(tool_output_for(&store, id), "start -> compile");
+        assert_eq!(tool_status_for(&store, id), ChatToolCallStatus::Running);
+
+        assert!(store.set_tool_status(id, ChatToolCallStatus::Done));
+        assert_eq!(tool_status_for(&store, id), ChatToolCallStatus::Done);
+    }
+
+    #[test]
+    fn tool_updates_noop_without_dirty_notification_when_unchanged() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::tool_call(
+            id,
+            "build",
+            ChatToolCallStatus::Running,
+            "same",
+        ));
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(store.append_tool_delta(id, ""));
+        assert!(store.update_tool_output(id, "same"));
+        assert!(store.set_tool_status(id, ChatToolCallStatus::Running));
+
+        assert!(!binding.check_dirty(&mut observer));
     }
 }

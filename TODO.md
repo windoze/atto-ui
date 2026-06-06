@@ -351,7 +351,7 @@
 - 已审阅 `atto-ui-test-host` raw PTY output 捕获、`snapshot_clipboard_app` 和 `tests/pty_clipboard.rs`，确认 PTY 覆盖跨行拖选、选区高亮和 Ctrl+C 后 OSC52 输出序列。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 
-### [ ] T13 — chat 工具调用块（消费 disclosure）（C.2）
+### [DONE] T13 — chat 工具调用块（消费 disclosure）（C.2）
 **文件**：`crates/atto-ui-chat/src/message.rs`、`list.rs`
 **现状**：`ChatMessageContent` 仅 Text/File，无工具调用建模。
 **步骤**：
@@ -359,6 +359,12 @@
 2. 渲染用 T11 的 `Disclosure`；输出可经 T8 的增量流式持续灌入。
 **测试**：PTY：工具块 running→done 状态切换、输出流式追加、折叠展开。
 **验收**：工具块在会话列表中可折叠、状态正确、输出可流式。
+**完成记录（2026-06-06）**：
+- 新增 `ChatToolCallStatus` 与 `ChatMessageContent::ToolCall { name, status, output }`，并提供 `ChatMessage::tool_call` 构造器。
+- `ChatMessageStore` 新增 `append_tool_delta`、`update_tool_output`、`set_tool_status`，支持工具输出流式追加与 running/done/error 状态更新，同值/空 delta 不产生脏通知。
+- `ChatMessageList` 使用 core `Disclosure` 渲染工具调用块，将 chat 工具状态映射到 `DisclosureStatus`；row key 忽略工具输出和工具状态以保留折叠状态并避免流式更新重建整行。
+- 动态消息序列化/解析支持 `tool_call` 内容；`snapshot_chat_app --tool-call` 和 `pty_chat` 覆盖 running→done→error、输出追加、折叠/展开。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui-chat`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [ ] R13 — 审阅 T13
 - 确认 chat 仅消费 core disclosure，未在 chat 重复实现折叠逻辑。

@@ -63,9 +63,26 @@ pub enum ChatMessageStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChatToolCallStatus {
+    Running,
+    Done,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatMessageContent {
-    Text { markdown: String },
-    File { name: String, url: Option<String> },
+    Text {
+        markdown: String,
+    },
+    File {
+        name: String,
+        url: Option<String>,
+    },
+    ToolCall {
+        name: String,
+        status: ChatToolCallStatus,
+        output: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +125,26 @@ impl ChatMessage {
             content: ChatMessageContent::File {
                 name: name.into(),
                 url,
+            },
+        }
+    }
+
+    pub fn tool_call(
+        id: impl Into<ChatMessageId>,
+        name: impl Into<String>,
+        status: ChatToolCallStatus,
+        output: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        Self {
+            id: id.into(),
+            sender: ChatSender::Tool(name.clone()),
+            timestamp: None,
+            status: ChatMessageStatus::Final,
+            content: ChatMessageContent::ToolCall {
+                name,
+                status,
+                output: output.into(),
             },
         }
     }

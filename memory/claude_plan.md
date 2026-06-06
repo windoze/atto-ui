@@ -2,27 +2,33 @@
 
 ## 范围
 
-以 `TODO.md` 为权威任务列表，本轮只完成第一个未完成任务：`R12 — 审阅 T12`。本轮是审阅任务，重点确认 T12 的 OSC52 剪贴板、core 通用文本选区复制、测试覆盖和降级行为；如发现缺陷，优先修复与 R12 直接相关的问题，验证通过后更新 `TODO.md`、提交并停止。
+- 以 `TODO.md` 为权威任务列表。
+- 本轮只完成第一个标题未带 `[DONE]` 的任务：`T13 — chat 工具调用块（消费 disclosure）（C.2）`。
+- 完成 T13、更新记录并提交后停止，不处理 `R13` 或后续任务。
 
 ## 步骤
 
-1. 读取 `TODO.md`，确认第一个标题未带 `[DONE]` 的任务是 `R12`。
-2. 检查最新提交信息；若明确提到与 R12 直接相关的未完成问题，将其纳入本轮审阅或作为前置记录到 `TODO.md`。
-3. 审阅 T12 相关实现：`src/clipboard.rs`、core `Text` 选区逻辑、`TextBox` 剪贴板路径、test-host raw output 捕获、`snapshot_clipboard_app` 和 PTY/单测。
-4. 对照 R12 验收点确认：OSC52 编码正确且写出失败安全降级；选区位于 core 通用层且未引入 editor 依赖；PTY 覆盖选区高亮与 OSC52 输出。
-5. 如发现 R12 范围内的缺陷，做最小正确修复并补充测试；如发现阻塞但不能在本轮正确完成，更新 `TODO.md` 加入最小前置任务并停止。
-6. 按要求验证：先 `cargo fmt`，再 `cargo clippy --workspace --all-targets -- -D warnings`，再运行相关 PTY 测试和完整 workspace 测试。
-7. 将 `R12` 标题标记为 `[DONE]`，补充完成记录，必要时仅更新 `TODO.md`；除非阶段计划变化，否则不更新 `PLAN.md`。
-8. 提交本轮相关更改并停止，不处理 `T13`。
+1. 读取 `TODO.md`，确认第一个未完成任务。
+2. 只检查与当前任务直接相关的最近提交和工作区状态，避免开放式历史问题排查。
+3. 检查 chat 消息模型、store、列表渲染、动态组件解析和 core `Disclosure` API。
+4. 新增 `ChatMessageContent::ToolCall { name, status, output }`，其中 status 覆盖 running/done/error。
+5. 提供工具输出流式追加与状态更新 API，避免空 delta 或同值更新产生无效 dirty 通知。
+6. 在 chat 消息列表中复用 core `Disclosure` 渲染工具调用块，不在 chat 内重复实现折叠逻辑。
+7. 补充单测与 PTY：覆盖 running→done/error 状态变化、输出追加、折叠和展开。
+8. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+9. 验证通过后，将 T13 标题标记为 `[DONE]` 并补充完成记录。
+10. 只提交本轮 T13 相关文件和计划记录。
 
 ## 进度
 
-- 已读取 `TODO.md` 并确认第一个未完成任务：`R12 — 审阅 T12`。
-- 已写入本轮 R12 审阅计划；下一步检查最新提交与 T12 相关实现。
-- 已检查最新提交：最新提交仅记录 T12 completion plan；T12 实现提交为 `[T12] Add system clipboard selection`，未显示与 R12 直接相关的未完成事项。
-- 已审阅 `src/clipboard.rs`、`src/composable/primitives.rs`、`src/widgets/textbox.rs`、`crates/atto-ui-test-host/src/lib.rs`、`src/bin/snapshot_clipboard_app.rs`、`tests/pty_clipboard.rs`。
-- 当前审阅结论：未发现 R12 范围内缺陷；OSC52 编码路径正确，写出失败由调用点 best-effort 忽略；文本选区实现位于 core 通用 `Text`/`TextBox` 路径，未引入 editor 依赖；PTY 覆盖选区高亮与 OSC52 输出。
-- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
-- 已更新 `TODO.md`，将 R12 标记为 `[DONE]` 并记录审阅与验证结果。
-- 已提交 R12 审阅记录：`6bf73a5 [R12] Review system clipboard selection`。
-- 本轮到此停止，不处理 T13。
+- 已确认第一个未完成任务为 `T13 — chat 工具调用块（消费 disclosure）（C.2）`。
+- 已检查相关实现：chat 行 key 已支持文本流式 delta 不重建整行；core `Disclosure` 已支持绑定 title/status/content、键盘和鼠标折叠。
+- 已实现 `ChatToolCallStatus`、`ChatMessageContent::ToolCall`、`ChatMessage::tool_call`。
+- 已实现 `ChatMessageStore::append_tool_delta`、`update_tool_output`、`set_tool_status`。
+- 已让 `ChatMessageList` 使用 core `Disclosure` 渲染工具调用块，并将工具状态映射到 `DisclosureStatus`。
+- 已让工具调用 row key 忽略工具输出和工具状态，从而保留折叠状态并避免流式输出重建整行。
+- 已补充动态消息 `tool_call` 序列化/解析与 round-trip 单测。
+- 已新增 `snapshot_chat_app --tool-call` 和 PTY 覆盖 running→done→error、输出追加、折叠/展开。
+- 已修正 `--tool-call` fixture 分支，避免工具调用模式仍追加默认 seed 消息导致工具块被自动滚出视口。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui-chat`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
+- 已更新 `TODO.md`，将 T13 标记为 `[DONE]` 并记录完成内容与验证结果。
