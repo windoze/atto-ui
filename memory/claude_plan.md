@@ -27,4 +27,5 @@
 - R18 审阅范围：toast 队列是否不阻塞主循环且不与状态栏冲突；`WindowedText` 超大块 windowing 是否不丢内容且展开正确；OSC8/图片多模态能力检测与降级是否安全；运行对应 PTY、clippy 和 workspace 测试。
 - 审阅发现并修复 `WindowedText` 可见行路径的 materialization 问题：展开状态滚动到大文本尾部时，现在先定位可见窗口再构造绘制行，常规可见行保持 borrowed slice，避免为跳过的行创建 `String`。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui windowed_text -- --nocapture`；`cargo test --test pty_notifications_windowing_multimodal -- --nocapture`；`cargo test --workspace --all-targets`。
-- 已将 `TODO.md` 中 `R18` 标记为 `[DONE]` 并补充完成记录。下一步提交本次任务相关改动后停止。
+- 已将 `TODO.md` 中 `R18` 标记为 `[DONE]` 并补充完成记录。
+- 已提交 R18 审阅与修复改动：`7dd8cb4 [R18] Review notifications windowing multimodal`。下一步停止，不处理 `T19`。
