@@ -35,4 +35,5 @@
 - 已将 `TODO.md` 中 T16 标记为 `[DONE]` 并补充完成记录。
 - 提交前审查发现并修正了 `TypeAhead` 鼠标事件命中范围：现在只有 inner 内容区内的点击会定位输入或确认建议，避免边框点击误触。
 - 修正后验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_typeahead`；`cargo test`。
-- 下一步：更新暂存区、检查 staged diff/status/log，提交 T16 相关文件并停止。
+- 已提交 T16 实现与完成记录：`a84df19 [T16] Add core typeahead command palette`。
+- 本次追加仅记录提交结果；由于只修改执行记录文档，不需要重新运行测试。
