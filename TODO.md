@@ -450,10 +450,17 @@
 - 新增 `snapshot_typeahead_app` 与 `tests/pty_typeahead.rs`，覆盖弹层打开/关闭、slash 命令选择确认、`@file` 模糊过滤和 Esc 关闭后保留 query。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_typeahead`；`cargo test`。
 
-### [ ] R16 — 审阅 T16
+### [DONE] R16 — 审阅 T16
 - 确认 typeahead 与输入框解耦、可复用（非 editor 专用）。
 - 确认弹层焦点/命中与底层组件不冲突。
 - 运行 PTY。
+**完成记录（2026-06-07）**：
+- 已审阅 `src/fuzzy.rs`、`src/widgets/typeahead.rs`、runtime schema/导出、`snapshot_typeahead_app` 与 `tests/pty_typeahead.rs`。
+- 确认 fuzzy matcher 是 core 级可复用实现，`TypeAhead`/`CommandPalette` 通过 `Binding`、runtime action 和 callback 组合通用输入/命令列表，不依赖 editor 专用状态或组件。
+- 确认弹层绘制在组件自身布局区域内，事件命中先校验 `last_area`/inner rect，键盘焦点由组件自身 `FocusNav` 管理，鼠标点击只在输入行或建议行内消费，不与下方组件冲突。
+- 补充审阅覆盖缺口：新增 `pty_typeahead_mouse_click_accepts_visible_suggestion`，从真实 PTY 屏幕定位建议项并点击，验证鼠标命中路径可接受建议。
+- 完整验证中发现 `atto-editor-app` 的 Explorer smoke 在负载下偶发首屏 3 秒等待超时；已将同类 Explorer smoke 文本等待预算统一提高到 5 秒，单用例仍远低于 1 分钟，并复跑通过。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_typeahead`；`cargo test -p atto-editor-app --test explorer_enter_open_smoke`；`cargo test -p atto-editor-app --test explorer_open_smoke`；`cargo test --workspace --all-targets`。
 
 ---
 

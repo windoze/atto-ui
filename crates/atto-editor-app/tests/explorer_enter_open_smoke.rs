@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use atto_ui_test_host::PtyTestHost;
 
+const PTY_WAIT: Duration = Duration::from_secs(5);
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -26,7 +28,7 @@ fn enter_in_explorer_opens_file() -> anyhow::Result<()> {
     let exe = PathBuf::from(env!("CARGO_BIN_EXE_atto-editor-app"));
     let mut host = PtyTestHost::spawn(&exe, &[root.to_string_lossy().as_ref()], 90, 28)?;
 
-    host.wait_for_text(file_name, Duration::from_secs(3))?;
+    host.wait_for_text(file_name, PTY_WAIT)?;
 
     // Click the file entry, then press Enter to open in a tab.
     let click_x = 6;
@@ -35,7 +37,7 @@ fn enter_in_explorer_opens_file() -> anyhow::Result<()> {
     std::thread::sleep(Duration::from_millis(50));
     host.send_str("\r")?;
 
-    host.wait_for_text("HELLO_FROM_EDITOR", Duration::from_secs(3))?;
+    host.wait_for_text("HELLO_FROM_EDITOR", PTY_WAIT)?;
 
     host.send_ctrl('q')?;
     host.wait_for_exit(Duration::from_secs(2))?;

@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use atto_ui_test_host::PtyTestHost;
 
+const PTY_WAIT: Duration = Duration::from_secs(5);
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -27,7 +29,7 @@ fn double_click_in_explorer_opens_file_without_hanging() -> anyhow::Result<()> {
     let mut host = PtyTestHost::spawn(&exe, &[root.to_string_lossy().as_ref()], 90, 28)?;
 
     // Wait for the Explorer window to render the file name.
-    host.wait_for_text(file_name, Duration::from_secs(3))?;
+    host.wait_for_text(file_name, PTY_WAIT)?;
 
     // Default layout places the Explorer window docked left. Click the second row inside the
     // file tree content (first row is the workspace root dir node).
@@ -38,7 +40,7 @@ fn double_click_in_explorer_opens_file_without_hanging() -> anyhow::Result<()> {
     host.click(click_x, click_y)?;
 
     // The editor view should render the file contents somewhere on screen.
-    host.wait_for_text("HELLO_FROM_EDITOR", Duration::from_secs(3))?;
+    host.wait_for_text("HELLO_FROM_EDITOR", PTY_WAIT)?;
 
     // Ensure the app is still responsive (Quit shortcut should work).
     host.send_ctrl('q')?;

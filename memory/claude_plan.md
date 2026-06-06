@@ -1,39 +1,34 @@
-# 执行计划
+# Claude Execution Plan
 
-## 范围与原则
-- 本轮只处理 `TODO.md` 中第一个标题未以 `[DONE]` 开头的任务，完成后停止。
-- `TODO.md` 是任务顺序、约束、验证要求和完成记录的权威来源。
-- 不做开放式历史问题扫查；只有阻塞当前任务或使当前任务行为无效的问题才纳入本轮。
-- 不采用规避实现、削弱测试或改变规格的方式推进。
-- 本文件记录可审计计划、关键进展和结果；不记录隐藏推理过程。
+说明：本文件记录可审计的执行计划、关键决策和进度更新；不记录私有推理链。
 
-## 初始步骤
-1. 读取 `TODO.md`，定位第一个未完成任务。
-2. 检查最近提交信息是否明确提到与该任务直接相关的未完成问题。
-3. 阅读当前任务涉及的代码、测试和文档，确认需求、依赖和验证命令。
-4. 如发现当前任务必须先解决的新前置问题，更新 `TODO.md` 并提交后停止。
+## 当前目标
 
-## 实施步骤
-1. 按任务要求做最小正确实现，避免无关重构。
-2. 为变更补充或调整相关测试。
-3. 按要求先运行格式化，再运行 lint，再运行相关和完整验证；若仅文档变更且可复用最近绿色结果，则在完成记录中说明跳过原因。
-4. 修复验证中发现且未被明确排期的失败；无法本轮修复时，将最小前置任务插入 `TODO.md` 正确位置。
-5. 将当前任务标题加上 `[DONE]`，更新完成记录。
-6. 检查 `git status`、`git diff` 和最近提交，提交本轮所有相关变更。
-7. 停止，不处理下一个任务。
+- 按 `TODO.md` 的顺序识别第一个标题未带 `[DONE]` 的任务。
+- 完整处理该任务，或在遇到真实阻塞时按要求把最小必要前置任务写入 `TODO.md` 后停止。
+- 完成后更新 `TODO.md` 的完成记录并提交 Git；本轮只处理一个任务。
 
-## 当前状态
-- 已创建本轮执行计划文件。
-- 已读取 `TODO.md`，第一个未完成任务是 `T16 — 通用 typeahead / 命令面板 / 模糊匹配（core）（C.3）`。
-- 最近提交为 `[R15] Record completion plan`，仅修改计划记录，未提到与 T16 直接相关的未完成问题。
-- 发现工作树已有与本轮无关的未提交变更（若干文档删除/移动、`PLAN.md`、脚本等）；本轮不回退、不修改这些无关变更。
-- 已阅读现有 `TextBox`、`TextArea`、`ListBox`、组件 trait、Stack 事件/布局、运行时 builtins、主题与 PTY fixture 模式。
-- 实施方案：新增 `src/fuzzy.rs` 提供子序列模糊匹配；新增 `src/widgets/typeahead.rs` 提供可绑定 query/items 的 `TypeAhead` 以及基于它的 `CommandPalette`；导出并注册到 runtime；新增 `snapshot_typeahead_app` 和 PTY 测试覆盖弹层、过滤、选择确认和 Esc 关闭。
-- 已完成核心实现、运行时注册、snapshot fixture 与 `tests/pty_typeahead.rs`。
-- 验证进度：`cargo fmt` 通过；`cargo clippy --workspace --all-targets -- -D warnings` 通过。
-- 验证进度：`cargo test --test pty_typeahead` 通过；完整 `cargo test` 通过。
-- 已将 `TODO.md` 中 T16 标记为 `[DONE]` 并补充完成记录。
-- 提交前审查发现并修正了 `TypeAhead` 鼠标事件命中范围：现在只有 inner 内容区内的点击会定位输入或确认建议，避免边框点击误触。
-- 修正后验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_typeahead`；`cargo test`。
-- 已提交 T16 实现与完成记录：`a84df19 [T16] Add core typeahead command palette`。
-- 本次追加仅记录提交结果；由于只修改执行记录文档，不需要重新运行测试。
+## 初始执行步骤
+
+1. 读取 `TODO.md`，定位第一个未完成任务及其验证要求。
+2. 查看最近提交，判断是否有与该任务直接相关的未完成事项。
+3. 只围绕当前任务收集必要上下文，避免开放式历史问题扫描。
+4. 实施当前任务要求的最小正确变更。
+5. 按要求运行格式化、lint 和相关测试；如果执行完整测试套件，设置足够长的超时。
+6. 若发现未被安排的测试或夹具失败，修复或在 `TODO.md` 中排入必要任务，且不把当前任务标为完成。
+7. 任务完成后，将任务标题加上 `[DONE]`，更新完成记录。
+8. 检查 `git status`、`git diff`、最近提交记录，确认只提交本轮应包含的变更。
+9. 使用清晰的任务相关提交信息提交，然后停止。
+
+## 进度记录
+
+- 已创建初始执行计划，下一步读取 `TODO.md` 确认当前任务。
+- 已读取 `TODO.md`，当前第一项未完成任务是 `R16 — 审阅 T16`。
+- 最新提交为 `13efd67 Update plan`，未明确提到与 R16 直接相关的未完成事项。
+- 下一步审阅 T16 的 `src/fuzzy.rs`、`src/widgets/typeahead.rs`、命令面板/runtime/schema 导出、`snapshot_typeahead_app` 与 PTY 测试，重点确认复用性、焦点/命中行为和验证结果。
+- 已审阅主要实现与测试，发现 T16 完成记录提到鼠标点击确认，但现有 PTY 只覆盖键盘选择和 Esc 关闭；已补充 `pty_typeahead_mouse_click_accepts_visible_suggestion`，通过真实屏幕坐标点击建议项验证命中路径。
+- 验证进度：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --test pty_typeahead` 均通过。
+- 完整 `cargo test --workspace --all-targets` 失败于 `atto-editor-app --test explorer_enter_open_smoke::enter_in_explorer_opens_file`，现需按测试失败策略定位并修复，或在 `TODO.md` 中安排最小必要任务后停止。
+- 已复跑 `explorer_enter_open_smoke`：初次仍复现，随后在环境稳定后通过，判断为 PTY 首屏/内容等待预算在完整 suite 负载下过短。已将 `explorer_enter_open_smoke` 与同类 `explorer_open_smoke` 的文本等待预算从 3 秒提高到 5 秒，保持单用例远低于 1 分钟。
+- 复验结果：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --test pty_typeahead`、`cargo test -p atto-editor-app --test explorer_enter_open_smoke`、`cargo test -p atto-editor-app --test explorer_open_smoke`、`cargo test --workspace --all-targets` 均通过。
+- 已将 `TODO.md` 中 `R16` 标记为 `[DONE]`，并写入审阅完成记录。下一步检查 diff/status 后提交本轮变更。
