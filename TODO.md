@@ -82,11 +82,16 @@
 - 新增 `snapshot_app --apphost-api` fixture 与 `tests/pty_apphost_api.rs`，验证 `AppHost::send_event` 注入点击和 Enter 键均能触发按钮回调。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui app::desktop`；`cargo test --test pty_apphost_api`；`cargo test`。
 
-### [ ] R3 — 审阅 T3
+### [DONE] R3 — 审阅 T3
 - 确认 `send_event` 的坐标系/目标窗口路由正确（0-based、相对窗口）。
 - 确认窗口管理方法与现有 wm 不变量一致（模态焦点陷阱、Z 序、最小化态）。
 - 确认 `set_property` 与 `get_property` 往返一致。
 - 运行相关 PTY/单测。
+**完成记录（2026-06-06）**：
+- 已审阅 `Desktop::send_event_to_window`、`AppHost::send_event` 与 `WindowManager::dispatch_to_window_view` 路径，确认目标窗口事件注入复用真实分发入口；鼠标输入按目标窗口外框左上角的 0-based 相对坐标转换为绝对坐标，键盘和粘贴事件直接路由到目标窗口视图。
+- 已审阅 `close_window`、`focus_window`、`move_window`、`resize_window`、`list_windows`、`set_title`，确认关闭 hook、模态焦点陷阱、Z 序聚焦、最小化态拒绝聚焦以及工作区归一化移动/缩放均复用现有 `WindowManager` 不变量。
+- 已审阅 `set_property` 与 `get_property` 往返路径，确认写入走动态窗口 `TreeOp::SetProp`，读取走 `DesktopInspector`，并已有单测覆盖属性更新可见性。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui app::desktop`；`cargo test --test pty_apphost_api`；`cargo test --workspace --all-targets`。
 
 ### [ ] T4 — DesktopInspector 快照导出（B.1）
 **文件**：`src/inspect.rs`、`src/app/run.rs`

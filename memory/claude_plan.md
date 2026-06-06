@@ -1,26 +1,22 @@
-# 执行计划与进度日志
+# 当前执行计划
 
-## 当前状态
-- 已读取 `TODO.md`，第一个未完成任务为 `T3 — AppHost 事件注入与窗口管理（B.1）`。
-- 最近提交为 R2 记录/审阅相关，未发现直接指向 T3 的未完成提交说明。
-- 本文件记录可审阅的执行计划、关键进度和计划变更；不记录不可公开的隐性推理。
+## 状态
+- 本轮目标：完成 `R3 — 审阅 T3`，然后停止。
+- 已确认最新提交 `[T3] Add AppHost event injection APIs` 与当前审阅任务直接相关，但提交信息未声明未完成事项。
 
-## 执行计划
-1. 读取 `TODO.md`，按文件顺序识别第一个标题未带 `[DONE]` 的任务。
-2. 检查该任务的要求、依赖、验证方式和完成记录格式；必要时查看相关代码与最近提交，但不做开放式历史问题扫查。
-3. 若任务可直接完成，则实施最小正确改动，并避免影响无关文件。
-4. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，随后运行相关测试；需要完整验证时运行完整测试套件并设置足够超时。
-5. 若发现未被排期且会阻塞当前任务的失败测试、夹具问题或规格缺口，则修复；若无法在当前任务内正确修复，则在 `TODO.md` 中添加最小前置任务并停止。
-6. 完成后在 `TODO.md` 将当前任务标题加上 `[DONE]`，更新完成记录；仅在阶段计划真实变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff`、最近提交，确认只提交本次相关改动；用清晰提交信息提交。
-8. 提交后停止，不继续下一个任务。
+## 执行步骤
+1. 审阅 T3 相关实现文件，重点确认 `AppHost::send_event` 坐标系和目标窗口路由。
+2. 审阅窗口管理 API 对现有 `Desktop`/`WindowManager` 不变量的复用情况，重点关注模态焦点陷阱、Z 序、最小化态。
+3. 审阅 `set_property` 与 `get_property` 是否通过同一动态 tree-op/属性路径完成往返。
+4. 审阅 T3 新增测试是否真实覆盖 R3 要求，必要时补充缺失测试或修复发现的问题。
+5. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关 PTY/单测；如代码有变更或发现失败，修复后再验证。
+6. 将 `R3` 标记为 `[DONE]` 并写入完成记录；只有阶段级计划变化时才更新 `PLAN.md`。
+7. 提交本轮相关变更，提交信息使用 `[R3] ...`，然后停止。
 
-## 进度记录
-- 已完成：读取 `TODO.md` 并识别当前任务 T3。
-- 已完成：检查 `AppHost`、`Desktop`、`WindowManager`、事件分发入口和现有 PTY fixture 结构。
-- 已完成：在 `Desktop`/`WindowManager` 增加可单测的窗口管理和目标窗口事件注入能力，并由 `AppHost` 公开转发方法；鼠标注入坐标按目标窗口 0-based 相对坐标转为现有绝对坐标分发。
-- 已完成：新增 Rust 单测覆盖目标窗口事件、窗口 close/focus/move/resize/list、模态/最小化焦点约束与 `set_property`；新增 PTY fixture 覆盖 `AppHost::send_event` 点击/按键触发按钮回调。
-- 已完成：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、新增相关测试与完整 `cargo test` 均通过。
-- 已完成：`TODO.md` 中 T3 已标记 `[DONE]`，并补充完成记录与验证命令。
-- 已完成：检查 git 状态、目标 diff、最近提交和 staged diff；确认存在若干非本次无关改动，已仅暂存 T3 相关文件。
-- 待执行：提交 T3 改动并停止。
+## 更新记录
+- 初始化执行计划，下一步读取 `TODO.md` 确认当前任务。
+- 已确认当前任务为 `R3 — 审阅 T3`，并将计划聚焦到该审阅范围。
+- 已完成 R3 代码审阅：`send_event` 坐标转换、目标窗口路由、窗口管理 API、`set_property`/`get_property` 往返路径均与任务要求一致；暂未发现需要代码修复的问题。
+- 下一步执行验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui app::desktop`、`cargo test --test pty_apphost_api`。
+- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui app::desktop`、`cargo test --test pty_apphost_api`、`cargo test --workspace --all-targets`。
+- 已将 `TODO.md` 中 `R3` 标记为 `[DONE]` 并补充完成记录；下一步提交本轮变更。
