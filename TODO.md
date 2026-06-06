@@ -439,10 +439,17 @@
 - CI 复核：仓库当前无 `.github` workflow 或其他 CI 配置文件，因此无 CI 引用需要同步更新。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace --all-targets`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14A — 拆分 editor view 巨型文件（M8）
+### [DONE] T14A — 拆分 editor view 巨型文件（M8）
 **文件**：`crates/atto-ui-editor/src/view/mod.rs`(1971)。
 **说明**：从原 T14 拆出；原任务明确要求“逐文件单独 PR”，因此按文件顺序拆成独立可验证任务。纯机械重构，按职责拆子模块，零行为变更。
 **测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+**完成记录（2026-06-06）**：
+- 将 `crates/atto-ui-editor/src/view/mod.rs` 收敛为模块声明、核心类型定义和 `EditorView::new`，不再承载编辑器视图的大块实现。
+- 新增 `actions.rs`、`component_impl.rs`、`editing.rs`、`scrolling.rs`、`state.rs`、`tests.rs`，分别承载 keymap action 分发、atto-ui trait impl、文本编辑/剪贴板、视口滚动/折叠/光标移动、共享状态同步 helper、单元测试。
+- 复用并扩展既有 `lsp.rs` 与 `render.rs`：LSP hover/completion/goto 调度归入 `lsp.rs`，语法/语义样式映射归入 `render.rs`。
+- 跨子模块调用仅提升为 `pub(super)`，未新增外部公开 API；本次为纯机械重构，行为保持不变。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] T14B — 拆分 editor app window 巨型文件（M8）
 **文件**：`crates/atto-editor-app/src/window.rs`(1839)。

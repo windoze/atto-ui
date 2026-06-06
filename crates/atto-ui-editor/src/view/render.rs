@@ -230,6 +230,118 @@ impl EditorView {
         frame.render_widget(Paragraph::new(lines).style(theme.gutter), area);
     }
 
+    fn style_for_style_ids(&self, style_ids: &[u32]) -> Style {
+        let theme = self.editor_theme();
+
+        let mut fg = None;
+        let mut bg = None;
+        let mut mods = Modifier::empty();
+
+        let semantic_legend = self
+            .lsp
+            .session
+            .as_ref()
+            .and_then(|lsp| lsp.semantic_legend());
+
+        for &style_id in style_ids {
+            if let Some(style) = theme.style_ids.get(&style_id) {
+                if style.fg.is_some() {
+                    fg = style.fg;
+                }
+                if style.bg.is_some() {
+                    bg = style.bg;
+                }
+                mods |= style.add_modifier;
+                continue;
+            }
+
+            // Sublime: map StyleId -> scope string (if configured).
+            if let Some(scope) = self.syntax_processor.as_ref().and_then(|p| match p {
+                SyntaxProcessor::Sublime(p) => p.scope_mapper.scope_for_style_id(style_id),
+                _ => None,
+            }) {
+                if let Some(style) = syntax::style_for_sublime_scope(&theme, scope) {
+                    if style.fg.is_some() {
+                        fg = style.fg;
+                    }
+                    if style.bg.is_some() {
+                        bg = style.bg;
+                    }
+                    mods |= style.add_modifier;
+                    continue;
+                }
+
+                mods |= theme.unknown_scope.add_modifier;
+                if theme.unknown_scope.fg.is_some() {
+                    fg = theme.unknown_scope.fg;
+                }
+                if theme.unknown_scope.bg.is_some() {
+                    bg = theme.unknown_scope.bg;
+                }
+                continue;
+            }
+
+            // LSP semantic tokens default encoding: high 16 bits token_type, low 16 bits modifiers.
+            if style_id < 0x0100_0000 {
+                let (token_type_idx, token_mod_bits) =
+                    editor_core_lsp::decode_semantic_style_id(style_id);
+                let token_type_name = semantic_legend
+                    .and_then(|legend| legend.token_types.get(token_type_idx as usize))
+                    .map(|s| s.as_str());
+
+                let token_style = token_type_name
+                    .and_then(|name| theme.semantic_tokens.token_types.get(name))
+                    .copied()
+                    .unwrap_or(theme.semantic_tokens.unknown_token_type);
+
+                if token_style.fg.is_some() {
+                    fg = token_style.fg;
+                }
+                if token_style.bg.is_some() {
+                    bg = token_style.bg;
+                }
+                mods |= token_style.add_modifier;
+
+                if let Some(legend) = semantic_legend {
+                    for (i, name) in legend.token_modifiers.iter().enumerate() {
+                        if i >= 32 {
+                            break;
+                        }
+                        if token_mod_bits & (1u32 << i) == 0 {
+                            continue;
+                        }
+                        mods |= theme
+                            .semantic_tokens
+                            .token_modifiers
+                            .get(name)
+                            .copied()
+                            .unwrap_or(theme.semantic_tokens.unknown_token_modifier);
+                    }
+                }
+
+                continue;
+            }
+
+            // Unknown StyleId.
+            if theme.unknown_style_id.fg.is_some() {
+                fg = theme.unknown_style_id.fg;
+            }
+            if theme.unknown_style_id.bg.is_some() {
+                bg = theme.unknown_style_id.bg;
+            }
+            mods |= theme.unknown_style_id.add_modifier;
+        }
+
+        let mut style = theme.text;
+        if let Some(fg) = fg {
+            style = style.fg(fg);
+        }
+        if let Some(bg) = bg {
+            style = style.bg(bg);
+        }
+        style.add_modifier(mods)
+    }
+
     fn render_text(&self, frame: &mut Frame<'_>, area: Rect, focused: bool, theme: &EditorTheme) {
         let editor = self.state_manager.editor();
         let scroll_top = self.state_manager.get_viewport_state().scroll_top;

@@ -3,6 +3,13 @@
 use super::*;
 
 impl EditorView {
+    pub(super) fn start_lsp_if_enabled(&mut self) {
+        let EditorLspMode::Enabled(cfg) = self.config.lsp.get() else {
+            return;
+        };
+        self.start_lsp_session(cfg);
+    }
+
     pub(super) fn lsp_did_change(&mut self, change: LspContentChange) {
         let result = {
             let Some(lsp) = self.lsp.session.as_mut() else {
@@ -339,6 +346,283 @@ impl EditorView {
             scroll: 0,
             accept: None,
         }));
+    }
+
+    pub(super) fn hide_hover_popup_only(&mut self) {
+        if self.hover_popup.get().is_some() {
+            self.hover_popup.set(None);
+        }
+        self.lsp.hover_due = None;
+        self.lsp.hover_pending_request = None;
+        self.lsp.hover_target = None;
+        self.lsp.hover_requested = None;
+    }
+
+    pub(super) fn consume_hover_popup_dismissed(&mut self) {
+        let Some(pos) = self.hover_popup_dismissed.get() else {
+            return;
+        };
+        self.hover_popup_dismissed.set(None);
+
+        // Suppress re-showing at the same hover position until the mouse moves elsewhere.
+        self.lsp.hover_suppressed_position = Some(pos);
+        self.lsp.hover_due = None;
+        self.lsp.hover_pending_request = None;
+        self.lsp.hover_target = None;
+        self.lsp.hover_requested = None;
+    }
+
+    pub(super) fn update_hover_anchor(&mut self, pos: Position, screen: (u16, u16)) {
+        if self.lsp.hover_suppressed_position.is_some_and(|p| p != pos) {
+            self.lsp.hover_suppressed_position = None;
+        }
+
+        let prev_pos = self.lsp.hover_anchor.map(|a| a.position);
+        self.lsp.hover_anchor = Some(HoverAnchor {
+            position: pos,
+            screen,
+        });
+
+        // When the hovered position changes, any visible tooltip and any in-flight request become
+        // stale. Don't treat this as an explicit dismissal: allow the tooltip to show again after
+        // the normal idle delay.
+        if prev_pos != Some(pos) {
+            if self.hover_popup.get().is_some() {
+                self.hover_popup.set(None);
+            }
+            self.lsp.hover_due = None;
+            self.lsp.hover_pending_request = None;
+            self.lsp.hover_target = None;
+            self.lsp.hover_requested = None;
+            return;
+        }
+
+        // Same token/position: keep the tooltip close to the mouse.
+        if let Some(mut popup) = self.hover_popup.get()
+            && popup.anchor == pos
+        {
+            popup.rect = self.hover_popup_rect_for_screen_point(screen, popup.contents.lines());
+            self.hover_popup.set(Some(popup));
+        }
+    }
+
+    fn request_hover_at_anchor(&mut self, anchor: HoverAnchor) {
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+        let pos = anchor.position;
+        if let Ok(id) = lsp.request_hover(
+            &self.state_manager.editor().line_index,
+            pos.line,
+            pos.column,
+        ) {
+            self.lsp.hover_pending_request = Some(id);
+            self.lsp.hover_requested = Some(anchor);
+        }
+    }
+
+    pub(super) fn request_hover_now(&mut self) {
+        let Some(screen) = self.cursor_screen_position().and_then(|p| p) else {
+            return;
+        };
+        self.request_hover_at_anchor(HoverAnchor {
+            position: self.active_cursor_position(),
+            screen,
+        });
+    }
+
+    pub(super) fn request_completion_now(&mut self) {
+        if !self.config.completion.enabled.get() {
+            return;
+        }
+        let pos = self.active_cursor_position();
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+        if let Ok(id) = lsp.request_completion(
+            &self.state_manager.editor().line_index,
+            pos.line,
+            pos.column,
+        ) {
+            self.lsp.completion_pending_request = Some(id);
+            self.lsp.completion_requested_position = Some(pos);
+        }
+    }
+
+    pub(super) fn request_goto(&mut self, kind: EditorLspGotoKind) {
+        let pos = self.active_cursor_position();
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+        let line_index = &self.state_manager.editor().line_index;
+        let request = match kind {
+            EditorLspGotoKind::Definition => {
+                lsp.request_definition(line_index, pos.line, pos.column)
+            }
+            EditorLspGotoKind::Declaration => {
+                lsp.request_declaration(line_index, pos.line, pos.column)
+            }
+            EditorLspGotoKind::TypeDefinition => {
+                lsp.request_type_definition(line_index, pos.line, pos.column)
+            }
+            EditorLspGotoKind::Implementation => {
+                lsp.request_implementation(line_index, pos.line, pos.column)
+            }
+            EditorLspGotoKind::References => {
+                lsp.request_references(line_index, pos.line, pos.column, true)
+            }
+        };
+        if let Ok(id) = request {
+            self.lsp.pending_goto = Some((id, kind));
+        }
+    }
+
+    pub(super) fn schedule_hover_after_delay(&mut self) {
+        if self.hover_popup.get().is_some() {
+            return;
+        }
+        if self.lsp.completion_pending_request.is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.completion_popup.get().is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if !self.config.hover.enabled.get() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.lsp.session.is_none() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.lsp.hover_pending_request.is_some() {
+            return;
+        }
+
+        let Some(anchor) = self.lsp.hover_anchor else {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        };
+        if self.lsp.hover_suppressed_position == Some(anchor.position) {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+
+        let delay = self.config.hover.delay.get();
+        self.lsp.hover_due = Some(Instant::now() + delay);
+        self.lsp.hover_target = Some(anchor);
+    }
+
+    pub(super) fn maybe_fire_hover(&mut self) {
+        let Some(due) = self.lsp.hover_due else {
+            return;
+        };
+        if Instant::now() < due {
+            return;
+        }
+        if self.lsp.hover_pending_request.is_some() {
+            return;
+        }
+        if self.lsp.completion_pending_request.is_some() {
+            return;
+        }
+        if self.hover_popup.get().is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.completion_popup.get().is_some() {
+            return;
+        }
+
+        let Some(target) = self.lsp.hover_target else {
+            self.lsp.hover_due = None;
+            return;
+        };
+
+        if self.lsp.hover_anchor.map(|a| a.position) != Some(target.position) {
+            self.schedule_hover_after_delay();
+            return;
+        }
+        if self.lsp.hover_suppressed_position == Some(target.position) {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+
+        self.lsp.hover_due = None;
+        self.lsp.hover_target = None;
+        self.request_hover_at_anchor(target);
+    }
+
+    pub(super) fn process_completion_accept(&mut self) {
+        let Some(mut popup) = self.completion_popup.get() else {
+            return;
+        };
+        let Some(idx) = popup.accept.take() else {
+            return;
+        };
+        self.completion_popup.set(Some(popup.clone()));
+        self.apply_completion_index(idx);
+        self.completion_popup.set(None);
+    }
+
+    fn apply_completion_index(&mut self, idx: usize) {
+        let Some(popup) = self.completion_popup.get() else {
+            return;
+        };
+        let Some(item) = popup.items.get(idx) else {
+            return;
+        };
+
+        let LspCompletionItemEdit::Raw(raw) = &item.edit;
+        let Some(obj) = raw.as_object() else {
+            return;
+        };
+
+        // Basic insertion strategy:
+        // - prefer `textEdit` if present (TextEdit shape)
+        // - else use `insertText`
+        // - else insert `label`
+        if let Some(text_edit) = obj.get("textEdit") {
+            let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
+                let old_char_count = self.state_manager.editor().char_count();
+                lsp.full_document_change(
+                    &self.state_manager.editor().line_index,
+                    old_char_count,
+                    "",
+                )
+            });
+
+            let edits = editor_core_lsp::text_edits_from_value(&serde_json::Value::Array(vec![
+                text_edit.clone(),
+            ]));
+            let _ = editor_core_lsp::apply_text_edits(&mut self.state_manager, &edits);
+            let after_text = self.state_manager.editor().get_text();
+            self.config.text.set(after_text.clone());
+            self.maybe_apply_syntax_highlighting();
+            self.hide_hover_popup_only();
+            if let Some(mut change) = full_lsp_change {
+                change.text = after_text;
+                self.lsp_did_change(change);
+            }
+            return;
+        }
+
+        if let Some(insert_text) = obj.get("insertText").and_then(|v| v.as_str()) {
+            self.insert_text(insert_text);
+            return;
+        }
+
+        self.insert_text(item.label.as_str());
     }
 
     pub(super) fn hover_popup_rect_for_screen_point(
