@@ -1,0 +1,5 @@
+error: unknown view_builder! component `UnknownWidget`
+  --> tests/ui/view_builder_unknown_component.rs:31:13
+   |
+31 |             UnknownWidget("boom")
+   |             ^^^^^^^^^^^^^

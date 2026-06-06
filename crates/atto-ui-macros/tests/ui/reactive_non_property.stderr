@@ -1,0 +1,7 @@
+error: field `count` is marked #[reactive] but is not `Property<T>`
+  --> tests/ui/reactive_non_property.rs:32:10
+   |
+32 | #[derive(Reactive)]
+   |          ^^^^^^^^
+   |
+   = note: this error originates in the derive macro `Reactive` (in Nightly builds, run with -Z macro-backtrace for more info)

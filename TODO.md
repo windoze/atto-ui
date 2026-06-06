@@ -40,7 +40,7 @@
 - 确认 `screen_snapshot`/`region_snapshot` 对行 trim 与尾部空行归一稳定，`wait_for_screen` 使用 10ms 轮询避免忙等。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [ ] T2 — macros trybuild 测试（A.1）
+### [DONE] T2 — macros trybuild 测试（A.1）
 **文件**：`crates/atto-ui-macros/`、新增 `crates/atto-ui-macros/tests/`
 **现状**：`#[reactive]` / `view_builder!` / `component_properties` 宏测试数为 0。
 **步骤**：
@@ -49,6 +49,11 @@
 3. `tests/ui/` 放编译失败用例（非法属性、未知类型 → 断言 `compile_error!` 友好提示，关联 L6）。
 **测试**：`cargo test -p atto-ui-macros`。
 **验收**：成功与失败用例各 ≥2；CI 内运行。
+**完成记录（2026-06-06）**：
+- 为 `atto-ui-macros` 添加 `trybuild` dev-dependency 和 `tests/trybuild.rs` harness。
+- 新增 3 个成功展开 fixture：`Reactive` 访问器/dirty/binding、`view_builder!` 构树与 modifier、`ComponentProperties` + `component_properties` 属性反射和 schema。
+- 新增 2 个失败 fixture 及 `.stderr`：`#[reactive]` 标在非 `Property<T>` 字段时的友好错误、`view_builder!` 未知组件时的友好错误。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`；`cargo test --workspace --all-targets`。
 
 ### [ ] R2 — 审阅 T2
 - 确认 trybuild 用例真实覆盖三个宏的核心展开路径与至少一类编译失败。

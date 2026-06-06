@@ -1,25 +1,28 @@
-# 执行计划
+# 当前执行计划
 
-## 当前状态
+## 范围
 
-- 已读取 `TODO.md`，第一个未完成任务是 `R1 — 审阅 T1`。
-- 最近提交为 `[T1] Complete test host input APIs`，与当前审阅任务直接相关。
-- 已检查 T1 主要改动文件，新增输入 API 与 `snapshot_app --input-api` 测试夹具覆盖 R1 审阅范围。
-- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全部通过。
-- 本文件用于记录可审阅的执行计划、关键进度和必要调整；不记录私有推理链。
+- 目标：根据 `TODO.md` 找到第一个未完成任务，完整完成该任务后停止。
+- 约束：只完成一个任务；完成后更新 `TODO.md`，必要时更新 `PLAN.md`；运行规定验证；提交一次清晰的 Git commit。
+- 说明：本文件记录可审阅的执行计划、关键决策和进度更新，不记录不可见的私有推理过程。
 
 ## 步骤
 
-1. 阅读 T1 提交涉及的 test-host、snapshot_app 和 PTY 测试文件。
-2. 对照 R1 要求检查：新增输入 API 的 crossterm 编码、`resize` 对 PTY 与 vt100 的尺寸同步、快照归一逻辑、`wait_for_screen` 轮询行为。
-3. 如发现影响 R1 验收的缺陷，优先修复并补充/调整测试；如出现必须前置处理的问题，则更新 `TODO.md` 后停止。
-4. 运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test`。
-5. 若验证通过，在 `TODO.md` 将 `R1` 标记为 `[DONE]` 并补充完成记录。
-6. 检查 git 状态、差异和近期日志，提交本次 R1 相关全部变更。
-7. 停止，不继续处理 `T2`。
+1. 读取 `TODO.md`，按文件顺序识别第一个标题未带 `[DONE]` 的任务。
+2. 查看当前 Git 状态和最近提交，确认是否有与该任务直接相关的未完成内容或现有改动需要纳入本次任务。
+3. 阅读该任务相关代码、测试和文档，确定最小正确实现范围。
+4. 实现任务；如发现阻塞当前任务的真实缺口，优先修复，或在 `TODO.md` 中插入最小必要前置任务并停止。
+5. 运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，通过后运行相关测试；如代码有变更且需要完整验证，运行完整测试套件。
+6. 更新 `TODO.md`：将完成任务标题加 `[DONE]`，填写完成记录和验证结果。仅在阶段计划确实变化时更新 `PLAN.md`。
+7. 检查 `git status`、`git diff`、最近提交，确认只提交本任务相关文件。
+8. 创建清晰的 Git commit，然后停止，不继续处理下一个任务。
 
-## 验证策略
+## 当前状态
 
-- 先运行 `cargo fmt`。
-- 再运行 `cargo clippy --all-targets -- -D warnings`。
-- 最后根据任务范围运行相关测试；如需要完整验证，运行 `cargo test --all --all-targets` 并使用足够长的超时。
+- 已读取 `TODO.md`，确认第一个未完成任务为 `T2 — macros trybuild 测试（A.1）`。
+- 已检查 Git 状态和最近提交；现有未提交文档/脚本改动与 T2 无关，将避免纳入本次提交。
+- 已阅读 `crates/atto-ui-macros` 的三个宏实现与现有 `tests/macro_view_builder.rs`。
+- 已添加 `trybuild` harness、3 个成功展开 fixture、2 个失败诊断 fixture，并用 `TRYBUILD=overwrite cargo test -p atto-ui-macros` 生成 `.stderr`。
+- 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`；`cargo test --workspace --all-targets`。
+- 已更新 `TODO.md`：将 T2 标题标记为 `[DONE]`，并补充完成记录和验证结果。
+- 下一步：检查 diff，确认不纳入无关工作区改动，然后提交 T2 相关变更。
