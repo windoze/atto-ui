@@ -8,7 +8,7 @@ def on_click(event: atto_ui.Event, source: atto_ui.ComponentRef):
 
 
 def main():
-    app = atto_ui.App()
+    app = atto_ui.App(headless=False)
 
     root = atto_ui.VStack(
         spacing=1,

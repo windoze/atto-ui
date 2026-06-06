@@ -208,6 +208,49 @@ class Window:
     def _apply_tree_ops(self, ops: List[Dict[str, Any]]) -> None:
         self.app._native.apply_tree_ops(self.id, ops)
 
+    def send_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        return self.app.send_event(self, event)
+
+    def click(
+        self,
+        column: int,
+        row: int,
+        *,
+        button: str = "left",
+        modifiers: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.app.click(self, column, row, button=button, modifiers=modifiers)
+
+    def key(
+        self,
+        key: str,
+        *,
+        modifiers: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.app.key(self, key, modifiers=modifiers)
+
+    def paste(self, text: str) -> Dict[str, Any]:
+        return self.app.paste(self, text)
+
+    def focus(self) -> bool:
+        return self.app.focus_window(self)
+
+    def close(self) -> bool:
+        return self.app.close_window(self)
+
+    def move(self, x: int, y: int) -> bool:
+        self.rect = (x, y, self.rect[2], self.rect[3]) if isinstance(self.rect, tuple) else self.rect
+        return self.app.move_window(self, x, y)
+
+    def resize(self, width: int, height: int) -> bool:
+        if isinstance(self.rect, tuple):
+            self.rect = (self.rect[0], self.rect[1], width, height)
+        return self.app.resize_window(self, width, height)
+
+    def set_title(self, title: str) -> bool:
+        self.title = title
+        return self.app.set_title(self, title)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "title": self.title,
@@ -223,8 +266,9 @@ class Window:
 
 
 class App:
-    def __init__(self) -> None:
-        self._native = _native.AppHost()
+    def __init__(self, *, headless: bool = True, cols: int = 80, rows: int = 24) -> None:
+        self._native = _native.AppHost(cols=cols, rows=rows, headless=headless)
+        self._headless = headless
         self._next_callback_id = 1
         self._next_component_id = 1
         self._callbacks: Dict[int, Callback] = {}
@@ -288,8 +332,114 @@ class App:
         return running
 
     def run(self) -> None:
+        if self._headless:
+            raise RuntimeError("run() requires App(headless=False); use step() for headless tests")
         while self.step():
             pass
+
+    def send_event(
+        self,
+        window: Union[Window, int],
+        event: Union[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        result = self._native.send_event(window_id, event)
+        self._dispatch_callbacks()
+        return result
+
+    def click(
+        self,
+        window: Union[Window, int],
+        column: int,
+        row: int,
+        *,
+        button: str = "left",
+        modifiers: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.send_event(
+            window,
+            {
+                "type": "mouse",
+                "kind": "down",
+                "button": button,
+                "column": column,
+                "row": row,
+                "modifiers": list(modifiers or []),
+            },
+        )
+
+    def key(
+        self,
+        window: Union[Window, int],
+        key: str,
+        *,
+        modifiers: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.send_event(
+            window,
+            {
+                "type": "key",
+                "key": key,
+                "modifiers": list(modifiers or []),
+            },
+        )
+
+    def char(
+        self,
+        window: Union[Window, int],
+        char: str,
+        *,
+        modifiers: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.send_event(
+            window,
+            {
+                "type": "key",
+                "char": char,
+                "modifiers": list(modifiers or []),
+            },
+        )
+
+    def paste(self, window: Union[Window, int], text: str) -> Dict[str, Any]:
+        return self.send_event(window, {"type": "paste", "text": text})
+
+    def snapshot(self) -> Dict[str, Any]:
+        return self._native.snapshot()
+
+    def list_windows(self) -> List[Dict[str, Any]]:
+        return self._native.list_windows()
+
+    def close_window(self, window: Union[Window, int]) -> bool:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        ok = bool(self._native.close_window(window_id))
+        if ok:
+            self._windows = [w for w in self._windows if w.id != window_id]
+            for cid, mapped in list(self._cid_to_window.items()):
+                if mapped.id == window_id:
+                    del self._cid_to_window[cid]
+        return ok
+
+    def focus_window(self, window: Union[Window, int]) -> bool:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        return bool(self._native.focus_window(window_id))
+
+    def move_window(self, window: Union[Window, int], x: int, y: int) -> bool:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        return bool(self._native.move_window(window_id, x, y))
+
+    def resize_window(self, window: Union[Window, int], width: int, height: int) -> bool:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        return bool(self._native.resize_window(window_id, width, height))
+
+    def set_title(self, window: Union[Window, int], title: str) -> bool:
+        window_id = window.id if isinstance(window, Window) else int(window)
+        return bool(self._native.set_title(window_id, title))
+
+    def set_property(self, cid: str, name: str, value: Any) -> None:
+        self._native.set_property(cid, name, value)
+
+    def get_property(self, cid: str, name: str) -> Any:
+        return self._native.get_property(cid, name)
 
     def _dispatch_callbacks(self) -> None:
         for ev in self._native.drain_callbacks():

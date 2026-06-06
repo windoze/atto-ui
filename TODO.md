@@ -120,7 +120,7 @@
 - 新增回归单测覆盖 headless AppHost snapshot 路径，以及 TableView 大集合属性不会进入 snapshot properties。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui export_snapshot`；`cargo test -p atto-ui headless_apphost_snapshot_uses_in_memory_layout`；`cargo test --workspace --all-targets`。
 
-### [ ] T5 — Python e2e 测试 host 雏形（B.4）
+### [DONE] T5 — Python e2e 测试 host 雏形（B.4）
 **文件**：`crates/atto-ui-python/`、新增 Python 测试目录
 **现状**：Python 仅解析层单测，无端到端；依赖 T3（send_event）+ T4（snapshot）。
 **步骤**：
@@ -129,6 +129,12 @@
 3. 不依赖真实 PTY。
 **测试**：Python 端 ≥8 个 e2e（M1 阶段雏形，M4 扩到 ≥15）。
 **验收**：能用断言式 e2e 驱动一个含按钮/输入的多窗口应用。
+**完成记录（2026-06-06）**：
+- `atto-ui-python` 绑定新增显式 headless `AppHost` 构造路径，并暴露 `send_event`、窗口 close/focus/move/resize/list/set_title、`set_property`、`get_property` 与 `snapshot()`。
+- Python wrapper 新增 headless-first `App` e2e API：`send_event`、`click`、`key`、`char`、`paste`、`snapshot`、窗口管理和属性读写；交互式 `run()` 需显式 `headless=False`，示例已同步。
+- 新增 `crates/atto-ui-python/tests/test_e2e.py`，包含 8 个不依赖真实 PTY 的 Python `unittest` e2e，覆盖 native host snapshot、构树 snapshot、事件注入回调元数据、TextBox 输入/submit、tree-ops 增删改移、回调往返修改、窗口管理、多窗口事件路由。
+- 更新 Python README，记录 headless 测试、事件坐标、snapshot/窗口管理/属性 API 与 e2e 运行方式。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`；`cargo test --workspace --all-targets`。首次完整 workspace 测试中 `atto-ui-terminal` 的两个 PTY 用例出现一次 `READY` 等待超时；随后 `cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture` 和完整 workspace 复跑均通过，当前无未处理失败。
 
 ### [ ] R5 — 审阅 T5
 - 确认 e2e 真实经过 Rust 分发路径（非 Python 侧模拟）。

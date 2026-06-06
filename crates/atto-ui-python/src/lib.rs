@@ -4,6 +4,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyByteArray, PyBytes, PyDict, PyList, PyString, PyTuple};
 use pyo3::{Bound, IntoPyObjectExt, Py};
@@ -11,8 +15,10 @@ use ratatui::layout::Rect;
 
 use ::atto_ui as atto_ui_crate;
 use atto_ui_components::register_all_runtime_components;
-use atto_ui_crate::DesktopInspector;
-use atto_ui_crate::app::{AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, MenuBar};
+use atto_ui_crate::app::{
+    AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, DesktopAction,
+    DesktopEventResult, MenuBar, WindowInfo,
+};
 use atto_ui_crate::runtime::{
     AlignSpec, AnchorPlacementSpec, AnchorSpec, EdgeInsetsSpec, LayoutSpec, Rect as RuntimeRect,
     SizeSpec, global_registry,
@@ -21,7 +27,8 @@ use atto_ui_crate::theme::Theme;
 use atto_ui_crate::wm::{WindowId, WindowKind};
 use atto_ui_crate::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentSchema, ComponentSpec,
-    ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta, TreeOp, ValueType,
+    ComponentSpecChild, ComponentValue, DesktopSnapshot, DesktopSnapshotNode, EventMeta, NodeKind,
+    PropertyMeta, TreeOp, ValueType,
 };
 
 type PyObject = Py<PyAny>;
@@ -35,22 +42,21 @@ struct PyAppHost {
 #[pymethods]
 impl PyAppHost {
     #[new]
-    fn new() -> PyResult<Self> {
+    #[pyo3(signature = (cols = 80, rows = 24, headless = true))]
+    fn new(cols: u16, rows: u16, headless: bool) -> PyResult<Self> {
         register_all_runtime_components();
 
-        let config = CrosstermAppConfig::default()
-            .tick_rate(Duration::from_millis(16))
-            .mouse_capture(true)
-            .cursor(CursorMode::Hide);
-
         let callbacks = CallbackRegistry::new();
-        let host = AppHost::new(config, |_screen| {
-            let theme = Theme::dark();
-            let menu = MenuBar::new(vec![]);
-            let desktop = Desktop::new(theme, menu);
-            Ok(desktop)
-        })
-        .map_err(to_py_err)?;
+        let host = if headless {
+            AppHost::new_headless(Rect::new(0, 0, cols, rows), build_empty_desktop)
+                .map_err(to_py_err)?
+        } else {
+            let config = CrosstermAppConfig::default()
+                .tick_rate(Duration::from_millis(16))
+                .mouse_capture(true)
+                .cursor(CursorMode::Hide);
+            AppHost::new(config, build_empty_desktop).map_err(to_py_err)?
+        };
 
         Ok(Self { host, callbacks })
     }
@@ -107,12 +113,68 @@ impl PyAppHost {
         Ok(list.into_any().unbind())
     }
 
+    fn send_event(
+        &mut self,
+        py: Python<'_>,
+        window_id: u64,
+        event: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        let event = py_to_event(event)?;
+        let result = self
+            .host
+            .send_event(WindowId::from_raw(window_id), event)
+            .map_err(to_py_err)?;
+        desktop_event_result_to_py(py, &result)
+    }
+
+    fn close_window(&mut self, window_id: u64) -> bool {
+        self.host.close_window(WindowId::from_raw(window_id))
+    }
+
+    fn focus_window(&mut self, window_id: u64) -> bool {
+        self.host.focus_window(WindowId::from_raw(window_id))
+    }
+
+    fn move_window(&mut self, window_id: u64, x: u16, y: u16) -> PyResult<bool> {
+        self.host
+            .move_window(WindowId::from_raw(window_id), x, y)
+            .map_err(to_py_err)
+    }
+
+    fn resize_window(&mut self, window_id: u64, width: u16, height: u16) -> PyResult<bool> {
+        self.host
+            .resize_window(WindowId::from_raw(window_id), width, height)
+            .map_err(to_py_err)
+    }
+
+    fn list_windows(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let list = PyList::empty(py);
+        for window in self.host.list_windows() {
+            list.append(window_info_to_py(py, &window)?)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn set_title(&mut self, window_id: u64, title: String) -> bool {
+        self.host.set_title(WindowId::from_raw(window_id), title)
+    }
+
+    fn set_property(&mut self, id: String, name: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let value = py_to_component_value(value)?;
+        self.host.set_property(id, name, value).map_err(to_py_err)
+    }
+
     fn get_property(&mut self, py: Python<'_>, id: String, name: String) -> PyResult<PyObject> {
-        let mut inspector = DesktopInspector::new(self.host.desktop());
-        let value = inspector
+        let value = self
+            .host
             .get_property(&id, &name)
             .map_err(|err| to_py_err(format!("{err:?}")))?;
         component_value_to_py(py, &value)
+    }
+
+    fn snapshot(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        let snapshot = self.host.snapshot().map_err(to_py_err)?;
+        desktop_snapshot_to_py(py, &snapshot)
     }
 
     fn schemas(&self, py: Python<'_>) -> PyResult<PyObject> {
@@ -133,6 +195,12 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn to_py_err<E: std::fmt::Display>(err: E) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(err.to_string())
+}
+
+fn build_empty_desktop(_screen: Rect) -> anyhow::Result<Desktop> {
+    let theme = Theme::dark();
+    let menu = MenuBar::new(vec![]);
+    Ok(Desktop::new(theme, menu))
 }
 
 fn normalize_name(name: &str) -> String {
@@ -174,6 +242,213 @@ fn py_to_rect(obj: &Bound<'_, PyAny>) -> PyResult<Rect> {
     }
 
     Err(to_py_err("rect must be tuple/list/dict"))
+}
+
+fn py_to_event(obj: &Bound<'_, PyAny>) -> PyResult<Event> {
+    if let Ok(value) = obj.extract::<String>() {
+        return Ok(Event::Key(KeyEvent::new(
+            py_to_key_code_name(&value)?,
+            KeyModifiers::NONE,
+        )));
+    }
+
+    let dict = obj
+        .cast::<PyDict>()
+        .map_err(|_| to_py_err("event must be string or dict"))?;
+    let kind = expect_string_key(dict, "type").or_else(|_| expect_string_key(dict, "event"))?;
+    match normalize_name(&kind).as_str() {
+        "key" => py_to_key_event(dict).map(Event::Key),
+        "mouse" => py_to_mouse_event(dict).map(Event::Mouse),
+        "paste" => {
+            let text = expect_string_key(dict, "text")?;
+            Ok(Event::Paste(text))
+        }
+        "resize" => {
+            let cols = py_to_u16(&expect_key(dict, "cols")?, "cols")?;
+            let rows = py_to_u16(&expect_key(dict, "rows")?, "rows")?;
+            Ok(Event::Resize(cols, rows))
+        }
+        "focusgained" => Ok(Event::FocusGained),
+        "focuslost" => Ok(Event::FocusLost),
+        _ => Err(to_py_err(format!("unknown event type: {kind}"))),
+    }
+}
+
+fn py_to_key_event(dict: &Bound<'_, PyDict>) -> PyResult<KeyEvent> {
+    let code = if let Some(value) = dict_get(dict, "char")? {
+        py_to_key_char(&value)?
+    } else {
+        let key = expect_string_key(dict, "key")?;
+        py_to_key_code_name(&key)?
+    };
+    let modifiers = dict_get(dict, "modifiers")?
+        .map(|value| py_to_key_modifiers(&value))
+        .transpose()?
+        .unwrap_or(KeyModifiers::NONE);
+    let kind = dict_get(dict, "kind")?
+        .map(|value| py_to_key_event_kind(&value))
+        .transpose()?
+        .unwrap_or(KeyEventKind::Press);
+    Ok(KeyEvent {
+        code,
+        modifiers,
+        kind,
+        state: KeyEventState::empty(),
+    })
+}
+
+fn py_to_key_char(obj: &Bound<'_, PyAny>) -> PyResult<KeyCode> {
+    let value: String = obj.extract()?;
+    let mut chars = value.chars();
+    let Some(ch) = chars.next() else {
+        return Err(to_py_err("key char must not be empty"));
+    };
+    if chars.next().is_some() {
+        return Err(to_py_err("key char must contain exactly one character"));
+    }
+    Ok(KeyCode::Char(ch))
+}
+
+fn py_to_key_code_name(name: &str) -> PyResult<KeyCode> {
+    let normalized = normalize_name(name);
+    match normalized.as_str() {
+        "backspace" => Ok(KeyCode::Backspace),
+        "enter" | "return" => Ok(KeyCode::Enter),
+        "left" => Ok(KeyCode::Left),
+        "right" => Ok(KeyCode::Right),
+        "up" => Ok(KeyCode::Up),
+        "down" => Ok(KeyCode::Down),
+        "home" => Ok(KeyCode::Home),
+        "end" => Ok(KeyCode::End),
+        "pageup" => Ok(KeyCode::PageUp),
+        "pagedown" => Ok(KeyCode::PageDown),
+        "tab" => Ok(KeyCode::Tab),
+        "backtab" => Ok(KeyCode::BackTab),
+        "delete" | "del" => Ok(KeyCode::Delete),
+        "insert" | "ins" => Ok(KeyCode::Insert),
+        "esc" | "escape" => Ok(KeyCode::Esc),
+        value if value.starts_with('f') => {
+            let n = value[1..]
+                .parse::<u8>()
+                .map_err(|_| to_py_err(format!("invalid function key: {name}")))?;
+            Ok(KeyCode::F(n))
+        }
+        value => {
+            let mut chars = value.chars();
+            if let Some(ch) = chars.next()
+                && chars.next().is_none()
+            {
+                return Ok(KeyCode::Char(ch));
+            }
+            Err(to_py_err(format!("unknown key: {name}")))
+        }
+    }
+}
+
+fn py_to_key_event_kind(obj: &Bound<'_, PyAny>) -> PyResult<KeyEventKind> {
+    let value: String = obj.extract()?;
+    match normalize_name(&value).as_str() {
+        "press" | "down" => Ok(KeyEventKind::Press),
+        "release" | "up" => Ok(KeyEventKind::Release),
+        "repeat" => Ok(KeyEventKind::Repeat),
+        _ => Err(to_py_err("invalid key event kind")),
+    }
+}
+
+fn py_to_mouse_event(dict: &Bound<'_, PyDict>) -> PyResult<MouseEvent> {
+    let kind_name = expect_string_key(dict, "kind")?;
+    let kind = py_to_mouse_event_kind(&kind_name, dict)?;
+    let column = if let Some(value) = dict_get(dict, "column")? {
+        py_to_u16(&value, "column")?
+    } else {
+        py_to_u16(&expect_key(dict, "x")?, "x")?
+    };
+    let row = if let Some(value) = dict_get(dict, "row")? {
+        py_to_u16(&value, "row")?
+    } else {
+        py_to_u16(&expect_key(dict, "y")?, "y")?
+    };
+    let modifiers = dict_get(dict, "modifiers")?
+        .map(|value| py_to_key_modifiers(&value))
+        .transpose()?
+        .unwrap_or(KeyModifiers::NONE);
+    Ok(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers,
+    })
+}
+
+fn py_to_mouse_event_kind(name: &str, dict: &Bound<'_, PyDict>) -> PyResult<MouseEventKind> {
+    match normalize_name(name).as_str() {
+        "down" => Ok(MouseEventKind::Down(py_to_mouse_button_from_dict(dict)?)),
+        "up" => Ok(MouseEventKind::Up(py_to_mouse_button_from_dict(dict)?)),
+        "drag" => Ok(MouseEventKind::Drag(py_to_mouse_button_from_dict(dict)?)),
+        "move" | "moved" => Ok(MouseEventKind::Moved),
+        "scrollup" => Ok(MouseEventKind::ScrollUp),
+        "scrolldown" => Ok(MouseEventKind::ScrollDown),
+        "scrollleft" => Ok(MouseEventKind::ScrollLeft),
+        "scrollright" => Ok(MouseEventKind::ScrollRight),
+        _ => Err(to_py_err(format!("unknown mouse event kind: {name}"))),
+    }
+}
+
+fn py_to_mouse_button_from_dict(dict: &Bound<'_, PyDict>) -> PyResult<MouseButton> {
+    let value = dict_get(dict, "button")?
+        .map(|button| button.extract::<String>())
+        .transpose()?
+        .unwrap_or_else(|| "left".to_string());
+    match normalize_name(&value).as_str() {
+        "left" => Ok(MouseButton::Left),
+        "right" => Ok(MouseButton::Right),
+        "middle" => Ok(MouseButton::Middle),
+        _ => Err(to_py_err(format!("unknown mouse button: {value}"))),
+    }
+}
+
+fn py_to_key_modifiers(obj: &Bound<'_, PyAny>) -> PyResult<KeyModifiers> {
+    if obj.is_none() {
+        return Ok(KeyModifiers::NONE);
+    }
+    if let Ok(value) = obj.extract::<String>() {
+        return key_modifiers_from_names(std::iter::once(value));
+    }
+    if let Ok(list) = obj.cast::<PyList>() {
+        let mut names = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            names.push(item.extract::<String>()?);
+        }
+        return key_modifiers_from_names(names);
+    }
+    if let Ok(tuple) = obj.cast::<PyTuple>() {
+        let mut names = Vec::with_capacity(tuple.len());
+        for item in tuple.iter() {
+            names.push(item.extract::<String>()?);
+        }
+        return key_modifiers_from_names(names);
+    }
+    Err(to_py_err("modifiers must be string/list/tuple"))
+}
+
+fn key_modifiers_from_names<I>(names: I) -> PyResult<KeyModifiers>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut modifiers = KeyModifiers::NONE;
+    for name in names {
+        match normalize_name(&name).as_str() {
+            "shift" => modifiers |= KeyModifiers::SHIFT,
+            "control" | "ctrl" => modifiers |= KeyModifiers::CONTROL,
+            "alt" | "option" => modifiers |= KeyModifiers::ALT,
+            "super" | "cmd" | "command" => modifiers |= KeyModifiers::SUPER,
+            "hyper" => modifiers |= KeyModifiers::HYPER,
+            "meta" => modifiers |= KeyModifiers::META,
+            "none" | "" => {}
+            _ => return Err(to_py_err(format!("unknown modifier: {name}"))),
+        }
+    }
+    Ok(modifiers)
 }
 
 fn py_to_tree_ops(obj: &Bound<'_, PyAny>) -> PyResult<Vec<TreeOp>> {
@@ -806,6 +1081,128 @@ fn callback_invocation_to_py(py: Python<'_>, event: &CallbackInvocation) -> PyRe
     } else {
         dict.set_item("payload", py.None())?;
     }
+    Ok(dict.into_any().unbind())
+}
+
+fn desktop_event_result_to_py(py: Python<'_>, result: &DesktopEventResult) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("consumed", result.is_consumed())?;
+    dict.set_item("outcome", format!("{:?}", result.outcome))?;
+    match result.action {
+        DesktopAction::None => dict.set_item("action", py.None())?,
+        DesktopAction::CloseWindow(id) => {
+            let action = PyDict::new(py);
+            action.set_item("type", "close_window")?;
+            action.set_item("window_id", id.raw())?;
+            dict.set_item("action", action)?;
+        }
+    }
+    Ok(dict.into_any().unbind())
+}
+
+fn window_info_to_py(py: Python<'_>, window: &WindowInfo) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("id", window.id.raw())?;
+    if let Some(tag) = &window.tag {
+        dict.set_item("tag", tag)?;
+    } else {
+        dict.set_item("tag", py.None())?;
+    }
+    dict.set_item("title", &window.title)?;
+    dict.set_item("kind", format!("{:?}", window.kind))?;
+    dict.set_item("state", format!("{:?}", window.state))?;
+    dict.set_item("rect", ratatui_rect_to_py(py, window.rect)?)?;
+    dict.set_item("is_focused", window.is_focused)?;
+    Ok(dict.into_any().unbind())
+}
+
+fn desktop_snapshot_to_py(py: Python<'_>, snapshot: &DesktopSnapshot) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("bounds", runtime_rect_to_py(py, snapshot.bounds)?)?;
+    dict.set_item("tree", desktop_snapshot_node_to_py(py, &snapshot.tree)?)?;
+    Ok(dict.into_any().unbind())
+}
+
+fn desktop_snapshot_node_to_py(py: Python<'_>, node: &DesktopSnapshotNode) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("kind", node_kind_to_py(node.kind))?;
+    if let Some(id) = &node.id {
+        dict.set_item("id", id)?;
+    } else {
+        dict.set_item("id", py.None())?;
+    }
+    if let Some(tag) = &node.tag {
+        dict.set_item("tag", tag)?;
+    } else {
+        dict.set_item("tag", py.None())?;
+    }
+    dict.set_item("name", &node.name)?;
+    dict.set_item("type_name", &node.type_name)?;
+    if let Some(bounds) = node.bounds {
+        dict.set_item("bounds", runtime_rect_to_py(py, bounds)?)?;
+    } else {
+        dict.set_item("bounds", py.None())?;
+    }
+    if let Some(text) = &node.text {
+        dict.set_item("text", text)?;
+    } else {
+        dict.set_item("text", py.None())?;
+    }
+    if let Some(state) = &node.state {
+        dict.set_item("state", state)?;
+    } else {
+        dict.set_item("state", py.None())?;
+    }
+    if let Some(window_id) = node.window_id {
+        dict.set_item("window_id", window_id)?;
+    } else {
+        dict.set_item("window_id", py.None())?;
+    }
+
+    let properties = PyDict::new(py);
+    for (key, value) in &node.properties {
+        properties.set_item(key, component_value_to_py(py, value)?)?;
+    }
+    dict.set_item("properties", properties)?;
+
+    let children = PyList::empty(py);
+    for child in &node.children {
+        children.append(desktop_snapshot_node_to_py(py, child)?)?;
+    }
+    dict.set_item("children", children)?;
+    Ok(dict.into_any().unbind())
+}
+
+fn node_kind_to_py(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Desktop => "desktop",
+        NodeKind::MenuBar => "menu_bar",
+        NodeKind::Menu => "menu",
+        NodeKind::MenuItem => "menu_item",
+        NodeKind::StatusBar => "status_bar",
+        NodeKind::Window => "window",
+        NodeKind::Component => "component",
+    }
+}
+
+fn ratatui_rect_to_py(py: Python<'_>, rect: Rect) -> PyResult<PyObject> {
+    runtime_rect_to_py(
+        py,
+        RuntimeRect {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+        },
+    )
+}
+
+fn runtime_rect_to_py(py: Python<'_>, rect: RuntimeRect) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("x", rect.x)?;
+    dict.set_item("y", rect.y)?;
+    dict.set_item("width", rect.width)?;
+    dict.set_item("height", rect.height)?;
     Ok(dict.into_any().unbind())
 }
 

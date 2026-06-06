@@ -1,29 +1,14 @@
-# Claude Execution Plan
+## 执行计划
 
-## Scope
+状态：T5 已实现、验证并更新 TODO，准备提交。
 
-- Follow `TODO.md` as the authoritative task list.
-- Select the first task whose title is not prefixed with `[DONE]`.
-- Complete exactly that task, then stop after committing the result.
+说明：本文件记录可检查的执行计划、关键步骤和进度更新；不包含私有推理过程。
 
-## Plan
-
-1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
-2. Check the latest commit only for directly relevant unfinished context.
-3. Inspect the smallest relevant part of the codebase for the selected task.
-4. Implement the task without workarounds or scope narrowing.
-5. Run formatting, linting, and relevant tests; run the full suite when required.
-6. Update `TODO.md` completion status and record validation results.
-7. Commit all intended changes with a task-specific message.
-8. Stop without starting the next task.
-
-## Progress
-
-- Initial plan recorded before repository inspection.
-- First incomplete task identified: `R4 — 审阅 T4`.
-- Latest commit `[T4] Export desktop snapshots` is directly relevant, so the review scope is the T4 snapshot export implementation.
-- Cross-review found T4 gaps that must be fixed before R4 can be marked done: `AppHost` lacks a headless/no-PTY path, and snapshot export clones all component properties including potentially large values.
-- Updated execution plan: add a minimal headless `AppHost` mode for in-memory `snapshot()`/host APIs, constrain snapshot properties to bounded assertion metadata, add regression tests, then run validation.
-- Implemented the R4 fixes: `AppHost::new_headless` with in-memory step/snapshot support, bounded component snapshot metadata, and regression tests for headless snapshot plus large collection omission.
-- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p atto-ui export_snapshot`, `cargo test -p atto-ui headless_apphost_snapshot_uses_in_memory_layout`, and `cargo test --workspace --all-targets`.
-- Marked `R4` as `[DONE]` in `TODO.md` with completion notes.
+步骤：
+1. 读取 `TODO.md`，按标题是否带 `[DONE]` 找出第一个未完成任务。当前任务：`T5 — Python e2e 测试 host 雏形`。
+2. 检查最新提交是否明确提到与该任务直接相关的未完成事项。最新提交为 `[R4] Review desktop snapshot export`，未包含未完成事项说明。
+3. 阅读当前任务相关代码、测试和计划文件，只收集完成该任务所需上下文。发现 `crates/atto-ui-python` 已有 PyO3 绑定和高层 Python wrapper，但尚未暴露 T3/T4 的 `send_event`、窗口管理、`set_property`、`snapshot()`，且测试需要可显式使用 headless `AppHost`。
+4. 按任务要求实现最小正确变更；如遇阻塞的规格缺口，更新 `TODO.md` 添加最小前置任务并停止。当前计划是在 Rust 绑定层新增 headless 构造与事件/窗口/snapshot 转换，在 Python wrapper 层提供 e2e 友好 API，并新增 8 个不依赖 PTY 的 `unittest` 用例。
+5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行相关或完整测试；发现未排期失败时修复或写入 `TODO.md`。当前 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-python`、`maturin develop`、`python -m unittest discover tests` 均已通过；第一次 Python e2e 暴露 snapshot 子组件 bounds 需要按组件层级换算为绝对点击坐标，已在测试 helper 中处理。
+6. 完成后在 `TODO.md` 的任务标题前加 `[DONE]`，更新完成记录；仅在阶段计划实际变化时更新 `PLAN.md`。已将 `T5` 标记为 `[DONE]` 并写入完成记录；本次无阶段计划变化，未更新 `PLAN.md`。
+7. 提交所有本次任务相关变更，提交信息包含任务编号，然后停止，不进入下一个任务。下一步执行提交前的 git 状态、diff 和最近提交检查。
