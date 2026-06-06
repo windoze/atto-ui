@@ -237,16 +237,13 @@ fn stream_reply(store: &ChatMessageStore, reply: String) {
     store.push(message);
 
     let chars: Vec<char> = reply.chars().collect();
-    let mut acc = String::new();
     let mut idx = 0usize;
     let mut rng = XorShift64::new(now_seed());
     while idx < chars.len() {
         let step = rng.gen_range(1, 3) as usize;
         let end = (idx + step).min(chars.len());
-        for ch in &chars[idx..end] {
-            acc.push(*ch);
-        }
-        store.update_text(id, acc.clone());
+        let delta: String = chars[idx..end].iter().collect();
+        store.append_delta(id, &delta);
         idx = end;
         let pause = rng.gen_range(120, 260);
         thread::sleep(Duration::from_millis(pause));

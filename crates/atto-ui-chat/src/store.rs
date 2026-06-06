@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use atto_ui::reactive::{Binding, Property};
 
-use crate::message::{ChatMessage, ChatMessageId, ChatMessageStatus};
+use crate::message::{ChatMessage, ChatMessageContent, ChatMessageId, ChatMessageStatus};
 
 #[derive(Clone, Debug)]
 pub struct ChatMessageStore {
@@ -58,14 +58,14 @@ impl ChatMessageStore {
     where
         F: FnOnce(&mut ChatMessage),
     {
-        let mut found = false;
-        self.messages.update(|items| {
+        self.messages.update_if(|items| {
             if let Some(item) = items.iter_mut().find(|item| item.id == id) {
                 f(item);
-                found = true;
+                true
+            } else {
+                false
             }
-        });
-        found
+        })
     }
 
     pub fn set_status(&self, id: ChatMessageId, status: ChatMessageStatus) -> bool {
@@ -74,16 +74,147 @@ impl ChatMessageStore {
 
     pub fn update_text(&self, id: ChatMessageId, markdown: impl Into<String>) -> bool {
         let markdown = markdown.into();
-        self.update_message(id, |item| {
-            if let crate::message::ChatMessageContent::Text { markdown: text } = &mut item.content {
-                *text = markdown.clone();
+        let mut found_text = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            let ChatMessageContent::Text { markdown: text } = &mut item.content else {
+                return false;
+            };
+            found_text = true;
+            if *text == markdown {
+                false
+            } else {
+                *text = markdown;
+                true
             }
-        })
+        });
+        found_text
+    }
+
+    pub fn append_delta(&self, id: ChatMessageId, delta: &str) -> bool {
+        let mut found_text = false;
+        self.messages.update_if(|items| {
+            let Some(item) = items.iter_mut().find(|item| item.id == id) else {
+                return false;
+            };
+            let ChatMessageContent::Text { markdown } = &mut item.content else {
+                return false;
+            };
+            found_text = true;
+            if delta.is_empty() {
+                return false;
+            }
+            markdown.push_str(delta);
+            true
+        });
+        found_text
     }
 }
 
 impl Default for ChatMessageStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::ChatSender;
+
+    fn text_for(store: &ChatMessageStore, id: ChatMessageId) -> String {
+        store
+            .messages()
+            .into_iter()
+            .find(|message| message.id == id)
+            .and_then(|message| match message.content {
+                ChatMessageContent::Text { markdown } => Some(markdown),
+                ChatMessageContent::File { .. } => None,
+            })
+            .expect("text message should exist")
+    }
+
+    fn status_for(store: &ChatMessageStore, id: ChatMessageId) -> ChatMessageStatus {
+        store
+            .messages()
+            .into_iter()
+            .find(|message| message.id == id)
+            .map(|message| message.status)
+            .expect("message should exist")
+    }
+
+    #[test]
+    fn append_delta_accumulates_text_and_preserves_streaming_status() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(
+            ChatMessage::text(id, ChatSender::Assistant, "")
+                .with_status(ChatMessageStatus::InProgress),
+        );
+
+        assert!(store.append_delta(id, "hel"));
+        assert!(store.append_delta(id, "lo"));
+
+        assert_eq!(text_for(&store, id), "hello");
+        assert_eq!(status_for(&store, id), ChatMessageStatus::InProgress);
+
+        assert!(store.set_status(id, ChatMessageStatus::Final));
+        assert_eq!(status_for(&store, id), ChatMessageStatus::Final);
+    }
+
+    #[test]
+    fn append_delta_is_noop_for_non_text_content() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::file(
+            id,
+            ChatSender::Assistant,
+            "report.txt",
+            None,
+        ));
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(!store.append_delta(id, "ignored"));
+
+        assert!(!binding.check_dirty(&mut observer));
+        assert!(matches!(
+            store.messages()[0].content,
+            ChatMessageContent::File { .. }
+        ));
+    }
+
+    #[test]
+    fn append_delta_empty_delta_does_not_notify() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(ChatMessage::text(id, ChatSender::Assistant, "seed"));
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(store.append_delta(id, ""));
+
+        assert_eq!(text_for(&store, id), "seed");
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn append_delta_handles_long_token_stream() {
+        let store = ChatMessageStore::new();
+        let id = store.next_message_id();
+        store.push(
+            ChatMessage::text(id, ChatSender::Assistant, "")
+                .with_status(ChatMessageStatus::InProgress),
+        );
+
+        for _ in 0..5_500 {
+            assert!(store.append_delta(id, "x"));
+        }
+
+        let text = text_for(&store, id);
+        assert_eq!(text.len(), 5_500);
+        assert!(text.bytes().all(|byte| byte == b'x'));
     }
 }

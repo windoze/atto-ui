@@ -212,7 +212,7 @@
 - 确认 `atto-ui-components` 的 `async` feature 默认关闭，开启时透传并 re-export `atto-ui-async`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo clippy -p atto-ui-async --features event-stream --all-targets -- -D warnings`；`cargo clippy -p atto-ui-components --no-default-features --features async --all-targets -- -D warnings`；`cargo tree -p atto-ui`；`cargo tree -p atto-ui-async --no-default-features`；`cargo test -p atto-ui-async --no-default-features`；`cargo test -p atto-ui-async --features event-stream`；`cargo test --workspace --all-targets`。
 
-### [ ] T8 — ChatMessageStore 增量流式（C.1）
+### [DONE] T8 — ChatMessageStore 增量流式（C.1）
 **文件**：`crates/atto-ui-chat/src/store.rs`、`message.rs`
 **现状**：仅 `update_text` 整串重设，长回复每 token 全量重排（O(n²) 风险）。
 **步骤**：
@@ -221,6 +221,12 @@
 3. 评估 `Property<Vec<ChatMessage>>` 的 update 粒度，避免每 delta clone 整个 Vec（必要时引入单条消息级通知）。
 **测试**：单测 append_delta 累积正确；模拟 >5k token 追加，断言无 O(n²)（行为正确为主）。
 **验收**：增量追加内容正确，长回复无明显重排退化。
+**完成记录（2026-06-06）**：
+- 新增 `ChatMessageStore::append_delta(id, &str)`，仅对 `ChatMessageContent::Text` 原地追加 delta；非文本内容安全 no-op，空 delta 不产生脏通知。
+- 新增 `Property::update_if` / `Binding::update_if`，让 store 能在找不到消息、非文本内容或相同文本时避免无效脏通知；`update_text` 改为只在文本实际变化时更新。
+- 更新 chat demo 流式回复逻辑，改为每步传入增量 delta，不再维护并重复提交累计全文；流式期间继续使用 `InProgress`，完成后置为 `Final`。
+- 新增 store 单测覆盖 delta 累积、`InProgress`→`Final` 状态配合、非文本 no-op、空 delta no-op 与 5,500 次 token 追加。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [ ] R8 — 审阅 T8
 - 确认 append_delta 仅作用于 Text 内容、对其他 content 安全 no-op。

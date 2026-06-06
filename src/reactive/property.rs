@@ -43,6 +43,20 @@ impl<T: Clone + PartialEq> Property<T> {
         self.dirty_flag.mark_dirty();
     }
 
+    pub fn update_if<F>(&self, f: F) -> bool
+    where
+        F: FnOnce(&mut T) -> bool,
+    {
+        let changed = {
+            let mut guard = self.value.write();
+            f(&mut *guard)
+        };
+        if changed {
+            self.dirty_flag.mark_dirty();
+        }
+        changed
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.dirty_flag.is_dirty()
     }
@@ -131,6 +145,20 @@ impl<T: Clone + PartialEq> Binding<T> {
         }
         self.dirty_flag.mark_dirty();
     }
+
+    pub fn update_if<F>(&self, f: F) -> bool
+    where
+        F: FnOnce(&mut T) -> bool,
+    {
+        let changed = {
+            let mut guard = self.value.write();
+            f(&mut *guard)
+        };
+        if changed {
+            self.dirty_flag.mark_dirty();
+        }
+        changed
+    }
 }
 
 impl<T> Clone for Binding<T> {
@@ -197,6 +225,26 @@ mod tests {
     }
 
     #[test]
+    fn property_update_if_marks_dirty_only_when_changed() {
+        let prop = Property::new(vec![1, 2]);
+        prop.mark_clean();
+
+        let changed = prop.update_if(|_| false);
+
+        assert!(!changed);
+        assert!(!prop.is_dirty(), "unchanged update should stay clean");
+
+        let changed = prop.update_if(|v| {
+            v.push(3);
+            true
+        });
+
+        assert!(changed);
+        assert_eq!(prop.get(), vec![1, 2, 3]);
+        assert!(prop.is_dirty(), "changed update should mark dirty");
+    }
+
+    #[test]
     fn property_binding_shares_state() {
         let prop = Property::new("hello".to_string());
         let binding = prop.binding();
@@ -226,5 +274,25 @@ mod tests {
         binding.update(|v| v.push(3));
 
         assert_eq!(prop.get(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn binding_update_if_marks_dirty_only_when_changed() {
+        let binding = Binding::new(vec![1, 2]);
+        binding.mark_clean();
+
+        let changed = binding.update_if(|_| false);
+
+        assert!(!changed);
+        assert!(!binding.is_dirty(), "unchanged update should stay clean");
+
+        let changed = binding.update_if(|v| {
+            v.push(3);
+            true
+        });
+
+        assert!(changed);
+        assert_eq!(binding.get(), vec![1, 2, 3]);
+        assert!(binding.is_dirty(), "changed update should mark dirty");
     }
 }
