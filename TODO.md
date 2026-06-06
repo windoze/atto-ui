@@ -315,10 +315,16 @@
 - 新增 disclosure 主题 glyph 与命名样式，新增 `snapshot_disclosure_app` fixture 和 `tests/pty_disclosure.rs`，覆盖键盘展开、鼠标折叠/展开、状态 running→done→error、绑定内容追加可见。
 - 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_disclosure`；`cargo test --workspace --all-targets`。
 
-### [ ] R11 — 审阅 T11
+### [DONE] R11 — 审阅 T11
 - 确认组件通用（不含会话语义）、可独立于 chat 使用。
 - 确认状态指示与主题样式一致。
 - 运行 PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `src/widgets/disclosure.rs`、`src/theme/mod.rs`、`src/runtime/builtins.rs`、`src/bin/snapshot_disclosure_app.rs` 与 `tests/pty_disclosure.rs` 的 T11 改动。
+- 确认 `Disclosure` 位于 core widgets，公开 `title`、`expanded`、`status`、`content`、`enabled`、可选子组件与 toggle callback，不包含 chat/session 专用语义，可独立于 chat 使用。
+- 确认状态指示使用主题 glyph `disclosure-*-indicator` 与命名样式 `disclosure-*`，标题/内容样式也走主题命名样式并保留 ASCII fallback。
+- 确认 PTY 覆盖 Enter 展开、鼠标折叠/展开、running/done/error 状态切换以及绑定内容追加可见。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_disclosure`；`cargo test --workspace --all-targets`。
 
 ### [ ] T12 — 系统剪贴板 + 文本选区复制（core）（C.2）
 **文件**：新增 `src/clipboard.rs`，composable/text 选区

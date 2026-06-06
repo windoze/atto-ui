@@ -1,30 +1,27 @@
-# Claude Execution Plan
+# 执行计划
 
-## Scope
+## 约束
+- 以 `TODO.md` 为唯一任务顺序与完成状态来源。
+- 本轮只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 不做开放式历史问题扫描；只处理当前任务相关或验证暴露且未排期的问题。
+- 如果发现阻塞当前任务的未排期问题，先在 `TODO.md` 中加入最小必要前置任务并提交，然后停止。
 
-Work through exactly one `TODO.md` task: the first task whose title is not prefixed with `[DONE]`. Stop after completing and committing that task, or after committing a required blocker/prerequisite update if completion is impossible.
+## 步骤
+1. 读取 `TODO.md`，识别第一个未完成任务及其验证要求。
+2. 检查最近提交信息，仅判断是否存在与该任务直接相关的未完成事项。
+3. 阅读当前任务涉及的源码、测试和文档，确定最小实现范围。
+4. 实现任务，保持改动聚焦，避免无关重构。
+5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，通过后运行相关或完整测试。
+6. 若验证失败且未在后续任务明确排期，则修复或在 `TODO.md` 中加入必要前置任务。
+7. 将任务标题标记为 `[DONE]`，更新完成记录；仅在阶段计划实际变化时更新 `PLAN.md`。
+8. 检查 `git status`、`git diff` 和最近提交，提交本轮相关更改。
+9. 停止，不处理下一个任务。
 
-## Plan
-
-1. Read `TODO.md` and identify the first incomplete task by title prefix.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect the files and tests relevant to the selected task.
-4. Implement the task as specified, without narrowing scope or using workaround behavior.
-5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task and repository policy.
-6. If tests reveal unscheduled failures, fix them if in scope or add the minimum prerequisite task(s) to `TODO.md` before marking the current task complete.
-7. Update `TODO.md` by prefixing the completed task title with `[DONE]` and adding a completion record with validation details.
-8. Update this file whenever a key step completes or the plan changes.
-9. Review `git status`, `git diff`, and recent commits, then commit all intended changes with a clear task-specific message.
-10. Stop without starting the next task.
-
-## Progress
-
-- Initial execution plan recorded.
-- Identified first incomplete task: `T11 — 可折叠 disclosure / accordion 组件（core）`.
-- Latest commit `[R10] Review chat and terminal coverage` is not directly relevant to T11.
-- Implementation approach: add a reusable core `Disclosure` widget with bound title/status/expanded/content state, optional child content, keyboard/mouse toggle handling, runtime registry exposure, and a PTY fixture covering T11 acceptance behavior.
-- Implemented the Disclosure widget path and ran `cargo fmt` successfully.
-- `cargo clippy --all-targets -- -D warnings` initially failed on Disclosure child context lifetime/borrow conflicts; fixing those before rerunning validation.
-- Fixed the Disclosure child context borrowing issue; `cargo fmt` and `cargo clippy --all-targets -- -D warnings` now pass.
-- Validation completed successfully: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --test pty_disclosure`, and `cargo test --workspace --all-targets` all pass.
-- Marked T11 as `[DONE]` in `TODO.md`; no `PLAN.md` update needed because phase sequencing did not change.
+## 当前状态
+- 已识别本轮任务：`R11 — 审阅 T11`。
+- 最近提交为 `[T11] Add core disclosure component`，未发现提交信息中声明的相关未完成事项。
+- 已审阅 Disclosure 组件实现、主题接入、runtime schema、fixture 与 PTY 测试，未发现阻塞当前任务的实现问题。
+- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --test pty_disclosure`、`cargo test --workspace --all-targets`。
+- 已将 `R11` 在 `TODO.md` 中标记为 `[DONE]` 并写入完成记录。
+- 已检查本轮目标差异；只提交 `TODO.md` 与 `memory/claude_plan.md`，保留工作树中其他既有改动不动。
+- 下一步提交本轮更改后停止。
