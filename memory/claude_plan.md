@@ -29,4 +29,5 @@
 - 已新增 `snapshot_clipboard_app` 与 `tests/pty_clipboard.rs`，覆盖跨行拖选、选区高亮和 OSC52 输出。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_clipboard`；`cargo test --workspace --all-targets`。
 - 已将 T12 在 `TODO.md` 中标记为 `[DONE]` 并写入完成记录。
-- 当前正在只检查和提交 T12 相关文件；保留工作树中其他既有无关变更不动。
+- 已提交本轮 T12 相关文件：`adf6319 [T12] Add system clipboard selection`。
+- 保留工作树中其他既有无关变更不动；本轮到此停止，不处理 R12。
