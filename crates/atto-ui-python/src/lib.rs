@@ -14,7 +14,7 @@ use pyo3::{Bound, IntoPyObjectExt, Py};
 use ratatui::layout::Rect;
 
 use ::atto_ui as atto_ui_crate;
-use atto_ui_components::register_all_runtime_components;
+use atto_ui_components::register_all_runtime_components as register_all_components;
 use atto_ui_crate::app::{
     AppControl, AppHost, CrosstermAppConfig, CursorMode, Desktop, DesktopAction,
     DesktopEventResult, MenuBar, WindowInfo,
@@ -44,7 +44,7 @@ impl PyAppHost {
     #[new]
     #[pyo3(signature = (cols = 80, rows = 24, headless = true))]
     fn new(cols: u16, rows: u16, headless: bool) -> PyResult<Self> {
-        register_all_runtime_components();
+        register_all_components();
 
         let callbacks = CallbackRegistry::new();
         let host = if headless {
@@ -177,6 +177,19 @@ impl PyAppHost {
         desktop_snapshot_to_py(py, &snapshot)
     }
 
+    fn set_theme(&mut self, name: String) -> PyResult<()> {
+        self.host.desktop().theme = theme_by_name(&name)?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (path, base = "dark".to_string()))]
+    fn load_theme(&mut self, path: String, base: String) -> PyResult<()> {
+        let base = theme_by_name(&base)?;
+        self.host.desktop().theme =
+            Theme::load_from_path_with_base(path, base).map_err(to_py_err)?;
+        Ok(())
+    }
+
     fn schemas(&self, py: Python<'_>) -> PyResult<PyObject> {
         let registry = global_registry(self.callbacks.clone());
         let list = PyList::empty(py);
@@ -190,7 +203,13 @@ impl PyAppHost {
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAppHost>()?;
+    m.add_function(wrap_pyfunction!(py_register_all_runtime_components, m)?)?;
     Ok(())
+}
+
+#[pyfunction(name = "register_all_runtime_components")]
+fn py_register_all_runtime_components() {
+    register_all_components();
 }
 
 fn to_py_err<E: std::fmt::Display>(err: E) -> PyErr {
@@ -201,6 +220,16 @@ fn build_empty_desktop(_screen: Rect) -> anyhow::Result<Desktop> {
     let theme = Theme::dark();
     let menu = MenuBar::new(vec![]);
     Ok(Desktop::new(theme, menu))
+}
+
+fn theme_by_name(name: &str) -> PyResult<Theme> {
+    match normalize_name(name).as_str() {
+        "dark" => Ok(Theme::dark()),
+        "light" => Ok(Theme::light()),
+        _ => Err(to_py_err(format!(
+            "unknown theme {name:?}; expected 'dark' or 'light'"
+        ))),
+    }
 }
 
 fn normalize_name(name: &str) -> String {

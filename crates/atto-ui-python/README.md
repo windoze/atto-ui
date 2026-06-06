@@ -1,6 +1,6 @@
-# atto-ui Python 绑定（最小可用版）
+# atto-ui Python 绑定
 
-当前 Python 绑定使用 `AppHost` 作为入口，直接接收 Python 的 `dict/list/tuple` 结构（不再使用 JSON 字符串）。`AppHost` 与高层 `App` 默认使用 headless 模式，适合端到端测试；交互式终端应用请显式传入 `headless=False`。
+当前 Python 绑定提供底层 `AppHost` 和高层 `App` wrapper。`AppHost` 直接接收 Python 的 `dict/list/tuple` 结构；`App` 提供组件构造助手、回调注册、schema 驱动属性校验、主题切换和 headless e2e API。两者默认使用 headless 模式，适合端到端测试；交互式终端应用请显式传入 `headless=False`。
 
 ## 快速示例
 
@@ -34,18 +34,31 @@ while app.step():
     break
 ```
 
-高层 wrapper 可用同一套 headless host 做断言式 e2e：
+高层 wrapper 可用组件 helper 构建应用，不需要手写裸 `dict`：
 
 ```python
 app = atto_ui.App(headless=True, cols=80, rows=24)
+app.set_theme("dark")
+
 window = app.add_dynamic_window(
     "Demo",
-    atto_ui.VStack(children=[atto_ui.Button(label="OK", cid="ok")]),
+    atto_ui.VStack(
+        spacing=1,
+        children=[
+            atto_ui.TextArea(title="Prompt", cid="prompt"),
+            atto_ui.Button(label="OK", cid="ok"),
+            atto_ui.ProgressBar(value=0.5, show_text=True, text="50%", cid="progress"),
+        ],
+    ),
 )
 app.step()
 snapshot = app.snapshot()
 app.send_event(window, {"type": "key", "key": "enter"})
 ```
+
+已覆盖的 core helper 包括：`Button`、`Text`、`Label`、`TextBox`、`TextArea`、`Checkbox`、`RadioGroup`、`Slider`、`Spinner`、`ProgressBar`、`ListBox`、`TableView`、`VStack`、`HStack`、`Grid`、`Border`、`Divider`、`Spacer`、`Splitter`、`TabView`、`StyledLabel`、`Disclosure`、`TypeAhead`、`CommandPalette`。
+
+附加组件可通过聚合入口注册并直接构造：`register_all_runtime_components()`、`MarkdownViewer`、`TerminalEmulator`、`FileTree`、`ChatMessageList`、`ChatInputPanel`。
 
 ## 结构约定
 
@@ -107,8 +120,11 @@ app.send_event(window, {"type": "key", "key": "enter"})
 
 ## 说明
 
-- 目前的 `callback` id 需要自行分配（后续会补注册接口）。
-- `schemas()` 返回所有内置组件的动态 schema（Python list/dict 结构）。
+- 高层 `App` 会自动为 callable 回调分配 callback id；底层 `AppHost` 仍可直接使用显式 id。
+- `App.schemas()` / `AppHost.schemas()` 返回所有内置和已注册上层组件的动态 schema（Python list/dict 结构）。
+- `ComponentRef.set_prop()`、`App.set_property()` 和高层 tree-op `set_prop` 会按 schema 校验属性是否存在、是否可写以及值类型是否匹配。
+- `App.set_theme("dark" | "light")` 可切换内置主题；`App.load_theme(path, base="dark")` 可加载 JSON/YAML 主题覆盖文件。
+- 包内附带 `atto_ui/__init__.pyi`、`atto_ui/_native.pyi` 和 `py.typed`，供 IDE 补全和类型检查工具使用。
 - `send_event()` 的鼠标坐标与 Rust `AppHost::send_event` 一致，使用目标窗口内的 0-based 相对坐标。
 - `snapshot()`、`list_windows()`、窗口 focus/move/resize/close/set_title 和 `set_property()` 均不依赖真实 PTY。
 

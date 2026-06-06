@@ -466,7 +466,7 @@
 
 ## 阶段四：M4 完善（Python 覆盖 + 通知/超大块/多模态 + P1/P2 测试 + 一致性收尾）
 
-### [ ] T17 — Python 组件覆盖 + 上层注册 + 主题（B.2/B.3）
+### [DONE] T17 — Python 组件覆盖 + 上层注册 + 主题（B.2/B.3）
 **文件**：`crates/atto-ui-python/`、`atto_ui/__init__.py` + `.pyi`
 **步骤**：
 1. 为所有内置组件补构造助手：Checkbox/RadioGroup/Slider/Spinner/ProgressBar/ListBox/TableView/Grid/Border/Divider/Spacer/Splitter/TabView/StyledLabel。
@@ -475,6 +475,14 @@
 4. 生成/手写 `atto_ui/__init__.pyi` + `_native.pyi`；schema 驱动 `set_prop` 校验；maturin 打包验证 + 扩充 `examples/minimal_app.py`。
 **测试**：Python e2e 扩到 ≥15；覆盖各组件构造、上层组件、主题切换。
 **验收**：Python 不写裸 dict 即可构建/管理含交互的多窗口应用；IDE 补全可用。
+**完成记录（2026-06-07）**：
+- Python native 绑定新增显式 `register_all_runtime_components()`，并在 `AppHost` 上暴露 `set_theme("dark"|"light")` 与 `load_theme(path, base="dark")`；高层 `App` 同步提供 `schemas()`、`set_theme()`、`load_theme()`。
+- Python wrapper 补齐 core 组件 helper：Checkbox、RadioGroup、Slider、Spinner、ProgressBar、ListBox、TableView、Grid、Border、Divider、Spacer、Splitter、TabView、StyledLabel，并同时覆盖 TextArea、Disclosure、TypeAhead、CommandPalette 等已进入 core 的组件。
+- Python wrapper 新增上层动态组件 helper 与数据 helper：MarkdownViewer、TerminalEmulator、FileTree/FileTreeNode、ChatMessageList、ChatInputPanel、ChatInputMode 与 chat message 构造函数；`register_all_runtime_components()` 可显式注册 Terminal/FileTree/Chat/Markdown 等附加组件。
+- 新增 schema 驱动属性校验：`ComponentRef.set_prop()`、`App.set_property()` 和高层 tree-op `set_prop` 会校验属性存在性、可写性和值类型；支持 `set_disabled()` 到 `enabled` 的布尔反向映射，并为 Rect tuple/list 归一为 dict。
+- 新增手写 `atto_ui/__init__.pyi`、`atto_ui/_native.pyi` 和 `py.typed`；更新 Python README 与 `examples/minimal_app.py`，展示高层 helper、主题和属性管理用法。
+- Python e2e 从 8 个扩到 15 个，新增覆盖 core helper 全量构建、schema set_prop 校验、上层组件 schema 注册、上层 helper 构建、主题切换/主题文件加载、类型声明随包提供，以及无需裸 dict 的交互式高层 helper 应用。
+- 验证通过：`python3 -m py_compile atto_ui/__init__.py tests/test_e2e.py examples/minimal_app.py`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`（15 tests）；`cargo test --workspace --all-targets`。
 
 ### [ ] R17 — 审阅 T17
 - 确认构造助手覆盖全部内置组件、参数与 schema 一致。
