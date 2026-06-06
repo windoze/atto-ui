@@ -38,3 +38,4 @@
 - 确认 `TextArea` 位于 core widgets，chat 仅通过 `atto_ui::widgets::TextArea` 组合消费；无法区分 `Shift+Enter` 的终端可用 `Ctrl+J` 换行降级。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui textarea`；`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring`；`cargo test --workspace --all-targets`。
 - `TODO.md` 已将 R15 标记为 `[DONE]` 并写入完成记录。下一步检查最终状态并提交本次 R15 相关变更。
+- 已提交 R15 审阅与完成记录：`94b88c7 [R15] Review multiline TextArea input`。本次追加仅记录提交结果；因只修改执行记录文档，不需要重新运行测试。
