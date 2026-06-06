@@ -10,6 +10,7 @@ mod drawing;
 pub mod inspect;
 pub mod reactive;
 pub mod runtime;
+pub mod task;
 pub mod text;
 pub mod theme;
 pub mod widgets;
@@ -26,6 +27,7 @@ pub use runtime::{
     ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,
     TreeError, TreeOp, ValueType,
 };
+pub use task::{CancellationToken, TaskHandle, TaskId, TaskMetadata, TaskRegistry};
 pub use wm::{
     Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
     WindowManager, WindowMinSizeMode, WindowState,

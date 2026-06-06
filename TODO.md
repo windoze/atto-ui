@@ -151,7 +151,7 @@
 
 ## 阶段二：M2 Agent 核心（任务取消 + async crate + 流式）
 
-### [ ] T6 — 任务取消抽象（core，std-only）（C.1）
+### [DONE] T6 — 任务取消抽象（core，std-only）（C.1）
 **文件**：新增 `src/task/`（或 `src/reactive/task.rs`），`src/app/run.rs` 集成
 **现状**：仅有 `EventQueue::channel()` + `run_crossterm_desktop_with_actions`（ASYNC.md Option A），无取消/任务注册/运行态。
 **步骤**：
@@ -160,6 +160,13 @@
 3. 事件循环集成：Esc 中断当前运行任务（在 `run_crossterm_desktop_with_actions` 或 AppHost step 内）。
 **测试**：单测取消语义；PTY：spawn 后台线程任务 → 显示 spinner → 按 Esc → 断言任务停止、UI 立即可交互、运行态归 false。
 **验收**：std 线程模型下可 spawn/取消；PTY 覆盖中断路径；core 仍无 tokio。
+**完成记录（2026-06-06）**：
+- 新增 core `src/task/`：`CancellationToken` 基于 `Arc<AtomicBool>`，提供协作式 `cancel()` / `is_cancelled()`；`TaskHandle` 持有 token 与 `TaskMetadata`；`TaskRegistry` 支持注册、注销、遍历、当前任务取消、全部取消、std thread `spawn()`，并维护共享 `Property<bool>` 运行态。
+- `AppHost` 内置 `TaskRegistry` 并暴露 `task_registry()`；`send_event()` 和 terminal `step()` 在 UI 未消费 `Esc` 时取消当前任务并将事件标记为 consumed，避免吞掉已被组件/窗口语义消费的 `Esc`。
+- 新增 `run_crossterm_desktop_with_actions_and_tasks()`，让 std-only action loop 可共享任务注册表；原 `run_crossterm_desktop_with_actions()` 保持兼容并委托空注册表。
+- `snapshot_async_app --cancellable` 新增确定性 PTY fixture：按 `s` 注册后台线程任务并显示 spinner/运行态，按 `Esc` 触发取消，后台线程协作退出后注销任务并显示 `Running: false`，随后 `p` 验证 UI 仍可交互。
+- 新增单测覆盖 token clone 共享取消、注册表 running property/遍历/当前任务取消、spawn 完成自动注销、AppHost ignored Esc 取消任务、组件 consumed Esc 不触发取消；新增 PTY 覆盖后台线程取消路径。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui task::`；`cargo test -p atto-ui app::run::tests::apphost_escape`；`cargo test --test pty_async_actions`；`cargo test --workspace --all-targets`；`cargo tree -p atto-ui`（确认 core 依赖树无 tokio）。
 
 ### [ ] R6 — 审阅 T6
 - 确认取消抽象不引入 tokio、不引入隐藏全局状态。

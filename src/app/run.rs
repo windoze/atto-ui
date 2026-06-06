@@ -18,6 +18,7 @@ use crate::composable::EventOutcome;
 use crate::inspect::{DesktopInspector, DesktopSnapshot};
 use crate::reactive::{set_global_tick_rate, tick_global_timers};
 use crate::runtime::{ComponentValue, TreeError};
+use crate::task::TaskRegistry;
 use crate::{ComponentError, WindowId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -181,6 +182,34 @@ fn handle_desktop_action(desktop: &mut Desktop, action: &DesktopAction) {
     }
 }
 
+fn is_escape_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind: KeyEventKind::Press,
+            ..
+        })
+    )
+}
+
+fn mark_consumed_if_escape_cancelled(
+    event: &Event,
+    result: &mut DesktopEventResult,
+    task_registry: &TaskRegistry,
+) -> bool {
+    if result.outcome != EventOutcome::Ignored || !is_escape_press(event) {
+        return false;
+    }
+
+    if task_registry.cancel_current() {
+        result.outcome = EventOutcome::Consumed;
+        true
+    } else {
+        false
+    }
+}
+
 pub type TickCallBack = dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>;
 pub type EventCallBack =
     dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>;
@@ -189,6 +218,7 @@ pub struct AppHost {
     config: CrosstermAppConfig,
     session: HostSession,
     desktop: Desktop,
+    task_registry: TaskRegistry,
     on_tick: Option<Box<TickCallBack>>,
     on_event: Option<Box<EventCallBack>>,
 }
@@ -206,6 +236,7 @@ impl AppHost {
             config,
             session: HostSession::Terminal(session),
             desktop,
+            task_registry: TaskRegistry::new(),
             on_tick: None,
             on_event: None,
         })
@@ -222,6 +253,7 @@ impl AppHost {
             config,
             session: HostSession::Headless { screen },
             desktop,
+            task_registry: TaskRegistry::new(),
             on_tick: None,
             on_event: None,
         })
@@ -235,14 +267,21 @@ impl AppHost {
         &self.desktop
     }
 
+    pub fn task_registry(&self) -> TaskRegistry {
+        self.task_registry.clone()
+    }
+
     pub fn screen(&self) -> Result<Rect> {
         self.session.screen()
     }
 
     pub fn send_event(&mut self, window_id: WindowId, event: Event) -> Result<DesktopEventResult> {
         let screen = self.screen()?;
-        let result = self.desktop.send_event_to_window(window_id, event, screen);
+        let mut result = self
+            .desktop
+            .send_event_to_window(window_id, event.clone(), screen);
         handle_desktop_action(&mut self.desktop, &result.action);
+        mark_consumed_if_escape_cancelled(&event, &mut result, &self.task_registry);
         Ok(result)
     }
 
@@ -332,8 +371,9 @@ impl AppHost {
 
         let ev = event::read()?;
         let screen = self.screen()?;
-        let result = self.desktop.handle_event(&ev, screen);
+        let mut result = self.desktop.handle_event(&ev, screen);
         handle_desktop_action(&mut self.desktop, &result.action);
+        mark_consumed_if_escape_cancelled(&ev, &mut result, &self.task_registry);
 
         if should_quit_default(&ev, result.outcome) {
             return Ok(AppControl::Exit);
@@ -426,6 +466,33 @@ pub fn run_crossterm_desktop_with_actions<B, TTick, TEvent, TAction, A>(
     config: CrosstermAppConfig,
     build: B,
     action_receiver: mpsc::Receiver<A>,
+    on_action: TAction,
+    on_tick: TTick,
+    on_event: TEvent,
+) -> Result<()>
+where
+    B: FnOnce(Rect) -> Result<Desktop>,
+    TAction: FnMut(&mut Desktop, A, Rect) -> Result<AppControl>,
+    TTick: FnMut(&mut Desktop, Rect) -> Result<AppControl>,
+    TEvent: FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
+{
+    run_crossterm_desktop_with_actions_and_tasks(
+        config,
+        build,
+        action_receiver,
+        TaskRegistry::new(),
+        on_action,
+        on_tick,
+        on_event,
+    )
+}
+
+/// Runs a crossterm-backed desktop UI with a shared task registry for Esc cancellation.
+pub fn run_crossterm_desktop_with_actions_and_tasks<B, TTick, TEvent, TAction, A>(
+    config: CrosstermAppConfig,
+    build: B,
+    action_receiver: mpsc::Receiver<A>,
+    task_registry: TaskRegistry,
     mut on_action: TAction,
     mut on_tick: TTick,
     mut on_event: TEvent,
@@ -464,8 +531,9 @@ where
 
         let ev = event::read()?;
         let screen: Rect = session.terminal.size()?.into();
-        let result = desktop.handle_event(&ev, screen);
+        let mut result = desktop.handle_event(&ev, screen);
         handle_desktop_action(&mut desktop, &result.action);
+        mark_consumed_if_escape_cancelled(&ev, &mut result, &task_registry);
 
         if should_quit_default(&ev, result.outcome) {
             break;
@@ -482,9 +550,36 @@ where
 mod tests {
     use super::*;
     use crate::app::MenuBar;
-    use crate::composable::{ComponentTagExt, Label};
+    use crate::composable::{
+        Component, ComponentContext, ComponentTagExt, EventHandling, EventOutcome, EventResult,
+        Label,
+    };
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
+
+    struct ConsumeEscView;
+
+    impl Component for ConsumeEscView {
+        fn draw(
+            &mut self,
+            _frame: &mut ratatui::Frame<'_>,
+            _area: Rect,
+            _ctx: ComponentContext<'_>,
+        ) {
+        }
+    }
+
+    impl EventHandling for ConsumeEscView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            if is_escape_press(event) {
+                EventResult::consumed()
+            } else {
+                EventResult::ignored()
+            }
+        }
+    }
+
+    crate::impl_component_default_traits!(ConsumeEscView => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[test]
     fn headless_apphost_snapshot_uses_in_memory_layout() {
@@ -518,5 +613,78 @@ mod tests {
                 height: 4,
             })
         );
+    }
+
+    #[test]
+    fn apphost_escape_cancels_current_task_when_event_is_ignored() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut window_id = None;
+        let mut host = AppHost::new_headless(screen, |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Task",
+                    Rect::new(2, 2, 24, 6),
+                    Box::new(Label::new("Task")),
+                ),
+                screen,
+            );
+            window_id = Some(id);
+            Ok(desktop)
+        })
+        .expect("headless host");
+        let window_id = window_id.expect("window id");
+        let registry = host.task_registry();
+        let running = registry.running_property();
+        let handle = registry.register("background");
+
+        let result = host
+            .send_event(
+                window_id,
+                Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            )
+            .expect("send Esc");
+
+        assert_eq!(result.outcome, EventOutcome::Consumed);
+        assert!(handle.is_cancelled());
+        assert!(running.get());
+
+        assert!(registry.unregister(handle.id()));
+        assert!(!running.get());
+    }
+
+    #[test]
+    fn apphost_escape_does_not_cancel_task_when_view_consumes_event() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut window_id = None;
+        let mut host = AppHost::new_headless(screen, |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Task",
+                    Rect::new(2, 2, 24, 6),
+                    Box::new(ConsumeEscView),
+                ),
+                screen,
+            );
+            window_id = Some(id);
+            Ok(desktop)
+        })
+        .expect("headless host");
+        let window_id = window_id.expect("window id");
+        let registry = host.task_registry();
+        let handle = registry.register("background");
+
+        let result = host
+            .send_event(
+                window_id,
+                Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            )
+            .expect("send Esc");
+
+        assert_eq!(result.outcome, EventOutcome::Consumed);
+        assert!(!handle.is_cancelled());
     }
 }
