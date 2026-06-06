@@ -1,14 +1,32 @@
-## 执行计划
+# Execution Plan
 
-状态：T5 已实现、验证并更新 TODO，准备提交。
+## Current Invocation
 
-说明：本文件记录可检查的执行计划、关键步骤和进度更新；不包含私有推理过程。
+- Source of truth: `TODO.md`.
+- Goal: complete exactly the first task whose heading is not prefixed with `[DONE]`, then stop.
+- Constraint: do not perform broad historical triage before selecting the current task.
+- Note: this file records an actionable plan and progress log, not private reasoning.
 
-步骤：
-1. 读取 `TODO.md`，按标题是否带 `[DONE]` 找出第一个未完成任务。当前任务：`T5 — Python e2e 测试 host 雏形`。
-2. 检查最新提交是否明确提到与该任务直接相关的未完成事项。最新提交为 `[R4] Review desktop snapshot export`，未包含未完成事项说明。
-3. 阅读当前任务相关代码、测试和计划文件，只收集完成该任务所需上下文。发现 `crates/atto-ui-python` 已有 PyO3 绑定和高层 Python wrapper，但尚未暴露 T3/T4 的 `send_event`、窗口管理、`set_property`、`snapshot()`，且测试需要可显式使用 headless `AppHost`。
-4. 按任务要求实现最小正确变更；如遇阻塞的规格缺口，更新 `TODO.md` 添加最小前置任务并停止。当前计划是在 Rust 绑定层新增 headless 构造与事件/窗口/snapshot 转换，在 Python wrapper 层提供 e2e 友好 API，并新增 8 个不依赖 PTY 的 `unittest` 用例。
-5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行相关或完整测试；发现未排期失败时修复或写入 `TODO.md`。当前 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-python`、`maturin develop`、`python -m unittest discover tests` 均已通过；第一次 Python e2e 暴露 snapshot 子组件 bounds 需要按组件层级换算为绝对点击坐标，已在测试 helper 中处理。
-6. 完成后在 `TODO.md` 的任务标题前加 `[DONE]`，更新完成记录；仅在阶段计划实际变化时更新 `PLAN.md`。已将 `T5` 标记为 `[DONE]` 并写入完成记录；本次无阶段计划变化，未更新 `PLAN.md`。
-7. 提交所有本次任务相关变更，提交信息包含任务编号，然后停止，不进入下一个任务。下一步执行提交前的 git 状态、diff 和最近提交检查。
+## Step-by-Step Plan
+
+1. Read `TODO.md` and identify the first incomplete task by heading prefix.
+2. Check the latest commit only for an explicitly mentioned unfinished issue directly relevant to that task.
+3. Read the selected task details, dependencies, validation requirements, and any relevant project files.
+4. Implement the selected task completely, unless a concrete prerequisite blocker makes that impossible.
+5. If blocked, update `TODO.md` with the minimum required prerequisite task, commit that bookkeeping, and stop.
+6. Run validation in the required order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full tests as required.
+7. Fix any failing unscheduled tests or add explicit prerequisite/follow-up tasks before marking the task complete.
+8. Mark the completed task heading in `TODO.md` with `[DONE]` and update its completion record.
+9. Update this file after key progress points.
+10. Inspect git status/diff/log, commit all intended task changes with a clear message, and stop.
+
+## Progress Log
+
+- Initialized execution plan before reading project task state.
+- Selected first incomplete task: `R5 — 审阅 T5`.
+- Planned validation focus: confirm Python e2e uses Rust host dispatch/snapshot paths, callback metadata completeness, and run the Python test suite plus required formatting/lint gates where applicable.
+- Reviewed T5 implementation entry points: Python `App.send_event()` calls native `_native.AppHost.send_event()`, which converts Python events to `crossterm::event::Event` and routes through Rust `AppHost::send_event()` / `Desktop::send_event_to_window()`.
+- Reviewed callback flow: dynamic component specs carry callback ids into Rust, widgets emit through `CallbackRegistry`, native `drain_callbacks()` returns `callback_id`, `target_id`, `event`, and `payload`, and the Python wrapper dispatches those records to registered callables.
+- Validation passed: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `python -m unittest discover tests` in `crates/atto-ui-python` (8 tests); `cargo test --workspace --all-targets`.
+- Updated `TODO.md`: marked `R5 — 审阅 T5` as `[DONE]` and recorded review findings plus validation commands.
+- Pre-commit inspection found unrelated existing working-tree changes outside this task; only `TODO.md` and `memory/claude_plan.md` will be staged for the R5 commit.

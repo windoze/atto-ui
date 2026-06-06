@@ -136,10 +136,16 @@
 - 更新 Python README，记录 headless 测试、事件坐标、snapshot/窗口管理/属性 API 与 e2e 运行方式。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-python`；`maturin develop`；`python -m unittest discover tests`；`cargo test --workspace --all-targets`。首次完整 workspace 测试中 `atto-ui-terminal` 的两个 PTY 用例出现一次 `READY` 等待超时；随后 `cargo test -p atto-ui-terminal --test pty_terminal_emulator -- --nocapture` 和完整 workspace 复跑均通过，当前无未处理失败。
 
-### [ ] R5 — 审阅 T5
+### [DONE] R5 — 审阅 T5
 - 确认 e2e 真实经过 Rust 分发路径（非 Python 侧模拟）。
 - 确认回调 payload/target_id/event 元数据齐全（B.1 回调载荷）。
 - 运行 Python 测试套件。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-python/src/lib.rs`、`crates/atto-ui-python/atto_ui/__init__.py`、`crates/atto-ui-python/tests/test_e2e.py` 与 Python README 中的 T5 改动。
+- 确认高层 `App.send_event()` / `Window.send_event()` 只做 Python 参数封装，实际事件进入 native `_native.AppHost.send_event()`，再经 Rust `AppHost::send_event()` / `Desktop::send_event_to_window()` / `WindowManager::dispatch_to_window_view()` 分发；测试中的 click/key/paste 均非 Python 侧模拟状态变更。
+- 确认动态组件事件绑定将 callback id 写入 Rust `ComponentSpec.events`，组件回调通过 `CallbackRegistry` emit，并由 native `drain_callbacks()` 暴露 `callback_id`、`target_id`、`event`、`payload`；Python wrapper 再映射为 `atto_ui.Event` 和 `ComponentRef`。
+- 确认 8 个 Python e2e 覆盖 headless snapshot、构树 snapshot、事件注入回调元数据、TextBox 输入/submit、tree-ops 增删改移、回调往返修改、窗口管理、多窗口事件路由。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`python -m unittest discover tests`（`crates/atto-ui-python`，8 tests）；`cargo test --workspace --all-targets`。
 
 ---
 
