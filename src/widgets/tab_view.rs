@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
-    EventResult, FocusNav, Layout, ScrollConfig, Scrollable, ScrollbarHost,
+    EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarHost,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -353,20 +353,23 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 impl TabView {
@@ -493,6 +496,10 @@ fn draw_marker(frame: &mut Frame<'_>, x: u16, y: u16, symbol: &str, style: Style
 
 #[component_properties]
 impl Component for TabView {
+    fn is_tab_container(&self) -> bool {
+        true
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::SelectIndex(idx) => self.set_selection(idx),
@@ -578,6 +585,7 @@ impl Component for TabView {
                         ctx.scrollbar_host.for_child()
                     },
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 };
                 child.view.draw(frame, content_abs, child_ctx);
             }
@@ -743,7 +751,9 @@ impl EventHandling for TabView {
         let (header_local, content_local) = Self::header_and_content(local_area, position);
 
         if let Event::Mouse(m) = event {
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
 
@@ -823,6 +833,7 @@ impl EventHandling for TabView {
                         ctx.scrollbar_host.for_child()
                     },
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
                 };
                 return child.view.handle_event(&child_event, child_ctx);
             }
@@ -845,6 +856,7 @@ impl EventHandling for TabView {
                     ctx.scrollbar_host.for_child()
                 },
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             let res = child.view.handle_event(event, child_ctx);
             if res.is_consumed() {

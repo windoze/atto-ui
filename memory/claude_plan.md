@@ -1,44 +1,29 @@
-# Claude Execution Plan
+# 执行计划
 
-## Scope
+## 当前目标
 
-- Work from `TODO.md` as the authoritative task list.
-- Identify the first task whose title is not prefixed with `[DONE]`.
-- Complete exactly that one task, then stop after committing.
-- Do not perform unrelated historical triage before selecting the current task.
+- 当前第一个未完成任务：`T12 — P3 批量清理`。
+- 完整完成 T12 中列出的 M6、L1–L10 清理项，验证实现，更新任务记录，提交 Git commit，然后停止。
 
-## Constraints
+## 执行步骤
 
-- Keep `TODO.md` as the routine task/completion log.
-- Update `PLAN.md` only if phase-level sequencing, dependencies, assumptions, or completion criteria change.
-- Do not use workarounds for spec mismatches. If a blocker prevents the task, add the minimum prerequisite task to `TODO.md`, commit, and stop.
-- Treat any observed unscheduled test or fixture failure as a real project issue: fix it or schedule it before marking the current task done.
-- Mark completion only by prefixing the task title with `[DONE]` and filling its completion record.
+1. 读取 `TODO.md`，只根据标题是否带 `[DONE]` 判断完成状态，定位第一个未完成任务。
+2. 检查该任务的要求、依赖、验证方式和完成记录；必要时查看最新提交，确认是否存在与当前任务直接相关的未完成事项。
+3. 读取当前任务涉及的代码、测试和文档，避免进行无关的历史问题扫描。
+4. 如任务可直接实施，进行最小且完整的代码或文档修改；如遇到阻塞当前任务的真实前置问题，则按要求更新 `TODO.md` 并停止。
+5. 运行格式化、lint 和相关测试；若代码有变更，按要求依次运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试。
+6. 若发现未排期的测试或 fixture 失败，修复或在 `TODO.md` 中排入正确位置，不忽略。
+7. 更新 `TODO.md`：完成的任务标题必须加 `[DONE]`，并补充完成记录。
+8. 仅当阶段级计划发生变化时更新 `PLAN.md`。
+9. 检查 Git 状态与差异，提交本次任务相关变更。
+10. 完成一个任务后停止，不继续下一个任务。
 
-## Step-by-Step Plan
+## 进度记录
 
-1. Read `TODO.md` and identify the first incomplete task by title prefix.
-2. Inspect recent git history only enough to determine whether the latest commit mentions an unfinished issue directly relevant to that selected task.
-3. Read the selected task details, dependencies, validation requirements, and completion-record format.
-4. Inspect the relevant code and tests for that task, avoiding broad unrelated issue sweeps.
-5. Implement the smallest correct change that satisfies the task requirements.
-6. Run `cargo fmt`.
-7. Run `cargo clippy --all-targets -- -D warnings`.
-8. Run the relevant tests, then the full required test suite if code changes require it.
-9. If failures appear, fix them if in scope or explicitly schedule prerequisite/follow-up tasks in `TODO.md` according to the policy.
-10. Update `TODO.md` by marking the completed task title with `[DONE]` and adding a concise completion record with validation results.
-11. Update this plan file as key steps complete or if the plan changes.
-12. Review git status and diff to ensure only intended files are included.
-13. Commit all required changes with a clear message referencing the task id.
-14. Stop without starting the next task.
-
-## Progress Log
-
-- Initial execution plan recorded before repository inspection.
-- Selected first incomplete task from `TODO.md`: `R11 — 审阅 T11`.
-- R11 scope: review T11's visible-row parsing and borrow changes, verify boundary coverage and large dataset rendering, fix only directly related issues if found, then mark R11 done and commit.
-- Review found that existing virtual-scroll PTY tests exercise the shared scroll container but not the changed `ListBox`/`TableView` row-slicing render paths directly.
-- Added focused unit tests for `ListBox` and `TableView` to verify vertical scroll slicing includes the first and last visible boundary rows and excludes adjacent offscreen rows.
-- Validation completed: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test draw_slices_visible_rows_after_vertical_scroll --lib`; `cargo test visible_row_range --lib`; `cargo test --test pty_virtual_scrolling`; `cargo test --all --all-targets`.
-- Completion record added to `TODO.md` and R11 marked `[DONE]`.
-- Pre-commit diff reviewed. Intended files: `TODO.md`, `memory/claude_plan.md`, `src/widgets/list.rs`, `src/widgets/table.rs`. Untracked `notification.sh` and `run_agent.sh` are unrelated and will not be staged.
+- 已创建初始执行计划。下一步读取 `TODO.md` 以确定第一个未完成任务。
+- 已读取 `TODO.md`，确认第一个未完成任务是 `T12 — P3 批量清理`；下一步检查最新提交与工作区状态，确认是否存在与 T12 直接相关的未完成事项。
+- 已检查最近提交与工作区：最近提交为 R11，未发现直接相关的未完成事项；未跟踪的 `notification.sh`、`run_agent.sh` 将保持不变。
+- 当前实施顺序：基础接口（事件坐标枚举、TabView trait 识别、运行时属性应用枚举）→ 控件/主题缓存 → 宏与颜色解析 → 阴影去重 → 文档和测试。
+- 已完成 T12 主要实现：事件坐标枚举、Button 命中判断、`Size::Weight(u16)` 文档修正、markdown-link 样式缓存、TabView trait 识别、view_builder crate path 配置与未知组件诊断、3 位 hex 颜色、共享 draw_shadow、运行时属性应用区分及相应测试。下一步按要求运行格式化、clippy 和全量测试。
+- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`。在微调 view_builder 已知组件列表后已重新运行同一组验证并全部通过。
+- 已更新 `TODO.md`，将 T12 标记为 `[DONE]` 并写入完成记录。下一步检查差异并提交本次任务变更。

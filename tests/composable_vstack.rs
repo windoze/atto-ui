@@ -1,5 +1,6 @@
 use atto_ui::composable::{
-    Component, ComponentContext, LayoutParams, ScrollbarHost, Size, TabMode, Text, VStack,
+    Component, ComponentContext, LayoutParams, MouseCoordinateSpace, ScrollbarHost, Size, TabMode,
+    Text, VStack,
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
@@ -29,6 +30,7 @@ fn composable_vstack_layout_with_spacing() {
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             };
 
             let row = LayoutParams {
@@ -63,6 +65,7 @@ fn composable_vstack_padding_moves_content_inward() {
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             };
 
             let mut view = VStack::new().child(Text::new("Padded")).padding(2);

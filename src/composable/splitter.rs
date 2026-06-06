@@ -748,6 +748,7 @@ impl Component for Splitter {
                 is_focused: child_focused,
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             first.view.draw(frame, abs, child_ctx);
         }
@@ -769,6 +770,7 @@ impl Component for Splitter {
                 is_focused: child_focused,
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             second.view.draw(frame, abs, child_ctx);
         }
@@ -945,7 +947,9 @@ impl EventHandling for Splitter {
             let Some(layout) = self.last_layout else {
                 return EventResult::ignored();
             };
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(layout.area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(layout.area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
 
@@ -1065,6 +1069,7 @@ impl EventHandling for Splitter {
                 is_focused: child_focused,
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
             };
 
             let res = self.children[child_idx]
@@ -1092,6 +1097,7 @@ impl EventHandling for Splitter {
                 is_focused: child_focused,
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {

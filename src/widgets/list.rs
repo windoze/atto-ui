@@ -21,7 +21,9 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-use super::util::{SelectionScroll, mouse_coords_local_to_area, visible_row_range, widget_style};
+use super::util::{
+    NamedStyleCache, SelectionScroll, mouse_coords_local_to_area, visible_row_range, widget_style,
+};
 
 #[derive(Clone, Debug, ComponentProperties)]
 struct ListBoxBindings {
@@ -228,7 +230,8 @@ impl EventHandling for ListBox {
         // Border-mounted scrollbars (right + bottom) so the list content doesn't lose space.
         if let Event::Mouse(m) = event
             && let Some(area) = self.last_area
-            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+            && let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
         {
             let abs_event = MouseEvent {
                 column: area.x.saturating_add(local_x),
@@ -364,6 +367,7 @@ struct ListBoxContent {
     bindings: Arc<RwLock<ListBoxBindings>>,
     state: ListState,
     selection_scroll: SelectionScroll,
+    markdown_link_style: NamedStyleCache,
 }
 
 impl ListBoxContent {
@@ -372,6 +376,7 @@ impl ListBoxContent {
             bindings,
             state: ListState::default(),
             selection_scroll: SelectionScroll::default(),
+            markdown_link_style: NamedStyleCache::default(),
         }
     }
 
@@ -457,7 +462,7 @@ impl ScrollContent for ListBoxContent {
             .normalize_selection(&bindings.selection, items.len());
         let scroll = ctx.info.scroll_offset;
         let viewport_w = area.width;
-        let link_overlay = ctx.component.theme.named_style("markdown-link");
+        let link_overlay = self.markdown_link_style.markdown_link(ctx.component.theme);
         let visible = visible_row_range(items.len(), scroll.y, area.height);
         let start = visible.start;
         let items: Vec<ListItem> = items[visible]
@@ -498,7 +503,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::composable::TabMode;
+    use crate::composable::{MouseCoordinateSpace, TabMode};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -511,6 +516,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Window,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         }
     }
 

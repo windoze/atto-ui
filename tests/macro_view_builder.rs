@@ -35,6 +35,19 @@ fn view_builder_macro_supports_nesting() {
 }
 
 #[test]
+fn view_builder_macro_supports_explicit_crate_path() {
+    let view = view_builder! {
+        crate_path = ::atto_ui;
+        VStack {
+            Text("Line 1")
+            Text("Line 2")
+        }
+    };
+
+    assert_eq!(view.children().len(), 2);
+}
+
+#[test]
 fn view_builder_macro_supports_child_modifiers() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};

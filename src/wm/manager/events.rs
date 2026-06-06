@@ -8,7 +8,8 @@ use crate::composable::scroll::{
     scrollbar_layout_1d, should_show_scrollbar,
 };
 use crate::composable::{
-    ComponentAction, ComponentContext, EventResult, ScrollbarHost, TabMode, TitleBarContext,
+    ComponentAction, ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    TitleBarContext,
 };
 use crate::theme::Theme;
 
@@ -83,6 +84,7 @@ impl WindowManager {
                     ScrollbarHost::Component
                 },
                 tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             };
             w.view.handle_event(event, ctx)
         };

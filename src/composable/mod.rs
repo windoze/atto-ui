@@ -26,8 +26,8 @@ pub use crate::widgets::{
 pub use border::Border;
 pub use component::{
     Component, ComponentAction, ComponentContext, DynamicTree, EventHandling, EventOutcome,
-    EventResult, FocusNav, Layout, Scrollable, ScrollbarHost, TabMode, TitleBarContent,
-    TitleBarContext, TitleBarSpan,
+    EventResult, FocusNav, Layout, MouseCoordinateSpace, Scrollable, ScrollbarHost, TabMode,
+    TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 pub use component_tag::{ComponentTag, ComponentTagExt};
 pub use for_each::{ForEach, ForEachIdentifiable};

@@ -43,6 +43,23 @@ colors:
 }
 
 #[test]
+fn theme_config_accepts_short_hex_colors() {
+    let yaml = r##"
+colors:
+  desktop:
+    fg: "#fff"
+    bg: "#0a7"
+"##;
+
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+
+    let mut theme = Theme::dark();
+    theme.apply_config_overlay(&cfg).expect("apply overlay");
+    assert_eq!(theme.desktop.fg, Some(Color::Rgb(0xff, 0xff, 0xff)));
+    assert_eq!(theme.desktop.bg, Some(Color::Rgb(0x00, 0xaa, 0x77)));
+}
+
+#[test]
 fn theme_config_preserves_custom_keys_for_user_widgets() {
     let json = r##"
     {

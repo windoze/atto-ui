@@ -24,6 +24,22 @@ pub struct ComponentContext<'a> {
     pub is_focused: bool,
     pub scrollbar_host: ScrollbarHost,
     pub tab_mode: TabMode,
+    pub mouse_coordinate_space: MouseCoordinateSpace,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MouseCoordinateSpace {
+    /// Mouse coordinates are absolute terminal coordinates.
+    #[default]
+    Absolute,
+    /// Mouse coordinates are already local to the component receiving the event.
+    Local,
+}
+
+impl MouseCoordinateSpace {
+    pub const fn for_child(self) -> Self {
+        MouseCoordinateSpace::Local
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -382,6 +398,10 @@ pub trait Component: Layout + Scrollable + FocusNav + DynamicTree + EventHandlin
         std::any::type_name::<Self>()
     }
 
+    fn is_tab_container(&self) -> bool {
+        false
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         Vec::new()
     }
@@ -530,6 +550,10 @@ impl EventHandling for Box<dyn Component> {
 impl Component for Box<dyn Component> {
     fn type_name(&self) -> &'static str {
         self.as_ref().type_name()
+    }
+
+    fn is_tab_container(&self) -> bool {
+        self.as_ref().is_tab_container()
     }
 
     fn property_names(&self) -> Vec<&'static str> {

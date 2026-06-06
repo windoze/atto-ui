@@ -160,6 +160,7 @@ impl ::atto_ui::composable::Component for ExplorerWindowView {
                 ctx.scrollbar_host.for_child()
             },
             tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
         self.file_tree.draw(frame, area, child_ctx);
     }
@@ -233,6 +234,7 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
                 ctx.scrollbar_host.for_child()
             },
             tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
 
         match event {

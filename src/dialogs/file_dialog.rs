@@ -851,7 +851,7 @@ fn cmp_entries(a: &Entry, b: &Entry) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composable::{ComponentContext, ScrollbarHost, TabMode};
+    use crate::composable::{ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode};
     use crate::theme::Theme;
     use crate::wm::WindowId;
     use crossterm::event::{KeyEventState, KeyModifiers};
@@ -924,6 +924,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
 
         let area = Rect::new(0, 0, 80, 24);

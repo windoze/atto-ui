@@ -118,12 +118,21 @@ impl ThemeConfig {
 fn parse_color(s: &str) -> Result<Color> {
     let trimmed = s.trim();
     if let Some(hex) = trimmed.strip_prefix('#') {
-        if hex.len() != 6 {
-            return Err(anyhow!("expected #RRGGBB, got {trimmed:?}"));
-        }
-        let r = u8::from_str_radix(&hex[0..2], 16).context("parse red channel")?;
-        let g = u8::from_str_radix(&hex[2..4], 16).context("parse green channel")?;
-        let b = u8::from_str_radix(&hex[4..6], 16).context("parse blue channel")?;
+        let (r, g, b) = match hex.len() {
+            3 => {
+                let r = parse_short_hex_channel(&hex[0..1]).context("parse red channel")?;
+                let g = parse_short_hex_channel(&hex[1..2]).context("parse green channel")?;
+                let b = parse_short_hex_channel(&hex[2..3]).context("parse blue channel")?;
+                (r, g, b)
+            }
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).context("parse red channel")?;
+                let g = u8::from_str_radix(&hex[2..4], 16).context("parse green channel")?;
+                let b = u8::from_str_radix(&hex[4..6], 16).context("parse blue channel")?;
+                (r, g, b)
+            }
+            _ => return Err(anyhow!("expected #RGB or #RRGGBB, got {trimmed:?}")),
+        };
         return Ok(Color::Rgb(r, g, b));
     }
 
@@ -149,6 +158,11 @@ fn parse_color(s: &str) -> Result<Color> {
         _ => return Err(anyhow!("unknown color {trimmed:?}")),
     };
     Ok(c)
+}
+
+fn parse_short_hex_channel(hex: &str) -> Result<u8> {
+    let v = u8::from_str_radix(hex, 16)?;
+    Ok((v << 4) | v)
 }
 
 fn parse_modifiers(mods: &[String]) -> Result<Modifier> {

@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
-use atto_ui::composable::{ComponentContext, EventResult};
+use atto_ui::composable::{ComponentContext, EventResult, MouseCoordinateSpace};
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowDecorations, WindowId, WindowKind, WindowManager};
 
@@ -227,7 +227,7 @@ impl ::atto_ui::composable::FocusNav for CompletionPopupView {}
 impl ::atto_ui::composable::DynamicTree for CompletionPopupView {}
 
 impl ::atto_ui::composable::EventHandling for CompletionPopupView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         let Some(mut model) = self.model.get() else {
             return EventResult::ignored();
         };
@@ -239,9 +239,9 @@ impl ::atto_ui::composable::EventHandling for CompletionPopupView {
             return EventResult::ignored();
         };
 
-        // Mouse events may arrive in screen coordinates (WindowManager dispatch) or already-local
-        // (nested containers). Interpret both.
-        let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+        let Some((local_x, local_y)) =
+            mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+        else {
             return EventResult::ignored();
         };
 
@@ -339,20 +339,23 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 impl EditorPopupWindows {

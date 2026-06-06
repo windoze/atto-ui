@@ -174,11 +174,11 @@ impl WindowManager {
 #[cfg(test)]
 mod tests {
     use super::WindowManager;
-    use super::draw::draw_shadow;
     use crate::composable::{
         Component, ComponentContext, EventHandling, EventResult, Label, Layout, ScrollConfig,
         Scrollable, ScrollbarVisibility,
     };
+    use crate::drawing::draw_shadow;
     use crate::theme::Theme;
     use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode};
     use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};

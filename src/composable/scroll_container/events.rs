@@ -1,4 +1,4 @@
-use super::super::component::{ComponentContext, EventResult, ScrollbarHost};
+use super::super::component::{ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost};
 use super::super::geom::{contains, mouse_coords_local_to_area};
 use super::super::scroll::{ScrollOffset, clamp_scroll_offset, scroll_offset_for_input_event};
 use super::{ScrollContainer, ScrollContainerHost, ScrollContentContext};
@@ -16,12 +16,16 @@ impl ScrollContainer {
         changed
     }
 
-    fn handle_event_bubble_impl(&mut self, event: &Event) -> EventResult {
+    fn handle_event_bubble_impl(
+        &mut self,
+        event: &Event,
+        coordinate_space: MouseCoordinateSpace,
+    ) -> EventResult {
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
                 return EventResult::ignored();
             };
-            if mouse_coords_local_to_area(area, *m).is_none() {
+            if mouse_coords_local_to_area(area, *m, coordinate_space).is_none() {
                 return EventResult::ignored();
             }
         }
@@ -66,6 +70,7 @@ impl ScrollContainer {
                 is_focused: ctx.is_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode,
+                mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
             },
             info,
         };
@@ -77,7 +82,9 @@ impl ScrollContainer {
             let Some(area) = self.last_area else {
                 return EventResult::ignored();
             };
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
 
@@ -107,10 +114,12 @@ impl ScrollContainer {
         // Content receives events first.
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
-                return self.handle_event_bubble_impl(event);
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                return self.handle_event_bubble_impl(event);
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
 
             let scrollbars = super::super::scroll::scrollbars_for_event(
@@ -154,6 +163,6 @@ impl ScrollContainer {
             }
         }
 
-        self.handle_event_bubble_impl(event)
+        self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space)
     }
 }

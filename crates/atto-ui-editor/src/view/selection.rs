@@ -99,11 +99,15 @@ impl EditorView {
         )
     }
 
-    pub(super) fn handle_mouse(&mut self, m: MouseEvent) -> EventResult {
+    pub(super) fn handle_mouse(
+        &mut self,
+        m: MouseEvent,
+        coordinate_space: MouseCoordinateSpace,
+    ) -> EventResult {
         let Some(area) = self.last_area else {
             return EventResult::ignored();
         };
-        let Some((local_x, local_y)) = mouse_coords_local_to_area(area, m) else {
+        let Some((local_x, local_y)) = mouse_coords_local_to_area(area, m, coordinate_space) else {
             self.mouse_drag = None;
             if self.lsp.hover_anchor.is_some() {
                 self.lsp.hover_anchor = None;
@@ -388,18 +392,21 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }

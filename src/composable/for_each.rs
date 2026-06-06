@@ -588,7 +588,7 @@ where
 mod tests {
     use super::*;
     use crate::composable::Text;
-    use crate::composable::{ScrollbarHost, TabMode};
+    use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
     use crate::reactive::Property;
     use crate::theme::Theme;
     use crate::wm::WindowId;
@@ -606,6 +606,7 @@ mod tests {
             is_focused: true,
             scrollbar_host,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
 
         let backend = TestBackend::new(area.width.max(1), area.height.max(1));

@@ -6,6 +6,7 @@ pub mod app;
 pub mod component_api;
 pub mod composable;
 pub mod dialogs;
+mod drawing;
 pub mod inspect;
 pub mod reactive;
 pub mod runtime;

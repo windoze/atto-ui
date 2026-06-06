@@ -65,6 +65,7 @@ impl StackCore {
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             if scrollable {
                 let Some(region) = scrolled_region(r, scroll, viewport_size, inner) else {
@@ -117,6 +118,7 @@ impl StackCore {
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             child.view.draw(frame, abs, child_ctx);
         }

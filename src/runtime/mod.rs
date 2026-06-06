@@ -221,20 +221,19 @@ impl ComponentTree {
                 TreeOp::SetProp { id, name, value } => {
                     if id_matches_root(&self.view, id) {
                         let applied = apply_property_to_view(self.view.as_mut(), id, name, value)?;
-                        if applied == PropertyApply::NeedsRebuild {
-                            self.rebuild()?;
-                            return Ok(true);
-                        }
-                        if applied == PropertyApply::NotFound {
-                            self.rebuild()?;
-                            return Ok(true);
+                        match applied {
+                            PropertyApply::Applied => {}
+                            PropertyApply::UnsupportedProperty | PropertyApply::NotFound => {
+                                self.rebuild()?;
+                                return Ok(true);
+                            }
                         }
                         continue;
                     }
 
                     match apply_property_to_view(self.view.as_mut(), id, name, value)? {
                         PropertyApply::Applied => {}
-                        PropertyApply::NeedsRebuild => {
+                        PropertyApply::UnsupportedProperty => {
                             if !replace_node_with_spec(
                                 self.view.as_mut(),
                                 id,
@@ -332,6 +331,10 @@ impl ComponentTree {
 impl Component for ComponentTree {
     fn type_name(&self) -> &'static str {
         self.view.type_name()
+    }
+
+    fn is_tab_container(&self) -> bool {
+        self.view.is_tab_container()
     }
 
     fn property_names(&self) -> Vec<&'static str> {
@@ -484,7 +487,7 @@ impl EventHandling for ComponentTree {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PropertyApply {
     Applied,
-    NeedsRebuild,
+    UnsupportedProperty,
     NotFound,
 }
 
@@ -501,8 +504,8 @@ fn apply_property_to_view(
     if view.tag() == Some(id) {
         return match view.set_property(name, value.clone()) {
             Ok(()) => Ok(PropertyApply::Applied),
-            Err(ComponentError::UnsupportedProperty(_)) => Ok(PropertyApply::NeedsRebuild),
-            Err(ComponentError::NotFound(_)) => Ok(PropertyApply::NeedsRebuild),
+            Err(ComponentError::UnsupportedProperty(_)) => Ok(PropertyApply::UnsupportedProperty),
+            Err(ComponentError::NotFound(_)) => Ok(PropertyApply::NotFound),
             Err(ComponentError::InvalidValue { expected, .. }) => Err(TreeError::InvalidProperty {
                 id: id.to_string(),
                 name: name.to_string(),
@@ -528,16 +531,9 @@ fn apply_property_to_view(
     Ok(PropertyApply::NotFound)
 }
 
-fn is_tab_view(view: &dyn Component) -> bool {
-    view.type_name()
-        .rsplit("::")
-        .next()
-        .is_some_and(|name| name == "TabView")
-}
-
 fn can_insert_into(view: &dyn Component, parent_id: &str) -> bool {
     if view.tag() == Some(parent_id) {
-        return !is_tab_view(view);
+        return !view.is_tab_container();
     }
 
     view.children()
@@ -581,7 +577,7 @@ fn replace_node_with_child_spec(
     child: &ComponentSpecChild,
     registry: &ComponentRegistry<Box<dyn Component>>,
 ) -> Result<bool, TreeError> {
-    let tab_view = is_tab_view(view);
+    let tab_view = view.is_tab_container();
     let Some(children) = view.children_mut() else {
         return Ok(false);
     };
@@ -614,7 +610,7 @@ fn insert_child_spec(
     registry: &ComponentRegistry<Box<dyn Component>>,
 ) -> Result<bool, TreeError> {
     if view.tag() == Some(parent_id) {
-        if is_tab_view(view) {
+        if view.is_tab_container() {
             return Ok(false);
         }
         let Some(children) = view.children_mut() else {
@@ -644,7 +640,7 @@ fn insert_child_spec(
 }
 
 fn remove_node(view: &mut dyn Component, id: &str) -> bool {
-    let tab_view = is_tab_view(view);
+    let tab_view = view.is_tab_container();
     let Some(children) = view.children_mut() else {
         return false;
     };
@@ -706,7 +702,7 @@ fn take_node_at_path(
     id: &str,
     parent_path: &mut Vec<usize>,
 ) -> Option<TakenNode> {
-    let tab_view = is_tab_view(view);
+    let tab_view = view.is_tab_container();
     let children = view.children_mut()?;
     if !tab_view {
         if let Some(idx) = children
@@ -764,7 +760,7 @@ fn insert_existing_node(
         return true;
     }
     if view.tag() == Some(parent_id) {
-        if is_tab_view(view) {
+        if view.is_tab_container() {
             return false;
         }
         let Some(children) = view.children_mut() else {
@@ -1564,7 +1560,9 @@ impl StackBuilder for HStack {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composable::{Component, ComponentContext, EventResult, ScrollbarHost, TabMode};
+    use crate::composable::{
+        Component, ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    };
     use crate::theme::Theme;
     use crate::wm::WindowId;
     use atto_ui_runtime::ComponentSpecChild;
@@ -1608,6 +1606,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
         let event = Event::Key(KeyEvent {
             code: KeyCode::Enter,
@@ -1645,6 +1644,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
         let event = Event::Key(KeyEvent {
             code: KeyCode::Char(' '),
@@ -1725,6 +1725,38 @@ mod tests {
             .get_property("text")
             .expect("text property");
         assert_eq!(value, ComponentValue::String("B".into()));
+    }
+
+    #[test]
+    fn apply_property_distinguishes_unsupported_property_from_missing_node() {
+        let callbacks = CallbackRegistry::new();
+        let root =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("Label")
+                        .with_id("title")
+                        .with_prop("text", ComponentValue::String("A".into())),
+                ));
+        let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+        let unsupported = apply_property_to_view(
+            tree.view_mut(),
+            "title",
+            "missing_prop",
+            &ComponentValue::String("B".into()),
+        )
+        .expect("apply unsupported");
+        assert_eq!(unsupported, PropertyApply::UnsupportedProperty);
+
+        let missing = apply_property_to_view(
+            tree.view_mut(),
+            "missing_node",
+            "text",
+            &ComponentValue::String("B".into()),
+        )
+        .expect("apply missing");
+        assert_eq!(missing, PropertyApply::NotFound);
     }
 
     #[test]
@@ -2009,6 +2041,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
         let event = Event::Key(KeyEvent {
             code: KeyCode::Enter,

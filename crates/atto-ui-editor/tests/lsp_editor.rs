@@ -7,7 +7,9 @@ use crossterm::event::{
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use atto_ui::composable::{Component, ComponentContext, EventHandling, ScrollbarHost, TabMode};
+use atto_ui::composable::{
+    Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
+};
 use atto_ui::wm::WindowId;
 use atto_ui_editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
 use atto_ui_editor::{EditorThemeSet, EditorView};
@@ -47,6 +49,7 @@ fn lsp_semantic_tokens_and_folding_markers_render_and_toggle() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let area = Rect::new(0, 0, 80, 10);
@@ -143,6 +146,7 @@ fn lsp_hover_popup_tracks_mouse_and_suppresses_until_move() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let area = Rect::new(0, 0, 80, 10);

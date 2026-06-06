@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    Component, ComponentContext, EdgeInsets, EventResult, ScrollConfig, ScrollContainer,
-    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, Scrollable,
-    ScrollbarDrag, ScrollbarHost, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
-    should_show_scrollbar,
+    Component, ComponentContext, EdgeInsets, EventResult, MouseCoordinateSpace, ScrollConfig,
+    ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset,
+    Scrollable, ScrollbarDrag, ScrollbarHost, Scrollbars, draw_scrollbars,
+    handle_scrollbar_mouse_event, should_show_scrollbar,
 };
 use atto_ui::reactive::Binding;
 use atto_ui::runtime::{
@@ -497,7 +497,8 @@ impl ::atto_ui::composable::EventHandling for FileTree {
         if matches!(ctx.scrollbar_host, ScrollbarHost::Component)
             && let Event::Mouse(m) = event
             && let Some(area) = self.last_area
-            && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+            && let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
         {
             let abs_event = MouseEvent {
                 column: area.x.saturating_add(local_x),
@@ -636,20 +637,23 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 struct FileTreeContent {

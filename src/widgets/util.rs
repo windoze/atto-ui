@@ -4,10 +4,29 @@ use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseE
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
-use crate::composable::{EventResult, ScrollContainerHost};
+use crate::composable::{EventResult, MouseCoordinateSpace, ScrollContainerHost};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::theme::Theme;
+
+const MARKDOWN_LINK_STYLE: &str = "markdown-link";
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NamedStyleCache {
+    theme_key: Option<usize>,
+    style: Option<Style>,
+}
+
+impl NamedStyleCache {
+    pub(crate) fn markdown_link(&mut self, theme: &Theme) -> Option<Style> {
+        let theme_key = theme as *const Theme as usize;
+        if self.theme_key != Some(theme_key) {
+            self.theme_key = Some(theme_key);
+            self.style = theme.named_style(MARKDOWN_LINK_STYLE);
+        }
+        self.style
+    }
+}
 
 /// Returns the row range visible in a vertically scrolled viewport.
 pub(crate) fn visible_row_range(
@@ -43,21 +62,24 @@ pub(crate) fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-/// Converts absolute or already-local mouse coordinates to coordinates local to `area`.
-pub(crate) fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+/// Converts mouse coordinates from an explicit coordinate space to coordinates local to `area`.
+pub(crate) fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers receive mouse coordinates already relative to their own origin.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 /// Shared selection and vertical scroll behavior for row-based widgets.
@@ -180,7 +202,11 @@ fn ensure_selection_visible(selection: usize, host: &mut ScrollContainerHost) {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_row_range;
+    use ratatui::style::{Color, Style};
+
+    use crate::theme::Theme;
+
+    use super::{NamedStyleCache, visible_row_range};
 
     #[test]
     fn visible_row_range_clamps_to_rows() {
@@ -194,5 +220,23 @@ mod tests {
     fn visible_row_range_handles_empty_viewport_or_rows() {
         assert_eq!(visible_row_range(0, 0, 5), 0..0);
         assert_eq!(visible_row_range(10, 4, 0), 4..4);
+    }
+
+    #[test]
+    fn named_style_cache_refreshes_when_theme_changes() {
+        let mut first = Theme::dark();
+        first.set_named_style("markdown-link", Style::default().fg(Color::Red));
+        let mut second = Theme::dark();
+        second.set_named_style("markdown-link", Style::default().fg(Color::Blue));
+
+        let mut cache = NamedStyleCache::default();
+        assert_eq!(
+            cache.markdown_link(&first).and_then(|s| s.fg),
+            Some(Color::Red)
+        );
+        assert_eq!(
+            cache.markdown_link(&second).and_then(|s| s.fg),
+            Some(Color::Blue)
+        );
     }
 }

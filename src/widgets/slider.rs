@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::composable::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -150,8 +150,14 @@ impl Slider {
         pos.min(width.saturating_sub(1))
     }
 
-    fn set_value_from_mouse(&mut self, area: Rect, m: MouseEvent) -> EventResult {
-        let Some((local_x, _local_y)) = mouse_coords_local_to_area(area, m) else {
+    fn set_value_from_mouse(
+        &mut self,
+        area: Rect,
+        m: MouseEvent,
+        coordinate_space: MouseCoordinateSpace,
+    ) -> EventResult {
+        let Some((local_x, _local_y)) = mouse_coords_local_to_area(area, m, coordinate_space)
+        else {
             return EventResult::ignored();
         };
         let value = self.value_from_pos(local_x, area.width);
@@ -242,7 +248,7 @@ impl FocusNav for Slider {
 }
 
 impl EventHandling for Slider {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -255,7 +261,7 @@ impl EventHandling for Slider {
                     let Some(area) = self.last_area else {
                         return EventResult::ignored();
                     };
-                    return self.set_value_from_mouse(area, *m);
+                    return self.set_value_from_mouse(area, *m, ctx.mouse_coordinate_space);
                 }
                 EventResult::ignored()
             }
@@ -279,25 +285,27 @@ impl EventHandling for Slider {
 
 crate::impl_component_default_traits!(Slider => Scrollable, DynamicTree);
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if area.width == 0 || area.height == 0 {
-        return None;
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => (area.width > 0
+            && area.height > 0
+            && m.column >= area.x
+            && m.column < area.x.saturating_add(area.width)
+            && m.row >= area.y
+            && m.row < area.y.saturating_add(area.height))
+        .then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    if m.column >= area.x
-        && m.column < area.x.saturating_add(area.width)
-        && m.row >= area.y
-        && m.row < area.y.saturating_add(area.height)
-    {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }

@@ -17,8 +17,8 @@ use super::geom::{
 use super::{
     Align, Anchor, AnchorPlacement, Component, ComponentAction, ComponentContext, DynamicTree,
     EdgeInsets, EventHandling, EventOutcome, EventResult, FocusNav, Grid, HStack, Layout,
-    LayoutParams, ScrollConfig, ScrollbarHost, ScrollbarVisibility, Size, Splitter,
-    SplitterOrientation, TabMode, VStack,
+    LayoutParams, MouseCoordinateSpace, ScrollConfig, ScrollbarHost, ScrollbarVisibility, Size,
+    Splitter, SplitterOrientation, TabMode, VStack,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +154,7 @@ fn draw_view(view: &mut dyn Component, area: Rect) {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let backend = TestBackend::new(80, 40);
@@ -169,6 +170,7 @@ fn test_context() -> ComponentContext<'static> {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     }
 }
 
@@ -200,7 +202,10 @@ fn geom_mouse_coords_local_to_area_accepts_local_coords() {
         row: 22,
         modifiers: KeyModifiers::empty(),
     };
-    assert_eq!(mouse_coords_local_to_area(area, abs), Some((2, 2)));
+    assert_eq!(
+        mouse_coords_local_to_area(area, abs, MouseCoordinateSpace::Absolute),
+        Some((2, 2))
+    );
 
     let local = MouseEvent {
         kind: MouseEventKind::Moved,
@@ -209,7 +214,27 @@ fn geom_mouse_coords_local_to_area_accepts_local_coords() {
         modifiers: KeyModifiers::empty(),
     };
     assert_eq!(
-        mouse_coords_local_to_area(Rect::new(0, 0, 4, 3), local),
+        mouse_coords_local_to_area(Rect::new(0, 0, 4, 3), local, MouseCoordinateSpace::Local),
+        Some((3, 1))
+    );
+}
+
+#[test]
+fn geom_mouse_coords_local_to_area_rejects_ambiguous_absolute_coords() {
+    let area = Rect::new(10, 20, 5, 4);
+    let event = MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 3,
+        row: 1,
+        modifiers: KeyModifiers::empty(),
+    };
+
+    assert_eq!(
+        mouse_coords_local_to_area(area, event, MouseCoordinateSpace::Absolute),
+        None
+    );
+    assert_eq!(
+        mouse_coords_local_to_area(area, event, MouseCoordinateSpace::Local),
         Some((3, 1))
     );
 }
@@ -616,6 +641,7 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
     let res = outer.handle_event(&click, ctx);
     assert!(res.is_consumed());
@@ -649,6 +675,7 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
     let res = vstack.handle_event(&tab, ctx);
     assert!(res.is_consumed());
@@ -679,6 +706,7 @@ fn keyboard_events_route_to_focused_child() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let key_a = Event::Key(KeyEvent {
@@ -744,6 +772,7 @@ fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let key_1 = Event::Key(KeyEvent {
@@ -827,6 +856,7 @@ fn tab_traversal_respects_tab_index_over_insertion_order() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let tab = Event::Key(KeyEvent {
@@ -1428,6 +1458,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let backend = TestBackend::new(10, 5);
@@ -1502,6 +1533,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         is_focused: true,
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
     };
 
     let backend = TestBackend::new(10, 4);

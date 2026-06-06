@@ -361,7 +361,7 @@
 
 > 以下为随手清理项，可批量提交。每项较小，统一在 R12 中集中审阅。
 
-### [TODO] T12 — P3 批量清理
+### [DONE] T12 — P3 批量清理
 - **M6**：`src/runtime/mod.rs:227-251,473-516`。区分 `PropertyApply::NotFound`（属性不存在）与组件不支持动态 set。当前 `apply_property_to_view`(492-493) 把 `UnsupportedProperty` 和 `NotFound` 都映射为 `NeedsRebuild`。新增 `PropertyApply::UnsupportedProperty` 变体，仅真正 `NotFound` 在 root 触发 rebuild，其余尽量局部替换。
 - **L1**：`src/composable/geom.rs:70-84`。移除 `column<width && row<height` 坐标系猜测，改为调用方显式传坐标系枚举参数。
 - **L2**：`src/widgets/button.rs:88-91`。保存 `last_area`，`Down(Left)` 前做 `contains` 检查（参考其他 widget）。
@@ -372,6 +372,19 @@
 - **L7**：`src/theme/config.rs:118` `parse_color`。支持 3 位 hex `#fff` → 扩展为 `#ffffff`。
 - **L9**：`src/app/menu.rs:868` 与 `src/wm/manager/draw.rs:114` `draw_shadow` 完全重复。提取到共享位置，二者调用同一函数。
 - **L10**：`cargo clippy --workspace --all-targets --fix` 修复 3 条告警，人工复核。（3 条既有告警已在 T1 验收中提前修复；T12 执行时复核 clippy 仍全清。）
+
+**完成记录（2026-06-06）**：
+- M6：`PropertyApply` 新增 `UnsupportedProperty`，`apply_property_to_view` 不再把组件不支持动态 set 与目标未找到混为一类；非 root 子节点不支持动态 set 时走局部 `replace_node_with_spec`，真正 `NotFound` 才回退 rebuild，并补充区分测试。
+- L1：新增 `MouseCoordinateSpace` 并接入 `ComponentContext`，`mouse_coords_local_to_area` 调用方必须显式传入绝对/本地坐标系；同步修复 composable、widgets、editor/file-tree 等同类 helper，移除 `column < width && row < height` 的隐式猜测。
+- L2：`Button` 保存 `last_area`，鼠标左键按下前先按当前坐标系做区域命中判断；新增单元测试确认区域外点击不会触发回调。
+- L3：`CLAUDE.md` 已修正布局权重说明为 `u16`，示例改为 `1, 2`。
+- L4：`ListBox` / `TableView` 对 `markdown-link` 命名样式使用 `NamedStyleCache`，主题指针变化时失效重取，并补充缓存刷新测试。
+- L5：`Component` 新增 `is_tab_container`，`TabView` 返回 true，`ComponentTag` / `Border` / `Visibility` / `WindowMinSizeView` / `ComponentTree` / `Box<dyn Component>` 透明委派，runtime 移除基于 `type_name()` 字符串的 TabView 识别。
+- L6：`view_builder!` 支持可选 `crate_path = ...;` 配置，展开时不再把 crate 路径固定在实现里；未知组件名会生成 `compile_error!`，并补充显式 crate path 测试。
+- L7：主题 `parse_color` 支持 3 位 hex（如 `#fff`、`#0a7`）并扩展到 8-bit RGB，新增配置覆盖测试。
+- L9：新增共享 `src/drawing.rs::draw_shadow`，菜单和窗口管理器共用同一实现，保留 bottom-right shadow 覆盖测试。
+- L10：复核 clippy，当前 `cargo clippy --workspace --all-targets -- -D warnings` 无告警。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R12 — 审阅 T12
 逐项审阅 P3 清理：每项改动正确且不引入回归；L5 trait 方法替换无遗漏 TabView 识别点；M6 增量路径不再误触发全量 rebuild；clippy 全清；`cargo test` 全绿。

@@ -56,6 +56,10 @@ impl<T> VisibilityExt for T where T: Component + Sized + 'static {}
 
 #[component_properties]
 impl ::atto_ui::composable::Component for Visibility {
+    fn is_tab_container(&self) -> bool {
+        self.inner.is_tab_container()
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
         props.push("visible");

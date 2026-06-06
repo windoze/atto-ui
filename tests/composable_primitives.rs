@@ -1,4 +1,6 @@
-use atto_ui::composable::{Component, ComponentContext, Divider, ScrollbarHost, TabMode, Text};
+use atto_ui::composable::{
+    Component, ComponentContext, Divider, MouseCoordinateSpace, ScrollbarHost, TabMode, Text,
+};
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use ratatui::Terminal;
@@ -27,6 +29,7 @@ fn composable_text_renders() {
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             };
 
             let mut view = Text::new("Hello, World!");
@@ -51,6 +54,7 @@ fn composable_divider_horizontal_renders() {
                 is_focused: true,
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             };
 
             let mut view = Divider::horizontal();

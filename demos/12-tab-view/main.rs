@@ -256,6 +256,7 @@ impl TabDemoView {
                 is_focused: ctx.is_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
             },
         )
     }
@@ -301,6 +302,7 @@ impl ::atto_ui::composable::Component for TabDemoView {
                     is_focused: ctx.is_focused,
                     scrollbar_host: ctx.scrollbar_host.for_child(),
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 },
             );
         }
@@ -370,6 +372,7 @@ impl ::atto_ui::composable::EventHandling for TabDemoView {
                 is_focused: ctx.is_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             },
         )
     }

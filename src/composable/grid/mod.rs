@@ -629,8 +629,8 @@ impl EventHandling for Grid {
         self.handle_event_capture_impl(event, ctx)
     }
 
-    fn handle_event_bubble(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
-        self.handle_event_bubble_impl(event)
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space)
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {

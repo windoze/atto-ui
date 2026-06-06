@@ -54,6 +54,10 @@ impl Component for ComponentTag {
         self.inner.type_name()
     }
 
+    fn is_tab_container(&self) -> bool {
+        self.inner.is_tab_container()
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         self.inner.property_names()
     }

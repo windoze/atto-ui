@@ -2,7 +2,7 @@ use crossterm::event::{Event, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use super::super::clipped;
-use super::super::component::{ComponentContext, EventResult, TabMode};
+use super::super::component::{ComponentContext, EventResult, MouseCoordinateSpace, TabMode};
 use super::super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
     tab_direction_for_event,
@@ -119,6 +119,7 @@ impl Grid {
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
 
             let res = self.children[child_idx]
@@ -208,7 +209,11 @@ impl Grid {
         EventResult::ignored()
     }
 
-    pub(super) fn handle_event_bubble_impl(&mut self, event: &Event) -> EventResult {
+    pub(super) fn handle_event_bubble_impl(
+        &mut self,
+        event: &Event,
+        coordinate_space: MouseCoordinateSpace,
+    ) -> EventResult {
         if !self.scrollable.get() {
             return EventResult::ignored();
         }
@@ -217,7 +222,7 @@ impl Grid {
             let Some(area) = self.last_area else {
                 return EventResult::ignored();
             };
-            if mouse_coords_local_to_area(area, *m).is_none() {
+            if mouse_coords_local_to_area(area, *m, coordinate_space).is_none() {
                 return EventResult::ignored();
             }
         }
@@ -253,10 +258,12 @@ impl Grid {
 
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
-                return self.handle_event_bubble_impl(event);
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
-                return self.handle_event_bubble_impl(event);
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
 
             let cfg = self.scroll_config.get();
@@ -292,7 +299,7 @@ impl Grid {
 
             let content = scrollbars.content;
             if !contains(content, local_x, local_y) {
-                return self.handle_event_bubble_impl(event);
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             }
 
             let content_x = local_x.saturating_sub(content.x);
@@ -301,10 +308,10 @@ impl Grid {
 
             let Some(child_id) = self.hit_test_child_scrolled(content_x, content_y, content_size)
             else {
-                return self.handle_event_bubble_impl(event);
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
             let Some(child_idx) = self.children.iter().position(|c| c.id == child_id) else {
-                return self.handle_event_bubble_impl(event);
+                return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
             };
 
             let child_bounds = self.children[child_idx].bounds();
@@ -343,6 +350,7 @@ impl Grid {
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
             };
 
             let res = self.children[child_idx]
@@ -356,7 +364,7 @@ impl Grid {
                 return EventResult::consumed();
             }
 
-            return self.handle_event_bubble_impl(event);
+            return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
         }
 
         if let Some(child_id) = self.focused.or_else(|| self.first_focusable_child())
@@ -370,6 +378,7 @@ impl Grid {
                 is_focused: child_focused,
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {
@@ -377,6 +386,6 @@ impl Grid {
             }
         }
 
-        self.handle_event_bubble_impl(event)
+        self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space)
     }
 }

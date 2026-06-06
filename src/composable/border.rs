@@ -60,6 +60,10 @@ impl Border {
 
 #[component_properties]
 impl ::atto_ui::composable::Component for Border {
+    fn is_tab_container(&self) -> bool {
+        self.inner.is_tab_container()
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         let mut props = self.inner.property_names();
         props.push("border");
@@ -125,6 +129,7 @@ impl ::atto_ui::composable::Component for Border {
                 ctx.scrollbar_host
             },
             tab_mode: ctx.tab_mode,
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
 
         self.inner.draw(frame, inner_area, inner_ctx);
@@ -337,13 +342,16 @@ impl ::atto_ui::composable::EventHandling for Border {
                 ctx.scrollbar_host
             },
             tab_mode: ctx.tab_mode,
+            mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
         };
 
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
                 return EventResult::ignored();
             };
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
 

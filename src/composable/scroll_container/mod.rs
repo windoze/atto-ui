@@ -304,6 +304,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                         is_focused: ctx.is_focused,
                         scrollbar_host: child_scrollbar_host,
                         tab_mode: ctx.tab_mode,
+                        mouse_coordinate_space: ctx.mouse_coordinate_space,
                     },
                     info,
                 };
@@ -349,6 +350,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                     is_focused: ctx.is_focused,
                     scrollbar_host: child_scrollbar_host,
                     tab_mode: ctx.tab_mode,
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 },
                 info,
             };
@@ -413,6 +415,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                 is_focused: ctx.is_focused,
                 scrollbar_host: child_scrollbar_host,
                 tab_mode: ctx.tab_mode,
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             },
             info,
         };
@@ -441,6 +444,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                     is_focused: ctx.is_focused,
                     scrollbar_host: child_scrollbar_host,
                     tab_mode: ctx.tab_mode,
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 },
                 info,
             };
@@ -517,7 +521,9 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::composable::{Component, ComponentContext, ScrollbarHost, TabMode};
+    use crate::composable::{
+        Component, ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    };
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -571,6 +577,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         };
 
         let backend = TestBackend::new(10, 10);

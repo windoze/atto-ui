@@ -249,7 +249,9 @@ impl EventHandling for TextBox {
                 let Some(area) = self.last_area else {
                     return EventResult::ignored();
                 };
-                let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+                let Some((local_x, local_y)) =
+                    mouse_coords_local_to_area(area, *m, _ctx.mouse_coordinate_space)
+                else {
                     return EventResult::ignored();
                 };
 

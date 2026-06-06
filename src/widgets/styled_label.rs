@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::ComponentValue;
-use crate::composable::{Component, ComponentContext, EventHandling, EventResult, Layout};
+use crate::composable::{
+    Component, ComponentContext, EventHandling, EventResult, Layout, MouseCoordinateSpace,
+};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use crate::text::styled_text::{
@@ -102,7 +104,7 @@ impl Layout for StyledLabel {
 }
 
 impl EventHandling for StyledLabel {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -117,7 +119,9 @@ impl EventHandling for StyledLabel {
         let Some(area) = self.last_area else {
             return EventResult::ignored();
         };
-        let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+        let Some((local_x, local_y)) =
+            mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+        else {
             return EventResult::ignored();
         };
         if local_y != 0 {
@@ -141,26 +145,27 @@ impl EventHandling for StyledLabel {
 
 crate::impl_component_default_traits!(StyledLabel => Scrollable, FocusNav, DynamicTree);
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if area.width == 0 || area.height == 0 {
-        return None;
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => (area.width > 0
+            && area.height > 0
+            && m.column >= area.x
+            && m.column < area.x.saturating_add(area.width)
+            && m.row >= area.y
+            && m.row < area.y.saturating_add(area.height))
+        .then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    if m.column >= area.x
-        && m.column < area.x.saturating_add(area.width)
-        && m.row >= area.y
-        && m.row < area.y.saturating_add(area.height)
-    {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
-    }
-
-    // Events from nested containers are already relative to our own origin.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }

@@ -13,7 +13,7 @@ use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
-use super::util::widget_style;
+use super::util::{mouse_coords_local_to_area, widget_style};
 
 #[derive(Clone, ComponentProperties)]
 pub struct Button {
@@ -21,6 +21,7 @@ pub struct Button {
     on_click: Option<Arc<dyn Fn() + Send + Sync>>,
     on_click_callback: Option<CallbackHandle>,
     enabled: Binding<bool>,
+    last_area: Option<Rect>,
 }
 
 impl Button {
@@ -30,6 +31,7 @@ impl Button {
             on_click: None,
             on_click_callback: None,
             enabled: true.into(),
+            last_area: None,
         }
     }
 
@@ -69,6 +71,7 @@ impl Button {
 #[component_properties]
 impl Component for Button {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         let enabled = self.enabled.get();
         let style = widget_style(ctx.theme, enabled, ctx.is_focused);
         let block = Block::default()
@@ -102,7 +105,7 @@ impl FocusNav for Button {
 }
 
 impl EventHandling for Button {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         if !self.enabled.get() {
             return EventResult::ignored();
         }
@@ -112,6 +115,12 @@ impl EventHandling for Button {
                 use crossterm::event::MouseEventKind;
 
                 if m.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let Some(area) = self.last_area else {
+                        return EventResult::ignored();
+                    };
+                    if mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space).is_none() {
+                        return EventResult::ignored();
+                    }
                     self.trigger();
                     return EventResult::submitted();
                 }
@@ -131,3 +140,68 @@ impl EventHandling for Button {
 }
 
 crate::impl_component_default_traits!(Button => Scrollable, DynamicTree);
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    #[test]
+    fn mouse_down_outside_last_area_does_not_click() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_button = Arc::clone(&calls);
+        let mut button = Button::new("OK").on_click(move || {
+            calls_for_button.fetch_add(1, Ordering::SeqCst);
+        });
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
+        terminal
+            .draw(|f| button.draw(f, Rect::new(10, 5, 6, 3), context(&theme)))
+            .expect("draw");
+
+        let outside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(
+            button.handle_event(&outside, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let inside = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 11,
+            row: 6,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(
+            button.handle_event(&inside, context(&theme)),
+            EventResult::submitted()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+}

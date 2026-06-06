@@ -11,8 +11,8 @@ use ratatui::style::Style;
 use crate::composable::scroll::{clamp_scroll_offset, scroll_offset_for_input_event};
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
-    EventResult, FocusNav, Layout, ScrollConfig, ScrollOffset, Scrollable, TitleBarContent,
-    TitleBarContext,
+    EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig, ScrollOffset, Scrollable,
+    TitleBarContent, TitleBarContext,
 };
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
@@ -123,20 +123,23 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 fn fill_buffer(buf: &mut Buffer, style: Style) {
@@ -227,6 +230,7 @@ impl WindowMinSizeView {
             is_focused: ctx.is_focused,
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
 
         let backend =
@@ -289,10 +293,13 @@ impl WindowMinSizeView {
             is_focused: ctx.is_focused,
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
+            mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
         };
 
         if let Event::Mouse(m) = event {
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
             let translated = MouseEvent {
@@ -314,6 +321,10 @@ impl WindowMinSizeView {
 impl Component for WindowMinSizeView {
     fn type_name(&self) -> &'static str {
         self.inner.type_name()
+    }
+
+    fn is_tab_container(&self) -> bool {
+        self.inner.is_tab_container()
     }
 
     fn property_names(&self) -> Vec<&'static str> {
@@ -509,7 +520,7 @@ impl EventHandling for WindowMinSizeView {
                 }
 
                 if let Event::Mouse(m) = event
-                    && mouse_coords_local_to_area(area, *m).is_none()
+                    && mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space).is_none()
                 {
                     return EventResult::ignored();
                 }

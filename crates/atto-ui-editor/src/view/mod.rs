@@ -19,7 +19,9 @@ use ratatui::widgets::{Block, Paragraph};
 use serde_json::json;
 use std::process::Command as ProcessCommand;
 
-use atto_ui::composable::{ComponentContext, EventResult, ScrollConfig, Scrollable};
+use atto_ui::composable::{
+    ComponentContext, EventResult, MouseCoordinateSpace, ScrollConfig, Scrollable,
+};
 use atto_ui::reactive::{DirtyObserver, EventQueue};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 
@@ -1795,7 +1797,7 @@ impl ::atto_ui::composable::EventHandling for EditorView {
                 EventResult::consumed()
             }
             Event::Key(key) => self.handle_key_event(*key),
-            Event::Mouse(m) => self.handle_mouse(*m),
+            Event::Mouse(m) => self.handle_mouse(*m, ctx.mouse_coordinate_space),
             _ => EventResult::ignored(),
         };
 
@@ -1870,6 +1872,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
             tab_mode: atto_ui::composable::TabMode::Cycle,
+            mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
         };
 
         terminal
@@ -1919,6 +1922,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
             tab_mode: atto_ui::composable::TabMode::Cycle,
+            mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
         };
 
         terminal

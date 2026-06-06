@@ -23,7 +23,8 @@ use crate::text::styled_text::spans_from_inline;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::util::{
-    SelectionScroll, contains, mouse_coords_local_to_area, visible_row_range, widget_style,
+    NamedStyleCache, SelectionScroll, contains, mouse_coords_local_to_area, visible_row_range,
+    widget_style,
 };
 
 #[derive(Clone, Debug, ComponentProperties)]
@@ -46,6 +47,7 @@ pub struct TableView {
     scrollbar_drag: Option<ScrollbarDrag>,
     last_area: Option<Rect>,
     min_size: (u16, u16),
+    markdown_link_style: NamedStyleCache,
 }
 
 impl Clone for TableView {
@@ -57,6 +59,7 @@ impl Clone for TableView {
             scrollbar_drag: None,
             last_area: None,
             min_size: self.min_size,
+            markdown_link_style: NamedStyleCache::default(),
         }
     }
 }
@@ -101,6 +104,7 @@ impl TableView {
             scrollbar_drag: None,
             last_area: None,
             min_size: (3, 4),
+            markdown_link_style: NamedStyleCache::default(),
         }
     }
 
@@ -203,7 +207,7 @@ impl Component for TableView {
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
         let header_height = if headers.is_empty() { 0 } else { 1 };
-        let link_overlay = ctx.theme.named_style("markdown-link");
+        let link_overlay = self.markdown_link_style.markdown_link(ctx.theme);
 
         if header_height > 0 {
             let header_style = if enabled {
@@ -277,7 +281,9 @@ impl EventHandling for TableView {
             && let Some(area) = self.last_area
             && let Some((_, body_area, header_height)) = self.layout_areas(area)
         {
-            let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m) else {
+            let Some((local_x, local_y)) =
+                mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+            else {
                 return EventResult::ignored();
             };
             let abs_event = MouseEvent {
@@ -451,6 +457,7 @@ struct TableBodyContent {
     bindings: Arc<RwLock<TableViewBindings>>,
     state: TableState,
     selection_scroll: SelectionScroll,
+    markdown_link_style: NamedStyleCache,
 }
 
 impl TableBodyContent {
@@ -459,6 +466,7 @@ impl TableBodyContent {
             bindings,
             state: TableState::default(),
             selection_scroll: SelectionScroll::default(),
+            markdown_link_style: NamedStyleCache::default(),
         }
     }
 }
@@ -528,7 +536,7 @@ impl ScrollContent for TableBodyContent {
 
         let headers = bindings.headers.get();
         let rows = bindings.rows.get();
-        let link_overlay = ctx.component.theme.named_style("markdown-link");
+        let link_overlay = self.markdown_link_style.markdown_link(ctx.component.theme);
         let selection = self
             .selection_scroll
             .normalize_selection(&bindings.selection, rows.len());
@@ -606,7 +614,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::composable::TabMode;
+    use crate::composable::{MouseCoordinateSpace, TabMode};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -619,6 +627,7 @@ mod tests {
             is_focused: true,
             scrollbar_host: ScrollbarHost::Window,
             tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
         }
     }
 

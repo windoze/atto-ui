@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use atto_ui::composable::{
-    ComponentContext, EventResult, ScrollConfig, ScrollOffset, Scrollable, ScrollbarDrag,
-    ScrollbarHost, Scrollbars, TitleBarContent, TitleBarContext, draw_scrollbars,
+    ComponentContext, EventResult, MouseCoordinateSpace, ScrollConfig, ScrollOffset, Scrollable,
+    ScrollbarDrag, ScrollbarHost, Scrollbars, TitleBarContent, TitleBarContext, draw_scrollbars,
     handle_scrollbar_mouse_event, should_show_scrollbar,
 };
 use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
@@ -718,6 +718,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
                     ctx.scrollbar_host.for_child()
                 },
                 tab_mode: ctx.tab_mode.for_child(),
+                mouse_coordinate_space: ctx.mouse_coordinate_space,
             };
             self.file_tree.draw(frame, layout.sidebar, child_ctx);
         }
@@ -732,6 +733,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
                 ctx.scrollbar_host.for_child()
             },
             tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
         self.tab_window.draw(frame, layout.main, child_ctx);
 
@@ -885,7 +887,8 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
             Event::Mouse(m) => {
                 if self.sidebar_visible.get()
                     && let Some(area) = self.last_area
-                    && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+                    && let Some((local_x, local_y)) =
+                        mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
                     && let Some((pane, next)) =
                         self.handle_split_scrollbar_event(area, local_x, local_y, m.kind)
                 {
@@ -941,6 +944,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                             ctx.scrollbar_host.for_child()
                         },
                         tab_mode: ctx.tab_mode.for_child(),
+                        mouse_coordinate_space: ctx.mouse_coordinate_space,
                     };
                     return self.file_tree.handle_event(event, child_ctx);
                 }
@@ -955,6 +959,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                         ctx.scrollbar_host.for_child()
                     },
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 };
                 self.tab_window.handle_event(event, child_ctx)
             }
@@ -980,6 +985,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                         ctx.scrollbar_host.for_child()
                     },
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 };
                 self.file_tree.handle_event(event, child_ctx)
             }
@@ -995,6 +1001,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                             ctx.scrollbar_host.for_child()
                         },
                         tab_mode: ctx.tab_mode.for_child(),
+                        mouse_coordinate_space: ctx.mouse_coordinate_space,
                     };
                     return self.file_tree.handle_event(event, child_ctx);
                 }
@@ -1009,6 +1016,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                         ctx.scrollbar_host.for_child()
                     },
                     tab_mode: ctx.tab_mode.for_child(),
+                    mouse_coordinate_space: ctx.mouse_coordinate_space,
                 };
                 self.tab_window.handle_event(event, child_ctx)
             }
@@ -1039,6 +1047,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
                 ctx.scrollbar_host.for_child()
             },
             tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
         self.tab_window.draw(frame, area, child_ctx);
     }
@@ -1120,6 +1129,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
                 ctx.scrollbar_host.for_child()
             },
             tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
         };
         self.tab_window.handle_event(event, child_ctx)
     }
@@ -1134,20 +1144,23 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-fn mouse_coords_local_to_area(area: Rect, m: MouseEvent) -> Option<(u16, u16)> {
-    if contains(area, m.column, m.row) {
-        return Some((
-            m.column.saturating_sub(area.x),
-            m.row.saturating_sub(area.y),
-        ));
+fn mouse_coords_local_to_area(
+    area: Rect,
+    m: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
+            (
+                m.column.saturating_sub(area.x),
+                m.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => {
+            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
+                .then_some((m.column, m.row))
+        }
     }
-
-    // Nested containers may forward mouse coordinates already relative to this view.
-    if m.column < area.width && m.row < area.height {
-        return Some((m.column, m.row));
-    }
-
-    None
 }
 
 struct DocumentTabView {
@@ -1782,7 +1795,8 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
 
         if let Event::Mouse(m) = event {
             if let Some(area) = self.last_area
-                && let Some((local_x, local_y)) = mouse_coords_local_to_area(area, *m)
+                && let Some((local_x, local_y)) =
+                    mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
                 && let Some((which, next)) =
                     self.handle_split_scrollbar_event(area, local_x, local_y, m.kind)
             {
