@@ -19,10 +19,7 @@ impl WindowManager {
 
     pub fn toggle_maximize_focused(&mut self, bounds: Rect) {
         let Some(id) = self.focused() else { return };
-        let can_toggle = self
-            .windows
-            .iter()
-            .any(|w| w.id == id && chrome::can_toggle_maximize(w));
+        let can_toggle = self.window(id).is_some_and(chrome::can_toggle_maximize);
         if can_toggle {
             self.toggle_maximize(id, bounds);
         }

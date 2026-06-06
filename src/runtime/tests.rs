@@ -329,6 +329,76 @@ fn component_tree_incremental_move_child() {
 }
 
 #[test]
+fn component_tree_incremental_view_index_tracks_shifted_paths_within_batch() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("a")
+                .with_prop("text", ComponentValue::String("A".into())),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("b")
+                .with_prop("text", ComponentValue::String("B".into())),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("c")
+                .with_prop("text", ComponentValue::String("C".into())),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[
+            TreeOp::Insert {
+                parent_id: "root".into(),
+                index: 0,
+                child: ComponentSpecChild::new(
+                    ComponentSpec::new("Label")
+                        .with_id("x")
+                        .with_prop("text", ComponentValue::String("X".into())),
+                ),
+            },
+            TreeOp::Remove { id: "a".into() },
+            TreeOp::SetProp {
+                id: "c".into(),
+                name: "text".into(),
+                value: ComponentValue::String("C2".into()),
+            },
+            TreeOp::Replace {
+                id: "b".into(),
+                node: ComponentSpecChild::new(
+                    ComponentSpec::new("Button")
+                        .with_id("b")
+                        .with_prop("label", ComponentValue::String("B2".into())),
+                ),
+            },
+            TreeOp::Move {
+                id: "c".into(),
+                new_parent_id: "root".into(),
+                index: 1,
+            },
+        ])
+        .expect("apply");
+    assert!(changed);
+
+    let children = tree.view().children();
+    let ids: Vec<Option<&str>> = children.iter().map(|child| child.view.tag()).collect();
+    assert_eq!(ids, vec![Some("x"), Some("c"), Some("b")]);
+    assert_eq!(
+        children[1].view.get_property("text"),
+        Some(ComponentValue::String("C2".into()))
+    );
+    assert!(children[2].view.type_name().ends_with("Button"));
+    assert_eq!(
+        children[2].view.get_property("label"),
+        Some(ComponentValue::String("B2".into()))
+    );
+}
+
+#[test]
 fn component_tree_incremental_move_missing_parent_preserves_root_and_view() {
     let callbacks = CallbackRegistry::new();
     let root = ComponentSpec::new("VStack")

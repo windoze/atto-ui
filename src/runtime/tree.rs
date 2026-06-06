@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect as RatatuiRect;
@@ -91,12 +93,18 @@ impl ComponentTree {
         }
 
         let mut structural = false;
+        let mut view_index = ViewPathIndex::new(self.view.as_ref());
         for (op, root_after_op) in ops.iter().zip(root_after_ops.iter()) {
             match op {
                 TreeOp::SetTree(_) => {}
                 TreeOp::SetProp { id, name, value } => {
-                    if id_matches_root(&self.view, id) {
-                        let applied = apply_property_to_view(self.view.as_mut(), id, name, value)?;
+                    let Some(path) = view_index.path(id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if path.is_empty() {
+                        let applied =
+                            apply_property_at_path(self.view.as_mut(), &path, id, name, value)?;
                         match applied {
                             PropertyApply::Applied => {}
                             PropertyApply::UnsupportedProperty | PropertyApply::NotFound => {
@@ -107,11 +115,12 @@ impl ComponentTree {
                         continue;
                     }
 
-                    match apply_property_to_view(self.view.as_mut(), id, name, value)? {
+                    match apply_property_at_path(self.view.as_mut(), &path, id, name, value)? {
                         PropertyApply::Applied => {}
                         PropertyApply::UnsupportedProperty => {
-                            if !replace_node_with_spec(
+                            if !replace_node_with_spec_at_path(
                                 self.view.as_mut(),
+                                &path,
                                 id,
                                 root_after_op,
                                 &self.registry,
@@ -119,6 +128,7 @@ impl ComponentTree {
                                 self.rebuild()?;
                                 return Ok(true);
                             }
+                            view_index.rebuild(self.view.as_ref());
                             structural = true;
                         }
                         PropertyApply::NotFound => {
@@ -128,12 +138,17 @@ impl ComponentTree {
                     }
                 }
                 TreeOp::BindEvent { id, .. } | TreeOp::ClearEvent { id, .. } => {
-                    if id_matches_root(&self.view, id) {
+                    let Some(path) = view_index.path(id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if path.is_empty() {
                         self.rebuild()?;
                         return Ok(true);
                     }
-                    if !replace_node_with_spec(
+                    if !replace_node_with_spec_at_path(
                         self.view.as_mut(),
+                        &path,
                         id,
                         root_after_op,
                         &self.registry,
@@ -141,6 +156,7 @@ impl ComponentTree {
                         self.rebuild()?;
                         return Ok(true);
                     }
+                    view_index.rebuild(self.view.as_ref());
                     structural = true;
                 }
                 TreeOp::Insert {
@@ -148,8 +164,13 @@ impl ComponentTree {
                     index,
                     child,
                 } => {
-                    if !insert_child_spec(
+                    let Some(parent_path) = view_index.path(parent_id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if !insert_child_spec_at_path(
                         self.view.as_mut(),
+                        &parent_path,
                         parent_id,
                         *index,
                         child,
@@ -158,30 +179,46 @@ impl ComponentTree {
                         self.rebuild()?;
                         return Ok(true);
                     }
+                    view_index.rebuild(self.view.as_ref());
                     structural = true;
                 }
                 TreeOp::Remove { id } => {
-                    if id_matches_root(&self.view, id) {
+                    let Some(path) = view_index.path(id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if path.is_empty() {
                         return Err(TreeError::InvalidTreeOp(
                             "cannot remove root node".to_string(),
                         ));
                     }
-                    if !remove_node(self.view.as_mut(), id) {
+                    if !remove_node_at_path(self.view.as_mut(), &path, id) {
                         self.rebuild()?;
                         return Ok(true);
                     }
+                    view_index.rebuild(self.view.as_ref());
                     structural = true;
                 }
                 TreeOp::Replace { id, node } => {
-                    if id_matches_root(&self.view, id) {
+                    let Some(path) = view_index.path(id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if path.is_empty() {
                         self.rebuild()?;
                         return Ok(true);
                     }
-                    if !replace_node_with_child_spec(self.view.as_mut(), id, node, &self.registry)?
-                    {
+                    if !replace_node_at_path_with_child_spec(
+                        self.view.as_mut(),
+                        &path,
+                        id,
+                        node,
+                        &self.registry,
+                    )? {
                         self.rebuild()?;
                         return Ok(true);
                     }
+                    view_index.rebuild(self.view.as_ref());
                     structural = true;
                 }
                 TreeOp::Move {
@@ -189,13 +226,23 @@ impl ComponentTree {
                     new_parent_id,
                     index,
                 } => {
-                    if id_matches_root(&self.view, id) {
+                    let Some(path) = view_index.path(id).cloned() else {
+                        self.rebuild()?;
+                        return Ok(true);
+                    };
+                    if path.is_empty() {
                         return Err(TreeError::InvalidTreeOp(
                             "cannot move root node".to_string(),
                         ));
                     }
                     // `move_node` keeps the view tree intact on failure, so rebuilding remains safe.
-                    if !move_node(self.view.as_mut(), id, new_parent_id, *index) {
+                    if !move_node_indexed(
+                        self.view.as_mut(),
+                        id,
+                        new_parent_id,
+                        *index,
+                        &mut view_index,
+                    ) {
                         self.rebuild()?;
                         return Ok(true);
                     }
@@ -371,54 +418,48 @@ pub(super) enum PropertyApply {
     NotFound,
 }
 
-fn id_matches_root(view: &dyn Component, id: &str) -> bool {
-    view.tag().is_some_and(|view_id| view_id == id)
-}
-
+#[cfg(test)]
 pub(super) fn apply_property_to_view(
     view: &mut dyn Component,
     id: &str,
     name: &str,
     value: &ComponentValue,
 ) -> Result<PropertyApply, TreeError> {
-    if view.tag() == Some(id) {
-        return match view.set_property(name, value.clone()) {
-            Ok(()) => Ok(PropertyApply::Applied),
-            Err(ComponentError::UnsupportedProperty(_)) => Ok(PropertyApply::UnsupportedProperty),
-            Err(ComponentError::NotFound(_)) => Ok(PropertyApply::NotFound),
-            Err(ComponentError::InvalidValue { expected, .. }) => Err(TreeError::InvalidProperty {
-                id: id.to_string(),
-                name: name.to_string(),
-                reason: format!("expected {expected}"),
-            }),
-            Err(err) => Err(TreeError::InvalidProperty {
-                id: id.to_string(),
-                name: name.to_string(),
-                reason: format!("{err:?}"),
-            }),
-        };
-    }
-
-    if let Some(children) = view.children_mut() {
-        for child in children.iter_mut() {
-            let applied = apply_property_to_view(child.view.as_mut(), id, name, value)?;
-            if applied != PropertyApply::NotFound {
-                return Ok(applied);
-            }
-        }
-    }
-
-    Ok(PropertyApply::NotFound)
+    let index = ViewPathIndex::new(view);
+    let Some(path) = index.path(id) else {
+        return Ok(PropertyApply::NotFound);
+    };
+    apply_property_at_path(view, path, id, name, value)
 }
 
-fn can_insert_into(view: &dyn Component, parent_id: &str) -> bool {
-    if view.tag() == Some(parent_id) {
-        return !view.is_tab_container();
+fn apply_property_at_path(
+    view: &mut dyn Component,
+    path: &[usize],
+    id: &str,
+    name: &str,
+    value: &ComponentValue,
+) -> Result<PropertyApply, TreeError> {
+    let Some(target) = view_at_path_mut(view, path) else {
+        return Ok(PropertyApply::NotFound);
+    };
+    if target.tag() != Some(id) {
+        return Ok(PropertyApply::NotFound);
     }
-
-    view.children()
-        .iter()
-        .any(|child| can_insert_into(child.view.as_ref(), parent_id))
+    match target.set_property(name, value.clone()) {
+        Ok(()) => Ok(PropertyApply::Applied),
+        Err(ComponentError::UnsupportedProperty(_)) => Ok(PropertyApply::UnsupportedProperty),
+        Err(ComponentError::NotFound(_)) => Ok(PropertyApply::NotFound),
+        Err(ComponentError::InvalidValue { expected, .. }) => Err(TreeError::InvalidProperty {
+            id: id.to_string(),
+            name: name.to_string(),
+            reason: format!("expected {expected}"),
+        }),
+        Err(err) => Err(TreeError::InvalidProperty {
+            id: id.to_string(),
+            name: name.to_string(),
+            reason: format!("{err:?}"),
+        }),
+    }
 }
 
 struct TakenNode {
@@ -427,143 +468,214 @@ struct TakenNode {
     index: usize,
 }
 
-fn find_child_spec_by_id<'a>(root: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpecChild> {
-    for child in &root.children {
-        if child.node.id.as_deref() == Some(id) {
-            return Some(child);
-        }
-        if let Some(found) = find_child_spec_by_id(child.node.as_ref(), id) {
-            return Some(found);
-        }
-    }
-    None
+type ViewPath = Vec<usize>;
+
+struct ViewPathIndex {
+    paths: HashMap<String, ViewPath>,
 }
 
-fn replace_node_with_spec(
+impl ViewPathIndex {
+    fn new(view: &dyn Component) -> Self {
+        let mut paths = HashMap::new();
+        index_view_paths(view, &mut Vec::new(), &mut paths);
+        Self { paths }
+    }
+
+    fn rebuild(&mut self, view: &dyn Component) {
+        *self = Self::new(view);
+    }
+
+    fn path(&self, id: &str) -> Option<&ViewPath> {
+        self.paths.get(id)
+    }
+}
+
+fn index_view_paths(
+    view: &dyn Component,
+    path: &mut ViewPath,
+    paths: &mut HashMap<String, ViewPath>,
+) {
+    if let Some(id) = view.tag() {
+        paths.entry(id.to_string()).or_insert_with(|| path.clone());
+    }
+    for (idx, child) in view.children().iter().enumerate() {
+        path.push(idx);
+        index_view_paths(child.view.as_ref(), path, paths);
+        path.pop();
+    }
+}
+
+fn view_at_path<'a>(view: &'a dyn Component, path: &[usize]) -> Option<&'a dyn Component> {
+    let mut current = view;
+    for &idx in path {
+        current = current.children().get(idx)?.view.as_ref();
+    }
+    Some(current)
+}
+
+fn view_at_path_mut<'a>(
+    view: &'a mut dyn Component,
+    path: &[usize],
+) -> Option<&'a mut dyn Component> {
+    let mut current = view;
+    for &idx in path {
+        current = current.children_mut()?.get_mut(idx)?.view.as_mut();
+    }
+    Some(current)
+}
+
+fn child_spec_at_path<'a>(
+    root: &'a ComponentSpec,
+    path: &[usize],
+) -> Option<&'a ComponentSpecChild> {
+    let (&idx, parent_path) = path.split_last()?;
+    let mut parent = root;
+    for &parent_idx in parent_path {
+        parent = parent.children.get(parent_idx)?.node.as_ref();
+    }
+    parent.children.get(idx)
+}
+
+fn replace_node_with_spec_at_path(
     view: &mut dyn Component,
+    path: &[usize],
     id: &str,
     root: &ComponentSpec,
     registry: &ComponentRegistry<Box<dyn Component>>,
 ) -> Result<bool, TreeError> {
-    let Some(child_spec) = find_child_spec_by_id(root, id) else {
+    let Some(child_spec) = child_spec_at_path(root, path) else {
         return Ok(false);
     };
-    replace_node_with_child_spec(view, id, child_spec, registry)
+    replace_node_at_path_with_child_spec(view, path, id, child_spec, registry)
 }
 
-fn replace_node_with_child_spec(
+fn replace_node_at_path_with_child_spec(
     view: &mut dyn Component,
+    path: &[usize],
     id: &str,
     child: &ComponentSpecChild,
     registry: &ComponentRegistry<Box<dyn Component>>,
 ) -> Result<bool, TreeError> {
-    let tab_view = view.is_tab_container();
-    let Some(children) = view.children_mut() else {
+    let Some((&idx, parent_path)) = path.split_last() else {
         return Ok(false);
     };
-    for node in children.iter_mut() {
-        if node.view.tag() == Some(id) {
-            if tab_view {
-                return Ok(false);
-            }
-            let new_view = registry.build(&child.node)?;
-            node.view = new_view;
-            node.layout = child
-                .layout
-                .as_ref()
-                .map(layout_from_spec)
-                .unwrap_or_default();
-            return Ok(true);
-        }
-        if replace_node_with_child_spec(node.view.as_mut(), id, child, registry)? {
-            return Ok(true);
-        }
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return Ok(false);
+    };
+    if parent.is_tab_container() {
+        return Ok(false);
     }
-    Ok(false)
+    let Some(children) = parent.children_mut() else {
+        return Ok(false);
+    };
+    let Some(node) = children.get_mut(idx) else {
+        return Ok(false);
+    };
+    if node.view.tag() != Some(id) {
+        return Ok(false);
+    }
+    let new_view = registry.build(&child.node)?;
+    node.view = new_view;
+    node.layout = child
+        .layout
+        .as_ref()
+        .map(layout_from_spec)
+        .unwrap_or_default();
+    Ok(true)
 }
 
-fn insert_child_spec(
+fn insert_child_spec_at_path(
     view: &mut dyn Component,
+    parent_path: &[usize],
     parent_id: &str,
     index: usize,
     child: &ComponentSpecChild,
     registry: &ComponentRegistry<Box<dyn Component>>,
 ) -> Result<bool, TreeError> {
-    if view.tag() == Some(parent_id) {
-        if view.is_tab_container() {
-            return Ok(false);
-        }
-        let Some(children) = view.children_mut() else {
-            return Ok(false);
-        };
-        let layout = child
-            .layout
-            .as_ref()
-            .map(layout_from_spec)
-            .unwrap_or_default();
-        let mut node = ComponentNode::new(registry.build(&child.node)?).with_layout(layout);
-        node.parent = children.first().and_then(|existing| existing.parent);
-        let idx = index.min(children.len());
-        children.insert(idx, node);
-        return Ok(true);
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return Ok(false);
+    };
+    if parent.tag() != Some(parent_id) || parent.is_tab_container() {
+        return Ok(false);
     }
-
-    if let Some(children) = view.children_mut() {
-        for node in children.iter_mut() {
-            if insert_child_spec(node.view.as_mut(), parent_id, index, child, registry)? {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
+    let Some(children) = parent.children_mut() else {
+        return Ok(false);
+    };
+    let layout = child
+        .layout
+        .as_ref()
+        .map(layout_from_spec)
+        .unwrap_or_default();
+    let mut node = ComponentNode::new(registry.build(&child.node)?).with_layout(layout);
+    node.parent = children.first().and_then(|existing| existing.parent);
+    let idx = index.min(children.len());
+    children.insert(idx, node);
+    Ok(true)
 }
 
-fn remove_node(view: &mut dyn Component, id: &str) -> bool {
-    let tab_view = view.is_tab_container();
-    let Some(children) = view.children_mut() else {
+fn remove_node_at_path(view: &mut dyn Component, path: &[usize], id: &str) -> bool {
+    let Some((&idx, parent_path)) = path.split_last() else {
         return false;
     };
-    if tab_view {
-        if children.iter().any(|child| child.view.tag() == Some(id)) {
-            return false;
-        }
-    } else if let Some(idx) = children
-        .iter()
-        .position(|child| child.view.tag() == Some(id))
-    {
-        children.remove(idx);
-        return true;
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return false;
+    };
+    if parent.is_tab_container() {
+        return false;
     }
-
-    for child in children.iter_mut() {
-        if remove_node(child.view.as_mut(), id) {
-            return true;
-        }
+    let Some(children) = parent.children_mut() else {
+        return false;
+    };
+    if children.get(idx).and_then(|child| child.view.tag()) != Some(id) {
+        return false;
     }
-
-    false
+    children.remove(idx);
+    true
 }
 
+#[cfg(test)]
 pub(super) fn move_node(
     view: &mut dyn Component,
     id: &str,
     new_parent_id: &str,
     index: usize,
 ) -> bool {
-    if !can_insert_into(view, new_parent_id) {
+    let mut view_index = ViewPathIndex::new(view);
+    move_node_indexed(view, id, new_parent_id, index, &mut view_index)
+}
+
+fn move_node_indexed(
+    view: &mut dyn Component,
+    id: &str,
+    new_parent_id: &str,
+    index: usize,
+    view_index: &mut ViewPathIndex,
+) -> bool {
+    let Some(parent_path) = view_index.path(new_parent_id).cloned() else {
+        return false;
+    };
+    if !can_insert_at_path(view, &parent_path, new_parent_id) {
         return false;
     }
-
-    let Some(taken) = take_node(view, id) else {
+    let Some(path) = view_index.path(id).filter(|path| !path.is_empty()).cloned() else {
+        return false;
+    };
+    let Some(taken) = take_node_at_path(view, &path, id) else {
         return false;
     };
     let restore_path = taken.parent_path;
     let restore_index = taken.index;
     let mut node = Some(taken.node);
-    let inserted = insert_existing_node(view, new_parent_id, index, &mut node);
+    view_index.rebuild(view);
+    let inserted = view_index
+        .path(new_parent_id)
+        .cloned()
+        .is_some_and(|parent_path| {
+            insert_existing_node_at_path(view, &parent_path, new_parent_id, index, &mut node)
+        });
     debug_assert_eq!(inserted, node.is_none());
     if inserted && node.is_none() {
+        view_index.rebuild(view);
         return true;
     }
 
@@ -574,45 +686,33 @@ pub(super) fn move_node(
             "failed to restore node after move insertion failure"
         );
     }
+    view_index.rebuild(view);
 
     false
 }
 
-fn take_node(view: &mut dyn Component, id: &str) -> Option<TakenNode> {
-    take_node_at_path(view, id, &mut Vec::new())
+fn can_insert_at_path(view: &dyn Component, parent_path: &[usize], parent_id: &str) -> bool {
+    let Some(parent) = view_at_path(view, parent_path) else {
+        return false;
+    };
+    parent.tag() == Some(parent_id) && !parent.is_tab_container()
 }
 
-fn take_node_at_path(
-    view: &mut dyn Component,
-    id: &str,
-    parent_path: &mut Vec<usize>,
-) -> Option<TakenNode> {
-    let tab_view = view.is_tab_container();
-    let children = view.children_mut()?;
-    if !tab_view {
-        if let Some(idx) = children
-            .iter()
-            .position(|child| child.view.tag() == Some(id))
-        {
-            return Some(TakenNode {
-                node: children.remove(idx),
-                parent_path: parent_path.clone(),
-                index: idx,
-            });
-        }
-    } else if children.iter().any(|child| child.view.tag() == Some(id)) {
+fn take_node_at_path(view: &mut dyn Component, path: &[usize], id: &str) -> Option<TakenNode> {
+    let (&idx, parent_path) = path.split_last()?;
+    let parent = view_at_path_mut(view, parent_path)?;
+    if parent.is_tab_container() {
         return None;
     }
-
-    for (child_idx, child) in children.iter_mut().enumerate() {
-        parent_path.push(child_idx);
-        let found = take_node_at_path(child.view.as_mut(), id, parent_path);
-        parent_path.pop();
-        if let Some(found) = found {
-            return Some(found);
-        }
+    let children = parent.children_mut()?;
+    if children.get(idx).and_then(|child| child.view.tag()) != Some(id) {
+        return None;
     }
-    None
+    Some(TakenNode {
+        node: children.remove(idx),
+        parent_path: parent_path.to_vec(),
+        index: idx,
+    })
 }
 
 fn restore_node(
@@ -635,8 +735,9 @@ fn restore_node(
     restore_node(child.view.as_mut(), remaining_path, index, node)
 }
 
-fn insert_existing_node(
+fn insert_existing_node_at_path(
     view: &mut dyn Component,
+    parent_path: &[usize],
     parent_id: &str,
     index: usize,
     node: &mut Option<ComponentNode>,
@@ -644,27 +745,18 @@ fn insert_existing_node(
     if node.is_none() {
         return true;
     }
-    if view.tag() == Some(parent_id) {
-        if view.is_tab_container() {
-            return false;
-        }
-        let Some(children) = view.children_mut() else {
-            return false;
-        };
-        let mut node = node.take().expect("node present");
-        node.parent = children.first().and_then(|existing| existing.parent);
-        let idx = index.min(children.len());
-        children.insert(idx, node);
-        return true;
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return false;
+    };
+    if parent.tag() != Some(parent_id) || parent.is_tab_container() {
+        return false;
     }
-
-    if let Some(children) = view.children_mut() {
-        for child in children.iter_mut() {
-            if insert_existing_node(child.view.as_mut(), parent_id, index, node) {
-                return node.is_none();
-            }
-        }
-    }
-
-    false
+    let Some(children) = parent.children_mut() else {
+        return false;
+    };
+    let mut node = node.take().expect("node present");
+    node.parent = children.first().and_then(|existing| existing.parent);
+    let idx = index.min(children.len());
+    children.insert(idx, node);
+    true
 }

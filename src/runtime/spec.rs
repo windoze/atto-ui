@@ -1,6 +1,6 @@
 //! Language-neutral runtime specs and tree operation primitives.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -541,175 +541,198 @@ impl std::error::Error for TreeError {}
 
 pub fn apply_tree_ops(root: &mut ComponentSpec, ops: &[TreeOp]) -> Result<bool, TreeError> {
     let mut structural = false;
+    let mut index = SpecPathIndex::new(root);
     for op in ops {
-        match op {
-            TreeOp::SetTree(spec) => {
-                *root = spec.clone();
-                structural = true;
-            }
-            TreeOp::Insert {
-                parent_id,
-                index,
-                child,
-            } => {
-                let parent = find_by_id_mut(root, parent_id)
-                    .ok_or_else(|| TreeError::NotFound(parent_id.clone()))?;
-                let idx = (*index).min(parent.children.len());
-                parent.children.insert(idx, child.clone());
-                structural = true;
-            }
-            TreeOp::Remove { id } => {
-                if remove_by_id(root, id) {
-                    structural = true;
-                } else {
-                    return Err(TreeError::NotFound(id.clone()));
-                }
-            }
-            TreeOp::Replace { id, node } => {
-                if replace_by_id(root, id, node.clone()) {
-                    structural = true;
-                } else {
-                    return Err(TreeError::NotFound(id.clone()));
-                }
-            }
-            TreeOp::Move {
-                id,
-                new_parent_id,
-                index,
-            } => {
-                let moving_node = find_child_node_by_id(root, id)
-                    .ok_or_else(|| TreeError::NotFound(id.clone()))?;
-                if find_by_id(moving_node, new_parent_id).is_some() {
-                    return Err(TreeError::InvalidTreeOp(
-                        "cannot move node into itself or descendant".to_string(),
-                    ));
-                }
-                if find_by_id(root, new_parent_id).is_none() {
-                    return Err(TreeError::NotFound(new_parent_id.clone()));
-                }
-
-                let node = take_by_id(root, id).expect("validated movable child exists");
-                let parent = find_by_id_mut(root, new_parent_id)
-                    .expect("validated target parent exists outside moved subtree");
-                let idx = (*index).min(parent.children.len());
-                parent.children.insert(idx, node);
-                structural = true;
-            }
-            TreeOp::SetProp { id, name, value } => {
-                let node =
-                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
-                node.props.insert(name.clone(), value.clone());
-            }
-            TreeOp::BindEvent {
-                id,
-                event,
-                callback,
-            } => {
-                let node =
-                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
-                node.events.insert(event.clone(), *callback);
-            }
-            TreeOp::ClearEvent { id, event } => {
-                let node =
-                    find_by_id_mut(root, id).ok_or_else(|| TreeError::NotFound(id.clone()))?;
-                node.events.remove(event);
-            }
-        }
+        structural |= apply_tree_op(root, op, &mut index)?;
     }
 
     Ok(structural)
 }
 
-fn find_by_id<'a>(node: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpec> {
-    if node.id.as_deref() == Some(id) {
-        return Some(node);
-    }
-    for child in &node.children {
-        if let Some(found) = find_by_id(child.node.as_ref(), id) {
-            return Some(found);
-        }
-    }
-    None
+type SpecPath = Vec<usize>;
+
+struct SpecPathIndex {
+    paths: HashMap<String, SpecPath>,
 }
 
-fn find_child_node_by_id<'a>(node: &'a ComponentSpec, id: &str) -> Option<&'a ComponentSpec> {
-    for child in &node.children {
-        if child.node.id.as_deref() == Some(id) {
-            return Some(child.node.as_ref());
-        }
-        if let Some(found) = find_child_node_by_id(child.node.as_ref(), id) {
-            return Some(found);
-        }
+impl SpecPathIndex {
+    fn new(root: &ComponentSpec) -> Self {
+        let mut paths = HashMap::new();
+        index_spec_paths(root, &mut Vec::new(), &mut paths);
+        Self { paths }
     }
-    None
+
+    fn rebuild(&mut self, root: &ComponentSpec) {
+        *self = Self::new(root);
+    }
+
+    fn path(&self, id: &str) -> Option<&SpecPath> {
+        self.paths.get(id)
+    }
 }
 
-fn find_by_id_mut<'a>(node: &'a mut ComponentSpec, id: &str) -> Option<&'a mut ComponentSpec> {
-    if node.id.as_deref() == Some(id) {
-        return Some(node);
+fn index_spec_paths(
+    node: &ComponentSpec,
+    path: &mut SpecPath,
+    paths: &mut HashMap<String, SpecPath>,
+) {
+    if let Some(id) = &node.id {
+        paths.entry(id.clone()).or_insert_with(|| path.clone());
     }
-    for child in &mut node.children {
-        if let Some(found) = find_by_id_mut(child.node.as_mut(), id) {
-            return Some(found);
-        }
+    for (idx, child) in node.children.iter().enumerate() {
+        path.push(idx);
+        index_spec_paths(child.node.as_ref(), path, paths);
+        path.pop();
     }
-    None
 }
 
-fn remove_by_id(node: &mut ComponentSpec, id: &str) -> bool {
-    let mut idx = None;
-    for (i, child) in node.children.iter().enumerate() {
-        if child.node.id.as_deref() == Some(id) {
-            idx = Some(i);
-            break;
+fn apply_tree_op(
+    root: &mut ComponentSpec,
+    op: &TreeOp,
+    index: &mut SpecPathIndex,
+) -> Result<bool, TreeError> {
+    match op {
+        TreeOp::SetTree(spec) => {
+            *root = spec.clone();
+            index.rebuild(root);
+            Ok(true)
         }
-    }
-    if let Some(i) = idx {
-        node.children.remove(i);
-        return true;
-    }
+        TreeOp::Insert {
+            parent_id,
+            index: child_index,
+            child,
+        } => {
+            let parent_path = index
+                .path(parent_id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(parent_id.clone()))?;
+            let parent = spec_at_path_mut(root, &parent_path)
+                .ok_or_else(|| TreeError::NotFound(parent_id.clone()))?;
+            let idx = (*child_index).min(parent.children.len());
+            parent.children.insert(idx, child.clone());
+            index.rebuild(root);
+            Ok(true)
+        }
+        TreeOp::Remove { id } => {
+            let path = index
+                .path(id)
+                .filter(|path| !path.is_empty())
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            remove_child_at_path(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            index.rebuild(root);
+            Ok(true)
+        }
+        TreeOp::Replace { id, node } => {
+            let path = index
+                .path(id)
+                .filter(|path| !path.is_empty())
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let slot =
+                child_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            *slot = node.clone();
+            index.rebuild(root);
+            Ok(true)
+        }
+        TreeOp::Move {
+            id,
+            new_parent_id,
+            index: child_index,
+        } => {
+            let moving_path = index
+                .path(id)
+                .filter(|path| !path.is_empty())
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let target_path = index
+                .path(new_parent_id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(new_parent_id.clone()))?;
+            if target_path.starts_with(&moving_path) {
+                return Err(TreeError::InvalidTreeOp(
+                    "cannot move node into itself or descendant".to_string(),
+                ));
+            }
 
-    for child in &mut node.children {
-        if remove_by_id(child.node.as_mut(), id) {
-            return true;
+            let node =
+                remove_child_at_path(root, &moving_path).expect("validated movable child exists");
+            index.rebuild(root);
+            let parent_path = index
+                .path(new_parent_id)
+                .cloned()
+                .expect("validated target parent exists outside moved subtree");
+            let parent = spec_at_path_mut(root, &parent_path)
+                .expect("validated target parent path resolves");
+            let idx = (*child_index).min(parent.children.len());
+            parent.children.insert(idx, node);
+            index.rebuild(root);
+            Ok(true)
+        }
+        TreeOp::SetProp { id, name, value } => {
+            let path = index
+                .path(id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let node =
+                spec_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            node.props.insert(name.clone(), value.clone());
+            Ok(false)
+        }
+        TreeOp::BindEvent {
+            id,
+            event,
+            callback,
+        } => {
+            let path = index
+                .path(id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let node =
+                spec_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            node.events.insert(event.clone(), *callback);
+            Ok(false)
+        }
+        TreeOp::ClearEvent { id, event } => {
+            let path = index
+                .path(id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let node =
+                spec_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            node.events.remove(event);
+            Ok(false)
         }
     }
-    false
 }
 
-fn replace_by_id(node: &mut ComponentSpec, id: &str, new_node: ComponentSpecChild) -> bool {
-    for child in &mut node.children {
-        if child.node.id.as_deref() == Some(id) {
-            *child = new_node;
-            return true;
-        }
+fn spec_at_path_mut<'a>(
+    mut node: &'a mut ComponentSpec,
+    path: &[usize],
+) -> Option<&'a mut ComponentSpec> {
+    for &idx in path {
+        node = node.children.get_mut(idx)?.node.as_mut();
     }
-    for child in &mut node.children {
-        if replace_by_id(child.node.as_mut(), id, new_node.clone()) {
-            return true;
-        }
-    }
-    false
+    Some(node)
 }
 
-fn take_by_id(node: &mut ComponentSpec, id: &str) -> Option<ComponentSpecChild> {
-    let mut idx = None;
-    for (i, child) in node.children.iter().enumerate() {
-        if child.node.id.as_deref() == Some(id) {
-            idx = Some(i);
-            break;
-        }
-    }
-    if let Some(i) = idx {
-        return Some(node.children.remove(i));
-    }
+fn child_at_path_mut<'a>(
+    root: &'a mut ComponentSpec,
+    path: &[usize],
+) -> Option<&'a mut ComponentSpecChild> {
+    let (&idx, parent_path) = path.split_last()?;
+    let parent = spec_at_path_mut(root, parent_path)?;
+    parent.children.get_mut(idx)
+}
 
-    for child in &mut node.children {
-        if let Some(found) = take_by_id(child.node.as_mut(), id) {
-            return Some(found);
-        }
+fn remove_child_at_path(root: &mut ComponentSpec, path: &[usize]) -> Option<ComponentSpecChild> {
+    let (&idx, parent_path) = path.split_last()?;
+    let parent = spec_at_path_mut(root, parent_path)?;
+    if idx < parent.children.len() {
+        Some(parent.children.remove(idx))
+    } else {
+        None
     }
-    None
 }
 
 #[cfg(test)]
@@ -805,6 +828,52 @@ mod tests {
 
         assert!(matches!(err, TreeError::InvalidTreeOp(_)));
         assert_eq!(tree, original);
+    }
+
+    #[test]
+    fn tree_ops_path_index_tracks_shifted_paths_within_batch() {
+        let mut tree = ComponentSpec::new("VStack")
+            .with_id("root")
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("b"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("c"),
+            ));
+
+        let ops = vec![
+            TreeOp::Remove { id: "a".into() },
+            TreeOp::SetProp {
+                id: "c".into(),
+                name: "text".into(),
+                value: ComponentValue::String("updated".into()),
+            },
+            TreeOp::Replace {
+                id: "b".into(),
+                node: ComponentSpecChild::new(ComponentSpec::new("Button").with_id("b")),
+            },
+            TreeOp::Move {
+                id: "c".into(),
+                new_parent_id: "root".into(),
+                index: 0,
+            },
+        ];
+
+        assert!(apply_tree_ops(&mut tree, &ops).unwrap());
+        let ids: Vec<Option<&str>> = tree
+            .children
+            .iter()
+            .map(|child| child.node.id.as_deref())
+            .collect();
+        assert_eq!(ids, vec![Some("c"), Some("b")]);
+        assert_eq!(
+            tree.children[0].node.props.get("text"),
+            Some(&ComponentValue::String("updated".into()))
+        );
+        assert_eq!(tree.children[1].node.type_name, "Button");
     }
 
     #[test]

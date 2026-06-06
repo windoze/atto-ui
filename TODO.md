@@ -519,10 +519,18 @@
 - 审阅 T14E app menu 拆分时发现 facade API 回归：`MenuCallback` 从原 `menu` facade 消失；已将别名恢复到 `src/app/menu.rs`，并让 `model`/`input` 通过 `super::MenuCallback` 使用，保持拆分前路径且不新增顶层 `app` 导出。
 - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T15 — id 索引替代 O(n) 查找（M9，低优先）
+### [DONE] T15 — id 索引替代 O(n) 查找（M9，低优先）
 **文件**：`src/wm/manager/events.rs|focus.rs|z_order.rs`、runtime tree-ops。
 **说明**：引入 `id→index/path` 索引替代线性扫描。窗口/节点少时无碍，最低优先级。
 **测试**：现有 wm/runtime 测试回归。
+
+**完成记录（2026-06-06）**：
+- `WindowManager` 新增 `window_index: HashMap<WindowId, usize>`，`window`/`window_mut`/`window_kind`/事件分发/聚焦/置顶等 id 定位路径改为通过索引获取 `Vec<Window>` 下标。
+- 窗口增删和 z-order 重排后统一重建索引，补充 `window_index_stays_synced_after_reorder_focus_and_close` 覆盖 add/bring_to_front/focus/close 后索引与窗口顺序一致、无悬挂索引。
+- runtime `ComponentSpec` tree-op 新增 `id -> path` 索引，Insert/Remove/Replace/Move/SetProp/BindEvent/ClearEvent 通过 path 定位节点；结构变更后重建索引，保留移入自身/后代与缺失目标校验语义。
+- `ComponentTree::apply_ops_incremental` 的 live view tree 增量路径新增 `tag -> path` 索引，局部属性更新、事件重建、插入、删除、替换、移动均通过 path 定位；结构变更后重建索引以避免批内路径偏移。
+- 新增 spec 与 ComponentTree 批内路径偏移回归测试，覆盖结构变更后继续操作原有 id 时索引同步正确。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R15 — 审阅 T15
 确认索引与实际数据一致（增删窗口/节点时同步更新）、无悬挂索引、测试全绿。

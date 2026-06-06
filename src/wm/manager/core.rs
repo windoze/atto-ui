@@ -10,6 +10,21 @@ impl WindowManager {
         Self::default()
     }
 
+    pub(super) fn rebuild_window_index(&mut self) {
+        self.window_index.clear();
+        for (idx, window) in self.windows.iter().enumerate() {
+            self.window_index.insert(window.id, idx);
+        }
+    }
+
+    pub(super) fn window_index_of(&self, id: WindowId) -> Option<usize> {
+        let idx = *self.window_index.get(&id)?;
+        self.windows
+            .get(idx)
+            .filter(|window| window.id == id)
+            .map(|_| idx)
+    }
+
     pub fn windows(&self) -> &[Window] {
         &self.windows
     }
@@ -36,6 +51,7 @@ impl WindowManager {
         }
 
         self.windows.push(window);
+        self.rebuild_window_index();
         self.bring_to_front(id);
         id
     }
@@ -48,6 +64,7 @@ impl WindowManager {
         self.mouse_capture = false;
         let was_focused = self.focused == Some(id);
         self.windows.retain(|w| w.id != id);
+        self.rebuild_window_index();
         if was_focused {
             self.focused = self.topmost_focusable_id();
         }

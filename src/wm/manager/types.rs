@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::layout::Rect;
 
 use crate::composable::scroll::ScrollbarDrag;
@@ -67,6 +69,7 @@ pub(crate) struct HitTest {
 pub struct WindowManager {
     pub(super) next_id: u64,
     pub(super) windows: Vec<Window>,
+    pub(super) window_index: HashMap<WindowId, usize>,
     pub(super) focused: Option<WindowId>,
     pub(super) drag: Option<DragState>,
     pub(super) mouse_capture: bool,

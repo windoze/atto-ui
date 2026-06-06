@@ -33,6 +33,13 @@ impl EventHandling for DummyView {
 
 crate::impl_component_default_traits!(DummyView => Layout, Scrollable, FocusNav, DynamicTree);
 
+fn assert_window_index_matches_order(wm: &WindowManager) {
+    assert_eq!(wm.window_index.len(), wm.windows().len());
+    for (idx, window) in wm.windows().iter().enumerate() {
+        assert_eq!(wm.window_index_of(window.id), Some(idx));
+    }
+}
+
 struct MinSizeView {
     min: (u16, u16),
 }
@@ -311,6 +318,57 @@ fn focus_cycles_between_windows() {
     assert_eq!(wm.focused(), Some(id2));
     wm.focus_next();
     assert_eq!(wm.focused(), Some(id1));
+}
+
+#[test]
+fn window_index_stays_synced_after_reorder_focus_and_close() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let id1 = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "One",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let id2 = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Two",
+            Rect::new(3, 3, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let id3 = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Three",
+            Rect::new(5, 5, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    assert_window_index_matches_order(&wm);
+    assert_eq!(wm.window(id2).expect("id2").title.get(), "Two");
+
+    wm.bring_to_front(id1);
+    assert_window_index_matches_order(&wm);
+    assert_eq!(wm.windows().last().map(|w| w.id), Some(id1));
+
+    wm.focus(id3);
+    assert_window_index_matches_order(&wm);
+    assert_eq!(wm.focused(), Some(id3));
+    assert_eq!(wm.windows().last().map(|w| w.id), Some(id3));
+
+    wm.close(id2);
+    assert_window_index_matches_order(&wm);
+    assert!(wm.window(id2).is_none());
+    assert_eq!(wm.window(id1).expect("id1").title.get(), "One");
+    assert_eq!(wm.window(id3).expect("id3").title.get(), "Three");
 }
 
 #[test]

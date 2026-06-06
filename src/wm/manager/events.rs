@@ -50,7 +50,7 @@ impl WindowManager {
         bounds: Rect,
         theme: &Theme,
     ) -> Option<(WindowId, EventResult)> {
-        let idx = self.windows.iter().position(|w| w.id == id)?;
+        let idx = self.window_index_of(id)?;
         let is_focused = self.focused() == Some(id);
         let action = {
             let w = &mut self.windows[idx];
@@ -97,15 +97,17 @@ impl WindowManager {
     }
 
     pub fn window_kind(&self, id: WindowId) -> Option<WindowKind> {
-        self.windows.iter().find(|w| w.id == id).map(|w| w.kind)
+        self.window(id).map(|w| w.kind)
     }
 
     pub fn window(&self, id: WindowId) -> Option<&Window> {
-        self.windows.iter().find(|w| w.id == id)
+        let idx = self.window_index_of(id)?;
+        self.windows.get(idx)
     }
 
     pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
-        self.windows.iter_mut().find(|w| w.id == id)
+        let idx = self.window_index_of(id)?;
+        self.windows.get_mut(idx)
     }
 
     fn handle_mouse(&mut self, m: &MouseEvent, bounds: Rect, theme: &Theme) -> WindowManagerAction {
@@ -130,9 +132,8 @@ impl WindowManager {
                 let window_id = hit.window_id;
                 if modal.is_none()
                     && self
-                        .windows
-                        .iter()
-                        .any(|w| w.id == window_id && w.kind.is_focusable())
+                        .window(window_id)
+                        .is_some_and(|w| w.kind.is_focusable())
                 {
                     self.focus(window_id);
                 }
@@ -148,9 +149,8 @@ impl WindowManager {
                     }
                     HitRegion::MaximizeButton => {
                         let can_maximize = self
-                            .windows
-                            .iter()
-                            .any(|w| w.id == window_id && chrome::can_toggle_maximize(w));
+                            .window(window_id)
+                            .is_some_and(chrome::can_toggle_maximize);
                         if can_maximize {
                             self.toggle_maximize(window_id, bounds);
                         }

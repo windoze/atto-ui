@@ -15,11 +15,7 @@ impl WindowManager {
         if self.active_modal_id().is_some() {
             return;
         }
-        if !self
-            .windows
-            .iter()
-            .any(|w| w.id == id && w.kind.is_focusable())
-        {
+        if !self.window(id).is_some_and(|w| w.kind.is_focusable()) {
             return;
         }
         self.focused = Some(id);
@@ -51,10 +47,7 @@ impl WindowManager {
 
     pub fn minimize_focused(&mut self) {
         let Some(id) = self.focused() else { return };
-        let can_minimize = self
-            .windows
-            .iter()
-            .any(|w| w.id == id && chrome::can_minimize(w));
+        let can_minimize = self.window(id).is_some_and(chrome::can_minimize);
         if !can_minimize {
             return;
         }
