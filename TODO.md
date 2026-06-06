@@ -494,11 +494,20 @@
 - 新增 `manager/tests.rs` 承载原 `mod.rs` 内的 window manager 单元测试；现有 `chrome/draw/events/focus/placement/z_order` 职责模块保持行为不变。
 - 验证：`cargo fmt`；`cargo test --lib wm::manager::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
-### [TODO] T14E — 拆分 app menu 巨型文件（M8）
+### [DONE] T14E — 拆分 app menu 巨型文件（M8）
 **文件**：`src/app/menu.rs`(923)。
 **依赖**：T14D。
 **说明**：纯机械重构，按职责拆子模块，零行为变更。
 **测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
+
+**完成记录（2026-06-06）**：
+- 将 `src/app/menu.rs` 收敛为 app menu facade，仅保留子模块声明与现有公开 API re-export。
+- 新增 `src/app/menu/model.rs` 承载 `MenuCallback`、`MenuItem`、`MenuSpec`、`MenuAction`、`MenuBar` 与基础状态/构造方法。
+- 新增 `src/app/menu/input.rs` 承载键盘/鼠标菜单分发、菜单导航、快捷键、命中测试和选中项激活逻辑。
+- 新增 `src/app/menu/draw.rs` 承载菜单栏与下拉菜单绘制、文本绘制、宽字符 buffer 维护和阴影/边框渲染。
+- 新增 `src/app/menu/layout.rs` 与 `src/app/menu/minimized.rs`，分别承载菜单几何 helper 与最小化窗口菜单同步逻辑。
+- 本次为纯机械拆分，未改变菜单行为或公开 `app` re-export 面；`PLAN.md` 未更新，因为阶段级计划没有变化。
+- 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets` 全部通过。
 
 ### [TODO] R14 — 审阅 T14A–T14E
 确认五个文件拆分均为纯机械重构、无行为变更、模块边界合理、全量测试通过。
