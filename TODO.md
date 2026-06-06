@@ -366,10 +366,16 @@
 - 动态消息序列化/解析支持 `tool_call` 内容；`snapshot_chat_app --tool-call` 和 `pty_chat` 覆盖 running→done→error、输出追加、折叠/展开。
 - 验证通过：`cargo fmt`；`cargo test -p atto-ui-chat`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [ ] R13 — 审阅 T13
+### [DONE] R13 — 审阅 T13
 - 确认 chat 仅消费 core disclosure，未在 chat 重复实现折叠逻辑。
 - 确认状态机 running/done/error 转换正确。
 - 运行 chat PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-chat/src/message.rs`、`store.rs`、`list.rs`、`dynamic.rs`、`src/bin/snapshot_chat_app.rs` 与 `tests/pty_chat.rs` 的 T13 改动。
+- 确认 chat 工具调用块通过 `ChatMessageBody::Tool(Disclosure)` 直接消费 core `Disclosure`，chat 侧仅维护消息模型、binding 同步与状态映射，未重复实现折叠交互逻辑。
+- 确认 `ChatMessageStore` 的 `append_tool_delta`、`update_tool_output`、`set_tool_status` 对 running/done/error 状态和输出流式更新的 dirty 通知边界正确，同值/空 delta 不产生无效通知。
+- 确认 PTY 覆盖 `running -> done -> error` 状态指示、输出追加以及鼠标折叠/展开，且 row key 忽略工具输出/状态以保留 disclosure 折叠状态。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat --test pty_chat`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ### [ ] T14 — 消息内 Artifact link + 最简文本 viewer（核心方案）（C.0 占位实现）
 **文件**：`crates/atto-ui-chat/src/message.rs`、新增 viewer 模块（仅依赖 core widgets）

@@ -1,34 +1,28 @@
-# Claude 执行计划
+# Claude Execution Plan
 
-## 范围
+本文件记录本次执行的可检查计划与进度；不包含隐藏推理细节。
 
-- 以 `TODO.md` 为权威任务列表。
-- 本轮只完成第一个标题未带 `[DONE]` 的任务：`T13 — chat 工具调用块（消费 disclosure）（C.2）`。
-- 完成 T13、更新记录并提交后停止，不处理 `R13` 或后续任务。
+## 当前目标
 
-## 步骤
+按照 `TODO.md` 的顺序完成第一个未标记 `[DONE]` 的任务：`R13 — 审阅 T13`，完成后更新记录、验证、提交并停止。
 
-1. 读取 `TODO.md`，确认第一个未完成任务。
-2. 只检查与当前任务直接相关的最近提交和工作区状态，避免开放式历史问题排查。
-3. 检查 chat 消息模型、store、列表渲染、动态组件解析和 core `Disclosure` API。
-4. 新增 `ChatMessageContent::ToolCall { name, status, output }`，其中 status 覆盖 running/done/error。
-5. 提供工具输出流式追加与状态更新 API，避免空 delta 或同值更新产生无效 dirty 通知。
-6. 在 chat 消息列表中复用 core `Disclosure` 渲染工具调用块，不在 chat 内重复实现折叠逻辑。
-7. 补充单测与 PTY：覆盖 running→done/error 状态变化、输出追加、折叠和展开。
-8. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-9. 验证通过后，将 T13 标题标记为 `[DONE]` 并补充完成记录。
-10. 只提交本轮 T13 相关文件和计划记录。
+## 执行计划
 
-## 进度
+1. 读取 `TODO.md`，只定位第一个未完成任务，不做开放式历史问题扫查。
+2. 检查该任务相关上下文、依赖和最新提交，判断是否存在直接阻塞当前任务的问题。
+3. 若可直接执行，实施当前任务；若存在必须先修复的具体阻塞项，按要求更新 `TODO.md` 并提交后停止。
+4. 运行必要的格式化、lint 和测试验证；若发现未排期的失败，修复或把最小前置任务加入 `TODO.md`。
+5. 将完成的任务标题加上 `[DONE]`，更新其 completion record，并仅在阶段计划变化时更新 `PLAN.md`。
+6. 检查 git 状态、diff 和最近提交，提交本次任务相关所有变更。
+7. 停止，不处理下一个任务。
 
-- 已确认第一个未完成任务为 `T13 — chat 工具调用块（消费 disclosure）（C.2）`。
-- 已检查相关实现：chat 行 key 已支持文本流式 delta 不重建整行；core `Disclosure` 已支持绑定 title/status/content、键盘和鼠标折叠。
-- 已实现 `ChatToolCallStatus`、`ChatMessageContent::ToolCall`、`ChatMessage::tool_call`。
-- 已实现 `ChatMessageStore::append_tool_delta`、`update_tool_output`、`set_tool_status`。
-- 已让 `ChatMessageList` 使用 core `Disclosure` 渲染工具调用块，并将工具状态映射到 `DisclosureStatus`。
-- 已让工具调用 row key 忽略工具输出和工具状态，从而保留折叠状态并避免流式输出重建整行。
-- 已补充动态消息 `tool_call` 序列化/解析与 round-trip 单测。
-- 已新增 `snapshot_chat_app --tool-call` 和 PTY 覆盖 running→done→error、输出追加、折叠/展开。
-- 已修正 `--tool-call` fixture 分支，避免工具调用模式仍追加默认 seed 消息导致工具块被自动滚出视口。
-- 验证通过：`cargo fmt`；`cargo test -p atto-ui-chat`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- 已更新 `TODO.md`，将 T13 标记为 `[DONE]` 并记录完成内容与验证结果。
+## 进度记录
+
+- 已写入初始执行计划。
+- 已读取 `TODO.md`，确认第一个未完成任务为 `R13 — 审阅 T13`。
+- 已检查最新提交为 `[T13] Add chat tool call disclosure`，直接对应当前审阅任务。
+- 下一步审阅 T13 相关实现与测试：确认 chat 复用 core `Disclosure`、状态转换正确，并运行 chat PTY/相关验证。
+- 已完成 T13 相关实现审阅，未发现需修复的问题。
+- 已运行并通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --test pty_chat`、`cargo test -p atto-ui-chat`、`cargo test --workspace --all-targets`。
+- 已将 `TODO.md` 中 `R13` 标记为 `[DONE]` 并补充完成记录。
+- 下一步检查 diff/status，然后提交本次 R13 审阅记录并停止。
