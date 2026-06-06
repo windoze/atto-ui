@@ -3,6 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
+use unicode_width::UnicodeWidthStr;
 
 static CHAT_PTY_LOCK: Mutex<()> = Mutex::new(());
 
@@ -30,6 +31,21 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
                 y.min(u16::MAX as usize) as u16,
             )
         })
+    })
+}
+
+fn find_close_button_on_title_row(host: &PtyTestHost, title: &str) -> Option<(u16, u16)> {
+    let contents = host.screen_contents().ok()?;
+    contents.lines().enumerate().find_map(|(y, line)| {
+        let title_idx = line.find(title)?;
+        line.char_indices()
+            .rfind(|(idx, ch)| *idx > title_idx && *ch == '×')
+            .map(|(idx, _)| {
+                (
+                    line[..idx].width().min(u16::MAX as usize) as u16,
+                    y.min(u16::MAX as usize) as u16,
+                )
+            })
     })
 }
 
@@ -254,6 +270,14 @@ fn chat_artifact_code_link_opens_text_viewer_window() -> anyhow::Result<()> {
     host.wait_for_text("Code: main.rs", Duration::from_secs(2))?;
     host.wait_for_text("Code Artifact: main.rs", Duration::from_secs(2))?;
     host.wait_for_text("CODE-ARTIFACT", Duration::from_secs(2))?;
+
+    let (close_x, close_y) =
+        find_close_button_on_title_row(&host, "Code: main.rs").expect("code viewer close button");
+    host.click(close_x, close_y)?;
+    host.wait_for_screen(
+        |snapshot| !snapshot.iter().any(|line| line.contains("CODE-ARTIFACT")),
+        Duration::from_secs(2),
+    )?;
 
     host.send_ctrl('q')?;
     Ok(())

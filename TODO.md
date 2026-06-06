@@ -395,11 +395,17 @@
 - `snapshot_chat_app --artifact-link` 使用事件队列连接 link 点击和 `TextArtifactViewer::open()`；新增 PTY 覆盖点击 Code link 显示源码、点击 Diff link 显示 diff 文本。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
-### [ ] R14 — 审阅 T14
+### [DONE] R14 — 审阅 T14
 - 确认 chat 不直接依赖 editor，仅通过 `ArtifactViewer` 接口与 `on_open_artifact` 解耦。
 - 确认最简 viewer 接口足以被未来富实现替换（签名稳定）。
 - 确认 link 点击命中与窗口打开/关闭正确。
 - 运行 PTY。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-chat/src/message.rs`、`list.rs`、`dynamic.rs`、`viewer.rs`、`src/bin/snapshot_chat_app.rs` 与 `crates/atto-ui-chat/tests/pty_chat.rs` 的 T14 改动。
+- 确认 chat crate 未依赖 editor；消息列表只建模 artifact link，并通过 `on_open_artifact(ArtifactId)` / 动态 `open_artifact` 事件暴露打开请求，实际呈现由外部 `ArtifactViewer` 实现处理。
+- 确认 `ArtifactViewer::open(&mut self, Artifact) -> WindowId` 与 `TextArtifactViewer` 接口足以被后续富 viewer 替换；最简实现通过 `Desktop::add_window(WindowKind::Normal, ...)` 打开独立普通窗口，code/file 走只读文本呈现，diff 走 unified diff 前缀着色。
+- 补充审阅发现的覆盖缺口：`chat_artifact_code_link_opens_text_viewer_window` 现在打开 code viewer 后点击标题栏关闭按钮，并断言 viewer 内容消失，覆盖 link 点击、窗口打开和关闭链路。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat --test pty_chat chat_artifact -- --nocapture`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
 ### [ ] T15 — 多行输入 + 历史 + 键盘增强（core）（C.3）
 **文件**：新增 `src/widgets/textarea.rs`，`src/app/run.rs`（键盘增强标志）
