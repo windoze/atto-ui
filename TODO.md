@@ -434,7 +434,7 @@
 - 已审阅 `crates/atto-ui-chat/src/input.rs` 与 `snapshot_chat_app` 接入，确认 chat 仅通过 `atto_ui::widgets::TextArea` 组合消费多行输入，并保留 choice/confirm 自定义输入的单行 `TextBox` 路径。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui textarea`；`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring`；`cargo test --workspace --all-targets`。
 
-### [ ] T16 — 通用 typeahead / 命令面板 / 模糊匹配（core）（C.3）
+### [DONE] T16 — 通用 typeahead / 命令面板 / 模糊匹配（core）（C.3）
 **文件**：新增 `src/widgets/typeahead.rs`、`src/fuzzy.rs`
 **现状**：editor 内有 LSP 补全弹窗但不可复用；无通用 typeahead/模糊匹配。
 **步骤**：
@@ -443,6 +443,12 @@
 3. 命令面板组合（typeahead + 命令列表）。
 **测试**：PTY：输入触发弹层、模糊过滤、选择确认、Esc 关闭。
 **验收**：通用 typeahead 可挂到任意输入框；模糊匹配可复用。
+**完成记录（2026-06-06）**：
+- 新增 `src/fuzzy.rs`，提供确定性的 case-insensitive 子序列模糊匹配与排序；匹配结果包含分数和候选内 byte 位置，排序偏好连续/词边界匹配并在同分时保持输入顺序。
+- 新增 core `TypeAhead` 组件：绑定 `query`/`items`/`selection`/`accepted`/`open` 状态，支持输入触发补全弹层、模糊过滤、Up/Down 选择、Enter 确认、Esc 关闭、鼠标点击确认与 `input_text`/`select_index`/`submit` runtime action。
+- 新增 core `CommandPalette` 组件，基于 `TypeAhead` 组合命令列表、slash 命令与 `@file` 引用输入；导出到 `widgets`/`composable` 并注册到 runtime schema。
+- 新增 `snapshot_typeahead_app` 与 `tests/pty_typeahead.rs`，覆盖弹层打开/关闭、slash 命令选择确认、`@file` 模糊过滤和 Esc 关闭后保留 query。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_typeahead`；`cargo test`。
 
 ### [ ] R16 — 审阅 T16
 - 确认 typeahead 与输入框解耦、可复用（非 editor 专用）。

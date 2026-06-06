@@ -1,8 +1,8 @@
 use crate::ComponentPropertySchema;
 use crate::composable::{
-    Border, Component, ComponentTag, Disclosure, DisclosureStatus, Divider, DividerOrientation,
-    EdgeInsets, Grid, HStack, Label, LayoutParams, Spacer, Splitter, SplitterOrientation, TabView,
-    Text, TextArea, TextBox, VStack, Visibility,
+    Border, CommandPalette, Component, ComponentTag, Disclosure, DisclosureStatus, Divider,
+    DividerOrientation, EdgeInsets, Grid, HStack, Label, LayoutParams, Spacer, Splitter,
+    SplitterOrientation, TabView, Text, TextArea, TextBox, TypeAhead, VStack, Visibility,
 };
 use crate::reactive::Binding;
 use crate::widgets::{
@@ -30,6 +30,8 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
     register_text(&mut registry);
     register_textbox(&mut registry, callbacks.clone());
     register_textarea(&mut registry, callbacks.clone());
+    register_typeahead(&mut registry, callbacks.clone());
+    register_command_palette(&mut registry, callbacks.clone());
     register_slider(&mut registry, callbacks.clone());
     register_progress_bar(&mut registry);
     register_radio_group(&mut registry, callbacks.clone());
@@ -265,6 +267,106 @@ fn register_textarea(
             textarea = textarea.on_submit_callback(cb);
         }
         Ok(wrap_with_id(spec, Box::new(textarea)))
+    });
+}
+
+fn register_typeahead(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<TypeAhead>("TypeAhead")
+        .with_event(EventMeta::new("change").with_payload(ValueType::String))
+        .with_event(EventMeta::new("accept").with_payload(ValueType::String))
+        .with_event(EventMeta::new("close"))
+        .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
+        .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
+        .with_action(ActionMeta::new("submit"))
+        .allow_children(false);
+
+    registry.register(schema, move |spec, _registry| {
+        let title = prop_string(spec, "title")?.unwrap_or_else(|| "TypeAhead".to_string());
+        let query = prop_string(spec, "query")?.unwrap_or_default();
+        let items = prop_vec_string(spec, "items")?.unwrap_or_default();
+        let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let selection = prop_usize(spec, "selection")?.unwrap_or(0);
+        let accepted = prop_string(spec, "accepted")?.unwrap_or_default();
+        let open = prop_bool(spec, "open")?.unwrap_or(false);
+        let open_on_empty = prop_bool(spec, "open_on_empty")?.unwrap_or(false);
+        let placeholder = prop_string(spec, "placeholder")?;
+        let height = prop_u16(spec, "height")?.unwrap_or(8);
+        let max_results = prop_usize(spec, "max_results")?.unwrap_or(8);
+
+        let mut view = TypeAhead::new(title, Binding::new(query), Binding::new(items))
+            .enabled(enabled)
+            .selection(Binding::new(selection))
+            .accepted(Binding::new(accepted))
+            .open(open)
+            .open_on_empty(open_on_empty)
+            .height(height)
+            .max_results(max_results);
+        if let Some(placeholder) = placeholder {
+            view = view.placeholder(placeholder);
+        }
+        if let Some(cb) = event_handle(spec, "change", callbacks.clone()) {
+            view = view.on_change_callback(cb);
+        }
+        if let Some(cb) = event_handle(spec, "accept", callbacks.clone()) {
+            view = view.on_accept_callback(cb);
+        }
+        if let Some(cb) = event_handle(spec, "close", callbacks.clone()) {
+            view = view.on_close_callback(cb);
+        }
+        Ok(wrap_with_id(spec, Box::new(view)))
+    });
+}
+
+fn register_command_palette(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<CommandPalette>("CommandPalette")
+        .with_event(EventMeta::new("change").with_payload(ValueType::String))
+        .with_event(EventMeta::new("accept").with_payload(ValueType::String))
+        .with_event(EventMeta::new("close"))
+        .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
+        .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
+        .with_action(ActionMeta::new("submit"))
+        .allow_children(false);
+
+    registry.register(schema, move |spec, _registry| {
+        let title = prop_string(spec, "title")?.unwrap_or_else(|| "Command Palette".to_string());
+        let query = prop_string(spec, "query")?.unwrap_or_default();
+        let items = prop_vec_string(spec, "items")?.unwrap_or_default();
+        let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let selection = prop_usize(spec, "selection")?.unwrap_or(0);
+        let accepted = prop_string(spec, "accepted")?.unwrap_or_default();
+        let open = prop_bool(spec, "open")?.unwrap_or(true);
+        let open_on_empty = prop_bool(spec, "open_on_empty")?.unwrap_or(true);
+        let placeholder = prop_string(spec, "placeholder")?;
+        let height = prop_u16(spec, "height")?.unwrap_or(8);
+        let max_results = prop_usize(spec, "max_results")?.unwrap_or(8);
+
+        let mut view = CommandPalette::new(title, Binding::new(query), Binding::new(items))
+            .enabled(enabled)
+            .selection(Binding::new(selection))
+            .accepted(Binding::new(accepted))
+            .open(open)
+            .open_on_empty(open_on_empty)
+            .height(height)
+            .max_results(max_results);
+        if let Some(placeholder) = placeholder {
+            view = view.placeholder(placeholder);
+        }
+        if let Some(cb) = event_handle(spec, "change", callbacks.clone()) {
+            view = view.on_change_callback(cb);
+        }
+        if let Some(cb) = event_handle(spec, "accept", callbacks.clone()) {
+            view = view.on_accept_callback(cb);
+        }
+        if let Some(cb) = event_handle(spec, "close", callbacks.clone()) {
+            view = view.on_close_callback(cb);
+        }
+        Ok(wrap_with_id(spec, Box::new(view)))
     });
 }
 

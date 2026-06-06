@@ -17,6 +17,7 @@ mod tab_view;
 mod table;
 mod textarea;
 mod textbox;
+mod typeahead;
 mod util;
 
 pub use button::Button;
@@ -33,3 +34,4 @@ pub use tab_view::{TabHeaderPosition, TabView};
 pub use table::TableView;
 pub use textarea::TextArea;
 pub use textbox::TextBox;
+pub use typeahead::{CommandPalette, TypeAhead};
