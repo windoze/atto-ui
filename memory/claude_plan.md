@@ -16,7 +16,7 @@
 ## 本次进度
 
 - 已读取 `TODO.md`；第一个未完成任务仍是 `T13A — 确认命名消歧义方案（T13 前置）`。
-- 已检查最新提交：`9a87d6d [T13A] Record continued confirmation wait`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
+- 已检查最新提交：`f4c3670 [T13A] Record confirmation still pending`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
 - 当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
 - 在收到确认前，不执行 T13，也不把 T13A 标记为 `[DONE]`。
 - 已在 `TODO.md` 追加本轮复核记录，明确 T13A 继续等待维护者确认且 T13 不执行。
@@ -26,12 +26,19 @@
 ## 历史记录
 
 - 上一轮已读取 `TODO.md`；当时第一个未完成任务仍是 `T13A — 确认命名消歧义方案（T13 前置）`。
-- 上一轮已检查最新提交：`6f7a49c [T13A] Record continued confirmation blocker`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
+- 上一轮已检查最新提交：`9a87d6d [T13A] Record continued confirmation wait`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
 - 上一轮判断当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
 - 上一轮在收到确认前，未执行 T13，也未把 T13A 标记为 `[DONE]`。
 - 上一轮已在 `TODO.md` 追加本轮复核记录，明确 T13A 继续等待维护者确认且 T13 不执行。
 - 上一轮已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，本轮不修改、不纳入提交。
-- 上一轮没有代码实现，也没有运行 Rust 验证套件，因为任务仍阻塞在确认输入上。
+- 上一轮没有代码实现，也没有运行 Rust 验证套件，因为任务仍阻塞在确认输入上，且仅修改 Markdown 任务/计划记录。
+- 更早一轮已读取 `TODO.md`；当时第一个未完成任务仍是 `T13A — 确认命名消歧义方案（T13 前置）`。
+- 更早一轮已检查最新提交：`6f7a49c [T13A] Record continued confirmation blocker`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
+- 更早一轮判断当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
+- 更早一轮在收到确认前，未执行 T13，也未把 T13A 标记为 `[DONE]`。
+- 更早一轮已在 `TODO.md` 追加本轮复核记录，明确 T13A 继续等待维护者确认且 T13 不执行。
+- 更早一轮已发现两个既有未跟踪脚本 `notification.sh`、`run_agent.sh`，本轮不修改、不纳入提交。
+- 更早一轮没有代码实现，也没有运行 Rust 验证套件，因为任务仍阻塞在确认输入上。
 - 更早一轮已读取 `TODO.md`；当时第一个未完成任务仍是 `T13A — 确认命名消歧义方案（T13 前置）`。
 - 更早一轮已检查最新提交：`783313b [T13A] Record maintainer confirmation blocker`，该提交与当前任务直接相关，并确认 T13A 仍等待维护者决策。
 - 更早一轮判断当前阻塞在维护者决策：必须确认是否将 `atto-editor` 改名为 `atto-editor-app`、若改名是否同步更新 workspace 依赖/import/文档/CI/发布引用、以及 `atto-ui-runtime` 是保持独立核心共享 crate 还是合并进 `atto-ui`。
