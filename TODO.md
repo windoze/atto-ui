@@ -27,12 +27,18 @@
 - 新增 `snapshot_app --input-api` 事件回显 fixture，并新增 `tests/pty_test_host_api.rs` 覆盖新增输入、断言、光标、水平滚动与 resize API。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --test pty_test_host_api`；`cargo test`。
 
-### [ ] R1 — 审阅 T1
+### [DONE] R1 — 审阅 T1
 审阅 T1 改动：
 - 确认新增输入 API 的事件编码与 crossterm `MouseEvent`/`KeyEvent` 一致（modifier 位、SGR 序列）。
 - 确认 `resize` 真实改变 vt100 解析尺寸且后续断言可见。
 - 确认快照归一逻辑稳定（trim/空行）、`wait_for_screen` 无忙等死锁。
 - 运行全 workspace `cargo test`。
+**完成记录（2026-06-06）**：
+- 已审阅 `crates/atto-ui-test-host/src/lib.rs`、`src/bin/snapshot_app.rs`、`tests/pty_test_host_api.rs` 的 T1 改动。
+- 对照 crossterm 0.29 解析逻辑确认 SGR 鼠标按钮/modifier、水平滚动、无按键移动以及修饰键参数编码与 `MouseEvent`/`KeyEvent` 一致。
+- 确认 `resize` 同步 PTY master 与 vt100 parser 尺寸，且 `--input-api` fixture 的 `size: 100x30` 断言覆盖真实 resize 可见性。
+- 确认 `screen_snapshot`/`region_snapshot` 对行 trim 与尾部空行归一稳定，`wait_for_screen` 使用 10ms 轮询避免忙等。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [ ] T2 — macros trybuild 测试（A.1）
 **文件**：`crates/atto-ui-macros/`、新增 `crates/atto-ui-macros/tests/`
