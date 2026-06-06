@@ -103,6 +103,57 @@ fn chat_input_modes_submit_callbacks() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_textarea_multiline_history_and_kill_ring() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 26)?;
+
+    host.wait_for_text("Message", Duration::from_secs(2))?;
+
+    host.send_str("line1")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::SHIFT)?;
+    host.send_str("line2")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("line1"))
+                && snapshot.iter().any(|line| line.contains("line2"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=line1", Duration::from_secs(2))?;
+    host.wait_for_text("line2", Duration::from_secs(2))?;
+
+    host.send_str("uno")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=uno", Duration::from_secs(2))?;
+    host.send_str("zwo")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=zwo", Duration::from_secs(2))?;
+
+    host.key_with_mods(KeyCode::Up, KeyModifiers::NONE)?;
+    host.send_str("-zz")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=zwo-zz", Duration::from_secs(2))?;
+
+    host.key_with_mods(KeyCode::Up, KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Up, KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
+    host.send_str("-yy")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=zwo-zz-yy", Duration::from_secs(2))?;
+
+    host.send_str("killme")?;
+    host.send_ctrl('u')?;
+    host.send_ctrl('y')?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=killme", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_auto_follow_pauses_after_user_scrolls_up() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

@@ -15,7 +15,10 @@ use atto_ui::composable::EventOutcome;
 use atto_ui::reactive::{set_global_tick_rate, tick_global_timers};
 use atto_ui::task::TaskRegistry;
 use crossterm::cursor;
-use crossterm::event::{self, Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    self, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -246,6 +249,7 @@ fn mark_consumed_if_escape_cancelled(
 
 struct TerminalSession {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    keyboard_enhancement_active: bool,
 }
 
 impl TerminalSession {
@@ -260,6 +264,15 @@ impl TerminalSession {
         if config.enable_bracketed_paste {
             execute!(stdout, event::EnableBracketedPaste)?;
         }
+        let keyboard_enhancement_active = if config.enable_keyboard_enhancement {
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )
+            .is_ok()
+        } else {
+            false
+        };
         match config.cursor {
             atto_ui::app::CursorMode::Show => execute!(stdout, cursor::Show)?,
             atto_ui::app::CursorMode::Hide => execute!(stdout, cursor::Hide)?,
@@ -269,7 +282,10 @@ impl TerminalSession {
         let mut terminal = Terminal::new(backend)?;
         terminal.clear()?;
 
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            keyboard_enhancement_active,
+        })
     }
 
     fn screen(&self) -> Result<Rect> {
@@ -287,6 +303,9 @@ impl Drop for TerminalSession {
         let _ = disable_raw_mode();
 
         let backend = self.terminal.backend_mut();
+        if self.keyboard_enhancement_active {
+            let _ = execute!(backend, PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(backend, LeaveAlternateScreen);
         let _ = execute!(backend, event::DisableMouseCapture);
         let _ = execute!(backend, event::DisableBracketedPaste);

@@ -407,7 +407,7 @@
 - 补充审阅发现的覆盖缺口：`chat_artifact_code_link_opens_text_viewer_window` 现在打开 code viewer 后点击标题栏关闭按钮，并断言 viewer 内容消失，覆盖 link 点击、窗口打开和关闭链路。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat --test pty_chat chat_artifact -- --nocapture`；`cargo test -p atto-ui-chat`；`cargo test --workspace --all-targets`。
 
-### [ ] T15 — 多行输入 + 历史 + 键盘增强（core）（C.3）
+### [DONE] T15 — 多行输入 + 历史 + 键盘增强（core）（C.3）
 **文件**：新增 `src/widgets/textarea.rs`，`src/app/run.rs`（键盘增强标志）
 **现状**：仅单行 TextBox；全工作区未启用 KeyboardEnhancementFlags，无法区分 Enter/Shift+Enter。
 **步骤**：
@@ -416,6 +416,12 @@
 3. 在 chat 输入面板接入（chat 侧仅消费）。
 **测试**：PTY：多行编辑、Enter 提交 vs Shift+Enter 换行、历史上下翻、kill-ring。
 **验收**：多行输入可用；Enter/Shift+Enter 语义正确（需终端支持增强标志，附降级路径）。
+**完成记录（2026-06-06）**：
+- 新增 core `TextArea` 组件并导出/注册到内置 runtime：支持多行 grapheme-aware 编辑、垂直/水平光标滚动、鼠标定位、`Enter` 可配置提交、`Shift+Enter` 换行、`Ctrl+J` 降级换行、历史上下翻与 `Ctrl+U`/`Ctrl+K`/`Ctrl+Y` kill-ring。
+- `CrosstermAppConfig` 新增默认开启的 `keyboard_enhancement` 开关；同步/async terminal session 启动时 push `KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`，退出时 pop 恢复，写出失败时安全降级继续运行。
+- chat 文本输入模式改用 core `TextArea`，`ChatInputHandle` 持有输入历史；动态 `ChatInputPanel` schema 增加 `history`，文本 mode 增加 `height`，choice/confirm 自定义输入仍保留单行 `TextBox`。
+- `snapshot_chat_app` 启用键盘增强并调整窗口高度以保持消息列表视口；新增 PTY 覆盖多行编辑、`Shift+Enter` 换行 vs `Enter` 提交、历史 `Up/Down`、kill-ring yank。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui textarea`；`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring -- --nocapture`；`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ### [ ] R15 — 审阅 T15
 - 确认键盘增强标志的启用/恢复（退出时还原终端状态）。

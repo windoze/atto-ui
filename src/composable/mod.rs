@@ -21,7 +21,7 @@ mod visibility;
 pub use crate::widgets::{
     Button, Checkbox, Disclosure, DisclosureStatus, FlowDirection, Label, ListBox, ProgressBar,
     RadioGroup, Slider, Spinner, SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect, StyledLabel,
-    TabHeaderPosition, TabView, TableView, TextBox,
+    TabHeaderPosition, TabView, TableView, TextArea, TextBox,
 };
 pub use border::Border;
 pub use component::{

@@ -15,6 +15,7 @@ mod spinner;
 mod styled_label;
 mod tab_view;
 mod table;
+mod textarea;
 mod textbox;
 mod util;
 
@@ -30,4 +31,5 @@ pub use spinner::{FlowDirection, Spinner, SpinnerIconStyle, SpinnerLayout, Spinn
 pub use styled_label::StyledLabel;
 pub use tab_view::{TabHeaderPosition, TabView};
 pub use table::TableView;
+pub use textarea::TextArea;
 pub use textbox::TextBox;

@@ -4,7 +4,7 @@ use atto_ui::composable::Component;
 use atto_ui::reactive::Binding;
 use atto_ui::runtime::{
     component_schema, event_handle, invalid_prop, invalid_prop_reason, prop_bool, prop_string,
-    prop_u16, prop_usize, register_registry_extension, wrap_with_id,
+    prop_u16, prop_usize, prop_vec_string, register_registry_extension, wrap_with_id,
 };
 use atto_ui::{
     CallbackRegistry, ComponentPropertySchema, ComponentRegistry, ComponentSchema, ComponentValue,
@@ -36,6 +36,7 @@ impl ComponentPropertySchema for ChatInputPanel {
             PropertyMeta::new("mode", ValueType::Map),
             PropertyMeta::new("draft", ValueType::String),
             PropertyMeta::new("custom", ValueType::String),
+            PropertyMeta::new("history", ValueType::StringList),
             PropertyMeta::new("selection", ValueType::U64),
             PropertyMeta::new("enabled", ValueType::Bool),
             PropertyMeta::new("clear_on_submit", ValueType::Bool),
@@ -485,6 +486,10 @@ pub fn register_chat_input_panel(
             handle.custom_binding().set(custom);
         }
 
+        if let Some(history) = prop_vec_string(spec, "history")? {
+            handle.history_binding().set(history);
+        }
+
         if let Some(selection) = prop_usize(spec, "selection")? {
             handle.selection_binding().set(selection);
         }
@@ -546,6 +551,7 @@ mod tests {
             ComponentValue::String("Hello".to_string()),
         );
         mode.insert("placeholder".to_string(), ComponentValue::Null);
+        mode.insert("height".to_string(), ComponentValue::U64(5));
 
         let spec = ComponentSpec::new("ChatInputPanel")
             .with_prop("mode", ComponentValue::Map(mode.clone()))

@@ -6,7 +6,7 @@ use atto_ui::composable::{
     VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver, Property};
-use atto_ui::widgets::{Button, RadioGroup, TextBox};
+use atto_ui::widgets::{Button, RadioGroup, TextArea, TextBox};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use crossterm::event::Event;
 use ratatui::Frame;
@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 pub struct ChatTextInputConfig {
     pub title: String,
     pub placeholder: Option<String>,
+    pub height: u16,
 }
 
 impl ChatTextInputConfig {
@@ -24,11 +25,17 @@ impl ChatTextInputConfig {
         Self {
             title: title.into(),
             placeholder: None,
+            height: 5,
         }
     }
 
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    pub fn height(mut self, height: u16) -> Self {
+        self.height = height.max(3);
         self
     }
 }
@@ -155,6 +162,7 @@ pub(crate) fn chat_input_mode_to_component_value(mode: &ChatInputMode) -> Compon
                     .map(|ph| ComponentValue::String(ph.clone()))
                     .unwrap_or(ComponentValue::Null),
             );
+            map.insert("height".to_string(), ComponentValue::U64(cfg.height as u64));
         }
         ChatInputMode::Choice(cfg) => {
             map.insert(
@@ -254,6 +262,13 @@ fn parse_bool_value(value: &ComponentValue, field: &str) -> Result<bool, String>
     }
 }
 
+fn parse_u16_value(value: &ComponentValue, field: &str) -> Result<u16, String> {
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| format!("expected unsigned integer for '{field}', got {value:?}"))?;
+    u16::try_from(raw).map_err(|_| format!("'{field}' value {raw} exceeds u16 range"))
+}
+
 pub(crate) fn parse_chat_input_mode_value(value: &ComponentValue) -> Result<ChatInputMode, String> {
     match value {
         ComponentValue::Null => Ok(ChatInputMode::text(
@@ -290,6 +305,12 @@ pub(crate) fn parse_chat_input_mode_value(value: &ComponentValue) -> Result<Chat
                     Ok(ChatInputMode::Text(ChatTextInputConfig {
                         title,
                         placeholder,
+                        height: map
+                            .get("height")
+                            .map(|v| parse_u16_value(v, "height"))
+                            .transpose()?
+                            .unwrap_or(5)
+                            .max(3),
                     }))
                 }
                 "choice" => {
@@ -390,6 +411,7 @@ pub struct ChatInputHandle {
     mode: Property<ChatInputMode>,
     draft: Property<String>,
     custom: Property<String>,
+    history: Property<Vec<String>>,
     selection: Property<usize>,
     enabled: Property<bool>,
     clear_on_submit: Property<bool>,
@@ -404,6 +426,7 @@ impl ChatInputHandle {
             )),
             draft: Property::new(String::new()),
             custom: Property::new(String::new()),
+            history: Property::new(Vec::new()),
             selection: Property::new(0),
             enabled: Property::new(true),
             clear_on_submit: Property::new(true),
@@ -430,6 +453,10 @@ impl ChatInputHandle {
         self.custom.binding()
     }
 
+    pub fn history_binding(&self) -> Binding<Vec<String>> {
+        self.history.binding()
+    }
+
     pub fn selection_binding(&self) -> Binding<usize> {
         self.selection.binding()
     }
@@ -450,7 +477,7 @@ impl Default for ChatInputHandle {
 }
 
 enum ChatInputView {
-    Text(TextBox),
+    Text(Box<TextArea>),
     Choice(VStack),
     Confirm(VStack),
     Custom(SharedComponent),
@@ -460,6 +487,7 @@ pub struct ChatInputPanel {
     mode: Binding<ChatInputMode>,
     draft: Binding<String>,
     custom: Binding<String>,
+    history: Binding<Vec<String>>,
     selection: Binding<usize>,
     enabled: Binding<bool>,
     clear_on_submit: Binding<bool>,
@@ -474,6 +502,7 @@ impl ChatInputPanel {
         let mode = handle.mode.binding();
         let draft = handle.draft.binding();
         let custom = handle.custom.binding();
+        let history = handle.history.binding();
         let selection = handle.selection.binding();
         let enabled = handle.enabled.binding();
         let clear_on_submit = handle.clear_on_submit.binding();
@@ -481,10 +510,13 @@ impl ChatInputPanel {
             mode: mode.clone(),
             draft: draft.clone(),
             custom: custom.clone(),
+            history: history.clone(),
             selection: selection.clone(),
             enabled: enabled.clone(),
             clear_on_submit: clear_on_submit.clone(),
-            view: ChatInputView::Text(TextBox::new("", draft.clone())),
+            view: ChatInputView::Text(Box::new(
+                TextArea::new("", draft.clone()).history(history.clone()),
+            )),
             mode_observer: mode.dirty_observer(),
             on_submit: None,
             custom_view: None,
@@ -519,12 +551,15 @@ impl ChatInputPanel {
         };
         match mode {
             ChatInputMode::Text(cfg) => {
-                let mut input = TextBox::new(cfg.title.clone(), self.draft.clone())
-                    .enabled(self.enabled.clone());
+                let mut input = TextArea::new(cfg.title.clone(), self.draft.clone())
+                    .enabled(self.enabled.clone())
+                    .history(self.history.clone())
+                    .height(cfg.height)
+                    .enter_submits(true);
                 if let Some(ph) = &cfg.placeholder {
                     input = input.placeholder(ph.clone());
                 }
-                ChatInputView::Text(input)
+                ChatInputView::Text(Box::new(input))
             }
             ChatInputMode::Choice(cfg) => {
                 if !cfg.options.is_empty() {
@@ -619,10 +654,12 @@ impl ChatInputPanel {
                 if let Some(view) = &self.custom_view {
                     ChatInputView::Custom(SharedComponent::new(view.clone()))
                 } else {
-                    let fallback = TextBox::new("Message", self.draft.clone())
+                    let fallback = TextArea::new("Message", self.draft.clone())
                         .placeholder("Type a message")
-                        .enabled(self.enabled.clone());
-                    ChatInputView::Text(fallback)
+                        .enabled(self.enabled.clone())
+                        .history(self.history.clone())
+                        .enter_submits(true);
+                    ChatInputView::Text(Box::new(fallback))
                 }
             }
         }
@@ -697,7 +734,7 @@ impl ChatInputPanel {
         const SPACING: u16 = 1;
 
         match mode {
-            ChatInputMode::Text(_) => TEXTBOX_HEIGHT,
+            ChatInputMode::Text(cfg) => cfg.height.max(3),
             ChatInputMode::Choice(cfg) => {
                 let radio_height = cfg.options.len().saturating_add(1) as u16;
                 let mut parts: u16 = 3; // radio + divider + buttons
@@ -735,6 +772,7 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             "mode",
             "draft",
             "custom",
+            "history",
             "selection",
             "enabled",
             "clear_on_submit",
@@ -746,6 +784,7 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             "mode" => Some(chat_input_mode_to_component_value(&self.mode.get())),
             "draft" => Some(ComponentValue::String(self.draft.get())),
             "custom" => Some(ComponentValue::String(self.custom.get())),
+            "history" => Some(ComponentValue::StringList(self.history.get())),
             "selection" => Some(ComponentValue::U64(self.selection.get() as u64)),
             "enabled" => Some(ComponentValue::Bool(self.enabled.get())),
             "clear_on_submit" => Some(ComponentValue::Bool(self.clear_on_submit.get())),
@@ -770,6 +809,12 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             "custom" => {
                 let custom = <String as ComponentValueCodec>::from_component_value(value, name)?;
                 self.custom.set(custom);
+                Ok(())
+            }
+            "history" => {
+                let history =
+                    <Vec<String> as ComponentValueCodec>::from_component_value(value, name)?;
+                self.history.set(history);
                 Ok(())
             }
             "selection" => {

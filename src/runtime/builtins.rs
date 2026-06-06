@@ -2,7 +2,7 @@ use crate::ComponentPropertySchema;
 use crate::composable::{
     Border, Component, ComponentTag, Disclosure, DisclosureStatus, Divider, DividerOrientation,
     EdgeInsets, Grid, HStack, Label, LayoutParams, Spacer, Splitter, SplitterOrientation, TabView,
-    Text, TextBox, VStack, Visibility,
+    Text, TextArea, TextBox, VStack, Visibility,
 };
 use crate::reactive::Binding;
 use crate::widgets::{
@@ -29,6 +29,7 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
     register_styled_label(&mut registry, callbacks.clone());
     register_text(&mut registry);
     register_textbox(&mut registry, callbacks.clone());
+    register_textarea(&mut registry, callbacks.clone());
     register_slider(&mut registry, callbacks.clone());
     register_progress_bar(&mut registry);
     register_radio_group(&mut registry, callbacks.clone());
@@ -223,6 +224,47 @@ fn register_textbox(
             textbox = textbox.on_submit_callback(cb);
         }
         Ok(wrap_with_id(spec, Box::new(textbox)))
+    });
+}
+
+fn register_textarea(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<TextArea>("TextArea")
+        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("submit"))
+        .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
+        .allow_children(false);
+
+    registry.register(schema, move |spec, _registry| {
+        let title = prop_string(spec, "title")?.unwrap_or_default();
+        let text = prop_string(spec, "text")?.unwrap_or_default();
+        let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let clipboard = prop_string(spec, "clipboard")?.unwrap_or_default();
+        let kill_ring = prop_string(spec, "kill_ring")?.unwrap_or_default();
+        let history = prop_vec_string(spec, "history")?.unwrap_or_default();
+        let height = prop_u16(spec, "height")?.unwrap_or(5);
+        let enter_submits = prop_bool(spec, "enter_submits")?.unwrap_or(false);
+        let placeholder = prop_string(spec, "placeholder")?;
+
+        let mut textarea = TextArea::new(title, Binding::new(text))
+            .enabled(enabled)
+            .clipboard(clipboard)
+            .kill_ring(kill_ring)
+            .history(Binding::new(history))
+            .height(height)
+            .enter_submits(enter_submits);
+        if let Some(value) = placeholder {
+            textarea = textarea.placeholder(value);
+        }
+        if let Some(cb) = event_handle(spec, "change", callbacks.clone()) {
+            textarea = textarea.on_change_callback(cb);
+        }
+        if let Some(cb) = event_handle(spec, "submit", callbacks.clone()) {
+            textarea = textarea.on_submit_callback(cb);
+        }
+        Ok(wrap_with_id(spec, Box::new(textarea)))
     });
 }
 

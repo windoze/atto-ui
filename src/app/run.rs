@@ -4,7 +4,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -33,6 +36,7 @@ pub struct CrosstermAppConfig {
     pub tick_rate: Duration,
     pub enable_mouse_capture: bool,
     pub enable_bracketed_paste: bool,
+    pub enable_keyboard_enhancement: bool,
     pub cursor: CursorMode,
 }
 
@@ -42,6 +46,7 @@ impl Default for CrosstermAppConfig {
             tick_rate: Duration::from_millis(16),
             enable_mouse_capture: true,
             enable_bracketed_paste: false,
+            enable_keyboard_enhancement: true,
             cursor: CursorMode::Hide,
         }
     }
@@ -62,6 +67,13 @@ impl CrosstermAppConfig {
     pub fn bracketed_paste(self, enable_bracketed_paste: bool) -> Self {
         Self {
             enable_bracketed_paste,
+            ..self
+        }
+    }
+
+    pub fn keyboard_enhancement(self, enable_keyboard_enhancement: bool) -> Self {
+        Self {
+            enable_keyboard_enhancement,
             ..self
         }
     }
@@ -99,6 +111,7 @@ pub fn should_quit_default(event: &Event, outcome: EventOutcome) -> bool {
 
 struct TerminalSession {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    keyboard_enhancement_active: bool,
 }
 
 impl TerminalSession {
@@ -113,6 +126,15 @@ impl TerminalSession {
         if config.enable_bracketed_paste {
             execute!(stdout, event::EnableBracketedPaste)?;
         }
+        let keyboard_enhancement_active = if config.enable_keyboard_enhancement {
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )
+            .is_ok()
+        } else {
+            false
+        };
         match config.cursor {
             CursorMode::Show => execute!(stdout, cursor::Show)?,
             CursorMode::Hide => execute!(stdout, cursor::Hide)?,
@@ -122,7 +144,10 @@ impl TerminalSession {
         let mut terminal = Terminal::new(backend)?;
         terminal.clear()?;
 
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            keyboard_enhancement_active,
+        })
     }
 }
 
@@ -164,6 +189,9 @@ impl Drop for TerminalSession {
         let _ = disable_raw_mode();
 
         let backend = self.terminal.backend_mut();
+        if self.keyboard_enhancement_active {
+            let _ = execute!(backend, PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(backend, LeaveAlternateScreen);
         let _ = execute!(backend, event::DisableMouseCapture);
         let _ = execute!(backend, event::DisableBracketedPaste);

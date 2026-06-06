@@ -6,7 +6,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -34,6 +37,7 @@ fn main() -> Result<()> {
         stdout,
         EnterAlternateScreen,
         event::EnableMouseCapture,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
         cursor::Show
     )?;
 
@@ -141,7 +145,7 @@ fn main() -> Result<()> {
                 x: work.x.saturating_add(2),
                 y: work.y.saturating_add(2),
                 width: 60.min(work.width.saturating_sub(2)).max(30),
-                height: 16.min(work.height.saturating_sub(2)).max(10),
+                height: 18.min(work.height.saturating_sub(2)).max(12),
             },
             Box::new(panel),
         ),
@@ -310,6 +314,7 @@ fn main() -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        PopKeyboardEnhancementFlags,
         LeaveAlternateScreen,
         event::DisableMouseCapture
     )?;
