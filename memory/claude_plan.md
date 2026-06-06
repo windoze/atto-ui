@@ -25,4 +25,5 @@
 - 已添加 `trybuild` harness、3 个成功展开 fixture、2 个失败诊断 fixture，并用 `TRYBUILD=overwrite cargo test -p atto-ui-macros` 生成 `.stderr`。
 - 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-macros`；`cargo test --workspace --all-targets`。
 - 已更新 `TODO.md`：将 T2 标题标记为 `[DONE]`，并补充完成记录和验证结果。
-- 下一步：检查 diff，确认不纳入无关工作区改动，然后提交 T2 相关变更。
+- 已提交 T2 实现变更：`0ad804f [T2] Add macros trybuild tests`。
+- 当前任务完成；停止，不继续处理 R2。
