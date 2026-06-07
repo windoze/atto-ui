@@ -423,13 +423,22 @@
 - `snapshot_editor_app` 增加 Rust comment fixture；新增 view 单测覆盖 indent/outdent、duplicate/delete/move line、join/split line、toggle comment、多光标 occurrence、read-only gate 与默认 keymap；新增 PTY 覆盖 Ctrl+/ 行注释切换。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R6 — 审阅 T6
+### [DONE] R6 — 审阅 T6
 
 审阅 T6 改动：
 - 确认所有 mutating action 都走 read-only gate。
 - 确认所有文本变更都同步 binding、syntax、LSP didChange。
 - 确认默认键不覆盖已有 Copy/Paste/Find/Fold/LSP goto 等绑定。
 - 确认 comment config 对不支持注释的语言安全 no-op，而不是 panic。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T6 的 `EditorAction` 扩展、默认 keymap、`handle_action` 分发、full-document edit sync helper、`EditorConfig.comment`、app language comment config 与 `DocumentTabView` 注入路径。
+- 确认 mutating actions 统一经过 `action_mutates_document` + `read_only` gate；新增 Indent/Outdent/SplitLine/ToggleComment/JoinLines/MoveLinesUp/MoveLinesDown/DuplicateLines/DeleteLines 均在 read-only 下拒绝修改。
+- 确认新增文本修改 action 均经 `execute_full_document_edit_and_sync`，实际文本变化后同步 `config.text`、刷新 syntax，并向 LSP 发送 full didChange；Undo/Redo 与既有插入/删除路径保持同步语义。
+- 确认默认键保留既有 Copy/Paste/Find/Fold/LSP goto 绑定，新增 Ctrl+Left/Right、Ctrl+/、Alt+Up/Down、Shift+Alt+Down、Ctrl+Alt+Up/Down、Ctrl+D、Ctrl+Shift+L 未覆盖上述既有绑定。
+- 确认 `comment_config_for_language` 对 JSON/plaintext/未知语言返回 `None`，`ToggleComment` 在无 comment config 或空 config 时安全 no-op，不 panic。
+- 未发现需要修改代码的问题。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T7 — L1 LSP diagnostics 数据接收与状态模型
 
