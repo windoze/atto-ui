@@ -21,6 +21,7 @@ use super::{
 
 impl WindowManager {
     pub fn draw(&mut self, frame: &mut Frame<'_>, bounds: Rect, theme: &Theme) {
+        let effective_bounds = self.apply_dock_layout(bounds);
         let focused = self.focused();
         let modal = self.active_modal_id();
         if modal.is_some() {
@@ -36,9 +37,17 @@ impl WindowManager {
             }
 
             let enforced_min_size = placement::window_enforced_min_size(window);
-            let rect = match state {
-                WindowState::Maximized => bounds,
-                _ => placement::normalize_rect(window.rect.get(), bounds, enforced_min_size),
+            let rect = if window.dock.get().is_some() {
+                window.rect.get()
+            } else {
+                match state {
+                    WindowState::Maximized => effective_bounds,
+                    _ => placement::normalize_rect(
+                        window.rect.get(),
+                        effective_bounds,
+                        enforced_min_size,
+                    ),
+                }
             };
             window.rect.set(rect);
 

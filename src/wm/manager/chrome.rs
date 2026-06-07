@@ -268,6 +268,11 @@ pub(super) fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> 
 
 pub(super) fn effective_titlebar_buttons(w: &Window, deco: &WindowDecorations) -> WindowButtons {
     let mut buttons = deco.buttons.clone();
+    if w.dock.get().is_some() {
+        buttons.minimize = false;
+        buttons.maximize = false;
+        return buttons;
+    }
     if !w.resizable.get() {
         buttons.minimize = false;
         buttons.maximize = false;

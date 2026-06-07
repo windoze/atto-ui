@@ -4,6 +4,6 @@ mod window;
 
 pub use manager::{WindowManager, WindowManagerAction, WindowManagerInputMode};
 pub use window::{
-    Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
-    WindowMinSizeMode, WindowState,
+    DockAutoHide, DockSide, Window, WindowBorderStyle, WindowButtons, WindowDecorations,
+    WindowDock, WindowId, WindowKind, WindowMinSizeMode, WindowState,
 };

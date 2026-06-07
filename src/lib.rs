@@ -31,6 +31,6 @@ pub use runtime::{
 };
 pub use task::{CancellationToken, TaskHandle, TaskId, TaskMetadata, TaskRegistry};
 pub use wm::{
-    Window, WindowBorderStyle, WindowButtons, WindowDecorations, WindowId, WindowKind,
-    WindowManager, WindowMinSizeMode, WindowState,
+    DockAutoHide, DockSide, Window, WindowBorderStyle, WindowButtons, WindowDecorations,
+    WindowDock, WindowId, WindowKind, WindowManager, WindowMinSizeMode, WindowState,
 };

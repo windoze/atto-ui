@@ -161,7 +161,7 @@
 - 确认 T2 单测经由 `WindowManager::handle_event`/mouse event 路径，PTY 测试经真实 mouse 序列驱动 snapshot app，而不是直接调用组件方法。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T3 — C2 Docking 类型、work area reserve 与基础绘制
+### [DONE] T3 — C2 Docking 类型、work area reserve 与基础绘制
 
 **依赖**：无；可与 T1/T2 并行，但与 T5 Explorer 迁移有依赖。
 
@@ -213,6 +213,14 @@
 **验收**：
 - Docked window 可以绘制在 work area 边缘。
 - 其他窗口 maximize 不覆盖 docked window。
+
+**完成记录（2026-06-08）**：
+- 新增 `DockSide`、`DockAutoHide`、`WindowDock` public API，并从 `src/wm/mod.rs` 与 `src/lib.rs` re-export；`Window` 增加 `dock: Binding<Option<WindowDock>>`，`Window::with_dock(...)` 与 `WindowDock::docked(side, size)` 可声明 docked window。
+- 新增 `src/wm/manager/docking.rs`，实现 `dock_rect`、`reserve_for_docked_windows`、`WindowManager::effective_work_area(bounds)` 与 draw/event 前 dock layout 同步；Left/Right/Top/Bottom 按当前窗口顺序扣 reserve，`size` clamp 到 dock min/max/available，auto-hide invisible 只 reserve 1 cell handle。
+- `WindowManager::add_window`、`draw`、view dispatch、component drag/drop 路径、window move/resize/maximize 路径均改用 dock-aware effective work area；dock window rect 由 dock layout 覆盖，默认 `movable=false`、`resizable=true`、`state=Normal`。
+- 现有 titlebar move、普通角落 resize、minimize/maximize chrome 不再把 docked window 当普通 floating window 处理，为后续 T4 内侧边 dock resize 保留语义。
+- 在 `src/wm/manager/tests.rs` 增加覆盖：left dock reserve 后 maximized normal window 不覆盖 dock；right + bottom dock reserve 顺序正确；dock rect 不受 builder 原始 rect 影响且可绘制到边缘；普通 move/resize clamp 到 dock reserve；auto-hide invisible dock 只 reserve 1 cell。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R3 — 审阅 T3
 

@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use crate::composable::Component;
 use crate::{TreeError, TreeOp};
 
-use super::{Window, WindowId, WindowKind, WindowManager, placement};
+use super::{Window, WindowId, WindowKind, WindowManager, docking, placement};
 
 impl WindowManager {
     pub fn new() -> Self {
@@ -45,8 +45,19 @@ impl WindowManager {
         window.id = id;
 
         let enforced_min_size = placement::window_enforced_min_size(&window);
-
-        let rect = placement::normalize_rect(window.rect.get(), bounds, enforced_min_size);
+        let rect = if let Some(dock) = window.dock.get() {
+            window.movable.set(false);
+            window.resizable.set(true);
+            window.state.set(super::WindowState::Normal);
+            let reserved = self.effective_work_area(bounds);
+            docking::dock_rect(bounds, &dock, reserved)
+        } else {
+            placement::normalize_rect(
+                window.rect.get(),
+                self.effective_work_area(bounds),
+                enforced_min_size,
+            )
+        };
         window.rect.set(rect);
 
         if window.kind == WindowKind::Modal {

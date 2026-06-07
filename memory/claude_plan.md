@@ -1,28 +1,29 @@
-# 当前执行计划
+# 执行计划
 
 ## 范围
 
 - 以 `TODO.md` 为任务顺序和完成状态的权威来源。
-- 只完成首个标题未标记 `[DONE]` 的任务，完成后停止。
-- 本文件记录可公开的执行计划、关键决策和进度，不包含隐藏推理链。
+- 只选择首个标题未标记 `[DONE]` 的任务；完成该任务后停止。
+- 若发现阻塞当前任务的规格缺口或未排期失败，先修复，或添加最小前置任务后停止。
+- 完成时更新 `TODO.md` / 详细 TODO 文件、记录验证结果，并提交当前任务相关改动。
 
-## 执行步骤
+## 步骤
 
-1. 读取 `TODO.md`，识别第一个未完成任务及其验证要求。
-2. 只检查最新提交是否有与当前任务直接相关的未完成事项。
-3. 阅读当前任务涉及的代码、测试和完成记录要求。
-4. 按任务要求做最小正确修改；若发现阻塞性规格缺口，修复或加入最小前置任务后停止。
-5. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、完整测试。
-6. 将完成任务在 `TODO.md` / 详细 TODO 文件中显式标记为 `[DONE]`，并更新完成记录。
-7. 只提交当前任务相关文件，然后停止。
+1. 读取 `TODO.md`，定位首个未完成任务及其验证要求。
+2. 只检查最近提交中与该任务直接相关的未完成事项。
+3. 阅读任务涉及的 `Window`、`WindowManager`、Desktop 路由、re-export 与测试代码。
+4. 实现 T3 的 dock public API、dock layout、effective work area、绘制/事件/placement 接入。
+5. 增加 manager 单测覆盖 dock reserve、dock rect 覆盖、普通窗口 maximize/move/resize 与 auto-hide invisible reserve。
+6. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+7. 将 T3 在 `TODO.md` 和 `TODO-2.md` 显式标记 `[DONE]` 并写入完成记录。
+8. 查看 git 状态和 diff，只提交当前任务相关文件。
 
-## 进度记录
+## 当前状态
 
-- 已在任务检查前记录初始计划。
-- 已识别首个未完成任务：`R2 — 审阅 T2`，位于 `TODO-2.md`。
-- 审阅重点：`global_drag` 与 WM chrome `drag` 优先级、`Up`/`Esc`/window close 清理路径、overlay 绘制健壮性、测试是否经由 `WindowManager` 事件路径。
-- 审阅发现一个当前任务范围内缺陷：`global_drag` active 时，Desktop menu/status bar 可能先消费鼠标 `Up`，导致 `WindowManager` 收不到释放事件并残留拖拽状态。
-- 已调整计划：修复 Desktop 在全局拖拽期间先路由 mouse/`Esc` 到 `WindowManager`，并补充 chrome release 与 source/target close 清理测试。
-- 已实现修复并新增测试：Desktop status bar release 清理全局拖拽；WM 关闭 source/target window 清理 `global_drag`。
+- 首个未完成任务已确定为 `T3 — C2 Docking 类型、work area reserve 与基础绘制`。
+- 最新提交 `[R2] Review global drag cleanup` 未显示与 T3 直接冲突的未完成问题。
+- 已实现 T3：新增 `DockSide`、`DockAutoHide`、`WindowDock`、`Window.dock`、`Window::with_dock`、`WindowDock::docked`，新增 `src/wm/manager/docking.rs`，并将 add/draw/dispatch/drag/drop/move/resize/maximize 路径接入 dock-aware effective work area。
+- 已补充单测：left/right/bottom dock reserve、dock rect 忽略原始 builder rect 且可绘制到边缘、普通窗口 move/resize clamp、auto-hide invisible 只 reserve 1 cell。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- 已在 `TODO.md` 和 `TODO-2.md` 将 `R2` 标记完成并写入完成记录。
+- `TODO.md` 与 `TODO-2.md` 已将 T3 标记为 `[DONE]` 并写入完成记录。
+- 提交前检查发现未跟踪文件 `notification.sh`、`run_agent.sh`，它们不是本任务产物，将保持未提交。

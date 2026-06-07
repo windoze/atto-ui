@@ -26,10 +26,11 @@ impl WindowManager {
     }
 
     pub fn move_window_to(&mut self, id: WindowId, x: u16, y: u16, bounds: Rect) -> bool {
+        let bounds = self.effective_work_area(bounds);
         let Some(w) = self.window_mut(id) else {
             return false;
         };
-        if !w.movable.get() || w.state.get() == WindowState::Maximized {
+        if w.dock.get().is_some() || !w.movable.get() || w.state.get() == WindowState::Maximized {
             return false;
         }
         let mut rect = w.rect.get();
@@ -47,10 +48,11 @@ impl WindowManager {
         height: u16,
         bounds: Rect,
     ) -> bool {
+        let bounds = self.effective_work_area(bounds);
         let Some(w) = self.window_mut(id) else {
             return false;
         };
-        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
+        if w.dock.get().is_some() || !w.resizable.get() || w.state.get() == WindowState::Maximized {
             return false;
         }
         let enforced_min_size = window_enforced_min_size(w);
@@ -62,8 +64,9 @@ impl WindowManager {
     }
 
     fn move_window_by(&mut self, id: WindowId, dx: i16, dy: i16, bounds: Rect) {
+        let bounds = self.effective_work_area(bounds);
         let Some(w) = self.window_mut(id) else { return };
-        if !w.movable.get() || w.state.get() == WindowState::Maximized {
+        if w.dock.get().is_some() || !w.movable.get() || w.state.get() == WindowState::Maximized {
             return;
         }
         let mut rect = w.rect.get();
@@ -74,8 +77,9 @@ impl WindowManager {
     }
 
     fn resize_window_by(&mut self, id: WindowId, dw: i16, dh: i16, bounds: Rect) {
+        let bounds = self.effective_work_area(bounds);
         let Some(w) = self.window_mut(id) else { return };
-        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
+        if w.dock.get().is_some() || !w.resizable.get() || w.state.get() == WindowState::Maximized {
             return;
         }
         let enforced_min_size = window_enforced_min_size(w);
@@ -87,7 +91,11 @@ impl WindowManager {
     }
 
     pub(super) fn toggle_maximize(&mut self, id: WindowId, bounds: Rect) {
+        let bounds = self.effective_work_area(bounds);
         let Some(w) = self.window_mut(id) else { return };
+        if w.dock.get().is_some() {
+            return;
+        }
         match w.state.get() {
             WindowState::Maximized => {
                 w.state.set(WindowState::Normal);

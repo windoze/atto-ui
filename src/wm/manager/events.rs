@@ -27,6 +27,7 @@ impl WindowManager {
         mode: WindowManagerInputMode,
         theme: &Theme,
     ) -> WindowManagerAction {
+        self.apply_dock_layout(bounds);
         match event {
             Event::Mouse(m) => self.handle_mouse(m, bounds, theme),
             Event::Key(k) => self.handle_key(*k, bounds, mode, theme),
@@ -51,6 +52,7 @@ impl WindowManager {
         bounds: Rect,
         theme: &Theme,
     ) -> Option<(WindowId, EventResult)> {
+        let effective_bounds = self.apply_dock_layout(bounds);
         let idx = self.window_index_of(id)?;
         let is_focused = self.focused() == Some(id);
         let drag = drag_context_for_window(self.global_drag.as_ref(), id);
@@ -63,9 +65,15 @@ impl WindowManager {
 
             let enforced_min_size = placement::window_enforced_min_size(w);
             // Ensure rect stays clamped before passing input.
-            let rect = match state {
-                WindowState::Maximized => bounds,
-                _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+            let rect = if w.dock.get().is_some() {
+                w.rect.get()
+            } else {
+                match state {
+                    WindowState::Maximized => effective_bounds,
+                    _ => {
+                        placement::normalize_rect(w.rect.get(), effective_bounds, enforced_min_size)
+                    }
+                }
             };
             w.rect.set(rect);
             if let Event::Mouse(m) = event {
@@ -189,7 +197,10 @@ impl WindowManager {
                                 return action;
                             }
 
-                            if w.movable.get() && w.state.get() != WindowState::Maximized {
+                            if w.dock.get().is_none()
+                                && w.movable.get()
+                                && w.state.get() != WindowState::Maximized
+                            {
                                 let rect = w.rect.get();
                                 self.drag = Some(DragState {
                                     window_id,
@@ -202,13 +213,15 @@ impl WindowManager {
                         }
                     }
                     HitRegion::ResizeHandle(corner) => {
+                        let effective_bounds = self.effective_work_area(bounds);
                         if let Some(w) = self.window_mut(window_id)
+                            && w.dock.get().is_none()
                             && w.resizable.get()
                             && w.state.get() != WindowState::Maximized
                         {
                             let start_rect = placement::normalize_rect(
                                 w.rect.get(),
-                                bounds,
+                                effective_bounds,
                                 placement::window_enforced_min_size(w),
                             );
                             w.rect.set(start_rect);
@@ -361,13 +374,17 @@ impl WindowManager {
                 let Some(drag) = self.drag else {
                     return WindowManagerAction::default();
                 };
+                let effective_bounds = self.effective_work_area(bounds);
                 let Some(w) = self.window_mut(drag.window_id) else {
                     self.drag = None;
                     return WindowManagerAction::default();
                 };
                 match drag.kind {
                     DragKind::Move { offset_x, offset_y } => {
-                        if !w.movable.get() || w.state.get() == WindowState::Maximized {
+                        if w.dock.get().is_some()
+                            || !w.movable.get()
+                            || w.state.get() == WindowState::Maximized
+                        {
                             return WindowManagerAction::default();
                         }
                         let new_x = m.column.saturating_sub(offset_x);
@@ -377,12 +394,15 @@ impl WindowManager {
                         rect.y = new_y;
                         w.rect.set(placement::normalize_rect(
                             rect,
-                            bounds,
+                            effective_bounds,
                             placement::window_enforced_min_size(w),
                         ));
                     }
                     DragKind::Resize { start_rect, corner } => {
-                        if !w.resizable.get() || w.state.get() == WindowState::Maximized {
+                        if w.dock.get().is_some()
+                            || !w.resizable.get()
+                            || w.state.get() == WindowState::Maximized
+                        {
                             return WindowManagerAction::default();
                         }
                         w.rect.set(placement::resize_rect_from_corner(
@@ -390,7 +410,7 @@ impl WindowManager {
                             corner,
                             m.column,
                             m.row,
-                            bounds,
+                            effective_bounds,
                             placement::window_enforced_min_size(w),
                         ));
                     }
@@ -508,6 +528,7 @@ impl WindowManager {
         bounds: Rect,
         theme: &Theme,
     ) -> Option<(Option<ComponentId>, DragSource)> {
+        let effective_bounds = self.effective_work_area(bounds);
         let idx = self.window_index_of(window_id)?;
         let is_focused = self.focused() == Some(window_id);
         let w = &mut self.windows[idx];
@@ -516,9 +537,13 @@ impl WindowManager {
         }
 
         let enforced_min_size = placement::window_enforced_min_size(w);
-        let rect = match w.state.get() {
-            WindowState::Maximized => bounds,
-            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        let rect = if w.dock.get().is_some() {
+            w.rect.get()
+        } else {
+            match w.state.get() {
+                WindowState::Maximized => effective_bounds,
+                _ => placement::normalize_rect(w.rect.get(), effective_bounds, enforced_min_size),
+            }
         };
         w.rect.set(rect);
 
@@ -631,6 +656,7 @@ impl WindowManager {
         bounds: Rect,
         theme: &Theme,
     ) -> Option<DropFeedback> {
+        let effective_bounds = self.effective_work_area(bounds);
         let idx = self.window_index_of(window_id)?;
         let is_focused = self.focused() == Some(window_id);
         let w = &mut self.windows[idx];
@@ -639,9 +665,13 @@ impl WindowManager {
         }
 
         let enforced_min_size = placement::window_enforced_min_size(w);
-        let rect = match w.state.get() {
-            WindowState::Maximized => bounds,
-            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        let rect = if w.dock.get().is_some() {
+            w.rect.get()
+        } else {
+            match w.state.get() {
+                WindowState::Maximized => effective_bounds,
+                _ => placement::normalize_rect(w.rect.get(), effective_bounds, enforced_min_size),
+            }
         };
         w.rect.set(rect);
 
@@ -675,6 +705,7 @@ impl WindowManager {
         bounds: Rect,
         theme: &Theme,
     ) -> Option<EventResult> {
+        let effective_bounds = self.effective_work_area(bounds);
         let idx = self.window_index_of(window_id)?;
         let is_focused = self.focused() == Some(window_id);
         let w = &mut self.windows[idx];
@@ -683,9 +714,13 @@ impl WindowManager {
         }
 
         let enforced_min_size = placement::window_enforced_min_size(w);
-        let rect = match w.state.get() {
-            WindowState::Maximized => bounds,
-            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        let rect = if w.dock.get().is_some() {
+            w.rect.get()
+        } else {
+            match w.state.get() {
+                WindowState::Maximized => effective_bounds,
+                _ => placement::normalize_rect(w.rect.get(), effective_bounds, enforced_min_size),
+            }
         };
         w.rect.set(rect);
 
@@ -715,6 +750,7 @@ impl WindowManager {
     }
 
     fn cancel_source_drag(&mut self, state: &GlobalDragState, bounds: Rect, theme: &Theme) {
+        let effective_bounds = self.effective_work_area(bounds);
         let Some(idx) = self.window_index_of(state.source_window) else {
             return;
         };
@@ -725,9 +761,13 @@ impl WindowManager {
         }
 
         let enforced_min_size = placement::window_enforced_min_size(w);
-        let rect = match w.state.get() {
-            WindowState::Maximized => bounds,
-            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        let rect = if w.dock.get().is_some() {
+            w.rect.get()
+        } else {
+            match w.state.get() {
+                WindowState::Maximized => effective_bounds,
+                _ => placement::normalize_rect(w.rect.get(), effective_bounds, enforced_min_size),
+            }
         };
         w.rect.set(rect);
 
@@ -839,6 +879,7 @@ impl WindowManager {
             let decorations = w.decorations.get();
 
             if decorations.border.has_border()
+                && w.dock.get().is_none()
                 && w.resizable.get()
                 && state != WindowState::Maximized
                 && rect.width >= 2

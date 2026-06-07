@@ -46,6 +46,44 @@ pub enum WindowState {
     Maximized,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DockSide {
+    Left,
+    Right,
+    Bottom,
+    Top,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DockAutoHide {
+    Disabled,
+    Enabled { visible: bool },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowDock {
+    pub side: DockSide,
+    /// Left/Right use width; Top/Bottom use height.
+    pub size: u16,
+    pub min_size: u16,
+    pub max_size: Option<u16>,
+    pub auto_hide: DockAutoHide,
+    pub handle_label: Option<String>,
+}
+
+impl WindowDock {
+    pub fn docked(side: DockSide, size: u16) -> Self {
+        Self {
+            side,
+            size,
+            min_size: 1,
+            max_size: None,
+            auto_hide: DockAutoHide::Disabled,
+            handle_label: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WindowBorderStyle {
     #[default]
@@ -125,6 +163,7 @@ pub struct Window {
     pub title: Binding<String>,
     pub rect: Binding<Rect>,
     pub state: Binding<WindowState>,
+    pub dock: Binding<Option<WindowDock>>,
     pub decorations: Binding<WindowDecorations>,
     pub view: Box<dyn Component>,
     pub min_size: Binding<(u16, u16)>,
@@ -157,6 +196,7 @@ impl Window {
             title: title.into(),
             rect: rect.into(),
             state: WindowState::Normal.into(),
+            dock: None.into(),
             decorations: WindowDecorations::default().into(),
             view,
             min_size: (12, 5).into(),
@@ -191,6 +231,16 @@ impl Window {
 
     pub fn with_decorations(mut self, decorations: impl Into<Binding<WindowDecorations>>) -> Self {
         self.decorations = decorations.into();
+        self
+    }
+
+    pub fn with_dock(mut self, dock: impl Into<Binding<Option<WindowDock>>>) -> Self {
+        self.dock = dock.into();
+        if self.dock.get().is_some() {
+            self.movable.set(false);
+            self.resizable.set(true);
+            self.state.set(WindowState::Normal);
+        }
         self
     }
 

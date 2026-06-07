@@ -6,7 +6,10 @@ use crate::composable::{
 };
 use crate::drawing::draw_shadow;
 use crate::theme::Theme;
-use crate::wm::{Window, WindowBorderStyle, WindowKind, WindowMinSizeMode, WindowState};
+use crate::wm::{
+    DockAutoHide, DockSide, Window, WindowBorderStyle, WindowDock, WindowKind, WindowMinSizeMode,
+    WindowState,
+};
 use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeOp};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
@@ -554,6 +557,205 @@ fn normal_window_maximize_and_restore_preserves_rect() {
     let window = wm.window(id).expect("window");
     assert_eq!(window.state.get(), WindowState::Normal);
     assert_eq!(window.rect.get(), original);
+}
+
+#[test]
+fn left_dock_reserves_maximized_normal_window() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(30, 8, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(WindowDock::docked(DockSide::Left, 18))),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(25, 3, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.focus(normal_id);
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(
+        wm.window(dock_id).expect("dock").rect.get(),
+        Rect::new(0, 0, 18, 24)
+    );
+    assert_eq!(
+        wm.window(normal_id).expect("normal").rect.get(),
+        Rect::new(18, 0, 62, 24)
+    );
+}
+
+#[test]
+fn right_and_bottom_docks_reserve_work_area_in_order() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let right_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Right",
+            Rect::new(1, 1, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(WindowDock::docked(DockSide::Right, 15))),
+        bounds,
+    );
+    let bottom_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Bottom",
+            Rect::new(1, 1, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(WindowDock::docked(DockSide::Bottom, 6))),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(1, 1, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.focus(normal_id);
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(wm.effective_work_area(bounds), Rect::new(0, 0, 65, 18));
+    assert_eq!(
+        wm.window(right_id).expect("right").rect.get(),
+        Rect::new(65, 0, 15, 24)
+    );
+    assert_eq!(
+        wm.window(bottom_id).expect("bottom").rect.get(),
+        Rect::new(0, 18, 65, 6)
+    );
+    assert_eq!(
+        wm.window(normal_id).expect("normal").rect.get(),
+        Rect::new(0, 0, 65, 18)
+    );
+}
+
+#[test]
+fn dock_window_rect_ignores_original_builder_rect_and_draws_at_edge() {
+    let theme = Theme::dark();
+    let bounds = Rect::new(0, 0, 80, 24);
+    let original = Rect::new(20, 7, 5, 5);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(WindowKind::Normal, "Top", original, Box::new(DummyView))
+            .with_dock(Some(WindowDock::docked(DockSide::Top, 4))),
+        bounds,
+    );
+
+    assert_ne!(wm.window(id).expect("dock").rect.get(), original);
+    assert_eq!(
+        wm.window(id).expect("dock").rect.get(),
+        Rect::new(0, 0, 80, 4)
+    );
+
+    let backend = TestBackend::new(bounds.width, bounds.height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+    assert_ne!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((0, 0))
+            .expect("dock edge")
+            .symbol(),
+        " "
+    );
+}
+
+#[test]
+fn normal_move_and_resize_are_clamped_to_dock_reserve() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(WindowDock::docked(DockSide::Left, 20))),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(30, 4, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    assert!(wm.move_window_to(normal_id, 0, 0, bounds));
+    assert_eq!(wm.window(normal_id).expect("normal").rect.get().x, 20);
+
+    assert!(wm.resize_window_to(normal_id, 100, 30, bounds));
+    assert_eq!(
+        wm.window(normal_id).expect("normal").rect.get(),
+        Rect::new(20, 0, 60, 24)
+    );
+
+    let dock_rect = wm.window(dock_id).expect("dock").rect.get();
+    assert!(!wm.move_window_to(dock_id, 10, 0, bounds));
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get(), dock_rect);
+}
+
+#[test]
+fn auto_hidden_dock_reserves_one_cell_handle() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut dock = WindowDock::docked(DockSide::Left, 20);
+    dock.auto_hide = DockAutoHide::Enabled { visible: false };
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(3, 3, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.focus(normal_id);
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(
+        wm.window(dock_id).expect("dock").rect.get(),
+        Rect::new(0, 0, 1, 24)
+    );
+    assert_eq!(
+        wm.window(normal_id).expect("normal").rect.get(),
+        Rect::new(1, 0, 79, 24)
+    );
 }
 
 #[test]
