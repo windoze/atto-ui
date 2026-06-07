@@ -24,4 +24,5 @@
 - 针对性 e2e 已通过：`npm run build --prefix packages/react && node packages/react/__test__/e2e.cjs`。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。
 - 当前仓库快照中不存在 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
-- 已更新 `TODO.md` 和 `TODO-1.md`，将 `NR17` 标记为 `[DONE]` 并写入完成记录。下一步只提交本任务相关文件。
+- 已更新 `TODO.md` 和 `TODO-1.md`，将 `NR17` 标记为 `[DONE]` 并写入完成记录。
+- 已提交本任务记录：`68fe09a [NR17] Review React e2e coverage`。当前任务完成，按要求停止。
