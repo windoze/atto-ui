@@ -281,7 +281,7 @@ impl EditorView {
         self.insert_text(&text);
     }
 
-    pub(super) fn indent_or_tab(&mut self) {
+    pub(super) fn configure_tab_key_behavior(&mut self) {
         let tab_width = self.config.indent.tab_width.get().max(1);
         let insert_spaces = self.config.indent.insert_spaces.get();
 
@@ -293,6 +293,48 @@ impl EditorView {
                 TabKeyBehavior::Tab
             },
         }));
+    }
+
+    pub(super) fn execute_full_document_edit_and_sync(
+        &mut self,
+        command: EditCommand,
+        insert_like: bool,
+    ) -> bool {
+        let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
+            let old_char_count = self.state_manager.editor().char_count();
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
+        });
+
+        let before_text = self.state_manager.editor().get_text();
+        if !self.execute(Command::Edit(command)) {
+            return false;
+        }
+        let after_text = self.state_manager.editor().get_text();
+        let changed = after_text != before_text;
+        if changed {
+            self.config.text.set(after_text.clone());
+            self.last_insert_time = insert_like.then(Instant::now);
+            self.maybe_apply_syntax_highlighting();
+        } else if !insert_like {
+            self.last_insert_time = None;
+        }
+
+        if insert_like {
+            self.hide_hover_popup_only();
+        } else {
+            self.hide_popups();
+        }
+
+        if changed && let Some(mut change) = full_lsp_change {
+            change.text = after_text;
+            self.lsp_did_change(change);
+        }
+
+        true
+    }
+
+    pub(super) fn indent_or_tab(&mut self) {
+        self.configure_tab_key_behavior();
 
         // LSP sync: use full-document change since InsertTab can expand to a variable number of
         // spaces (and also applies to multi-cursor / rectangular selections).

@@ -53,6 +53,28 @@ fn pty_editor_tab_inserts_to_next_tab_stop() {
 }
 
 #[test]
+fn pty_editor_ctrl_slash_toggles_rust_line_comment() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
+    host.wait_for_text("let answer = 42;", Duration::from_secs(2))
+        .expect("initial render");
+
+    let screen = host.screen_contents().expect("screen");
+    let (row, col) = find_text_pos(&screen, "let answer = 42;").expect("find rust line");
+    host.click(col as u16, row as u16).expect("click rust line");
+
+    // Ctrl+/ is encoded as C0 US (0x1f) by common terminals.
+    host.send(&[0x1f]).expect("Ctrl+/ toggle comment");
+
+    host.wait_for_text("// let answer = 42;", Duration::from_secs(2))
+        .expect("line comment toggled on");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_editor_double_click_selects_word_and_replaces_on_type() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");

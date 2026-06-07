@@ -3,6 +3,19 @@
 use super::*;
 
 impl EditorView {
+    fn execute_cursor_action(&mut self, command: CursorCommand, clear_selection: bool) -> bool {
+        self.hide_popups();
+        if !self.execute(Command::Cursor(command)) {
+            return false;
+        }
+        if clear_selection {
+            let _ = self.execute(Command::Cursor(CursorCommand::ClearSelection));
+            self.rect_selection_anchor = None;
+        }
+        self.adjust_scroll();
+        true
+    }
+
     pub(super) fn handle_action(&mut self, action: EditorAction) -> bool {
         if self.config.read_only.get() && action_mutates_document(action) {
             self.hide_popups();
@@ -124,6 +137,46 @@ impl EditorView {
                 self.indent_or_tab();
                 true
             }
+            EditorAction::Indent => {
+                self.configure_tab_key_behavior();
+                self.execute_full_document_edit_and_sync(EditCommand::Indent, false)
+            }
+            EditorAction::Outdent => {
+                self.configure_tab_key_behavior();
+                self.execute_full_document_edit_and_sync(EditCommand::Outdent, false)
+            }
+            EditorAction::SplitLine => {
+                self.execute_full_document_edit_and_sync(EditCommand::SplitLine, false)
+            }
+            EditorAction::ToggleComment => {
+                let Some(config) = self.config.comment.get() else {
+                    self.hide_popups();
+                    return true;
+                };
+                if !config.has_line() && !config.has_block() {
+                    self.hide_popups();
+                    return true;
+                }
+                self.execute_full_document_edit_and_sync(
+                    EditCommand::ToggleComment { config },
+                    false,
+                )
+            }
+            EditorAction::JoinLines => {
+                self.execute_full_document_edit_and_sync(EditCommand::JoinLines, false)
+            }
+            EditorAction::MoveLinesUp => {
+                self.execute_full_document_edit_and_sync(EditCommand::MoveLinesUp, false)
+            }
+            EditorAction::MoveLinesDown => {
+                self.execute_full_document_edit_and_sync(EditCommand::MoveLinesDown, false)
+            }
+            EditorAction::DuplicateLines => {
+                self.execute_full_document_edit_and_sync(EditCommand::DuplicateLines, false)
+            }
+            EditorAction::DeleteLines => {
+                self.execute_full_document_edit_and_sync(EditCommand::DeleteLines, false)
+            }
 
             EditorAction::MoveLeft => {
                 self.move_cursor(0, -1, false);
@@ -132,6 +185,15 @@ impl EditorView {
             EditorAction::MoveRight => {
                 self.move_cursor(0, 1, false);
                 true
+            }
+            EditorAction::MoveWordLeft => {
+                self.execute_cursor_action(CursorCommand::MoveWordLeft, true)
+            }
+            EditorAction::MoveWordRight => {
+                self.execute_cursor_action(CursorCommand::MoveWordRight, true)
+            }
+            EditorAction::MoveToMatchingBracket => {
+                self.execute_cursor_action(CursorCommand::MoveToMatchingBracket, true)
             }
             EditorAction::MoveUp => {
                 self.move_cursor(-1, 0, false);
@@ -198,6 +260,27 @@ impl EditorView {
             EditorAction::ToggleRectSelection => {
                 self.toggle_rect_selection();
                 true
+            }
+            EditorAction::AddCursorAbove => {
+                self.execute_cursor_action(CursorCommand::AddCursorAbove, false)
+            }
+            EditorAction::AddCursorBelow => {
+                self.execute_cursor_action(CursorCommand::AddCursorBelow, false)
+            }
+            EditorAction::AddNextOccurrence => self.execute_cursor_action(
+                CursorCommand::AddNextOccurrence {
+                    options: SearchOptions::default(),
+                },
+                false,
+            ),
+            EditorAction::AddAllOccurrences => self.execute_cursor_action(
+                CursorCommand::AddAllOccurrences {
+                    options: SearchOptions::default(),
+                },
+                false,
+            ),
+            EditorAction::ExpandSelection => {
+                self.execute_cursor_action(CursorCommand::ExpandSelection, false)
             }
 
             EditorAction::ToggleFoldAtCursor => {
@@ -302,5 +385,14 @@ fn action_mutates_document(action: EditorAction) -> bool {
             | EditorAction::DeleteForward
             | EditorAction::InsertNewline
             | EditorAction::InsertTab
+            | EditorAction::Indent
+            | EditorAction::Outdent
+            | EditorAction::SplitLine
+            | EditorAction::ToggleComment
+            | EditorAction::JoinLines
+            | EditorAction::MoveLinesUp
+            | EditorAction::MoveLinesDown
+            | EditorAction::DuplicateLines
+            | EditorAction::DeleteLines
     )
 }

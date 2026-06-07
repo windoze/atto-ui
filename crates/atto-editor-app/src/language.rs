@@ -9,7 +9,7 @@ use atto_ui_editor::{
     TS_STYLE_CONSTANT, TS_STYLE_FUNCTION, TS_STYLE_KEYWORD, TS_STYLE_NUMBER, TS_STYLE_STRING,
     TS_STYLE_TYPE, TS_STYLE_VARIABLE,
 };
-use editor_core::StyleId;
+use editor_core::{CommentConfig, StyleId};
 
 pub fn guess_language_id(path: &Path) -> String {
     let ext = path
@@ -57,6 +57,19 @@ pub fn lsp_mode_for_file(path: &Path, language_id: &str) -> EditorLspMode {
 
     let cfg = EditorLspConfig::for_file_path(path, language_id.to_string(), cmd);
     EditorLspMode::Enabled(cfg)
+}
+
+pub fn comment_config_for_language(language_id: &str) -> Option<CommentConfig> {
+    match language_id {
+        "rust" => Some(CommentConfig::line_and_block("//", "/*", "*/")),
+        "javascript" | "javascriptreact" | "typescript" | "typescriptreact" => {
+            Some(CommentConfig::line_and_block("//", "/*", "*/"))
+        }
+        "toml" | "yaml" | "python" => Some(CommentConfig::line("#")),
+        "markdown" => Some(CommentConfig::block("<!--", "-->")),
+        "json" | "plaintext" => None,
+        _ => None,
+    }
 }
 
 fn lsp_command_for_language(language_id: &str) -> Option<Vec<String>> {
@@ -263,4 +276,31 @@ fn sublime_fallback_config(_language_id: &str) -> Option<EditorSyntaxConfig> {
         syntax_file: syntax_file.into(),
         include_paths,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comment_config_matches_supported_language_ids() {
+        assert_eq!(
+            comment_config_for_language("rust").and_then(|cfg| cfg.line),
+            Some("//".to_string())
+        );
+        assert_eq!(
+            comment_config_for_language("typescriptreact").and_then(|cfg| cfg.line),
+            Some("//".to_string())
+        );
+        assert_eq!(
+            comment_config_for_language("python").and_then(|cfg| cfg.line),
+            Some("#".to_string())
+        );
+        assert_eq!(comment_config_for_language("json"), None);
+        assert_eq!(comment_config_for_language("plaintext"), None);
+
+        let markdown = comment_config_for_language("markdown").expect("markdown comments");
+        assert_eq!(markdown.block_start.as_deref(), Some("<!--"));
+        assert_eq!(markdown.block_end.as_deref(), Some("-->"));
+    }
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use atto_ui::composable::ScrollConfig;
 use atto_ui::reactive::Binding;
-use editor_core::{StyleId, StyleLayerId};
+use editor_core::{CommentConfig, StyleId, StyleLayerId};
 use tree_sitter::Language;
 
 use super::keymap::EditorKeymap;
@@ -217,6 +217,9 @@ pub struct EditorConfig {
     /// Language id used for per-language theming and LSP document open (if enabled).
     pub language_id: Binding<String>,
 
+    /// Optional comment tokens used by ToggleComment.
+    pub comment: Binding<Option<CommentConfig>>,
+
     /// Optional syntax highlighting provider (when LSP is disabled or as fallback).
     pub syntax: Binding<EditorSyntaxConfig>,
 
@@ -243,6 +246,7 @@ impl EditorConfig {
             text: text.into(),
             clipboard: String::new().into(),
             language_id: "plaintext".into(),
+            comment: None.into(),
             syntax: EditorSyntaxConfig::None.into(),
             indent: EditorIndentConfig::default(),
             show_line_numbers: true.into(),

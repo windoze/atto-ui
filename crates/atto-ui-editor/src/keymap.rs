@@ -44,10 +44,22 @@ pub enum EditorAction {
     DeleteForward,
     InsertNewline,
     InsertTab,
+    Indent,
+    Outdent,
+    SplitLine,
+    ToggleComment,
+    JoinLines,
+    MoveLinesUp,
+    MoveLinesDown,
+    DuplicateLines,
+    DeleteLines,
 
     // --- Cursor movement (non-selecting)
     MoveLeft,
     MoveRight,
+    MoveWordLeft,
+    MoveWordRight,
+    MoveToMatchingBracket,
     MoveUp,
     MoveDown,
     MoveHome,
@@ -68,6 +80,11 @@ pub enum EditorAction {
     // --- Multi-cursor / selection modes
     ClearSecondarySelections,
     ToggleRectSelection,
+    AddCursorAbove,
+    AddCursorBelow,
+    AddNextOccurrence,
+    AddAllOccurrences,
+    ExpandSelection,
 
     // --- Folding
     ToggleFoldAtCursor,
@@ -157,6 +174,32 @@ impl EditorKeymap {
             KeyChord::new(KeyCode::Tab, KeyModifiers::NONE),
             A::InsertTab,
         );
+        map.insert(
+            KeyChord::new(KeyCode::Char('/'), KeyModifiers::CONTROL),
+            A::ToggleComment,
+        );
+        // Some terminals encode Ctrl+/ as the same C0 byte as Ctrl+_.
+        map.insert(
+            KeyChord::new(KeyCode::Char('_'), KeyModifiers::CONTROL),
+            A::ToggleComment,
+        );
+        // Crossterm's legacy C0 parser reports raw 0x1f as Ctrl+7.
+        map.insert(
+            KeyChord::new(KeyCode::Char('7'), KeyModifiers::CONTROL),
+            A::ToggleComment,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Up, KeyModifiers::ALT),
+            A::MoveLinesUp,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Down, KeyModifiers::ALT),
+            A::MoveLinesDown,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Down, KeyModifiers::ALT | KeyModifiers::SHIFT),
+            A::DuplicateLines,
+        );
 
         // --- Cursor movement
         map.insert(
@@ -166,6 +209,14 @@ impl EditorKeymap {
         map.insert(
             KeyChord::new(KeyCode::Right, KeyModifiers::NONE),
             A::MoveRight,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Left, KeyModifiers::CONTROL),
+            A::MoveWordLeft,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Right, KeyModifiers::CONTROL),
+            A::MoveWordRight,
         );
         map.insert(KeyChord::new(KeyCode::Up, KeyModifiers::NONE), A::MoveUp);
         map.insert(
@@ -243,6 +294,25 @@ impl EditorKeymap {
         map.insert(
             KeyChord::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
             A::ToggleRectSelection,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            A::AddCursorAbove,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            A::AddCursorBelow,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+            A::AddNextOccurrence,
+        );
+        map.insert(
+            KeyChord::new(
+                KeyCode::Char('l'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            A::AddAllOccurrences,
         );
         map.insert(
             KeyChord::new(KeyCode::Char('u'), KeyModifiers::CONTROL),

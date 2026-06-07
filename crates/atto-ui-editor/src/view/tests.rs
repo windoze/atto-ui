@@ -173,3 +173,188 @@ fn editor_view_mouse_wheel_scrolls_even_at_viewport_edge() {
         "expected second wheel scroll to advance content again; got row0={row0:?}"
     );
 }
+
+fn test_view_with_text(text: &str) -> (EditorView, atto_ui::reactive::Binding<String>) {
+    let text: atto_ui::reactive::Binding<String> = text.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (view, _handle) = EditorView::new(cfg, theme);
+    (view, text)
+}
+
+#[test]
+fn editor_actions_line_edits_sync_text_binding() {
+    let text: atto_ui::reactive::Binding<String> = "a\nb\nc".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.indent.tab_width.set(2);
+    cfg.indent.insert_spaces.set(true);
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 1,
+        column: 0,
+    }));
+    assert!(view.handle_action(EditorAction::Indent));
+    assert_eq!(text.get(), "a\n  b\nc");
+
+    assert!(view.handle_action(EditorAction::Outdent));
+    assert_eq!(text.get(), "a\nb\nc");
+
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 1,
+        column: 0,
+    }));
+    assert!(view.handle_action(EditorAction::DuplicateLines));
+    assert_eq!(text.get(), "a\nb\nb\nc");
+
+    assert!(view.handle_action(EditorAction::DeleteLines));
+    assert_eq!(text.get(), "a\nb\nc");
+
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 1,
+        column: 0,
+    }));
+    assert!(view.handle_action(EditorAction::MoveLinesUp));
+    assert_eq!(text.get(), "b\na\nc");
+
+    assert!(view.handle_action(EditorAction::MoveLinesDown));
+    assert_eq!(text.get(), "a\nb\nc");
+}
+
+#[test]
+fn editor_actions_comment_join_and_split_sync_text_binding() {
+    let text: atto_ui::reactive::Binding<String> = "let x = 1;\n  let y = 2;".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.comment
+        .set(Some(editor_core::CommentConfig::line("//")));
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+
+    assert!(view.handle_action(EditorAction::ToggleComment));
+    assert_eq!(text.get(), "// let x = 1;\n  let y = 2;");
+
+    assert!(view.handle_action(EditorAction::ToggleComment));
+    assert_eq!(text.get(), "let x = 1;\n  let y = 2;");
+
+    assert!(view.handle_action(EditorAction::JoinLines));
+    assert_eq!(text.get(), "let x = 1; let y = 2;");
+
+    let (mut split_view, split_text) = test_view_with_text("hello world");
+    let _ = split_view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 0,
+        column: 5,
+    }));
+    assert!(split_view.handle_action(EditorAction::SplitLine));
+    assert_eq!(split_text.get(), "hello\n world");
+}
+
+#[test]
+fn editor_actions_multi_cursor_occurrence_commands() {
+    let (mut view, _text) = test_view_with_text("foo foo foo");
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 0,
+        column: 0,
+    }));
+
+    assert!(view.handle_action(EditorAction::AddNextOccurrence));
+    let sel = view
+        .state_manager
+        .editor()
+        .selection()
+        .cloned()
+        .expect("primary selection");
+    assert_eq!(sel.start, Position::new(0, 4));
+    assert_eq!(sel.end, Position::new(0, 7));
+    assert_eq!(view.state_manager.editor().secondary_selections().len(), 1);
+
+    let (mut view, _text) = test_view_with_text("foo foo foo");
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 0,
+        column: 0,
+    }));
+
+    assert!(view.handle_action(EditorAction::AddAllOccurrences));
+    assert_eq!(view.state_manager.editor().secondary_selections().len(), 2);
+}
+
+#[test]
+fn editor_actions_read_only_blocks_document_mutations() {
+    let text: atto_ui::reactive::Binding<String> = "a\nb".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.read_only.set(true);
+    cfg.comment
+        .set(Some(editor_core::CommentConfig::line("//")));
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+
+    assert!(!view.handle_action(EditorAction::DeleteLines));
+    assert!(!view.handle_action(EditorAction::ToggleComment));
+    assert_eq!(text.get(), "a\nb");
+
+    assert!(view.handle_action(EditorAction::MoveWordRight));
+}
+
+#[test]
+fn editor_default_keymap_includes_stage_three_actions_without_known_conflicts() {
+    let keymap = EditorKeymap::default_bindings();
+
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Left, KeyModifiers::CONTROL)),
+        Some(EditorAction::MoveWordLeft)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Right, KeyModifiers::CONTROL)),
+        Some(EditorAction::MoveWordRight)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Char('/'), KeyModifiers::CONTROL)),
+        Some(EditorAction::ToggleComment)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Char('7'), KeyModifiers::CONTROL)),
+        Some(EditorAction::ToggleComment)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Down, KeyModifiers::ALT)),
+        Some(EditorAction::MoveLinesDown)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(
+            KeyCode::Down,
+            KeyModifiers::ALT | KeyModifiers::SHIFT
+        )),
+        Some(EditorAction::DuplicateLines)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(
+            KeyCode::Down,
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        )),
+        Some(EditorAction::AddCursorBelow)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+        Some(EditorAction::AddNextOccurrence)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(
+            KeyCode::Char('l'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        Some(EditorAction::AddAllOccurrences)
+    );
+
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        Some(EditorAction::Copy)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+        Some(EditorAction::Find)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::F(12), KeyModifiers::NONE)),
+        Some(EditorAction::LspGotoDefinition)
+    );
+}

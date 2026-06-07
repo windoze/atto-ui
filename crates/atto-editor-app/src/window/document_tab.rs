@@ -730,6 +730,8 @@ fn build_editor_view(
 ) -> atto_ui_editor::EditorView {
     let mut cfg = atto_ui_editor::EditorConfig::new(text);
     cfg.clipboard = clipboard;
+    cfg.comment
+        .set(crate::language::comment_config_for_language(&language_id));
     cfg.language_id.set(language_id);
     cfg.syntax.set(syntax);
     cfg.lsp.set(lsp);

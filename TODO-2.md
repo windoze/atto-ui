@@ -365,7 +365,7 @@
 - 新增 app 单元回归测试覆盖 Explorer close/reopen 保留 dock side/size，以及 Explorer focused 时编辑命令 fallback 到 last focused editor。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-editor-app`；`cargo test --workspace --all-targets`。
 
-### [TODO] T6 — 阶段三首批编辑动作接线
+### [DONE] T6 — 阶段三首批编辑动作接线
 
 **依赖**：无。建议在 LSP 大任务前做，低风险提升编辑能力。
 
@@ -414,6 +414,14 @@
 **验收**：
 - 所有新增 action 在 read-only 下不会修改文本。
 - 所有文本修改同步到 `config.text`，保存时能写入新内容。
+
+**完成记录（2026-06-08）**：
+- 扩展 `EditorAction` 并接线到 `editor-core` 的 word movement、matching bracket、line edit、toggle comment、indent/outdent/split line、多光标 occurrence/selection expansion 等命令。
+- `EditorKeymap::default_bindings` 新增 Ctrl+Left/Right、Ctrl+/（含 raw `0x1f`/Ctrl+7 兼容）、Alt+Up/Down、Shift+Alt+Down、Ctrl+Alt+Up/Down、Ctrl+D、Ctrl+Shift+L 等默认绑定，未覆盖既有 Copy/Paste/Find/Fold/LSP goto 绑定。
+- `EditorConfig` 增加 `comment: Binding<Option<CommentConfig>>`；`atto-editor-app` 按语言注入 Rust/JS/TS/TOML/YAML/Python/Markdown 注释配置，JSON/plaintext 安全 no-op。
+- 新增 full-document edit 同步 helper；所有新增文本修改 action 均经过 read-only gate，并在实际文本变化后同步 `config.text`、刷新 syntax、发送 LSP full didChange。
+- `snapshot_editor_app` 增加 Rust comment fixture；新增 view 单测覆盖 indent/outdent、duplicate/delete/move line、join/split line、toggle comment、多光标 occurrence、read-only gate 与默认 keymap；新增 PTY 覆盖 Ctrl+/ 行注释切换。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R6 — 审阅 T6
 

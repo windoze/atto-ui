@@ -9,6 +9,7 @@ use atto_ui::app::{
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowKind};
 use atto_ui_editor::{EditorConfig, EditorSyntaxConfig, EditorThemeSet, EditorView};
+use editor_core::CommentConfig;
 
 fn main() -> Result<()> {
     // A deterministic app used by PTY tests to validate editor behavior.
@@ -20,6 +21,7 @@ fn main() -> Result<()> {
         "rect:ab".to_string(),
         "rect:ab".to_string(),
         "rect:ab".to_string(),
+        "let answer = 42;".to_string(),
         String::new(),
     ];
 
@@ -35,6 +37,8 @@ fn main() -> Result<()> {
     let theme: Binding<EditorThemeSet> = EditorThemeSet::default().into();
 
     let editor_config = EditorConfig::new(text);
+    editor_config.language_id.set("rust".to_string());
+    editor_config.comment.set(Some(CommentConfig::line("//")));
     editor_config.syntax.set(EditorSyntaxConfig::SimpleJson);
     editor_config.indent.tab_width.set(4);
     editor_config.indent.insert_spaces.set(true);
