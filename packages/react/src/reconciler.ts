@@ -7,18 +7,21 @@ import {
   appendChildToContainer,
   appendInitialChild,
   clearContainer,
+  commitHostUpdate,
   createHostContainer,
   createHostInstance,
   createHostTextInstance,
   flushStaticTree,
   insertBefore,
   insertInContainerBefore,
+  prepareHostUpdate,
   removeChild,
   removeChildFromContainer,
   updateTextInstance,
   type HostContainer,
   type HostContainerOptions,
   type HostInstance,
+  type HostUpdatePayload,
   type RenderHost,
 } from './host'
 
@@ -30,7 +33,7 @@ export interface AttoRoot {
 }
 
 type HostContext = null
-type UpdatePayload = null
+type UpdatePayload = HostUpdatePayload | null
 
 const hostConfig = {
   now: Date.now,
@@ -87,10 +90,10 @@ const hostConfig = {
   prepareUpdate(
     _instance: HostInstance,
     _type: string,
-    _oldProps: Readonly<Record<string, unknown>>,
-    _newProps: Readonly<Record<string, unknown>>,
+    oldProps: Readonly<Record<string, unknown>>,
+    newProps: Readonly<Record<string, unknown>>,
   ): UpdatePayload {
-    return null
+    return prepareHostUpdate(oldProps, newProps)
   },
 
   shouldSetTextContent(_type: string, _props: Readonly<Record<string, unknown>>): false {
@@ -139,7 +142,11 @@ const hostConfig = {
 
   commitMount(): void {},
 
-  commitUpdate(): void {},
+  commitUpdate(instance: HostInstance, updatePayload: UpdatePayload): void {
+    if (updatePayload) {
+      commitHostUpdate(instance, updatePayload)
+    }
+  },
 
   resetTextContent(): void {},
 

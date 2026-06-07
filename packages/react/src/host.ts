@@ -6,7 +6,7 @@ import type {
   TreeOp,
 } from '@atto-ui/core'
 
-export type RenderHost = Pick<AppHost, 'applyTreeOps'>
+export type RenderHost = Pick<AppHost, 'applyTreeOps' | 'allocCallback'>
 
 export interface HostContainerOptions {
   readonly idPrefix?: string
@@ -17,6 +17,7 @@ export interface HostContainer {
   readonly windowId: string
   readonly idPrefix: string
   readonly rootChildren: HostInstance[]
+  readonly pendingOps: TreeOp[]
   nextId: number
   needsTreeFlush: boolean
   lastTree: ComponentSpec | null
@@ -26,12 +27,37 @@ export interface HostInstance {
   readonly id: string
   readonly type: string
   props: HostProps
+  readonly events: HostEventBindings
   readonly children: HostInstance[]
   windowId: string | null
   parent: HostContainer | HostInstance | null
 }
 
 export type HostProps = Readonly<Record<string, ComponentValue>>
+export type HostEventBindings = Record<string, HostEventBinding>
+
+export interface HostEventBinding {
+  callbackId: string
+  handler: unknown
+}
+
+export interface HostUpdatePayload {
+  readonly props: HostProps
+  readonly setProps: readonly HostPropUpdate[]
+  readonly bindEvents: readonly HostEventUpdate[]
+  readonly clearEvents: readonly string[]
+  readonly updateEvents: readonly HostEventUpdate[]
+}
+
+export interface HostPropUpdate {
+  readonly name: string
+  readonly value: ComponentValue
+}
+
+export interface HostEventUpdate {
+  readonly event: string
+  readonly handler: unknown
+}
 
 let nextContainerId = 1
 
@@ -47,6 +73,7 @@ export function createHostContainer(
     windowId,
     idPrefix,
     rootChildren: [],
+    pendingOps: [],
     nextId: 0,
     needsTreeFlush: false,
     lastTree: null,
@@ -63,6 +90,7 @@ export function createHostInstance(
     id: `${container.idPrefix}-${++container.nextId}`,
     type: normalizeHostType(type),
     props: sanitizeProps(props),
+    events: createEventBindings(container, props),
     children: [],
     windowId: null,
     parent: null,
@@ -75,6 +103,7 @@ export function createHostTextInstance(container: HostContainer, text: string): 
     id: `${container.idPrefix}-${++container.nextId}`,
     type: 'TextSpan',
     props: text ? { text } : {},
+    events: {},
     children: [],
     windowId: null,
     parent: null,
@@ -86,8 +115,13 @@ export function appendInitialChild(parent: HostInstance, child: HostInstance): v
 }
 
 export function appendChild(parent: HostInstance, child: HostInstance): void {
+  const shouldQueue = parent.windowId !== null
   attachChild(parent, child, null)
-  markContainerForFlush(parent)
+  if (shouldQueue) {
+    enqueueChildInsert(parent, child, null)
+  } else {
+    markContainerForFlush(parent)
+  }
 }
 
 export function insertBefore(
@@ -95,16 +129,27 @@ export function insertBefore(
   child: HostInstance,
   beforeChild: HostInstance,
 ): void {
+  const shouldQueue = parent.windowId !== null
   attachChild(parent, child, beforeChild)
-  markContainerForFlush(parent)
+  if (shouldQueue) {
+    enqueueChildInsert(parent, child, beforeChild)
+  } else {
+    markContainerForFlush(parent)
+  }
 }
 
 export function removeChild(parent: HostInstance, child: HostInstance): void {
+  const shouldQueue = parent.windowId !== null && child.windowId !== null
   detachFromParent(child)
   if (child.parent === parent) {
     child.parent = null
   }
-  markContainerForFlush(parent)
+  setSubtreeWindowId(child, null)
+  if (shouldQueue) {
+    enqueueTreeOpForInstance(parent, { op: 'remove', id: child.id })
+  } else {
+    markContainerForFlush(parent)
+  }
 }
 
 export function appendChildToContainer(container: HostContainer, child: HostInstance): void {
@@ -126,13 +171,14 @@ export function removeChildFromContainer(container: HostContainer, child: HostIn
   if (child.parent === container) {
     child.parent = null
   }
+  setSubtreeWindowId(child, null)
   container.needsTreeFlush = true
 }
 
 export function clearContainer(container: HostContainer): boolean {
   for (const child of container.rootChildren) {
     child.parent = null
-    child.windowId = null
+    setSubtreeWindowId(child, null)
   }
   container.rootChildren.length = 0
   container.needsTreeFlush = true
@@ -140,8 +186,19 @@ export function clearContainer(container: HostContainer): boolean {
 }
 
 export function updateTextInstance(textInstance: HostInstance, text: string): void {
+  const oldText = typeof textInstance.props.text === 'string' ? textInstance.props.text : ''
   textInstance.props = text ? { text } : {}
-  markContainerForFlush(textInstance)
+  if (oldText === text) return
+  if (textInstance.windowId !== null) {
+    enqueueTreeOpForInstance(textInstance, {
+      op: 'set_prop',
+      id: textInstance.id,
+      name: 'text',
+      value: text,
+    })
+  } else {
+    markContainerForFlush(textInstance)
+  }
 }
 
 export function toComponentSpec(instance: HostInstance): ComponentSpec {
@@ -149,6 +206,7 @@ export function toComponentSpec(instance: HostInstance): ComponentSpec {
     type: string
     id: string
     props?: HostProps
+    events?: Readonly<Record<string, string>>
     children?: readonly ComponentSpecChild[]
   } = {
     type: instance.type,
@@ -158,6 +216,10 @@ export function toComponentSpec(instance: HostInstance): ComponentSpec {
   if (Object.keys(instance.props).length > 0) {
     spec.props = instance.props
   }
+  const events = eventsToSpec(instance.events)
+  if (Object.keys(events).length > 0) {
+    spec.events = events
+  }
   if (instance.children.length > 0) {
     spec.children = instance.children.map(toComponentSpec)
   }
@@ -165,19 +227,120 @@ export function toComponentSpec(instance: HostInstance): ComponentSpec {
   return spec
 }
 
-/** Flush the current static React subtree into the target atto-ui window. */
+/** Flush root replacement or incremental TreeOp mutations into the target atto-ui window. */
 export function flushStaticTree(container: HostContainer): void {
-  if (!container.needsTreeFlush) return
-  if (container.rootChildren.length === 0) return
-  if (container.rootChildren.length !== 1) {
-    throw new Error('atto-ui React root currently requires exactly one host child')
+  if (container.needsTreeFlush) {
+    if (container.rootChildren.length > 1) {
+      throw new Error('atto-ui React root currently requires at most one host child')
+    }
+
+    const tree = container.rootChildren.length === 0
+      ? emptyRootSpec(container)
+      : toComponentSpec(container.rootChildren[0])
+    const op: TreeOp = { op: 'set_tree', tree }
+    container.host.applyTreeOps(container.windowId, op)
+    container.lastTree = tree
+    container.pendingOps.length = 0
+    container.needsTreeFlush = false
+    return
   }
 
-  const tree = toComponentSpec(container.rootChildren[0])
-  const op: TreeOp = { op: 'set_tree', tree }
-  container.host.applyTreeOps(container.windowId, op)
-  container.lastTree = tree
-  container.needsTreeFlush = false
+  if (container.pendingOps.length === 0) return
+  const ops = container.pendingOps.length === 1
+    ? container.pendingOps[0]
+    : container.pendingOps.slice()
+  container.host.applyTreeOps(container.windowId, ops)
+  container.pendingOps.length = 0
+  container.lastTree = container.rootChildren.length === 0
+    ? emptyRootSpec(container)
+    : toComponentSpec(container.rootChildren[0])
+}
+
+export function prepareHostUpdate(
+  oldProps: Readonly<Record<string, unknown>>,
+  newProps: Readonly<Record<string, unknown>>,
+): HostUpdatePayload | null {
+  const oldHostProps = sanitizeProps(oldProps)
+  const newHostProps = sanitizeProps(newProps)
+  const setProps: HostPropUpdate[] = []
+
+  for (const [name, value] of Object.entries(newHostProps)) {
+    if (!componentValueEqual(oldHostProps[name], value)) {
+      setProps.push({ name, value })
+    }
+  }
+
+  const oldEvents = eventProps(oldProps)
+  const newEvents = eventProps(newProps)
+  const bindEvents: HostEventUpdate[] = []
+  const clearEvents: string[] = []
+  const updateEvents: HostEventUpdate[] = []
+
+  for (const [event, handler] of newEvents) {
+    if (!oldEvents.has(event)) {
+      bindEvents.push({ event, handler })
+    } else if (!Object.is(oldEvents.get(event), handler)) {
+      updateEvents.push({ event, handler })
+    }
+  }
+  for (const event of oldEvents.keys()) {
+    if (!newEvents.has(event)) {
+      clearEvents.push(event)
+    }
+  }
+
+  if (
+    setProps.length === 0
+    && bindEvents.length === 0
+    && clearEvents.length === 0
+    && updateEvents.length === 0
+  ) {
+    return null
+  }
+
+  return {
+    props: newHostProps,
+    setProps,
+    bindEvents,
+    clearEvents,
+    updateEvents,
+  }
+}
+
+export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayload): void {
+  instance.props = payload.props
+
+  for (const { name, value } of payload.setProps) {
+    enqueueTreeOpForMountedInstance(instance, {
+      op: 'set_prop',
+      id: instance.id,
+      name,
+      value,
+    })
+  }
+
+  for (const event of payload.clearEvents) {
+    delete instance.events[event]
+    enqueueTreeOpForMountedInstance(instance, { op: 'clear_event', id: instance.id, event })
+  }
+
+  for (const { event, handler } of payload.bindEvents) {
+    const callbackId = allocateCallbackForInstance(instance)
+    instance.events[event] = { callbackId, handler }
+    enqueueTreeOpForMountedInstance(instance, {
+      op: 'bind_event',
+      id: instance.id,
+      event,
+      callback: callbackId,
+    })
+  }
+
+  for (const { event, handler } of payload.updateEvents) {
+    const binding = instance.events[event]
+    if (binding) {
+      binding.handler = handler
+    }
+  }
 }
 
 export function sanitizeProps(props: Readonly<Record<string, unknown>>): HostProps {
@@ -197,6 +360,128 @@ export function normalizeHostType(type: string): string {
   if (mapped) return mapped
   if (type.length === 0) return type
   return type[0].toUpperCase() + type.slice(1)
+}
+
+function createEventBindings(
+  container: HostContainer,
+  props: Readonly<Record<string, unknown>>,
+): HostEventBindings {
+  const bindings: HostEventBindings = {}
+  for (const [event, handler] of eventProps(props)) {
+    bindings[event] = { callbackId: container.host.allocCallback(), handler }
+  }
+  return bindings
+}
+
+function eventsToSpec(bindings: HostEventBindings): Readonly<Record<string, string>> {
+  const events: Record<string, string> = {}
+  for (const [event, binding] of Object.entries(bindings)) {
+    events[event] = binding.callbackId
+  }
+  return events
+}
+
+function eventProps(props: Readonly<Record<string, unknown>>): Map<string, unknown> {
+  const events = new Map<string, unknown>()
+  for (const [name, value] of Object.entries(props)) {
+    if (typeof value !== 'function') continue
+    const event = eventNameFromProp(name)
+    if (event) {
+      events.set(event, value)
+    }
+  }
+  return events
+}
+
+function eventNameFromProp(name: string): string | null {
+  if (!/^on[A-Z]/.test(name)) return null
+  const raw = name.slice(2)
+  return raw[0].toLowerCase() + raw.slice(1)
+}
+
+function allocateCallbackForInstance(instance: HostInstance): string {
+  const container = containerForInstance(instance)
+  if (!container) {
+    throw new Error(`Cannot allocate callback for detached node ${instance.id}`)
+  }
+  return container.host.allocCallback()
+}
+
+function enqueueChildInsert(
+  parent: HostInstance,
+  child: HostInstance,
+  beforeChild: HostInstance | null,
+): void {
+  enqueueTreeOpForInstance(parent, {
+    op: 'insert_before',
+    parent_id: parent.id,
+    anchor_id: beforeChild?.id ?? null,
+    child: toComponentSpec(child),
+  })
+}
+
+function enqueueTreeOpForMountedInstance(instance: HostInstance, op: TreeOp): void {
+  if (instance.windowId !== null) {
+    enqueueTreeOpForInstance(instance, op)
+  } else {
+    markContainerForFlush(instance)
+  }
+}
+
+function enqueueTreeOpForInstance(instance: HostInstance, op: TreeOp): void {
+  const container = containerForInstance(instance)
+  if (!container) {
+    throw new Error(`Cannot enqueue TreeOp for detached node ${instance.id}`)
+  }
+  if (!container.needsTreeFlush) {
+    container.pendingOps.push(op)
+  }
+}
+
+function containerForInstance(instance: HostInstance): HostContainer | null {
+  let cursor: HostContainer | HostInstance | null = instance
+  while (cursor !== null) {
+    if ('rootChildren' in cursor) return cursor
+    cursor = cursor.parent
+  }
+  return null
+}
+
+function emptyRootSpec(container: HostContainer): ComponentSpec {
+  return { type: 'Spacer', id: `${container.idPrefix}-empty-root` }
+}
+
+function componentValueEqual(left: ComponentValue | undefined, right: ComponentValue): boolean {
+  if (left === undefined) return false
+  if (Object.is(left, right)) return true
+  if (left instanceof Uint8Array || right instanceof Uint8Array) {
+    return left instanceof Uint8Array && right instanceof Uint8Array && bytesEqual(left, right)
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((value, index) => componentValueEqual(value, right[index]))
+  }
+  if (isComponentValueMap(left) && isComponentValueMap(right)) {
+    const leftMap = left as Record<string, ComponentValue>
+    const rightMap = right as Record<string, ComponentValue>
+    const leftKeys = Object.keys(leftMap)
+    const rightKeys = Object.keys(rightMap)
+    if (leftKeys.length !== rightKeys.length) return false
+    return leftKeys.every((key) => componentValueEqual(leftMap[key], rightMap[key]))
+  }
+  return false
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
+}
+
+function isComponentValueMap(value: ComponentValue | undefined): value is Record<string, ComponentValue> {
+  return typeof value === 'object'
+    && value !== null
+    && !(value instanceof Uint8Array)
+    && !Array.isArray(value)
 }
 
 function attachChild(

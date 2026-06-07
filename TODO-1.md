@@ -237,7 +237,7 @@
 - 补充 `packages/react/__test__/reconciler.cjs` 覆盖 parent/windowId 生命周期、同一 React 实例重渲染时 id 保持稳定，以及默认 root id 前缀唯一性；现有 headless 测试继续验证真实 `AppHost` 静态渲染文本。
 - 验证通过：`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NT9 — props/子节点增删/事件 op 映射（U.1）
+### [DONE] NT9 — props/子节点增删/事件 op 映射（U.1）
 **文件**：`packages/react/src/host.ts`、`src/reconciler.ts`
 **现状**：NT8 已能静态渲染；需支持更新与增量。依赖 NT6 的 `InsertBefore`（或回退 index 版）。
 **步骤**：
@@ -247,6 +247,11 @@
 4. op 累积：commit 期间 push 进 buffer，`resetAfterCommit` flush（分桶在 NT13 完善）。
 **测试**：reconciler 单测——`useState` 改 text→`SetProp`；列表增删/重排→正确 op 序列；事件 bind/clear 时机正确。
 **验收**：动态更新、增删、重排、事件绑定均产出正确 `TreeOp`。
+**完成记录（2026-06-07）**：
+- `packages/react/src/host.ts` 增加 pending `TreeOp` 缓冲与事件 binding 状态；初始挂载/根替换继续走 `set_tree`，提交期 props/text diff 走精确 `set_prop`，子节点新增与已挂载重排走 `insert_before`，删除走 `remove`。
+- `prepareUpdate`/`commitUpdate` 现在计算 host props 与事件 prop diff：事件新增分配 native callback handle 并发 `bind_event`，事件移除发 `clear_event`，handler 函数替换只更新实例记录，不重复 re-bind。
+- 扩展 `packages/react/__test__/reconciler.cjs` 覆盖 `useState` 文本更新、列表新增/重排/删除、事件 bind/handler 更新/clear；headless React 测试继续通过真实 `AppHost` 路径。
+- 验证通过：`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR9 — 审阅 NT9
 - 确认重排的 move 判定正确（已挂载→Move，新建→Insert）。
