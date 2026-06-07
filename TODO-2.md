@@ -350,13 +350,20 @@
 - 调整既有 Explorer PTY smoke 测试点击坐标，以匹配 WM dock 贴齐 work area 边缘后的文件树内容行。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R5 — 审阅 T5
+### [DONE] R5 — 审阅 T5
 
 审阅 T5 改动：
 - 确认 `atto-editor-app` 没有残留 `work_without_explorer` 逻辑。
 - 确认 Explorer close/reopen 后 dock side/size 保持合理。
 - 确认 `active_editor_commands` 在 Explorer focused 时仍能 fallback 到 last focused editor。
 - 运行 `cargo test -p atto-editor-app` 和相关 PTY。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T5 的 Explorer docking 迁移，确认 `atto-editor-app` 不再保留 `work_without_explorer`、`default_explorer_rect`、`docked_explorer_rect` 或 `ExplorerDock` 等 app 层手算 Explorer reserve 逻辑。
+- 确认 Explorer 由 WM `WindowDock` 表达 side/size；`sync_explorer_dock_state`、`toggle_explorer_window` 与 `dock_explorer_window` 会同步并保留 close/reopen 后的 dock side/size。
+- 确认 `active_editor_commands` 在 Explorer focused 时优先 fallback 到 `last_focused_editor`，并在该 editor 仍存在时投递编辑命令。
+- 新增 app 单元回归测试覆盖 Explorer close/reopen 保留 dock side/size，以及 Explorer focused 时编辑命令 fallback 到 last focused editor。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-editor-app`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T6 — 阶段三首批编辑动作接线
 

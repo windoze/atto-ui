@@ -1115,6 +1115,112 @@ mod tests {
     }
 
     #[test]
+    fn toggle_explorer_window_preserves_dock_side_and_size_on_reopen() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        {
+            let mut s = state.lock();
+            s.explorer_dock = DockSide::Right;
+            s.explorer_size = Some(41);
+        }
+        toggle_explorer_window(&mut desktop, screen, &state, actions.clone());
+        let first_id = state.lock().explorer_window.expect("explorer reopened");
+
+        let dock = desktop
+            .wm
+            .window(first_id)
+            .expect("explorer")
+            .dock
+            .get()
+            .expect("dock config");
+        assert_eq!(dock.side, DockSide::Right);
+        assert_eq!(dock.size, 41);
+
+        toggle_explorer_window(&mut desktop, screen, &state, actions.clone());
+        assert!(state.lock().explorer_window.is_none());
+
+        toggle_explorer_window(&mut desktop, screen, &state, actions);
+        let reopened_id = state.lock().explorer_window.expect("explorer reopened");
+        assert_ne!(first_id, reopened_id);
+        let reopened_dock = desktop
+            .wm
+            .window(reopened_id)
+            .expect("explorer")
+            .dock
+            .get()
+            .expect("dock config");
+        assert_eq!(reopened_dock.side, DockSide::Right);
+        assert_eq!(reopened_dock.size, 41);
+    }
+
+    #[test]
+    fn active_editor_commands_falls_back_when_explorer_is_focused() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let explorer = ExplorerWindowView::new(
+            actions.clone(),
+            state.lock().explorer_commands.clone(),
+            Vec::new(),
+        );
+        let explorer_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Explorer",
+                Rect::default(),
+                Box::new(explorer),
+            )
+            .with_dock(Some(explorer_dock_config(
+                DockSide::Left,
+                DEFAULT_EXPLORER_DOCK_SIZE,
+            ))),
+            screen,
+        );
+
+        let editor_commands = EventQueue::<EditorWindowCommand>::new();
+        let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
+            atto_ui_editor::EditorThemeSet::default().into();
+        let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
+        let editor =
+            EditorWindowView::new(actions, editor_commands.clone(), editor_theme, clipboard);
+        let editor_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Atto Editor",
+                default_editor_rect(Desktop::layout(screen).work_area, 0),
+                Box::new(editor),
+            ),
+            screen,
+        );
+        {
+            let mut s = state.lock();
+            s.explorer_window = Some(explorer_id);
+            s.editor_windows.insert(editor_id, editor_commands.clone());
+            s.last_focused_editor = Some(editor_id);
+        }
+
+        desktop.wm.focus(explorer_id);
+        assert_eq!(desktop.wm.focused(), Some(explorer_id));
+
+        active_editor_commands(&desktop, &state)
+            .expect("last focused editor commands")
+            .push(EditorWindowCommand::SaveActive);
+
+        let drained = editor_commands.drain();
+        assert!(matches!(
+            drained.as_slice(),
+            [EditorWindowCommand::SaveActive]
+        ));
+    }
+
+    #[test]
     fn explorer_double_click_opens_file_in_editor() -> anyhow::Result<()> {
         let root = unique_temp_dir("explorer_double_click_opens");
         fs::create_dir_all(&root)?;

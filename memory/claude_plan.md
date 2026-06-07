@@ -1,33 +1,27 @@
-# Current Invocation Plan
+# Claude Execution Plan
 
-I will not record hidden chain-of-thought, but this file captures the complete actionable execution plan, decisions, progress, and validation status for this invocation.
-
-## Goal
-
-- Complete exactly the first incomplete task in `TODO.md`, then stop.
-- Treat `TODO.md` as the authoritative task list and only update `PLAN.md` if phase-level sequencing or completion criteria change.
+## Scope
+- Follow `TODO.md` as the authoritative task list.
+- Complete exactly the first task whose heading is not prefixed with `[DONE]`, then stop.
+- Do not perform broad historical triage before selecting that task.
 
 ## Execution Plan
+1. Read `TODO.md` and identify the first incomplete task by heading prefix.
+2. Review the selected task's requirements, dependencies, validation requirements, and completion-record format.
+3. Inspect only the code and tests needed for that task, plus recent Git context if it directly affects the selected task.
+4. Implement the smallest spec-correct change required by the task.
+5. Run formatting first, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full tests required by the task.
+6. If an unscheduled failing test or fixture appears, fix it if in scope or add the minimum prerequisite task to `TODO.md` before the blocked task and stop.
+7. Update this file after key milestones or any plan change.
+8. Mark the task title in `TODO.md` with `[DONE]` only after implementation and required validation succeed, and update its completion record.
+9. Commit all changes for this invocation with a clear task-specific commit message.
+10. Stop without starting the next task.
 
-1. Read `TODO.md` and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect the code and tests relevant to the selected task without doing broad unrelated triage.
-4. Implement the selected task completely, using small targeted patches.
-5. Run required validation in the requested order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task and by observed failures.
-6. If validation reveals an unscheduled failing test/fixture, fix it if in scope or add the minimum prerequisite/follow-up task in `TODO.md` before marking the current task complete.
-7. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling in its completion record.
-8. Update this progress file whenever a key step completes or the plan changes.
-9. Inspect git status/diff/log, then commit all intended changes with a descriptive task-specific message.
-10. Stop after the commit without starting the next task.
-
-## Progress
-
-- Plan initialized before reading task files or running commands.
-- Read `TODO.md` and `TODO-2.md`; selected first incomplete task: `T5 — C2 atto-editor-app Explorer 改用 WM Docking`.
-- Checked latest commit summary: `[R4] Review dock resize and auto-hide hit-test`; no explicit unfinished issue directly relevant to T5.
-- Inspected `crates/atto-editor-app/src/app.rs`, `actions.rs`, existing app tests, and WM docking API. Current app still has local `ExplorerDock`, `default_explorer_rect`, `docked_explorer_rect`, and `work_without_explorer`; implementation will replace those with `DockSide`/`WindowDock` and store only last Explorer dock size.
-- Implemented Explorer docking migration: app creation/toggle/left-right actions now use `WindowDock`, app state tracks `DockSide` plus last dock size, and the old Explorer rect/work-area helpers were removed. Added unit tests and a new integration test file for Explorer dock reserve/side/resize behavior.
-- Full test run exposed `explorer_enter_open_smoke` coordinate drift from the new edge-aligned dock layout. Updated existing Explorer PTY click coordinates from row 5 to row 4 so they target the same file-tree row under WM docking.
-- Validation passed after fixes: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace --all-targets`.
-- Marked T5 as `[DONE]` in `TODO-2.md`, updated the `TODO.md` index row to `DONE`, and recorded implementation plus validation details.
-- Reviewed and staged intended T5 files only; unrelated untracked `notification.sh` and `run_agent.sh` remain unstaged.
+## Current Status
+- `TODO.md` read. First incomplete task is `R5 审阅 T5` in `TODO-2.md`.
+- Detailed T5/R5 requirements read. Review checklist: no residual app-level Explorer work-area calculation, Explorer close/reopen preserves dock side/size, editor commands fallback to last focused editor when Explorer has focus, and `atto-editor-app` plus related PTY tests pass.
+- Implementation inspection found no residual `work_without_explorer` / manual Explorer reserve helpers. Added focused regression tests for Explorer dock side/size preservation across close/reopen and `active_editor_commands` fallback while Explorer is focused.
+- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p atto-editor-app`, and `cargo test --workspace --all-targets`.
+- `TODO.md` and `TODO-2.md` updated to mark `R5 审阅 T5` complete with the completion record.
+- Git status/diff/log inspected. Intended commit contents are `TODO.md`, `TODO-2.md`, `crates/atto-editor-app/src/app.rs`, and `memory/claude_plan.md`; unrelated untracked `notification.sh` and `run_agent.sh` remain unstaged.
+- Final step for this invocation: commit the R5 review changes, then stop.

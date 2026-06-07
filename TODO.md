@@ -66,7 +66,7 @@
 | T4 | DONE | [DONE] C2 Dock resize / auto-hide / hit-test | TODO-2.md · 阶段一 |
 | R4 | DONE | [DONE] 审阅 T4 | TODO-2.md · 阶段一 |
 | T5 | DONE | [DONE] C2 atto-editor-app Explorer 改用 WM Docking | TODO-2.md · 阶段一 |
-| R5 | TODO | 审阅 T5 | TODO-2.md · 阶段一 |
+| R5 | DONE | [DONE] 审阅 T5 | TODO-2.md · 阶段一 |
 | T6 | TODO | 阶段三首批编辑动作接线 | TODO-2.md · 阶段一 |
 | R6 | TODO | 审阅 T6 | TODO-2.md · 阶段一 |
 | T7 | TODO | L1 LSP diagnostics 数据接收与状态模型 | TODO-2.md · 阶段一 |
