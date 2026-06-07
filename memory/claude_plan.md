@@ -28,4 +28,5 @@
 - 已定位第一个未完成任务为 `TODO-1.md` 的 `NR6`：审阅 `NT6` 的 `TreeOp::InsertBefore` 锚点插入实现。
 - 下一步检查最新提交是否有与 `NR6` 直接相关的未完成事项，然后审阅相关 runtime、Node 转换层、TS 类型和测试。
 - 已完成 `NR6` 审阅与验证：未发现需要代码修复的问题；`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、Node native build、Node/core npm 测试和 core TypeScript 检查均通过。
-- 已将 `TODO.md` 与 `TODO-1.md` 中的 `NR6` 标记为 `[DONE]` 并填写完成记录；下一步检查差异并提交。
+- 已将 `TODO.md` 与 `TODO-1.md` 中的 `NR6` 标记为 `[DONE]` 并填写完成记录。
+- 已提交 `NR6` 审阅记录，提交为 `de9cef1 [NR6] Review InsertBefore tree op`；工作区仅剩非本轮未跟踪文件 `notification.sh`、`run_agent.sh`。
