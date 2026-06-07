@@ -151,10 +151,11 @@ impl AppHost {
     pub fn add_dynamic_window(
         &mut self,
         title: String,
-        rect: Rect,
+        #[napi(ts_arg_type = "Rect | [number, number, number, number]")] rect: Value,
         root: Value,
     ) -> napi::Result<String> {
         let root = component_spec_from_json(root, &self.callback_handles)?;
+        let rect = rect_from_json(rect)?;
         let screen = self.host.screen().map_err(error::anyhow_error)?;
         let id = self
             .host
@@ -162,7 +163,7 @@ impl AppHost {
             .add_dynamic_window(
                 WindowKind::Normal,
                 title,
-                rect_to_tui(rect),
+                rect,
                 root,
                 self.callbacks.clone(),
                 screen,
@@ -355,8 +356,54 @@ fn build_empty_desktop(_screen: TuiRect) -> anyhow::Result<Desktop> {
     Ok(Desktop::new(Theme::dark(), MenuBar::new(vec![])))
 }
 
-fn rect_to_tui(rect: Rect) -> TuiRect {
-    TuiRect::new(rect.x, rect.y, rect.width, rect.height)
+fn rect_from_json(value: Value) -> napi::Result<TuiRect> {
+    match value {
+        Value::Array(values) => rect_from_array(&values),
+        Value::Object(object) => rect_from_object(&object),
+        _ => Err(error::invalid_arg(
+            "rect must be [x, y, width, height] or { x, y, width, height }",
+        )),
+    }
+}
+
+fn rect_from_array(values: &[Value]) -> napi::Result<TuiRect> {
+    if values.len() != 4 {
+        return Err(error::invalid_arg("rect array must have 4 elements"));
+    }
+    Ok(TuiRect::new(
+        u16_from_json(&values[0], "rect.x")?,
+        u16_from_json(&values[1], "rect.y")?,
+        u16_from_json(&values[2], "rect.width")?,
+        u16_from_json(&values[3], "rect.height")?,
+    ))
+}
+
+fn rect_from_object(object: &Map<String, Value>) -> napi::Result<TuiRect> {
+    Ok(TuiRect::new(
+        u16_from_json(expect_rect_field(object, "x")?, "rect.x")?,
+        u16_from_json(expect_rect_field(object, "y")?, "rect.y")?,
+        u16_from_json(expect_rect_field(object, "width")?, "rect.width")?,
+        u16_from_json(expect_rect_field(object, "height")?, "rect.height")?,
+    ))
+}
+
+fn expect_rect_field<'a>(object: &'a Map<String, Value>, name: &str) -> napi::Result<&'a Value> {
+    object
+        .get(name)
+        .ok_or_else(|| error::invalid_arg(format!("rect missing {name}")))
+}
+
+fn u16_from_json(value: &Value, context: &str) -> napi::Result<u16> {
+    let Some(value) = value.as_f64() else {
+        return Err(error::invalid_arg(format!("{context} must be a number")));
+    };
+    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > u16::MAX as f64 {
+        return Err(error::invalid_arg(format!(
+            "{context} must be an integer between 0 and {}",
+            u16::MAX
+        )));
+    }
+    Ok(value as u16)
 }
 
 fn rect_to_json(rect: RuntimeRect) -> Value {
@@ -566,12 +613,7 @@ mod tests {
         let window = host
             .add_dynamic_window(
                 "Smoke".to_string(),
-                Rect {
-                    x: 1,
-                    y: 1,
-                    width: 24,
-                    height: 8,
-                },
+                json!({ "x": 1, "y": 1, "width": 24, "height": 8 }),
                 json!({
                     "type": "VStack",
                     "id": "root",
@@ -606,6 +648,26 @@ mod tests {
         assert_eq!(callbacks[0]["callbackId"], json!(callback));
         assert_eq!(callbacks[0]["targetId"], json!("ok"));
         assert_eq!(callbacks[0]["event"], json!("click"));
+    }
+
+    #[test]
+    fn rect_decoder_accepts_object_and_array_shapes() {
+        assert_eq!(
+            rect_from_json(json!({ "x": 1, "y": 2, "width": 3, "height": 4 })).unwrap(),
+            TuiRect::new(1, 2, 3, 4)
+        );
+        assert_eq!(
+            rect_from_json(json!([5, 6, 7, 8])).unwrap(),
+            TuiRect::new(5, 6, 7, 8)
+        );
+    }
+
+    #[test]
+    fn rect_decoder_rejects_invalid_values() {
+        assert!(rect_from_json(json!([1, 2, 3])).is_err());
+        assert!(rect_from_json(json!({ "x": 1, "y": 2, "width": 3 })).is_err());
+        assert!(rect_from_json(json!([1, 2, -3, 4])).is_err());
+        assert!(rect_from_json(json!([1, 2, 3.5, 4])).is_err());
     }
 
     fn find_snapshot_node<'a>(node: &'a Value, id: &str) -> Option<&'a Value> {

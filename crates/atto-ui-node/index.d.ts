@@ -5,7 +5,7 @@ export declare class AppHost {
   /** Create an AppHost. By default `step()` is non-blocking (`tickRate = 0`). */
   constructor(config?: AppHostConfig | undefined | null)
   /** Add a dynamic runtime window and return its opaque string handle. */
-  addDynamicWindow(title: string, rect: Rect, root: any): string
+  addDynamicWindow(title: string, rect: Rect | [number, number, number, number], root: any): string
   /** Apply one TreeOp object or an array of TreeOp objects to a dynamic window. */
   applyTreeOps(windowId: string, ops: any): boolean
   /** Advance the host by one frame. Returns false when the host requests exit. */

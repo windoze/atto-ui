@@ -16,7 +16,7 @@ assert.match(callback, /^atto:callback:/)
 
 const windowId = host.addDynamicWindow(
   'Smoke',
-  { x: 1, y: 1, width: 32, height: 9 },
+  [1, 1, 32, 9],
   {
     type: 'VStack',
     id: 'root',

@@ -109,11 +109,17 @@
 - 更新 napi 生成的 `index.js`/`index.d.ts`，导出 `AppHost`、`AppHostConfig`、`Rect` 与 `registerAllRuntimeComponents()`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm test`。
 
-### [TODO] NR4 — 审阅 NT4
+### [DONE] NR4 — 审阅 NT4
 - 确认方法集与 Python 对称，签名与 §6.1 一致。
 - 确认 `step()` 在 `tickRate=0` 下非阻塞；`drainCallbacks` 载荷（callbackId/targetId/event/payload）齐全。
 - 确认 headless 路径不依赖真实 PTY。
 - 运行 JS 冒烟 + 相关单测。
+**完成记录（2026-06-07）**：
+- 审阅 `crates/atto-ui-node/src/lib.rs` 与 `crates/atto-ui-python/src/lib.rs`，确认 Node `AppHost` 覆盖 B.1 要求的方法集：constructor/headless、`addDynamicWindow`、`applyTreeOps`、`step`、`drainCallbacks`、`allocCallback`、事件注入、窗口管理、属性读写、snapshot、theme 与 schemas；窗口/回调 id 均按 NT3 以 string handle 暴露。
+- 修复 `addDynamicWindow` 的 `Rect` 输入兼容性：Node 侧现在与文档/Python 路径一致，支持 `{ x, y, width, height }` 和 `[x, y, width, height]` 两种形态；补充 Rust 单测与 JS headless 冒烟覆盖数组输入。
+- 校正 `NODE_BINDING.md` §6.1/§6.2 中遗留的 numeric id 表述，明确 windowId/callbackId 为不透明 string handle；重新生成 `index.d.ts`，`addDynamicWindow` 类型为 `Rect | [number, number, number, number]`。
+- 确认 `tickRate=0` 为 Node 默认配置，`step()` 在 headless 路径不进入 crossterm poll；JS 冒烟验证 `drainCallbacks` 返回完整 `{ callbackId, targetId, event, payload }` 载荷，headless 构造和 snapshot 均走内存路径。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm test`。
 
 ### [TODO] NT5 — `@atto-ui/core` native 加载（L.1）
 **文件**：新增 `packages/core/`（`index.ts`、`native.d.ts`）

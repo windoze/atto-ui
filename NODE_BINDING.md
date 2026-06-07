@@ -132,8 +132,8 @@ napi-rs 提供 `ThreadsafeFunction` 可从 Rust 线程回调 JS，但：
 | 方法 | 签名（TS 视角） | 说明 |
 |---|---|---|
 | 构造 | `new AppHost(config?)` | 初始化终端会话；默认 `tickRate=0`（非阻塞）、隐藏光标、开启鼠标捕获 |
-| `addDynamicWindow` | `(title: string, rect: Rect, root: ComponentSpec) => number` | 添加动态窗口，返回 windowId |
-| `applyTreeOps` | `(windowId: number, ops: TreeOp[]) => boolean` | 应用增量树操作 |
+| `addDynamicWindow` | `(title: string, rect: Rect, root: ComponentSpec) => string` | 添加动态窗口，返回不透明 windowId handle |
+| `applyTreeOps` | `(windowId: string, ops: TreeOp[]) => boolean` | 应用增量树操作 |
 | `step` | `() => boolean` | 非阻塞推进一帧；返回 false 表示退出 |
 | `drainCallbacks` | `() => CallbackInvocation[]` | 取出自上次以来的 UI 回调事件 |
 | `getProperty` | `(id: string, name: string) => ComponentValue` | 读取组件属性 |
@@ -147,9 +147,9 @@ napi-rs 提供 `ThreadsafeFunction` 可从 Rust 线程回调 JS，但：
 |---|---|
 | `Rect` | `[number, number, number, number]` 或 `{ x, y, width, height }` |
 | `ComponentValue` | `boolean \| number \| string \| string[] \| string[][] \| Uint8Array \| ComponentValue[] \| Record<string, ComponentValue> \| null` |
-| `ComponentSpec` | `{ type: string; id?: string; props?: Record<string, ComponentValue>; events?: Record<string, number>; children?: ComponentSpecChild[] }` |
+| `ComponentSpec` | `{ type: string; id?: string; props?: Record<string, ComponentValue>; events?: Record<string, string>; children?: ComponentSpecChild[] }` |
 | `TreeOp` | discriminated union（`{ op: "set_prop", id, name, value }` 等） |
-| `CallbackInvocation` | `{ callbackId: number; targetId: string \| null; event: string; payload: ComponentValue \| null }` |
+| `CallbackInvocation` | `{ callbackId: string; targetId: string \| null; event: string; payload: ComponentValue \| null }` |
 
 命名约定：JS 侧用 camelCase，napi-rs 自动从 Rust snake_case 转换；`.d.ts` 自动生成。
 
@@ -163,9 +163,10 @@ UI 事件不直接回调 JS 函数，而是经 `CallbackRegistry` 收集，由 J
 
 ```ts
 import { VStack, Text, Button, ChatMessageList } from "atto-ui";
+const callbackId = appHost.allocCallback();
 const root = VStack({ padding: 1 }, [
   Text("Hello"),
-  Button({ id: "send", text: "Send", onClick: 1 }),
+  Button({ id: "send", text: "Send", onClick: callbackId }),
 ]);
 ```
 

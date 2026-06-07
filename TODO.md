@@ -17,7 +17,7 @@
 | NT3 | DONE | id handle 包装 + 错误映射（B.3 / B.4） | TODO-1.md · 阶段一 M0+M1 |
 | NR3 | DONE | 审阅 NT3 | TODO-1.md · 阶段一 M0+M1 |
 | NT4 | DONE | `#[napi] AppHost` 全方法暴露（B.1） | TODO-1.md · 阶段一 M0+M1 |
-| NR4 | TODO | 审阅 NT4 | TODO-1.md · 阶段一 M0+M1 |
+| NR4 | DONE | [DONE] 审阅 NT4 | TODO-1.md · 阶段一 M0+M1 |
 | NT5 | TODO | `@atto-ui/core` native 加载（L.1） | TODO-1.md · 阶段一 M0+M1 |
 | NR5 | TODO | 审阅 NT5 | TODO-1.md · 阶段一 M0+M1 |
 | NT6 | TODO | `TreeOp::InsertBefore` 锚点版插入（R.1） | TODO-1.md · 阶段二 M2 |
