@@ -290,13 +290,19 @@
 - 新增 WM 单元测试覆盖：left dock resize 更新 `dock.size` 且不改普通窗口 rect；hidden auto-hide handle click 后 visible=true 且 reserve 仍为 1 cell；点击外部后 hidden；visible auto-hide overlay 优先命中 dock。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R4 — 审阅 T4
+### [DONE] R4 — 审阅 T4
 
 审阅 T4 改动：
 - 确认每个 `DockSide` 的内侧 resize 边无 off-by-one。
 - 确认 resize clamp 尊重 min/max/available。
 - 确认 auto-hide visible=false 时不会把 view 画到不可见区域外。
 - 确认鼠标事件不穿透到被 dock overlay 遮住的普通窗口。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T4 的 dock resize / auto-hide / hit-test 实现：`DockResizeEdge` 对 Left/Right/Bottom/Top 均使用内侧边，resize 只写 `WindowDock.size` 并经 `clamp_dock_size` 限制到 min/max/available。
+- 确认 auto-hide hidden 状态只 reserve/draw 1 cell handle，`WindowManager::draw` 在 `visible=false` 时跳过 dock view 绘制；visible overlay 在 hit-test 中优先于普通窗口，鼠标不会穿透到被遮住的 normal window。
+- 新增 WM 回归测试覆盖：四个 `DockSide` 的 resize edge off-by-one、min/max/available clamp、hidden auto-hide 不绘制 view 且仍绘制 handle、visible auto-hide overlay mouse 不穿透 normal window。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T5 — C2 atto-editor-app Explorer 改用 WM Docking
 

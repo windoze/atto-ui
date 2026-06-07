@@ -142,6 +142,39 @@ impl FocusNav for DropTargetProbe {}
 impl DynamicTree for DropTargetProbe {}
 impl EventHandling for DropTargetProbe {}
 
+struct DrawCountView {
+    count: Arc<AtomicUsize>,
+}
+
+impl Component for DrawCountView {
+    fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+crate::impl_component_default_traits!(DrawCountView => Layout, Scrollable, FocusNav, DynamicTree, EventHandling);
+
+struct MouseCountView {
+    count: Arc<AtomicUsize>,
+}
+
+impl Component for MouseCountView {
+    fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+}
+
+impl EventHandling for MouseCountView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        if matches!(event, Event::Mouse(_)) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            EventResult::consumed()
+        } else {
+            EventResult::ignored()
+        }
+    }
+}
+
+crate::impl_component_default_traits!(MouseCountView => Layout, Scrollable, FocusNav, DynamicTree);
+
 fn left_mouse_event(kind: MouseEventKind, column: u16, row: u16) -> Event {
     Event::Mouse(MouseEvent {
         kind,
@@ -765,6 +798,62 @@ fn auto_hidden_dock_reserves_one_cell_handle() {
 }
 
 #[test]
+fn dock_resize_edge_rect_uses_inner_edge_for_every_side() {
+    let rect = Rect::new(10, 5, 8, 6);
+
+    assert_eq!(
+        super::docking::dock_resize_edge_rect(rect, DockSide::Left),
+        Rect::new(17, 5, 1, 6)
+    );
+    assert_eq!(
+        super::docking::dock_resize_edge_rect(rect, DockSide::Right),
+        Rect::new(10, 5, 1, 6)
+    );
+    assert_eq!(
+        super::docking::dock_resize_edge_rect(rect, DockSide::Bottom),
+        Rect::new(10, 5, 8, 1)
+    );
+    assert_eq!(
+        super::docking::dock_resize_edge_rect(rect, DockSide::Top),
+        Rect::new(10, 10, 8, 1)
+    );
+}
+
+#[test]
+fn dock_resize_clamp_respects_min_max_and_available_for_every_side() {
+    for side in [
+        DockSide::Left,
+        DockSide::Right,
+        DockSide::Bottom,
+        DockSide::Top,
+    ] {
+        let mut dock = WindowDock::docked(side, 12);
+        dock.min_size = 5;
+        dock.max_size = Some(12);
+
+        assert_eq!(
+            super::docking::clamp_dock_size(&dock, Rect::new(0, 0, 40, 20), 1),
+            5
+        );
+        assert_eq!(
+            super::docking::clamp_dock_size(&dock, Rect::new(0, 0, 40, 20), 50),
+            12
+        );
+
+        dock.max_size = None;
+        let available_area = Rect::new(0, 0, 9, 7);
+        let available = match side {
+            DockSide::Left | DockSide::Right => available_area.width,
+            DockSide::Bottom | DockSide::Top => available_area.height,
+        };
+        assert_eq!(
+            super::docking::clamp_dock_size(&dock, available_area, 50),
+            available
+        );
+    }
+}
+
+#[test]
 fn left_dock_resize_drag_updates_dock_size_without_touching_normal_rect() {
     let bounds = Rect::new(0, 0, 80, 24);
     let theme = Theme::dark();
@@ -881,6 +970,45 @@ fn auto_hide_handle_click_shows_overlay_and_outside_click_hides_it() {
 }
 
 #[test]
+fn auto_hidden_dock_draws_handle_without_drawing_view() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let mut dock = WindowDock::docked(DockSide::Left, 20);
+    dock.auto_hide = DockAutoHide::Enabled { visible: false };
+    dock.handle_label = Some("D".to_string());
+    let draw_count = Arc::new(AtomicUsize::new(0));
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DrawCountView {
+                count: Arc::clone(&draw_count),
+            }),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+
+    let backend = TestBackend::new(bounds.width, bounds.height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+    assert_eq!(draw_count.load(Ordering::SeqCst), 0);
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 1);
+    assert_eq!(
+        terminal
+            .backend()
+            .buffer()
+            .cell((0, 0))
+            .expect("handle cell")
+            .symbol(),
+        "D"
+    );
+}
+
+#[test]
 fn visible_auto_hide_dock_overlays_normal_windows_for_hit_test() {
     let bounds = Rect::new(0, 0, 80, 24);
     let mut dock = WindowDock::docked(DockSide::Left, 20);
@@ -912,6 +1040,55 @@ fn visible_auto_hide_dock_overlays_normal_windows_for_hit_test() {
     assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 20);
     assert_eq!(wm.window(normal_id).expect("normal").rect.get().x, 1);
     assert_eq!(wm.window_at(5, 5), Some(dock_id));
+}
+
+#[test]
+fn visible_auto_hide_overlay_mouse_does_not_pass_through_to_normal_window() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let mut dock = WindowDock::docked(DockSide::Left, 20);
+    dock.auto_hide = DockAutoHide::Enabled { visible: true };
+    let dock_events = Arc::new(AtomicUsize::new(0));
+    let normal_events = Arc::new(AtomicUsize::new(0));
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(MouseCountView {
+                count: Arc::clone(&dock_events),
+            }),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(1, 0, 79, 24),
+            Box::new(MouseCountView {
+                count: Arc::clone(&normal_events),
+            }),
+        ),
+        bounds,
+    );
+    wm.toggle_maximize_focused(bounds);
+    assert_eq!(wm.focused(), Some(normal_id));
+
+    let event = left_mouse_event(MouseEventKind::Down(MouseButton::Left), 5, 5);
+    wm.handle_event(
+        &event,
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.dispatch_to_focused_view(&event, bounds, &theme);
+
+    assert_eq!(wm.focused(), Some(dock_id));
+    assert_eq!(dock_events.load(Ordering::SeqCst), 1);
+    assert_eq!(normal_events.load(Ordering::SeqCst), 0);
 }
 
 #[test]
