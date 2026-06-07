@@ -34,4 +34,6 @@
 - 已确认仓库中没有 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 - 下一步：更新 `TODO.md` / `TODO-1.md` 将 `NR16` 标记为 `[DONE]` 并写入完成记录，然后检查 diff 并提交。
 - 已更新 `TODO.md` 与 `TODO-1.md`，`NR16` 已标记为 `[DONE]` 并写入完成记录。
-- 下一步：复查工作区状态、diff 和最近提交，仅暂存本次任务相关文件并提交。
+- 已复查工作区状态、diff 和最近提交，仅暂存本次任务相关文件，未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。
+- 已提交 NR16 审阅变更：`e222e99 [NR16] Review reconciler test matrix`。
+- 当前任务已完成，按要求停止，不继续 `NT17`。
