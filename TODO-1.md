@@ -472,10 +472,15 @@
 - 将 e2e 接入 `packages/react/package.json` 的 `npm test`，确保 CI/本地 React 测试套件运行该端到端覆盖。
 - 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/e2e.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NR17 — 审阅 NT17
+### [DONE] NR17 — 审阅 NT17
 - 确认 e2e 走真实 Rust 分发路径（非 JS 侧模拟）。
 - 确认多窗口/受控输入覆盖。
 - 运行 e2e。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/__test__/e2e.cjs` 与 `e2e_app.cjs`，确认 headless 路径通过真实 `@atto-ui/react` `render()` 构造 native `AppHost`，输入经 `host.sendEvent()` 进入 Rust runtime，tick loop 调用 `host.step()` 与 `host.drainCallbacks()` 完成原生事件分发，而非 JS mock。
+- 确认 PTY 路径通过 Python `pty.openpty()` 启动 `node e2e_app.cjs`，真实终端渲染后驱动键盘输入、Tab/Enter 交互和 Ctrl+Q 退出；用屏幕输出断言 summary/actions 两个窗口及交互状态。
+- 确认覆盖多窗口、受控 `TextBox` 输入回环、列表新增/删除、`ListBox` 状态和 Button 计数器回调；`npm test --prefix packages/react` 已包含该 e2e。
+- 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/e2e.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NT18 — 示例 app（含流式聊天）（T.3）
 **文件**：`examples/`（JS/TS）
