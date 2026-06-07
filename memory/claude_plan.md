@@ -1,36 +1,29 @@
-# Claude 执行计划
-
-本文件记录本次调用的可审计执行计划、关键进度和验证结果；不记录私有推理链。
+# 执行计划
 
 ## 范围
 
-- 以 `TODO.md` 为任务顺序、任务要求和完成状态的权威来源。
-- 本次只完成首个未完成任务，完成后提交并停止。
-- 在识别当前任务前不做开放式历史问题排查。
-- 如遇到阻塞当前任务的缺陷或未计划的失败测试，优先修复；无法在本任务内修复时，向 `TODO.md` 添加最小前置任务并停止。
+- 按 `TODO.md` 的顺序识别第一个标题未带 `[DONE]` 的任务。
+- 只完成该一个任务；完成、验证、更新记录并提交后停止。
+- `TODO.md` 是任务顺序与完成状态的权威来源；仅在阶段级计划变化时更新 `PLAN.md`。
 
-## 执行步骤
+## 步骤
 
-1. 读取 `TODO.md`，找到标题未带 `[DONE]` 的首个任务。
-2. 仅检查最新提交是否明确提到与该任务直接相关的未完成问题。
-3. 读取当前任务在 `TODO-1.md` / `PLAN-1.md` 中的详细要求、依赖和验收标准。
-4. 只检查与当前任务相关的 npm/Rust/TS 包配置和 native 加载路径。
-5. 用最小改动实现 npm 平台矩阵、平台子包和主包依赖配置。
-6. 运行 `cargo fmt`。
-7. 运行 `cargo clippy --workspace --all-targets -- -D warnings`。
-8. 运行完整 Rust 测试、相关 TS/JS 验证、napi 本地构建和 npm pack dry-run。
-9. 在 `TODO.md` 和 `TODO-1.md` 中只将当前任务标记为 `[DONE]` 并写入完成记录。
-10. 关键步骤完成或计划变化时更新本文件。
-11. 提交前检查 `git status`、`git diff` 和最近提交。
-12. 只暂存并提交本次任务相关文件。
-13. 停止，不开始下一项任务。
+1. 读取 `TODO.md`，定位第一个未完成任务，并记录任务编号、标题、要求、依赖和验证条件。
+2. 检查最近提交是否明确提到与该任务直接相关的未完成问题；只处理会阻塞当前任务的问题。
+3. 阅读当前任务相关代码、测试和文档，确定最小正确实现范围。
+4. 如发现当前任务无法按规范实现且需要新增具体前置任务，则更新 `TODO.md`，必要时更新 `PLAN.md`，提交后停止。
+5. 否则实现当前任务，保持改动小而完整，避免绕过规范或夹带无关变更。
+6. 运行要求的验证流程：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后运行相关/完整测试；若只有文档变更且已有可复用绿色结果，则按要求记录跳过原因。
+7. 处理所有发现的未排期测试或夹具失败：修复，或在 `TODO.md` 中加入最小必要前置/后续任务且不把当前任务标记完成。
+8. 完成后在 `TODO.md` 标题前加 `[DONE]`，更新完成记录与验证结果。
+9. 提交所有本次任务相关变更，提交信息使用清晰的任务编号和动词短语。
+10. 停止，不继续下一个任务。
 
-## 进度记录
+## 进度日志
 
-- 已在读取任务详情前初始化本计划文件。
-- 已识别首个未完成任务：`NT19 — 跨平台预编译 + npm 包（P.1 / P.2）`。
-- 最新提交 `eed389f [NR18] Review React streaming example` 未指向与 `NT19` 直接相关的未完成前置问题。
-- 已为 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react` 添加 npm 发布元数据；已新增 `@atto-ui/node-*` 四个平台子包目录。
-- `napi create-npm-dirs --dry-run` 已确认平台矩阵可被 `@napi-rs/cli` 解析；`npm pack --dry-run` 已确认 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react` 主包结构。
-- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、Node native 测试、core/react TS 检查和 JS 测试、darwin-arm64/darwin-x64 本地 napi 构建、artifact copy、平台包 pack dry-run、`git diff --check` 均通过。
-- 已在 `TODO.md` 和 `TODO-1.md` 只将 `NT19` 标记为 `[DONE]`；`NR19` 保持为下一项未完成任务。
+- 已创建本计划文件；下一步读取 `TODO.md` 定位第一个未完成任务。
+- 已定位第一个未完成任务：`NR19 — 审阅 NT19`；最近提交 `[NT19] Add npm platform packages` 与该审阅直接相关。
+- 审阅重点：平台矩阵、平台子包 `os`/`cpu`/`libc` 与 `files`、主包和 `@atto-ui/core` 的 `optionalDependencies`、无 Rust 工具链安装路径、`npm pack` 产物结构。
+- 已发现并决定修复打包风险：平台子包在 `.node` 产物缺失时仍可被 `npm pack` 打出空二进制包；将为每个子包添加 `prepack` 存在性校验，确保缺少 native 产物时发布前失败。
+- 已完成修复并验证：Darwin 平台包 pack 成功，Linux/Windows 缺产物时 prepack 按预期阻止空包；临时消费端安装 tarball 后可在 `--ignore-scripts --omit=dev` 下加载 `@atto-ui/core` 与 `@atto-ui/node`。
+- 已运行完整相关验证并将 `NR19` 在 `TODO-1.md` / `TODO.md` 标记为 `[DONE]`；下一步检查 diff、提交本次任务变更后停止。

@@ -524,10 +524,15 @@
 - 验证通过：`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi create-npm-dirs --npm-dir npm --dry-run`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform --target x86_64-apple-darwin`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .`；`npm pack --dry-run`（`crates/atto-ui-node`、`packages/core`、`packages/react`、四个平台子包；本机已生成并打入 darwin-arm64/darwin-x64 产物，Linux/Windows 产物由对应平台/后续 CI 生成）。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm test --prefix crates/atto-ui-node`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NR19 — 审阅 NT19
+### [DONE] NR19 — 审阅 NT19
 - 确认平台矩阵与 optionalDependencies 配置正确。
 - 确认无 native 工具链时安装可用。
 - 验证打包产物。
+**完成记录（2026-06-08）**：
+- 审阅 `crates/atto-ui-node/package.json`、`packages/core/package.json`、`packages/react/package.json` 与四个 `crates/atto-ui-node/npm/*/package.json`，确认平台矩阵覆盖 `darwin-arm64`、`darwin-x64`、`linux-x64-gnu`、`win32-x64-msvc`，主包与 `@atto-ui/core` 的 `optionalDependencies` 均指向对应 `@atto-ui/node-*` 平台二进制包。
+- 修复平台子包打包风险：为四个子包新增 `prepack` `.node` 存在性校验，防止缺少 native 产物时仍发布不含二进制的空包；Darwin 当前产物 pack 成功，Linux/Windows 在本机缺少产物时会按预期阻止 pack，待对应平台/CI 生成产物后再发布。
+- 验证无 native 工具链安装路径：将 `@atto-ui/core`、`@atto-ui/node` 与本机 `@atto-ui/node-darwin-arm64` 子包打成 tarball 后安装到临时消费端，使用 `--ignore-scripts --omit=dev` 安装并分别 `require('@atto-ui/core')` / `require('@atto-ui/node')`，均成功加载平台 `.node` 并返回 `version() == "0.1.0"`。
+- 验证通过：`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi create-npm-dirs --npm-dir npm --dry-run`；`npm pack --dry-run --json`（`crates/atto-ui-node`、`packages/core`、`packages/react`、`crates/atto-ui-node/npm/darwin-arm64`、`crates/atto-ui-node/npm/darwin-x64`）；Linux/Windows 子包缺产物负向 prepack 检查；临时消费端 tarball 安装加载检查；`cargo fmt`；`cargo fmt --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck` / `npm test`（`packages/core`）；`npm run typecheck` / `npm test`（`packages/react`）；`npm test`（`crates/atto-ui-node`）；`npm ci --dry-run --ignore-scripts`（`packages/react`）；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NT20 — CI 流水线 + Bun/Deno + 文档（P.3）
 **文件**：CI 配置、`README`、API 文档

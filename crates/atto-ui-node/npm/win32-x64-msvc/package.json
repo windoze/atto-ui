@@ -9,6 +9,9 @@
   "files": [
     "atto_ui_node.win32-x64-msvc.node"
   ],
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('atto_ui_node.win32-x64-msvc.node')\""
+  },
   "publishConfig": {
     "access": "public"
   },

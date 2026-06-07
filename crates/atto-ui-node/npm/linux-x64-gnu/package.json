@@ -9,6 +9,9 @@
   "files": [
     "atto_ui_node.linux-x64-gnu.node"
   ],
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('atto_ui_node.linux-x64-gnu.node')\""
+  },
   "publishConfig": {
     "access": "public"
   },
