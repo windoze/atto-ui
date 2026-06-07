@@ -72,7 +72,7 @@
 | T7 | DONE | [DONE] L1 LSP diagnostics 数据接收与状态模型 | TODO-2.md · 阶段一 |
 | R7 | DONE | [DONE] 审阅 T7 | TODO-2.md · 阶段一 |
 | T8 | DONE | [DONE] L1 diagnostics gutter/statusbar 渲染与 F8 跳转 | TODO-2.md · 阶段一 |
-| R8 | TODO | 审阅 T8 | TODO-2.md · 阶段一 |
+| R8 | DONE | [DONE] 审阅 T8 | TODO-2.md · 阶段一 |
 | T9 | TODO | L2 Code Action 请求、列表 popup 与单文档应用 | TODO-2.md · 阶段一 |
 | R9 | TODO | 审阅 T9 | TODO-2.md · 阶段一 |
 | T10 | TODO | C4 MenuBar mnemonic/accelerator 与 Turbo Vision 绘制 | TODO-2.md · 阶段二 |

@@ -261,6 +261,50 @@ fn editor_view_renders_diagnostics_gutter_marker() {
 }
 
 #[test]
+fn editor_view_does_not_repeat_diagnostic_marker_on_wrapped_rows() {
+    let (mut view, _text) = test_view_with_text("abcdefghijk\n");
+    view.apply_current_document_diagnostics(editor_core_lsp::LspPublishDiagnosticsParams {
+        uri: "file:///diagnostics.rs".to_string(),
+        version: Some(1),
+        diagnostics: vec![editor_core_lsp::LspDiagnostic {
+            range: editor_core_lsp::LspRange::new(
+                editor_core_lsp::LspPosition::new(0, 0),
+                editor_core_lsp::LspPosition::new(0, 3),
+            ),
+            severity: Some(editor_core_lsp::LspDiagnosticSeverity::Error),
+            code: None,
+            source: Some("test".to_string()),
+            message: "mock error".to_string(),
+            related_information: None,
+            data: None,
+        }],
+    });
+
+    let backend = ratatui::backend::TestBackend::new(12, 4);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = atto_ui::composable::ComponentContext {
+        theme: &app_theme,
+        window_id: atto_ui::wm::WindowId::default(),
+        is_focused: true,
+        scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+        tab_mode: atto_ui::composable::TabMode::Cycle,
+        mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+
+    terminal
+        .draw(|f| view.draw(f, Rect::new(0, 0, 12, 4), ctx))
+        .expect("draw");
+
+    let buf = terminal.backend().buffer();
+    assert_eq!(buf.cell((5, 0)).expect("row 0 marker").symbol(), "E");
+    assert_eq!(buf.cell((5, 1)).expect("row 1 marker").symbol(), " ");
+    assert_eq!(buf.cell((7, 1)).expect("row 1 separator").symbol(), "│");
+    assert_eq!(buf.cell((8, 1)).expect("wrapped text start").symbol(), "e");
+}
+
+#[test]
 fn editor_actions_jump_between_diagnostics_with_wraparound() {
     let (mut view, _text) = test_view_with_text("zero\none\ntwo\nthree\n");
     view.apply_current_document_diagnostics(editor_core_lsp::LspPublishDiagnosticsParams {

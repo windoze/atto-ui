@@ -574,13 +574,21 @@
 - 修复同文件 PTY 测试在并行负载下 2 秒初始文本等待偶发超时的问题：`pty_editor.rs` 文本等待统一使用 5 秒 `PTY_WAIT`，单个测试仍远低于 1 分钟。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_editor`；`cargo test --workspace --all-targets`。
 
-### [TODO] R8 — 审阅 T8
+### [DONE] R8 — 审阅 T8
 
 审阅 T8 改动：
 - 确认 gutter 额外列与 line number/folding marker 的宽度计算一致，无覆盖文本首列。
 - 确认 wrap line 不重复显示主行 marker，或行为明确。
 - 确认 F8/Shift+F8 wrap-around 正确。
 - 确认 statusbar 在非 editor focused（Explorer focused）时仍显示 last focused editor 的 diagnostics。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T8 的 diagnostics gutter 宽度计算、`render_gutter` marker 绘制、`F8`/`Shift+F8` 诊断跳转、`EditorTheme` diagnostics style id 映射，以及 `atto-editor-app` active/last-focused editor diagnostics summary 到 statusbar 的传播路径。
+- 确认 diagnostics gutter 额外列与 line number/folding marker 使用同一 `layout_rects` 宽度模型，未覆盖文本首列；无 diagnostics 时不额外占用 diagnostics gutter 列。
+- 确认 wrapped visual row 不重复显示主逻辑行 diagnostics marker；新增 `editor_view_does_not_repeat_diagnostic_marker_on_wrapped_rows` 回归测试固定 continuation row 保留 gutter 空白、separator 与文本起始列。
+- 确认 `F8`/`Shift+F8` 按 diagnostics start offset 排序并正确 wrap-around；已有单测覆盖 next/prev wrap，PTY 覆盖 F8 从远端 viewport 跳回诊断行。
+- 确认 Explorer focused 时 statusbar 使用 `last_focused_editor` 的 diagnostics summary，且已有 app 单测覆盖 `E:1 W:2 I:3 H:4` fallback 渲染。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T9 — L2 Code Action 请求、列表 popup 与单文档应用
 
