@@ -200,9 +200,11 @@ dependencies = [
  "anyhow",
  "atto-ui",
  "atto-ui-components",
+ "crossterm",
  "napi",
  "napi-build",
  "napi-derive",
+ "ratatui",
  "serde",
  "serde_json",
 ]

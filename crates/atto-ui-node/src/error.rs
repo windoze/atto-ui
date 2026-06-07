@@ -1,6 +1,6 @@
 //! Error conversion helpers for the Node binding.
 
-use atto_ui::TreeError;
+use atto_ui::{ComponentError, TreeError};
 use napi::{Error, Status};
 
 /// Convert invalid JavaScript-facing input into a `TypeError`-like napi error.
@@ -11,6 +11,20 @@ pub fn invalid_arg(message: impl Into<String>) -> Error {
 /// Convert runtime tree errors into JavaScript `Error` objects without dropping context.
 pub fn tree_error(error: TreeError) -> Error {
     Error::new(Status::GenericFailure, error.to_string())
+}
+
+/// Convert component inspection/property errors into JavaScript `Error` objects.
+pub fn component_error(error: ComponentError) -> Error {
+    let message = match error {
+        ComponentError::NotFound(id) => format!("component not found: {id}"),
+        ComponentError::UnsupportedProperty(name) => format!("unsupported property: {name}"),
+        ComponentError::InvalidValue { name, expected } => {
+            format!("invalid value for {name}: expected {expected}")
+        }
+        ComponentError::ActionNotSupported(name) => format!("action not supported: {name}"),
+        ComponentError::RenderFailed(message) => format!("render failed: {message}"),
+    };
+    Error::new(Status::GenericFailure, message)
 }
 
 /// Convert arbitrary host errors into JavaScript `Error` objects without dropping context.
@@ -55,5 +69,11 @@ mod tests {
 
         assert_eq!(error.reason, "could not start host: config missing");
         assert!(!error.reason.contains("backtrace"));
+    }
+
+    #[test]
+    fn component_error_uses_stable_messages() {
+        let error = component_error(ComponentError::invalid_value("text", "string"));
+        assert_eq!(error.reason, "invalid value for text: expected string");
     }
 }

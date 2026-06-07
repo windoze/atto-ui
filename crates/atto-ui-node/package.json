@@ -8,7 +8,7 @@
   "scripts": {
     "build": "napi build --platform",
     "build:release": "napi build --platform --release",
-    "test": "node __test__/version.cjs"
+    "test": "node __test__/version.cjs && node __test__/app_host.cjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.1.5"

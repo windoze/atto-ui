@@ -91,7 +91,7 @@
 - 修复 `crates/atto-ui-node/src/error.rs` 的 `anyhow::Error` 映射：JS `Error` reason 现在保留 display source chain（例如外层 context + 根因），不使用 debug/backtrace 细节；`TreeError` display 消息保持原样透传。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] NT4 — `#[napi] AppHost` 全方法暴露（B.1）
+### [DONE] NT4 — `#[napi] AppHost` 全方法暴露（B.1）
 **文件**：`crates/atto-ui-node/src/lib.rs`
 **现状**：Rust `::atto_ui::app::AppHost` 已具备 `new`/`new_headless`/`step`/`drain_callbacks`/`add_dynamic_window`/`apply_tree_ops`/`get_property`/`set_property`/`send_event`/窗口管理/`snapshot`/`schemas`（agent-ui 归档计划 T3–T5 落地）。
 **步骤**：
@@ -101,6 +101,13 @@
 4. 用 NT2/NT3 的转换与 handle 包装贯通参数与返回值。
 **测试**：headless 冒烟（JS）——建窗口→`applyTreeOps` 改 text→`step`→`snapshot()` 断言文本；`drainCallbacks` 取回注入事件。
 **验收**：JS 能用命令式 spec/op 驱动一个 headless 窗口，能力与 Python `PyAppHost` 对称。
+**完成记录（2026-06-07）**：
+- 在 `crates/atto-ui-node/src/lib.rs` 暴露 `#[napi] AppHost`：支持 constructor 配置（`headless`、`cols`/`rows`、`tickRate=0`、鼠标捕获、隐藏光标等）、`addDynamicWindow`、`applyTreeOps`、`step`、`drainCallbacks`、`allocCallback`、`sendEvent`、窗口管理、属性读写、`snapshot`、主题方法与 `schemas`。
+- 复用 NT2/NT3 转换层与 string handle：窗口/回调 id 均以 `atto:window:*` / `atto:callback:*` 暴露；`CallbackInvocation`、snapshot 和 window list 输出不暴露 raw `u64`/BigInt。
+- 新增 `event.rs` 支持 JS 注入 key/mouse/paste/resize/focus 事件；补充组件错误映射，保证属性读取等路径返回清晰 JS Error。
+- 新增 `__test__/app_host.cjs`，覆盖 headless 建窗口、`applyTreeOps` 修改文本、`getProperty`/`snapshot` 断言、`sendEvent` 触发 Button callback、`drainCallbacks`、窗口列表/标题/关闭与 stale handle 失效。
+- 更新 napi 生成的 `index.js`/`index.d.ts`，导出 `AppHost`、`AppHostConfig`、`Rect` 与 `registerAllRuntimeComponents()`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm test`。
 
 ### [TODO] NR4 — 审阅 NT4
 - 确认方法集与 Python 对称，签名与 §6.1 一致。

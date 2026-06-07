@@ -508,4 +508,6 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.AppHost = nativeBinding.AppHost
+module.exports.registerAllRuntimeComponents = nativeBinding.registerAllRuntimeComponents
 module.exports.version = nativeBinding.version
