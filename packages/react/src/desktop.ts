@@ -1,6 +1,8 @@
 import { Fragment, createElement, type ReactElement, type ReactNode } from 'react'
 import type { RectLike } from '@atto-ui/core'
 
+import type { AttoUiEventHandler } from './events'
+
 export type OneOrMany<T> = T | readonly T[]
 export type MenuItemElement = ReactElement<MenuItemProps, typeof MenuItem>
 export type MenuElement = ReactElement<MenuProps, typeof Menu>
@@ -42,7 +44,7 @@ export interface MenuItemProps {
   readonly label: string
   readonly shortcut?: string | null
   readonly enabled?: boolean
-  readonly onClick?: () => void
+  readonly onClick?: AttoUiEventHandler
   readonly children?: MenuItemChildren
 }
 

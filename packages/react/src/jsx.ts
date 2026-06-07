@@ -44,6 +44,15 @@ interface MarkdownViewerHostProps {
   readonly onLink?: AttoUiEventHandler
 }
 
+interface GridHostProps {
+  readonly columns?: number
+  readonly row_gap?: number
+  readonly column_gap?: number
+  readonly padding?: GridProps['padding']
+  readonly scrollable?: boolean
+  readonly children?: ReactNode
+}
+
 interface ProgressBarHostProps {
   readonly min?: number
   readonly max?: number
@@ -80,7 +89,7 @@ declare global {
         readonly enabled?: boolean
         readonly onChange?: AttoUiEventHandler
       }
-      grid: GridProps
+      grid: GridHostProps
       hstack: StackProps
       listBox: ListBoxHostProps
       listbox: ListBoxHostProps
@@ -120,6 +129,7 @@ export type {
   ButtonHostProps,
   LabelProps,
   MarkdownProps,
+  GridHostProps,
   RichTextHostProps,
   TableViewHostProps,
   TextBoxHostProps,

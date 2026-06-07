@@ -86,4 +86,4 @@ export {
   type TextProps,
 } from './text'
 
-export type { RichTextHostProps } from './jsx'
+export type { GridHostProps, RichTextHostProps } from './jsx'

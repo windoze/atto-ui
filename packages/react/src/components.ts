@@ -99,6 +99,7 @@ export function Button({ label, children, enabled, onClick }: ButtonProps): Reac
 export function TextBox(props: TextBoxProps): ReactElement {
   const { title, value, placeholder, enabled, clipboard, onChange, onSubmit } = props
   return hostElement('textBox', {
+    __attoControlledText: true,
     title,
     text: value,
     placeholder,

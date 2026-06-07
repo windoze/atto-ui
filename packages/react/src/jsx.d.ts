@@ -1,5 +1,6 @@
 export type {
   ButtonHostProps,
+  GridHostProps,
   LabelProps,
   MarkdownProps,
   RichTextHostProps,

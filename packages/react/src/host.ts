@@ -55,6 +55,7 @@ export interface HostInstance {
   parent: HostContainer | HostInstance | null
   needsTreeFlush: boolean
   needsDesktopSync: boolean
+  controlledText: boolean
   lastTree: ComponentSpec | null
 }
 
@@ -68,6 +69,7 @@ export interface HostEventBinding {
 
 export interface HostUpdatePayload {
   readonly props: HostProps
+  readonly controlledText: boolean
   readonly setProps: readonly HostPropUpdate[]
   readonly clearProps: readonly string[]
   readonly bindEvents: readonly HostEventUpdate[]
@@ -86,6 +88,8 @@ export interface HostEventUpdate {
 }
 
 let nextContainerId = 1
+
+const CONTROLLED_TEXT_PROP = '__attoControlledText'
 
 /** Create the single-window container that the React reconciler mutates. */
 export function createHostContainer(
@@ -140,9 +144,10 @@ export function createHostInstance(
   type: string,
   props: Readonly<Record<string, unknown>>,
 ): HostInstance {
+  const normalizedType = normalizeHostType(type)
   return {
     id: `${container.idPrefix}-${++container.nextId}`,
-    type: normalizeHostType(type),
+    type: normalizedType,
     props: sanitizeProps(props),
     events: createEventBindings(container, props),
     children: [],
@@ -150,6 +155,7 @@ export function createHostInstance(
     parent: null,
     needsTreeFlush: false,
     needsDesktopSync: false,
+    controlledText: isControlledTextProps(normalizedType, props),
     lastTree: null,
   }
 }
@@ -166,6 +172,7 @@ export function createHostTextInstance(container: HostContainer, text: string): 
     parent: null,
     needsTreeFlush: false,
     needsDesktopSync: false,
+    controlledText: false,
     lastTree: null,
   }
 }
@@ -455,7 +462,20 @@ export function dispatchHostCallbacks(
   container: HostContainer,
   invocations: readonly CallbackInvocation[],
 ): number {
-  return container.eventDispatcher.dispatchAll(invocations)
+  let dispatched = 0
+  let needsFlush = false
+  for (const invocation of invocations) {
+    const previousControlledText = controlledTextValueForInvocation(container, invocation)
+    if (!container.eventDispatcher.dispatch(invocation)) continue
+    dispatched += 1
+    if (resyncControlledTextAfterChange(container, invocation, previousControlledText)) {
+      needsFlush = true
+    }
+  }
+  if (needsFlush) {
+    flushStaticTree(container)
+  }
+  return dispatched
 }
 
 export function prepareHostUpdate(
@@ -464,6 +484,8 @@ export function prepareHostUpdate(
 ): HostUpdatePayload | null {
   const oldHostProps = sanitizeProps(oldProps)
   const newHostProps = sanitizeProps(newProps)
+  const oldControlledText = oldProps[CONTROLLED_TEXT_PROP] === true
+  const newControlledText = newProps[CONTROLLED_TEXT_PROP] === true
   const setProps: HostPropUpdate[] = []
 
   for (const [name, value] of Object.entries(newHostProps)) {
@@ -500,12 +522,14 @@ export function prepareHostUpdate(
     && bindEvents.length === 0
     && clearEvents.length === 0
     && updateEvents.length === 0
+    && oldControlledText === newControlledText
   ) {
     return null
   }
 
   return {
     props: newHostProps,
+    controlledText: newControlledText,
     setProps,
     clearProps,
     bindEvents,
@@ -514,7 +538,57 @@ export function prepareHostUpdate(
   }
 }
 
+function resyncControlledTextAfterChange(
+  container: HostContainer,
+  invocation: CallbackInvocation,
+  previousText: string | null,
+): boolean {
+  if (previousText === null || invocation.event !== 'change' || invocation.targetId === null) {
+    return false
+  }
+  const instance = findHostInstance(container, invocation.targetId)
+  if (!instance || !instance.controlledText || instance.type !== 'TextBox') return false
+  const text = instance.props.text
+  if (typeof text !== 'string' || invocation.payload === text || text !== previousText) return false
+  enqueueTreeOpForMountedInstance(instance, {
+    op: 'set_prop',
+    id: instance.id,
+    name: 'text',
+    value: text,
+  })
+  return true
+}
+
+function controlledTextValueForInvocation(
+  container: HostContainer,
+  invocation: CallbackInvocation,
+): string | null {
+  if (invocation.event !== 'change' || invocation.targetId === null) return null
+  const instance = findHostInstance(container, invocation.targetId)
+  if (!instance || !instance.controlledText || instance.type !== 'TextBox') return null
+  const text = instance.props.text
+  return typeof text === 'string' ? text : null
+}
+
+function findHostInstance(container: HostContainer, id: string): HostInstance | null {
+  for (const child of container.rootChildren) {
+    const found = findHostInstanceInSubtree(child, id)
+    if (found) return found
+  }
+  return null
+}
+
+function findHostInstanceInSubtree(instance: HostInstance, id: string): HostInstance | null {
+  if (instance.id === id) return instance
+  for (const child of instance.children) {
+    const found = findHostInstanceInSubtree(child, id)
+    if (found) return found
+  }
+  return null
+}
+
 export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayload): void {
+  instance.controlledText = payload.controlledText
   if (isWindowInstance(instance)) {
     commitWindowUpdate(instance, payload)
     return
@@ -1164,8 +1238,13 @@ function isStatusBarInstance(instance: HostInstance): boolean {
 
 function shouldSkipProp(name: string, value: unknown): boolean {
   if (name === 'children' || name === 'key' || name === 'ref') return true
+  if (name.startsWith('__atto')) return true
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return true
   return /^on[A-Z]/.test(name)
+}
+
+function isControlledTextProps(type: string, props: Readonly<Record<string, unknown>>): boolean {
+  return type === 'TextBox' && props[CONTROLLED_TEXT_PROP] === true
 }
 
 function toComponentValue(value: unknown): ComponentValue | undefined {

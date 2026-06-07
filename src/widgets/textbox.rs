@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -314,8 +314,14 @@ impl EventHandling for TextBox {
                 EventResult::changed()
             }
             Event::Key(KeyEvent {
-                code, modifiers, ..
+                code,
+                modifiers,
+                kind,
+                ..
             }) => {
+                if matches!(kind, KeyEventKind::Release) {
+                    return EventResult::ignored();
+                }
                 let mods = *modifiers;
                 match code {
                     KeyCode::Char('a') if mods.contains(KeyModifiers::CONTROL) => {
@@ -698,5 +704,39 @@ fn draw_indicator(
     if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
         cell.set_symbol(symbol);
         cell.set_style(style);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(theme: &crate::theme::Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: crate::wm::WindowId::default(),
+            is_focused: true,
+            scrollbar_host: crate::composable::ScrollbarHost::Component,
+            tab_mode: crate::composable::TabMode::Cycle,
+            mouse_coordinate_space: crate::composable::MouseCoordinateSpace::Absolute,
+        }
+    }
+
+    #[test]
+    fn key_release_does_not_insert_text() {
+        let value = Binding::new(String::new());
+        let mut textbox = TextBox::new("Name", value.clone());
+        let theme = crate::theme::Theme::dark();
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('Z'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+
+        assert_eq!(
+            textbox.handle_event(&release, context(&theme)),
+            EventResult::ignored()
+        );
+        assert_eq!(value.get(), "");
     }
 }

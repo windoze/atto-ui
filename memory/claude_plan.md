@@ -1,32 +1,28 @@
-# 执行计划
+执行计划与进度记录
 
-## 当前约束
+约束说明：此文件记录可审计的执行计划、关键决策和进度更新；不会记录不可公开的内部推理链。
 
-- 先依据 `TODO.md` 找到第一个标题未以 `[DONE]` 开头的任务。
-- 只完成该任务，验证通过后更新 `TODO.md` 并提交，然后停止。
-- 若发现当前任务被未跟踪的前置问题阻塞，优先在 `TODO.md` 中插入最小必要前置任务，提交后停止。
-- `PLAN.md` 只在阶段级计划、依赖或完成标准变化时更新。
-- 不使用 workaround；若实现路径存在缺口，修复缺口或把它明确排入 `TODO.md`。
+当前目标：按 `TODO.md` 的顺序完成第一个标题未带 `[DONE]` 的任务，完成后更新记录、验证、提交，并停止。
 
-## 步骤计划
+步骤：
+1. 读取 `TODO.md`，只识别第一个未完成任务，不进行开放式历史问题扫查。
+2. 查看最新提交信息；若它明确提到与当前任务直接相关的未完成问题，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
+3. 阅读当前任务相关的计划、源码和测试，确认要求、依赖与验证方式。
+4. 若任务可直接完成，做最小正确实现；若发现阻塞当前任务的真实前置问题，按要求更新 `TODO.md` 并停止。
+5. 运行格式化、lint 和相关测试；若代码改动影响全局行为，则按要求运行完整验证。
+6. 将任务标题标记为 `[DONE]`，更新 `TODO.md` 的 completion record；仅当阶段计划变化时更新 `PLAN.md`。
+7. 检查 `git status`、`git diff`、近期提交，提交本次任务相关改动。
+8. 提交后停止，不进入下一个任务。
 
-1. 读取 `TODO.md`，按顺序确认第一个未完成任务及其要求、依赖和验证标准。
-2. 检查最近提交是否显式提到与该任务直接相关的未完成问题。
-3. 针对当前任务读取必要源码、测试和文档，限定范围，不做无关历史问题扫查。
-4. 如任务可直接执行，实施最小正确改动；如遇阻塞，更新 `TODO.md` 记录前置任务并停止。
-5. 按要求运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，随后运行相关测试；如代码发生实质变更，再运行完整测试套件。
-6. 处理所有观察到且未显式排期的测试/fixture 失败。
-7. 将当前任务标题标记为 `[DONE]`，更新完成记录；仅在阶段计划变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff`、最近提交，确认只提交本次任务相关文件。
-9. 使用描述性提交信息提交改动，然后停止，不进入下一任务。
-
-## 进度记录
-
-- 已创建本计划文件，下一步读取 `TODO.md` 并识别第一个未完成任务。
-- 已确认第一个未完成任务为 `NT14 — host 组件库 + JSX 类型 + 受控输入（U.6）`。
-- 最近提交为 `NR13` 审阅 React desktop/window mapping，未发现最新提交显式标注与 NT14 直接相关的未完成 blocker；下一步限定在 `packages/react`、`packages/core` 类型和相关 PTY/JS 测试中分析实现面。
-- 已分析现有 React reconciler：host 事件名默认由 `onXxx` 映射为 runtime `xxx`，但 TextBox/ListBox/Table 等 `change` 事件当前无 payload，无法可靠实现受控 wrapper 的值回传。
-- 调整计划：先补运行时 change/select 类事件 payload（TextBox/TextArea string、选择类 u64、Checkbox bool、Slider f64），再新增 React typed wrappers 与 JSX intrinsic 类型；测试覆盖 wrapper lowering、payload 分发、headless/PTY 受控 TextBox。
-- 已完成主要代码改动：新增 React host wrapper 组件、JSX intrinsic 声明、TSX 类型用例、components PTY 用例，并补齐 runtime change 事件 payload 与相关 Rust 回归测试。下一步运行格式化、类型检查与测试，根据失败继续修正。
-- 验证已完成并通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、React typecheck/build、`cargo test --all --all-targets`、napi build、core/node/react JS 测试、`git diff --check`。`tools/run_fixtures.py` 不存在，独立 fixture 套件无可运行入口。
-- 已将 NT14 在 `TODO.md` 与 `TODO-1.md` 标记为 `[DONE]` 并写入完成记录。下一步检查 diff/status 后提交本次任务相关文件。
+进度：
+- 已创建本执行计划文件。
+- 已读取 `TODO.md`/`TODO-1.md`，确认当前任务为 `NR14 — 审阅 NT14`。
+- 已检查最新提交 `[NT14] Add React host component wrappers`，与当前审阅任务直接相关；审阅范围限定为该提交及其相关实现/测试。
+- 已审阅 React host wrapper、JSX 类型、runtime change payload 与受控 TextBox 测试。
+- 发现并纳入当前审阅修复：`TextBox` 未忽略 key release 可能重复输入；受控 `TextBox` 在 `onChange` 拒绝/转换输入时不会回写 React 受控值；raw `<grid>` JSX 类型允许 wrapper-only camelCase gap props；`MenuItem.onClick` 类型不能接收事件对象。
+- 已完成最小范围修复并补充 Rust/JS/TS 回归测试。
+- 已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`npm run typecheck --prefix packages/react`、`cargo test -p atto-ui widgets::textbox::tests::key_release_does_not_insert_text`、`npm test --prefix packages/react`。
+- 已通过完整验证：`cargo test --all --all-targets`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）、`npm test --prefix crates/atto-ui-node`、`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`、`npm test --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm test --prefix packages/react`、`git diff --check`。
+- 已确认未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
+- 已将 `NR14` 在 `TODO-1.md` 和 `TODO.md` 标记为 `[DONE]`/`DONE` 并写入完成记录。
+- 下一步：检查 diff/status 后提交本任务改动并停止。

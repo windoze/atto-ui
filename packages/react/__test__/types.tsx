@@ -30,9 +30,13 @@ const desktop = <>
 
 const rawTextBox = <textBox title="Raw" text="value" onChange={(event) => event.payload} />
 const rawList = <listBox items={['one']} selection={0} onChange={(event) => event.callbackId} />
+const rawGrid = <grid columns={2} row_gap={1} column_gap={1} />
+const menuEvent = <MenuBar><Menu title="File"><MenuItem label="Open" onClick={(event) => event.callbackId.toUpperCase()} /></Menu></MenuBar>
 void desktop
 void rawTextBox
 void rawList
+void rawGrid
+void menuEvent
 
 // @ts-expect-error controlled TextBox requires value
 const missingValue = <TextBox onChange={() => {}} />
@@ -49,3 +53,7 @@ void statusBarChildren
 // @ts-expect-error raw host TextBox uses the runtime text prop; value belongs to the wrapper
 const rawValue = <textBox value="not supported" />
 void rawValue
+
+// @ts-expect-error raw host Grid uses runtime snake_case props; the Grid wrapper accepts camelCase
+const rawGridCamelGap = <grid rowGap={1} />
+void rawGridCamelGap

@@ -403,10 +403,17 @@
 - 新增 TSX 类型用例、reconciler wrapper lowering/payload 分发测试、headless 受控 TextBox 回归，以及 PTY components 用例，覆盖 TextBox 输入、Button 点击、ListBox 与 Table 选择更新。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm run build --prefix packages/react`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR14 — 审阅 NT14
+### [DONE] NR14 — 审阅 NT14
 - 确认事件 prop 约定一致、类型精确。
 - 确认受控输入不出现光标跳动/重复字符。
 - 运行 `tsc` + PTY。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/components.ts`、`jsx.ts`、`desktop.ts` 与 `host.ts`，确认 wrapper 事件约定统一映射到 runtime 事件名：`Button.onClick -> click`、`TextBox.onChange(value,event) -> change`、`ListBox`/`Table` selection change payload 为 number；补正 `MenuItem.onClick` 类型为 `AttoUiEventHandler`，允许读取 callback event。
+- 修复受控 `TextBox` 回环缺口：React wrapper 标记受控 text host；callback 分发后若 runtime payload 与当前 React `text` prop 不一致，会立即回写当前受控值，覆盖拒绝/转换输入场景，避免 native buffer 与 React state 脱同步；接受输入时不会产生重复回写 op。
+- 修复重复输入风险：Rust `TextBox` 现在与 `TextArea`/scroll/typeahead 一致忽略 `KeyEventKind::Release`，补充 release 不插入文本的单测。
+- 收紧 JSX 类型：raw `<grid>` 改用 runtime snake_case `row_gap`/`column_gap` host props，camelCase 仅由 `Grid` wrapper 接受；补充 TSX 类型负例。
+- 确认 PTY 覆盖受控 TextBox happy path、Button 点击、ListBox/Table 选择更新；新增 reconciler 回归覆盖受控 TextBox 拒绝输入回写与接受输入无重复 op。React JSX 对具体 wrapper 子元素身份仍受 TypeScript/React JSX element erasure 限制，运行时结构校验继续覆盖 Desktop/Menu 非法子节点。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`cargo test -p atto-ui widgets::textbox::tests::key_release_does_not_insert_text`；`npm test --prefix packages/react`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test --prefix crates/atto-ui-node`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NT15 — `@atto-ui/core` 命令式构造器（L.2）
 **文件**：`packages/core/src/`

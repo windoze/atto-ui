@@ -587,3 +587,63 @@ assert.equal(dispatchHostCallbacks(componentRoot.container, [
   { callbackId: wrappedTable.events.change, targetId: wrappedTable.id, event: 'change', payload: 1 },
 ]), 1)
 assert.equal(nextTableSelection, 1)
+
+const { host: controlledRejectHost, ops: controlledRejectOps } = createMockHost()
+const controlledRejectRoot = createRoot(controlledRejectHost, 'controlled-reject-window', { idPrefix: 'controlled-reject' })
+let rejectedTextValue = null
+controlledRejectRoot.render(React.createElement(TextBox, {
+  value: 'A',
+  onChange(value) {
+    rejectedTextValue = value
+  },
+}))
+const rejectedTextBox = controlledRejectRoot.container.rootChildren[0]
+controlledRejectOps.length = 0
+assert.equal(dispatchHostCallbacks(controlledRejectRoot.container, [
+  { callbackId: rejectedTextBox.events.change.callbackId, targetId: rejectedTextBox.id, event: 'change', payload: 'AB' },
+]), 1)
+assert.equal(rejectedTextValue, 'AB')
+assert.deepEqual(controlledRejectOps, [
+  {
+    windowId: 'controlled-reject-window',
+    op: { op: 'set_prop', id: rejectedTextBox.id, name: 'text', value: 'A' },
+  },
+])
+
+const { host: controlledAcceptHost, ops: controlledAcceptOps } = createMockHost()
+const controlledAcceptRoot = createRoot(controlledAcceptHost, 'controlled-accept-window', { idPrefix: 'controlled-accept' })
+function ControlledAcceptTextBox() {
+  const [value, setValue] = React.useState('A')
+  return React.createElement(TextBox, { value, onChange: setValue })
+}
+controlledAcceptRoot.render(React.createElement(ControlledAcceptTextBox))
+const acceptedTextBox = controlledAcceptRoot.container.rootChildren[0]
+controlledAcceptOps.length = 0
+assert.equal(dispatchHostCallbacks(controlledAcceptRoot.container, [
+  { callbackId: acceptedTextBox.events.change.callbackId, targetId: acceptedTextBox.id, event: 'change', payload: 'AB' },
+]), 1)
+assert.deepEqual(controlledAcceptOps, [
+  {
+    windowId: 'controlled-accept-window',
+    op: { op: 'set_prop', id: acceptedTextBox.id, name: 'text', value: 'AB' },
+  },
+])
+
+const { host: controlledTransformHost, ops: controlledTransformOps } = createMockHost()
+const controlledTransformRoot = createRoot(controlledTransformHost, 'controlled-transform-window', { idPrefix: 'controlled-transform' })
+function ControlledTransformTextBox() {
+  const [value, setValue] = React.useState('A')
+  return React.createElement(TextBox, { value, onChange: (next) => setValue(next.toUpperCase()) })
+}
+controlledTransformRoot.render(React.createElement(ControlledTransformTextBox))
+const transformedTextBox = controlledTransformRoot.container.rootChildren[0]
+controlledTransformOps.length = 0
+assert.equal(dispatchHostCallbacks(controlledTransformRoot.container, [
+  { callbackId: transformedTextBox.events.change.callbackId, targetId: transformedTextBox.id, event: 'change', payload: 'ab' },
+]), 1)
+assert.deepEqual(controlledTransformOps, [
+  {
+    windowId: 'controlled-transform-window',
+    op: { op: 'set_prop', id: transformedTextBox.id, name: 'text', value: 'AB' },
+  },
+])
