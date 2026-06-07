@@ -1,28 +1,28 @@
 # Execution Plan
 
-## Current Objective
+## Current Invocation
 
-Complete exactly the first incomplete task listed in `TODO.md`, then stop after validation, documentation updates, and a Git commit.
+- Goal: complete exactly the first incomplete task listed in `TODO.md`, then stop.
+- Constraint: `TODO.md` is authoritative for task order and completion state; a task is complete only if its heading is prefixed with `[DONE]`.
+- Constraint: update this file when the plan changes or a key step completes.
 
-Selected task: `R6 — 审阅 T6` from `TODO-2.md`.
+## Step-by-Step Plan
 
-## Plan
+1. Read `TODO.md` and identify the first task heading that is not prefixed with `[DONE]`.
+2. Review that task's requirements, dependencies, validation instructions, and completion record.
+3. Inspect only the code and documents needed for that task; avoid broad unrelated triage.
+4. Implement the task as written, unless a concrete blocker requires adding a prerequisite task in `TODO.md`.
+5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant tests, and run the full suite when required.
+6. If validation reveals unscheduled failures, fix them or add the minimum prerequisite/follow-up task before marking the current task done.
+7. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record.
+8. Update this file with key progress and validation results.
+9. Inspect git status, diff, and recent log, then commit all intended changes with a task-specific message.
+10. Stop without starting the next task.
 
-1. Read `TODO.md` first to identify the first task whose title is not prefixed with `[DONE]`.
-2. Inspect only the files and code paths needed for that task, plus recent Git context if it is directly relevant to the selected task.
-3. Implement the selected task completely, or add the minimum prerequisite task to `TODO.md` if a concrete blocker makes correct implementation impossible.
-4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full tests required by the task.
-5. Address any observed failing tests or fixtures according to the failure policy before marking the task complete.
-6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling in its completion record.
-7. Update this file when key steps are completed or if the plan changes.
-8. Review Git status/diff/log, stage only intended files, and commit the completed task with a clear message.
-9. Stop without starting the next task.
+## Progress Log
 
-## Progress
-
-- Initial execution plan written.
-- Read `TODO.md` and `TODO-2.md`; identified `R6 — 审阅 T6` as the first incomplete task.
-- Latest commit is `[T6] Wire stage three editor actions`, directly relevant to this review.
-- Reviewed T6 editor action dispatch, keymap bindings, read-only gating, text/LSP sync path, and language comment configuration.
+- Plan initialized before reading project task files.
+- Identified first incomplete task: `T7 — L1 LSP diagnostics 数据接收与状态模型` in `TODO-2.md`; latest commit is `R6` and does not mention a directly relevant unfinished T7 issue.
+- Implemented diagnostics state plumbing: `DiagnosticsSummary`, handle binding, LSP controller diagnostic fields, publishDiagnostics event handling, editor-core diagnostic edit application, and mock LSP/test coverage.
 - Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Marked `R6` complete in `TODO.md` and `TODO-2.md` with a completion record.
+- Marked T7 complete in `TODO.md` and `TODO-2.md` with completion notes.

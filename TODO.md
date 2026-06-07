@@ -69,7 +69,7 @@
 | R5 | DONE | [DONE] 审阅 T5 | TODO-2.md · 阶段一 |
 | T6 | DONE | [DONE] 阶段三首批编辑动作接线 | TODO-2.md · 阶段一 |
 | R6 | DONE | [DONE] 审阅 T6 | TODO-2.md · 阶段一 |
-| T7 | TODO | L1 LSP diagnostics 数据接收与状态模型 | TODO-2.md · 阶段一 |
+| T7 | DONE | [DONE] L1 LSP diagnostics 数据接收与状态模型 | TODO-2.md · 阶段一 |
 | R7 | TODO | 审阅 T7 | TODO-2.md · 阶段一 |
 | T8 | TODO | L1 diagnostics gutter/statusbar 渲染与 F8 跳转 | TODO-2.md · 阶段一 |
 | R8 | TODO | 审阅 T8 | TODO-2.md · 阶段一 |

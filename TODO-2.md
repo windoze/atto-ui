@@ -440,7 +440,7 @@
 - 未发现需要修改代码的问题。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T7 — L1 LSP diagnostics 数据接收与状态模型
+### [DONE] T7 — L1 LSP diagnostics 数据接收与状态模型
 
 **依赖**：无；如果要显示在 app statusbar，依赖 T10/T11 更完整。
 
@@ -491,6 +491,14 @@
 **验收**：
 - publish diagnostics 能进入 editor-core processing edits。
 - hover/completion/goto response 行为不回归。
+
+**完成记录（2026-06-08）**：
+- 新增 `DiagnosticsSummary { errors, warnings, infos, hints }`，从 `atto-ui-editor` crate root re-export，并通过 `EditorViewHandle::diagnostics_summary` 暴露给宿主 UI。
+- `EditorLspController` 增加 diagnostics 数据、result id、pending pull request、cursor 与 revision 状态；LSP session 出错、禁用或重启时会清理 diagnostics 状态与 summary。
+- `maybe_poll_lsp` 改为显式 match `Notification` / `Response` / `DeferredRequest`，`publishDiagnostics` 会按当前 document URI/version 过滤后转换为 `editor-core` processing edits 并更新 summary；hover/completion/goto response 分支保持原行为。
+- 扩展 mock LSP server，在 `file:///diagnostics.rs` 打开时发送 deterministic `publishDiagnostics`。
+- 新增 editor view 单测覆盖 diagnostics summary 与 `state_manager.editor().diagnostics()`，新增 LSP integration 测试覆盖 mock `publishDiagnostics` 驱动 summary 更新。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R7 — 审阅 T7
 

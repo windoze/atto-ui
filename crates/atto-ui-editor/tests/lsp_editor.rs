@@ -11,7 +11,9 @@ use atto_ui::composable::{
     Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
 };
 use atto_ui::wm::WindowId;
-use atto_ui_editor::{EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig};
+use atto_ui_editor::{
+    DiagnosticsSummary, EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig,
+};
 use atto_ui_editor::{EditorThemeSet, EditorView};
 
 #[test]
@@ -230,6 +232,70 @@ fn lsp_hover_popup_tracks_mouse_and_suppresses_until_move() {
         if Instant::now() >= deadline2 {
             panic!("timed out waiting for hover popup after mouse move");
         }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn lsp_publish_diagnostics_updates_summary() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text = "let bad = 1;\n".to_string();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+
+    let lsp_cfg = EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///diagnostics.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    };
+    cfg.lsp.set(EditorLspMode::Enabled(lsp_cfg));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+
+    let area = Rect::new(0, 0, 80, 10);
+    assert_eq!(
+        handle.diagnostics_summary.get(),
+        DiagnosticsSummary::default()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        let summary = handle.diagnostics_summary.get();
+        if summary.errors == 1 {
+            assert_eq!(summary.warnings, 0);
+            assert_eq!(summary.infos, 0);
+            assert_eq!(summary.hints, 0);
+            break;
+        }
+
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for diagnostics summary; got {summary:?}");
+        }
+
         thread::sleep(Duration::from_millis(10));
     }
 }

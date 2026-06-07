@@ -13,7 +13,9 @@ use editor_core::{
     Command, CursorCommand, EditCommand, EditorStateManager, Position, SearchOptions, Selection,
     SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, char_width,
 };
-use editor_core_lsp::{LspContentChange, LspSession, locations_from_value};
+use editor_core_lsp::{
+    LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession, locations_from_value,
+};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -50,12 +52,37 @@ pub enum EditorEvent {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiagnosticsSummary {
+    pub errors: usize,
+    pub warnings: usize,
+    pub infos: usize,
+    pub hints: usize,
+}
+
+impl DiagnosticsSummary {
+    pub(crate) fn from_diagnostics(diagnostics: &[LspDiagnostic]) -> Self {
+        let mut summary = Self::default();
+        for diagnostic in diagnostics {
+            match diagnostic.severity {
+                Some(LspDiagnosticSeverity::Error) => summary.errors += 1,
+                Some(LspDiagnosticSeverity::Warning) => summary.warnings += 1,
+                Some(LspDiagnosticSeverity::Information) => summary.infos += 1,
+                Some(LspDiagnosticSeverity::Hint) => summary.hints += 1,
+                None => summary.infos += 1,
+            }
+        }
+        summary
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EditorViewHandle {
     pub events: EventQueue<EditorEvent>,
     pub hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
     pub hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
     pub completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
+    pub diagnostics_summary: atto_ui::reactive::Binding<DiagnosticsSummary>,
     pub theme: atto_ui::reactive::Binding<EditorThemeSet>,
     pub language_id: atto_ui::reactive::Binding<String>,
 }
@@ -98,6 +125,13 @@ struct EditorLspController {
 
     // Pending goto request id -> kind.
     pending_goto: Option<(u64, EditorLspGotoKind)>,
+
+    // Diagnostics state.
+    diagnostics: Vec<LspDiagnostic>,
+    diagnostic_result_id: Option<String>,
+    pending_document_diagnostic: Option<u64>,
+    diagnostic_cursor: Option<usize>,
+    diagnostics_revision: u64,
 }
 
 pub struct EditorView {
@@ -110,6 +144,7 @@ pub struct EditorView {
     hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
     hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
     completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
+    diagnostics_summary: atto_ui::reactive::Binding<DiagnosticsSummary>,
 
     state_manager: EditorStateManager,
 
@@ -149,12 +184,14 @@ impl EditorView {
         let hover_popup = atto_ui::reactive::Binding::new(None);
         let hover_popup_dismissed = atto_ui::reactive::Binding::new(None);
         let completion_popup = atto_ui::reactive::Binding::new(None);
+        let diagnostics_summary = atto_ui::reactive::Binding::new(DiagnosticsSummary::default());
 
         let handle = EditorViewHandle {
             events: events.clone(),
             hover_popup: hover_popup.clone(),
             hover_popup_dismissed: hover_popup_dismissed.clone(),
             completion_popup: completion_popup.clone(),
+            diagnostics_summary: diagnostics_summary.clone(),
             theme: theme.clone(),
             language_id: config.language_id.clone(),
         };
@@ -169,6 +206,7 @@ impl EditorView {
             hover_popup,
             hover_popup_dismissed,
             completion_popup,
+            diagnostics_summary,
             state_manager: EditorStateManager::new(&initial, 1),
             last_area: None,
             viewport_size: (0, 0),

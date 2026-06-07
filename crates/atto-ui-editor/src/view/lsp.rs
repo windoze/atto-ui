@@ -21,6 +21,7 @@ impl EditorView {
         if result.is_err() {
             self.lsp.session = None;
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+            self.clear_lsp_diagnostics();
             self.maybe_apply_syntax_highlighting();
         }
     }
@@ -36,83 +37,157 @@ impl EditorView {
         if poll_result.is_err() {
             self.lsp.session = None;
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+            self.clear_lsp_diagnostics();
             self.maybe_apply_syntax_highlighting();
             return;
         }
 
-        // Drain events (hover/completion/goto responses, UX messages, etc.)
-        let Some(lsp) = self.lsp.session.as_mut() else {
-            return;
-        };
-        for ev in lsp.drain_events() {
-            let editor_core_lsp::LspEvent::Response(resp) = ev else {
-                continue;
+        // Drain events (diagnostics notifications, hover/completion/goto responses, UX messages, etc.)
+        let events = {
+            let Some(lsp) = self.lsp.session.as_mut() else {
+                return;
             };
-
-            let method = resp.method;
-            let id = resp.id;
-            let result = resp.result;
-            let error = resp.error;
-
-            if let Some((pending_id, kind)) = self.lsp.pending_goto
-                && pending_id == id
-            {
-                let locs = result
-                    .as_ref()
-                    .map(locations_from_value)
-                    .unwrap_or_default();
-                self.events.push(EditorEvent::LspGoto {
-                    kind,
-                    locations: locs,
-                });
-                self.lsp.pending_goto = None;
-            }
-
-            if let Some(pending_id) = self.lsp.hover_pending_request
-                && pending_id == id
-                && method.as_str() == "textDocument/hover"
-            {
-                self.lsp.hover_pending_request = None;
-                let requested = self.lsp.hover_requested.take();
-                if error.is_some() {
-                    self.hover_popup.set(None);
-                    continue;
-                }
-
-                let Some(result) = result.as_ref() else {
-                    self.hover_popup.set(None);
-                    continue;
-                };
-
-                let anchor = requested.or(self.lsp.hover_anchor).or_else(|| {
-                    self.cursor_screen_position()
-                        .and_then(|p| p)
-                        .map(|p| HoverAnchor {
-                            position: self.active_cursor_position(),
-                            screen: p,
-                        })
-                });
-
-                if let Some(anchor) = anchor {
-                    self.handle_lsp_hover_response(result, anchor);
-                } else {
-                    self.hover_popup.set(None);
-                }
-            }
-
-            if let Some(pending_id) = self.lsp.completion_pending_request
-                && pending_id == id
-                && method.as_str() == "textDocument/completion"
-            {
-                self.lsp.completion_pending_request = None;
-                self.lsp.completion_requested_position = None;
-                if let Some(result) = result.as_ref() {
-                    self.handle_lsp_completion_response(result);
-                } else {
-                    self.completion_popup.set(None);
-                }
+            lsp.drain_events()
+        };
+        for ev in events {
+            match ev {
+                editor_core_lsp::LspEvent::Notification(
+                    editor_core_lsp::LspNotification::PublishDiagnostics(params),
+                ) => self.apply_publish_diagnostics(params),
+                editor_core_lsp::LspEvent::Notification(_) => {}
+                editor_core_lsp::LspEvent::DeferredRequest(_) => {}
+                editor_core_lsp::LspEvent::Response(resp) => self.handle_lsp_response(resp),
             }
         }
+    }
+
+    fn handle_lsp_response(&mut self, resp: editor_core_lsp::LspResponse) {
+        let method = resp.method;
+        let id = resp.id;
+        let result = resp.result;
+        let error = resp.error;
+
+        if let Some((pending_id, kind)) = self.lsp.pending_goto
+            && pending_id == id
+        {
+            let locs = result
+                .as_ref()
+                .map(locations_from_value)
+                .unwrap_or_default();
+            self.events.push(EditorEvent::LspGoto {
+                kind,
+                locations: locs,
+            });
+            self.lsp.pending_goto = None;
+        }
+
+        if let Some(pending_id) = self.lsp.hover_pending_request
+            && pending_id == id
+            && method.as_str() == "textDocument/hover"
+        {
+            self.lsp.hover_pending_request = None;
+            let requested = self.lsp.hover_requested.take();
+            if error.is_some() {
+                self.hover_popup.set(None);
+                return;
+            }
+
+            let Some(result) = result.as_ref() else {
+                self.hover_popup.set(None);
+                return;
+            };
+
+            let anchor = requested.or(self.lsp.hover_anchor).or_else(|| {
+                self.cursor_screen_position()
+                    .and_then(|p| p)
+                    .map(|p| HoverAnchor {
+                        position: self.active_cursor_position(),
+                        screen: p,
+                    })
+            });
+
+            if let Some(anchor) = anchor {
+                self.handle_lsp_hover_response(result, anchor);
+            } else {
+                self.hover_popup.set(None);
+            }
+        }
+
+        if let Some(pending_id) = self.lsp.completion_pending_request
+            && pending_id == id
+            && method.as_str() == "textDocument/completion"
+        {
+            self.lsp.completion_pending_request = None;
+            self.lsp.completion_requested_position = None;
+            if let Some(result) = result.as_ref() {
+                self.handle_lsp_completion_response(result);
+            } else {
+                self.completion_popup.set(None);
+            }
+        }
+    }
+
+    fn apply_publish_diagnostics(&mut self, params: editor_core_lsp::LspPublishDiagnosticsParams) {
+        if !self.publish_diagnostics_matches_current_document(&params) {
+            return;
+        }
+        self.apply_current_document_diagnostics(params);
+    }
+
+    fn publish_diagnostics_matches_current_document(
+        &self,
+        params: &editor_core_lsp::LspPublishDiagnosticsParams,
+    ) -> bool {
+        let Some(lsp) = self.lsp.session.as_ref() else {
+            return false;
+        };
+        let document = lsp.document();
+        if params.uri != document.uri {
+            return false;
+        }
+        match params.version {
+            Some(version) => version == document.version,
+            None => true,
+        }
+    }
+
+    pub(super) fn apply_current_document_diagnostics(
+        &mut self,
+        params: editor_core_lsp::LspPublishDiagnosticsParams,
+    ) {
+        let edits = editor_core_lsp::lsp_diagnostics_to_processing_edits(
+            self.state_manager.editor().line_index(),
+            &params,
+        );
+        self.state_manager.apply_processing_edits(edits);
+
+        let diagnostics = params.diagnostics;
+        let summary = DiagnosticsSummary::from_diagnostics(&diagnostics);
+        self.lsp.diagnostics = diagnostics;
+        self.lsp.diagnostic_cursor = None;
+        self.lsp.diagnostics_revision = self.lsp.diagnostics_revision.saturating_add(1);
+        self.set_diagnostics_summary(summary);
+    }
+
+    fn set_diagnostics_summary(&mut self, summary: DiagnosticsSummary) {
+        if self.diagnostics_summary.get() != summary {
+            self.diagnostics_summary.set(summary);
+        }
+    }
+
+    fn clear_lsp_diagnostics(&mut self) {
+        let summary_was_non_empty = self.diagnostics_summary.get() != DiagnosticsSummary::default();
+        let had_diagnostics_state = !self.lsp.diagnostics.is_empty()
+            || self.lsp.diagnostic_result_id.take().is_some()
+            || self.lsp.pending_document_diagnostic.take().is_some()
+            || self.lsp.diagnostic_cursor.take().is_some()
+            || summary_was_non_empty;
+
+        self.lsp.diagnostics.clear();
+        if had_diagnostics_state {
+            self.lsp.diagnostics_revision = self.lsp.diagnostics_revision.saturating_add(1);
+        }
+        self.set_diagnostics_summary(DiagnosticsSummary::default());
     }
 
     pub(super) fn maybe_start_or_stop_lsp(&mut self) {
@@ -124,6 +199,7 @@ impl EditorView {
             EditorLspMode::Disabled => {
                 self.lsp.session = None;
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+                self.clear_lsp_diagnostics();
                 self.maybe_apply_syntax_highlighting();
                 self.hide_popups();
             }
@@ -131,6 +207,7 @@ impl EditorView {
                 // Best-effort restart on changes.
                 self.lsp.session = None;
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
+                self.clear_lsp_diagnostics();
                 self.hide_popups();
                 self.start_lsp_session(cfg);
             }

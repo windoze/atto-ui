@@ -29,6 +29,35 @@ fn respond_error<W: io::Write>(
     )
 }
 
+fn publish_mock_diagnostics<W: io::Write>(
+    writer: &mut W,
+    uri: &str,
+    version: Option<i64>,
+) -> io::Result<()> {
+    editor_core_lsp::write_lsp_message(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "version": version,
+                "diagnostics": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 4 },
+                            "end": { "line": 0, "character": 8 }
+                        },
+                        "severity": 1,
+                        "source": "atto-ui-mock-lsp",
+                        "message": "mock error"
+                    }
+                ]
+            }
+        }),
+    )
+}
+
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -97,6 +126,21 @@ fn main() -> io::Result<()> {
                 respond(&mut stdout, id, result)?;
             }
             // Notifications.
+            ("textDocument/didOpen", None) => {
+                let Some(text_document) = msg
+                    .get("params")
+                    .and_then(|params| params.get("textDocument"))
+                else {
+                    continue;
+                };
+                let Some(uri) = text_document.get("uri").and_then(Value::as_str) else {
+                    continue;
+                };
+                if uri.ends_with("/diagnostics.rs") || uri == "file:///diagnostics.rs" {
+                    let version = text_document.get("version").and_then(Value::as_i64);
+                    publish_mock_diagnostics(&mut stdout, uri, version)?;
+                }
+            }
             ("exit", None) => break,
             (_, None) => {
                 // Ignore unknown notifications.

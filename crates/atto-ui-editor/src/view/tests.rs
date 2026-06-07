@@ -183,6 +183,39 @@ fn test_view_with_text(text: &str) -> (EditorView, atto_ui::reactive::Binding<St
 }
 
 #[test]
+fn editor_view_applies_diagnostics_to_summary_and_core_state() {
+    let (mut view, _text) = test_view_with_text("let bad = 1;\n");
+    let params = editor_core_lsp::LspPublishDiagnosticsParams {
+        uri: "file:///diagnostics.rs".to_string(),
+        version: Some(1),
+        diagnostics: vec![editor_core_lsp::LspDiagnostic {
+            range: editor_core_lsp::LspRange::new(
+                editor_core_lsp::LspPosition::new(0, 4),
+                editor_core_lsp::LspPosition::new(0, 7),
+            ),
+            severity: Some(editor_core_lsp::LspDiagnosticSeverity::Error),
+            code: None,
+            source: Some("test".to_string()),
+            message: "mock error".to_string(),
+            related_information: None,
+            data: None,
+        }],
+    };
+
+    view.apply_current_document_diagnostics(params);
+
+    let summary = view.diagnostics_summary.get();
+    assert_eq!(summary.errors, 1);
+    assert_eq!(summary.warnings, 0);
+    assert_eq!(summary.infos, 0);
+    assert_eq!(summary.hints, 0);
+
+    let diagnostics = view.state_manager.editor().diagnostics();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].message, "mock error");
+}
+
+#[test]
 fn editor_actions_line_edits_sync_text_binding() {
     let text: atto_ui::reactive::Binding<String> = "a\nb\nc".to_string().into();
     let cfg = EditorConfig::new(text.clone());

@@ -38,4 +38,4 @@ pub use theme::{
     SemanticTokenTheme, TS_STYLE_COMMENT, TS_STYLE_CONSTANT, TS_STYLE_FUNCTION, TS_STYLE_KEYWORD,
     TS_STYLE_NUMBER, TS_STYLE_STRING, TS_STYLE_TYPE, TS_STYLE_VARIABLE,
 };
-pub use view::{EditorEvent, EditorView, EditorViewHandle};
+pub use view::{DiagnosticsSummary, EditorEvent, EditorView, EditorViewHandle};
