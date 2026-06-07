@@ -451,10 +451,15 @@
 - 将新增矩阵接入 `packages/react/package.json` 的 `npm test`，确保 CI 运行；矩阵断言精确到 op 顺序、按 window 分桶后的 apply 调用形态、callback 释放与 stale callback 不再分发。
 - 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/reconciler_matrix.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。
 
-### [TODO] NR16 — 审阅 NT16
+### [DONE] NR16 — 审阅 NT16
 - 确认矩阵覆盖全（无遗漏 op 类型/边界）。
 - 确认断言精确（op 顺序、分桶）。
 - 运行单测。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/__test__/reconciler_matrix.cjs` 与 HostConfig lowering，确认矩阵覆盖初始 mount `set_tree`、props `set_prop`/`clear_prop`、事件 `bind_event`/`clear_event`、raw text `set_prop text`、新增 append/anchor insert、已挂载节点 move、remove、`clearContainer` 空树替换、多窗口 op 分桶与窗口关闭不进入 TreeOp。
+- 补齐矩阵边界：handler 替换复用原 callback 且不产生 TreeOp；非尾部 move 精确使用 `anchor_id`；`clearContainer` 释放 callback handle，stale callback 不再分发。
+- 确认断言精确到 `applyTreeOps(windowId, op|ops[])` 调用顺序、同窗口多 op 批量形态、跨窗口分桶顺序、callback release 顺序与 stale dispatch 结果。
+- 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/reconciler_matrix.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NT17 — PTY 端到端（T.2）
 **文件**：`crates/atto-ui-node/__test__/` 或 JS e2e + 复用 `crates/atto-ui-test-host`

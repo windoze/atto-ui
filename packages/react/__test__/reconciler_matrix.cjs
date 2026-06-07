@@ -98,9 +98,12 @@ function keyedLabels(items) {
   const { host, ops, releasedCallbacks } = createMockHost()
   const root = createRoot(host, 'prop-window', { idPrefix: 'prop-matrix' })
   function noop() {}
-  let focused = false
+  let focused = 'none'
   function focus() {
-    focused = true
+    focused = 'first'
+  }
+  function focusAgain() {
+    focused = 'second'
   }
 
   root.render(h('button', { label: 'Old', tooltip: 'Tip', onClick: noop }))
@@ -126,7 +129,18 @@ function keyedLabels(items) {
   assert.equal(dispatchHostCallbacks(root.container, [
     { callbackId: 'matrix-callback-2', targetId: button.id, event: 'focus', payload: null },
   ]), 1)
-  assert.equal(focused, true)
+  assert.equal(focused, 'first')
+
+  ops.length = 0
+  root.render(h('button', { label: 'New', disabled: true, onFocus: focusAgain }))
+
+  assert.deepEqual(ops, [])
+  assert.equal(button.events.focus.callbackId, 'matrix-callback-2')
+  assert.deepEqual(releasedCallbacks, ['matrix-callback-1'])
+  assert.equal(dispatchHostCallbacks(root.container, [
+    { callbackId: 'matrix-callback-2', targetId: button.id, event: 'focus', payload: null },
+  ]), 1)
+  assert.equal(focused, 'second')
 }
 
 {
@@ -203,6 +217,29 @@ function keyedLabels(items) {
 }
 
 {
+  const { host, ops } = createMockHost()
+  const root = createRoot(host, 'move-anchor-window', { idPrefix: 'move-anchor-matrix' })
+
+  root.render(labels(['A', 'C', 'B']))
+  const parent = root.container.rootChildren[0]
+  const aId = parent.children[0].id
+  const bId = parent.children[2].id
+  ops.length = 0
+
+  root.render(labels(['C', 'A', 'B']))
+
+  assert.deepEqual(ops, [{
+    windowId: 'move-anchor-window',
+    op: {
+      op: 'insert_before',
+      parent_id: parent.id,
+      anchor_id: bId,
+      child: { type: 'Label', id: aId, props: { text: 'A' } },
+    },
+  }])
+}
+
+{
   const { host, ops, releasedCallbacks } = createMockHost()
   const root = createRoot(host, 'remove-window', { idPrefix: 'remove-matrix' })
   function maybeButton(show) {
@@ -230,10 +267,12 @@ function keyedLabels(items) {
 }
 
 {
-  const { host, ops } = createMockHost()
+  const { host, ops, releasedCallbacks } = createMockHost()
   const root = createRoot(host, 'clear-window', { idPrefix: 'clear-matrix' })
+  let clicked = false
 
-  root.render(h('label', { text: 'temporary' }))
+  root.render(h('button', { label: 'temporary', onClick() { clicked = true } }))
+  const button = root.container.rootChildren[0]
   ops.length = 0
 
   root.render(null)
@@ -243,6 +282,11 @@ function keyedLabels(items) {
     op: { op: 'set_tree', tree: { type: 'Spacer', id: 'clear-matrix-empty-root' } },
   }])
   assert.equal(root.container.rootChildren.length, 0)
+  assert.deepEqual(releasedCallbacks, ['matrix-callback-1'])
+  assert.equal(dispatchHostCallbacks(root.container, [
+    { callbackId: 'matrix-callback-1', targetId: button.id, event: 'click', payload: null },
+  ]), 0)
+  assert.equal(clicked, false)
 }
 
 {

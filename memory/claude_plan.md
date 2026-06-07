@@ -2,35 +2,36 @@
 
 ## 约束
 
-- 以 `TODO.md` 为唯一任务顺序与完成状态来源。
+- 以 `TODO.md` 为任务顺序和完成状态的唯一来源。
 - 只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
-- 不进行开放式历史问题清扫；只处理阻塞当前任务或当前验证暴露且未被明确排期的失败。
-- 不写入私密推理链；本文件记录可审查的执行计划、关键决策和进度。
+- 若遇到阻塞当前任务的缺陷或缺失能力，优先修复；无法直接修复时，在 `TODO.md` 中加入最小前置任务并停止。
+- 只在阶段级计划变化时更新 `PLAN.md`。
+- 完成实现后按要求运行格式化、lint、测试，并提交 Git 变更。
 
 ## 步骤
 
-1. 读取 `TODO.md`，按文档顺序识别第一个未完成任务。
-2. 查看最近提交信息；仅当它明确提到与当前任务直接相关的未完成事项时，将其纳入当前任务或补为前置任务。
-3. 阅读当前任务涉及的代码、测试和说明，确认验收要求。
-4. 按最小正确变更实现任务；如遇必须先修复的具体阻塞问题，更新 `TODO.md` 插入最少前置任务并停止。
-5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再按任务要求运行相关测试；需要时运行完整测试套件。
-6. 若发现未排期的测试或 fixture 失败，修复或在 `TODO.md` 中排期到当前任务完成前。
-7. 更新 `TODO.md`：给完成任务标题添加 `[DONE]`，填写完成记录和验证结果。仅在阶段计划变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff`、最近提交，提交本次任务相关所有未提交文件。
-9. 停止，不继续下一个任务。
+1. 读取 `TODO.md`，定位第一个未完成任务，并确认其依赖、验证要求和完成记录格式。
+2. 检查最近提交是否明确提到与该任务直接相关的未完成事项。
+3. 根据任务内容阅读相关代码和测试，避免做无关历史问题排查。
+4. 实现当前任务，保持改动最小且符合现有结构。
+5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行相关测试；若需要完整验证，运行完整测试套件并设置足够超时。
+6. 若发现未被安排的失败测试或阻塞缺陷，修复它；若不能在当前任务内正确修复，则更新 `TODO.md` 添加前置任务并停止。
+7. 将当前任务标题标记为 `[DONE]`，更新完成记录，必要时更新 `PLAN.md`。
+8. 检查 `git status`、`git diff`、最近提交记录，提交本次任务相关全部变更。
+9. 停止，不继续处理后续任务。
 
-## 当前状态
+## 进度
 
-- 已读取 `TODO.md` 与 `TODO-1.md`。
-- 首个未完成任务确认为 `NT16 — reconciler 单测矩阵（T.1）`。
-- 最近提交为 `[NR15] Review core imperative builders`，未发现与 NT16 直接相关的未完成事项。
-- 已新增 `packages/react/__test__/reconciler_matrix.cjs` 并接入 `packages/react/package.json` 的 `npm test`。
-- 矩阵覆盖 mount/set_tree、props set/clear、事件 bind/clear、文本更新、insert_before append/anchor、已挂载节点 move、remove 前 clear_event、clearContainer 空树、desktop 多窗口 op 分桶和窗口关闭不进 TreeOp。
-- 首次运行新增矩阵测试发现测试用例把文本值同时作为 React key，导致多窗口分桶更新被解释为 remove/insert；已改用稳定 key，使该用例验证属性更新与分桶顺序。
-- React build + 新增矩阵测试已通过。
-- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`、`npm test --prefix crates/atto-ui-node`、`npm test --prefix packages/core`、`npm test --prefix packages/react`、`git diff --check`。
-- 已更新 `TODO.md` 与 `TODO-1.md`，将 NT16 标记为 `[DONE]` 并写入完成记录。
-- 补强事件清理断言后，已重跑 `npm test --prefix packages/react` 与 `git diff --check`，均通过。
-- 提交前检查发现工作区另有未跟踪 `notification.sh`、`run_agent.sh`，它们不是本任务变更，未纳入提交。
-- 已提交本任务实现：`c1fd6b8 [NT16] Add reconciler test matrix`。
-- 当前任务完成后停止，不继续 `NR16`。
+- 已写入初始执行计划。
+- 已读取 `TODO.md` 与 `TODO-1.md`，第一个未完成任务为 `NR16 — 审阅 NT16`。
+- 当前执行单元：审阅 `packages/react/__test__/reconciler_matrix.cjs` 是否覆盖 NT16 要求的 mount/update/增删/重排/事件 bind-clear、op 顺序与分桶断言，并运行要求的单测/验证。
+- 已检查最新提交 `54ae1c8 [NT16] Record completion status`，提交摘要未声明与 NR16 直接相关的未完成事项。
+- 审阅发现矩阵主体覆盖主要 `TreeOp`，但事件 handler 替换不重绑、`clearContainer` 回调释放、非尾部 move 三个边界主要由旧测试覆盖；计划将这些边界补进 `reconciler_matrix.cjs`，使矩阵自身满足 NR16 的覆盖要求。
+- 已补充 `reconciler_matrix.cjs`：新增 handler 更新零 op/复用 callback、非尾部 move anchor、清空容器释放 callback 且 stale callback 不分发的断言。
+- 初步验证通过：`npm run build --prefix packages/react && node packages/react/__test__/reconciler_matrix.cjs`。
+- 下一步验证：按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、完整 Rust 测试、React typecheck/test，并视结果修复。
+- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。
+- 已确认仓库中没有 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
+- 下一步：更新 `TODO.md` / `TODO-1.md` 将 `NR16` 标记为 `[DONE]` 并写入完成记录，然后检查 diff 并提交。
+- 已更新 `TODO.md` 与 `TODO-1.md`，`NR16` 已标记为 `[DONE]` 并写入完成记录。
+- 下一步：复查工作区状态、diff 和最近提交，仅暂存本次任务相关文件并提交。
