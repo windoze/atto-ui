@@ -329,6 +329,36 @@ impl Desktop {
         let layout = Self::layout(screen);
         self.menu.refresh_minimized_windows(&self.wm);
 
+        let input_mode = if self.mode == DesktopMode::WindowManagement {
+            WindowManagerInputMode::WindowManagement
+        } else {
+            WindowManagerInputMode::Normal
+        };
+
+        if self.wm.has_global_drag()
+            && matches!(
+                event,
+                Event::Mouse(_)
+                    | Event::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        ..
+                    })
+            )
+        {
+            let wm_action = self
+                .wm
+                .handle_event(event, layout.work_area, input_mode, &self.theme);
+            if let Some(id) = wm_action.close {
+                if self.wm.request_close(id) {
+                    return DesktopEventResult::close_window(id);
+                }
+                return DesktopEventResult::consumed();
+            }
+            if wm_action.consumed {
+                return DesktopEventResult::consumed();
+            }
+        }
+
         // Desktop chrome mouse routing (menu bar / status bar) comes first so clicks don't
         // accidentally fall through to the focused view.
         if let Event::Mouse(m) = event {
@@ -389,36 +419,7 @@ impl Desktop {
 
         let modal_active = self.wm.has_active_modal();
 
-        let input_mode = if self.mode == DesktopMode::WindowManagement {
-            WindowManagerInputMode::WindowManagement
-        } else {
-            WindowManagerInputMode::Normal
-        };
-
         let mut view_dispatched = false;
-
-        if self.wm.has_global_drag()
-            && matches!(
-                event,
-                Event::Key(KeyEvent {
-                    code: KeyCode::Esc,
-                    ..
-                })
-            )
-        {
-            let wm_action = self
-                .wm
-                .handle_event(event, layout.work_area, input_mode, &self.theme);
-            if let Some(id) = wm_action.close {
-                if self.wm.request_close(id) {
-                    return DesktopEventResult::close_window(id);
-                }
-                return DesktopEventResult::consumed();
-            }
-            if wm_action.consumed {
-                return DesktopEventResult::consumed();
-            }
-        }
 
         // Layered input:
         //  1. Focused view receives the event (normal mode only; keys/paste/etc).
@@ -633,7 +634,10 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composable::{Component, ComponentContext, EventHandling, EventResult};
+    use crate::composable::{
+        Component, ComponentContext, DragAndDrop, DragOperation, DragPayload, DragSource,
+        EventHandling, EventResult,
+    };
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -691,6 +695,47 @@ mod tests {
     }
 
     crate::impl_component_default_traits!(CountingMouseView => Layout, Scrollable, FocusNav, DynamicTree);
+
+    #[derive(Clone)]
+    struct DesktopDragSourceView {
+        cancels: Arc<AtomicUsize>,
+    }
+
+    impl DesktopDragSourceView {
+        fn new(cancels: Arc<AtomicUsize>) -> Self {
+            Self { cancels }
+        }
+    }
+
+    impl Component for DesktopDragSourceView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl DragAndDrop for DesktopDragSourceView {
+        fn drag_source_at(
+            &self,
+            _screen_x: u16,
+            _screen_y: u16,
+            _ctx: ComponentContext<'_>,
+        ) -> Option<DragSource> {
+            Some(DragSource {
+                payload: DragPayload::Text("desktop-drag".to_string()),
+                operation: DragOperation::Copy,
+                threshold: 1,
+                ghost: None,
+            })
+        }
+
+        fn drag_cancelled(&mut self, _ctx: ComponentContext<'_>) {
+            self.cancels.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl crate::composable::Layout for DesktopDragSourceView {}
+    impl crate::composable::Scrollable for DesktopDragSourceView {}
+    impl crate::composable::FocusNav for DesktopDragSourceView {}
+    impl crate::composable::DynamicTree for DesktopDragSourceView {}
+    impl EventHandling for DesktopDragSourceView {}
 
     #[derive(Clone)]
     struct RecordingView {
@@ -982,6 +1027,64 @@ mod tests {
         assert_eq!(desktop.wm.focused(), Some(id1));
         assert_eq!(clicks_one.load(Ordering::SeqCst), 1);
         assert_eq!(clicks_two.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn global_drag_mouse_up_on_desktop_chrome_clears_drag() {
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let cancels = Arc::new(AtomicUsize::new(0));
+
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Drag",
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 20,
+                    height: 6,
+                },
+                Box::new(DesktopDragSourceView::new(Arc::clone(&cancels))),
+            ),
+            screen,
+        );
+
+        let down = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        });
+        desktop.handle_event(&down, screen);
+        assert!(desktop.wm.has_global_drag());
+
+        let drag_to_status_bar = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 3,
+            row: screen.height.saturating_sub(1),
+            modifiers: KeyModifiers::NONE,
+        });
+        let drag_result = desktop.handle_event(&drag_to_status_bar, screen);
+        assert!(drag_result.is_consumed());
+        assert!(desktop.wm.has_global_drag());
+
+        let up_on_status_bar = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 3,
+            row: screen.height.saturating_sub(1),
+            modifiers: KeyModifiers::NONE,
+        });
+        let up_result = desktop.handle_event(&up_on_status_bar, screen);
+
+        assert!(up_result.is_consumed());
+        assert!(!desktop.wm.has_global_drag());
+        assert_eq!(cancels.load(Ordering::SeqCst), 1);
     }
 
     #[test]

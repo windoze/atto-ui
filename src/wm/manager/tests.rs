@@ -1026,6 +1026,118 @@ fn component_drag_rejected_drop_cancels_source() {
 }
 
 #[test]
+fn component_drag_closes_source_window_clears_drag_state() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let source_requests = Arc::new(AtomicUsize::new(0));
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let target_over = Arc::new(AtomicUsize::new(0));
+    let target_drop = Arc::new(AtomicUsize::new(0));
+
+    let mut wm = WindowManager::new();
+    let source_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Source",
+            Rect::new(2, 2, 20, 6),
+            Box::new(DragSourceProbe {
+                threshold: 1,
+                source_requests: Arc::clone(&source_requests),
+                cancel_count: Arc::clone(&cancel_count),
+            }),
+        ),
+        bounds,
+    );
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Target",
+            Rect::new(30, 2, 20, 6),
+            Box::new(DropTargetProbe {
+                effect: DropEffect::Copy,
+                drag_over_count: Arc::clone(&target_over),
+                drop_count: Arc::clone(&target_drop),
+            }),
+        ),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 3, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 32, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert!(wm.has_global_drag());
+
+    wm.close(source_id);
+
+    assert!(!wm.has_global_drag());
+}
+
+#[test]
+fn component_drag_closes_target_window_clears_drag_state() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let source_requests = Arc::new(AtomicUsize::new(0));
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let target_over = Arc::new(AtomicUsize::new(0));
+    let target_drop = Arc::new(AtomicUsize::new(0));
+
+    let mut wm = WindowManager::new();
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Source",
+            Rect::new(2, 2, 20, 6),
+            Box::new(DragSourceProbe {
+                threshold: 1,
+                source_requests: Arc::clone(&source_requests),
+                cancel_count: Arc::clone(&cancel_count),
+            }),
+        ),
+        bounds,
+    );
+    let target_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Target",
+            Rect::new(30, 2, 20, 6),
+            Box::new(DropTargetProbe {
+                effect: DropEffect::Copy,
+                drag_over_count: Arc::clone(&target_over),
+                drop_count: Arc::clone(&target_drop),
+            }),
+        ),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 3, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 32, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert!(wm.has_global_drag());
+
+    wm.close(target_id);
+
+    assert!(!wm.has_global_drag());
+}
+
+#[test]
 fn close_hook_can_cancel_close_request() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};

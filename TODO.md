@@ -60,7 +60,7 @@
 | T1 | DONE | [DONE] C1 通用拖拽数据模型与 Component hooks | TODO-2.md · 阶段一 |
 | R1 | DONE | [DONE] 审阅 T1 | TODO-2.md · 阶段一 |
 | T2 | DONE | [DONE] C1 WindowManager 全局拖拽会话与反馈绘制 | TODO-2.md · 阶段一 |
-| R2 | TODO | 审阅 T2 | TODO-2.md · 阶段一 |
+| R2 | DONE | [DONE] 审阅 T2 | TODO-2.md · 阶段一 |
 | T3 | TODO | C2 Docking 类型、work area reserve 与基础绘制 | TODO-2.md · 阶段一 |
 | R3 | TODO | 审阅 T3 | TODO-2.md · 阶段一 |
 | T4 | TODO | C2 Dock resize / auto-hide / hit-test | TODO-2.md · 阶段一 |

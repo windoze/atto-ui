@@ -145,13 +145,21 @@
 - 新增 `snapshot_app --drag-drop` fixture 与 `tests/pty_drag_drop.rs`，覆盖双窗口拖拽显示 `Dropped: drag-item`，以及 `Esc` cancel 后不 drop。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`。
 
-### [TODO] R2 — 审阅 T2
+### [DONE] R2 — 审阅 T2
 
 审阅 T2 改动：
 - 确认 `global_drag` 与现有 WM chrome `drag` 优先级清晰，不互相覆盖。
 - 确认 `Up`、`Esc`、source/target window 被关闭时都能清理 drag 状态。
 - 确认 ghost/drop feedback 绘制在所有窗口之上且不会 panic 于 0 宽/高 rect。
 - 确认测试真实经过 `WindowManager::handle_mouse`，不是直接调用组件方法。
+
+**完成记录（2026-06-08）**：
+- 已审阅 `global_drag` 与既有 WM chrome `drag` 的优先级：component drag 只从窗口 body 启动，titlebar、resize handle 与 window scrollbar 仍走原 `drag` 路径，active `global_drag` 在 mouse drag/move/up 期间优先处理。
+- 发现并修复 Desktop chrome 抢先消费全局拖拽 mouse `Up` 的问题：当 `global_drag` 存在时，Desktop 先把鼠标事件和 `Esc` 交给 `WindowManager`，避免拖到 menu/status bar 释放后 drag 状态残留。
+- 确认 `Up`、`Esc`、source/target window close 都会清理 `global_drag`；新增 Desktop 回归测试覆盖 status bar release，新增 WM 单测覆盖关闭 source/target window。
+- 确认 ghost/drop feedback overlay 在所有窗口绘制后叠加，feedback rect 经过 clipping，0 宽/高 rect 不会绘制或 panic。
+- 确认 T2 单测经由 `WindowManager::handle_event`/mouse event 路径，PTY 测试经真实 mouse 序列驱动 snapshot app，而不是直接调用组件方法。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T3 — C2 Docking 类型、work area reserve 与基础绘制
 
