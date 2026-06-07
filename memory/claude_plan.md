@@ -1,48 +1,27 @@
-# Claude Execution Plan
+# 当前执行计划
 
-## Scope
+## 约束
+- 仅处理 `TODO.md` 中第一个标题未带 `[DONE]` 的任务，完成后停止。
+- `TODO.md` 是任务排序、依赖、验证和完成记录的权威来源。
+- 不做开放式历史问题扫描；仅处理阻塞当前任务或测试/夹具策略要求处理的问题。
+- 不使用规避方案；发现阻塞当前任务的实现缺口时，先修复或在 `TODO.md` 中插入最小前置任务并停止。
+- 仅在阶段级计划发生变化时更新 `PLAN.md`。
+- 代码修改后按要求运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行完整测试；若仅文档变更且已有可复用绿色结果，则记录跳过原因。
+- 完成后更新 `TODO.md`，提交一次清晰的 Git commit，然后停止。
 
-- Work from `TODO.md` as the authoritative task list.
-- Complete exactly the first task whose title is not prefixed with `[DONE]`.
-- Do not proceed to later tasks after completing or scheduling a blocker for the current task.
-- Keep this file updated when the plan changes or key steps complete.
+## 步骤
+1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务，并查看其依赖、验证要求和完成记录。
+2. 检查最近提交是否明确提到与该任务直接相关的未完成问题；若相关，将其纳入当前任务或作为前置任务写入 `TODO.md`。
+3. 根据任务内容读取必要源码、测试和文档，确认需要修改的最小范围。
+4. 实现当前任务；若发现必须先处理的具体阻塞问题，更新 `TODO.md` 记录前置任务，提交并停止。
+5. 运行格式化、lint 和相关测试；根据失败信息修复当前任务范围内的问题，未排程的测试/夹具失败需修复或写入 `TODO.md`。
+6. 在 `TODO.md` 中将当前任务标题加 `[DONE]`，补充完成记录、验证结果和必要说明。
+7. 复查 `git status`、`git diff`、最近提交，确保仅提交本次任务相关变更；如为恢复上次未完成任务，则包含当前未提交文件。
+8. 使用描述性提交信息提交变更。
 
-## Execution Steps
-
-1. Read `TODO.md` and identify the first incomplete task by title prefix.
-2. Inspect the latest commit only for unfinished work directly relevant to that task.
-3. Read the files and tests needed to understand the selected task.
-4. Implement the task directly, without narrowing scope or using workaround behavior.
-5. If a concrete prerequisite or blocking spec mismatch is found, update `TODO.md` with the minimum required prerequisite task, keep the current task incomplete, commit, and stop.
-6. Run required validation in the requested order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
-7. Address any unscheduled failing tests or fixtures before marking the task complete.
-8. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record.
-9. Review `git status`, `git diff`, and recent log, then commit all intended changes with a clear task-specific message.
-10. Stop after the single task is completed and committed.
-
-## Current Status
-
-- `TODO.md` read. The first incomplete task is `NT13` from `TODO-1.md`.
-- `NT13` scope: implement virtual `DesktopContainer`, `<Window>` host nodes, window lifecycle routing, window prop updates, per-window op bucketing, and `singleWindow:true` auto wrapping for `@atto-ui/react`.
-- Latest commit checked: `[NR12] Review React text components`; no unfinished NT13 note was found.
-- Existing React code is currently single-window: `createRoot(host, windowId)` owns one runtime window and `flushStaticTree()` sends all ops to that one `windowId`.
-- Native AppHost already supports window lifecycle methods, but does not expose desktop chrome setters for MenuBar/StatusBar; to avoid a spec-deviating no-op, NT13 implementation will include minimal native `setMenuBar` / `setStatusBar` support and matching TS types.
-
-## Detailed Implementation Plan
-
-1. Extend `packages/react/src/host.ts` with desktop/window container modes, virtual host node detection, window root `set_tree` flushes, and per-window pending-op buckets.
-2. Add desktop root lifecycle: direct root children must be `Window`, `MenuBar`, or `StatusBar`; `Window` add/remove maps to `addDynamicWindow`/`closeWindow`; `Window` prop updates map to `setTitle`/`moveWindow`/`resizeWindow`.
-3. Add React wrappers in a new `packages/react/src/desktop.ts` for `Window`, `MenuBar`, `Menu`, `MenuItem`, and `StatusBar`.
-4. Add `createDesktopRoot()` and update `render()` so default/single-window mode auto-wraps the user tree in a full-screen `Window`; `singleWindow:false` renders the user-provided desktop tree directly.
-5. Add native/core support for `setMenuBar` and `setStatusBar`, including callback emission from menu items.
-6. Add reconciler/headless/render tests for multi-window op bucketing, window lifecycle/title/rect updates, context sharing, single-window auto wrapping, and basic MenuBar/StatusBar lowering.
-7. Run the required validation sequence, update `TODO.md`, commit, and stop.
-
-## Progress Update
-
-- Implemented desktop/window container modes in `packages/react/src/host.ts` with virtual `Window`, `MenuBar`, `Menu`, `MenuItem`, and `StatusBar` handling.
-- Added `packages/react/src/desktop.ts` wrappers and `createDesktopRoot()`; `render()` now uses the virtual desktop root and auto-wraps single-window apps.
-- Added native/core `setMenuBar` and `setStatusBar`; custom status text no longer gets overwritten by default desktop status text.
-- Added JS/native/type tests for multi-window routing, context across windows, window prop updates, desktop child validation, and chrome lowering.
-- Validation completed so far: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --all --all-targets`; core/react TypeScript checks; napi build; node/core/react npm tests; `git diff --check`. No `tools/run_fixtures.py` fixture runner exists in this repo.
-- Next step: update `TODO.md` / `TODO-1.md` completion records, then commit intended changes.
+## 进度
+- 已创建本执行计划，下一步读取 `TODO.md` 定位首个未完成任务。
+- 已读取 `TODO.md`，首个未完成任务为 `NR13`：审阅 `NT13`（`TODO-1.md · 阶段五 M6`）。下一步读取 `TODO-1.md` 详情并检查最近提交是否有直接相关未完成事项。
+- 已确认最近提交 `[NT13] Add React desktop window mapping` 与当前审阅任务直接相关。下一步审阅 React desktop/window 映射、op 分桶、`singleWindow`/多窗口路径及相关测试。
+- 已审阅 `packages/react/src/host.ts`、`desktop.ts`、`render.ts`、`reconciler.ts`、Node/core chrome setter 与现有测试；未发现需要立即修改的生产实现。下一步运行格式化、lint、Rust 全量测试以及 React/Core/Node 相关 TS/JS/PTY 测试。
+- 已完成验证并更新 `TODO.md` / `TODO-1.md`：`NR13` 已标记 `[DONE]`，完成记录包含审阅结论和验证命令；`NT14` 已明确包含 JSX 子节点类型约束。下一步复查 diff、状态与最近提交后提交本次变更。

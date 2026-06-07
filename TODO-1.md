@@ -371,11 +371,16 @@
 - 补充测试覆盖两窗口 op 分桶、window 开关和 title/rect 更新、跨窗口 Context、desktop root 非法子节点、MenuBar/StatusBar lowering、`render()` 单窗口自动包装和 `singleWindow:false` 多窗口 headless 路径；Node binding 冒烟覆盖 native chrome setter。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR13 — 审阅 NT13
+### [DONE] NR13 — 审阅 NT13
 - 确认 DesktopContainer 仅接受合法子节点，非法子节点编译期/运行期被拦。
 - 确认 op 分桶无串窗口；windowId 继承正确。
 - 确认 `singleWindow` 与多窗口路径一致。
 - 运行 PTY + 单测。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/host.ts`、`desktop.ts`、`reconciler.ts` 与 `render.ts`：确认 desktop root 直接子节点运行时限制为 `Window`/`MenuBar`/`StatusBar`，`Window` 内禁止虚拟 chrome 节点，`MenuBar`/`Menu`/`MenuItem` 子树也有运行时结构校验；编译期精确 JSX/host 组件子节点约束已明确纳入后续 `NT14` 的 JSX 类型任务。
+- 确认窗口映射与 op 路由：`Window` mount/unmount 走 `addDynamicWindow`/`closeWindow`，title/rect 更新走 `setTitle`/`moveWindow`/`resizeWindow`；普通子树继承最近 `Window.windowId`，pending `TreeOp` 按 `windowId` 分桶，窗口根重建会丢弃同窗口旧增量 op，避免串窗口。
+- 确认 `singleWindow` 与多窗口路径共用 `createDesktopRoot`：默认 `render()` 自动包全屏 `Window`，`singleWindow:false` 保留用户声明的多窗口树；`RenderHandle.windowIds()` 从 desktop root 当前窗口子节点派生。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ---
 
@@ -385,7 +390,7 @@
 **文件**：`packages/react/src/components.ts`、`src/jsx.d.ts`
 **现状**：内置组件已注册（Button/TextBox/ListBox/TableView/VStack/HStack/Grid 等）；需 React wrapper 与类型。
 **步骤**：
-1. intrinsic elements + `jsx.d.ts`；wrapper：`<Button onClick>`/`<TextBox value onChange>`/`<ListBox>`/`<Table>`/`<VStack>`/`<HStack>`/`<Grid>`。
+1. intrinsic elements + `jsx.d.ts`；wrapper：`<Button onClick>`/`<TextBox value onChange>`/`<ListBox>`/`<Table>`/`<VStack>`/`<HStack>`/`<Grid>`；补齐 `Desktop`/`Window`/`MenuBar`/`Menu`/`MenuItem`/`StatusBar` 的 JSX 子节点类型约束。
 2. 统一事件 prop 约定（`onClick`/`onChange`/`onSelect`）→ atto-ui 事件名映射。
 3. 在 napi 生成的 native `.d.ts` 上扩展组件 props 类型。
 4. 受控输入回环：`<TextBox value onChange>`，确认外部 `SetProp value` + 变更事件不打架（§10.7 风险）。
