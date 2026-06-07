@@ -6,7 +6,7 @@ use ratatui::style::Style;
 
 use crate::composable::{EventResult, MouseCoordinateSpace, ScrollContainerHost};
 use crate::reactive::Binding;
-use crate::runtime::CallbackHandle;
+use crate::runtime::{CallbackHandle, ComponentValue};
 use crate::theme::Theme;
 
 const MARKDOWN_LINK_STYLE: &str = "markdown-link";
@@ -176,7 +176,7 @@ impl SelectionScroll {
         ensure_selection_visible(idx, host);
         self.last_selection = Some(idx);
         if let Some(cb) = on_change {
-            cb.emit();
+            cb.emit_with(Some(ComponentValue::U64(idx as u64)));
         }
         EventResult::changed()
     }

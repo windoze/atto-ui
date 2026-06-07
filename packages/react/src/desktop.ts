@@ -1,6 +1,16 @@
 import { Fragment, createElement, type ReactElement, type ReactNode } from 'react'
 import type { RectLike } from '@atto-ui/core'
 
+export type OneOrMany<T> = T | readonly T[]
+export type MenuItemElement = ReactElement<MenuItemProps, typeof MenuItem>
+export type MenuElement = ReactElement<MenuProps, typeof Menu>
+export type MenuBarElement = ReactElement<MenuBarProps, typeof MenuBar>
+export type StatusBarElement = ReactElement<StatusBarProps, typeof StatusBar>
+export type WindowElement = ReactElement<WindowProps, typeof Window>
+export type MenuItemChildren = OneOrMany<MenuItemElement | null | false>
+export type MenuBarChildren = OneOrMany<MenuElement | null | false>
+export type DesktopChildren = OneOrMany<WindowElement | MenuBarElement | StatusBarElement | null | false>
+
 export interface WindowProps {
   readonly title?: string
   readonly rect: RectLike
@@ -8,22 +18,23 @@ export interface WindowProps {
 }
 
 export interface DesktopProps {
-  readonly children?: ReactNode
+  readonly children?: DesktopChildren
 }
 
 export interface StatusBarProps {
   readonly left?: string | null
   readonly right?: string | null
+  readonly children?: never
 }
 
 export interface MenuBarProps {
-  readonly children?: ReactNode
+  readonly children?: MenuBarChildren
 }
 
 export interface MenuProps {
   readonly id?: string
   readonly title: string
-  readonly children?: ReactNode
+  readonly children?: MenuItemChildren
 }
 
 export interface MenuItemProps {
@@ -32,7 +43,7 @@ export interface MenuItemProps {
   readonly shortcut?: string | null
   readonly enabled?: boolean
   readonly onClick?: () => void
-  readonly children?: ReactNode
+  readonly children?: MenuItemChildren
 }
 
 /** Optional readability wrapper; the reconciler itself supplies the virtual DesktopContainer. */

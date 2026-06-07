@@ -107,6 +107,46 @@ fn component_checkbox_change_emits_callback() {
     assert_eq!(events[0].callback_id, cb);
     assert_eq!(events[0].target_id.as_deref(), Some("chk"));
     assert_eq!(events[0].event, "change");
+    assert_eq!(events[0].payload, Some(ComponentValue::Bool(true)));
+}
+
+#[test]
+fn component_textbox_change_emits_text_payload() {
+    let callbacks = CallbackRegistry::new();
+    let cb = callbacks.register();
+
+    let mut spec = ComponentSpec::new("TextBox")
+        .with_id("name")
+        .with_prop("title", ComponentValue::String("Name".into()))
+        .with_prop("text", ComponentValue::String(String::new()));
+    spec.events.insert("change".into(), cb);
+
+    let registry = builtin_registry(callbacks.clone());
+    let mut view = registry.build(&spec).expect("build");
+
+    let ctx = ComponentContext {
+        theme: &Theme::dark(),
+        window_id: WindowId(1),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+    };
+    let event = Event::Key(KeyEvent {
+        code: KeyCode::Char('A'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    let result = view.handle_event(&event, ctx);
+    assert_eq!(result, EventResult::changed());
+
+    let events = callbacks.drain();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].callback_id, cb);
+    assert_eq!(events[0].target_id.as_deref(), Some("name"));
+    assert_eq!(events[0].event, "change");
+    assert_eq!(events[0].payload, Some(ComponentValue::String("A".into())));
 }
 
 #[test]

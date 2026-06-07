@@ -2,6 +2,9 @@ const assert = require('node:assert/strict')
 const React = require('react')
 const {
   B,
+  Button,
+  Grid,
+  ListBox,
   I,
   Link,
   Markdown,
@@ -10,8 +13,11 @@ const {
   MenuItem,
   S,
   StatusBar,
+  Table,
   Text,
+  TextBox,
   U,
+  VStack,
   Window,
   createDesktopRoot,
   createRoot,
@@ -512,3 +518,72 @@ assert.deepEqual(markdownOps[0].op.tree, {
   id: markdownOps[0].op.tree.id,
   props: { markdown: '# Title\n\n- item' },
 })
+
+const { host: componentHost, ops: componentOps } = createMockHost()
+const componentRoot = createRoot(componentHost, 'component-window', { idPrefix: 'components' })
+let nextTextValue = null
+let nextListSelection = null
+let nextTableSelection = null
+componentRoot.render(React.createElement(
+  VStack,
+  { spacing: 1 },
+  React.createElement(Button, { onClick() {} }, 'Save'),
+  React.createElement(TextBox, {
+    title: 'Name',
+    value: 'Ada',
+    onChange(value) {
+      nextTextValue = value
+    },
+  }),
+  React.createElement(ListBox, {
+    title: 'People',
+    items: ['Ada', 'Grace'],
+    onSelect(selection) {
+      nextListSelection = selection
+    },
+  }),
+  React.createElement(Table, {
+    title: 'Rows',
+    headers: ['name'],
+    rows: [['Ada'], ['Grace']],
+    onChange(selection) {
+      nextTableSelection = selection
+    },
+  }),
+  React.createElement(Grid, { columns: 2, rowGap: 1, columnGap: 1 },
+    React.createElement('label', { text: 'Grid A' }),
+    React.createElement('label', { text: 'Grid B' })),
+))
+const componentTree = componentOps[0].op.tree
+assert.equal(componentTree.type, 'VStack')
+assert.deepEqual(componentTree.props, { spacing: 1 })
+assert.deepEqual(componentTree.children.map((child) => child.type), [
+  'Button',
+  'TextBox',
+  'ListBox',
+  'TableView',
+  'Grid',
+])
+const wrappedButton = componentTree.children[0]
+const wrappedTextBox = componentTree.children[1]
+const wrappedList = componentTree.children[2]
+const wrappedTable = componentTree.children[3]
+const wrappedGrid = componentTree.children[4]
+assert.deepEqual(wrappedButton.props, { label: 'Save' })
+assert.deepEqual(wrappedTextBox.props, { title: 'Name', text: 'Ada' })
+assert.deepEqual(wrappedList.props, { title: 'People', items: ['Ada', 'Grace'], selection: 0 })
+assert.deepEqual(wrappedTable.props, { title: 'Rows', headers: ['name'], rows: [['Ada'], ['Grace']], selection: 0 })
+assert.deepEqual(wrappedGrid.props, { columns: 2, row_gap: 1, column_gap: 1 })
+
+assert.equal(dispatchHostCallbacks(componentRoot.container, [
+  { callbackId: wrappedTextBox.events.change, targetId: wrappedTextBox.id, event: 'change', payload: 'Grace' },
+]), 1)
+assert.equal(nextTextValue, 'Grace')
+assert.equal(dispatchHostCallbacks(componentRoot.container, [
+  { callbackId: wrappedList.events.change, targetId: wrappedList.id, event: 'change', payload: 1 },
+]), 1)
+assert.equal(nextListSelection, 1)
+assert.equal(dispatchHostCallbacks(componentRoot.container, [
+  { callbackId: wrappedTable.events.change, targetId: wrappedTable.id, event: 'change', payload: 1 },
+]), 1)
+assert.equal(nextTableSelection, 1)

@@ -8,7 +8,7 @@ use crate::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
-use crate::runtime::CallbackHandle;
+use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Debug, ComponentProperties)]
@@ -176,7 +176,7 @@ impl Slider {
         if (prev - value).abs() > f64::EPSILON
             && let Some(cb) = &self.on_change_callback
         {
-            cb.emit();
+            cb.emit_with(Some(ComponentValue::F64(value)));
         }
         EventResult::changed()
     }

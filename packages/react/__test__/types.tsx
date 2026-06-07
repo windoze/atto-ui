@@ -1,0 +1,51 @@
+import {
+  Button,
+  Grid,
+  HStack,
+  ListBox,
+  Menu,
+  MenuBar,
+  MenuItem,
+  StatusBar,
+  Table,
+  TextBox,
+  VStack,
+  Window,
+} from '../src'
+
+const button = <Button onClick={() => {}}>Save</Button>
+const textbox = <TextBox value="Ada" onChange={(value, event) => {
+  value.toUpperCase()
+  event.targetId?.toString()
+}} />
+const list = <ListBox items={['one', 'two']} selectedIndex={0} onSelect={(index) => index.toFixed()} />
+const table = <Table headers={['name']} rows={[["Ada"], ["Grace"]]} onChange={(index) => index.toFixed()} />
+const layout = <Grid columns={2} rowGap={1} columnGap={1}>{button}{textbox}</Grid>
+const stack = <VStack spacing={1}><HStack>{layout}</HStack>{list}{table}</VStack>
+const desktop = <>
+  <MenuBar><Menu title="File"><MenuItem label="Open" onClick={() => {}} /></Menu></MenuBar>
+  <StatusBar left="Ready" right="Ln 1" />
+  <Window title="Main" rect={[1, 1, 40, 10]}>{stack}</Window>
+</>
+
+const rawTextBox = <textBox title="Raw" text="value" onChange={(event) => event.payload} />
+const rawList = <listBox items={['one']} selection={0} onChange={(event) => event.callbackId} />
+void desktop
+void rawTextBox
+void rawList
+
+// @ts-expect-error controlled TextBox requires value
+const missingValue = <TextBox onChange={() => {}} />
+void missingValue
+
+// @ts-expect-error TextBox onChange receives the next string value first
+const wrongChange = <TextBox value="" onChange={(value: number) => value.toFixed()} />
+void wrongChange
+
+// @ts-expect-error StatusBar is a fixed desktop slot and does not accept children
+const statusBarChildren = <StatusBar>bad</StatusBar>
+void statusBarChildren
+
+// @ts-expect-error raw host TextBox uses the runtime text prop; value belongs to the wrapper
+const rawValue = <textBox value="not supported" />
+void rawValue

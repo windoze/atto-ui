@@ -386,7 +386,7 @@
 
 ## 阶段六：M7 组件库 + TS 类型
 
-### [TODO] NT14 — host 组件库 + JSX 类型 + 受控输入（U.6）
+### [DONE] NT14 — host 组件库 + JSX 类型 + 受控输入（U.6）
 **文件**：`packages/react/src/components.ts`、`src/jsx.d.ts`
 **现状**：内置组件已注册（Button/TextBox/ListBox/TableView/VStack/HStack/Grid 等）；需 React wrapper 与类型。
 **步骤**：
@@ -396,6 +396,12 @@
 4. 受控输入回环：`<TextBox value onChange>`，确认外部 `SetProp value` + 变更事件不打架（§10.7 风险）。
 **测试**：`tsc` 通过；PTY——各组件交互；受控 TextBox 输入正确。
 **验收**：常用组件有类型化 React 封装；受控输入无回环抖动。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/src/components.ts`，导出 `Button`、受控 `TextBox value/onChange`、`ListBox`、`Table`/`TableView`、`VStack`、`HStack`、`Grid` typed wrappers；事件约定统一为 `onClick`、TextBox `onChange(value,event)`、列表/表格 `onSelect`/`onChange(index,event)`。
+- 新增 `packages/react/src/jsx.ts` 与 `src/jsx.d.ts`，为 atto-ui host intrinsic elements 提供 JSX 类型，并补齐 desktop/window/menu/status slot 组件的 children 类型声明；`index.d.ts` 会引用 `jsx` 类型模块。
+- 补齐 runtime change payload：TextBox/TextArea 发送当前 string，Checkbox 发送 bool，Slider 发送 f64，RadioGroup/ListBox/TableView/TabView 发送 selection u64；同步更新 schema payload 元数据，避免 React 受控 wrapper 读取宿主状态或猜测值。
+- 新增 TSX 类型用例、reconciler wrapper lowering/payload 分发测试、headless 受控 TextBox 回归，以及 PTY components 用例，覆盖 TextBox 输入、Button 点击、ListBox 与 Table 选择更新。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm run build --prefix packages/react`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR14 — 审阅 NT14
 - 确认事件 prop 约定一致、类型精确。

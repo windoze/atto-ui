@@ -13,7 +13,7 @@ use crate::composable::{
     EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarHost,
 };
 use crate::reactive::Binding;
-use crate::runtime::CallbackHandle;
+use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl TabView {
 
     fn emit_change(&self) {
         if let Some(cb) = &self.on_change_callback {
-            cb.emit();
+            cb.emit_with(Some(ComponentValue::U64(self.selection.get() as u64)));
         }
     }
 

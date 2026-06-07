@@ -50,6 +50,29 @@ export {
 } from './desktop'
 
 export {
+  Button,
+  Grid,
+  HStack,
+  ListBox,
+  Table,
+  TableView,
+  TextBox,
+  VStack,
+  type ButtonHostProps,
+  type ButtonProps,
+  type GridProps,
+  type LabelProps,
+  type ListBoxHostProps,
+  type ListBoxProps,
+  type StackProps,
+  type TableProps,
+  type TableViewHostProps,
+  type TextBoxHostProps,
+  type TextBoxProps,
+  type ValueChangeHandler,
+} from './components'
+
+export {
   B,
   I,
   Link,
@@ -62,3 +85,5 @@ export {
   type MarkdownProps,
   type TextProps,
 } from './text'
+
+export type { RichTextHostProps } from './jsx'

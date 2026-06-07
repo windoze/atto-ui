@@ -90,7 +90,7 @@ fn register_checkbox(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<Checkbox>("Checkbox")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::Bool))
         .with_action(ActionMeta::new("toggle"))
         .allow_children(false);
 
@@ -260,7 +260,7 @@ fn register_textbox(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<TextBox>("TextBox")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::String))
         .with_event(EventMeta::new("submit"))
         .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
         .allow_children(false);
@@ -293,7 +293,7 @@ fn register_textarea(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<TextArea>("TextArea")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::String))
         .with_event(EventMeta::new("submit"))
         .with_action(ActionMeta::new("input_text").with_payload(ValueType::String))
         .allow_children(false);
@@ -434,7 +434,7 @@ fn register_slider(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<Slider>("Slider")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::F64))
         .allow_children(false);
 
     registry.register(schema, move |spec, _registry| {
@@ -478,7 +478,7 @@ fn register_radio_group(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<RadioGroup>("RadioGroup")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::U64))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
 
@@ -506,7 +506,7 @@ fn register_list_box(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<ListBox>("ListBox")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::U64))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
 
@@ -534,7 +534,7 @@ fn register_table_view(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<TableView>("TableView")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::U64))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(false);
 
@@ -580,7 +580,7 @@ fn register_tab_view(
     callbacks: CallbackRegistry,
 ) {
     let schema = component_schema::<TabView>("TabView")
-        .with_event(EventMeta::new("change"))
+        .with_event(EventMeta::new("change").with_payload(ValueType::U64))
         .with_action(ActionMeta::new("select_index").with_payload(ValueType::U64))
         .allow_children(true);
 

@@ -8,7 +8,7 @@ use crate::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
 };
 use crate::reactive::Binding;
-use crate::runtime::CallbackHandle;
+use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::util::{mouse_coords_local_to_area, widget_style};
@@ -51,7 +51,7 @@ impl Checkbox {
 
     fn emit_change(&self) {
         if let Some(cb) = &self.on_change_callback {
-            cb.emit();
+            cb.emit_with(Some(ComponentValue::Bool(self.binding.get())));
         }
     }
 }

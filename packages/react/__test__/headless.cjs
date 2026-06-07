@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const React = require('react')
 const core = require('../../core')
-const { Markdown, createRoot, dispatchHostCallbacks } = require('../dist')
+const { Markdown, TextBox, createRoot, dispatchHostCallbacks } = require('../dist')
 
 function findNode(node, id) {
   if (node.id === id) return node
@@ -66,3 +66,34 @@ const markdownRoot = createRoot(markdownHost, markdownWindowId, { idPrefix: 'mar
 markdownRoot.render(React.createElement(Markdown, null, '# Title\n\n- item'))
 assert.equal(markdownHost.step(), true)
 assert.equal(findNode(markdownHost.snapshot().tree, 'markdown-headless-1').name, 'MarkdownViewer')
+
+const controlledHost = new core.AppHost({ headless: true, cols: 60, rows: 16, tickRate: 0 })
+const controlledWindowId = controlledHost.addDynamicWindow('Controlled TextBox', { x: 1, y: 1, width: 42, height: 10 }, {
+  type: 'Spacer',
+  id: 'react-controlled-placeholder',
+})
+
+function ControlledTextBox() {
+  const [value, setValue] = React.useState('')
+  return React.createElement(
+    'vstack',
+    null,
+    React.createElement(TextBox, {
+      title: 'Name',
+      value,
+      onChange(nextValue) {
+        setValue(nextValue)
+      },
+    }),
+    React.createElement('label', { text: `Value: ${value}` }),
+  )
+}
+
+const controlledRoot = createRoot(controlledHost, controlledWindowId, { idPrefix: 'controlled-headless' })
+controlledRoot.render(React.createElement(ControlledTextBox))
+assert.equal(controlledHost.step(), true)
+assert.equal(findNode(controlledHost.snapshot().tree, 'controlled-headless-2').text, 'Value: ')
+controlledHost.sendEvent(controlledWindowId, { type: 'key', char: 'Z' })
+assert.equal(dispatchHostCallbacks(controlledRoot.container, controlledHost.drainCallbacks()), 1)
+assert.equal(controlledHost.step(), true)
+assert.equal(findNode(controlledHost.snapshot().tree, 'controlled-headless-2').text, 'Value: Z')
