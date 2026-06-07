@@ -415,12 +415,18 @@
 - 确认 PTY 覆盖受控 TextBox happy path、Button 点击、ListBox/Table 选择更新；新增 reconciler 回归覆盖受控 TextBox 拒绝输入回写与接受输入无重复 op。React JSX 对具体 wrapper 子元素身份仍受 TypeScript/React JSX element erasure 限制，运行时结构校验继续覆盖 Desktop/Menu 非法子节点。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`cargo test -p atto-ui widgets::textbox::tests::key_release_does_not_insert_text`；`npm test --prefix packages/react`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test --prefix crates/atto-ui-node`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NT15 — `@atto-ui/core` 命令式构造器（L.2）
+### [DONE] NT15 — `@atto-ui/core` 命令式构造器（L.2）
 **文件**：`packages/core/src/`
 **现状**：低层用法需不依赖 react 的 spec 构造器（§6.4）。
 **步骤**：提供 `VStack(...)`/`Text(...)`/`Button(...)` 等薄包装 spec 对象的构造器（类型安全），供低层用法与作为 React 库底层。
 **测试**：单测构造 spec 与手写 JSON 等价；`tsc` 通过。
 **验收**：不使用 React 也能类型安全地构树。
+**完成记录（2026-06-07）**：
+- 新增 `packages/core/src/builders.ts` / `builders.js`，导出纯 TS/CJS 命令式构造器：`component`、`child`/`withLayout`/`withMeta`/`tab`，以及 `Text`、`Label`、`Button`、`TextBox`、`TextArea`、`Checkbox`、`RadioGroup`、`Slider`、`Spinner`、`ProgressBar`、`ListBox`、`TableView`、`VStack`、`HStack`、`Grid`、`Border`、`Visibility`、`Divider`、`Spacer`、`Splitter`、`TabView`、`TextSpan`、`RichText`、`StyledLabel`、`Disclosure`、`TypeAhead`、`CommandPalette`。
+- 构造器返回标准 `ComponentSpec`/`ComponentSpecChild` plain object，自动丢弃 `undefined` props/events，支持 camelCase 便捷入参到 runtime snake_case 属性映射，并将 `onClick`/`onChange`/`onSubmit`/`onLink` 等事件别名映射为底层 `events` callback handle。
+- `packages/core/index.ts` 和 `index.js` 统一 re-export 构造器；新增 `packages/core/__test__/builders.cjs` 断言构造器输出与手写 JSON 等价，扩展 `__test__/types.ts` 覆盖构造器返回值非 `any`、callback handle/string 参数类型约束与 child layout/meta 类型。
+- 修复当前 TypeScript 版本下 `moduleResolution: "Node"` 的阻塞性弃用错误：`packages/core` 与 `packages/react` 改用 `module`/`moduleResolution: "Node16"`，保持后续 `tsc` 验证可运行。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm test --prefix crates/atto-ui-node`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR15 — 审阅 NT15
 - 确认构造器产出的 spec 与核心类型一致、无字段遗漏。

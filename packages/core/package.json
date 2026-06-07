@@ -14,7 +14,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node __test__/headless.cjs"
+    "test": "node __test__/headless.cjs && node __test__/builders.cjs"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

@@ -385,3 +385,5 @@ export interface ComponentSchema {
   readonly events: readonly EventMeta[]
   readonly allows_children: boolean
 }
+
+export * from './src/builders'

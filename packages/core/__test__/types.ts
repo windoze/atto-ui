@@ -1,5 +1,11 @@
 import {
   AppHost,
+  Button,
+  Grid,
+  Text,
+  VStack,
+  child,
+  tab,
   type CallbackInvocation,
   type ComponentSpec,
   type ComponentValue,
@@ -54,12 +60,31 @@ const released: boolean = host.releaseCallback(host.allocCallback())
 const windows: WindowInfo[] = host.listWindows()
 const snapshot: DesktopSnapshot = host.snapshot()
 
+const builtRoot = VStack({ id: 'built-root', padding: 1 }, [
+  child(Text('Hello', { id: 'built-text', selectable: true }), {
+    layout: { width: 'fill' },
+    meta: { title: 'Greeting' },
+  }),
+  Button({ id: 'built-button', label: 'OK', onClick: 'atto:callback:2' }),
+  Grid({ columns: 2, rowGap: 1 }, [tab('Tab label', Text('Cell'))]),
+])
+const builtSpec: ComponentSpec = builtRoot
+const shortcutButton: ComponentSpec = Button('Send', { onClick: 'atto:callback:3' })
+
+// @ts-expect-error callback handles must be strings from AppHost.allocCallback().
+Button({ label: 'Bad', onClick: 1 })
+// @ts-expect-error Text content must be a string.
+Text(123)
+
 type _CallbacksAreTyped = AssertFalse<IsAny<typeof callbacks>>
 type _WindowsAreTyped = AssertFalse<IsAny<typeof windows>>
 type _SnapshotIsTyped = AssertFalse<IsAny<typeof snapshot>>
+type _BuilderIsTyped = AssertFalse<IsAny<typeof builtRoot>>
 
 void changed
 void callbacks
 void released
 void windows
 void snapshot
+void builtSpec
+void shortcutButton

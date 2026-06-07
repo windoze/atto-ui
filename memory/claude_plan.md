@@ -1,28 +1,22 @@
-执行计划与进度记录
+<!-- Progress plan for the current autonomous task invocation. -->
 
-约束说明：此文件记录可审计的执行计划、关键决策和进度更新；不会记录不可公开的内部推理链。
+# Current Invocation Plan
 
-当前目标：按 `TODO.md` 的顺序完成第一个标题未带 `[DONE]` 的任务，完成后更新记录、验证、提交，并停止。
+1. Read `TODO.md` first and identify the first task whose heading is not prefixed with `[DONE]`.
+2. Check the latest commit only for directly relevant unfinished work after the current task is identified.
+3. Read the task body, dependencies, validation requirements, and any completion record in `TODO.md`.
+4. Inspect only the code and tests needed to complete that task without broad unrelated triage.
+5. Implement the task as written, adding a prerequisite task instead only if a concrete blocker makes correct execution impossible.
+6. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task and repository policy.
+7. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling in its completion record. Update `PLAN.md` only if the phase-level plan changes.
+8. Review the worktree, commit all intended changes with a descriptive task-scoped commit message, and stop without starting the next task.
 
-步骤：
-1. 读取 `TODO.md`，只识别第一个未完成任务，不进行开放式历史问题扫查。
-2. 查看最新提交信息；若它明确提到与当前任务直接相关的未完成问题，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
-3. 阅读当前任务相关的计划、源码和测试，确认要求、依赖与验证方式。
-4. 若任务可直接完成，做最小正确实现；若发现阻塞当前任务的真实前置问题，按要求更新 `TODO.md` 并停止。
-5. 运行格式化、lint 和相关测试；若代码改动影响全局行为，则按要求运行完整验证。
-6. 将任务标题标记为 `[DONE]`，更新 `TODO.md` 的 completion record；仅当阶段计划变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff`、近期提交，提交本次任务相关改动。
-8. 提交后停止，不进入下一个任务。
+## Progress Log
 
-进度：
-- 已创建本执行计划文件。
-- 已读取 `TODO.md`/`TODO-1.md`，确认当前任务为 `NR14 — 审阅 NT14`。
-- 已检查最新提交 `[NT14] Add React host component wrappers`，与当前审阅任务直接相关；审阅范围限定为该提交及其相关实现/测试。
-- 已审阅 React host wrapper、JSX 类型、runtime change payload 与受控 TextBox 测试。
-- 发现并纳入当前审阅修复：`TextBox` 未忽略 key release 可能重复输入；受控 `TextBox` 在 `onChange` 拒绝/转换输入时不会回写 React 受控值；raw `<grid>` JSX 类型允许 wrapper-only camelCase gap props；`MenuItem.onClick` 类型不能接收事件对象。
-- 已完成最小范围修复并补充 Rust/JS/TS 回归测试。
-- 已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`npm run typecheck --prefix packages/react`、`cargo test -p atto-ui widgets::textbox::tests::key_release_does_not_insert_text`、`npm test --prefix packages/react`。
-- 已通过完整验证：`cargo test --all --all-targets`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）、`npm test --prefix crates/atto-ui-node`、`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`、`npm test --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm test --prefix packages/react`、`git diff --check`。
-- 已确认未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
-- 已将 `NR14` 在 `TODO-1.md` 和 `TODO.md` 标记为 `[DONE]`/`DONE` 并写入完成记录。
-- 下一步：检查 diff/status 后提交本任务改动并停止。
+- Initial plan written before running repository inspection commands.
+- Identified first incomplete task from `TODO.md`: `NT15` (`@atto-ui/core` imperative builders, L.2) in `TODO-1.md`.
+- Read `TODO-1.md` NT15 details. Scope: add type-safe imperative component spec builders under `packages/core/src/`, test equivalence with handwritten JSON, and pass TypeScript checks. Latest commit `NR14` did not surface a directly relevant unfinished blocker.
+- Implemented first draft of `packages/core/src/builders.ts` and runtime `builders.js`, exported them from the core package, and added JS/type tests for builder output and type safety.
+- Quick validation found a TypeScript 6 deprecation failure for `moduleResolution: "Node"`; fixed both TS package configs to `module`/`moduleResolution: "Node16"`. Core and React typechecks now pass, and `packages/core` tests pass.
+- Completed full validation: `cargo fmt`, workspace clippy, full Rust tests, core/react typechecks, core/react JS tests, and Node binding JS tests all passed. Marked `NT15` as `[DONE]` in `TODO-1.md` and the root `TODO.md` index.
+- Fixed an event alias merge edge case so explicit `events` entries are not cleared by omitted `on*` aliases; reran `packages/core` typecheck/test plus React typecheck/test successfully.
