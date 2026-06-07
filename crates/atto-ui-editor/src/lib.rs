@@ -11,6 +11,7 @@
 //! `atto_ui::theme::Theme` for text styling.
 
 mod config;
+mod diff;
 mod dynamic;
 mod keymap;
 mod popup;
@@ -22,6 +23,7 @@ pub use config::{
     EditorLspGotoKind, EditorLspMode, EditorScrollConfig, EditorSyntaxConfig,
     EditorTreeSitterConfig,
 };
+pub use diff::{DiffView, DiffViewConfig, DiffViewHandle, DiffViewMode};
 pub use dynamic::{editor_schema, register_editor, register_runtime_components};
 pub use keymap::{EditorAction, EditorKeymap, KeyChord};
 pub use popup::{

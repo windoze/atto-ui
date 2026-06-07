@@ -11,7 +11,7 @@ use crossterm::event::{
 };
 use editor_core::{
     Command, CursorCommand, EditCommand, EditorStateManager, Position, Selection,
-    SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, layout::char_width,
+    SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, char_width,
 };
 use editor_core_highlight_simple::{RegexHighlightProcessor, SimpleIniStyles, SimpleJsonStyles};
 use editor_core_lsp::{LspContentChange, LspSession, locations_from_value};

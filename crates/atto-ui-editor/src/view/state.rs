@@ -61,12 +61,12 @@ impl EditorView {
         let start_offset = self
             .state_manager
             .editor()
-            .line_index
+            .line_index()
             .position_to_char_offset(selection.start.line, selection.start.column);
         let end_offset = self
             .state_manager
             .editor()
-            .line_index
+            .line_index()
             .position_to_char_offset(selection.end.line, selection.end.column);
         (start_offset.min(end_offset), start_offset.max(end_offset))
     }
@@ -75,7 +75,7 @@ impl EditorView {
         let pos = self.active_cursor_position();
         self.state_manager
             .editor()
-            .line_index
+            .line_index()
             .position_to_char_offset(pos.line, pos.column)
     }
 

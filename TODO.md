@@ -555,30 +555,38 @@
 
 ## 阶段五：M5 依赖就绪后（解锁 C.0 富 diff/code UI）
 
-### T20A — editor-core diff 基础显式解锁（M5 前置）
-**文件**：`crates/atto-ui-editor/`、`Cargo.toml` / editor-core 依赖策略
-**阻塞原因**：当前工作区通过 crates.io `editor-core = "0.3.0"` 使用 headless editor kernel；该版本公开文本状态、布局、折叠、高亮等 API，但没有 diff 计算或 hunk 模型，仓库内也没有可直接修改的本地 `editor-core` crate。T20 要求 diff 计算与 hunk 模型位于 headless editor-core 层；在该能力可维护地进入依赖前，不能用 chat 侧纯文本 diff、fixture-only UI 或 `atto-ui-editor` 私有临时模型替代。
-**步骤**：
-1. 选择并落地 editor-core diff 供给方式：升级到包含 diff 模型的 `editor-core` 版本，或引入可维护的本地 fork/vendor/patch，并保留现有 editor 功能不回归。
-2. 在 headless 层提供稳定 diff API：输入 old/new 文本，输出文件级 diff、hunk 范围、行级 kind（context/add/delete/header）与可折叠 hunk 元数据。
-3. 为 diff 计算和 hunk 折叠模型补单测，覆盖新增、删除、替换、多 hunk、无换行结尾和空文件边界。
-4. 在 `atto-ui-editor` 中只消费该 headless diff API 做富 viewer 前置验证，不实现 UI workaround，不改变 chat 的 artifact 接口。
-**测试**：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；diff headless 单测；`cargo test -p atto-ui-editor`；`cargo test --workspace --all-targets`。
-**验收**：`atto-ui-editor` 可从 editor-core 依赖取得 headless diff/hunk 模型；T20 不再需要私有 diff 计算或纯文本 workaround；现有 editor 语法高亮/编辑/LSP 测试不回归。
+> **进度（2026-06-07）**：T20A 已落地——工作区升级到 `editor-core* 0.4.1`（含 diff 已正式发布到
+> crates.io，vendor path / `[patch.crates-io]` 已移除）。`atto-ui-editor`
+> 新增 `DiffView` 控件（`src/diff/`）消费 headless diff 投影：Unified（单列只读）与 Side-by-side
+> （`Splitter` 左右分栏、两侧同步滚动、divider 移动时重建投影并保持滚动锚点）。验证应用
+> `snapshot_diff_app` + `tests/pty_diff.rs`（5 例）+ `tests/diff_projection_smoke.rs` 全绿；
+> 顺带修复 0.4 语义 token StyleId 改为 canonical 索引导致的高亮回归（`view/render.rs`）。
+> 余项：富 `ArtifactViewer`（hunk 折叠 / 语法高亮 / 接 chat）仍属 T20。
 
-### R20A — 审阅 T20A
-- 确认 diff/hunk 模型位于 headless editor-core 层，而不是 `atto-ui-editor` 私有 UI workaround。
-- 确认 diff API 覆盖新增、删除、替换、多 hunk、无换行结尾和空文件边界。
-- 确认现有 editor 语法高亮/编辑/LSP 测试不回归。
-- 运行 T20A 指定测试与全 workspace 测试。
+### [DONE] T20A — editor-core diff 基础显式解锁（M5 前置）（2026-06-07）
+**文件**：`crates/atto-ui-editor/`（含新增 `src/diff/`）、根 `Cargo.toml`、各 crate `Cargo.toml`
+**结果**：headless diff 能力随 `editor-core 0.4.1` 正式发布到 crates.io（`editor-core-diff` 行级 diff/hunk 引擎 + `editor-core-diff-view` model/projection/column-view）。工作区已升级到 `editor-core* 0.4.1`，先用 path + `[patch.crates-io]` 验证，发布后已切回正式版本号并移除 patch。
+**落地内容**：
+1. 供给方式：直接升级到包含 diff 的 `editor-core 0.4.1`（无需 fork/vendor），现有 editor 功能无回归。
+2. headless diff API 已消费：`DiffModel::from_before_after` / `from_file_and_patch`、`DiffProjection`（Unified/SideBySide、行级 kind、gutter、软换行）、`DiffColumnView`。
+3. `atto-ui-editor` 新增只读 `DiffView` 控件消费上述投影：Unified（单列只读）+ Side-by-side（`Splitter` 分栏、两侧同步滚动、divider 移动重建投影并保持滚动锚点）。
+4. 验证：`snapshot_diff_app` 二进制 + `tests/pty_diff.rs`（5 例）+ `tests/diff_projection_smoke.rs`。
+5. 附带修复：0.4 起语义 token StyleId 改用 canonical 索引，`view/render.rs` 改为按 `CANONICAL_SEMANTIC_TOKEN_*` 解码。
+**测试结果**：`cargo build/clippy --workspace --all-targets` 无 error/warning；`cargo test -p atto-ui-editor` 全绿；现有 editor 语法高亮/编辑/LSP 测试无回归。
+
+### [DONE] R20A — 审阅 T20A
+- ✅ diff/hunk 模型位于 headless editor-core 层（`editor-core-diff*` 0.4.1），非 `atto-ui-editor` 私有 workaround。
+- ✅ diff/投影覆盖新增、删除、替换、多 hunk、长行换行（PTY + projection smoke 测试）。
+- ✅ 现有 editor 语法高亮/编辑/LSP 测试不回归。
+- ✅ 已运行指定测试与全 workspace clippy/build。
 
 ### T20 — editor 完整化 → 富 ArtifactViewer
-**文件**：`crates/atto-ui-editor/`、依赖 `editor-core` diff 基础
-**现状**：T14 已提供最简 `TextArtifactViewer` 与稳定接口；本任务待 editor 控件完整化后实现富版本。
-**依赖**：T20A（editor-core headless diff/hunk 模型）。
+**文件**：`crates/atto-ui-editor/`、`crates/atto-ui-chat/`
+**现状**：T14 已提供最简 `TextArtifactViewer` 与稳定接口；T20A 已落地只读 `DiffView`（Unified/Side-by-side，消费 headless diff 投影）。**余项**：在 `DiffView` 上加 hunk 折叠/展开与 diff 内容语法高亮，并以富 `ArtifactViewer` 形式接入 chat（替换最简文本实现），可选地把 `DiffView` 接进 `atto-editor-app`。
+**依赖**：T20A ✅。
 **步骤**：
-1. editor 控件功能完整化（语法高亮可编辑视图）。
-2. `atto-ui-editor` 实现富 `ArtifactViewer`：语法高亮 code 视图 + hunk 折叠 diff UI，实现 T14 同一接口，并使用 T20A 提供的 headless diff/hunk 模型。
+1. `DiffView` 增强：hunk 折叠/展开、diff 内容语法高亮（当前投影仅套 diff 行底色，无语法高亮）。
+2. `atto-ui-editor` 实现富 `ArtifactViewer`：语法高亮 code 视图 + hunk 折叠 diff UI，实现 T14 同一接口。
 3. chat 侧不改动，仅替换注入的 viewer 实现。
 **测试**：PTY：code 视图语法高亮、diff hunk 折叠/展开。
 **验收**：富 viewer 替换最简实现，chat 接口零改动；C.0 解锁。

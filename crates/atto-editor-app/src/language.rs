@@ -9,7 +9,7 @@ use atto_ui_editor::{
     TS_STYLE_CONSTANT, TS_STYLE_FUNCTION, TS_STYLE_KEYWORD, TS_STYLE_NUMBER, TS_STYLE_STRING,
     TS_STYLE_TYPE, TS_STYLE_VARIABLE,
 };
-use editor_core::intervals::StyleId;
+use editor_core::StyleId;
 
 pub fn guess_language_id(path: &Path) -> String {
     let ext = path

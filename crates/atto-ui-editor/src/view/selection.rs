@@ -40,7 +40,7 @@ impl EditorView {
         let line_text = self
             .state_manager
             .editor()
-            .line_index
+            .line_index()
             .get_line_text(pos.line)
             .unwrap_or_default();
         let chars: Vec<char> = line_text.chars().collect();
@@ -89,7 +89,7 @@ impl EditorView {
         let line_text = self
             .state_manager
             .editor()
-            .line_index
+            .line_index()
             .get_line_text(logical_line)
             .unwrap_or_default();
         let line_char_len = line_text.chars().count();
@@ -167,7 +167,7 @@ impl EditorView {
             && local_x < gutter.width.saturating_sub(1)
         {
             let mut x = 0u16;
-            let line_count = self.state_manager.editor().line_index.line_count().max(1);
+            let line_count = self.state_manager.editor().line_index().line_count().max(1);
             let digits = line_count.to_string().len().max(2) as u16;
             if show_line_numbers {
                 x = x.saturating_add(digits.saturating_add(1));
@@ -333,12 +333,12 @@ impl EditorView {
         let visual_row = scroll_top.saturating_add(y as usize);
         let (logical_line, visual_in_line) = editor.visual_to_logical_line(visual_row);
 
-        let Some(layout) = editor.layout_engine.get_line_layout(logical_line) else {
+        let Some(layout) = editor.layout_engine().get_line_layout(logical_line) else {
             return Position::new(logical_line, x as usize);
         };
 
         let line_text = editor
-            .line_index
+            .line_index()
             .get_line_text(logical_line)
             .unwrap_or_default();
         let line_char_len = line_text.chars().count();

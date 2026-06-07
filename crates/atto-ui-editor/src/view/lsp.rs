@@ -412,7 +412,7 @@ impl EditorView {
         };
         let pos = anchor.position;
         if let Ok(id) = lsp.request_hover(
-            &self.state_manager.editor().line_index,
+            self.state_manager.editor().line_index(),
             pos.line,
             pos.column,
         ) {
@@ -440,7 +440,7 @@ impl EditorView {
             return;
         };
         if let Ok(id) = lsp.request_completion(
-            &self.state_manager.editor().line_index,
+            self.state_manager.editor().line_index(),
             pos.line,
             pos.column,
         ) {
@@ -454,7 +454,7 @@ impl EditorView {
         let Some(lsp) = self.lsp.session.as_mut() else {
             return;
         };
-        let line_index = &self.state_manager.editor().line_index;
+        let line_index = &self.state_manager.editor().line_index();
         let request = match kind {
             EditorLspGotoKind::Definition => {
                 lsp.request_definition(line_index, pos.line, pos.column)
@@ -596,7 +596,7 @@ impl EditorView {
             let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
                 let old_char_count = self.state_manager.editor().char_count();
                 lsp.full_document_change(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     old_char_count,
                     "",
                 )
@@ -688,7 +688,7 @@ impl EditorView {
         let show_line_numbers = self.config.show_line_numbers.get();
         let show_folding_markers = self.config.show_folding_markers.get();
 
-        let line_count = self.state_manager.editor().line_index.line_count().max(1);
+        let line_count = self.state_manager.editor().line_index().line_count().max(1);
         let digits = line_count.to_string().len().max(2) as u16;
 
         let mut gutter_w = 0u16;

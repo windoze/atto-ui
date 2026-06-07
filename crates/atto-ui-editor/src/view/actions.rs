@@ -10,7 +10,7 @@ impl EditorView {
                 let old_char_count = self.state_manager.editor().char_count();
                 let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
                     lsp.full_document_change(
-                        &self.state_manager.editor().line_index,
+                        self.state_manager.editor().line_index(),
                         old_char_count,
                         "",
                     )
@@ -35,7 +35,7 @@ impl EditorView {
                 let old_char_count = self.state_manager.editor().char_count();
                 let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
                     lsp.full_document_change(
-                        &self.state_manager.editor().line_index,
+                        self.state_manager.editor().line_index(),
                         old_char_count,
                         "",
                     )

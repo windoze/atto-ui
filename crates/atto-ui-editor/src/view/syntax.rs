@@ -18,7 +18,10 @@ impl EditorView {
                     .map(SyntaxProcessor::Regex)
             }
             EditorSyntaxConfig::TreeSitter(cfg) => {
-                let mut ts = TreeSitterProcessorConfig::new(cfg.language, cfg.highlights_query);
+                let mut ts = TreeSitterProcessorConfig::new(
+                    editor_core_treesitter::TreeSitterLanguage::Native(cfg.language),
+                    cfg.highlights_query,
+                );
                 ts.folds_query = cfg.folds_query;
                 ts.capture_styles = cfg.capture_styles;
                 ts.style_layer = cfg.style_layer;

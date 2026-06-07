@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use atto_ui::composable::ScrollConfig;
 use atto_ui::reactive::Binding;
-use editor_core::intervals::{StyleId, StyleLayerId};
+use editor_core::{StyleId, StyleLayerId};
 use tree_sitter::Language;
 
 use super::keymap::EditorKeymap;

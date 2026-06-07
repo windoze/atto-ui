@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use editor_core::FOLD_PLACEHOLDER_STYLE_ID;
+use editor_core::{
+    DIFF_ADD_LINE_STYLE_ID, DIFF_REMOVE_LINE_STYLE_ID, DIFF_SPACER_STYLE_ID,
+    FOLD_PLACEHOLDER_STYLE_ID,
+};
 use editor_core_highlight_simple::{
     SIMPLE_STYLE_BOOLEAN, SIMPLE_STYLE_COMMENT, SIMPLE_STYLE_KEY, SIMPLE_STYLE_NULL,
     SIMPLE_STYLE_NUMBER, SIMPLE_STYLE_SECTION, SIMPLE_STYLE_STRING,
@@ -188,6 +191,20 @@ impl EditorTheme {
         );
         style_ids.insert(TS_STYLE_VARIABLE, Style::default().fg(Color::White));
         style_ids.insert(TS_STYLE_CONSTANT, Style::default().fg(Color::Magenta));
+
+        // Diff line backgrounds (added / removed / alignment spacer).
+        style_ids.insert(
+            DIFF_ADD_LINE_STYLE_ID,
+            Style::default().bg(Color::Rgb(0, 48, 0)),
+        );
+        style_ids.insert(
+            DIFF_REMOVE_LINE_STYLE_ID,
+            Style::default().bg(Color::Rgb(64, 0, 0)),
+        );
+        style_ids.insert(
+            DIFF_SPACER_STYLE_ID,
+            Style::default().bg(Color::Rgb(18, 18, 18)),
+        );
 
         // Find/replace match highlights.
         style_ids.insert(

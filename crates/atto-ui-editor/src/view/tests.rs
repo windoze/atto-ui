@@ -27,7 +27,7 @@ fn editor_view_applies_simple_json_highlighting_on_new() {
     let offset = view
         .state_manager
         .editor()
-        .line_index
+        .line_index()
         .position_to_char_offset(0, 7);
     let styles = view.state_manager.get_styles_at(offset);
 

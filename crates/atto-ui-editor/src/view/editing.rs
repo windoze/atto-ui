@@ -20,7 +20,7 @@ impl EditorView {
             if has_multi {
                 let old_char_count = self.state_manager.editor().char_count();
                 full_lsp_change = Some(lsp.full_document_change(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     old_char_count,
                     "",
                 ));
@@ -36,7 +36,7 @@ impl EditorView {
                         (offset, offset)
                     });
                 lsp_change = Some(lsp.content_change_for_offsets(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     start,
                     end,
                     text,
@@ -83,7 +83,7 @@ impl EditorView {
             if has_multi {
                 let old_char_count = self.state_manager.editor().char_count();
                 full_lsp_change = Some(lsp.full_document_change(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     old_char_count,
                     "",
                 ));
@@ -91,7 +91,7 @@ impl EditorView {
                 let offset = self.cursor_offset();
                 if offset > 0 {
                     lsp_change = Some(lsp.content_change_for_offsets(
-                        &self.state_manager.editor().line_index,
+                        self.state_manager.editor().line_index(),
                         offset - 1,
                         offset,
                         "",
@@ -143,7 +143,7 @@ impl EditorView {
             if has_multi {
                 let old_char_count = self.state_manager.editor().char_count();
                 full_lsp_change = Some(lsp.full_document_change(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     old_char_count,
                     "",
                 ));
@@ -152,7 +152,7 @@ impl EditorView {
                 let max_offset = self.state_manager.editor().char_count();
                 if offset < max_offset {
                     lsp_change = Some(lsp.content_change_for_offsets(
-                        &self.state_manager.editor().line_index,
+                        self.state_manager.editor().line_index(),
                         offset,
                         offset + 1,
                         "",
@@ -208,13 +208,13 @@ impl EditorView {
             if has_multi {
                 let old_char_count = self.state_manager.editor().char_count();
                 full_lsp_change = Some(lsp.full_document_change(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     old_char_count,
                     "",
                 ));
             } else {
                 lsp_change = Some(lsp.content_change_for_offsets(
-                    &self.state_manager.editor().line_index,
+                    self.state_manager.editor().line_index(),
                     start,
                     end,
                     "",
@@ -262,12 +262,7 @@ impl EditorView {
             if len == 0 {
                 continue;
             }
-            parts.push(
-                self.state_manager
-                    .editor()
-                    .piece_table
-                    .get_range(start, len),
-            );
+            parts.push(self.state_manager.editor().text_range(start, len));
         }
 
         self.config.clipboard.set(parts.join("\n"));
@@ -303,7 +298,7 @@ impl EditorView {
         // spaces (and also applies to multi-cursor / rectangular selections).
         let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
             let old_char_count = self.state_manager.editor().char_count();
-            lsp.full_document_change(&self.state_manager.editor().line_index, old_char_count, "")
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
         });
 
         let before_text = self.state_manager.editor().get_text();
@@ -328,9 +323,9 @@ impl EditorView {
 
     pub(super) fn select_all(&mut self) {
         let editor = self.state_manager.editor();
-        let last_line = editor.line_index.line_count().saturating_sub(1);
+        let last_line = editor.line_index().line_count().saturating_sub(1);
         let last_col = editor
-            .line_index
+            .line_index()
             .get_line_text(last_line)
             .map(|s| s.chars().count())
             .unwrap_or(0);

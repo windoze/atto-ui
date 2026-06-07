@@ -10,7 +10,7 @@ impl EditorView {
         self.state_manager.set_viewport_height(viewport_height);
 
         let viewport_width = text_area.width.max(1) as usize;
-        if viewport_width != self.state_manager.editor().viewport_width {
+        if viewport_width != self.state_manager.editor().viewport_width() {
             let _ = self
                 .state_manager
                 .execute(Command::View(ViewCommand::SetViewportWidth {
@@ -83,7 +83,7 @@ impl EditorView {
         let mut regions = self
             .state_manager
             .editor()
-            .folding_manager
+            .folding_manager()
             .regions()
             .to_vec();
 
@@ -151,7 +151,7 @@ impl EditorView {
     pub(super) fn move_cursor(&mut self, delta_line: isize, delta_column: isize, extend: bool) {
         // Clamp positive line movements to avoid `editor_core` rejecting out-of-bounds `MoveBy` /
         // `ExtendSelection` targets (notably `PageDown` near EOF).
-        let line_count = self.state_manager.editor().line_index.line_count();
+        let line_count = self.state_manager.editor().line_index().line_count();
         if line_count == 0 {
             return;
         }
@@ -239,7 +239,7 @@ impl EditorView {
         let editor = self.state_manager.editor();
         let pos = self.active_cursor_position();
         let line_text = editor
-            .line_index
+            .line_index()
             .get_line_text(pos.line)
             .unwrap_or_default();
         let col = if end { line_text.chars().count() } else { 0 };

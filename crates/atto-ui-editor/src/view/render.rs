@@ -160,12 +160,12 @@ impl EditorView {
         let cursor_line = self.state_manager.get_cursor_state().position.line;
         let scroll_top = self.state_manager.get_viewport_state().scroll_top;
 
-        let line_count = editor.line_index.line_count().max(1);
+        let line_count = editor.line_index().line_count().max(1);
         let digits = line_count.to_string().len().max(2);
 
         let mut fold_regions_by_start =
-            std::collections::HashMap::<usize, editor_core::intervals::FoldRegion>::new();
-        for r in editor.folding_manager.regions() {
+            std::collections::HashMap::<usize, editor_core::FoldRegion>::new();
+        for r in editor.folding_manager().regions() {
             fold_regions_by_start
                 .entry(r.start_line)
                 .or_insert_with(|| r.clone());
@@ -237,12 +237,6 @@ impl EditorView {
         let mut bg = None;
         let mut mods = Modifier::empty();
 
-        let semantic_legend = self
-            .lsp
-            .session
-            .as_ref()
-            .and_then(|lsp| lsp.semantic_legend());
-
         for &style_id in style_ids {
             if let Some(style) = theme.style_ids.get(&style_id) {
                 if style.fg.is_some() {
@@ -282,12 +276,15 @@ impl EditorView {
             }
 
             // LSP semantic tokens default encoding: high 16 bits token_type, low 16 bits modifiers.
+            // Since editor-core 0.4 the indices are canonical (server-legend independent), so we
+            // resolve names against the canonical token type/modifier lists rather than the
+            // server legend.
             if style_id < 0x0100_0000 {
                 let (token_type_idx, token_mod_bits) =
                     editor_core_lsp::decode_semantic_style_id(style_id);
-                let token_type_name = semantic_legend
-                    .and_then(|legend| legend.token_types.get(token_type_idx as usize))
-                    .map(|s| s.as_str());
+                let token_type_name = editor_core_lsp::CANONICAL_SEMANTIC_TOKEN_TYPES
+                    .get(token_type_idx as usize)
+                    .copied();
 
                 let token_style = token_type_name
                     .and_then(|name| theme.semantic_tokens.token_types.get(name))
@@ -302,21 +299,22 @@ impl EditorView {
                 }
                 mods |= token_style.add_modifier;
 
-                if let Some(legend) = semantic_legend {
-                    for (i, name) in legend.token_modifiers.iter().enumerate() {
-                        if i >= 32 {
-                            break;
-                        }
-                        if token_mod_bits & (1u32 << i) == 0 {
-                            continue;
-                        }
-                        mods |= theme
-                            .semantic_tokens
-                            .token_modifiers
-                            .get(name)
-                            .copied()
-                            .unwrap_or(theme.semantic_tokens.unknown_token_modifier);
+                for (i, name) in editor_core_lsp::CANONICAL_SEMANTIC_TOKEN_MODIFIERS
+                    .iter()
+                    .enumerate()
+                {
+                    if i >= 16 {
+                        break;
                     }
+                    if token_mod_bits & (1u32 << i) == 0 {
+                        continue;
+                    }
+                    mods |= theme
+                        .semantic_tokens
+                        .token_modifiers
+                        .get(*name)
+                        .copied()
+                        .unwrap_or(theme.semantic_tokens.unknown_token_modifier);
                 }
 
                 continue;
@@ -368,13 +366,13 @@ impl EditorView {
             }
 
             let (logical_line, visual_in_line) = editor.visual_to_logical_line(visual_row);
-            let Some(layout) = editor.layout_engine.get_line_layout(logical_line) else {
+            let Some(layout) = editor.layout_engine().get_line_layout(logical_line) else {
                 display_lines.push(Line::from(""));
                 continue;
             };
 
             let line_text = editor
-                .line_index
+                .line_index()
                 .get_line_text(logical_line)
                 .unwrap_or_default();
             let line_char_len = line_text.chars().count();

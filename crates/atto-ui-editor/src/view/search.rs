@@ -2,8 +2,8 @@
 
 use atto_ui::text::TextBuffer;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use editor_core::intervals::{Interval, StyleLayerId};
 use editor_core::search::{SearchError, SearchOptions, find_all};
+use editor_core::{Interval, StyleLayerId};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -336,7 +336,7 @@ impl EditorView {
 
         let old_char_count = self.state_manager.editor().char_count();
         let mut full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            lsp.full_document_change(&self.state_manager.editor().line_index, old_char_count, "")
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
         });
 
         let before = self.state_manager.editor().get_text();
@@ -370,7 +370,7 @@ impl EditorView {
 
         let old_char_count = self.state_manager.editor().char_count();
         let mut full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
-            lsp.full_document_change(&self.state_manager.editor().line_index, old_char_count, "")
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
         });
 
         let before = self.state_manager.editor().get_text();
