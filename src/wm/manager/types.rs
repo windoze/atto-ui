@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::composable::scroll::ScrollbarDrag;
+use crate::composable::{ComponentId, DragSource, DropFeedback};
 
 use super::{Window, WindowId};
 
@@ -47,6 +48,20 @@ pub(crate) struct DragState {
     pub(crate) kind: DragKind,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct GlobalDragState {
+    pub(crate) source_window: WindowId,
+    pub(crate) source_component: Option<ComponentId>,
+    pub(crate) start_x: u16,
+    pub(crate) start_y: u16,
+    pub(crate) last_x: u16,
+    pub(crate) last_y: u16,
+    pub(crate) source: DragSource,
+    pub(crate) active: bool,
+    pub(crate) feedback: Option<DropFeedback>,
+    pub(crate) target_window: Option<WindowId>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HitRegion {
     TitleBar,
@@ -72,5 +87,6 @@ pub struct WindowManager {
     pub(super) window_index: HashMap<WindowId, usize>,
     pub(super) focused: Option<WindowId>,
     pub(super) drag: Option<DragState>,
+    pub(super) global_drag: Option<GlobalDragState>,
     pub(super) mouse_capture: bool,
 }

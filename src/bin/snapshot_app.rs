@@ -25,8 +25,9 @@ use atto_ui::app::{
     StatusBar, Toast, ToastLevel,
 };
 use atto_ui::composable::{
-    Component, ComponentContext, DynamicTree, EdgeInsets, EventHandling, EventResult, FocusNav,
-    Grid, HStack, Layout, LayoutParams, Scrollable, Size, VStack, WindowedText,
+    Component, ComponentContext, DragAndDrop, DragOffer, DragOperation, DragPayload, DragSource,
+    DropEffect, DropFeedback, DynamicTree, EdgeInsets, EventHandling, EventResult, FocusNav, Grid,
+    HStack, Layout, LayoutParams, Scrollable, Size, VStack, WindowedText,
 };
 use atto_ui::drawing::{
     ImageData, ImageRenderOptions, detect_image_protocol_from_env, image_sequence_or_fallback,
@@ -336,6 +337,174 @@ fn event_order_demo() -> Box<dyn Component> {
         Box::new(root),
         log,
     ))
+}
+
+fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
+    rect.width > 0
+        && rect.height > 0
+        && x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
+}
+
+struct SnapshotDragSourceView {
+    cancelled: Arc<AtomicBool>,
+    last_area: Rect,
+}
+
+impl SnapshotDragSourceView {
+    fn new(cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            cancelled,
+            last_area: Rect::default(),
+        }
+    }
+}
+
+impl Component for SnapshotDragSourceView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = area;
+        let cancelled = if self.cancelled.load(Ordering::SeqCst) {
+            "yes"
+        } else {
+            "no"
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from("Drag source"),
+                Line::from("drag-item"),
+                Line::from(format!("Cancelled: {cancelled}")),
+            ])
+            .style(ctx.theme.widget.normal),
+            area,
+        );
+    }
+}
+
+impl DragAndDrop for SnapshotDragSourceView {
+    fn drag_source_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        _ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        rect_contains(self.last_area, screen_x, screen_y).then(|| DragSource {
+            payload: DragPayload::Text("drag-item".to_string()),
+            operation: DragOperation::Copy,
+            threshold: 1,
+            ghost: Some("drag-item".to_string()),
+        })
+    }
+
+    fn drag_cancelled(&mut self, _ctx: ComponentContext<'_>) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Layout for SnapshotDragSourceView {}
+impl Scrollable for SnapshotDragSourceView {}
+impl FocusNav for SnapshotDragSourceView {}
+impl DynamicTree for SnapshotDragSourceView {}
+impl EventHandling for SnapshotDragSourceView {}
+
+struct SnapshotDropTargetView {
+    status: Arc<Mutex<String>>,
+    last_area: Rect,
+}
+
+impl SnapshotDropTargetView {
+    fn new(status: Arc<Mutex<String>>) -> Self {
+        Self {
+            status,
+            last_area: Rect::default(),
+        }
+    }
+}
+
+impl Component for SnapshotDropTargetView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = area;
+        let status = self
+            .status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_else(|_| "Drop target: unavailable".to_string());
+        frame.render_widget(
+            Paragraph::new(vec![Line::from("Drop target"), Line::from(status)])
+                .style(ctx.theme.widget.normal),
+            area,
+        );
+    }
+}
+
+impl DragAndDrop for SnapshotDropTargetView {
+    fn drag_over(&mut self, offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> DropFeedback {
+        if rect_contains(self.last_area, offer.screen_x, offer.screen_y) {
+            DropFeedback {
+                effect: DropEffect::Copy,
+                rect: Some(self.last_area),
+                label: Some("drop".to_string()),
+            }
+        } else {
+            DropFeedback::default()
+        }
+    }
+
+    fn drop(&mut self, offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> EventResult {
+        if !rect_contains(self.last_area, offer.screen_x, offer.screen_y) {
+            return EventResult::ignored();
+        }
+        let label = match offer.payload {
+            DragPayload::Text(text) => text.clone(),
+            _ => "payload".to_string(),
+        };
+        if let Ok(mut status) = self.status.lock() {
+            *status = format!("Dropped: {label}");
+        }
+        EventResult::consumed()
+    }
+}
+
+impl Layout for SnapshotDropTargetView {}
+impl Scrollable for SnapshotDropTargetView {}
+impl FocusNav for SnapshotDropTargetView {}
+impl DynamicTree for SnapshotDropTargetView {}
+impl EventHandling for SnapshotDropTargetView {}
+
+fn run_drag_drop_fixture() -> Result<()> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(Mutex::new("Drop target: idle".to_string()));
+    let mut host = AppHost::new(
+        CrosstermAppConfig::default()
+            .tick_rate(Duration::from_millis(20))
+            .mouse_capture(true)
+            .cursor(CursorMode::Hide),
+        move |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let source_id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Drag Source",
+                    Rect::new(2, 2, 30, 8),
+                    Box::new(SnapshotDragSourceView::new(Arc::clone(&cancelled))),
+                ),
+                screen,
+            );
+            desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Drop Target",
+                    Rect::new(40, 2, 32, 8),
+                    Box::new(SnapshotDropTargetView::new(Arc::clone(&status))),
+                ),
+                screen,
+            );
+            desktop.wm.focus(source_id);
+            Ok(desktop)
+        },
+    )?;
+    host.run()
 }
 
 struct WidgetsView {
@@ -1159,6 +1328,9 @@ fn main() -> Result<()> {
     }
     if args.iter().any(|arg| arg == "--core-widgets-t19") {
         return run_t19_widgets_fixture();
+    }
+    if args.iter().any(|arg| arg == "--drag-drop") {
+        return run_drag_drop_fixture();
     }
     if args.iter().any(|arg| arg == "--input-api") {
         return run_input_api_fixture();

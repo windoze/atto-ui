@@ -8,14 +8,15 @@ use crate::composable::scroll::{
     scrollbar_layout_1d, should_show_scrollbar,
 };
 use crate::composable::{
-    ComponentAction, ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
-    TitleBarContext,
+    ComponentAction, ComponentContext, ComponentId, DragContext, DragOffer, DragSource, DropEffect,
+    DropFeedback, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode, TitleBarContext,
 };
 use crate::theme::Theme;
 
 use super::{
-    DragKind, DragState, HitRegion, HitTest, ResizeCorner, Window, WindowId, WindowKind,
-    WindowManager, WindowManagerAction, WindowManagerInputMode, WindowState, chrome, placement,
+    DragKind, DragState, GlobalDragState, HitRegion, HitTest, ResizeCorner, Window, WindowId,
+    WindowKind, WindowManager, WindowManagerAction, WindowManagerInputMode, WindowState, chrome,
+    placement,
 };
 
 impl WindowManager {
@@ -28,7 +29,7 @@ impl WindowManager {
     ) -> WindowManagerAction {
         match event {
             Event::Mouse(m) => self.handle_mouse(m, bounds, theme),
-            Event::Key(k) => self.handle_key(*k, bounds, mode),
+            Event::Key(k) => self.handle_key(*k, bounds, mode, theme),
             _ => WindowManagerAction::default(),
         }
     }
@@ -52,6 +53,7 @@ impl WindowManager {
     ) -> Option<(WindowId, EventResult)> {
         let idx = self.window_index_of(id)?;
         let is_focused = self.focused() == Some(id);
+        let drag = drag_context_for_window(self.global_drag.as_ref(), id);
         let action = {
             let w = &mut self.windows[idx];
             let state = w.state.get();
@@ -74,19 +76,14 @@ impl WindowManager {
                     return Some((id, EventResult::ignored()));
                 }
             }
-            let ctx = ComponentContext {
+            let decorations = w.decorations.get();
+            let ctx = window_component_context(
                 theme,
-                window_id: id,
+                id,
                 is_focused,
-                scrollbar_host: if w.decorations.get().border.has_border() {
-                    ScrollbarHost::Window
-                } else {
-                    ScrollbarHost::Component
-                },
-                tab_mode: TabMode::Cycle,
-                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
-                drag: None,
-            };
+                decorations.border.has_border(),
+                drag,
+            );
             w.view.handle_event(event, ctx)
         };
         Some((id, action))
@@ -118,6 +115,7 @@ impl WindowManager {
 
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                self.cancel_global_drag(bounds, theme);
                 self.drag = None;
                 self.mouse_capture = false;
                 let Some(hit) = self.hit_test(m.column, m.row, modal) else {
@@ -329,12 +327,37 @@ impl WindowManager {
                             ScrollbarHit::None => {}
                         }
                     }
-                    HitRegion::Body => {}
+                    HitRegion::Body => {
+                        if let Some((source_component, source)) =
+                            self.drag_source_for_window(window_id, m.column, m.row, bounds, theme)
+                        {
+                            self.global_drag = Some(GlobalDragState {
+                                source_window: window_id,
+                                source_component,
+                                start_x: m.column,
+                                start_y: m.row,
+                                last_x: m.column,
+                                last_y: m.row,
+                                source,
+                                active: false,
+                                feedback: None,
+                                target_window: None,
+                            });
+                        }
+                    }
                 }
 
                 action
             }
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                if self.global_drag.is_some() {
+                    self.update_global_drag(m.column, m.row, bounds, theme);
+                    return WindowManagerAction {
+                        consumed: true,
+                        close: None,
+                    };
+                }
+
                 let Some(drag) = self.drag else {
                     return WindowManagerAction::default();
                 };
@@ -461,6 +484,10 @@ impl WindowManager {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                if self.global_drag.is_some() {
+                    return self.finish_global_drag(m.column, m.row, bounds, theme);
+                }
+
                 let consumed = self.drag.is_some() || self.mouse_capture;
                 self.drag = None;
                 self.mouse_capture = false;
@@ -473,12 +500,265 @@ impl WindowManager {
         }
     }
 
+    fn drag_source_for_window(
+        &mut self,
+        window_id: WindowId,
+        x: u16,
+        y: u16,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> Option<(Option<ComponentId>, DragSource)> {
+        let idx = self.window_index_of(window_id)?;
+        let is_focused = self.focused() == Some(window_id);
+        let w = &mut self.windows[idx];
+        if w.state.get() == WindowState::Minimized {
+            return None;
+        }
+
+        let enforced_min_size = placement::window_enforced_min_size(w);
+        let rect = match w.state.get() {
+            WindowState::Maximized => bounds,
+            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        };
+        w.rect.set(rect);
+
+        if !placement::contains(w.inner_rect(), x, y) {
+            return None;
+        }
+
+        let decorations = w.decorations.get();
+        let ctx = window_component_context(
+            theme,
+            window_id,
+            is_focused,
+            decorations.border.has_border(),
+            None,
+        );
+        let source_component = w.view.focused_child();
+        let source = w.view.drag_source_at(x, y, ctx)?;
+        Some((source_component, source))
+    }
+
+    fn update_global_drag(&mut self, x: u16, y: u16, bounds: Rect, theme: &Theme) {
+        let Some(mut state) = self.global_drag.take() else {
+            return;
+        };
+
+        state.last_x = x;
+        state.last_y = y;
+        if !state.active && drag_distance_reached_threshold(&state, x, y) {
+            state.active = true;
+        }
+
+        if state.active {
+            let mut target_window = None;
+            let mut feedback = None;
+            if let Some(id) = self.window_at(x, y)
+                && let Some(next_feedback) = self.drag_over_window(&state, id, x, y, bounds, theme)
+            {
+                target_window = Some(id);
+                feedback = Some(next_feedback);
+            }
+            state.target_window = target_window;
+            state.feedback = feedback;
+        } else {
+            state.target_window = None;
+            state.feedback = None;
+        }
+
+        self.global_drag = Some(state);
+    }
+
+    fn finish_global_drag(
+        &mut self,
+        x: u16,
+        y: u16,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> WindowManagerAction {
+        let Some(mut state) = self.global_drag.take() else {
+            return WindowManagerAction::default();
+        };
+
+        state.last_x = x;
+        state.last_y = y;
+
+        if !state.active {
+            return WindowManagerAction::default();
+        }
+
+        let accepted = state
+            .feedback
+            .as_ref()
+            .is_some_and(|feedback| feedback.effect != DropEffect::None);
+        let mut close = None;
+        if accepted {
+            if let Some(target_id) = state.target_window {
+                if let Some(res) = self.drop_on_window(&state, target_id, x, y, bounds, theme) {
+                    if res.action == ComponentAction::CloseWindow {
+                        close = Some(target_id);
+                    }
+                } else {
+                    self.cancel_source_drag(&state, bounds, theme);
+                }
+            } else {
+                self.cancel_source_drag(&state, bounds, theme);
+            }
+        } else {
+            self.cancel_source_drag(&state, bounds, theme);
+        }
+
+        WindowManagerAction {
+            consumed: true,
+            close,
+        }
+    }
+
+    fn cancel_global_drag(&mut self, bounds: Rect, theme: &Theme) -> bool {
+        let Some(state) = self.global_drag.take() else {
+            return false;
+        };
+        self.cancel_source_drag(&state, bounds, theme);
+        true
+    }
+
+    fn drag_over_window(
+        &mut self,
+        state: &GlobalDragState,
+        window_id: WindowId,
+        x: u16,
+        y: u16,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> Option<DropFeedback> {
+        let idx = self.window_index_of(window_id)?;
+        let is_focused = self.focused() == Some(window_id);
+        let w = &mut self.windows[idx];
+        if w.state.get() == WindowState::Minimized {
+            return None;
+        }
+
+        let enforced_min_size = placement::window_enforced_min_size(w);
+        let rect = match w.state.get() {
+            WindowState::Maximized => bounds,
+            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        };
+        w.rect.set(rect);
+
+        if !placement::contains(w.inner_rect(), x, y) {
+            return None;
+        }
+
+        let offer = DragOffer {
+            payload: &state.source.payload,
+            operation: state.source.operation,
+            screen_x: x,
+            screen_y: y,
+        };
+        let decorations = w.decorations.get();
+        let ctx = window_component_context(
+            theme,
+            window_id,
+            is_focused,
+            decorations.border.has_border(),
+            Some(drag_context_from_state(state)),
+        );
+        Some(w.view.drag_over(offer, ctx))
+    }
+
+    fn drop_on_window(
+        &mut self,
+        state: &GlobalDragState,
+        window_id: WindowId,
+        x: u16,
+        y: u16,
+        bounds: Rect,
+        theme: &Theme,
+    ) -> Option<EventResult> {
+        let idx = self.window_index_of(window_id)?;
+        let is_focused = self.focused() == Some(window_id);
+        let w = &mut self.windows[idx];
+        if w.state.get() == WindowState::Minimized {
+            return None;
+        }
+
+        let enforced_min_size = placement::window_enforced_min_size(w);
+        let rect = match w.state.get() {
+            WindowState::Maximized => bounds,
+            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        };
+        w.rect.set(rect);
+
+        if !placement::contains(w.inner_rect(), x, y) {
+            return None;
+        }
+
+        let offer = DragOffer {
+            payload: &state.source.payload,
+            operation: state.source.operation,
+            screen_x: x,
+            screen_y: y,
+        };
+        let decorations = w.decorations.get();
+        let ctx = window_component_context(
+            theme,
+            window_id,
+            is_focused,
+            decorations.border.has_border(),
+            Some(drag_context_from_state(state)),
+        );
+        Some(crate::composable::DragAndDrop::drop(
+            w.view.as_mut(),
+            offer,
+            ctx,
+        ))
+    }
+
+    fn cancel_source_drag(&mut self, state: &GlobalDragState, bounds: Rect, theme: &Theme) {
+        let Some(idx) = self.window_index_of(state.source_window) else {
+            return;
+        };
+        let is_focused = self.focused() == Some(state.source_window);
+        let w = &mut self.windows[idx];
+        if w.state.get() == WindowState::Minimized {
+            return;
+        }
+
+        let enforced_min_size = placement::window_enforced_min_size(w);
+        let rect = match w.state.get() {
+            WindowState::Maximized => bounds,
+            _ => placement::normalize_rect(w.rect.get(), bounds, enforced_min_size),
+        };
+        w.rect.set(rect);
+
+        let decorations = w.decorations.get();
+        let drag = state.active.then(|| drag_context_from_state(state));
+        let ctx = window_component_context(
+            theme,
+            state.source_window,
+            is_focused,
+            decorations.border.has_border(),
+            drag,
+        );
+        let _source_component = state.source_component;
+        w.view.drag_cancelled(ctx);
+    }
+
     fn handle_key(
         &mut self,
         k: KeyEvent,
         bounds: Rect,
         mode: WindowManagerInputMode,
+        theme: &Theme,
     ) -> WindowManagerAction {
+        if k.code == KeyCode::Esc && self.global_drag.is_some() {
+            let consumed = self.cancel_global_drag(bounds, theme);
+            return WindowManagerAction {
+                consumed,
+                close: None,
+            };
+        }
+
         if k.code == KeyCode::F(6) && mode == WindowManagerInputMode::Normal {
             self.focus_next();
             return WindowManagerAction {
@@ -644,5 +924,57 @@ impl WindowManager {
             });
         }
         None
+    }
+}
+
+fn drag_distance_reached_threshold(state: &GlobalDragState, x: u16, y: u16) -> bool {
+    let threshold = state.source.threshold;
+    threshold == 0
+        || state.start_x.abs_diff(x) >= threshold
+        || state.start_y.abs_diff(y) >= threshold
+}
+
+fn drag_context_from_state(state: &GlobalDragState) -> DragContext<'_> {
+    DragContext {
+        payload: &state.source.payload,
+        operation: state.source.operation,
+        source_window: state.source_window,
+    }
+}
+
+fn drag_context_for_window<'a>(
+    state: Option<&'a GlobalDragState>,
+    window_id: WindowId,
+) -> Option<DragContext<'a>> {
+    let state = state?;
+    if !state.active {
+        return None;
+    }
+    if state.source_window == window_id || state.target_window == Some(window_id) {
+        Some(drag_context_from_state(state))
+    } else {
+        None
+    }
+}
+
+fn window_component_context<'a>(
+    theme: &'a Theme,
+    window_id: WindowId,
+    is_focused: bool,
+    has_border: bool,
+    drag: Option<DragContext<'a>>,
+) -> ComponentContext<'a> {
+    ComponentContext {
+        theme,
+        window_id,
+        is_focused,
+        scrollbar_host: if has_border {
+            ScrollbarHost::Window
+        } else {
+            ScrollbarHost::Component
+        },
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag,
     }
 }

@@ -1,36 +1,28 @@
 # 当前执行计划
 
-## 约束说明
+## 说明
 
 - 本文件记录可公开的执行计划、关键决策和进度，不包含私密推理链路。
-- `TODO.md` 是任务顺序和完成状态的唯一依据；只完成第一个标题未带 `[DONE]` 的任务。
-- 若遇到阻塞当前任务的缺陷、规格偏差或未排期测试失败，优先修复；若无法正确修复，则在 `TODO.md` 中加入最小必要前置任务并停止。
-- 完成任务后必须更新 `TODO.md` / `TODO-2.md` 的标题与完成记录，运行任务要求的验证，提交 Git，然后停止。
-
-## 当前任务
-
-- 首个未完成任务：`R1 — 审阅 T1`。
-- 来源：`TODO-2.md` 阶段一。
-- 审阅范围：`T1 — C1 通用拖拽数据模型与 Component hooks` 的实现质量、正确性、公开 API 和测试覆盖。
+- `TODO.md` / `TODO-2.md` 是任务顺序、要求和完成状态的依据；本次只完成第一个未完成任务后停止。
 
 ## 执行步骤
 
-1. 检查最新提交信息和当前工作区状态，确认是否存在与 R1/T1 直接相关的未完成事项或未提交续作。
-2. 审阅 T1 涉及文件：`src/composable/drag.rs`、`src/composable/mod.rs`、`src/composable/component.rs`，以及 workspace 中所有 `ComponentContext` 构造点和手写 `impl Component` 类型。
-3. 核对 R1 验收点：`DragAndDrop` 默认 no-op、所有 `ComponentContext` 构造点显式设置 `drag`、没有不安全占位或 panic、public re-export 不泄露 wm 内部私有类型。
-4. 若发现 R1 范围内的实际缺陷，直接做最小正确修复并补充/调整测试；若发现无法立即修复的前置问题，将其插入 `TODO.md` / `TODO-2.md` 并停止。
-5. 运行要求的验证：`cargo check --workspace --all-targets`、`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`；如代码有实质变更，再按需要运行相关测试。
-6. 根据审阅结果更新 `TODO-2.md`：将 `R1` 标题改为 `[DONE] R1 — 审阅 T1`，写入完成记录；同步更新 `TODO.md` 索引状态。
-7. 如阶段级计划没有变化，不更新 `PLAN-2.md`。
-8. 检查 Git 状态和 diff，提交本任务相关变更，提交信息使用 `[R1] Review T1 drag and drop hooks`。
-9. 停止，不处理 `T2`。
+1. 先读取 `TODO.md`，识别标题未带 `[DONE]` 的第一个任务。
+2. 只检查最新提交中是否有与该任务直接相关的未完成事项。
+3. 读取所选任务的文件范围、步骤、测试、验收和完成记录要求。
+4. 只检查与该任务相关的代码和测试，不做开放式历史问题扫描。
+5. 按任务原文实现；若出现阻塞该任务的规格缺口，优先修复或在 `TODO.md` 中加入最小前置任务后停止。
+6. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test`。
+7. 将完成任务在 `TODO.md` / `TODO-2.md` 中显式标记为 `[DONE]`，并填写完成记录。
+8. 检查 Git 状态和 diff，只提交本任务相关文件，不提交无关未跟踪文件。
+9. 提交后停止，不处理下一个任务。
 
 ## 进度记录
 
-- 已读取 `TODO.md` 和 `TODO-2.md`，确认当前任务为 `R1 — 审阅 T1`。
-- 已检查最新提交 `7b67168 [T1] Add drag and drop component hooks`，该提交正是 R1 审阅对象；当前工作区另有未跟踪的 `notification.sh`、`run_agent.sh`，与本任务无关且不触碰。
-- 已审阅 T1 涉及的拖拽类型、`DragAndDrop` 默认 hook、`ComponentContext.drag` 构造点、`composable` re-export 与手写 `impl Component` 补齐情况；未发现需要代码修复的问题。
-- 验证已通过：`cargo fmt`；`cargo check --workspace --all-targets`；`cargo clippy --workspace --all-targets -- -D warnings`。
-- 已将 `TODO-2.md` 的 R1 标记为 `[DONE]` 并写入完成记录；已同步更新 `TODO.md` 索引状态。
-- 已检查 Git diff，确认本次仅需提交 `TODO.md`、`TODO-2.md` 和 `memory/claude_plan.md`；未跟踪脚本与 R1 无关，不纳入提交。
-- 下一步提交 R1 变更，然后停止。
+- 已在执行仓库命令前记录本次公开执行计划。
+- 已选择首个未完成任务：`T2 — C1 WindowManager 全局拖拽会话与反馈绘制`。
+- 最新提交 `ccf02a7 [R1] Review T1 drag and drop hooks` 未提到会改变 T2 顺序的未完成事项。
+- 检查 T2 时发现直接阻塞点：`Window::new` 会用 `WindowMinSizeView` 包装视图，必须转发 drag/drop hooks，否则全局拖拽无法触达实际组件；该修复已纳入 T2 范围。
+- 已实现 T2：`WindowManager.global_drag`、source/target hook 调用、threshold 激活、drop/cancel、Esc 取消、overlay 绘制、主题 named styles、`WindowMinSizeView` hook 转发、单元测试和 PTY fixture/test。
+- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`。
+- 已在 `TODO.md` 与 `TODO-2.md` 中将 T2 标记完成并写入完成记录。

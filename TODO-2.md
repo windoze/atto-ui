@@ -77,7 +77,7 @@
 - 未发现需要修改代码的问题。
 - 验证通过：`cargo fmt`；`cargo check --workspace --all-targets`；`cargo clippy --workspace --all-targets -- -D warnings`。
 
-### [TODO] T2 — C1 WindowManager 全局拖拽会话与反馈绘制
+### [DONE] T2 — C1 WindowManager 全局拖拽会话与反馈绘制
 
 **依赖**：T1。
 
@@ -134,6 +134,16 @@
 **验收**：
 - drag 期间普通 hover/click 不误触发。
 - window titlebar 移动、resize handle、window scrollbar 拖动不回归。
+
+**完成记录（2026-06-08）**：
+- 在 `WindowManager` 增加 `global_drag: Option<GlobalDragState>`，保留原有 `drag: Option<DragState>` 专用于 window move/resize/window scrollbar，component drag 不混入 chrome drag 状态。
+- `Down(Left)` 命中窗口 body 时聚焦窗口并查询 `drag_source_at`，记录 pending drag；`Drag(Left)`/`Moved` 达到 threshold 后激活，按 `window_at` 定位 target 并调用 `drag_over` 保存 feedback；`Up(Left)` 对接受的 target 调 `drop`，拒绝/无 target 时通知 source `drag_cancelled`；`Esc` 可取消 pending/active drag。
+- active drag 期间 source/target 的 `ComponentContext.drag` 会传入 `DragContext`；普通 dispatch/draw 路径仍保持 `drag: None`。
+- 修复 `WindowMinSizeView` 对 drag/drop hooks 的转发，并在 overflow 内部转发时保留 `ctx.drag`，避免 `Window::new` wrapper 吞掉组件拖拽能力。
+- 在窗口绘制完成后叠加 drop feedback rect 与 ghost 文本；新增 `drag-ghost`、`drop-target-active`、`drop-target-reject`、`drop-insertion-marker` named styles。
+- 新增 `src/wm/manager/tests.rs` 单元覆盖：threshold 未达到不激活、不触发 target；threshold 达到后 target 收到 `drag_over`；reject target drop 时 source 收到 cancel。
+- 新增 `snapshot_app --drag-drop` fixture 与 `tests/pty_drag_drop.rs`，覆盖双窗口拖拽显示 `Dropped: drag-item`，以及 `Esc` cancel 后不 drop。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`。
 
 ### [TODO] R2 — 审阅 T2
 

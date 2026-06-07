@@ -1,7 +1,8 @@
 use super::WindowManager;
 use crate::composable::{
-    Component, ComponentContext, EventHandling, EventResult, Label, Layout, ScrollConfig,
-    Scrollable, ScrollbarVisibility,
+    Component, ComponentContext, DragAndDrop, DragOffer, DragOperation, DragPayload, DragSource,
+    DropEffect, DropFeedback, DynamicTree, EventHandling, EventResult, FocusNav, Label, Layout,
+    ScrollConfig, Scrollable, ScrollbarVisibility,
 };
 use crate::drawing::draw_shadow;
 use crate::theme::Theme;
@@ -17,6 +18,8 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Default)]
 struct DummyView;
@@ -59,6 +62,91 @@ impl Layout for MinSizeView {
 }
 
 crate::impl_component_default_traits!(MinSizeView => Scrollable, FocusNav, DynamicTree, EventHandling);
+
+struct DragSourceProbe {
+    threshold: u16,
+    source_requests: Arc<AtomicUsize>,
+    cancel_count: Arc<AtomicUsize>,
+}
+
+impl Component for DragSourceProbe {
+    fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+}
+
+impl DragAndDrop for DragSourceProbe {
+    fn drag_source_at(
+        &self,
+        _screen_x: u16,
+        _screen_y: u16,
+        _ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        self.source_requests.fetch_add(1, Ordering::SeqCst);
+        Some(DragSource {
+            payload: DragPayload::Text("probe".to_string()),
+            operation: DragOperation::Copy,
+            threshold: self.threshold,
+            ghost: Some("probe".to_string()),
+        })
+    }
+
+    fn drag_cancelled(&mut self, _ctx: ComponentContext<'_>) {
+        self.cancel_count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Layout for DragSourceProbe {}
+impl Scrollable for DragSourceProbe {}
+impl FocusNav for DragSourceProbe {}
+impl DynamicTree for DragSourceProbe {}
+impl EventHandling for DragSourceProbe {}
+
+struct DropTargetProbe {
+    effect: DropEffect,
+    drag_over_count: Arc<AtomicUsize>,
+    drop_count: Arc<AtomicUsize>,
+}
+
+impl Component for DropTargetProbe {
+    fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+}
+
+impl DragAndDrop for DropTargetProbe {
+    fn drag_over(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> DropFeedback {
+        assert!(
+            ctx.drag.is_some(),
+            "active drag context should reach target"
+        );
+        assert_eq!(offer.payload, &DragPayload::Text("probe".to_string()));
+        self.drag_over_count.fetch_add(1, Ordering::SeqCst);
+        DropFeedback {
+            effect: self.effect,
+            rect: Some(Rect::new(30, 3, 10, 2)),
+            label: Some("target".to_string()),
+        }
+    }
+
+    fn drop(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> EventResult {
+        assert!(ctx.drag.is_some(), "active drag context should reach drop");
+        assert_eq!(offer.payload, &DragPayload::Text("probe".to_string()));
+        self.drop_count.fetch_add(1, Ordering::SeqCst);
+        EventResult::consumed()
+    }
+}
+
+impl Layout for DropTargetProbe {}
+impl Scrollable for DropTargetProbe {}
+impl FocusNav for DropTargetProbe {}
+impl DynamicTree for DropTargetProbe {}
+impl EventHandling for DropTargetProbe {}
+
+fn left_mouse_event(kind: MouseEventKind, column: u16, row: u16) -> Event {
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
+}
 
 #[test]
 fn window_manager_can_replace_view() {
@@ -744,6 +832,197 @@ fn mouse_drag_resize_handles_work_on_all_corners() {
         let w = wm.window_mut(id).expect("window");
         assert_eq!(w.rect.get(), expected, "case {label}");
     }
+}
+
+#[test]
+fn component_drag_stays_pending_until_threshold_is_reached() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let source_requests = Arc::new(AtomicUsize::new(0));
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let target_over = Arc::new(AtomicUsize::new(0));
+    let target_drop = Arc::new(AtomicUsize::new(0));
+
+    let mut wm = WindowManager::new();
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Source",
+            Rect::new(2, 2, 20, 6),
+            Box::new(DragSourceProbe {
+                threshold: 4,
+                source_requests: Arc::clone(&source_requests),
+                cancel_count: Arc::clone(&cancel_count),
+            }),
+        ),
+        bounds,
+    );
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Target",
+            Rect::new(30, 2, 20, 6),
+            Box::new(DropTargetProbe {
+                effect: DropEffect::Copy,
+                drag_over_count: Arc::clone(&target_over),
+                drop_count: Arc::clone(&target_drop),
+            }),
+        ),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 3, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 5, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    let drag = wm.global_drag.as_ref().expect("pending drag");
+    assert!(!drag.active);
+    assert_eq!(source_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(target_over.load(Ordering::SeqCst), 0);
+
+    let up = wm.handle_event(
+        &left_mouse_event(MouseEventKind::Up(MouseButton::Left), 5, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert!(
+        !up.consumed,
+        "pending click release should still reach views"
+    );
+    assert!(wm.global_drag.is_none());
+    assert_eq!(cancel_count.load(Ordering::SeqCst), 0);
+    assert_eq!(target_drop.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn component_drag_over_reaches_target_after_threshold() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let source_requests = Arc::new(AtomicUsize::new(0));
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let target_over = Arc::new(AtomicUsize::new(0));
+    let target_drop = Arc::new(AtomicUsize::new(0));
+
+    let mut wm = WindowManager::new();
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Source",
+            Rect::new(2, 2, 20, 6),
+            Box::new(DragSourceProbe {
+                threshold: 1,
+                source_requests: Arc::clone(&source_requests),
+                cancel_count: Arc::clone(&cancel_count),
+            }),
+        ),
+        bounds,
+    );
+    let target_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Target",
+            Rect::new(30, 2, 20, 6),
+            Box::new(DropTargetProbe {
+                effect: DropEffect::Copy,
+                drag_over_count: Arc::clone(&target_over),
+                drop_count: Arc::clone(&target_drop),
+            }),
+        ),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 3, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 32, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    let drag = wm.global_drag.as_ref().expect("active drag");
+    assert!(drag.active);
+    assert_eq!(drag.target_window, Some(target_id));
+    assert_eq!(target_over.load(Ordering::SeqCst), 1);
+    assert_eq!(target_drop.load(Ordering::SeqCst), 0);
+    assert_eq!(cancel_count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn component_drag_rejected_drop_cancels_source() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let source_requests = Arc::new(AtomicUsize::new(0));
+    let cancel_count = Arc::new(AtomicUsize::new(0));
+    let target_over = Arc::new(AtomicUsize::new(0));
+    let target_drop = Arc::new(AtomicUsize::new(0));
+
+    let mut wm = WindowManager::new();
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Source",
+            Rect::new(2, 2, 20, 6),
+            Box::new(DragSourceProbe {
+                threshold: 1,
+                source_requests: Arc::clone(&source_requests),
+                cancel_count: Arc::clone(&cancel_count),
+            }),
+        ),
+        bounds,
+    );
+    wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Target",
+            Rect::new(30, 2, 20, 6),
+            Box::new(DropTargetProbe {
+                effect: DropEffect::None,
+                drag_over_count: Arc::clone(&target_over),
+                drop_count: Arc::clone(&target_drop),
+            }),
+        ),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 3, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 32, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    let up = wm.handle_event(
+        &left_mouse_event(MouseEventKind::Up(MouseButton::Left), 32, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    assert!(up.consumed);
+    assert!(wm.global_drag.is_none());
+    assert_eq!(target_over.load(Ordering::SeqCst), 1);
+    assert_eq!(target_drop.load(Ordering::SeqCst), 0);
+    assert_eq!(cancel_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]

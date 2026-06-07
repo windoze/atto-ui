@@ -14,4 +14,4 @@ pub use types::{WindowManager, WindowManagerAction, WindowManagerInputMode};
 pub(crate) use super::{
     Window, WindowBorderStyle, WindowButtons, WindowId, WindowKind, WindowMinSizeMode, WindowState,
 };
-pub(crate) use types::{DragKind, DragState, HitRegion, HitTest, ResizeCorner};
+pub(crate) use types::{DragKind, DragState, GlobalDragState, HitRegion, HitTest, ResizeCorner};

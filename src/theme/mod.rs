@@ -317,6 +317,23 @@ impl Theme {
         self.named_styles.insert("window-bg".into(), self.window_bg);
         self.named_styles
             .insert("window-shadow".into(), self.window_shadow);
+        self.named_styles.insert(
+            "drag-ghost".into(),
+            self.window_bg
+                .patch(self.widget.accent.add_modifier(Modifier::BOLD)),
+        );
+        self.named_styles.insert(
+            "drop-target-active".into(),
+            Style::default().bg(Color::Rgb(24, 64, 48)).fg(Color::White),
+        );
+        self.named_styles.insert(
+            "drop-target-reject".into(),
+            Style::default().bg(Color::Rgb(96, 32, 32)).fg(Color::White),
+        );
+        self.named_styles.insert(
+            "drop-insertion-marker".into(),
+            self.widget.accent.add_modifier(Modifier::BOLD),
+        );
 
         self.named_styles
             .insert("scrollbar-track".into(), self.scrollbar_track);

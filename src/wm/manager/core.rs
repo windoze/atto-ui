@@ -31,6 +31,10 @@ impl WindowManager {
         &self.windows
     }
 
+    pub fn has_global_drag(&self) -> bool {
+        self.global_drag.is_some()
+    }
+
     pub(crate) fn windows_mut(&mut self) -> &mut [Window] {
         &mut self.windows
     }
@@ -61,6 +65,10 @@ impl WindowManager {
     pub fn close(&mut self, id: WindowId) {
         self.drag = match self.drag {
             Some(d) if d.window_id == id => None,
+            other => other,
+        };
+        self.global_drag = match self.global_drag.take() {
+            Some(d) if d.source_window == id || d.target_window == Some(id) => None,
             other => other,
         };
         self.mouse_capture = false;

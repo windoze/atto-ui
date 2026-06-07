@@ -397,6 +397,29 @@ impl Desktop {
 
         let mut view_dispatched = false;
 
+        if self.wm.has_global_drag()
+            && matches!(
+                event,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Esc,
+                    ..
+                })
+            )
+        {
+            let wm_action = self
+                .wm
+                .handle_event(event, layout.work_area, input_mode, &self.theme);
+            if let Some(id) = wm_action.close {
+                if self.wm.request_close(id) {
+                    return DesktopEventResult::close_window(id);
+                }
+                return DesktopEventResult::consumed();
+            }
+            if wm_action.consumed {
+                return DesktopEventResult::consumed();
+            }
+        }
+
         // Layered input:
         //  1. Focused view receives the event (normal mode only; keys/paste/etc).
         //  2. Focused window (WindowManager) receives the event.

@@ -10,9 +10,9 @@ use ratatui::style::Style;
 
 use crate::composable::scroll::{clamp_scroll_offset, scroll_offset_for_input_event};
 use crate::composable::{
-    Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
-    EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig, ScrollOffset, Scrollable,
-    TitleBarContent, TitleBarContext,
+    Component, ComponentContext, ComponentId, ComponentNode, DragOffer, DragSource, DropFeedback,
+    DynamicTree, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig,
+    ScrollOffset, Scrollable, TitleBarContent, TitleBarContext,
 };
 use crate::reactive::Binding;
 use crate::wm::WindowMinSizeMode;
@@ -231,7 +231,7 @@ impl WindowMinSizeView {
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space,
-            drag: None,
+            drag: ctx.drag,
         };
 
         let backend =
@@ -295,7 +295,7 @@ impl WindowMinSizeView {
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
-            drag: None,
+            drag: ctx.drag,
         };
 
         if let Event::Mouse(m) = event {
@@ -383,7 +383,28 @@ impl Component for WindowMinSizeView {
     }
 }
 
-impl crate::composable::DragAndDrop for WindowMinSizeView {}
+impl crate::composable::DragAndDrop for WindowMinSizeView {
+    fn drag_source_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        self.inner.drag_source_at(screen_x, screen_y, ctx)
+    }
+
+    fn drag_over(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> DropFeedback {
+        self.inner.drag_over(offer, ctx)
+    }
+
+    fn drop(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> EventResult {
+        crate::composable::DragAndDrop::drop(self.inner.as_mut(), offer, ctx)
+    }
+
+    fn drag_cancelled(&mut self, ctx: ComponentContext<'_>) {
+        self.inner.drag_cancelled(ctx);
+    }
+}
 
 impl Layout for WindowMinSizeView {
     fn min_width(&self) -> u16 {
