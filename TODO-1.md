@@ -461,11 +461,16 @@
 - 确认断言精确到 `applyTreeOps(windowId, op|ops[])` 调用顺序、同窗口多 op 批量形态、跨窗口分桶顺序、callback release 顺序与 stale dispatch 结果。
 - 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/reconciler_matrix.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NT17 — PTY 端到端（T.2）
+### [DONE] NT17 — PTY 端到端（T.2）
 **文件**：`crates/atto-ui-node/__test__/` 或 JS e2e + 复用 `crates/atto-ui-test-host`
 **步骤**：计数器、表单（受控输入）、列表增删、多窗口——经真实/headless 路径驱动并断言屏幕。
 **测试**：PTY/headless e2e。
 **验收**：关键交互路径端到端可验证。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/__test__/e2e_app.cjs`，构建一个真实 React 多窗口端到端 app：左侧 summary window 展示计数器、受控输入、列表新增/删除状态，右侧 actions window 包含 `TextBox`、新增/删除按钮、计数按钮和 `ListBox`。
+- 新增 `packages/react/__test__/e2e.cjs`，同一用例覆盖 headless 与 PTY 两条路径：headless 直接通过真实 `AppHost` 发送窗口 key event 并断言 snapshot；PTY 启动真实终端 render app，驱动输入、按钮和列表状态变化并断言屏幕文本。
+- 将 e2e 接入 `packages/react/package.json` 的 `npm test`，确保 CI/本地 React 测试套件运行该端到端覆盖。
+- 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/e2e.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NR17 — 审阅 NT17
 - 确认 e2e 走真实 Rust 分发路径（非 JS 侧模拟）。
