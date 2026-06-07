@@ -14,7 +14,7 @@
 
 ## 阶段一：M0 脚手架 + M1 binding 核心
 
-### [TODO] NT1 — `atto-ui-node` crate 脚手架 + napi build（B.0）
+### [DONE] NT1 — `atto-ui-node` crate 脚手架 + napi build（B.0）
 **文件**：新增 `crates/atto-ui-node/`（`Cargo.toml`、`build.rs`、`package.json`、`src/lib.rs`），根 `Cargo.toml`（workspace members）
 **现状**：尚无 Node binding crate；workspace 已有 `crates/atto-ui-python`（pyo3）可作对称参照。
 **步骤**：
@@ -24,6 +24,12 @@
 4. 暴露 `#[napi] fn version() -> String` 作为冒烟点。
 **测试**：`__test__/` 内 JS require 调用 `version()`；`napi build` 产出 `.node`。
 **验收**：`cargo build -p atto-ui-node` 通过，workspace 构建不回归；JS 能加载并调用。
+**完成记录（2026-06-07）**：
+- 新增 `crates/atto-ui-node/`：`Cargo.toml` 配置 `cdylib`、`napi`/`napi-derive`、`atto-ui`、`atto-ui-components`、`serde_json` 与 `napi-build`；`build.rs` 调用 `napi_build::setup()`。
+- 新增 `package.json` 的 `@napi-rs/cli` build/test 脚本、`main`/`types` 入口与 `napi.binaryName`；保留生成的 `index.js` / `index.d.ts` 供 JS 侧加载与类型冒烟，`.node` 产物由 `.gitignore` 排除。
+- 新增 `src/lib.rs` 暴露 `#[napi] version() -> String`；因 napi-rs 宏展开会局部 `allow(unsafe_code)`，crate 级别采用 `#![deny(unsafe_code)]` + `#![allow(unsafe_op_in_unsafe_fn)]`，符合本任务允许的 napi-rs 冲突放宽。
+- 新增 `__test__/version.cjs`，通过 package 入口 require 生成的 napi loader 并断言 `version()` 返回 `0.1.0`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build -p atto-ui-node`；`cargo test`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`node __test__/version.cjs`。
 
 ### [TODO] NR1 — 审阅 NT1
 - 确认 crate-type/feature/依赖正确，workspace 不引入 tokio。

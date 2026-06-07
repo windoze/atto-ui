@@ -1,0 +1,19 @@
+{
+  "name": "@atto-ui/node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "napi build --platform",
+    "build:release": "napi build --platform --release",
+    "test": "node __test__/version.cjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.1.5"
+  },
+  "napi": {
+    "binaryName": "atto_ui_node"
+  }
+}

@@ -1,5 +1,6 @@
 .env*
 .venv
 /target
+*.node
 __pycache__/
 /memory
