@@ -195,11 +195,16 @@
 - 新增 `src/bin/snapshot_rich_text_app.rs` 与 `tests/pty_rich_text.rs`，覆盖结构化富文本 PTY 渲染与链接点击 callback；补充 unit/schema 测试覆盖样式、颜色、合并/清理、callback payload 与非法颜色校验。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] NR7 — 审阅 NT7
+### [DONE] NR7 — 审阅 NT7
 - 确认渲染管线复用（未重写宽字符/截断逻辑）。
 - 确认相邻片段合并、空 span 清理、链接命中正确。
 - 确认 `Text`/`StyledLabel`/`MarkdownViewer` 等现有文本组件不回归。
 - 运行快照 + PTY。
+**完成记录（2026-06-07）**：
+- 审阅 `src/text/styled_text.rs` 与 `src/widgets/rich_text.rs`，确认 `RichText`/`TextSpan` 通过结构化 `StyledTextSegment` 复用 `spans_from_segments`、`slice_spans_from_segments` 和 `hit_test_link` 管线，未重写宽字符、截断或链接命中逻辑。
+- 确认 `normalize_segments` 统一处理相邻同 style/href 合并与空 span 清理；`RichText` 仅接受 `TextSpan` 子节点并通过 `link` 事件发送 URL payload，`TextSpan` schema 不允许 children。
+- 确认 `Text` 未受本次管线影响，`StyledLabel` 仍走既有 inline parse + shared segment 渲染路径，`MarkdownViewer` 测试在完整 workspace 验证中通过。
+- 验证通过：`cargo test -p atto-ui rich_text`；`cargo test --test pty_rich_text`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。未找到 `run_fixtures.py`，无单独 fixture 套件可运行。
 
 ---
 
