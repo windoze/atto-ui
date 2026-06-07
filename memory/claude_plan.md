@@ -30,4 +30,5 @@
 - 重新运行 `cargo clippy --workspace --all-targets -- -D warnings` 与完整 `cargo test --workspace --all-targets` 均已通过。
 - 已更新 `TODO.md` 和 `TODO-2.md`，将 T8 标记为 `[DONE]` 并写入完成记录。
 - 已检查 `git status`、`git diff --stat`、`git log --oneline -10` 与 diff；无关未跟踪文件 `notification.sh`、`run_agent.sh` 不纳入提交。
-- 下一步提交本轮 T8 相关变更后停止。
+- 已提交本轮 T8 相关变更：`9d6e778 [T8] Render diagnostics gutter and status`。
+- 下一步只提交这条执行日志更新后停止，不进入 R8/T9。
