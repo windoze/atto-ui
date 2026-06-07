@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const React = require('react')
 const core = require('../../core')
-const { createRoot, dispatchHostCallbacks } = require('../dist')
+const { Markdown, createRoot, dispatchHostCallbacks } = require('../dist')
 
 function findNode(node, id) {
   if (node.id === id) return node
@@ -56,3 +56,13 @@ assert.equal(findNode(eventHost.snapshot().tree, 'event-headless-1').text, 'Coun
 eventHost.sendEvent(eventWindowId, { type: 'key', key: 'enter' })
 assert.equal(dispatchHostCallbacks(eventRoot.container, eventHost.drainCallbacks()), 1)
 assert.equal(findNode(eventHost.snapshot().tree, 'event-headless-1').text, 'Count: 1')
+
+const markdownHost = new core.AppHost({ headless: true, cols: 60, rows: 16, tickRate: 0 })
+const markdownWindowId = markdownHost.addDynamicWindow('React Markdown', { x: 1, y: 1, width: 40, height: 10 }, {
+  type: 'Spacer',
+  id: 'react-markdown-placeholder',
+})
+const markdownRoot = createRoot(markdownHost, markdownWindowId, { idPrefix: 'markdown-headless' })
+markdownRoot.render(React.createElement(Markdown, null, '# Title\n\n- item'))
+assert.equal(markdownHost.step(), true)
+assert.equal(findNode(markdownHost.snapshot().tree, 'markdown-headless-1').name, 'MarkdownViewer')

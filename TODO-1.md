@@ -319,7 +319,7 @@
 
 ## 阶段四：M5 文本子系统
 
-### [TODO] NT12 — React 文本组件（U.5）
+### [DONE] NT12 — React 文本组件（U.5）
 **文件**：`packages/react/src/text.ts`
 **现状**：NT7 已提供 `RichText`/`TextSpan`；`MarkdownViewer` 已注册（`crates/atto-ui-markdown`）。
 **步骤**：
@@ -329,6 +329,12 @@
 4. `<Markdown>{md}</Markdown>`→`MarkdownViewer`（props `markdown`）。
 **测试**：快照——`<B>` 粗体、`<Text>hi {name}</Text>` 合并、块级 markdown；PTY——点击链接触发。
 **验收**：React 文本/内联样式/markdown 渲染正确，文本片段在 Rust 侧合并。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/src/text.ts` 并从 `packages/react/src/index.ts` 导出 `Text`、`B`、`I`、`U`、`S`、`Link`、`Markdown`；`Text` 生成 `RichText` 容器和多个 `TextSpan` 子节点，样式 flags 写入 `TextSpan` props，不在 JS 侧合并相邻片段。
+- 保留 HostConfig 原生 text node 路径：`createTextInstance` 继续创建 `TextSpan`，`commitTextUpdate` 继续对该 `TextSpan` 发送 `set_prop text`；新增 `markdownViewer` host 类型映射到 runtime `MarkdownViewer`。
+- `Link href onClick` 通过 `RichText` 的 `link` 事件绑定，按 payload URL 路由到对应 `Link.onClick`；`Markdown` 将文本 children 或 `markdown` prop 映射到 `MarkdownViewer.markdown`。
+- 补充测试：reconciler 快照覆盖 raw text `TextSpan` 更新、`Text` 内联 bold/italic/underline/strike/link props、MarkdownViewer 映射与 link callback 分发；headless 测试覆盖 MarkdownViewer native 构建；新增 PTY 链接点击测试覆盖真实终端点击后 `Link.onClick -> setState -> screen update`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR12 — 审阅 NT12
 - 确认文本节点合并发生在 Rust 侧（`RichText`），JS 仅产 `TextSpan`。

@@ -108,7 +108,7 @@ export function createHostInstance(
   }
 }
 
-/** Represent raw React text as a plain TextSpan until richer text support lands. */
+/** Represent raw React text as a TextSpan so RichText can merge adjacent spans in Rust. */
 export function createHostTextInstance(container: HostContainer, text: string): HostInstance {
   return {
     id: `${container.idPrefix}-${++container.nextId}`,
@@ -672,6 +672,8 @@ const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   label: 'Label',
   listBox: 'ListBox',
   listbox: 'ListBox',
+  markdownViewer: 'MarkdownViewer',
+  markdownviewer: 'MarkdownViewer',
   progressBar: 'ProgressBar',
   progressbar: 'ProgressBar',
   radioGroup: 'RadioGroup',

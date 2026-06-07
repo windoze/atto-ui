@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node __test__/reconciler.cjs && node __test__/headless.cjs && node __test__/render.cjs && node __test__/render_pty.cjs && node __test__/event_pty.cjs"
+    "test": "npm run build && node __test__/reconciler.cjs && node __test__/headless.cjs && node __test__/render.cjs && node __test__/render_pty.cjs && node __test__/event_pty.cjs && node __test__/text_pty.cjs"
   },
   "dependencies": {
     "@atto-ui/core": "file:../core",

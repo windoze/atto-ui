@@ -30,3 +30,17 @@ export {
   type AttoUiCallbackEvent,
   type AttoUiEventHandler,
 } from './events'
+
+export {
+  B,
+  I,
+  Link,
+  Markdown,
+  S,
+  Text,
+  U,
+  type LinkClickHandler,
+  type LinkProps,
+  type MarkdownProps,
+  type TextProps,
+} from './text'
