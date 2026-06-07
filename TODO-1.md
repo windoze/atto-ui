@@ -336,11 +336,16 @@
 - 补充测试：reconciler 快照覆盖 raw text `TextSpan` 更新、`Text` 内联 bold/italic/underline/strike/link props、MarkdownViewer 映射与 link callback 分发；headless 测试覆盖 MarkdownViewer native 构建；新增 PTY 链接点击测试覆盖真实终端点击后 `Link.onClick -> setState -> screen update`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR12 — 审阅 NT12
+### [DONE] NR12 — 审阅 NT12
 - 确认文本节点合并发生在 Rust 侧（`RichText`），JS 仅产 `TextSpan`。
 - 确认链接事件 payload 与 onClick 路由正确。
 - 确认 `<Markdown>` 与 viewer 属性映射一致。
 - 运行快照 + PTY。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/text.ts` 与 `packages/react/src/host.ts`：确认原生 text node 和 `<Text>` 内联 children 都只产出 `TextSpan` 子节点，JS 侧不合并相邻片段；Rust `RichText::segments()` 继续通过 `normalize_segments` 清理空 span 并合并相邻同 style 片段。
+- 审阅 `Link` 路由与事件分发：`RichText` link 事件 payload 仍为 URL string，React `Text` 的 `onLink` handler 按 payload 路由到对应 `Link.onClick`，并保留 `onLink`/`onLinkClick` 透传；PTY 链接点击覆盖真实事件路径。
+- 审阅 `<Markdown>` 映射：children 或 `markdown` prop 统一映射到 `MarkdownViewer.markdown`，camelCase options 转为 runtime snake_case props，`onLink` 映射到 MarkdownViewer `link` 事件。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm run typecheck --prefix packages/react`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。
 
 ---
 
