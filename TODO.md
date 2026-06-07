@@ -21,7 +21,7 @@
 | NT5 | DONE | [DONE] `@atto-ui/core` native 加载（L.1） | TODO-1.md · 阶段一 M0+M1 |
 | NR5 | DONE | [DONE] 审阅 NT5 | TODO-1.md · 阶段一 M0+M1 |
 | NT6 | DONE | [DONE] `TreeOp::InsertBefore` 锚点版插入（R.1） | TODO-1.md · 阶段二 M2 |
-| NR6 | TODO | 审阅 NT6 | TODO-1.md · 阶段二 M2 |
+| NR6 | DONE | [DONE] 审阅 NT6 | TODO-1.md · 阶段二 M2 |
 | NT7 | TODO | `RichText` + `TextSpan` 结构化富文本（R.2） | TODO-1.md · 阶段二 M2 |
 | NR7 | TODO | 审阅 NT7 | TODO-1.md · 阶段二 M2 |
 | NT8 | TODO | react-reconciler HostConfig 骨架 + 节点 id + 静态渲染（U.1） | TODO-1.md · 阶段三 M3+M4 |

@@ -167,11 +167,16 @@
 - Node 转换层与 `@atto-ui/core` 类型同步新增 `insert_before` discriminated union；JS headless 冒烟覆盖 anchor 插入、append 和已存在节点 move。
 - 验证通过：`cargo fmt`；`cargo test -p atto-ui runtime::`；`cargo test -p atto-ui-node convert::tests::tree_op_parses_every_variant`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`。
 
-### [TODO] NR6 — 审阅 NT6
+### [DONE] NR6 — 审阅 NT6
 - 确认 anchor 解析、move 等价语义与"不能移进自身子树"保护正确。
 - 确认增量分支不误判结构变更、不全量重建。
 - 确认对现有 `Insert`/Python 零影响。
 - 运行 runtime 单测 + 全 workspace。
+**完成记录（2026-06-07）**：
+- 审阅 `src/runtime/spec.rs` 的 `TreeOp::InsertBefore`：确认 `anchor_id=None` append、指定锚点按目标父节点直接子节点解析，已存在 child id 走 detach 后按锚点插入的 move 等价语义；移动 root、移入自身或后代的保护会在提交前失败并保持原树不变。
+- 审阅 `src/runtime/tree.rs` 的增量分支：确认新插入与已存在节点重排均走增量更新，重排保留已有 `ComponentNode`，每步以 spec/view 形状校验保护，失败时回退重建且不把部分 view 更新留存。
+- 确认旧 `Insert { index }` 分支未改变，Python binding 的既有 tree op 解析与测试保持通过；Node 转换层与 `@atto-ui/core` 类型已包含 `insert_before`，JS headless 冒烟覆盖 anchor、append 与 move。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test`（`packages/core`）。
 
 ### [TODO] NT7 — `RichText` + `TextSpan` 结构化富文本（R.2）
 **文件**：`src/text/styled_text.rs`、`src/widgets/`（新增）、`src/runtime/builtins.rs`
