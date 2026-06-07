@@ -42,4 +42,5 @@
 - 已运行并通过针对性测试：`cargo test -p atto-ui runtime::`、`cargo test -p atto-ui-node convert::tests::tree_op_parses_every_variant`。
 - 已运行并通过完整/相关验证：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）、`npm test`（`crates/atto-ui-node`）、`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`、`npm test --prefix packages/core`。
 - 已将 `TODO-1.md` 的 `NT6` 标记为 `[DONE]` 并补充完成记录；已同步更新 `TODO.md` 索引状态。
-- 下一步检查 git 状态与 diff，暂存本轮相关改动并提交。
+- 已检查 git 状态、diff 与最近提交；已暂存并提交 `NT6` 相关改动。
+- 提交后工作区仅剩非本轮未跟踪文件 `notification.sh`、`run_agent.sh`，未纳入提交。
