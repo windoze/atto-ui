@@ -880,3 +880,33 @@ fn builtin_schema_includes_styled_label_link_event() {
         .expect("link");
     assert_eq!(link.payload, Some(ValueType::String));
 }
+
+#[test]
+fn builtin_schema_includes_rich_text_and_text_span() {
+    let registry = builtin_registry(CallbackRegistry::new());
+    let rich = registry.schema("RichText").expect("rich text schema");
+    assert!(rich.allows_children);
+    let link = rich
+        .events
+        .iter()
+        .find(|event| event.name == "link")
+        .expect("link");
+    assert_eq!(link.payload, Some(ValueType::String));
+
+    let span = registry.schema("TextSpan").expect("text span schema");
+    assert!(!span.allows_children);
+    for prop in [
+        "text",
+        "bold",
+        "italic",
+        "underline",
+        "strike",
+        "color",
+        "href",
+    ] {
+        assert!(
+            span.properties.iter().any(|meta| meta.name == prop),
+            "missing TextSpan property {prop}"
+        );
+    }
+}

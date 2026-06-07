@@ -178,7 +178,7 @@
 - 确认旧 `Insert { index }` 分支未改变，Python binding 的既有 tree op 解析与测试保持通过；Node 转换层与 `@atto-ui/core` 类型已包含 `insert_before`，JS headless 冒烟覆盖 anchor、append 与 move。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test`（`packages/core`）。
 
-### [TODO] NT7 — `RichText` + `TextSpan` 结构化富文本（R.2）
+### [DONE] NT7 — `RichText` + `TextSpan` 结构化富文本（R.2）
 **文件**：`src/text/styled_text.rs`、`src/widgets/`（新增）、`src/runtime/builtins.rs`
 **现状**：`Text`/`StyledLabel` 均 `allow_children(false)`、文本走 prop；`styled_text.rs` 的 `StyledTextSegment` 渲染管线（`spans_from_segments`/`slice_segments`/`hit_test_link`）目前仅由 `parse_inline(markdown串)` 喂入（§10.7）。
 **步骤**：
@@ -188,6 +188,12 @@
 4. `href` 命中复用 `hit_test_link`，发 `link` 事件（payload=url）。
 **测试**：headless 快照——粗/斜/下划线/删除线/链接渲染正确；PTY——点击链接触发回调。
 **验收**：富文本以结构化子节点驱动，复用既有 segment 渲染管线，无需 markdown 转义。
+**完成记录（2026-06-07）**：
+- `src/text/styled_text.rs` 新增结构化 `StyledTextSegment::structured` 与 `normalize_segments` 入口，支持相邻同 style 合并、空 span 清理和 `color` 前景色，同时继续复用 `spans_from_segments` / `slice_spans_from_segments` / `hit_test_link` 管线。
+- 新增 `src/widgets/rich_text.rs`：`TextSpan` 暴露 `text`/`bold`/`italic`/`underline`/`strike`/`color`/`href` 结构化 props；`RichText` 接收 `TextSpan` 子节点，绘制时生成 segments，并复用链接命中逻辑发 `link` 事件（payload 为 url string）。
+- 在 `src/runtime/builtins.rs`、`src/widgets/mod.rs`、`src/composable/mod.rs` 注册/导出 `RichText` 与 `TextSpan`；`RichText` schema 允许 children 并声明 `link` 事件，`TextSpan` schema 不允许 children。
+- 新增 `src/bin/snapshot_rich_text_app.rs` 与 `tests/pty_rich_text.rs`，覆盖结构化富文本 PTY 渲染与链接点击 callback；补充 unit/schema 测试覆盖样式、颜色、合并/清理、callback payload 与非法颜色校验。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] NR7 — 审阅 NT7
 - 确认渲染管线复用（未重写宽字符/截断逻辑）。

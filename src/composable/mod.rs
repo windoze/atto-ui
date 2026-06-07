@@ -21,8 +21,9 @@ mod windowed_text;
 
 pub use crate::widgets::{
     Button, Checkbox, CommandPalette, Disclosure, DisclosureStatus, FlowDirection, Label, ListBox,
-    ProgressBar, RadioGroup, Slider, Spinner, SpinnerIconStyle, SpinnerLayout, SpinnerTextEffect,
-    StyledLabel, TabHeaderPosition, TabView, TableView, TextArea, TextBox, TypeAhead,
+    ProgressBar, RadioGroup, RichText, Slider, Spinner, SpinnerIconStyle, SpinnerLayout,
+    SpinnerTextEffect, StyledLabel, TabHeaderPosition, TabView, TableView, TextArea, TextBox,
+    TextSpan, TypeAhead,
 };
 pub use border::Border;
 pub use component::{

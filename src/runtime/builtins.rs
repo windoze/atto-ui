@@ -6,17 +6,17 @@ use crate::composable::{
 };
 use crate::reactive::Binding;
 use crate::widgets::{
-    Button, Checkbox, ListBox, ProgressBar, RadioGroup, Slider, Spinner, StyledLabel,
-    TabHeaderPosition, TableView,
+    Button, Checkbox, ListBox, ProgressBar, RadioGroup, RichText, Slider, Spinner, StyledLabel,
+    TabHeaderPosition, TableView, TextSpan,
 };
 
 use super::props::{
-    layout_from_spec, prop_bool, prop_edge_insets, prop_f64, prop_string, prop_table, prop_u16,
-    prop_usize, prop_vec_string,
+    invalid_prop_reason, layout_from_spec, prop_bool, prop_edge_insets, prop_f64, prop_string,
+    prop_table, prop_u16, prop_usize, prop_vec_string,
 };
 use super::{
     ActionMeta, CallbackHandle, CallbackId, CallbackRegistry, ComponentRegistry, ComponentSchema,
-    ComponentSpec, EventMeta, ValueType,
+    ComponentSpec, EventMeta, TreeError, ValueType,
 };
 
 pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dyn Component>> {
@@ -27,6 +27,8 @@ pub fn builtin_registry(callbacks: CallbackRegistry) -> ComponentRegistry<Box<dy
     register_disclosure(&mut registry, callbacks.clone());
     register_label(&mut registry);
     register_styled_label(&mut registry, callbacks.clone());
+    register_text_span(&mut registry);
+    register_rich_text(&mut registry, callbacks.clone());
     register_text(&mut registry);
     register_textbox(&mut registry, callbacks.clone());
     register_textarea(&mut registry, callbacks.clone());
@@ -181,6 +183,63 @@ fn register_styled_label(
             label = label.on_link_callback(cb);
         }
         Ok(wrap_with_id(spec, Box::new(label)))
+    });
+}
+
+fn register_text_span(registry: &mut ComponentRegistry<Box<dyn Component>>) {
+    let schema = component_schema::<TextSpan>("TextSpan").allow_children(false);
+
+    registry.register(schema, move |spec, _registry| {
+        let text = prop_string(spec, "text")?.unwrap_or_default();
+        let mut span = TextSpan::new(text)
+            .bold(prop_bool(spec, "bold")?.unwrap_or(false))
+            .italic(prop_bool(spec, "italic")?.unwrap_or(false))
+            .underline(prop_bool(spec, "underline")?.unwrap_or(false))
+            .strike(prop_bool(spec, "strike")?.unwrap_or(false));
+
+        if let Some(color) = prop_string(spec, "color")? {
+            span = span
+                .color_name(color)
+                .map_err(|err| invalid_prop_reason(spec, "color", err))?;
+        }
+        if let Some(href) = prop_string(spec, "href")? {
+            span = span.href(href);
+        }
+
+        Ok(wrap_with_id(spec, Box::new(span)))
+    });
+}
+
+fn register_rich_text(
+    registry: &mut ComponentRegistry<Box<dyn Component>>,
+    callbacks: CallbackRegistry,
+) {
+    let schema = component_schema::<RichText>("RichText")
+        .with_event(EventMeta::new("link").with_payload(ValueType::String))
+        .allow_children(true);
+
+    registry.register(schema, move |spec, registry| {
+        let mut rich_text = RichText::new();
+        if let Some(cb) = event_handle(spec, "link", callbacks.clone()) {
+            rich_text = rich_text.on_link_callback(cb);
+        }
+
+        for child in &spec.children {
+            if child.node.type_name != "TextSpan" {
+                return Err(TreeError::InvalidTreeOp(
+                    "RichText only accepts TextSpan children".to_string(),
+                ));
+            }
+            let view = registry.build(&child.node)?;
+            let layout = child
+                .layout
+                .as_ref()
+                .map(layout_from_spec)
+                .unwrap_or_default();
+            rich_text.add_child_with_layout(view, layout);
+        }
+
+        Ok(wrap_with_id(spec, Box::new(rich_text)))
     });
 }
 

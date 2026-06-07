@@ -1,4 +1,4 @@
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -9,6 +9,7 @@ struct InlineStyleFlags {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    color: Option<Color>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,6 +17,40 @@ pub(crate) struct StyledTextSegment {
     text: String,
     style: InlineStyleFlags,
     link_url: Option<String>,
+}
+
+impl StyledTextSegment {
+    pub(crate) fn structured(
+        text: impl Into<String>,
+        bold: bool,
+        italic: bool,
+        underline: bool,
+        strike: bool,
+        color: Option<Color>,
+        link_url: Option<String>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            style: InlineStyleFlags {
+                bold,
+                italic,
+                underline,
+                strikethrough: strike,
+                color,
+            },
+            link_url,
+        }
+    }
+}
+
+pub(crate) fn normalize_segments(
+    segments: impl IntoIterator<Item = StyledTextSegment>,
+) -> Vec<StyledTextSegment> {
+    let mut out = Vec::new();
+    for segment in segments {
+        push_segment(&mut out, segment);
+    }
+    out
 }
 
 pub(crate) fn parse_inline(input: &str) -> Vec<StyledTextSegment> {
@@ -221,6 +256,9 @@ fn segment_to_span(
     if seg.style.strikethrough {
         style = style.add_modifier(Modifier::CROSSED_OUT);
     }
+    if let Some(color) = seg.style.color {
+        style = style.fg(color);
+    }
 
     if seg.link_url.is_some() {
         if let Some(overlay) = link_overlay {
@@ -305,6 +343,81 @@ fn flush_plain(segments: &mut Vec<StyledTextSegment>, plain: &mut String) {
             link_url: None,
         },
     );
+}
+
+pub(crate) fn parse_text_color(input: &str) -> Result<Color, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("expected color name or #RGB/#RRGGBB".to_string());
+    }
+
+    if let Some(hex) = trimmed.strip_prefix('#') {
+        let bytes = hex.as_bytes();
+        let (r, g, b) = match bytes.len() {
+            3 => (
+                parse_short_hex_channel(bytes[0])?,
+                parse_short_hex_channel(bytes[1])?,
+                parse_short_hex_channel(bytes[2])?,
+            ),
+            6 => (
+                parse_hex_channel(bytes[0], bytes[1])?,
+                parse_hex_channel(bytes[2], bytes[3])?,
+                parse_hex_channel(bytes[4], bytes[5])?,
+            ),
+            _ => return Err(format!("expected #RGB or #RRGGBB, got {trimmed:?}")),
+        };
+        return Ok(Color::Rgb(r, g, b));
+    }
+
+    if let Some(index) = trimmed
+        .strip_prefix("indexed:")
+        .or_else(|| trimmed.strip_prefix("ansi:"))
+    {
+        let value = index
+            .parse::<u8>()
+            .map_err(|_| format!("invalid indexed color {trimmed:?}"))?;
+        return Ok(Color::Indexed(value));
+    }
+
+    let color = match trimmed.to_ascii_lowercase().as_str() {
+        "reset" => Color::Reset,
+        "black" => Color::Black,
+        "red" => Color::Red,
+        "green" => Color::Green,
+        "yellow" => Color::Yellow,
+        "blue" => Color::Blue,
+        "magenta" => Color::Magenta,
+        "cyan" => Color::Cyan,
+        "gray" | "grey" => Color::Gray,
+        "darkgray" | "darkgrey" => Color::DarkGray,
+        "lightred" => Color::LightRed,
+        "lightgreen" => Color::LightGreen,
+        "lightyellow" => Color::LightYellow,
+        "lightblue" => Color::LightBlue,
+        "lightmagenta" => Color::LightMagenta,
+        "lightcyan" => Color::LightCyan,
+        "white" => Color::White,
+        _ => return Err(format!("unknown color {trimmed:?}")),
+    };
+    Ok(color)
+}
+
+fn parse_short_hex_channel(hex: u8) -> Result<u8, String> {
+    let value = hex_value(hex)?;
+    Ok((value << 4) | value)
+}
+
+fn parse_hex_channel(high: u8, low: u8) -> Result<u8, String> {
+    Ok((hex_value(high)? << 4) | hex_value(low)?)
+}
+
+fn hex_value(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("invalid hex digit".to_string()),
+    }
 }
 
 fn parse_delimited<'a>(input: &'a str, open: &str, close: &str) -> Option<(&'a str, usize)> {
@@ -419,5 +532,32 @@ mod tests {
         let segs = parse_inline("go [here](url)!");
         let link_x = "go ".len() as u16;
         assert_eq!(hit_test_link(&segs, link_x), Some("url"));
+    }
+
+    #[test]
+    fn structured_segments_merge_adjacent_matching_styles() {
+        let segments = normalize_segments([
+            StyledTextSegment::structured("", false, false, false, false, None, None),
+            StyledTextSegment::structured("a", true, false, false, false, Some(Color::Red), None),
+            StyledTextSegment::structured("b", true, false, false, false, Some(Color::Red), None),
+            StyledTextSegment::structured("c", true, false, false, false, Some(Color::Blue), None),
+        ]);
+
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].text, "ab");
+        assert_eq!(segments[0].style.color, Some(Color::Red));
+        assert_eq!(segments[1].text, "c");
+    }
+
+    #[test]
+    fn parses_structured_text_colors() {
+        assert_eq!(parse_text_color("red"), Ok(Color::Red));
+        assert_eq!(parse_text_color("#0a7"), Ok(Color::Rgb(0x00, 0xaa, 0x77)));
+        assert_eq!(
+            parse_text_color("#112233"),
+            Ok(Color::Rgb(0x11, 0x22, 0x33))
+        );
+        assert_eq!(parse_text_color("indexed:42"), Ok(Color::Indexed(42)));
+        assert!(parse_text_color("not-a-color").is_err());
     }
 }
