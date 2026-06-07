@@ -1,31 +1,37 @@
-# 当前执行计划
+# 执行计划
 
-## 范围
+## 当前约束
 
-- 以 `TODO.md` 作为唯一任务排序与完成状态来源。
-- 仅处理第一个标题未带 `[DONE]` 的任务，完成后停止。
-- 如遇阻塞当前任务的缺陷、缺失能力或测试/fixture 失败，优先修复；若无法在当前任务内正确修复，则在 `TODO.md` 中插入最小必要前置任务并提交后停止。
+- 以 `TODO.md` 为任务顺序和完成状态的唯一依据。
+- 只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 完成后必须更新 `TODO.md` 的任务标题和完成记录，并提交 Git commit。
+- 若遇到阻塞当前任务的缺陷或缺失能力，先修复；若无法在本次完成，则在 `TODO.md` 插入最小必要前置任务并提交后停止。
+- 验证顺序遵循要求：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后运行相关或完整测试。
 
 ## 步骤
 
-1. 读取 `TODO.md`，定位第一个未完成任务，并检查其任务正文、依赖、验证要求和完成记录。
-2. 检查最新提交信息是否明确提到与该任务直接相关的未完成问题；如相关，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
-3. 根据当前任务读取必要的代码、测试与文档上下文，避免无关的历史问题扫查。
-4. 实现当前任务要求；如果发现必须先解决的具体阻塞项，更新 `TODO.md` 并停止在阻塞处理路径。
-5. 运行格式化、lint 和相关测试；如代码有变更，按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行必要的完整测试。
-6. 若发现未排期的失败测试或 fixture，修复或将最小必要修复任务排入 `TODO.md`，不得将当前任务标为完成。
-7. 完成后更新 `TODO.md`：在任务标题前加 `[DONE]`，并填写完成记录与验证结果；仅在阶段计划真实变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff`、最近提交记录，确认仅提交本次任务相关变更，并用清晰提交信息提交。
-9. 提交后停止，不继续处理下一个任务。
+1. 读取 `TODO.md`，识别第一个未完成任务及其验证要求。
+2. 查看最新提交信息，判断是否有与该任务直接相关的未完成事项。
+3. 检查当前工作区状态，避免覆盖用户或其他代理的改动。
+4. 阅读与该任务相关的代码、测试和文档，确定最小正确实现范围。
+5. 实现该任务；若发现直接阻塞问题，按规则修复或写入新的前置任务。
+6. 运行格式化、lint 和任务要求的测试；发现未排期失败时修复或排期。
+7. 更新 `TODO.md`，将本任务标题加 `[DONE]` 并填写完成记录。
+8. 复查 diff、状态和最近提交，提交本次任务相关全部改动。
+9. 停止，不继续处理下一个任务。
 
-## 当前状态
+## 进度
 
-- 已写入初始执行计划。
-- 已读取 `TODO.md` 与 `TODO-1.md`；第一个未完成任务是 `NR7 — 审阅 NT7`。
-- 最新提交为 `[NT7] Add RichText and TextSpan`，与当前审阅任务直接相关，无额外未完成前置说明。
-- 已审阅 `src/text/styled_text.rs`、`src/widgets/rich_text.rs`、runtime 注册、schema 测试、快照 app 与 PTY 测试；未发现需要修改实现的当前任务阻塞问题。
-- 已通过目标验证：`cargo test -p atto-ui rich_text`；`cargo test --test pty_rich_text`。
-- 已通过完整验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
-- 未找到 `run_fixtures.py`，本仓库无单独 fixture 套件可运行。
-- 已更新 `TODO.md` / `TODO-1.md` 的 `NR7` 完成状态和完成记录。
-- 下一步：提交 `NR7` 审阅完成记录后停止。
+- 已建立初始执行计划。
+- 已读取 `TODO.md`，首个未完成任务为 `NT8`：`react-reconciler HostConfig 骨架 + 节点 id + 静态渲染（U.1）`。
+- 已查看最近提交，最新提交为 `NR7` 审阅任务；未发现提交信息中直接提示 `NT8` 的未完成事项。
+- 当前工作区除本计划文件外，还有未跟踪的 `notification.sh`、`run_agent.sh`；它们与当前任务无关，保持不修改。
+- 已读取 `TODO-1.md` 与 `PLAN-1.md` 中 `NT8/U.1` 要求：新增 `packages/react`，实现 LegacyRoot mutation HostConfig 骨架、节点 id、静态 React 树首次挂载到窗口，并覆盖 reconciler 纯单测与 headless 渲染测试。
+- 已检查 `packages/core` 类型与 Node 测试结构。
+- 已新增 `packages/react` 包骨架、Host 实例模型、React reconciler 接线、静态 `set_tree` flush、纯 JS reconciler 测试与 headless 测试。
+- 已安装 `packages/react` 本地依赖并生成 lockfile。
+- 已修正 TypeScript 与测试中暴露的问题；`npm run typecheck --prefix packages/react` 与 `npm test --prefix packages/react` 已通过。
+- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、Node binding napi build 与 JS 测试、`packages/core` 类型检查与 JS 测试、`packages/react` 类型检查与 JS/headless 测试均通过。
+- 未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
+- 已更新 `TODO.md` / `TODO-1.md` 的 `NT8` 完成状态与完成记录。
+- 下一步复查新增文件与 Git 状态，提交本次任务相关改动并停止。

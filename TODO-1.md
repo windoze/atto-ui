@@ -210,7 +210,7 @@
 
 ## 阶段三：M3 reconciler MVP + M4 主循环
 
-### [TODO] NT8 — react-reconciler HostConfig 骨架 + 节点 id + 静态渲染（U.1）
+### [DONE] NT8 — react-reconciler HostConfig 骨架 + 节点 id + 静态渲染（U.1）
 **文件**：新增 `packages/react/`（`src/reconciler.ts`、`src/host.ts`）
 **现状**：尚无 React 库；除 `SetTree` 外所有 `TreeOp` 靠 `ComponentSpec.id` 定位，React host 节点无天然 id（§10.4）。
 **步骤**：
@@ -220,6 +220,12 @@
 4. `finalizeInitialChildren`→false；`getPublicInstance`→instance；调度类方法代理 `setTimeout`/`clearTimeout`。
 **测试**：reconciler 单测——渲染 `<vstack><label/></vstack>` 断言产出的 spec/ops；headless 渲染出文本。
 **验收**：静态 React 树能渲染到一个窗口。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/` TypeScript 包，依赖 `react`/`react-reconciler` 与 `@atto-ui/core`，包含 package lock、typecheck/build/test 脚本，并忽略本地 `node_modules` 与构建产物。
+- `src/host.ts` 实现 host container 与 host instance 模型：实例在 `createInstance`/`createTextInstance` 时分配稳定 string id，保存 `{ id, type, props, children, windowId }`，将 lower-case host type 映射为 runtime component type，并过滤 React 内部 props / 函数事件 props。
+- `src/reconciler.ts` 接入 `react-reconciler` LegacyRoot mutation HostConfig：补齐必需生命周期、调度代理 `setTimeout`/`clearTimeout`/`queueMicrotask`，首次静态提交时将单根 React 子树转换为 `ComponentSpec` 并通过 `set_tree` flush 到目标窗口。
+- 新增 JS 测试：纯 reconciler 测试断言 `<vstack><label/></vstack>` 产出的 `set_tree` spec/op；headless 测试经真实 `AppHost` 渲染 React 树并在 snapshot 中断言文本。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR8 — 审阅 NT8
 - 确认节点 id 稳定、唯一、随实例生命周期管理。

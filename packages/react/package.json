@@ -1,0 +1,30 @@
+{
+  "name": "@atto-ui/react",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node __test__/reconciler.cjs && node __test__/headless.cjs"
+  },
+  "dependencies": {
+    "@atto-ui/core": "file:../core",
+    "react": "18.2.0",
+    "react-reconciler": "0.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.2.79",
+    "typescript": "^5.9.3"
+  }
+}

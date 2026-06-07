@@ -1,6 +1,8 @@
 .env*
 .venv
 /target
+node_modules/
+/packages/react/dist/
 *.node
 __pycache__/
 /memory
