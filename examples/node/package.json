@@ -1,0 +1,19 @@
+{
+  "name": "@atto-ui/example-agent-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build:react": "npm run build --prefix ../../packages/react",
+    "headless": "ATTO_UI_EXAMPLE_HEADLESS=1 node agent_chat.cjs --fast",
+    "start": "node agent_chat.cjs"
+  },
+  "dependencies": {
+    "@atto-ui/react": "file:../../packages/react",
+    "react": "18.2.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "*",
+    "openai": "*"
+  }
+}

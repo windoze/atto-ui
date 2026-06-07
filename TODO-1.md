@@ -482,11 +482,18 @@
 - 确认覆盖多窗口、受控 `TextBox` 输入回环、列表新增/删除、`ListBox` 状态和 Button 计数器回调；`npm test --prefix packages/react` 已包含该 e2e。
 - 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/e2e.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NT18 — 示例 app（含流式聊天）（T.3）
+### [DONE] NT18 — 示例 app（含流式聊天）（T.3）
 **文件**：`examples/`（JS/TS）
 **步骤**：计数器、待办表单、**流式聊天**（Anthropic/OpenAI SDK 灌 token，验证 §5.2 UI 与流式共存）。
 **测试**：手动运行 + 截图；流式高频更新不卡（必要时引入限频重绘/`stepDrainInput`）。
 **验收**：示例可运行，覆盖 state/事件/受控/流式。
+**完成记录（2026-06-07）**：
+- 新增 `examples/node/agent_chat.cjs`，提供 Node/React 示例 app：左侧窗口覆盖计数器 state、Button 事件、受控 `TextBox` todo 输入、`ListBox` 选择和 todo 增删；右侧窗口覆盖 prompt 输入与流式聊天渲染，另含 MenuBar/StatusBar。
+- 流式聊天默认使用离线 mock `for await` token source，确保示例无需密钥即可运行；同一路径支持 `ATTO_UI_CHAT_PROVIDER=openai` / `anthropic`，通过动态导入 OpenAI / Anthropic SDK 将真实 token 灌入 React state。
+- 新增 `examples/node/README.md` 与 `package.json`，记录本地构建、交互运行、headless smoke、可选 SDK 依赖和环境变量；未引入限频重绘，现有非阻塞 `render()` tick loop 在高频 mock token 下通过。
+- Headless smoke 会发送 native key events 操作计数器和受控 todo 表单，并等待流式输出完成；快照摘要示例：`Provider: mock`、`Last reply chars: 235`、`Counter: 1`、`Todos: 3`。
+- 交互式 PTY smoke 启动真实终端示例，等待 `Streaming Chat` 与 `Assistant:` 渲染后发送 `Ctrl+Q`，确认启动、流式绘制和退出干净。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`npm run headless --prefix examples/node`；交互式 PTY smoke；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NR18 — 审阅 NT18
 - 确认示例可独立运行、依赖声明完整。
