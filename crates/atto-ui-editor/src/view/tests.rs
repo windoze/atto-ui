@@ -216,6 +216,45 @@ fn editor_view_applies_diagnostics_to_summary_and_core_state() {
 }
 
 #[test]
+fn clear_lsp_diagnostics_clears_all_controller_state() {
+    let (mut view, _text) = test_view_with_text("let bad = 1;\n");
+    view.lsp.diagnostics.push(editor_core_lsp::LspDiagnostic {
+        range: editor_core_lsp::LspRange::new(
+            editor_core_lsp::LspPosition::new(0, 4),
+            editor_core_lsp::LspPosition::new(0, 7),
+        ),
+        severity: Some(editor_core_lsp::LspDiagnosticSeverity::Error),
+        code: None,
+        source: Some("test".to_string()),
+        message: "mock error".to_string(),
+        related_information: None,
+        data: None,
+    });
+    view.lsp.diagnostic_result_id = Some("previous".to_string());
+    view.lsp.pending_document_diagnostic = Some(42);
+    view.lsp.diagnostic_cursor = Some(0);
+    view.diagnostics_summary.set(DiagnosticsSummary {
+        errors: 1,
+        warnings: 0,
+        infos: 0,
+        hints: 0,
+    });
+
+    let revision_before = view.lsp.diagnostics_revision;
+    view.clear_lsp_diagnostics();
+
+    assert!(view.lsp.diagnostics.is_empty());
+    assert_eq!(view.lsp.diagnostic_result_id, None);
+    assert_eq!(view.lsp.pending_document_diagnostic, None);
+    assert_eq!(view.lsp.diagnostic_cursor, None);
+    assert_eq!(
+        view.diagnostics_summary.get(),
+        DiagnosticsSummary::default()
+    );
+    assert_eq!(view.lsp.diagnostics_revision, revision_before + 1);
+}
+
+#[test]
 fn editor_actions_line_edits_sync_text_binding() {
     let text: atto_ui::reactive::Binding<String> = "a\nb\nc".to_string().into();
     let cfg = EditorConfig::new(text.clone());

@@ -175,12 +175,16 @@ impl EditorView {
         }
     }
 
-    fn clear_lsp_diagnostics(&mut self) {
+    pub(super) fn clear_lsp_diagnostics(&mut self) {
         let summary_was_non_empty = self.diagnostics_summary.get() != DiagnosticsSummary::default();
-        let had_diagnostics_state = !self.lsp.diagnostics.is_empty()
-            || self.lsp.diagnostic_result_id.take().is_some()
-            || self.lsp.pending_document_diagnostic.take().is_some()
-            || self.lsp.diagnostic_cursor.take().is_some()
+        let had_diagnostics = !self.lsp.diagnostics.is_empty();
+        let had_diagnostic_result_id = self.lsp.diagnostic_result_id.take().is_some();
+        let had_pending_document_diagnostic = self.lsp.pending_document_diagnostic.take().is_some();
+        let had_diagnostic_cursor = self.lsp.diagnostic_cursor.take().is_some();
+        let had_diagnostics_state = had_diagnostics
+            || had_diagnostic_result_id
+            || had_pending_document_diagnostic
+            || had_diagnostic_cursor
             || summary_was_non_empty;
 
         self.lsp.diagnostics.clear();

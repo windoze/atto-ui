@@ -500,13 +500,22 @@
 - 新增 editor view 单测覆盖 diagnostics summary 与 `state_manager.editor().diagnostics()`，新增 LSP integration 测试覆盖 mock `publishDiagnostics` 驱动 summary 更新。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R7 — 审阅 T7
+### [DONE] R7 — 审阅 T7
 
 审阅 T7 改动：
 - 确认 `maybe_poll_lsp` 不再丢弃 Notification/DeferredRequest。
 - 确认 diagnostics uri/version 过滤不会把其他文档诊断写入当前 buffer。
 - 确认 summary binding 只在值变化时更新，避免无意义 dirty。
 - 确认 LSP session 出错时仍清理 diagnostics/style layer。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T7 的 `DiagnosticsSummary` / `EditorViewHandle::diagnostics_summary`、`EditorLspController` diagnostics 状态、`maybe_poll_lsp` 事件分发、`publishDiagnostics` 应用路径、URI/version 过滤与 LSP 出错清理路径。
+- 确认 `maybe_poll_lsp` 不再只处理 `Response`：`Notification(PublishDiagnostics)` 会更新 editor-core diagnostics 与 summary，其他 notification 和 `DeferredRequest` 当前安全忽略且不 panic，hover/completion/goto response 分支保持原行为。
+- 确认 diagnostics 只接受当前 document URI，带 version 的 payload 必须匹配当前 document version；其他文档或 stale version 不会写入当前 buffer。
+- 确认 `set_diagnostics_summary` 仅在值变化时写 binding，避免无意义 dirty。
+- 发现并修复 `clear_lsp_diagnostics` 的短路清理问题：原实现用 `||` 串联带副作用的 `.take()`，已有 diagnostics 时可能跳过 `diagnostic_result_id`、`pending_document_diagnostic`、`diagnostic_cursor` 清理；已改为先分别清理再合并状态，并新增回归测试 `clear_lsp_diagnostics_clears_all_controller_state`。
+- 确认 LSP `didChange`/poll/config restart/disable 错误路径调用 `clear_lsp_state` 清理 diagnostics style layer 与 core diagnostics，并重置 editor 侧 summary/controller diagnostics 状态。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T8 — L1 diagnostics gutter/statusbar 渲染与 F8 跳转
 
