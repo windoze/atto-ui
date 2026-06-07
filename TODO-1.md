@@ -509,13 +509,20 @@
 
 ## 阶段八：M9 打包分发
 
-### [TODO] NT19 — 跨平台预编译 + npm 包（P.1 / P.2）
+### [DONE] NT19 — 跨平台预编译 + npm 包（P.1 / P.2）
 **文件**：`crates/atto-ui-node/package.json`、`packages/*/package.json`、npm 平台子包
 **步骤**：
 1. `@napi-rs/cli` 平台矩阵：darwin-arm64/x64、linux-x64-gnu、win32-x64-msvc。
 2. 主包 + `optionalDependencies` 指向各平台二进制包（§7.2）。
 **测试**：本地各平台 `napi build`；`npm pack` 结构正确。
 **验收**：`npm install` 按平台拉取二进制，无需本地 Rust 工具链。
+**完成记录（2026-06-08）**：
+- `crates/atto-ui-node/package.json` 配置 `napi.targets` 平台矩阵：`aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu`、`x86_64-pc-windows-msvc`；新增对应 build 脚本、`npm:dirs`/`npm:artifacts` 脚本、主包 `files`、公开发布配置与 `optionalDependencies`。
+- 新增 `crates/atto-ui-node/npm/{darwin-arm64,darwin-x64,linux-x64-gnu,win32-x64-msvc}/` 平台子包；每个子包声明正确的包名、`.node` 入口、`files`、`os`/`cpu` 限制，Linux GNU 包额外声明 `libc: ["glibc"]`。
+- `packages/core/package.json` 改为可发布包，声明 `files`、公开发布配置，并直接 optional-depend on 四个 `@atto-ui/node-*` 平台包，使 `@atto-ui/core` 安装时可按平台拉取 native 二进制。
+- `packages/react/package.json` 改为可发布包，声明 `files: ["dist"]`、公开发布配置与 `prepack` build；发布依赖从本地 `file:../core` 改为 `@atto-ui/core@0.1.0`。
+- 验证通过：`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi create-npm-dirs --npm-dir npm --dry-run`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform --target x86_64-apple-darwin`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .`；`npm pack --dry-run`（`crates/atto-ui-node`、`packages/core`、`packages/react`、四个平台子包；本机已生成并打入 darwin-arm64/darwin-x64 产物，Linux/Windows 产物由对应平台/后续 CI 生成）。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm test --prefix crates/atto-ui-node`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NR19 — 审阅 NT19
 - 确认平台矩阵与 optionalDependencies 配置正确。

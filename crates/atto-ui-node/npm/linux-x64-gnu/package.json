@@ -1,0 +1,21 @@
+{
+  "name": "@atto-ui/node-linux-x64-gnu",
+  "version": "0.1.0",
+  "description": "Native N-API binding for atto-ui.",
+  "cpu": [
+    "x64"
+  ],
+  "main": "atto_ui_node.linux-x64-gnu.node",
+  "files": [
+    "atto_ui_node.linux-x64-gnu.node"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

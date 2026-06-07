@@ -46,7 +46,7 @@
 | NR17 | DONE | [DONE] 审阅 NT17 | TODO-1.md · 阶段七 M8 |
 | NT18 | DONE | [DONE] 示例 app（含流式聊天）（T.3） | TODO-1.md · 阶段七 M8 |
 | NR18 | DONE | [DONE] 审阅 NT18 | TODO-1.md · 阶段七 M8 |
-| NT19 | TODO | 跨平台预编译 + npm 包（P.1 / P.2） | TODO-1.md · 阶段八 M9 |
+| NT19 | DONE | [DONE] 跨平台预编译 + npm 包（P.1 / P.2） | TODO-1.md · 阶段八 M9 |
 | NR19 | TODO | 审阅 NT19 | TODO-1.md · 阶段八 M9 |
 | NT20 | TODO | CI 流水线 + Bun/Deno + 文档（P.3） | TODO-1.md · 阶段八 M9 |
 | NR20 | TODO | 审阅 NT20 | TODO-1.md · 阶段八 M9 |

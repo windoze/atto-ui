@@ -1,27 +1,36 @@
-# 执行计划
+# Claude 执行计划
 
-本文件记录本次调用的可审计计划、进度和验证结果；不记录私有推理链。
+本文件记录本次调用的可审计执行计划、关键进度和验证结果；不记录私有推理链。
 
 ## 范围
-- 以 `TODO.md` 为任务顺序和完成状态的唯一权威来源。
-- 找到第一个标题未标记 `[DONE]` 的任务并只完成该任务。
-- 本轮任务为 `NR18 — 审阅 NT18`，完成后提交并停止。
 
-## 步骤
-1. 读取 `TODO.md` 和 `TODO-1.md`，确认 `NR18` 的审阅要求与验收点。
-2. 检查最近提交是否直接关联该任务；最近提交 `6e6c117 [NT18] Add React streaming chat example` 纳入审阅范围。
-3. 审阅 `examples/node/agent_chat.cjs`、`examples/node/package.json`、`examples/node/README.md` 及其与 `packages/react` / `packages/core` 的运行关系。
-4. 如发现阻塞审阅完成的问题，直接修复真实问题；不通过缩小压力用例或放宽语义绕过。
-5. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、完整 Rust/TS/JS 验证和示例 smoke/stress。
-6. 将 `NR18` 在 `TODO.md` 与 `TODO-1.md` 标记为 `[DONE]`，写入完成记录；仅在阶段计划变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff` 和最近提交，只暂存本任务相关文件并提交。
+- 以 `TODO.md` 为任务顺序、任务要求和完成状态的权威来源。
+- 本次只完成首个未完成任务，完成后提交并停止。
+- 在识别当前任务前不做开放式历史问题排查。
+- 如遇到阻塞当前任务的缺陷或未计划的失败测试，优先修复；无法在本任务内修复时，向 `TODO.md` 添加最小前置任务并停止。
 
-## 进度
-- 已识别第一个未完成任务：`NR18 — 审阅 NT18`。
-- 初始工作区含 `examples/node/agent_chat.cjs`、`examples/node/package.json`、本计划文件改动，以及未跟踪 `notification.sh` / `run_agent.sh`；两个脚本与当前任务无关，保持不动。
-- 审阅确认示例覆盖计数器、Button 事件、受控 `TextBox` todo 输入、`ListBox` 选择、多窗口、MenuBar/StatusBar 和 mock/OpenAI/Anthropic 流式聊天路径。
-- 修复 stress 路径问题：长 fast mock 流此前会因每 token 提交 state 且每 token 创建 0ms timer 导致 `ATTO_UI_EXAMPLE_STRESS_TOKENS=1500` 超时；现在 fast mock 按批让出事件循环、assistant 文本按固定间隔批量刷新，窗口内渲染有限预览并保留完整回复长度统计。
-- 更新 `examples/node/README.md`，补充 clean checkout 依赖安装、headless smoke、stress smoke 和压力参数说明。
-- 目标验证已通过：`npm run build:react --prefix examples/node`；`npm run headless --prefix examples/node`；`npm run stress --prefix examples/node`；`ATTO_UI_EXAMPLE_STRESS_TOKENS=1500 npm run stress --prefix examples/node`。
-- 完整验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；在 `crates/atto-ui-node` 下运行 `npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。
-- 已在 `TODO.md` 和 `TODO-1.md` 将 `NR18` 标记为 `[DONE]` 并写入完成记录；`PLAN.md` 未变化，因为阶段级顺序和依赖没有变化。
+## 执行步骤
+
+1. 读取 `TODO.md`，找到标题未带 `[DONE]` 的首个任务。
+2. 仅检查最新提交是否明确提到与该任务直接相关的未完成问题。
+3. 读取当前任务在 `TODO-1.md` / `PLAN-1.md` 中的详细要求、依赖和验收标准。
+4. 只检查与当前任务相关的 npm/Rust/TS 包配置和 native 加载路径。
+5. 用最小改动实现 npm 平台矩阵、平台子包和主包依赖配置。
+6. 运行 `cargo fmt`。
+7. 运行 `cargo clippy --workspace --all-targets -- -D warnings`。
+8. 运行完整 Rust 测试、相关 TS/JS 验证、napi 本地构建和 npm pack dry-run。
+9. 在 `TODO.md` 和 `TODO-1.md` 中只将当前任务标记为 `[DONE]` 并写入完成记录。
+10. 关键步骤完成或计划变化时更新本文件。
+11. 提交前检查 `git status`、`git diff` 和最近提交。
+12. 只暂存并提交本次任务相关文件。
+13. 停止，不开始下一项任务。
+
+## 进度记录
+
+- 已在读取任务详情前初始化本计划文件。
+- 已识别首个未完成任务：`NT19 — 跨平台预编译 + npm 包（P.1 / P.2）`。
+- 最新提交 `eed389f [NR18] Review React streaming example` 未指向与 `NT19` 直接相关的未完成前置问题。
+- 已为 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react` 添加 npm 发布元数据；已新增 `@atto-ui/node-*` 四个平台子包目录。
+- `napi create-npm-dirs --dry-run` 已确认平台矩阵可被 `@napi-rs/cli` 解析；`npm pack --dry-run` 已确认 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react` 主包结构。
+- 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、Node native 测试、core/react TS 检查和 JS 测试、darwin-arm64/darwin-x64 本地 napi 构建、artifact copy、平台包 pack dry-run、`git diff --check` 均通过。
+- 已在 `TODO.md` 和 `TODO-1.md` 只将 `NT19` 标记为 `[DONE]`；`NR19` 保持为下一项未完成任务。
