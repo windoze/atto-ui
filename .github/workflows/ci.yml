@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Rust, JS, and runtime compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/react/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install Node test dependencies
+        run: npm ci --prefix packages/react --ignore-scripts
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --all --all-targets
+
+      - name: Build native Node binding
+        working-directory: crates/atto-ui-node
+        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
+
+      - name: Typecheck core package
+        run: npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit
+
+      - name: Test native Node binding
+        run: npm test --prefix crates/atto-ui-node
+
+      - name: Test core package on Node
+        run: npm test --prefix packages/core
+
+      - name: Test core package on Bun
+        run: npm run test:runtime:bun --prefix packages/core
+
+      - name: Test core package on Deno
+        run: npm run test:runtime:deno --prefix packages/core
+
+      - name: Typecheck React package
+        run: npm run typecheck --prefix packages/react
+
+      - name: Test React package
+        run: npm test --prefix packages/react
+
+      - name: Place npm artifacts
+        working-directory: crates/atto-ui-node
+        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .
+
+      - name: Dry-run npm packages
+        run: |
+          npm pack --dry-run --json --prefix crates/atto-ui-node
+          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/linux-x64-gnu
+          npm pack --dry-run --json --prefix packages/core
+          npm pack --dry-run --json --prefix packages/react
+
+      - name: Check whitespace
+        run: git diff --check

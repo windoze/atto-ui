@@ -534,7 +534,7 @@
 - 验证无 native 工具链安装路径：将 `@atto-ui/core`、`@atto-ui/node` 与本机 `@atto-ui/node-darwin-arm64` 子包打成 tarball 后安装到临时消费端，使用 `--ignore-scripts --omit=dev` 安装并分别 `require('@atto-ui/core')` / `require('@atto-ui/node')`，均成功加载平台 `.node` 并返回 `version() == "0.1.0"`。
 - 验证通过：`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi create-npm-dirs --npm-dir npm --dry-run`；`npm pack --dry-run --json`（`crates/atto-ui-node`、`packages/core`、`packages/react`、`crates/atto-ui-node/npm/darwin-arm64`、`crates/atto-ui-node/npm/darwin-x64`）；Linux/Windows 子包缺产物负向 prepack 检查；临时消费端 tarball 安装加载检查；`cargo fmt`；`cargo fmt --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck` / `npm test`（`packages/core`）；`npm run typecheck` / `npm test`（`packages/react`）；`npm test`（`crates/atto-ui-node`）；`npm ci --dry-run --ignore-scripts`（`packages/react`）；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NT20 — CI 流水线 + Bun/Deno + 文档（P.3）
+### [DONE] NT20 — CI 流水线 + Bun/Deno + 文档（P.3）
 **文件**：CI 配置、`README`、API 文档
 **步骤**：
 1. CI：交叉编译 + tag→发布；运行 reconciler 单测与 e2e。
@@ -542,6 +542,12 @@
 3. README + 快速开始 + API 文档。
 **测试**：CI 全绿；Bun/Deno 冒烟。
 **验收**：可一键发布；多运行时验证通过；文档可上手。
+**完成记录（2026-06-08）**：
+- 新增 `.github/workflows/ci.yml`：在 PR、`main`/`master` push 与手动触发时运行 Rust fmt/clippy/full tests、N-API build、Node binding 测试、`@atto-ui/core`/`@atto-ui/react` typecheck + JS/PTY/e2e 测试、Bun/Deno runtime 兼容冒烟，以及 npm pack dry-run。
+- 新增 `.github/workflows/release.yml`：`v*` tag 触发四平台 native build（darwin arm64/x64、linux x64 glibc、win32 x64 MSVC），下载 artifacts 后执行 `napi artifacts`、全包 pack dry-run，并按平台包→`@atto-ui/node`→`@atto-ui/core`→`@atto-ui/react` 的顺序用 `NPM_TOKEN` 发布；手动触发仅做构建与 pack 验证。
+- 新增 `packages/core/__test__/runtime_compat*.cjs` 与 npm scripts：Node/Bun/Deno headless 冒烟覆盖 N-API load、`AppHost`、`applyTreeOps`、事件注入和 callback drain；PTY 冒烟启动真实 raw-mode app 并断言 Ctrl+Q 退出后 alternate screen、cursor、mouse capture 和 raw-mode flags 均恢复。Deno script 显式使用 `--allow-read --allow-env --allow-run --allow-ffi`。
+- 重写根 `README.md` 为项目概览、Rust/JS 快速开始、验证命令、运行时兼容和 CI/release 入口；新增 `docs/NODE_API.md` 记录 AppHost、ComponentSpec/TreeOp、core builders、React API 与 Bun/Deno 行为；新增 `docs/RELEASE.md` 记录 CI 覆盖、本地 preflight、tag 发布矩阵和发布顺序；同步 `NODE_BINDING.md` §11 的已定实现与兼容性记录。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm exec --yes --package=bun@1.3.14 -- npm run test:runtime:bun --prefix packages/core`；`npm run test:runtime:deno --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .`（`crates/atto-ui-node`）；`npm pack --dry-run --json`（`crates/atto-ui-node`、`packages/core`、`packages/react`、`crates/atto-ui-node/npm/darwin-arm64`、`crates/atto-ui-node/npm/darwin-x64`）。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ### [TODO] NR20 — 审阅 NT20
 - 确认 CI 覆盖编译/测试/发布全链路。

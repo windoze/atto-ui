@@ -409,12 +409,12 @@ React 库带来的净增改动很少，且都不大：
 
 ---
 
-## 11. 开放问题
+## 11. 已定实现与兼容性记录
 
-- 高层 API 形态已定为 **React 风格（react-reconciler + JSX）**（见第 10 节）；薄包装 spec 的构造器（6.4）可作为不依赖 React 的低层入口并存。
-- 锚点版 `InsertBefore`（10.4）是首版就引入，还是先用 index 版跑通再迭代。
-- 是否需要 `stepDrainInput()` 与限频重绘作为首版 API，还是留待性能验证后再加。
-- 文本子系统首版走结构化 `RichText`/`TextSpan`，还是先用拍平成 inline-markdown 的过渡方案（10.7）。
-- npm 包命名与 scope（`atto-ui` vs `@atto-ui/*`）与现有 Python 包 `atto-ui` 的协调。
-- Bun/Deno 兼容性的验证范围（N-API 理论兼容，需实测 raw-mode 终端行为）。
+- 高层 API 形态已定为 **React 风格（react-reconciler + JSX）**（见第 10 节）；薄包装 spec 构造器（6.4）作为 `@atto-ui/core` 的低层入口并存。
+- 锚点版 `InsertBefore`（10.4）已在 runtime、Node binding、`@atto-ui/core` 类型与 React reconciler 中落地。
+- 文本子系统首版采用结构化 `RichText`/`TextSpan`，链接事件 payload 为 URL string。
+- npm 包命名采用 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react`，平台包采用 `@atto-ui/node-*`。
+- Bun/Deno 兼容性通过 `packages/core` 的 headless N-API 冒烟与 PTY raw-mode 冒烟验证；Deno 需要 `--allow-ffi`，Bun 直接加载 N-API `.node`。
+- `stepDrainInput()` 与限频重绘暂不作为首版公共 API；示例通过 JS 侧批量刷新和非阻塞 `step()` 保持流式 UI 可用。
 </content>

@@ -1,94 +1,118 @@
-A multi-window TUI application framework for Rust, built on top of Crossterm and Ratatui.
-It has following features:
-1. Multi-window support, each window can be independently moved, resized, minimized, maximized, and closed. Windows can also be layered on top of each other and maintain correct z-ordering.
-2. Built-in window management system that handles window creation, destruction, focus, and z-ordering.
-3. Support for various window types, including modal dialogs, tooltips, and floating windows
-4. Customizable window decorations, including title bars, borders, control buttons, and drop shadows.
-5. Menubars at the top of the application window, with support for nested menus and keyboard shortcuts.
-6. Status bars at the bottom of the application window, with support for dynamic content and customizable
-7. It should support keyboard and mouse input for window management and interaction.
-8. It should support theming and styling of windows and widgets, including colors, and other visual properties.
-9. It should support Unicode and wide character rendering for internationalization.
-10. It should include common widgets such as buttons, labels, text boxes, checkboxes, radio buttons, lists, and tables that can be used within windows.
+# atto-ui
 
-The library should have a modular architecture, from a basic component which can be used to build custom windows and widgets, to a high-level window management system that handles all aspects of window behavior and interaction.
+`atto-ui` is a multi-window terminal UI framework built on Crossterm and Ratatui. The repository contains the Rust runtime, a Node N-API binding, a typed `@atto-ui/core` JavaScript facade, and a React reconciler package for JSX-driven terminal apps.
 
-The library should expose traits and interfaces that allow developers to easily create custom windows, widgets, and behaviors, while still leveraging the built-in functionality of the framework.
+## Packages
 
-## Component Properties & Introspection
+| Package | Purpose |
+|---|---|
+| `atto-ui` | Core Rust crate with desktop chrome, window management, widgets, runtime component trees, themes, and PTY-testable app hosting. |
+| `crates/atto-ui-node` / `@atto-ui/node` | Native N-API binding exposing `AppHost` to JavaScript runtimes. |
+| `packages/core` / `@atto-ui/core` | Typed CommonJS facade, native loader, low-level spec builders, and runtime types. |
+| `packages/react` / `@atto-ui/react` | React reconciler, JSX host components, event bridge, and `render()` loop. |
+| `crates/atto-ui-node/npm/*` | Platform binary npm packages used by optional dependencies. |
 
-Custom components can expose dynamic properties for introspection and runtime updates.
+## Requirements
 
-- `#[derive(ComponentProperties)]` collects property metadata from `Binding<T>` / `Option<Binding<T>>` fields.
-- `#[component_properties]` on the `impl Component` block wires `property_names/get_property/set_property`.
-- Use `#[component(rename = "alias")]` to rename a property, `#[component(skip)]` to hide it, and
-  `#[component(delegate)]` to forward property access to a child component.
-- Conversions go through `ComponentValue` + `ComponentValueCodec`, keeping the API language-agnostic.
+- Rust stable with edition 2024 support.
+- Node.js 22 or newer for local JavaScript tests.
+- Python 3 for PTY integration tests.
+- Bun and Deno are optional locally, but CI validates both runtimes.
 
-Example:
+## Rust Quick Start
 
-```rust
-use atto_ui::composable::{Component, ComponentContext, EventResult};
-use atto_ui::reactive::Binding;
-use atto_ui_macros::{ComponentProperties, component_properties};
-
-#[derive(ComponentProperties)]
-struct HeaderView {
-    title: Binding<String>,
-    #[component(skip)]
-    local_state: usize,
-}
-
-#[component_properties]
-impl Component for HeaderView {
-    fn handle_event(&mut self, _event: &crossterm::event::Event, _ctx: ComponentContext<'_>) -> EventResult {
-        EventResult::ignored()
-    }
-
-    fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect, ctx: ComponentContext<'_>) {
-        // ...
-        let _ = (frame, area, ctx);
-    }
-}
+```sh
+cargo build
+cargo run --example demo
+cargo test --all --all-targets
 ```
 
-Refer to the [Turbo Vision](https://en.wikipedia.org/wiki/Turbo_Vision) framework for inspiration on design and functionality.
+Useful validation commands:
 
-You should use following ways to test the library:
-1. Create a test-host app that
-    1. allocate a PTY with screen buffer, which can run the TUI application in a pseudo terminal, and capture the screen buffer output for verification.
-    2. simulate user input (keyboard, mouse events, and 'paste' event to simulate IME text input) to interact with the TUI application running in the PTY and dump the screen buffer for analysis.
-2. Use this test-host app to create automated tests that verify the behavior and functionality of the library, including window management, input handling, rendering, and theming. Verify the screen buffer output against expected results to ensure correctness.
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --all --all-targets
+```
 
-First, you need to create a detailed step-by-step implementation plan for the library, breaking down the development process into manageable tasks and milestones. Each task and milestone should have sufficient tests and validations. Save the plan as `IMPLEMENTATION_PLAN.md`.
+The deterministic test target used by PTY tests is available with:
 
-Then you should follow the implementation plan to develop the library incrementally, ensuring that each task and milestone is completed and tested before moving on to the next one. Use the test-host app to validate the functionality of the library at each stage of development.
+```sh
+cargo run --bin snapshot_app
+```
 
-After each task or milestone is completed, update the `IMPLEMENTATION_PLAN.md` file to reflect the progress made and any changes to the plan, git commit the changes with meaningful commit messages.
+## JavaScript Quick Start
 
-At the end, you should create a sample TUI application that demonstrates the capabilities of the library, showcasing multi-window management, various window types, customizable decorations, menubars, status bars, input handling, theming, and common widgets. Save this sample application in the `examples/` directory of the project.
+Build the local native binding before running JS examples or tests from a checkout:
 
+```sh
+npm install --prefix crates/atto-ui-node --ignore-scripts
+npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
+```
 
----
+Low-level `@atto-ui/core` usage:
 
+```js
+const { AppHost, Button, Text, VStack } = require('@atto-ui/core')
 
-Create an editor component with the `editor-core` and related crates at `../editor-core`, with support of syntax highlighting, folding, and LSP integration.
-The editor-core and related crates should be imported from crates.io registry, not from local path. But you can refer to the local path `../editor-core` for a full copy of the source code.
-If should also:
-- Support keyboard and mouse interactions.
-- Support basic editing features such as, undo/redo, copy/paste, rect-selection/multi-cursor.
-- Shortcuts should be configurable.
-- Can toggle line numbers.
-- Can toggle folding markers.
-- Can configure scrollbars visibility.
-- Can configure tab size and spaces/tabs usage.
-- Support LSP functions:
-    - Style and folding
-    - Hover, delay should be configurable, hover popup should use a non-modal popup window without drop shadow, and with proper z-order. Make sure they can exceed the editor boundaries if needed. They also should be hidden/closed when the editor loses focus or any other interaction happens
-    - Completions, with a popup window similar to hover, but should support keyboard and mouse selection.
-    - Goto functions should be supported by providing callbacks to the host application, as the target may not be in the editor.
-- Has a separated theme support, **do not integrate with built-in themes.** Because LSP may introduce unknown scopes and token types, the theme should be per-language basis, and should be able to define styles for unknown scopes and token types.
+const host = new AppHost({ headless: true, cols: 60, rows: 16 })
+const callback = host.allocCallback()
+const windowId = host.addDynamicWindow('Hello', [1, 1, 40, 8], VStack({ id: 'root' }, [
+  Text('Hello from atto-ui', { id: 'title' }),
+  Button({ id: 'ok', text: 'OK', onClick: callback }),
+]))
 
-All configurations should be data bindings so they are changeable at runtime.
+host.step()
+host.sendEvent(windowId, { type: 'key', key: 'enter' })
+console.log(host.drainCallbacks())
+host.dispose()
+```
 
-You can refer to `../editor-core/crates/tui-editor` for a basic TUI example of using `editor-core`, which doesn't have mouse interaction yet but has many other features.
+React usage:
+
+```js
+const React = require('react')
+const { Button, Text, VStack, render } = require('@atto-ui/react')
+
+function App() {
+  const [count, setCount] = React.useState(0)
+  return React.createElement(VStack, null,
+    React.createElement(Text, null, `Count: ${count}`),
+    React.createElement(Button, { onClick: () => setCount((value) => value + 1) }, 'Increment'),
+  )
+}
+
+const handle = render(React.createElement(App), { singleWindow: true })
+process.once('SIGINT', () => handle.stop())
+```
+
+## JavaScript Validation
+
+```sh
+npm run typecheck --prefix packages/core
+npm test --prefix packages/core
+npm run typecheck --prefix packages/react
+npm test --prefix packages/react
+```
+
+Runtime compatibility smoke tests:
+
+```sh
+npm run test:runtime:node --prefix packages/core
+npm run test:runtime:bun --prefix packages/core
+npm run test:runtime:deno --prefix packages/core
+```
+
+The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the package script supplies those permissions. The Bun and Deno PTY smokes start a real raw-mode terminal app and assert that alternate screen, cursor, mouse capture, and terminal flags are restored on exit.
+
+## Documentation
+
+- `docs/NODE_API.md` documents the Node binding, `@atto-ui/core`, React package, component spec shape, events, and runtime compatibility notes.
+- `docs/RELEASE.md` documents CI coverage and the tag-based npm release workflow.
+- `NODE_BINDING.md` is the design record for the Node binding and React host architecture.
+
+## CI And Release
+
+CI runs Rust formatting, clippy, full Rust tests, native N-API build, Node/Core/React tests, React PTY/e2e coverage, Bun/Deno compatibility smokes, and npm pack dry-runs.
+
+Publishing is tag-based. Pushing a `v*` tag runs the release workflow, builds platform `.node` artifacts on macOS/Linux/Windows, verifies package contents, and publishes platform packages, `@atto-ui/node`, `@atto-ui/core`, and `@atto-ui/react` using `NPM_TOKEN`.

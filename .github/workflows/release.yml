@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-native:
+    name: Build ${{ matrix.triple }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            rust-target: aarch64-apple-darwin
+            triple: darwin-arm64
+          - os: macos-13
+            rust-target: x86_64-apple-darwin
+            triple: darwin-x64
+          - os: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            triple: linux-x64-gnu
+          - os: windows-2022
+            rust-target: x86_64-pc-windows-msvc
+            triple: win32-x64-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build native package
+        working-directory: crates/atto-ui-node
+        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform --release --target ${{ matrix.rust-target }}
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.triple }}
+          path: crates/atto-ui-node/atto_ui_node.${{ matrix.triple }}.node
+          if-no-files-found: error
+
+  publish:
+    name: Pack and publish npm packages
+    needs: build-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: packages/react/package-lock.json
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: crates/atto-ui-node
+          merge-multiple: true
+
+      - name: Place platform artifacts
+        working-directory: crates/atto-ui-node
+        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .
+
+      - name: Install React dependencies
+        run: npm ci --prefix packages/react --ignore-scripts
+
+      - name: Build React package
+        run: npm run build --prefix packages/react
+
+      - name: Verify package contents
+        run: |
+          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/darwin-arm64
+          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/darwin-x64
+          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/linux-x64-gnu
+          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/win32-x64-msvc
+          npm pack --dry-run --json --prefix crates/atto-ui-node
+          npm pack --dry-run --json --prefix packages/core
+          npm pack --dry-run --json --prefix packages/react
+
+      - name: Publish packages
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish crates/atto-ui-node/npm/darwin-arm64 --access public
+          npm publish crates/atto-ui-node/npm/darwin-x64 --access public
+          npm publish crates/atto-ui-node/npm/linux-x64-gnu --access public
+          npm publish crates/atto-ui-node/npm/win32-x64-msvc --access public
+          npm publish crates/atto-ui-node --access public
+          npm publish packages/core --access public
+          npm publish packages/react --access public

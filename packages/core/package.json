@@ -25,7 +25,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node __test__/headless.cjs && node __test__/builders.cjs"
+    "test": "node __test__/headless.cjs && node __test__/builders.cjs && npm run test:runtime:node",
+    "test:runtime": "npm run test:runtime:node && npm run test:runtime:bun && npm run test:runtime:deno",
+    "test:runtime:bun": "bun __test__/runtime_compat.cjs && node __test__/runtime_compat_pty.cjs bun",
+    "test:runtime:deno": "deno run --allow-read --allow-env --allow-run --allow-ffi __test__/runtime_compat.cjs && node __test__/runtime_compat_pty.cjs deno",
+    "test:runtime:node": "node __test__/runtime_compat.cjs && node __test__/runtime_compat_pty.cjs node"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
