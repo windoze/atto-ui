@@ -23,6 +23,13 @@ const {
 } = requireFromInstalledOrLocal('@atto-ui/react', () => require('../../packages/react/dist'))
 
 const h = React.createElement
+const DEFAULT_PROMPT = 'Summarize how atto-ui keeps React state and terminal input responsive.'
+const DEFAULT_TODOS = ['Build binding', 'Render React UI']
+const DEFAULT_STRESS_TODO_COUNT = 250
+const DEFAULT_STRESS_TOKEN_COUNT = 400
+const STREAM_FLUSH_INTERVAL_MS = 100
+const CHAT_PREVIEW_CHARS = 240
+const MOCK_FAST_YIELD_EVERY = 25
 
 function requireFromInstalledOrLocal(name, fallback) {
   try {
@@ -35,30 +42,64 @@ function requireFromInstalledOrLocal(name, fallback) {
 
 // Parse CLI flags and environment variables without adding an argument parser dependency.
 function parseOptions(argv, env) {
+  let promptProvided = Object.prototype.hasOwnProperty.call(env, 'ATTO_UI_CHAT_PROMPT')
   const options = {
     autostart: env.ATTO_UI_EXAMPLE_AUTOSTART !== '0',
     headless: env.ATTO_UI_EXAMPLE_HEADLESS === '1',
+    initialTodoCount: parsePositiveInteger(env.ATTO_UI_EXAMPLE_TODO_COUNT, DEFAULT_TODOS.length),
     mockDelayMs: Number(env.ATTO_UI_EXAMPLE_TOKEN_DELAY_MS ?? 8),
-    prompt: env.ATTO_UI_CHAT_PROMPT ?? 'Summarize how atto-ui keeps React state and terminal input responsive.',
+    prompt: env.ATTO_UI_CHAT_PROMPT ?? DEFAULT_PROMPT,
     provider: env.ATTO_UI_CHAT_PROVIDER ?? 'mock',
+    stress: env.ATTO_UI_EXAMPLE_STRESS === '1',
+    stressTokenCount: parsePositiveInteger(env.ATTO_UI_EXAMPLE_STRESS_TOKENS, DEFAULT_STRESS_TOKEN_COUNT),
   }
 
   for (const arg of argv) {
     if (arg === '--headless') options.headless = true
     else if (arg === '--no-autostart') options.autostart = false
     else if (arg === '--fast') options.mockDelayMs = 0
+    else if (arg === '--stress') options.stress = true
     else if (arg.startsWith('--provider=')) options.provider = arg.slice('--provider='.length)
-    else if (arg.startsWith('--prompt=')) options.prompt = arg.slice('--prompt='.length)
+    else if (arg.startsWith('--prompt=')) {
+      options.prompt = arg.slice('--prompt='.length)
+      promptProvided = true
+    } else if (arg.startsWith('--todo-count=')) {
+      options.initialTodoCount = parsePositiveInteger(arg.slice('--todo-count='.length), options.initialTodoCount)
+    } else if (arg.startsWith('--stress-tokens=')) {
+      options.stressTokenCount = parsePositiveInteger(arg.slice('--stress-tokens='.length), options.stressTokenCount)
+    }
+  }
+
+  if (options.stress) {
+    options.mockDelayMs = 0
+    options.initialTodoCount = Math.max(options.initialTodoCount, DEFAULT_STRESS_TODO_COUNT)
+    if (!promptProvided) options.prompt = makeStressPrompt(options.stressTokenCount)
   }
 
   return options
 }
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function makeStressPrompt(tokenCount) {
+  return Array.from({ length: tokenCount }, (_, index) => `stress-token-${index + 1}`).join(' ')
+}
+
 // Render the two-window demo app and wire UI events into React state.
-function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone, provider }) {
+function AgentChatExample({
+  autostart,
+  initialPrompt,
+  initialTodos = [...DEFAULT_TODOS],
+  mockDelayMs,
+  onStreamDone,
+  provider,
+}) {
   const [count, setCount] = React.useState(0)
   const [todoDraft, setTodoDraft] = React.useState('')
-  const [todos, setTodos] = React.useState(['Build binding', 'Render React UI'])
+  const [todos, setTodos] = React.useState(initialTodos)
   const [selectedTodo, setSelectedTodo] = React.useState(0)
   const [prompt, setPrompt] = React.useState(initialPrompt)
   const [messages, setMessages] = React.useState([
@@ -103,7 +144,7 @@ function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone,
     streamIdRef.current += 1
     setCount(0)
     setTodoDraft('')
-    setTodos(['Build binding', 'Render React UI'])
+    setTodos(initialTodos)
     setSelectedTodo(0)
     setPrompt(initialPrompt)
     setMessages([
@@ -122,6 +163,31 @@ function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone,
     const userId = nextMessageId('user')
     const assistantId = nextMessageId('assistant')
     let finalText = ''
+    let flushedText = ''
+    let lastFlushAt = 0
+    let flushTimer = null
+
+    function flushAssistantText() {
+      if (streamIdRef.current !== streamId || flushedText === finalText) return
+      flushedText = finalText
+      lastFlushAt = Date.now()
+      setMessages((current) => updateAssistantMessage(current, streamId, flushedText))
+    }
+
+    function scheduleAssistantFlush() {
+      if (flushTimer !== null) return
+      const waitMs = Math.max(0, STREAM_FLUSH_INTERVAL_MS - (Date.now() - lastFlushAt))
+      flushTimer = setTimeout(() => {
+        flushTimer = null
+        flushAssistantText()
+      }, waitMs)
+    }
+
+    function clearAssistantFlush() {
+      if (flushTimer === null) return
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
 
     setIsStreaming(true)
     setStatus(`streaming with ${provider}`)
@@ -135,17 +201,26 @@ function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone,
       for await (const token of createTokenStream(provider, request, { mockDelayMs })) {
         if (streamIdRef.current !== streamId) return
         finalText += token
-        setMessages((current) => updateAssistantMessage(current, streamId, finalText))
+        if (Date.now() - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+          clearAssistantFlush()
+          flushAssistantText()
+        } else {
+          scheduleAssistantFlush()
+        }
       }
+      clearAssistantFlush()
+      flushAssistantText()
       setStatus(`stream complete: ${finalText.length} chars`)
       onStreamDone?.({ ok: true, text: finalText })
     } catch (error) {
+      clearAssistantFlush()
       const message = error instanceof Error ? error.message : String(error)
       finalText = `Stream failed: ${message}`
       setStatus('stream failed')
       setMessages((current) => updateAssistantMessage(current, streamId, finalText))
       onStreamDone?.({ ok: false, text: finalText })
     } finally {
+      clearAssistantFlush()
       if (streamIdRef.current === streamId) setIsStreaming(false)
     }
   }
@@ -159,7 +234,7 @@ function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone,
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant')
   const chatLines = messages.slice(-7).map((message) => {
     const label = message.role === 'assistant' ? 'Assistant' : message.role === 'user' ? 'You' : 'System'
-    return h('label', { key: message.id, text: `${label}: ${message.text || '...'}` })
+    return h('label', { key: message.id, text: `${label}: ${previewChatText(message.text) || '...'}` })
   })
 
   return h(
@@ -217,6 +292,11 @@ function AgentChatExample({ autostart, initialPrompt, mockDelayMs, onStreamDone,
   )
 }
 
+function previewChatText(text) {
+  if (text.length <= CHAT_PREVIEW_CHARS) return text
+  return `${text.slice(0, CHAT_PREVIEW_CHARS - 3)}...`
+}
+
 // Replace only the assistant message owned by the active stream.
 function updateAssistantMessage(messages, streamId, text) {
   return messages.map((message) => (
@@ -250,10 +330,10 @@ async function* mockTokenStream(prompt, delayMs) {
     '. UI input, timers, and React state keep progressing between token chunks.',
   ].join('')
   const tokens = text.match(/\S+\s*/g) ?? []
-  for (const token of tokens) {
+  for (let index = 0; index < tokens.length; index += 1) {
     if (delayMs > 0) await delay(delayMs)
-    else await delay(0)
-    yield token
+    else if (index % MOCK_FAST_YIELD_EVERY === 0) await delay(0)
+    yield tokens[index]
   }
 }
 
@@ -298,8 +378,15 @@ async function* anthropicTokenStream(prompt) {
   }
 }
 
+function createInitialTodos(count) {
+  if (count === DEFAULT_TODOS.length) return [...DEFAULT_TODOS]
+  return Array.from({ length: count }, (_, index) => `Task ${String(index + 1).padStart(3, '0')}`)
+}
+
 // Run the same app in headless mode and assert that state, events, controlled input, and streaming work.
 async function runHeadless(options) {
+  const startedAt = Date.now()
+  const initialTodos = createInitialTodos(options.initialTodoCount)
   let resolveDone
   const streamDone = new Promise((resolve) => {
     resolveDone = resolve
@@ -307,6 +394,7 @@ async function runHeadless(options) {
   const handle = render(h(AgentChatExample, {
     autostart: true,
     initialPrompt: options.prompt,
+    initialTodos,
     mockDelayMs: options.mockDelayMs,
     onStreamDone: resolveDone,
     provider: options.provider,
@@ -328,7 +416,7 @@ async function runHeadless(options) {
     await waitFor(() => hasSnapshotText(handle, 'Draft: x'), 'controlled todo input')
     sendKey(handle, stateWindowId, 'tab')
     sendKey(handle, stateWindowId, 'enter')
-    await waitFor(() => hasSnapshotText(handle, 'Todos: 3'), 'todo add event')
+    await waitFor(() => hasSnapshotText(handle, `Todos: ${initialTodos.length + 1}`), 'todo add event')
 
     const result = await withTimeout(streamDone, 10_000, 'stream completion')
     await waitFor(() => {
@@ -340,6 +428,9 @@ async function runHeadless(options) {
     console.log('Atto UI React example headless snapshot:')
     for (const text of interestingSnapshotLines(texts)) {
       console.log(`- ${text}`)
+    }
+    if (options.stress) {
+      console.log(`- Stress: todos=${initialTodos.length} tokens=${options.stressTokenCount} elapsedMs=${Date.now() - startedAt}`)
     }
   } finally {
     handle.stop()
@@ -366,6 +457,7 @@ function runInteractive(options) {
   render(h(AgentChatExample, {
     autostart: options.autostart,
     initialPrompt: options.prompt,
+    initialTodos: createInitialTodos(options.initialTodoCount),
     mockDelayMs: options.mockDelayMs,
     provider: options.provider,
   }), {
@@ -384,7 +476,10 @@ function collectTexts(node, texts = []) {
 // Keep headless output compact enough to paste into task records.
 function interestingSnapshotLines(texts) {
   const prefixes = ['Counter:', 'Todos:', 'Provider:', 'Last reply chars:', 'Assistant:']
-  return texts.filter((text) => prefixes.some((prefix) => text.startsWith(prefix))).slice(0, 12)
+  return texts
+    .filter((text) => prefixes.some((prefix) => text.startsWith(prefix)))
+    .slice(0, 12)
+    .map((text) => (text.length > 160 ? `${text.slice(0, 157)}...` : text))
 }
 
 // Poll until React commits the expected state or fail with a useful label.

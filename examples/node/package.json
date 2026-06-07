@@ -6,6 +6,7 @@
   "scripts": {
     "build:react": "npm run build --prefix ../../packages/react",
     "headless": "ATTO_UI_EXAMPLE_HEADLESS=1 node agent_chat.cjs --fast",
+    "stress": "ATTO_UI_EXAMPLE_HEADLESS=1 node agent_chat.cjs --fast --stress",
     "start": "node agent_chat.cjs"
   },
   "dependencies": {

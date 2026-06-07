@@ -495,10 +495,15 @@
 - 交互式 PTY smoke 启动真实终端示例，等待 `Streaming Chat` 与 `Assistant:` 渲染后发送 `Ctrl+Q`，确认启动、流式绘制和退出干净。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`npm run headless --prefix examples/node`；交互式 PTY smoke；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NR18 — 审阅 NT18
+### [DONE] NR18 — 审阅 NT18
 - 确认示例可独立运行、依赖声明完整。
 - 确认流式与 UI 不互相阻塞。
 - 性能 sanity（大列表/高频流式）。
+**完成记录（2026-06-08）**：
+- 审阅 `examples/node/agent_chat.cjs`、`examples/node/package.json` 与 `examples/node/README.md`，确认示例覆盖计数器 state、Button 事件、受控 `TextBox` todo 输入、`ListBox` 选择、多窗口、MenuBar/StatusBar 和 mock/OpenAI/Anthropic 流式聊天路径；默认 mock provider 无密钥即可运行。
+- 修复长流 stress 问题：fast mock token source 现在按批让出事件循环，assistant 文本按固定间隔批量刷新，窗口内只渲染有限预览但保留完整回复长度统计；`ATTO_UI_EXAMPLE_STRESS_TOKENS=1500` 从超时恢复为约 0.5s 完成。
+- 补充示例 README 的 clean checkout 依赖安装、headless smoke、stress smoke 与 `ATTO_UI_EXAMPLE_TODO_COUNT` / `ATTO_UI_EXAMPLE_STRESS_TOKENS` 等参数说明；`examples/node/package.json` 提供 `headless` 与 `stress` 脚本。
+- 验证通过：`npm run build:react --prefix examples/node`；`npm run headless --prefix examples/node`；`npm run stress --prefix examples/node`；`ATTO_UI_EXAMPLE_STRESS_TOKENS=1500 npm run stress --prefix examples/node`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
 ---
 
