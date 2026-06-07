@@ -121,7 +121,7 @@
 - 确认 `tickRate=0` 为 Node 默认配置，`step()` 在 headless 路径不进入 crossterm poll；JS 冒烟验证 `drainCallbacks` 返回完整 `{ callbackId, targetId, event, payload }` 载荷，headless 构造和 snapshot 均走内存路径。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`npm test`。
 
-### [TODO] NT5 — `@atto-ui/core` native 加载（L.1）
+### [DONE] NT5 — `@atto-ui/core` native 加载（L.1）
 **文件**：新增 `packages/core/`（`index.ts`、`native.d.ts`）
 **现状**：尚无 npm 包；napi 可自动生成 `.d.ts`。
 **步骤**：
@@ -129,11 +129,22 @@
 2. 暴露 `AppHost` 类型与 `ComponentSpec`/`TreeOp`/`ComponentValue`/`CallbackInvocation` 的 TS 类型。
 **测试**：`tsc --noEmit` 通过；JS 端 import 并跑通 NT4 的 headless 冒烟。
 **验收**：`@atto-ui/core` 可作为 React 库（阶段三起）的底层依赖。
+**完成记录（2026-06-07）**：
+- 新增 `packages/core/`，包含 `package.json`、`tsconfig.json`、CommonJS 运行时入口 `index.js`、TS 类型入口 `index.ts`、native loader `native.js` 与 raw binding 声明 `native.d.ts`。
+- `native.js` 支持 `ATTO_UI_NATIVE_LIBRARY_PATH` / `NAPI_RS_NATIVE_LIBRARY_PATH` 覆盖、本包平台 `.node`、后续 `@atto-ui/core-*` 平台包、现有 `@atto-ui/node-*` / `@atto-ui/node` 包，以及当前 workspace 的 `crates/atto-ui-node` fallback。
+- `index.ts` 暴露强类型 `AppHost`、`ComponentSpec`、`ComponentSpecChild`、`LayoutSpec`、`ComponentValue`、`TreeOp`、`CallbackInvocation`、snapshot/window/schema/input event 等类型，避免把 napi 生成声明中的 `any` 泄漏给 `@atto-ui/core` 消费者。
+- 新增 `packages/core/__test__/headless.cjs`，经 `@atto-ui/core` 导入 native binding，完成 headless 建窗口、`applyTreeOps` 改文本、snapshot、事件注入与 callback drain 冒烟；新增 `__test__/types.ts` 覆盖核心类型与返回值非 `any`。
+- 验证通过：`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`node packages/core/__test__/headless.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc --noEmit`（`packages/core`）；`npm test`（`packages/core`）。
 
-### [TODO] NR5 — 审阅 NT5
+### [DONE] NR5 — 审阅 NT5
 - 确认类型声明与 Rust 侧一致、无 any 泄漏。
 - 确认跨平台 `.node` 加载路径正确（为 P 阶段分发铺垫）。
 - 运行 `tsc` + 冒烟。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/core/index.ts`、`native.d.ts` 与 `crates/atto-ui-node/src/lib.rs`/`convert.rs`，确认对外 `AppHost`、`ComponentSpec`、`TreeOp`、`ComponentValue`、`CallbackInvocation`、snapshot/window/schema/input event 类型与当前 Rust/Node JSON 形态一致。
+- 确认 `packages/core/index.ts` 对外类型无 `any` 泄漏；raw native 声明仅保留 `unknown`/`object` 边界，并由 typed facade 收窄。
+- 审阅 `packages/core/native.js` 加载顺序，确认支持显式环境变量覆盖、本包平台 `.node`、未来 `@atto-ui/core-*` 平台包、现有 `@atto-ui/node-*`/`@atto-ui/node` 以及 workspace `crates/atto-ui-node` fallback。
+- 验证通过：`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`node packages/core/__test__/headless.cjs`；`npm test --prefix packages/core`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ---
 

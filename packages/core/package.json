@@ -1,0 +1,22 @@
+{
+  "name": "@atto-ui/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "require": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node __test__/headless.cjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
