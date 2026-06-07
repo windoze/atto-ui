@@ -17,3 +17,4 @@
 - `npm test --prefix packages/react` 已通过；下一步按要求运行格式化、lint 与完整测试。
 - 验证已完成：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/react`、`npm test --prefix packages/react` 均通过；未找到 `tools/run_fixtures.py`。
 - 已在 `TODO.md` 与 `TODO-1.md` 将 `NR8` 标记为 `[DONE]` 并写入完成记录；下一步检查 diff/status 后提交本任务变更。
+- 已提交主要变更：`84d14cb [NR8] Review React reconciler static rendering`。下一步提交本进度文件最终状态后停止。
