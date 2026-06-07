@@ -15,4 +15,5 @@
 - 已审阅 `NT11` 事件桥主路径：React host 使用 `CallbackEventDispatcher` 维护 `callbackId -> 最新 handler`，tick 后 drain 并分发，卸载/事件清理时释放 handler 与 native handle，Node `drainCallbacks` 会过滤已释放 callback。
 - 已补充 `packages/react/__test__/render.cjs` 的 `for await` 流式 `setState` 回归测试，覆盖模拟 LLM chunk 流与 tick loop 共存。
 - 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。
-- 已将 `NR11` 在 `TODO-1.md` 与 `TODO.md` 标记为 `[DONE]` 并写入完成记录；下一步提交本次任务相关改动后停止。
+- 已将 `NR11` 在 `TODO-1.md` 与 `TODO.md` 标记为 `[DONE]` 并写入完成记录。
+- 已提交本次任务相关改动：`919e37a [NR11] Review React event bridge`。当前仅剩与本任务无关的未跟踪脚本 `notification.sh`、`run_agent.sh`，未纳入提交。
