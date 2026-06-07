@@ -1,0 +1,1491 @@
+# atto-editor-app 全功能编辑器任务列表
+
+> 来源：`PLAN-2.md`（基于 `EDITOR_APP.md`，设计日期 2026-06-07）
+> 说明：每个「实现任务」(T) 后紧跟一个「审阅任务」(R)，R 用于审阅前一个 T 的质量、正确性与测试覆盖。
+> 通用要求（每个 T 完成前必须满足）：`cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` 全绿；若任务只改文档可跳过构建。
+> 代码定位：行号会随实现漂移，执行时以本文列出的文件路径、类型名、函数名和 `PLAN-2.md` 对应章节为准。
+> editor-core 参考源码：`../editor-core`。当前本仓库各 editor crate 依赖 `editor-core = 0.4.1` / `editor-core-lsp = 0.4.1`，优先把 `../editor-core` 当 API 依据；除非任务明确要求，不要修改 `../editor-core`。
+
+---
+
+## 阶段一：框架底座 + editor 快速增益
+
+### [TODO] T1 — C1 通用拖拽数据模型与 Component hooks
+
+**依赖**：无。
+
+**文件**：
+- 新增 `src/composable/drag.rs`
+- 修改 `src/composable/mod.rs`
+- 修改 `src/composable/component.rs`
+- 检查所有手写 `impl Component` 的类型，必要时补 `impl DragAndDrop for ... {}` 或更新 `impl_component_default_traits!` 调用
+
+**相关现状**：
+- `src/composable/component.rs` 当前核心类型：`ComponentContext`, `EventResult`, `ComponentAction`, `Component`。
+- `Component` 当前约束为 `Layout + Scrollable + FocusNav + DynamicTree + EventHandling + Send`。
+- 现有局部拖拽只在滚动条 / splitter 内部实现，不是跨组件通用 drag/drop。
+
+**步骤**：
+1. 新增 `src/composable/drag.rs`，定义：
+   - `DragPayloadType(pub &'static str)`
+   - `DragPayload::{Text, FilePath, ComponentId, WindowId, Custom { ty, data }}`
+   - `DragOperation::{Copy, Move, Link}`
+   - `DragSource { payload, operation, threshold, ghost }`
+   - `DragOffer<'a> { payload, operation, screen_x, screen_y }`
+   - `DropEffect::{None, Copy, Move, Link}`
+   - `DropFeedback { effect, rect, label }`
+   - `DragContext<'a> { payload, operation, source_window }`
+2. 在 `src/composable/mod.rs` re-export 上述类型。
+3. 在 `component.rs` 新增 trait：
+   - `DragAndDrop::drag_source_at(...) -> Option<DragSource>`
+   - `DragAndDrop::drag_over(...) -> DropFeedback`
+   - `DragAndDrop::drop(...) -> EventResult`
+   - `DragAndDrop::drag_cancelled(...)`
+   - 所有方法必须有 no-op 默认实现。
+4. 扩展 `ComponentContext<'a>`，增加 `pub drag: Option<DragContext<'a>>`。所有构造 `ComponentContext` 的位置必须显式填 `drag: None`，后续 T2 再填 active drag。
+5. 扩展 `Component` trait 约束，把 `DragAndDrop` 纳入 supertraits。
+6. 更新 `impl_component_default_traits!` 宏说明和使用方式；让简单组件可以通过宏补默认 trait。
+7. 使用 `rg "impl .*Component for|ComponentContext \\{" src crates tests examples` 检查所有构造点与实现点，不要遗漏 workspace crates（`atto-ui-editor`, `atto-ui-file-tree`, `atto-editor-app`, `atto-ui-chat`, `atto-ui-markdown`, `atto-ui-terminal`）。
+
+**测试**：
+- 新增 `src/composable/drag.rs` 内简单单元测试，确认默认 `DropFeedback` 为 reject / none。
+- 编译即覆盖 trait 迁移完整性。
+
+**验收**：
+- 全 workspace 编译通过。
+- 现有滚动条、splitter 局部拖拽行为无变化。
+
+### [TODO] R1 — 审阅 T1
+
+审阅 T1 改动：
+- 确认 `DragAndDrop` 是默认 no-op，未强迫所有组件写业务逻辑。
+- 确认所有 `ComponentContext` 构造点都设置了 `drag` 字段，且未用不安全占位或 panic。
+- 确认 public re-export 合理，不泄露 wm 内部私有类型。
+- 运行 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`。
+
+### [TODO] T2 — C1 WindowManager 全局拖拽会话与反馈绘制
+
+**依赖**：T1。
+
+**文件**：
+- `src/wm/manager/types.rs`
+- `src/wm/manager/events.rs`
+- `src/wm/manager/draw.rs`
+- `src/wm/manager/mod.rs`（如需引入新子模块）
+- `src/theme/mod.rs`
+
+**相关现状**：
+- `WindowManager` 当前字段：`windows`, `window_index`, `focused`, `drag: Option<DragState>`, `mouse_capture`。
+- `DragState` / `DragKind` 目前只覆盖 window move、resize、scrollbar。
+- `dispatch_to_window_view` 当前构造 `ComponentContext`，并阻止 chrome/border 事件进入 view。
+
+**步骤**：
+1. 在 `types.rs` 新增 `GlobalDragState`：
+   - `source_window`
+   - `source_component: Option<ComponentId>`
+   - `start_x/start_y`
+   - `last_x/last_y`
+   - `source: DragSource`
+   - `active: bool`
+   - `feedback: Option<DropFeedback>`
+   - `target_window: Option<WindowId>`
+2. 给 `WindowManager` 增加 `global_drag: Option<GlobalDragState>`。
+3. 修改 `handle_mouse`：
+   - `Down(Left)` 命中 `HitRegion::Body` 时，先按现有逻辑 focus，再向 view 查询 `drag_source_at`；写入 `global_drag` 但 `active=false`。
+   - chrome hit（titlebar、resize、scrollbar、buttons）继续走现有 `drag`，不要启动 component drag。
+   - `Drag(Left)` / `Moved`：如果 `global_drag` 存在，超过 `DragSource.threshold` 后置 `active=true`；用 `window_at(m.column, m.row)` 找 target；对 target view 调 `drag_over` 并保存 feedback；返回 consumed。
+   - `Up(Left)`：如果 active 且 target feedback effect 不是 `None`，调用 target view `drop`；否则调用 source view `drag_cancelled`；清理 `global_drag`。
+   - `Esc` 键取消 active/pending drag。
+4. active drag 期间向 target/source 构造 `ComponentContext { drag: Some(...) }`；非 drag 路径保持 `None`。
+5. 在 `draw.rs` 所有窗口绘制后叠加：
+   - ghost 文本：`DragSource.ghost` 或 payload fallback label。
+   - `DropFeedback.rect` 高亮：用 `drop-target-active` 或 `drop-target-reject` named style。
+6. 在 `theme/mod.rs` 的 `populate_named_styles` 注册：
+   - `drag-ghost`
+   - `drop-target-active`
+   - `drop-target-reject`
+   - `drop-insertion-marker`
+   - 如需要读取 typed field，可优先用 `named_style` 避免扩 `Theme` 字段。
+7. 保持现有 `drag: Option<DragState>` 语义不变；不要把 window move/resize 混入 component drag。
+
+**测试**：
+- 在 `src/wm/manager/tests.rs` 增加测试组件：
+  - 未超过 threshold 不触发 active drag。
+  - 超过 threshold 后 target 收到 `drag_over`。
+  - drop 到 reject target 时 source 收到 cancel。
+- 新增 `tests/pty_drag_drop.rs` 或扩展 snapshot fixture：
+  - 两个窗口，左侧 source 拖到右侧 target，屏幕出现 `Dropped: ...`。
+  - Esc cancel 后不出现 drop 文本。
+
+**验收**：
+- drag 期间普通 hover/click 不误触发。
+- window titlebar 移动、resize handle、window scrollbar 拖动不回归。
+
+### [TODO] R2 — 审阅 T2
+
+审阅 T2 改动：
+- 确认 `global_drag` 与现有 WM chrome `drag` 优先级清晰，不互相覆盖。
+- 确认 `Up`、`Esc`、source/target window 被关闭时都能清理 drag 状态。
+- 确认 ghost/drop feedback 绘制在所有窗口之上且不会 panic 于 0 宽/高 rect。
+- 确认测试真实经过 `WindowManager::handle_mouse`，不是直接调用组件方法。
+
+### [TODO] T3 — C2 Docking 类型、work area reserve 与基础绘制
+
+**依赖**：无；可与 T1/T2 并行，但与 T5 Explorer 迁移有依赖。
+
+**文件**：
+- `src/wm/window.rs`
+- `src/wm/manager/types.rs`
+- 新增 `src/wm/manager/docking.rs`
+- `src/wm/manager/mod.rs`
+- `src/wm/manager/core.rs`
+- `src/wm/manager/draw.rs`
+- `src/wm/manager/placement.rs`
+- `src/app/desktop.rs`
+- `src/lib.rs`
+
+**相关现状**：
+- `Window` 只有 `movable`, `resizable`, `rect`, `state`，没有 dock 状态。
+- `Desktop::layout(screen).work_area` 只扣 menu/statusbar。
+- `WindowManager::draw(bounds, theme)` 对 maximized window 使用传入 bounds。
+
+**步骤**：
+1. 在 `window.rs` 定义并 re-export：
+   - `DockSide::{Left, Right, Bottom, Top}`
+   - `DockAutoHide::{Disabled, Enabled { visible: bool }}`
+   - `WindowDock { side, size, min_size, max_size, auto_hide, handle_label }`
+2. `Window` 增加 `pub dock: Binding<Option<WindowDock>>`，`Window::new` 默认 `None`。
+3. 增加 builder：
+   - `Window::with_dock(...)`
+   - `WindowDock::docked(side, size)` 或等价 constructor。
+4. 新增 `src/wm/manager/docking.rs`：
+   - `dock_rect(bounds, dock, reserved_work_area) -> Rect`
+   - `reserve_for_docked_windows(windows, bounds) -> Rect`
+   - `WindowManager::effective_work_area(bounds) -> Rect`
+   - clamp 规则：`size` 在 `[min_size, max_size.unwrap_or(available)]`；Left/Right 扣 width，Bottom/Top 扣 height；auto-hide invisible 只 reserve 1 cell handle。
+5. 修改 `WindowManager::add_window`：dock window rect 由 dock 计算；非 dock window normalize 到 `effective_work_area(bounds)`。
+6. 修改 `WindowManager::draw`：
+   - draw 前计算 dock window rect 并 `window.rect.set(rect)`。
+   - 非 dock maximized window 使用 `effective_work_area(bounds)`。
+   - 非 dock normal window normalize 到 `effective_work_area(bounds)`。
+7. 修改 window move/resize/maximize 路径（`events.rs`、`placement.rs` 调用点）使用 `effective_work_area(bounds)`，避免普通窗口覆盖 dock reserve。
+8. 在 `src/lib.rs` re-export `DockSide`, `DockAutoHide`, `WindowDock`。
+
+**测试**：
+- `src/wm/manager/tests.rs`：
+  - left dock reserve 后 normal maximized window 的 rect.x >= dock right edge。
+  - right dock/bottom dock reserve 正确。
+  - dock window rect 不受原始 `rect` builder 值影响。
+- 运行现有 window move/resize/maximize 相关测试，确认不回归。
+
+**验收**：
+- Docked window 可以绘制在 work area 边缘。
+- 其他窗口 maximize 不覆盖 docked window。
+
+### [TODO] R3 — 审阅 T3
+
+审阅 T3 改动：
+- 确认 dock reserve 只在 desktop work_area 内计算，不覆盖 menu/statusbar。
+- 确认多个 dock window 的 reserve 顺序 deterministic。
+- 确认 maximized/normal/floating/modal window 行为未被错误统一；modal 是否覆盖 dock 需有明确设计和测试。
+- 确认 `WindowDock` public API 不暴露 manager 内部细节。
+
+### [TODO] T4 — C2 Dock resize / auto-hide / hit-test
+
+**依赖**：T3。
+
+**文件**：
+- `src/wm/manager/types.rs`
+- `src/wm/manager/events.rs`
+- `src/wm/manager/docking.rs`
+- `src/wm/manager/draw.rs`
+- `src/wm/manager/chrome.rs`（如 hit-test 需要复用 chrome helper）
+
+**步骤**：
+1. 扩展 `HitRegion`：
+   - `DockResizeEdge(DockSide)`
+   - `DockAutoHideHandle`
+2. 扩展 `DragKind`：
+   - `DockResize { start_size: u16, side: DockSide }`
+3. 在 `docking.rs` 实现：
+   - `dock_resize_edge_rect(window_rect, side) -> Rect`
+   - `dock_handle_rect(bounds, dock) -> Rect`
+4. 修改 hit-test：
+   - Left dock 内侧边：`rect.x + rect.width - 1`
+   - Right dock 内侧边：`rect.x`
+   - Bottom dock 内侧边：`rect.y`
+   - Top dock 内侧边：`rect.y + rect.height - 1`
+5. 修改 `handle_mouse`：
+   - `Down(Left)` 命中 `DockResizeEdge` 时设置 `DragKind::DockResize`。
+   - `Drag(Left)` 时只更新 `WindowDock.size`，不要直接持久化 `rect.width/height`。
+   - 点击 auto-hide handle 时切换 `DockAutoHide::Enabled { visible: true }`。
+   - 点击 dock 以外或焦点离开时，把 visible 置回 false。
+6. `draw.rs` 绘制 auto-hide handle；MVP 不做动画。
+
+**测试**：
+- `src/wm/manager/tests.rs`：
+  - drag left dock 内侧边增减 `dock.size`。
+  - auto-hide invisible 只 reserve 1 cell。
+  - 点击 handle 后 visible true，点击外部后 false。
+
+**验收**：
+- Dock resize 不影响非 dock window 的 persisted rect。
+- Auto-hide 不需要动画，但状态切换和 reserve 必须正确。
+
+### [TODO] R4 — 审阅 T4
+
+审阅 T4 改动：
+- 确认每个 `DockSide` 的内侧 resize 边无 off-by-one。
+- 确认 resize clamp 尊重 min/max/available。
+- 确认 auto-hide visible=false 时不会把 view 画到不可见区域外。
+- 确认鼠标事件不穿透到被 dock overlay 遮住的普通窗口。
+
+### [TODO] T5 — C2 atto-editor-app Explorer 改用 WM Docking
+
+**依赖**：T3；若实现 auto-hide UI，则依赖 T4。
+
+**文件**：
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- 相关测试：`crates/atto-editor-app/tests/*`
+
+**相关现状**：
+- `app.rs` 内部有 `ExplorerDock::{Left,Right}`、`default_explorer_rect`、`docked_explorer_rect`、`work_without_explorer`。
+- 初始 Explorer 用 `Window::new(WindowKind::Normal, "Explorer", explorer_rect, ...)`。
+- Editor 初始 rect 用 `work_without_explorer(work, explorer_rect, dock)` 手算。
+
+**步骤**：
+1. 删除或废弃 `ExplorerDock` 和手算 rect/work area helper：
+   - `default_explorer_rect`
+   - `docked_explorer_rect`
+   - `work_without_explorer`
+2. `AppState` 中 `explorer_dock` 改为 `DockSide` 或直接不保存，取窗口 `dock.side`。
+3. 创建 Explorer window 时：
+   - `rect` 可传 `Rect::default()` 或合理 fallback。
+   - `.with_dock(Some(WindowDock { side: DockSide::Left, size: 34, min_size: 20, max_size: None, auto_hide: DockAutoHide::Disabled, handle_label: Some("Explorer".into()) }))`
+   - `.with_tag("atto-editor-app-explorer")` 保持。
+4. `AppAction::ExplorerLeft/ExplorerRight` 改为更新 `w.dock` 中 `side`，不要直接写 `w.rect`。
+5. 初始 editor window 继续用 `default_editor_rect(Desktop::layout(screen).work_area, offset)`，让 WM clamp 到 effective work area。
+6. 清理 `explorer_rect` 的语义：如果保留，只记录上次 dock size；不要保存 dock rect。
+
+**测试**：
+- 新增 `crates/atto-editor-app/tests/explorer_docking.rs`：
+  - 启动后 Explorer 在左侧，editor window 不覆盖 Explorer。
+  - 触发 Dock Explorer Right 后 Explorer 到右侧。
+  - resize terminal 后 dock reserve 仍正确。
+
+**验收**：
+- app 层不再手算 Explorer reserve。
+- View 菜单中的 Explorer left/right 行为保持可用。
+
+### [TODO] R5 — 审阅 T5
+
+审阅 T5 改动：
+- 确认 `atto-editor-app` 没有残留 `work_without_explorer` 逻辑。
+- 确认 Explorer close/reopen 后 dock side/size 保持合理。
+- 确认 `active_editor_commands` 在 Explorer focused 时仍能 fallback 到 last focused editor。
+- 运行 `cargo test -p atto-editor-app` 和相关 PTY。
+
+### [TODO] T6 — 阶段三首批编辑动作接线
+
+**依赖**：无。建议在 LSP 大任务前做，低风险提升编辑能力。
+
+**文件**：
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-ui-editor/src/view/input.rs`
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-editor-app/src/language.rs`
+- `crates/atto-editor-app/src/window/document_tab.rs`
+
+**editor-core API 参考**：
+- `../editor-core/crates/editor-core/src/model.rs`
+- `EditCommand::{Indent, Outdent, DuplicateLines, DeleteLines, MoveLinesUp, MoveLinesDown, JoinLines, SplitLine, ToggleComment}`
+- `CursorCommand::{MoveWordLeft, MoveWordRight, MoveToMatchingBracket, AddCursorAbove, AddCursorBelow, AddNextOccurrence, AddAllOccurrences, ExpandSelection}`
+
+**步骤**：
+1. 扩展 `EditorAction`：
+   - `MoveWordLeft`, `MoveWordRight`, `MoveToMatchingBracket`
+   - `ToggleComment`, `JoinLines`, `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines`, `Indent`, `Outdent`, `SplitLine`
+   - `AddCursorAbove`, `AddCursorBelow`, `AddNextOccurrence`, `AddAllOccurrences`, `ExpandSelection`
+2. 在 `EditorKeymap::default_bindings` 添加默认键：
+   - `Ctrl+Left/Right` 或 `Alt+Left/Right`：word move
+   - `Ctrl+/`：toggle comment
+   - `Alt+Up/Down`：move lines
+   - `Shift+Alt+Down`：duplicate lines
+   - `Ctrl+Alt+Up/Down`：add cursor above/below
+   - `Ctrl+D`：add next occurrence
+   - `Ctrl+Shift+L`：add all occurrences
+   - matching bracket / join lines / split line 可先只通过 command palette 后续暴露，如直接绑定需避免与现有快捷键冲突。
+3. `EditorConfig` 增加 `comment: Binding<Option<editor_core_lang::CommentConfig>>`。
+4. `atto-editor-app/src/language.rs` 增加 `comment_config_for_language(language_id)`：
+   - Rust/JS/TS/JSON/TOML/YAML/Python/Markdown 至少给 line comment（JSON 无 comment 可返回 None）。
+   - 使用 `editor_core_lang::CommentConfig` 的实际构造 API，执行前查 `../editor-core/crates/editor-core-lang/src/lib.rs`。
+5. `DocumentTabView::build_editor_view` 设置 `cfg.comment`。
+6. `view/actions.rs` 中把新 action 映射到 `Command::Edit` / `Command::Cursor`。
+7. 对会修改文本的 action 用 `execute_and_sync_text`，并确保 LSP didChange 逻辑与 Undo/Redo 类似：文本变更后更新 `config.text`、syntax、LSP full change。
+8. `action_mutates_document(action)` 增加对应修改类 action，read-only 时禁止。
+
+**测试**：
+- `crates/atto-ui-editor/src/view/tests.rs`：
+  - indent/outdent、duplicate/delete/move line、join/split line、multi-cursor occurrence。
+- PTY：
+  - 在 `snapshot_editor_app` 或 app 测试中按 `Ctrl+/`，Rust 文件行注释切换。
+
+**验收**：
+- 所有新增 action 在 read-only 下不会修改文本。
+- 所有文本修改同步到 `config.text`，保存时能写入新内容。
+
+### [TODO] R6 — 审阅 T6
+
+审阅 T6 改动：
+- 确认所有 mutating action 都走 read-only gate。
+- 确认所有文本变更都同步 binding、syntax、LSP didChange。
+- 确认默认键不覆盖已有 Copy/Paste/Find/Fold/LSP goto 等绑定。
+- 确认 comment config 对不支持注释的语言安全 no-op，而不是 panic。
+
+### [TODO] T7 — L1 LSP diagnostics 数据接收与状态模型
+
+**依赖**：无；如果要显示在 app statusbar，依赖 T10/T11 更完整。
+
+**文件**：
+- `crates/atto-ui-editor/src/view/mod.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/state.rs`
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-ui-editor/src/lib.rs`
+
+**editor-core-lsp API 参考**：
+- `../editor-core/crates/editor-core-lsp/src/lsp_events.rs`
+- `LspEvent::{Notification, Response, DeferredRequest}`
+- `LspNotification::PublishDiagnostics`
+- `LspPublishDiagnosticsParams`, `LspDiagnostic`, `LspDiagnosticSeverity`
+- `lsp_diagnostics_to_processing_edits`
+
+**步骤**：
+1. 新增 `DiagnosticsSummary { errors, warnings, infos, hints }`，并从 `lib.rs` re-export。
+2. `EditorViewHandle` 增加 `diagnostics_summary: Binding<DiagnosticsSummary>`。
+3. `EditorLspController` 增加：
+   - `diagnostics: Vec<LspDiagnostic>`
+   - `diagnostic_result_id: Option<String>`
+   - `pending_document_diagnostic: Option<u64>`
+   - `diagnostic_cursor: Option<usize>`
+   - `diagnostics_revision: u64`
+4. `EditorView::new` 创建 diagnostics binding 并放入 handle。
+5. 重构 `maybe_poll_lsp`：
+   - 不再只 `let LspEvent::Response(resp) = ev else { continue; }`。
+   - match `Notification(PublishDiagnostics(params))`，调用 `apply_publish_diagnostics(params)`。
+   - Response 交给现有 hover/completion/goto 分支。
+   - DeferredRequest 暂时排队或安全忽略，但不要 panic；workspace/applyEdit 在 L2/L3 再处理。
+6. `apply_publish_diagnostics`：
+   - 用 `lsp.diagnostics_version_matches(&params)`（如 API 可见）过滤过期诊断；若不可见，至少按 document uri 匹配当前 `lsp.document().uri`。
+   - 调 `lsp_diagnostics_to_processing_edits(self.state_manager.editor().line_index(), &params)`。
+   - `state_manager.apply_processing_edits(edits)`。
+   - 保存 `params.diagnostics` 到 controller，更新 summary binding。
+7. 可选：实现 pull diagnostics request：
+   - `request_document_diagnostic(previous_result_id)`。
+   - response `textDocument/diagnostic` 解析 `result.items` 为 publish-like params。
+
+**测试**：
+- 扩展 `crates/atto-ui-editor/tests/lsp_editor.rs` 或新增 diagnostics 测试：
+  - mock LSP 发 `publishDiagnostics`。
+  - 断言 `diagnostics_summary.errors == 1`。
+  - 断言 `state_manager.editor().diagnostics()` 有内容（可通过 test-only helper 暴露）。
+
+**验收**：
+- publish diagnostics 能进入 editor-core processing edits。
+- hover/completion/goto response 行为不回归。
+
+### [TODO] R7 — 审阅 T7
+
+审阅 T7 改动：
+- 确认 `maybe_poll_lsp` 不再丢弃 Notification/DeferredRequest。
+- 确认 diagnostics uri/version 过滤不会把其他文档诊断写入当前 buffer。
+- 确认 summary binding 只在值变化时更新，避免无意义 dirty。
+- 确认 LSP session 出错时仍清理 diagnostics/style layer。
+
+### [TODO] T8 — L1 diagnostics gutter/statusbar 渲染与 F8 跳转
+
+**依赖**：T7。Statusbar 分段可先用旧 `set_left/set_right`，完整接入依赖 T11。
+
+**文件**：
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-ui-editor/src/view/render.rs`
+- `crates/atto-ui-editor/src/theme.rs`
+- `crates/atto-editor-app/src/window/document_tab.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+- `crates/atto-editor-app/src/app.rs`
+
+**步骤**：
+1. `EditorAction` 增加：
+   - `LspNextDiagnostic`
+   - `LspPrevDiagnostic`
+2. 默认键位：
+   - `F8` -> next diagnostic
+   - `Shift+F8` -> prev diagnostic
+3. 在 `view/actions.rs` 实现 `jump_to_diagnostic(direction)`：
+   - 取 `state_manager.editor().diagnostics()`。
+   - 当前 offset 用现有 `cursor_offset()`。
+   - next 找 `range.start > current`，否则 wrap 到第一个。
+   - prev 找 `< current` 的最后一个，否则 wrap 到最后。
+   - 用 `LineIndex` offset->position 方法移动 cursor；执行后 `adjust_scroll()`。
+4. `render.rs::layout_rects` 在 diagnostics enabled 时给 gutter 额外 2 列。
+5. `render_gutter`：
+   - 构建 line -> highest severity map。
+   - marker 使用 ASCII：`E`, `W`, `I`, `H`。
+   - marker style 用 `EditorTheme` 新字段或 `style_ids` 映射。
+6. `theme.rs`：
+   - `EditorTheme` 增加 `diagnostic_error/warning/info/hint` 或在 `style_ids` 中映射 `editor-core-lsp` diagnostics style id。
+   - style id 编码见 `../editor-core/crates/editor-core-lsp/src/editor.rs` `diagnostic_style_id`，当前约 `0x0400_0100 | severity_bits`。
+7. `DocumentTabView` 不要丢弃 `EditorViewHandle`：
+   - 保存 primary handle 的 `diagnostics_summary`。
+   - `TabState` 或 `DocumentTabView` 暴露 active diagnostics summary。
+8. `app.rs` on_tick 根据 active editor summary 更新 `desktop.status`（旧 StatusBar 可先 `set_right("E:1 W:0")`）。
+
+**测试**：
+- PTY：mock LSP diagnostics 后，屏幕 gutter 出现 `E`。
+- `F8` 后 cursor/viewport 到诊断行；可通过 screen 或 test helper 断言。
+- app statusbar 出现 `E:1 W:0`。
+
+**验收**：
+- 诊断 underline/style、gutter marker、summary 三者一致。
+- 无 diagnostics 时 gutter 不额外占用空间，或占用行为有明确配置。
+
+### [TODO] R8 — 审阅 T8
+
+审阅 T8 改动：
+- 确认 gutter 额外列与 line number/folding marker 的宽度计算一致，无覆盖文本首列。
+- 确认 wrap line 不重复显示主行 marker，或行为明确。
+- 确认 F8/Shift+F8 wrap-around 正确。
+- 确认 statusbar 在非 editor focused（Explorer focused）时仍显示 last focused editor 的 diagnostics。
+
+### [TODO] T9 — L2 Code Action 请求、列表 popup 与单文档应用
+
+**依赖**：T7；建议 T8 后做。
+
+**文件**：
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/mod.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-ui-editor/src/view/input.rs`
+- `crates/atto-ui-editor/src/view/render.rs`
+- `crates/atto-ui-editor/src/popup.rs`
+- `crates/atto-ui-editor/src/lib.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_code_action`
+- `code_action_items_from_value`
+- `apply_plan_for_code_action_item`
+- `LspSession::apply_workspace_edit`
+- `LspSession::request_execute_command`
+- `summarize_workspace_edit`
+
+**步骤**：
+1. `EditorAction::LspCodeAction`，默认键 `Ctrl+.`。
+2. `EditorLspController` 增加 `pending_code_action: Option<u64>` 和 `code_action_items: Vec<LspCodeActionItem>`。
+3. `popup.rs` 新增：
+   - `CodeActionPopupModel { rect, items, selected, scroll, accept }`
+   - `CodeActionItemView { title, kind, is_preferred }`
+4. `EditorView` 增加 `code_action_popup: Binding<Option<CodeActionPopupModel>>`。
+5. 请求逻辑：
+   - 取当前 selection offsets；无 selection 时用 cursor offset 的空 range。
+   - context 初期可 `json!({ "diagnostics": [] })`；若 T7 保存了可转 JSON 的 diagnostics，则传 overlap diagnostics。
+   - 调 `lsp.request_code_action(line_index, start, end, context)`。
+6. Response：
+   - method `textDocument/codeAction` 且 id match 时，`code_action_items_from_value(result)`。
+   - 生成 popup；preferred action 排前或标记 `*`。
+7. 输入：
+   - popup 打开时 Up/Down/PageUp/PageDown/Enter/Esc 行为与 completion 一致。
+   - 鼠标点击可后续补；MVP 至少 keyboard。
+8. Apply：
+   - `apply_plan_for_code_action_item`。
+   - `plan.edit`：先用 `summarize_workspace_edit` 检查是否只涉及当前 uri；跨 URI 时通过 `EditorEvent` 或 popup/status 明确提示 skipped，不要静默丢弃。
+   - 单文档 edit 用 `lsp.apply_workspace_edit(&mut state_manager, &edit)` 或当前 uri 的 `workspace_edit_text_edits_for_uri` + `apply_text_edits`。
+   - 应用后更新 `config.text`、syntax、LSP didChange。
+   - `plan.command`：调用 `request_execute_command(command, arguments)`。
+
+**测试**：
+- Mock LSP 返回 code action title，`Ctrl+.` 后 popup 显示。
+- Enter 应用 edit，文本改变。
+- 返回跨文件 edit 时不改文本，并显示 skipped/unsupported 提示。
+
+**验收**：
+- Popup 与 completion/hover 不互相遮挡；Esc 能关闭。
+- Code action 应用后 undo 可恢复（单文档 edit 应走 editor-core edit path）。
+
+### [TODO] R9 — 审阅 T9
+
+审阅 T9 改动：
+- 确认跨文件 WorkspaceEdit 没有被静默部分应用。
+- 确认 code action command 即使没有 edit 也能 execute。
+- 确认 popup keyboard 与 completion popup 不冲突。
+- 确认应用 edit 后 LSP didChange 和 syntax refresh 都发生。
+
+---
+
+## 阶段二：界面统一、快捷键与 pickers
+
+### [TODO] T10 — C4 MenuBar mnemonic/accelerator 与 Turbo Vision 绘制
+
+**依赖**：无。
+
+**文件**：
+- `src/app/menu/model.rs`
+- `src/app/menu/input.rs`
+- `src/app/menu/draw.rs`
+- `src/app/menu/layout.rs`
+- `src/theme/mod.rs`
+- `crates/atto-editor-app/src/app.rs`（菜单构建用新 API）
+
+**相关现状**：
+- `MenuItem.shortcut` 当前既显示 `Ctrl+S`，又在 `handle_shortcut_char` 中当单字符助记键使用，语义混杂。
+- `draw.rs` 已有下拉菜单边框/阴影和 accelerator 右对齐基础。
+
+**步骤**：
+1. `MenuItem` 新增字段：
+   - `accelerator: Binding<Option<String>>`
+   - `mnemonic: Binding<Option<char>>`
+2. 保持旧 `shortcut()` builder 兼容：
+   - 推荐新增 `.accelerator("Ctrl+S")` 和 `.mnemonic('S')`。
+   - 旧 `.shortcut()` 可暂时设置 `accelerator`；若传入单字符，可同时设置 mnemonic，需写清兼容规则。
+3. `handle_shortcut_char` 优先匹配 `mnemonic`；没有 mnemonic 时 fallback 到 label 首字符，避免旧菜单失效。
+4. `draw.rs` 支持 label 中 `&File` 或 `_File` 标记 mnemonic：
+   - 绘制时不显示 `&`/`_`。
+   - mnemonic 字符用 `theme.named_style("menu-mnemonic")` 或 `theme.status_bar_key`。
+5. 下拉菜单绘制：
+   - label、accelerator、submenu arrow 三段布局明确。
+   - disabled 用 `theme.widget.disabled`。
+   - selected 用 `theme.menu_item_selected`。
+6. `theme/mod.rs` 注册 named styles：
+   - `menu-mnemonic`
+   - `menu-item-shortcut`
+   - `menu-border`
+7. 更新 `atto-editor-app/src/app.rs::build_menu`，把 `shortcut("Ctrl+S")` 迁到 `.accelerator("Ctrl+S")`，为 File/View/Split 菜单设置 mnemonic。
+
+**测试**：
+- `src/app/menu/*` 单元：`&File` 绘制不含 `&`，mnemonic 命中。
+- PTY：打开菜单，断言文本为 `File` 而不是 `&File`；按 mnemonic 激活对应项。
+
+**验收**：
+- 旧代码调用 `.shortcut()` 仍编译。
+- 菜单 accelerator 显示不影响 mnemonic 输入。
+
+### [TODO] R10 — 审阅 T10
+
+审阅 T10 改动：
+- 确认 `shortcut` 兼容路径不会改变现有 demo/menu 行为。
+- 确认 Unicode label 下 mnemonic 绘制不会破坏列宽。
+- 确认 dropdown width 计算包含 stripped label + accelerator + arrow。
+- 确认主题 named styles 可由 JSON/YAML overlay 覆盖。
+
+### [TODO] T11 — C4 分段式 StatusBar 与 editor diagnostics 接入
+
+**依赖**：T8 可提供 editor diagnostics summary；没有 T8 时先做 StatusBar API。
+
+**文件**：
+- `src/app/status.rs`
+- `src/app/desktop.rs`
+- `src/theme/mod.rs`
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/window.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+
+**相关现状**：
+- `StatusBar` 当前只有 `left: String`, `right: String`，`set_left`, `set_right`, `draw`。
+- 旧实现已经修复 Unicode width，可复用 `UnicodeWidthStr` / grapheme 截断 helper。
+
+**步骤**：
+1. 新增：
+   - `StatusSegmentAlign::{Left, Right}`
+   - `StatusSegment { id, text: Binding<String>, style, align, min_width, priority, on_click }`
+2. `StatusBar` 增加 `segments: Vec<StatusSegment>`，保留 `left/right` 兼容字段和 `set_left/set_right`。
+3. 新增 API：
+   - `set_segments(Vec<StatusSegment>)`
+   - `push_segment(StatusSegment)`
+   - `handle_mouse(&MouseEvent, area) -> EventResult`（点击 on_click）
+4. `draw`：
+   - 若 `segments.is_empty()`，走旧 left/right 逻辑。
+   - left segments 从左到右，right segments 从右到左。
+   - 宽度不足按 `priority` 隐藏；最后按 grapheme 截断。
+   - segment separator 用 `theme.glyph("status-separator")` fallback `" "`.
+5. `theme/mod.rs` 注册：
+   - `status-bar`
+   - `status-bar-key`
+   - `status-segment`
+   - `status-segment-warning`
+   - `status-segment-error`
+6. `Desktop` 事件分发中把 statusbar mouse click 路由到 `StatusBar::handle_mouse`。
+7. `atto-editor-app` on_tick 更新 segments：
+   - left：app name / active path / dirty marker。
+   - right：diagnostics `E:n W:n`、language、`Ln x, Col y`、indentation、LSP status。
+   - 短期如果 active editor status 暴露不足，先只接 diagnostics + language/path。
+
+**测试**：
+- `src/app/status.rs` 单元：
+  - ASCII/CJK/emoji segment 对齐。
+  - priority 隐藏。
+  - click hit-test。
+- PTY：
+  - editor app 状态栏显示 diagnostics summary。
+
+**验收**：
+- `set_left/set_right` 旧调用仍能工作。
+- statusbar 背景样式铺满整行。
+
+### [TODO] R11 — 审阅 T11
+
+审阅 T11 改动：
+- 确认 segment truncation 在 grapheme 边界且列宽正确。
+- 确认 click hit-test 与绘制坐标一致。
+- 确认 `Desktop::layout` 不因 statusbar 内部分段而改变。
+- 确认 editor app 在 Explorer focused 时仍显示 last focused editor 状态。
+
+### [TODO] T12 — C3 框架级多键序列 keymap engine
+
+**依赖**：无；与 T13 command registry 配套。
+
+**文件**：
+- 新增 `src/app/keymap.rs` 或 `src/input/keymap.rs`（建议 `src/app/keymap.rs`）
+- `src/app/mod.rs`
+- `src/lib.rs`（如需要 re-export）
+- `crates/atto-ui-editor/src/keymap.rs`（桥接）
+
+**相关现状**：
+- `atto-ui-editor/src/keymap.rs` 有自己的 `KeyChord` 和 `EditorKeymap(HashMap<KeyChord, EditorAction>)`，只支持单 chord。
+- 框架层没有通用 key sequence。
+
+**步骤**：
+1. 新增框架 `KeyChord { code, modifiers }`，支持 `from_key_event`。
+2. 新增 `KeySequence(Vec<KeyChord>)`。
+3. 实现 trie / prefix state：
+   - `KeySequenceEngine<A>`
+   - pending sequence
+   - timeout
+   - `handle_key(chord, now) -> KeymapMatch<A>`
+4. `KeymapMatch` 至少包含：
+   - `None`
+   - `Prefix { choices }`
+   - `Exact(A)`
+   - `AmbiguousExact { action, choices }`
+   - `Timeout`
+5. 新增 `WhichKeyChoice { key_label, command_id, title }`。
+6. `atto-ui-editor::KeyChord` 与框架 `KeyChord` 做桥接，不立即删除 editor 内类型。
+7. 添加格式化 helper：`Ctrl+K`, `Shift+F8`, `Ctrl+K Ctrl+F` label 生成。
+
+**测试**：
+- 单元：
+  - 单键 exact。
+  - `Ctrl+K` prefix。
+  - `Ctrl+K Ctrl+F` exact。
+  - ambiguous exact。
+  - timeout 清 pending。
+
+**验收**：
+- 不影响现有 `EditorKeymap::get(chord)`。
+- 新 engine 可独立用于 app command registry。
+
+### [TODO] R12 — 审阅 T12
+
+审阅 T12 改动：
+- 确认 trie 匹配 deterministic。
+- 确认 timeout 不依赖 wall clock hidden global，测试可注入 now。
+- 确认 KeyModifiers 比较与 crossterm 语义一致。
+- 确认没有把 editor 专用 action 类型引入 core keymap。
+
+### [TODO] T13 — Command registry 与 which-key popup
+
+**依赖**：T12。
+
+**文件**：
+- `src/app/keymap.rs`
+- 新增 `src/app/keymap_popup.rs` 或合并入 keymap 模块
+- `src/app/desktop.rs`
+- `src/theme/mod.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- 新增 `crates/atto-editor-app/src/commands.rs`
+
+**步骤**：
+1. 新增框架泛型 registry：
+   - `CommandDescriptor<A> { id, title, category, default_sequence, action }`
+   - `CommandRegistry<A> { commands, by_id }`
+2. 实现从 registry 构建 `KeySequenceEngine<A>`。
+3. Which-key popup model：
+   - `WhichKeyModel { prefix_label, choices }`
+   - 绘制 key label + title。
+4. 在 `Desktop` 增加可选 which-key overlay，或提供可复用 component 由 app 自己开 floating window。
+5. Theme token：
+   - `which-key-popup`
+   - `which-key-key`
+   - `which-key-title`
+6. `atto-editor-app/src/commands.rs`：
+   - 定义 app command registry，覆盖 File/View/Split/editor/LSP/picker 命令。
+   - 菜单后续可从 registry 生成，当前可先与菜单共享 id/title/shortcut 数据。
+
+**测试**：
+- key prefix 后显示 which-key choices。
+- 继续按完整序列触发 action 并关闭 popup。
+
+**验收**：
+- 命令面板和 keymap 能共享同一 command id/title。
+- which-key 不抢占普通单键输入。
+
+### [TODO] R13 — 审阅 T13
+
+审阅 T13 改动：
+- 确认 command id 唯一性有测试或 debug assertion。
+- 确认 which-key overlay 绘制在窗口之上但不破坏 modal。
+- 确认 prefix pending 时 Esc 可取消。
+- 确认 app command registry 不持有短生命周期引用。
+
+### [TODO] T14 — 通用 Picker component 与 Command Palette
+
+**依赖**：T13 推荐；无 T13 时也可先做独立 picker。
+
+**文件**：
+- 新增 `crates/atto-editor-app/src/picker.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/commands.rs`
+- 使用 `src/fuzzy.rs` 的 `atto_ui::fuzzy::{fuzzy_filter, fuzzy_match}`
+
+**参考**：
+- `../editor-core/crates/editor-core-app/src/command_palette.rs`
+- `../editor-core/crates/editor-core-app/src/fuzzy.rs`
+
+**步骤**：
+1. 新增 `PickerItem<A> { title, subtitle, shortcut, action }`。
+2. 新增 `PickerView<A>`：
+   - query `TextBox`
+   - filtered list
+   - selected index / scroll
+   - Enter accept、Esc close、Up/Down/PageUp/PageDown navigation
+3. 使用 `atto_ui::fuzzy::fuzzy_filter`，不要复制 `editor-core-app` fuzzy。
+4. `AppAction` 增加：
+   - `OpenCommandPalette`
+   - `RunCommand(String)` 或直接 accept `AppAction`
+5. `app.rs` 增加打开 command palette 的 modal/floating window。
+6. Command palette items 来自 `commands.rs` registry。
+
+**测试**：
+- Picker 单元：query 过滤、tie order、selected clamp。
+- PTY：`Ctrl+Shift+P` 打开 command palette，输入 `save`，Enter 触发 Save（可用状态文本或 mock action 断言）。
+
+**验收**：
+- Picker 可复用到 file/buffer/symbol/search。
+- Esc 必须关闭 picker 并恢复原窗口焦点。
+
+### [TODO] R14 — 审阅 T14
+
+审阅 T14 改动：
+- 确认 picker 没有每帧重建大列表导致明显卡顿；query 变化时过滤即可。
+- 确认 fuzzy positions 如用于高亮时 byte offset 处理 Unicode 安全。
+- 确认 modal/floating window close hook 清理 AppState。
+- 确认 command palette 不绕过 disabled command 规则。
+
+### [TODO] T15 — File picker 与 Buffer/tab picker
+
+**依赖**：T14。
+
+**文件**：
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- `crates/atto-editor-app/src/workspace.rs`
+- `crates/atto-editor-app/src/window.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+- `crates/atto-editor-app/src/picker.rs`
+
+**参考**：
+- `../editor-core/crates/editor-core-app/src/workspace_index.rs`
+
+**步骤**：
+1. `AppAction` 增加：
+   - `OpenFilePicker`
+   - `OpenBufferPicker`
+   - `SelectEditorTab { window: WindowId, tab_id: u64 }`
+2. File picker：
+   - MVP：复用 `build_workspace_tree` 后 flatten file nodes。
+   - workspace roots 改变时 invalid cache。
+   - picker accept -> `AppAction::OpenPath { path, target: OpenTarget::NewTab }`。
+   - 后续如引入 `editor-core-app::WorkspaceFileIndex`，需在 `Cargo.toml` 加 path dependency，并确认 `ignore` 依赖。
+3. Buffer/tab picker：
+   - `TabState` 增加 stable `tab_id: u64`。
+   - `EditorWindowView` 暴露 `tab_summaries()` 或通过 command queue 响应。
+   - `EditorWindowCommand::SelectTabById(u64)`。
+4. 快捷键：
+   - `Ctrl+P` 打开 file picker。
+   - buffer picker 可用 command palette 或 `Ctrl+Shift+P` 命令。
+
+**测试**：
+- File picker 在 temp workspace 中能 fuzzy 找到 `src/main.rs` 并打开。
+- Buffer picker 能从两个 tabs 切换到指定 tab。
+
+**验收**：
+- tab id 不因 close/reorder 改变而误选。
+- 大 workspace 初期可同步构建，但要有 max entries 或缓存，避免每帧扫描。
+
+### [TODO] R15 — 审阅 T15
+
+审阅 T15 改动：
+- 确认 file picker 不显示目录和隐藏 `.git` 内容。
+- 确认 workspace root 变化后 index invalidation 正确。
+- 确认 buffer picker accept 不依赖过期 tab index。
+- 确认打开文件沿用现有 `open_path`，不会重复添加 workspace root。
+
+### [TODO] T16 — Document symbols / Workspace symbols / Global search pickers
+
+**依赖**：T14；workspace symbols 最好依赖 T20/T21 workspace LSP refactor，MVP 可单文档 LSP。
+
+**文件**：
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/mod.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/picker.rs`
+- 可新增 `crates/atto-editor-app/src/search.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_document_symbols`
+- `lsp_document_symbols_to_outline`
+- `LspSession::request_workspace_symbol`
+- `lsp_workspace_symbols_to_results`
+
+**editor-core-app 参考**：
+- `../editor-core/crates/editor-core-app/src/find_in_files.rs`
+
+**步骤**：
+1. `EditorAction` 或 `AppAction` 增加：
+   - `OpenDocumentSymbolPicker`
+   - `OpenWorkspaceSymbolPicker`
+   - `OpenGlobalSearch`
+2. Document symbols：
+   - 当前 active `EditorView` 调 `request_document_symbols()`。
+   - response 转 outline，发送 `EditorEvent::DocumentSymbols`.
+   - app 打开 picker，accept 后让 active editor cursor move 到 symbol range start。
+3. Workspace symbols：
+   - 若未做 workspace LSP，先通过 last focused editor 的 LSP session 调 `request_workspace_symbol(query)`。
+   - accept 后 `OpenPath` 对应 URI，再 jump 到位置。
+4. Global search：
+   - MVP 用 Rust helper：复制/移植 `find_in_files` 逻辑或给 `atto-editor-app` 添加 `editor-core-app` path dependency。
+   - 避免每次 keypress 全量搜索；输入确认后搜索，或 debounce。
+   - 结果用 picker/list 显示 path:line: text。
+5. 搜索结果 accept：
+   - open file。
+   - jump to line/column，需要给 `EditorWindowCommand::OpenFileAndJump { path, line, column }` 或 open 后排队 jump。
+
+**测试**：
+- Mock LSP document symbols response -> picker shows symbol -> accept moves cursor。
+- Global search temp root 中找到 `TODO`，accept 打开对应文件。
+
+**验收**：
+- LSP response 异步到达时，如果 picker 已关闭，不应 panic。
+- Workspace symbol URI 非 file:// 时明确提示 unsupported。
+
+### [TODO] R16 — 审阅 T16
+
+审阅 T16 改动：
+- 确认 document symbol range 使用 UTF-16/LSP 坐标转 editor position 正确。
+- 确认 workspace symbol accept 对 unopened file 走统一 `open_path`。
+- 确认 global search 尊重 ignore/.gitignore 或明确 MVP 限制。
+- 确认搜索大文件有 size limit，避免卡 UI。
+
+---
+
+## 阶段三：Workspace LSP 与高级 LSP 功能
+
+### [TODO] T17 — Workspace / LSP Bridge 状态层
+
+**依赖**：建议 T7-T9 后做。
+
+**文件**：
+- 新增 `crates/atto-editor-app/src/workspace_state.rs`
+- 新增 `crates/atto-editor-app/src/lsp_workspace.rs`
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+- `crates/atto-editor-app/src/window/document_tab.rs`
+- `crates/atto-editor-app/Cargo.toml`
+
+**editor-core API 参考**：
+- `../editor-core/crates/editor-core/src/workspace.rs`
+- `Workspace::{new, open_buffer, create_view, set_active_view, buffer_id_for_uri, buffer_text, buffer_text_for_saving, apply_text_edits, apply_processing_edits, take_last_text_delta_for_buffer}`
+- `../editor-core/crates/editor-core-lsp/src/workspace_sync.rs`
+- `LspWorkspaceSync::{start, open_workspace_document, close_workspace_document, set_active_workspace_document, poll_workspace, did_change_from_text_delta, apply_workspace_edit}`
+- `../editor-core/crates/editor-core-app/src/workspace_io.rs` 可参考，不一定直接依赖。
+
+**步骤**：
+1. `Cargo.toml` 如需使用 `editor-core-app::WorkspaceIo`，添加 path dependency 到 `../editor-core/crates/editor-core-app`；否则在本 app 内实现最小 open/save helper。
+2. `AppState` 增加：
+   - `workspace: editor_core::workspace::Workspace`
+   - `path_to_buffer: HashMap<PathBuf, BufferId>`
+   - `buffer_to_tabs: HashMap<BufferId, Vec<TabRef>>`
+   - `lsp_by_root_language: HashMap<LspKey, LspWorkspaceSync>`
+3. 打开文件时：
+   - 仍创建 `Binding<String>` 给现有 `EditorView`（bridge 阶段）。
+   - 同时 `Workspace::open_buffer(Some(path_to_file_uri(path)), &text, viewport_width)`。
+   - `TabState` 保存 `buffer_id`。
+4. 文本同步：
+   - 保存/rename/format 前，把 tab binding 最新文本同步到 workspace buffer。
+   - workspace edit 后，把 `Workspace::buffer_text(buffer_id)` 写回对应 tab bindings。
+5. LSP sync：
+   - 按 `(workspace_root, language_id)` 复用 `LspWorkspaceSync`。
+   - 打开 tab 时 `open_workspace_document`。
+   - active tab 改变时 `set_active_workspace_document`。
+   - on_tick `poll_workspace` 并 drain events。
+6. 明确 bridge 限制：现有 `EditorView` 仍有自己的 `LspSession`，workspace LSP 先只服务 rename/workspace symbol；后续再新增 `WorkspaceEditorView` 替代 per-view session。
+
+**测试**：
+- 打开两个文件后 workspace 有两个 buffers。
+- 对 workspace 应用 edit 后两个 tab binding 更新。
+- active tab 切换后对应 LSP active document 改变（可用 mock / state 断言）。
+
+**验收**：
+- 不破坏当前打开/保存/dirty title。
+- 同一个文件重复打开仍只对应一个 buffer。
+
+### [TODO] R17 — 审阅 T17
+
+审阅 T17 改动：
+- 确认 bridge 同步不会形成 binding dirty 循环。
+- 确认 `path_to_file_uri` / `file_uri_to_path` 使用 `editor-core-lsp` helper，避免手写 URI。
+- 确认 close tab 后 buffer/LSP document 生命周期合理；若暂不 close，需注释说明。
+- 确认 workspace edit 后 dirty 状态正确更新。
+
+### [TODO] T18 — L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用
+
+**依赖**：T17。
+
+**文件**：
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-ui-editor/src/popup.rs`
+- `crates/atto-editor-app/src/app.rs`
+- `crates/atto-editor-app/src/lsp_workspace.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_prepare_rename`
+- `LspSession::request_rename`
+- `apply_workspace_edit_to_workspace`
+- `LspWorkspaceSync::apply_workspace_edit`
+
+**步骤**：
+1. `EditorAction::LspRename`，默认键 `F2`。
+2. prepare rename：
+   - active editor position -> `request_prepare_rename(line_index, line, column)`。
+   - response OK 后打开 rename input popup，默认文本为 prepare range 或当前 word。
+3. Rename input：
+   - Enter 调 `request_rename(line_index, line, column, new_name)`。
+   - Esc 取消。
+4. Rename response：
+   - 通过 workspace LSP sync 或 `apply_workspace_edit_to_workspace(&mut workspace, &edit)` 应用到已打开 buffers。
+   - 对 `skipped_uris` 显示明确提示，不写未打开文件。
+   - 更新所有 tab binding、dirty title、diagnostics/syntax。
+5. 如果没有 T17 workspace 可用，action 应显示 “Rename requires workspace support”，不要走 partial rename。
+
+**测试**：
+- Mock LSP prepare+rename 单文件 edit。
+- 两个已打开文件 cross-file edit 都更新。
+- 未打开 URI 被 skipped 且磁盘文件不被改。
+
+**验收**：
+- Rename 不会部分静默成功。
+- Rename edit 是 undoable（至少 per buffer 可 undo；若 bridge 不支持，记录限制）。
+
+### [TODO] R18 — 审阅 T18
+
+审阅 T18 改动：
+- 确认 prepare rename error/null 时 UI 提示合理。
+- 确认 skipped unopened URI 不写磁盘。
+- 确认 multiple buffers 更新后 tab dirty markers 正确。
+- 确认 rename popup 不与 completion/code action popup 状态冲突。
+
+### [TODO] T19 — L4 Signature Help
+
+**依赖**：T7 的 LSP response 分发。
+
+**文件**：
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/input.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/render.rs`
+- `crates/atto-ui-editor/src/popup.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_signature_help`
+- `signature_help_from_value`
+
+**步骤**：
+1. `EditorAction::LspSignatureHelp`，默认键 `Ctrl+Shift+Space`。
+2. `EditorLspController` 增加 `pending_signature_help: Option<u64>`。
+3. `popup.rs` 新增 `SignatureHelpPopupModel { rect, signatures, active_signature, active_parameter }`。
+4. 输入触发：
+   - 普通输入 `(` / `,` 后，如果 LSP enabled，调用 `request_signature_help_now()`。
+   - 手动 action 也触发。
+5. response：
+   - `signature_help_from_value(result)`。
+   - popup rect 类似 completion cursor rect。
+6. 渲染：
+   - 显示 active signature label。
+   - active parameter 用 selected/underline style。
+   - Esc 或普通输入关闭/刷新。
+
+**测试**：
+- Mock LSP：输入 `(` 后出现 signature popup。
+- Esc 关闭。
+
+**验收**：
+- completion popup 打开时 signature popup 不抢焦点。
+- 无 signature result 时 popup 清空。
+
+### [TODO] R19 — 审阅 T19
+
+审阅 T19 改动：
+- 确认触发字符插入后 cursor position 用 post-edit 位置请求。
+- 确认 stale response 不显示到新 cursor 位置。
+- 确认 popup rect clamp 在 editor content bounds 内。
+
+### [TODO] T20 — L5 Formatting 手动格式化与保存前格式化接口
+
+**依赖**：T7；format-on-save 完整体验可依赖 T17。
+
+**文件**：
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-ui-editor/src/keymap.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-editor-app/src/window.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_formatting`
+- `lsp_formatting_options`
+- `lsp_formatting_options_for_indentation_config`
+- `text_edits_from_value`
+- `apply_text_edits`
+
+**步骤**：
+1. `EditorAction::LspFormatDocument`；C3 完成后绑定 `Ctrl+K Ctrl+F`，此前通过 command palette 暴露。
+2. `EditorConfig` 增加 `format_on_save: Binding<bool>`，默认 false。
+3. 手动 format：
+   - 从 indent config 生成 LSP formatting options。
+   - `lsp.request_formatting(options)`。
+4. response：
+   - `text_edits_from_value(result)`。
+   - `apply_text_edits(&mut state_manager, &edits)`。
+   - 更新 `config.text`、syntax、LSP didChange。
+5. 保存前格式化：
+   - MVP 只提供 config 和 `EditorWindowCommand::FormatActive`。
+   - 完整版 `SaveActive` 如 `format_on_save=true`，先 format，成功后 save；失败要提示并可选择是否继续保存。
+
+**测试**：
+- Mock LSP formatting response 改变文本。
+- 无 LSP 时 format action ignored 并不改文本。
+
+**验收**：
+- Formatting edit 可 undo。
+- 保存时格式化不应造成重复 didChange 或 dirty 状态错乱。
+
+### [TODO] R20 — 审阅 T20
+
+审阅 T20 改动：
+- 确认 formatting 使用当前 tab_width/insert_spaces。
+- 确认空 edits response 不改变 dirty 状态。
+- 确认 format-on-save 失败路径不静默吞错误。
+
+### [TODO] T21 — L6 Inlay Hints 与 composed grid 渲染
+
+**依赖**：T7；建议 T20 后做。
+
+**文件**：
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-ui-editor/src/view/mod.rs`
+- `crates/atto-ui-editor/src/view/lsp.rs`
+- `crates/atto-ui-editor/src/view/render.rs`
+- `crates/atto-ui-editor/src/theme.rs`
+
+**editor-core-lsp API 参考**：
+- `LspSession::request_inlay_hints`
+- `lsp_inlay_hints_to_processing_edit`
+- `editor-core` composed viewport APIs：`get_headless_grid_composed` / `get_viewport_content_composed`
+
+**步骤**：
+1. `EditorInlayHintsConfig { enabled: Binding<bool>, refresh_delay: Binding<Duration> }`，加入 `EditorConfig`。
+2. `EditorAction::LspToggleInlayHints`。
+3. `EditorLspController` 增加:
+   - `pending_inlay_hints: Option<u64>`
+   - `last_inlay_range/revision`
+4. 在 draw/idle 中，当 focused、enabled、viewport/text revision 变化且无 pending 时，请求当前可见 range：
+   - start/end offset 用 `LineIndex` position conversion。
+   - `lsp.request_inlay_hints(line_index, start, end)`。
+5. response：
+   - `lsp_inlay_hints_to_processing_edit(line_index, result)`。
+   - `state_manager.apply_processing_edits([edit])`。
+6. `render_text` 改造：
+   - inlay/code lens enabled 时使用 composed grid。
+   - 抽象 styled grid 与 composed grid 的 span 生成，virtual text style 使用 `theme.inlay_hint`。
+7. `theme.rs` 增加 inlay hint/code lens style。
+
+**测试**：
+- Mock inlay hint response 后 PTY 断言出现 virtual text。
+- Toggle off 后 virtual text 消失。
+
+**验收**：
+- Inlay hints 不修改 backing text。
+- Virtual text 与 selection/cursor 渲染不互相错位。
+
+### [TODO] R21 — 审阅 T21
+
+审阅 T21 改动：
+- 确认 composed grid 渲染不破坏现有 syntax/semantic token style。
+- 确认 virtual text 不参与 copy/save。
+- 确认 viewport range 计算覆盖 soft wrap/folding 情况，至少不 panic。
+
+---
+
+## 阶段四：File tree 与文件面板
+
+### [TODO] T22 — F-FT FileTree 节点模型、git status 样式与多选
+
+**依赖**：无。
+
+**文件**：
+- `crates/atto-ui-file-tree/src/lib.rs`
+- `crates/atto-editor-app/src/workspace.rs`
+- `crates/atto-editor-app/src/explorer_window.rs`
+- `crates/atto-ui-file-tree/tests/pty_file_tree.rs`
+
+**相关现状**：
+- `FileTreeNode` 当前字段：`id`, `name`, `kind`, `children`, `is_expanded`。
+- `FileTreeBindings` 当前只有 `selection: Binding<Option<FileTreeNodeId>>`，无多选。
+
+**步骤**：
+1. `atto-ui-file-tree` 增加：
+   - `FileTreeGitStatus::{Modified, Added, Deleted, Renamed, Untracked, Ignored, Clean}`
+   - `FileTreeNode.git_status: Option<FileTreeGitStatus>`
+   - builder `with_git_status(status)`。
+2. `FileTreeBindings` 增加：
+   - `selections: Binding<BTreeSet<FileTreeNodeId>>`
+   - `selection_anchor: Option<FileTreeNodeId>`
+3. 保持 `selection` 作为 primary selection 兼容现有 API。
+4. 事件：
+   - click：单选。
+   - Ctrl+click：toggle。
+   - Shift+click：从 anchor 到 clicked visible row range。
+   - Shift+Up/Down：扩展 range。
+5. 绘制：
+   - selected rows 用 selection style。
+   - git status 根据 named style 或 theme widget accent 显示。
+6. `ExplorerWindowView` 读取多选 ids，为后续 context menu/drag 做准备。
+
+**测试**：
+- 单元：visible rows range selection。
+- PTY：Ctrl/Shift 多选，屏幕 selected style 或 debug text 可断言。
+
+**验收**：
+- 单选旧行为不回归。
+- 多选后 Enter 打开文件只打开 primary selection。
+
+### [TODO] R22 — 审阅 T22
+
+审阅 T22 改动：
+- 确认多选不破坏 runtime property schema 兼容。
+- 确认 range selection 只在 visible rows 上操作，不选中 collapsed children。
+- 确认 git status None/Clean 样式不会制造噪声。
+
+### [TODO] T23 — F-FT Context menu 与 inline new/rename
+
+**依赖**：T22。
+
+**文件**：
+- `crates/atto-ui-file-tree/src/lib.rs`
+- `crates/atto-editor-app/src/explorer_window.rs`
+- `crates/atto-editor-app/src/actions.rs`
+- `crates/atto-editor-app/tests/explorer_*`
+
+**步骤**：
+1. 右键 context menu：
+   - MVP 可在 `ExplorerWindowView` 内打开 app-level popup，不必先做框架通用 context menu。
+   - actions：New File, New Folder, Rename, Delete, Cut, Copy, Paste, Copy Path, Reveal。
+2. `FileTree` inline edit state：
+   - `InlineEditState { node_id, parent_id, text: TextBuffer, kind }`
+   - kind: Rename / NewFile / NewFolder。
+3. 绘制 inline row 时用 input 样式替代 label。
+4. Enter commit：
+   - Rename -> `std::fs::rename(old, new)`。
+   - New file -> `fs::File::create_new` 或检查 exists 后 create。
+   - New folder -> `fs::create_dir`。
+   - 成功后 `ExplorerWindowCommand::Refresh`。
+5. Esc cancel。
+6. Delete action：
+   - MVP 可移到 trash 暂不做；若直接删除，必须弹确认。没有确认 dialog 时先只实现 Rename/New。
+
+**测试**：
+- Inline rename commit/cancel。
+- New file/folder temp dir 成功创建。
+- Existing target 不覆盖并显示错误。
+
+**验收**：
+- 所有 FS 操作错误都通过状态/提示显示，不 silent return。
+- inline edit 不影响滚动条/selection。
+
+### [TODO] R23 — 审阅 T23
+
+审阅 T23 改动：
+- 确认文件名为空、含路径分隔符、目标已存在时安全拒绝。
+- 确认 rename/new 后 id/path maps 刷新。
+- 确认右键菜单不会误触发左键 selection/open。
+
+### [TODO] T24 — F-FT Drag move、剪贴板与 Git status 刷新
+
+**依赖**：T2, T22；clipboard 可不依赖 drag。
+
+**文件**：
+- `crates/atto-ui-file-tree/src/lib.rs`
+- `crates/atto-editor-app/src/explorer_window.rs`
+- `crates/atto-editor-app/src/workspace.rs`
+- `crates/atto-editor-app/src/app.rs`
+
+**步骤**：
+1. Drag move：
+   - `FileTree::drag_source_at` 返回 `DragPayload::Custom { ty: "atto-ui-file-tree/node-ids", data: "id1,id2" }`。
+   - `ExplorerWindowView::drop` 解析 ids -> paths。
+   - drop target 仅 directory/root。
+   - 用 `std::fs::rename` 移动；跨 filesystem 失败时 MVP 显示错误，不自动 copy+delete。
+2. 剪贴板：
+   - `ExplorerWindowView` 增加 `FileClipboard { mode: Cut|Copy, paths }`。
+   - Paste 到 directory：
+     - file copy: `fs::copy`
+     - dir copy: recursive helper
+     - cut: `fs::rename`
+     - 冲突：MVP 不覆盖，显示错误。
+3. Git status：
+   - 后台/节流运行 `git -C <root> status --porcelain=v1 --ignored=matching`。
+   - 解析 XY/path -> `FileTreeGitStatus`。
+   - 写入 workspace tree nodes 后 refresh binding。
+   - draw 不执行 git command。
+4. Refresh：
+   - 文件操作成功后 `ExplorerWindowCommand::Refresh`。
+   - workspace roots 改变时清 git cache。
+
+**测试**：
+- Drag move temp file 到 folder。
+- Cut/copy/paste 不覆盖已有文件。
+- Git status parser 单元：modified/added/untracked/ignored。
+
+**验收**：
+- 文件移动失败不丢源文件。
+- Git command 不在 draw/event hot path 同步运行。
+
+### [TODO] R24 — 审阅 T24
+
+审阅 T24 改动：
+- 确认 drag payload 无法伪造越过 workspace root 限制。
+- 确认 recursive copy 避免把目录复制到自身/后代。
+- 确认 cut 成功后 clipboard 清理，失败后保持或明确策略。
+- 确认 git status 对 renamed paths、spaces in filenames 解析正确或有明确限制。
+
+---
+
+## 阶段五：编辑体验收尾
+
+### [TODO] T25 — Auto-pairs / auto-indent 改用 editor-core 原语
+
+**依赖**：T6 可共享 action/text sync helper。
+
+**文件**：
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-ui-editor/src/view/input.rs`
+- `crates/atto-ui-editor/src/view/actions.rs`
+- `crates/atto-editor-app/src/language.rs`
+- `crates/atto-editor-app/src/window/document_tab.rs`
+
+**editor-core API 参考**：
+- `EditCommand::TypeChar { ch }`
+- `EditCommand::InsertNewline { auto_indent }`
+- `ViewCommand::SetAutoPairsConfig`
+- `ViewCommand::SetIndentationConfig`
+- `AutoPairsConfig`
+
+**步骤**：
+1. `EditorConfig` 增加：
+   - `auto_pairs: Binding<AutoPairsConfig>` 或更小 config。
+   - `auto_indent: Binding<bool>`。
+2. `language.rs` 增加：
+   - `indentation_config_for_language(language_id)`
+   - `auto_pairs_config_for_language(language_id)`
+3. `build_editor_view` 设置 indentation/auto-pairs view command。
+4. `handle_key_event` 普通 char：
+   - 不再直接 `insert_text(&c.to_string())`。
+   - 改 `execute_and_sync_text(Command::Edit(EditCommand::TypeChar { ch: c }))`。
+5. Enter：
+   - 改 `EditCommand::InsertNewline { auto_indent: config.auto_indent.get() }`。
+6. 保留 paste 走 `insert_text(text)` 或 `EditCommand::InsertText { text }`，不要对 paste 套 auto-pairs。
+
+**测试**：
+- 输入 `(` 自动补 `)`。
+- 有 selection 输入 `"` wrap selection。
+- Enter auto-indent 保持上一行缩进。
+
+**验收**：
+- Unicode 输入不被 auto-pairs 破坏。
+- IME/paste 不被误判为普通 TypeChar。
+
+### [TODO] R25 — 审阅 T25
+
+审阅 T25 改动：
+- 确认 TypeChar 后 cursor/selection 与 editor-core 预期一致。
+- 确认 read-only gate 覆盖 TypeChar/InsertNewline。
+- 确认 auto-pairs config 可按语言关闭。
+
+### [TODO] T26 — Trim trailing whitespace 与 save 流程整理
+
+**依赖**：T20 可共享 save/format 流程；无 T20 也可做。
+
+**文件**：
+- `crates/atto-ui-editor/src/config.rs`
+- `crates/atto-editor-app/src/window/tabs.rs`
+- `crates/atto-editor-app/src/window.rs`
+
+**步骤**：
+1. `EditorConfig` 或 app-level settings 增加 `trim_trailing_whitespace_on_save: Binding<bool>`，默认 false。
+2. 保存前生成 edits：
+   - 遍历每行，删除行尾空格/制表符。
+   - 不改变最终 newline 语义。
+   - 用 `EditCommand::ApplyTextEdits { edits }` 或 workspace `apply_text_edits`。
+3. `SaveActive` 流程顺序：
+   - format-on-save（如果启用且已实现）
+   - trim trailing whitespace
+   - write file
+   - update `last_saved_text` / dirty marker。
+4. 错误路径显示明确状态，不静默忽略。
+
+**测试**：
+- 保存启用 trim 后文件行尾空白被移除。
+- 默认未启用时保存不改变空白。
+- CRLF 文件保存仍保持 CRLF（如果使用 workspace line ending）。
+
+**验收**：
+- trim 操作可 undo（如果发生在 editor buffer 中）。
+- 保存后 dirty marker 清除。
+
+### [TODO] R26 — 审阅 T26
+
+审阅 T26 改动：
+- 确认 trim 不删除行内空格。
+- 确认最后一行无 newline 的文件不会被强制添加 newline，除非已有策略。
+- 确认保存失败时 dirty marker 不被清除。
+
+### [TODO] T27 — Jumplist / registers 设计占位与 WorkspaceEditorView 决策
+
+**依赖**：T17。
+
+**文件**：
+- `PLAN-2.md`（如需要补决策）
+- 新增或修改 `crates/atto-editor-app/src/workspace_state.rs`
+- `crates/atto-ui-editor/src/view/*`
+
+**说明**：
+此任务不是立即实现全部 jumplist/registers，而是在 workspace bridge 稳定后做架构决策，避免后续高级编辑功能继续堆在 per-view `EditorStateManager` 上。
+
+**步骤**：
+1. 对比两条路线：
+   - 保持 `EditorView + Binding<String>`，app 层同步 workspace。
+   - 新增 `WorkspaceEditorView { workspace: Arc<Mutex<Workspace>>, view_id }`。
+2. 写入代码注释或 `PLAN-2.md` 附录，明确何时切换。
+3. 如果决定新增 `WorkspaceEditorView`：
+   - 列出需迁移的 `EditorView` 方法：render/input/scroll/lsp/search/selection。
+   - 先做只读 prototype，不替换生产路径。
+4. Jumplist/registers 只在 workspace view 路线确定后接。
+
+**测试**：
+- 无功能改动时不需要 PTY。
+- 如做 prototype，单测 render/input smoke。
+
+**验收**：
+- 后续 Rename/workspace symbol/search result jump 有明确状态归属。
+- 不再新增跨文件功能到无法同步的 per-view 孤立状态。
+
+### [TODO] R27 — 审阅 T27
+
+审阅 T27 改动：
+- 确认决策记录具体到类型和文件，不是泛泛说明。
+- 确认没有引入未使用的大量 dead code。
+- 确认未来任务能据此判断应改 `EditorView` 还是 `WorkspaceEditorView`。
+
+---
+
+## 全局验证与维护任务
+
+### [TODO] T28 — 更新测试 fixture 与 mock LSP 覆盖矩阵
+
+**依赖**：贯穿 L1-L6，可在每个 LSP 任务后增量维护。
+
+**文件**：
+- `crates/atto-ui-editor/src/bin/mock_lsp_server.rs`
+- `crates/atto-ui-editor/tests/lsp_editor.rs`
+- `crates/atto-ui-editor/tests/pty_editor.rs`
+- 可能新增：
+  - `crates/atto-ui-editor/tests/pty_diagnostics.rs`
+  - `crates/atto-ui-editor/tests/pty_code_action.rs`
+  - `crates/atto-ui-editor/tests/pty_signature_help.rs`
+  - `crates/atto-ui-editor/tests/pty_inlay_hints.rs`
+
+**步骤**：
+1. mock LSP 支持：
+   - publishDiagnostics
+   - textDocument/codeAction
+   - textDocument/prepareRename
+   - textDocument/rename
+   - textDocument/signatureHelp
+   - textDocument/formatting
+   - textDocument/inlayHint
+   - document/workspaceSymbol
+2. 每个 method 都提供 deterministic response，不依赖真实 language server。
+3. PTY tests 使用固定 terminal size 和 `wait_for_text`。
+4. 对跨文件 edit 使用 temp dir，测试结束清理。
+
+**验收**：
+- LSP UI 功能均能在无外部 LSP server 情况下测试。
+- mock server 输出不污染 test stdout，失败时有足够日志。
+
+### [TODO] R28 — 审阅 T28
+
+审阅 T28 改动：
+- 确认 mock LSP JSON-RPC framing 正确。
+- 确认 tests 不依赖时序 sleep。
+- 确认 temp files/directories 清理。
+- 确认每个 LSP 功能至少有一个成功路径和一个 empty/error 路径测试。
+
+### [TODO] T29 — 文档与实施顺序维护
+
+**依赖**：每个阶段完成后执行。
+
+**文件**：
+- `PLAN-2.md`
+- `TODO-2.md`
+- `README.md`（如果公开行为/快捷键变化）
+- `crates/atto-editor-app/examples/basic.rs`（如示例需更新）
+
+**步骤**：
+1. 每完成一个 T/R 对，按归档 TODO 风格追加“完成记录”，记录：
+   - 改了哪些文件/类型/函数。
+   - 新增哪些测试。
+   - 跑了哪些命令。
+   - 是否有遗留限制。
+2. 如果实现偏离 `PLAN-2.md`，同步更新设计中的对应章节。
+3. 新快捷键、菜单项、环境变量（如 LSP command）变化同步 README 或 crate docs。
+4. 不创建临时计划 markdown；只维护 `TODO-2.md` / `PLAN-2.md`。
+
+**验收**：
+- 新 agent 接手时可以从 `TODO-2.md` 当前状态继续，不需要读聊天上下文。
+- 已完成任务都有完成记录和验证命令。
+
+### [TODO] R29 — 审阅 T29
+
+审阅 T29 改动：
+- 确认完成记录不是泛泛描述，能追踪文件和测试。
+- 确认文档没有过期路径/函数名。
+- 确认 README 只记录用户可见行为，不泄露内部实现细节。
+
