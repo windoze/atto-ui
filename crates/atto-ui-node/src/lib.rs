@@ -6,6 +6,8 @@
 use napi_derive::napi;
 
 pub mod convert;
+pub mod error;
+pub mod ids;
 
 /// Return the native package version exposed to JavaScript smoke tests.
 #[napi]

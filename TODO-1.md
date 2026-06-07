@@ -67,7 +67,7 @@
 - 补齐 `Rect` 的 `[x,y,width,height]` 输入解析，并扩展错误测试，确认缺字段/类型不符路径返回带上下文的 `napi::Error`，转换代码路径无 panic。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] NT3 — id handle 包装 + 错误映射（B.3 / B.4）
+### [DONE] NT3 — id handle 包装 + 错误映射（B.3 / B.4）
 **文件**：`crates/atto-ui-node/src/ids.rs`、`src/error.rs`
 **现状**：`CallbackId`/`WindowId` 是 u64 newtype；napi 把 u64 映射为 JS `BigInt`（§10.5）。节点 id 本身是 `String`（`ComponentSpec.id`），无需包装。
 **步骤**：
@@ -75,6 +75,11 @@
 2. `error.rs`：`TreeError`/`anyhow::Error` → `napi::Error`，信息透传到 JS throw。
 **测试**：单测 handle 双向解析一致；错误转换保留消息。
 **验收**：JS 侧不接触 BigInt、不做 id 算术；Rust 错误能在 JS 以 Error 抛出。
+**完成记录（2026-06-07）**：
+- 新增 `crates/atto-ui-node/src/ids.rs`，提供 `CallbackId`/`WindowId` 与不透明 string handle 的双向 Map；handle 使用独立命名空间，支持解析、复用与释放后失效。
+- 新增 `crates/atto-ui-node/src/error.rs`，将 `TreeError` 与 `anyhow::Error` 转为 `napi::Error` 并保留 display 消息。
+- 更新 `convert.rs` 中事件 callback id 的 JS 形态为 string handle，`ComponentSpec`/`TreeOp::BindEvent`/`CallbackInvocation` 不再接受数字 callback id，避免 JS 侧接触 BigInt 或做 id 算术。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] NR3 — 审阅 NT3
 - 确认 handle 包装无泄漏（窗口/回调销毁后 handle 失效处理合理）。

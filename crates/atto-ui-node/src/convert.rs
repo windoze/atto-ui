@@ -11,11 +11,13 @@ use atto_ui::runtime::{
     ComponentSpec, ComponentSpecChild, ComponentValue, EdgeInsetsSpec, LayoutSpec,
     Rect as RuntimeRect, SizeSpec, TreeOp,
 };
-use napi::Error;
-use napi::bindgen_prelude::{Env, Object, Result, Status, Unknown};
+use napi::bindgen_prelude::{Env, Object, Result, Unknown};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Number, Value};
+
+use crate::error::invalid_arg;
+use crate::ids::CallbackHandles;
 
 const TYPE_TAG: &str = "$type";
 const DATA_FIELD: &str = "data";
@@ -114,26 +116,37 @@ pub fn component_value_to_json(value: &ComponentValue) -> Result<Value> {
 }
 
 /// Decode a JavaScript value as a `ComponentSpec`.
-pub fn component_spec_from_unknown(env: &Env, value: Unknown<'_>) -> Result<ComponentSpec> {
-    component_spec_from_json(unknown_to_json(env, value)?)
+pub fn component_spec_from_unknown(
+    env: &Env,
+    value: Unknown<'_>,
+    callbacks: &CallbackHandles,
+) -> Result<ComponentSpec> {
+    component_spec_from_json(unknown_to_json(env, value)?, callbacks)
 }
 
 /// Encode a `ComponentSpec` as a JavaScript value.
 pub fn component_spec_to_unknown<'env>(
     env: &'env Env,
     value: &ComponentSpec,
+    callbacks: &mut CallbackHandles,
 ) -> Result<Unknown<'env>> {
-    let json = component_spec_to_json(value)?;
+    let json = component_spec_to_json(value, callbacks)?;
     json_to_unknown(env, &json)
 }
 
 /// Decode a JSON value as a runtime `ComponentSpec`.
-pub fn component_spec_from_json(value: Value) -> Result<ComponentSpec> {
-    component_spec_from_value(&value)
+pub fn component_spec_from_json(
+    value: Value,
+    callbacks: &CallbackHandles,
+) -> Result<ComponentSpec> {
+    component_spec_from_value(&value, callbacks)
 }
 
 /// Encode a runtime `ComponentSpec` as the JavaScript-facing object shape.
-pub fn component_spec_to_json(spec: &ComponentSpec) -> Result<Value> {
+pub fn component_spec_to_json(
+    spec: &ComponentSpec,
+    callbacks: &mut CallbackHandles,
+) -> Result<Value> {
     let mut object = Map::new();
     object.insert("type".to_string(), Value::String(spec.type_name.clone()));
     if let Some(id) = &spec.id {
@@ -143,7 +156,10 @@ pub fn component_spec_to_json(spec: &ComponentSpec) -> Result<Value> {
         object.insert("props".to_string(), value_map_to_json(&spec.props)?);
     }
     if !spec.events.is_empty() {
-        object.insert("events".to_string(), callback_map_to_json(&spec.events));
+        object.insert(
+            "events".to_string(),
+            callback_map_to_json(&spec.events, callbacks),
+        );
     }
     if !spec.children.is_empty() {
         object.insert(
@@ -151,7 +167,7 @@ pub fn component_spec_to_json(spec: &ComponentSpec) -> Result<Value> {
             Value::Array(
                 spec.children
                     .iter()
-                    .map(component_spec_child_to_json)
+                    .map(|child| component_spec_child_to_json(child, callbacks))
                     .collect::<Result<Vec<_>>>()?,
             ),
         );
@@ -160,28 +176,36 @@ pub fn component_spec_to_json(spec: &ComponentSpec) -> Result<Value> {
 }
 
 /// Decode a JavaScript value as a `TreeOp`.
-pub fn tree_op_from_unknown(env: &Env, value: Unknown<'_>) -> Result<TreeOp> {
-    tree_op_from_json(unknown_to_json(env, value)?)
+pub fn tree_op_from_unknown(
+    env: &Env,
+    value: Unknown<'_>,
+    callbacks: &CallbackHandles,
+) -> Result<TreeOp> {
+    tree_op_from_json(unknown_to_json(env, value)?, callbacks)
 }
 
 /// Encode a `TreeOp` as a JavaScript value.
-pub fn tree_op_to_unknown<'env>(env: &'env Env, value: &TreeOp) -> Result<Unknown<'env>> {
-    let json = tree_op_to_json(value)?;
+pub fn tree_op_to_unknown<'env>(
+    env: &'env Env,
+    value: &TreeOp,
+    callbacks: &mut CallbackHandles,
+) -> Result<Unknown<'env>> {
+    let json = tree_op_to_json(value, callbacks)?;
     json_to_unknown(env, &json)
 }
 
 /// Decode a JSON object as a runtime `TreeOp`.
-pub fn tree_op_from_json(value: Value) -> Result<TreeOp> {
-    tree_op_from_value(&value)
+pub fn tree_op_from_json(value: Value, callbacks: &CallbackHandles) -> Result<TreeOp> {
+    tree_op_from_value(&value, callbacks)
 }
 
 /// Encode a runtime `TreeOp` as a discriminated JavaScript union object.
-pub fn tree_op_to_json(op: &TreeOp) -> Result<Value> {
+pub fn tree_op_to_json(op: &TreeOp, callbacks: &mut CallbackHandles) -> Result<Value> {
     let mut object = Map::new();
     match op {
         TreeOp::SetTree(spec) => {
             object.insert("op".to_string(), Value::String("set_tree".to_string()));
-            object.insert("tree".to_string(), component_spec_to_json(spec)?);
+            object.insert("tree".to_string(), component_spec_to_json(spec, callbacks)?);
         }
         TreeOp::Insert {
             parent_id,
@@ -191,7 +215,10 @@ pub fn tree_op_to_json(op: &TreeOp) -> Result<Value> {
             object.insert("op".to_string(), Value::String("insert".to_string()));
             object.insert("parent_id".to_string(), Value::String(parent_id.clone()));
             object.insert("index".to_string(), usize_to_json(*index)?);
-            object.insert("child".to_string(), component_spec_child_to_json(child)?);
+            object.insert(
+                "child".to_string(),
+                component_spec_child_to_json(child, callbacks)?,
+            );
         }
         TreeOp::Remove { id } => {
             object.insert("op".to_string(), Value::String("remove".to_string()));
@@ -200,7 +227,10 @@ pub fn tree_op_to_json(op: &TreeOp) -> Result<Value> {
         TreeOp::Replace { id, node } => {
             object.insert("op".to_string(), Value::String("replace".to_string()));
             object.insert("id".to_string(), Value::String(id.clone()));
-            object.insert("node".to_string(), component_spec_child_to_json(node)?);
+            object.insert(
+                "node".to_string(),
+                component_spec_child_to_json(node, callbacks)?,
+            );
         }
         TreeOp::Move {
             id,
@@ -229,7 +259,10 @@ pub fn tree_op_to_json(op: &TreeOp) -> Result<Value> {
             object.insert("op".to_string(), Value::String("bind_event".to_string()));
             object.insert("id".to_string(), Value::String(id.clone()));
             object.insert("event".to_string(), Value::String(event.clone()));
-            object.insert("callback".to_string(), callback_id_to_json(*callback));
+            object.insert(
+                "callback".to_string(),
+                callback_id_to_json(*callback, callbacks),
+            );
         }
         TreeOp::ClearEvent { id, event } => {
             object.insert("op".to_string(), Value::String("clear_event".to_string()));
@@ -241,18 +274,21 @@ pub fn tree_op_to_json(op: &TreeOp) -> Result<Value> {
 }
 
 /// Decode a single op or an array of ops as runtime `TreeOp` values.
-pub fn tree_ops_from_json(value: Value) -> Result<Vec<TreeOp>> {
+pub fn tree_ops_from_json(value: Value, callbacks: &CallbackHandles) -> Result<Vec<TreeOp>> {
     match value {
-        Value::Array(values) => values.into_iter().map(tree_op_from_json).collect(),
-        other => tree_op_from_json(other).map(|op| vec![op]),
+        Value::Array(values) => values
+            .into_iter()
+            .map(|value| tree_op_from_json(value, callbacks))
+            .collect(),
+        other => tree_op_from_json(other, callbacks).map(|op| vec![op]),
     }
 }
 
 /// Encode runtime `TreeOp` values as a JavaScript array shape.
-pub fn tree_ops_to_json(ops: &[TreeOp]) -> Result<Value> {
+pub fn tree_ops_to_json(ops: &[TreeOp], callbacks: &mut CallbackHandles) -> Result<Value> {
     Ok(Value::Array(
         ops.iter()
-            .map(tree_op_to_json)
+            .map(|op| tree_op_to_json(op, callbacks))
             .collect::<Result<Vec<_>>>()?,
     ))
 }
@@ -261,27 +297,35 @@ pub fn tree_ops_to_json(ops: &[TreeOp]) -> Result<Value> {
 pub fn callback_invocation_from_unknown(
     env: &Env,
     value: Unknown<'_>,
+    callbacks: &CallbackHandles,
 ) -> Result<CallbackInvocation> {
-    callback_invocation_from_json(unknown_to_json(env, value)?)
+    callback_invocation_from_json(unknown_to_json(env, value)?, callbacks)
 }
 
 /// Encode a `CallbackInvocation` as a JavaScript value.
 pub fn callback_invocation_to_unknown<'env>(
     env: &'env Env,
     value: &CallbackInvocation,
+    callbacks: &mut CallbackHandles,
 ) -> Result<Unknown<'env>> {
-    let json = callback_invocation_to_json(value)?;
+    let json = callback_invocation_to_json(value, callbacks)?;
     json_to_unknown(env, &json)
 }
 
 /// Decode a JSON object as a runtime callback invocation.
-pub fn callback_invocation_from_json(value: Value) -> Result<CallbackInvocation> {
+pub fn callback_invocation_from_json(
+    value: Value,
+    callbacks: &CallbackHandles,
+) -> Result<CallbackInvocation> {
     let object = expect_object(&value, "callback invocation")?;
-    let callback = callback_id_from_value(expect_any_field(
-        object,
-        &["callbackId", "callback_id"],
-        "callback invocation callbackId",
-    )?)?;
+    let callback = callback_id_from_value(
+        expect_any_field(
+            object,
+            &["callbackId", "callback_id"],
+            "callback invocation callbackId",
+        )?,
+        callbacks,
+    )?;
     let target_id = get_any_field(object, &["targetId", "target_id"])
         .map(|value| expect_string(value, "callback invocation targetId"))
         .transpose()?;
@@ -301,11 +345,14 @@ pub fn callback_invocation_from_json(value: Value) -> Result<CallbackInvocation>
 }
 
 /// Encode a runtime callback invocation as the JavaScript callback object shape.
-pub fn callback_invocation_to_json(invocation: &CallbackInvocation) -> Result<Value> {
+pub fn callback_invocation_to_json(
+    invocation: &CallbackInvocation,
+    callbacks: &mut CallbackHandles,
+) -> Result<Value> {
     let mut object = Map::new();
     object.insert(
         "callbackId".to_string(),
-        callback_id_to_json(invocation.callback_id),
+        callback_id_to_json(invocation.callback_id, callbacks),
     );
     object.insert(
         "targetId".to_string(),
@@ -433,7 +480,7 @@ fn component_value_from_object(object: &Map<String, Value>) -> Result<ComponentV
     Ok(ComponentValue::Map(out))
 }
 
-fn component_spec_from_value(value: &Value) -> Result<ComponentSpec> {
+fn component_spec_from_value(value: &Value, callbacks: &CallbackHandles) -> Result<ComponentSpec> {
     let object = expect_object(value, "component spec")?;
     let type_name = expect_string(
         expect_any_field(object, &["type", "type_name"], "component spec type")?,
@@ -448,27 +495,30 @@ fn component_spec_from_value(value: &Value) -> Result<ComponentSpec> {
         spec.props = value_map_from_json(props, "component spec props")?;
     }
     if let Some(events) = get_field(object, "events") {
-        spec.events = callback_map_from_json(events, "component spec events")?;
+        spec.events = callback_map_from_json(events, "component spec events", callbacks)?;
     }
     if let Some(children) = get_field(object, "children") {
         let children = expect_array(children, "component spec children")?;
         spec.children = children
             .iter()
-            .map(component_spec_child_from_value)
+            .map(|child| component_spec_child_from_value(child, callbacks))
             .collect::<Result<Vec<_>>>()?;
     }
 
     Ok(spec)
 }
 
-fn component_spec_child_from_value(value: &Value) -> Result<ComponentSpecChild> {
+fn component_spec_child_from_value(
+    value: &Value,
+    callbacks: &CallbackHandles,
+) -> Result<ComponentSpecChild> {
     if let Value::Object(object) = value
         && (object.contains_key("node")
             || object.contains_key("layout")
             || object.contains_key("meta"))
     {
         let node_value = get_field(object, "node").unwrap_or(value);
-        let mut child = ComponentSpecChild::new(component_spec_from_value(node_value)?);
+        let mut child = ComponentSpecChild::new(component_spec_from_value(node_value, callbacks)?);
         if let Some(layout) = get_field(object, "layout") {
             child.layout = Some(layout_spec_from_value(layout)?);
         }
@@ -477,18 +527,23 @@ fn component_spec_child_from_value(value: &Value) -> Result<ComponentSpecChild> 
         }
         return Ok(child);
     }
-    Ok(ComponentSpecChild::new(component_spec_from_value(value)?))
+    Ok(ComponentSpecChild::new(component_spec_from_value(
+        value, callbacks,
+    )?))
 }
 
-fn component_spec_child_to_json(child: &ComponentSpecChild) -> Result<Value> {
+fn component_spec_child_to_json(
+    child: &ComponentSpecChild,
+    callbacks: &mut CallbackHandles,
+) -> Result<Value> {
     if child.layout.is_none() && child.meta.is_empty() {
-        return component_spec_to_json(child.node.as_ref());
+        return component_spec_to_json(child.node.as_ref(), callbacks);
     }
 
     let mut object = Map::new();
     object.insert(
         "node".to_string(),
-        component_spec_to_json(child.node.as_ref())?,
+        component_spec_to_json(child.node.as_ref(), callbacks)?,
     );
     if let Some(layout) = &child.layout {
         object.insert("layout".to_string(), layout_spec_to_json(layout)?);
@@ -551,7 +606,7 @@ fn layout_spec_to_json(layout: &LayoutSpec) -> Result<Value> {
     Ok(Value::Object(object))
 }
 
-fn tree_op_from_value(value: &Value) -> Result<TreeOp> {
+fn tree_op_from_value(value: &Value, callbacks: &CallbackHandles) -> Result<TreeOp> {
     let object = expect_object(value, "tree op")?;
     let op_name = expect_string(
         expect_any_field(object, &["op", "type", "kind"], "tree op op")?,
@@ -560,7 +615,7 @@ fn tree_op_from_value(value: &Value) -> Result<TreeOp> {
     match normalize_name(&op_name).as_str() {
         "settree" => {
             let tree = expect_any_field(object, &["tree", "spec", "root"], "set_tree tree")?;
-            Ok(TreeOp::SetTree(component_spec_from_value(tree)?))
+            Ok(TreeOp::SetTree(component_spec_from_value(tree, callbacks)?))
         }
         "insert" => Ok(TreeOp::Insert {
             parent_id: expect_string(
@@ -571,14 +626,20 @@ fn tree_op_from_value(value: &Value) -> Result<TreeOp> {
                 expect_field(object, "index", "insert index")?,
                 "insert index",
             )?,
-            child: component_spec_child_from_value(expect_field(object, "child", "insert child")?)?,
+            child: component_spec_child_from_value(
+                expect_field(object, "child", "insert child")?,
+                callbacks,
+            )?,
         }),
         "remove" => Ok(TreeOp::Remove {
             id: expect_string(expect_field(object, "id", "remove id")?, "remove id")?,
         }),
         "replace" => Ok(TreeOp::Replace {
             id: expect_string(expect_field(object, "id", "replace id")?, "replace id")?,
-            node: component_spec_child_from_value(expect_field(object, "node", "replace node")?)?,
+            node: component_spec_child_from_value(
+                expect_field(object, "node", "replace node")?,
+                callbacks,
+            )?,
         }),
         "move" => Ok(TreeOp::Move {
             id: expect_string(expect_field(object, "id", "move id")?, "move id")?,
@@ -605,11 +666,10 @@ fn tree_op_from_value(value: &Value) -> Result<TreeOp> {
                 expect_field(object, "event", "bind_event event")?,
                 "bind_event event",
             )?,
-            callback: callback_id_from_value(expect_field(
-                object,
-                "callback",
-                "bind_event callback",
-            )?)?,
+            callback: callback_id_from_value(
+                expect_field(object, "callback", "bind_event callback")?,
+                callbacks,
+            )?,
         }),
         "clearevent" => Ok(TreeOp::ClearEvent {
             id: expect_string(
@@ -801,29 +861,37 @@ fn value_map_to_json(values: &BTreeMap<String, ComponentValue>) -> Result<Value>
     Ok(Value::Object(object))
 }
 
-fn callback_map_from_json(value: &Value, context: &str) -> Result<BTreeMap<String, CallbackId>> {
+fn callback_map_from_json(
+    value: &Value,
+    context: &str,
+    callbacks: &CallbackHandles,
+) -> Result<BTreeMap<String, CallbackId>> {
     let object = expect_object(value, context)?;
     let mut out = BTreeMap::new();
     for (key, value) in object {
-        out.insert(key.clone(), callback_id_from_value(value)?);
+        out.insert(key.clone(), callback_id_from_value(value, callbacks)?);
     }
     Ok(out)
 }
 
-fn callback_map_to_json(values: &BTreeMap<String, CallbackId>) -> Value {
+fn callback_map_to_json(
+    values: &BTreeMap<String, CallbackId>,
+    callbacks: &mut CallbackHandles,
+) -> Value {
     let mut object = Map::new();
     for (key, value) in values {
-        object.insert(key.clone(), callback_id_to_json(*value));
+        object.insert(key.clone(), callback_id_to_json(*value, callbacks));
     }
     Value::Object(object)
 }
 
-fn callback_id_from_value(value: &Value) -> Result<CallbackId> {
-    u64_from_value(value, "callback id").map(CallbackId)
+fn callback_id_from_value(value: &Value, callbacks: &CallbackHandles) -> Result<CallbackId> {
+    let handle = expect_string(value, "callback id handle")?;
+    callbacks.resolve(&handle)
 }
 
-fn callback_id_to_json(value: CallbackId) -> Value {
-    Value::Number(Number::from(value.0))
+fn callback_id_to_json(value: CallbackId, callbacks: &mut CallbackHandles) -> Value {
+    Value::String(callbacks.handle_for(value))
 }
 
 fn tagged_component_value(tag: &str, data: Value) -> Value {
@@ -1154,10 +1222,6 @@ fn normalize_name(name: &str) -> String {
         .collect()
 }
 
-fn invalid_arg(message: impl Into<String>) -> Error {
-    Error::new(Status::InvalidArg, message.into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1255,6 +1319,8 @@ mod tests {
 
     #[test]
     fn component_spec_round_trips_js_shape() {
+        let mut callbacks = CallbackHandles::new();
+        let click = callbacks.handle_for(CallbackId(7));
         let input = json!({
             "type": "VStack",
             "id": "root",
@@ -1262,7 +1328,7 @@ mod tests {
                 "enabled": true,
                 "labels": ["one", "two"]
             },
-            "events": { "click": 7 },
+            "events": { "click": click.clone() },
             "children": [{
                 "node": {
                     "type": "Text",
@@ -1282,21 +1348,24 @@ mod tests {
             }]
         });
 
-        let spec = component_spec_from_json(input).unwrap();
+        let spec = component_spec_from_json(input, &callbacks).unwrap();
         assert_eq!(spec.type_name, "VStack");
         assert_eq!(spec.id.as_deref(), Some("root"));
         assert_eq!(spec.events.get("click"), Some(&CallbackId(7)));
         assert_eq!(spec.children.len(), 1);
         assert!(spec.children[0].layout.is_some());
 
-        let encoded = component_spec_to_json(&spec).unwrap();
+        let encoded = component_spec_to_json(&spec, &mut callbacks).unwrap();
         assert_eq!(encoded["type"], json!("VStack"));
+        assert_eq!(encoded["events"]["click"], json!(click));
         assert!(encoded.get("type_name").is_none());
-        assert_eq!(component_spec_from_json(encoded).unwrap(), spec);
+        assert_eq!(component_spec_from_json(encoded, &callbacks).unwrap(), spec);
     }
 
     #[test]
     fn tree_op_parses_every_variant() {
+        let mut callbacks = CallbackHandles::new();
+        let callback = callbacks.handle_for(CallbackId(99));
         let spec = json!({ "type": "Text", "id": "text", "props": { "text": "Hi" } });
         let child = json!({ "type": "Button", "id": "button" });
         let cases = vec![
@@ -1306,20 +1375,21 @@ mod tests {
             json!({ "op": "replace", "id": "old", "node": { "type": "Text", "id": "new" } }),
             json!({ "op": "move", "id": "node", "new_parent_id": "root", "index": 1 }),
             json!({ "op": "set_prop", "id": "node", "name": "text", "value": "New" }),
-            json!({ "op": "bind_event", "id": "node", "event": "click", "callback": 99 }),
+            json!({ "op": "bind_event", "id": "node", "event": "click", "callback": callback }),
             json!({ "op": "clear_event", "id": "node", "event": "click" }),
         ];
 
         for case in cases {
-            let op = tree_op_from_json(case).unwrap();
-            let encoded = tree_op_to_json(&op).unwrap();
-            assert_eq!(tree_op_from_json(encoded).unwrap(), op);
+            let op = tree_op_from_json(case, &callbacks).unwrap();
+            let encoded = tree_op_to_json(&op, &mut callbacks).unwrap();
+            assert_eq!(tree_op_from_json(encoded, &callbacks).unwrap(), op);
         }
     }
 
     #[test]
     fn tree_ops_accept_single_or_array() {
-        let single = tree_ops_from_json(json!({ "op": "remove", "id": "a" })).unwrap();
+        let mut callbacks = CallbackHandles::new();
+        let single = tree_ops_from_json(json!({ "op": "remove", "id": "a" }), &callbacks).unwrap();
         assert_eq!(
             single,
             vec![TreeOp::Remove {
@@ -1327,19 +1397,23 @@ mod tests {
             }]
         );
 
-        let many = tree_ops_from_json(json!([
-            { "op": "remove", "id": "a" },
-            { "op": "clear_event", "id": "a", "event": "click" }
-        ]))
+        let many = tree_ops_from_json(
+            json!([
+                { "op": "remove", "id": "a" },
+                { "op": "clear_event", "id": "a", "event": "click" }
+            ]),
+            &callbacks,
+        )
         .unwrap();
         assert_eq!(many.len(), 2);
         assert!(
-            matches!(tree_ops_to_json(&many).unwrap(), Value::Array(values) if values.len() == 2)
+            matches!(tree_ops_to_json(&many, &mut callbacks).unwrap(), Value::Array(values) if values.len() == 2)
         );
     }
 
     #[test]
     fn callback_invocation_uses_js_field_names() {
+        let mut callbacks = CallbackHandles::new();
         let invocation = CallbackInvocation {
             callback_id: CallbackId(11),
             target_id: Some("ok".to_string()),
@@ -1347,18 +1421,23 @@ mod tests {
             payload: Some(ComponentValue::String("payload".to_string())),
         };
 
-        let encoded = callback_invocation_to_json(&invocation).unwrap();
-        assert_eq!(encoded["callbackId"], json!(11));
+        let encoded = callback_invocation_to_json(&invocation, &mut callbacks).unwrap();
+        assert!(encoded["callbackId"].as_str().is_some());
         assert_eq!(encoded["targetId"], json!("ok"));
-        assert_eq!(callback_invocation_from_json(encoded).unwrap(), invocation);
+        assert_eq!(
+            callback_invocation_from_json(encoded, &callbacks).unwrap(),
+            invocation
+        );
+
+        let snake_handle = callbacks.handle_for(CallbackId(12));
 
         let snake_case = json!({
-            "callback_id": 12,
+            "callback_id": snake_handle,
             "target_id": null,
             "event": "change",
             "payload": null
         });
-        let decoded = callback_invocation_from_json(snake_case).unwrap();
+        let decoded = callback_invocation_from_json(snake_case, &callbacks).unwrap();
         assert_eq!(decoded.callback_id, CallbackId(12));
         assert_eq!(decoded.target_id, None);
         assert_eq!(decoded.payload, None);
@@ -1378,11 +1457,20 @@ mod tests {
 
     #[test]
     fn invalid_input_reports_context() {
-        let missing_op = tree_op_from_json(json!({ "id": "node" })).unwrap_err();
+        let callbacks = CallbackHandles::new();
+        let missing_op = tree_op_from_json(json!({ "id": "node" }), &callbacks).unwrap_err();
         assert!(missing_op.reason.contains("tree op op"));
 
-        let missing_type = component_spec_from_json(json!({ "id": "root" })).unwrap_err();
+        let missing_type =
+            component_spec_from_json(json!({ "id": "root" }), &callbacks).unwrap_err();
         assert!(missing_type.reason.contains("component spec type"));
+
+        let numeric_callback = tree_op_from_json(
+            json!({ "op": "bind_event", "id": "node", "event": "click", "callback": 99 }),
+            &callbacks,
+        )
+        .unwrap_err();
+        assert!(numeric_callback.reason.contains("callback id handle"));
 
         let missing_bytes_data =
             component_value_from_json(json!({ "$type": "bytes" })).unwrap_err();

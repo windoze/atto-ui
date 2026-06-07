@@ -197,6 +197,7 @@ dependencies = [
 name = "atto-ui-node"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "atto-ui",
  "atto-ui-components",
  "napi",
