@@ -1,35 +1,35 @@
-# Execution Plan
+# 执行计划
 
-## Current Status
+## 约束
 
-- Started this invocation.
-- Read `TODO.md` and `TODO-1.md`.
-- First incomplete task is `NR15 — 审阅 NT15`, which reviews the `@atto-ui/core` imperative builders from `NT15`.
-- Root `PLAN.md` is not present; existing phase plans are `PLAN-1.md` and `PLAN-2.md`.
-- Review found a concrete omission: `NODE_BINDING.md` §6.4 documents `ChatMessageList` as a low-level builder, and the Python wrapper exposes Markdown/Terminal/FileTree/Chat helpers, but `@atto-ui/core` builders currently cover only the core built-ins.
+- 以 `TODO.md` 为唯一任务顺序与完成状态来源。
+- 只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 不进行开放式历史问题清扫；只处理阻塞当前任务或当前验证暴露且未被明确排期的失败。
+- 不写入私密推理链；本文件记录可审查的执行计划、关键决策和进度。
 
-## Plan
+## 步骤
 
-1. Read `TODO.md` and identify the first task whose title is not prefixed with `[DONE]`.
-2. Check recent git history only for directly relevant unfinished work after the current task is identified.
-3. Add the missing `@atto-ui/core` command builders that are already documented or exposed by the Python low-level wrapper: MarkdownViewer, TerminalEmulator, FileTree/FileTreeNode, chat message helpers, ChatMessageList, and ChatInputPanel.
-4. Keep the generated spec shapes thin and consistent with runtime schemas: snake_case prop names, string callback handles, undefined pruning, and plain object `ComponentSpec` output.
-5. Extend core JS and TS tests to cover these builders and callback/string typing.
-6. Run formatting first, then clippy with warnings denied, then the required Rust and TypeScript/JS validation for `packages/core` and affected packages.
-7. Update `TODO.md` / `TODO-1.md` completion records and prefix `NR15` with `[DONE]` only after validation succeeds.
-8. Commit all intended changes with a clear `NR15` review message.
-9. Stop after completing this single task.
+1. 读取 `TODO.md`，按文档顺序识别第一个未完成任务。
+2. 查看最近提交信息；仅当它明确提到与当前任务直接相关的未完成事项时，将其纳入当前任务或补为前置任务。
+3. 阅读当前任务涉及的代码、测试和说明，确认验收要求。
+4. 按最小正确变更实现任务；如遇必须先修复的具体阻塞问题，更新 `TODO.md` 插入最少前置任务并停止。
+5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再按任务要求运行相关测试；需要时运行完整测试套件。
+6. 若发现未排期的测试或 fixture 失败，修复或在 `TODO.md` 中排期到当前任务完成前。
+7. 更新 `TODO.md`：给完成任务标题添加 `[DONE]`，填写完成记录和验证结果。仅在阶段计划变化时更新 `PLAN.md`。
+8. 检查 `git status`、`git diff`、最近提交，提交本次任务相关所有未提交文件。
+9. 停止，不继续下一个任务。
 
-## Notes
+## 当前状态
 
-- This file records the actionable plan and progress log, not private chain-of-thought.
-- `TODO.md` remains the source of truth for task ordering and completion state.
-
-## Progress Log
-
-- Identified `NR15` as the first incomplete task.
-- Reviewed `packages/core` builders against `TODO-1.md`, `PLAN-1.md`, `NODE_BINDING.md`, runtime schemas, and the Python low-level helper surface.
-- Fixed the documented/Python-helper coverage gap by adding MarkdownViewer, TerminalEmulator, FileTree/FileTreeNode, chat message helpers, ChatMessageList, ChatInputMode, and ChatInputPanel builders.
-- Extended `packages/core` JS output tests and TypeScript type tests for the added builders.
-- Validation passed: `npm run typecheck --prefix packages/core`; `npm test --prefix packages/core`; `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --all --all-targets`; `npm run typecheck --prefix packages/react`; `npm test --prefix packages/react`; `npm test --prefix crates/atto-ui-node`; `git diff --check`.
-- No `tools/run_fixtures.py` fixture runner exists in this workspace.
+- 已读取 `TODO.md` 与 `TODO-1.md`。
+- 首个未完成任务确认为 `NT16 — reconciler 单测矩阵（T.1）`。
+- 最近提交为 `[NR15] Review core imperative builders`，未发现与 NT16 直接相关的未完成事项。
+- 已新增 `packages/react/__test__/reconciler_matrix.cjs` 并接入 `packages/react/package.json` 的 `npm test`。
+- 矩阵覆盖 mount/set_tree、props set/clear、事件 bind/clear、文本更新、insert_before append/anchor、已挂载节点 move、remove 前 clear_event、clearContainer 空树、desktop 多窗口 op 分桶和窗口关闭不进 TreeOp。
+- 首次运行新增矩阵测试发现测试用例把文本值同时作为 React key，导致多窗口分桶更新被解释为 remove/insert；已改用稳定 key，使该用例验证属性更新与分桶顺序。
+- React build + 新增矩阵测试已通过。
+- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`、`npm test --prefix crates/atto-ui-node`、`npm test --prefix packages/core`、`npm test --prefix packages/react`、`git diff --check`。
+- 已更新 `TODO.md` 与 `TODO-1.md`，将 NT16 标记为 `[DONE]` 并写入完成记录。
+- 补强事件清理断言后，已重跑 `npm test --prefix packages/react` 与 `git diff --check`，均通过。
+- 提交前检查发现工作区另有未跟踪 `notification.sh`、`run_agent.sh`，它们不是本任务变更，提交时不纳入。
+- 下一步暂存本任务相关文件并提交 `[NT16] Add reconciler test matrix`。

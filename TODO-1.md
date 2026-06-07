@@ -441,11 +441,15 @@
 
 ## 阶段七：M8 测试 + 示例
 
-### [TODO] NT16 — reconciler 单测矩阵（T.1）
+### [DONE] NT16 — reconciler 单测矩阵（T.1）
 **文件**：`packages/react/__test__/`
 **步骤**：mount/update/增删/重排/事件 bind-clear → 断言产出的 `TreeOp` 序列（纯 JS，不进 native）。
 **测试**：覆盖 §10.4 映射表每一类操作；含 move 判定、事件 clear 时机边界。
 **验收**：HostConfig 行为有回归护栏，CI 内运行。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/__test__/reconciler_matrix.cjs`，使用纯 JS mock `AppHost` 覆盖 HostConfig 到 `TreeOp` 的矩阵：初始 mount `set_tree`、props `set_prop`/`clear_prop`、事件 `bind_event`/`clear_event`、raw text `commitTextUpdate`、新增子节点 append/anchor insert、已挂载节点重排 move、remove 前 clear_event、`clearContainer` 空树替换、多窗口 op 分桶和窗口关闭不进入 TreeOp。
+- 将新增矩阵接入 `packages/react/package.json` 的 `npm test`，确保 CI 运行；矩阵断言精确到 op 顺序、按 window 分桶后的 apply 调用形态、callback 释放与 stale callback 不再分发。
+- 验证通过：`npm run build --prefix packages/react && node packages/react/__test__/reconciler_matrix.cjs`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。
 
 ### [TODO] NR16 — 审阅 NT16
 - 确认矩阵覆盖全（无遗漏 op 类型/边界）。
