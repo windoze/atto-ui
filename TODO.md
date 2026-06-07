@@ -593,10 +593,15 @@
 - 测试覆盖：`pty_diff` 新增 hunk 折叠/展开与 projected cells Rust syntax 颜色断言；新增 `pty_rich_artifact` 覆盖 code link 打开富只读高亮 viewer、diff link 打开富 DiffView 并折叠/展开 hunk；新增 unified diff 内容重建单测。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`；`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`；`cargo test --workspace --all-targets`。
 
-### R20 — 审阅 T20
+### [DONE] R20 — 审阅 T20
 - 确认富 viewer 实现的接口与 T14 完全一致（chat 无需改动验证）。
 - 确认 diff hunk 模型来自 editor-core headless 层。
 - 运行 PTY。
+**完成记录（2026-06-07）**：
+- 已审阅 `atto-ui-chat::ArtifactViewer` 与 `atto-ui-editor::RichArtifactViewer`，确认富 viewer 直接实现 T14 同一 `open(&mut self, Artifact) -> WindowId` 接口；`atto-ui-chat` 未依赖 `atto-ui-editor`，chat 侧仍通过既有 `ChatMessageList::on_open_artifact` / `ArtifactLink` 回调打开 artifact。
+- 已审阅 `snapshot_rich_artifact_app` 注入链路，确认富 viewer 作为宿主实现注入，chat 消息列表和打开接口无需改动。
+- 已审阅 `DiffSession` / `DiffView`，确认 diff model/projection 来自 `editor-core-diff` / `editor-core-diff-view`，hunk 范围来自 `editor_core_diff::diff_line_hunks`；UI 层只维护折叠状态、placeholder row 和可见投影。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`；`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ---
 

@@ -1,31 +1,29 @@
-# 执行计划
+# Claude Execution Plan
 
-说明：本文件记录可审计的执行计划和进度，不包含隐藏推理内容。
+## Current Invocation
 
-1. 读取 `TODO.md`，按标题是否带 `[DONE]` 识别第一个未完成任务。
-2. 检查该任务的要求、依赖、验证方式和完成记录；如最新提交直接提到与该任务相关的未完成事项，也纳入当前任务判断。
-3. 只围绕第一个未完成任务收集必要代码上下文，避免开放式历史问题排查。
-4. 实现该任务要求；如果遇到阻塞任务的真实前置缺口，按要求更新 `TODO.md` 并停止。
-5. 按项目要求运行格式化、lint 和相关测试；若观察到未排期失败，修复或在 `TODO.md` 中排期。
-6. 将完成情况写回 `TODO.md`，任务标题加 `[DONE]` 并更新完成记录；仅在阶段计划变化时更新 `PLAN.md`。
-7. 检查 git 状态和差异，提交本次任务相关全部变更，然后停止，不处理后续任务。
+公开计划说明：本文件记录本次执行的可审计计划、关键决策和进度更新。不会包含私有推理链；会包含足够的步骤、依据和验证记录，便于检查执行过程。
 
-当前状态：已读取 `TODO.md`，第一个未完成任务为 `T20 — editor 完整化 → 富 ArtifactViewer`。下一步检查最新提交是否有直接相关未完成事项，然后只阅读 T20 相关的 `atto-ui-editor` / `atto-ui-chat` 代码与测试上下文。
+## Step-by-Step Plan
 
-T20 执行要点：
+1. 读取 `TODO.md`，按文档顺序找到第一个标题未以 `[DONE]` 开头的任务。
+2. 检查该任务的要求、依赖、完成记录和验证要求；仅在与当前任务直接相关时查看最近提交信息。
+3. 如果当前任务被未记录的具体前置问题阻塞，则将最小必要前置任务插入 `TODO.md`，提交后停止。
+4. 如果任务可直接执行，则检查相关代码和测试，做最小正确实现。
+5. 运行格式化、lint 和任务要求的测试；如发现未调度的失败测试/fixture，修复或在 `TODO.md` 中排入正确位置。
+6. 完成后在 `TODO.md` 中把任务标题加上 `[DONE]`，更新完成记录；仅当阶段级计划变化时更新 `PLAN.md`。
+7. 检查 `git status`、`git diff`、最近提交，提交本次任务相关变更，然后停止，不进入下一任务。
 
-1. 在现有 `DiffView` 上实现 hunk 折叠/展开，并确保 diff hunk 数据来自 `editor-core` headless 投影/模型路径。
-2. 为 code 视图和 diff 内容接入语法高亮；chat 侧接口保持 T14 的 `ArtifactViewer::open(&mut self, Artifact) -> WindowId` 不变。
-3. 在 `atto-ui-editor` 提供富 viewer 实现，`atto-ui-chat` 只替换注入实现或通过 feature/依赖使用该实现，不改变消息列表打开 artifact 的对外语义。
-4. 补充 PTY 测试覆盖 code 视图语法高亮、diff hunk 折叠/展开与 chat link 到富 viewer 链路。
-5. 按顺序运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关测试和完整 workspace 测试；若发现未排期失败，修复或按规则更新 `TODO.md`。
+## Progress Log
 
-进度更新：最新提交为 `[T20A] Add DiffView control on editor-core 0.4.1 diff crates`，未发现除 T20 本身余项外的直接相关未完成事项。开始阅读 `DiffView`、editor 渲染/语法高亮、chat artifact viewer 与现有 PTY fixture。
-
-进度更新：已完成 T20 相关上下文阅读。实施路径为：把 editor 的语法处理抽到 crate 级共享模块并补一个轻量 `SimpleRust` 高亮；`DiffSession` 继续消费 `editor-core-diff`/`editor-core-diff-view` 投影，同时根据 `editor-core-diff::diff_line_hunks` 建立 hunk 折叠状态，并在投影 cells 上叠加语法样式；在 `atto-ui-editor` 新增富 `ArtifactViewer` 实现，chat 仍只通过既有 `on_open_artifact`/`ArtifactViewer` 接口注入 viewer。
-
-进度更新：已实现共享语法处理、`SimpleRust`、read-only `EditorView` 配置、`DiffView` hunk 折叠/语法叠加、`RichArtifactViewer` 与 `snapshot_rich_artifact_app`。定向 PTY 初跑通过：`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`、`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`。
-
-进度更新：验证已完成。通过 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。下一步更新 `TODO.md` 中 T20 标题与完成记录，然后检查 git 差异并提交。
-
-最终状态：`TODO.md` 已将 T20 标记为 `[DONE]` 并写入完成记录；实现与验证结果已提交为 `e3438c0 [T20] Implement rich artifact viewer`。本轮停止在 T20，不执行 R20。
+- 已写入初始计划；下一步读取 `TODO.md` 识别首个未完成任务。
+- 已读取 `TODO.md`，首个未完成任务为 `R20 — 审阅 T20`。
+- 本次执行范围限定为审阅 T20：确认 chat 接口未改动且富 viewer 仍实现 T14 的 `ArtifactViewer` 接口，确认 diff hunk 模型来自 editor-core headless 层，运行相关 PTY/单测和 workspace 验证；完成后只标记 R20 为 `[DONE]` 并提交。
+- 2026-06-07 16:16 +08:00：开始新的调用。先重新读取 `TODO.md`，按当前文档状态选择首个未以 `[DONE]` 开头的任务；随后只执行该任务，完成或记录阻塞后提交并停止。
+- 已确认首个未完成任务仍为 `R20 — 审阅 T20`。本次执行计划：审阅 `RichArtifactViewer` 与 T14 `ArtifactViewer` 接口一致性、确认 chat 仍通过既有 `on_open_artifact` 注入 viewer、确认 diff hunk 折叠模型来自 `editor-core` headless diff 层、运行 R20 要求的 PTY/单测和 workspace 验证；若通过，则只更新 R20 完成记录并提交。
+- 审阅发现：`RichArtifactViewer` 在 `atto-ui-editor` 中直接 `impl atto_ui_chat::ArtifactViewer`，方法签名保持 `open(&mut self, Artifact) -> WindowId`；chat crate 未依赖 editor crate，富 viewer 通过现有 `ChatMessageList::on_open_artifact` 回调注入；`DiffSession` 使用 `editor_core_diff_view::{DiffModel, DiffProjection}` 和 `editor_core_diff::diff_line_hunks` 生成 headless diff/hunk 数据，UI 只维护 collapsed row projection。
+- 2026-06-07 16:20 +08:00：开始新的调用。计划先重新读取 `TODO.md`，选择当前第一个未以 `[DONE]` 开头的任务；随后检查直接相关代码/测试，按任务要求实现或审阅，运行所需验证，更新 `TODO.md` 完成记录，提交本次任务相关变更后停止。
+- 已确认当前首个未完成任务为 `R20 — 审阅 T20`。执行范围：审阅富 `ArtifactViewer` 接口兼容性、确认 chat 注入链路无需改动、确认 diff hunk 模型来自 editor-core headless 层、运行 R20 所需 PTY/相关验证；通过后只标记 `R20` 完成并提交本任务相关文件。
+- 审阅发现：`atto-ui-chat::ArtifactViewer` 仍为 `open(&mut self, Artifact) -> WindowId`；`atto-ui-editor::RichArtifactViewer` 直接实现同一 trait，chat crate 未依赖 editor crate；`snapshot_rich_artifact_app` 通过现有 `ChatMessageList::on_open_artifact` 回调注入富 viewer。`DiffSession` 使用 `DiffModel`/`DiffProjection` 和 `diff_line_hunks`，UI 层仅维护折叠状态与可见投影。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`；`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`；`cargo test --workspace --all-targets`。下一步更新 `TODO.md` 的 R20 标题和完成记录。
+- 已更新 `TODO.md`：`R20 — 审阅 T20` 标题加 `[DONE]`，并记录审阅结论与验证命令。最终步骤为检查 diff/status 并提交本任务相关文件。
