@@ -76,6 +76,7 @@ fn explorer_dock_reserves_editor_area_and_tracks_side_across_resize() {
                 editor_commands,
                 editor_theme,
                 clipboard,
+                atto_ui_editor::DiagnosticsSummary::default().into(),
             )),
         )
         .with_tag("atto-editor-app"),

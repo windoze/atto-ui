@@ -17,6 +17,7 @@ pub(super) struct TabState {
     last_saved_text: String,
     text_observer: DirtyObserver,
     is_dirty: bool,
+    diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     commands: EventQueue<TabCommand>,
 }
 
@@ -52,7 +53,7 @@ impl EditorWindowView {
         let syntax = syntax_config_for_file(&path, &language_id);
         let lsp = lsp_mode_for_file(&path, &language_id);
 
-        let tab_view = DocumentTabView::new(
+        let (tab_view, tab_handle) = DocumentTabView::new(
             tab_commands.clone(),
             self.editor_theme.clone(),
             self.clipboard.clone(),
@@ -77,6 +78,7 @@ impl EditorWindowView {
             last_saved_text: initial_text,
             text_observer,
             is_dirty: false,
+            diagnostics_summary: tab_handle.diagnostics_summary.clone(),
             commands: tab_commands.clone(),
         });
     }
@@ -153,6 +155,14 @@ impl EditorWindowView {
             };
             self.tab_window.set_tab_title(idx, title);
         }
+    }
+
+    pub(super) fn active_diagnostics_summary(&self) -> atto_ui_editor::DiagnosticsSummary {
+        self.tab_window
+            .active_tab()
+            .and_then(|idx| self.tabs.get(idx))
+            .map(|tab| tab.diagnostics_summary.get())
+            .unwrap_or_default()
     }
 
     pub(super) fn handle_commands(&mut self) {

@@ -36,7 +36,13 @@ fn window_border_scrollbar_renders_for_editor_view() {
         atto_ui_editor::EditorThemeSet::default().into();
     let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
 
-    let view = EditorWindowView::new(actions, commands.clone(), editor_theme, clipboard);
+    let view = EditorWindowView::new(
+        actions,
+        commands.clone(),
+        editor_theme,
+        clipboard,
+        atto_ui_editor::DiagnosticsSummary::default().into(),
+    );
 
     // Open the file in the active tab.
     commands.push(EditorWindowCommand::OpenFile(path));

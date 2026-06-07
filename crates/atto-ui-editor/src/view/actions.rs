@@ -16,6 +16,42 @@ impl EditorView {
         true
     }
 
+    fn jump_to_diagnostic(&mut self, direction: DiagnosticJumpDirection) -> bool {
+        let editor = self.state_manager.editor();
+        let mut diagnostics = editor.diagnostics().iter().enumerate().collect::<Vec<_>>();
+        if diagnostics.is_empty() {
+            return false;
+        }
+
+        diagnostics
+            .sort_by_key(|(_idx, diagnostic)| (diagnostic.range.start, diagnostic.range.end));
+
+        let current = self.cursor_offset();
+        let selected = match direction {
+            DiagnosticJumpDirection::Next => diagnostics
+                .iter()
+                .position(|(_idx, diagnostic)| diagnostic.range.start > current)
+                .unwrap_or(0),
+            DiagnosticJumpDirection::Prev => diagnostics
+                .iter()
+                .rposition(|(_idx, diagnostic)| diagnostic.range.start < current)
+                .unwrap_or_else(|| diagnostics.len().saturating_sub(1)),
+        };
+
+        let (diagnostic_idx, diagnostic) = diagnostics[selected];
+        let target_offset = diagnostic.range.start.min(editor.char_count());
+        let (line, column) = editor.line_index().char_offset_to_position(target_offset);
+
+        self.hide_popups();
+        let moved = self.execute(Command::Cursor(CursorCommand::MoveTo { line, column }));
+        let _ = self.execute(Command::Cursor(CursorCommand::ClearSelection));
+        if moved {
+            self.lsp.diagnostic_cursor = Some(diagnostic_idx);
+            self.adjust_scroll();
+        }
+        moved
+    }
+
     pub(super) fn handle_action(&mut self, action: EditorAction) -> bool {
         if self.config.read_only.get() && action_mutates_document(action) {
             self.hide_popups();
@@ -358,6 +394,12 @@ impl EditorView {
                 self.request_goto(EditorLspGotoKind::References);
                 true
             }
+            EditorAction::LspNextDiagnostic => {
+                self.jump_to_diagnostic(DiagnosticJumpDirection::Next)
+            }
+            EditorAction::LspPrevDiagnostic => {
+                self.jump_to_diagnostic(DiagnosticJumpDirection::Prev)
+            }
 
             EditorAction::ToggleLineNumbers => {
                 let cur = self.config.show_line_numbers.get();
@@ -371,6 +413,12 @@ impl EditorView {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagnosticJumpDirection {
+    Next,
+    Prev,
 }
 
 fn action_mutates_document(action: EditorAction) -> bool {

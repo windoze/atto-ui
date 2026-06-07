@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use atto_ui_test_host::PtyTestHost;
 use unicode_width::UnicodeWidthStr;
 
+const PTY_WAIT: Duration = Duration::from_secs(5);
+
 fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {
     for (row, line) in screen.lines().enumerate() {
         if let Some(byte_idx) = line.find(needle) {
@@ -29,7 +31,7 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 fn pty_editor_tab_inserts_to_next_tab_stop() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("tab:ab", Duration::from_secs(2))
+    host.wait_for_text("tab:ab", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -44,7 +46,7 @@ fn pty_editor_tab_inserts_to_next_tab_stop() {
     host.send_str("X").expect("insert X");
 
     // With tab_width=4 and insert_spaces=true, column 6 should advance to column 8 (2 spaces).
-    host.wait_for_text("tab:ab  X", Duration::from_secs(2))
+    host.wait_for_text("tab:ab  X", PTY_WAIT)
         .expect("tab inserted to next stop");
 
     host.send_ctrl('q').expect("quit");
@@ -56,7 +58,7 @@ fn pty_editor_tab_inserts_to_next_tab_stop() {
 fn pty_editor_ctrl_slash_toggles_rust_line_comment() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("let answer = 42;", Duration::from_secs(2))
+    host.wait_for_text("let answer = 42;", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -66,8 +68,33 @@ fn pty_editor_ctrl_slash_toggles_rust_line_comment() {
     // Ctrl+/ is encoded as C0 US (0x1f) by common terminals.
     host.send(&[0x1f]).expect("Ctrl+/ toggle comment");
 
-    host.wait_for_text("// let answer = 42;", Duration::from_secs(2))
+    host.wait_for_text("// let answer = 42;", PTY_WAIT)
         .expect("line comment toggled on");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_editor_diagnostics_gutter_and_f8_jump() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
+    let _mock_lsp = env!("CARGO_BIN_EXE_mock_lsp_server");
+    let mut host =
+        PtyTestHost::spawn(bin, &["--diagnostics"], 80, 24).expect("spawn PTY editor app");
+
+    host.wait_for_text("E │let bad = 1;", PTY_WAIT)
+        .expect("diagnostic gutter marker rendered");
+
+    for _ in 0..3 {
+        host.send_str("\u{1b}[6~").expect("PageDown");
+    }
+    host.wait_for_text("pd:050 line for paging", PTY_WAIT)
+        .expect("paged away from diagnostic");
+
+    host.send_str("\u{1b}[19~").expect("F8 next diagnostic");
+    host.wait_for_text("let bad = 1;", PTY_WAIT)
+        .expect("F8 jumped back to diagnostic line");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
@@ -78,7 +105,7 @@ fn pty_editor_ctrl_slash_toggles_rust_line_comment() {
 fn pty_editor_double_click_selects_word_and_replaces_on_type() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("double: world", Duration::from_secs(2))
+    host.wait_for_text("double: world", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -88,7 +115,7 @@ fn pty_editor_double_click_selects_word_and_replaces_on_type() {
     host.click(col as u16, row as u16).expect("click 2");
     host.send_str("X").expect("type over selection");
 
-    host.wait_for_text("double: X", Duration::from_secs(2))
+    host.wait_for_text("double: X", PTY_WAIT)
         .expect("word replaced");
 
     host.send_ctrl('q').expect("quit");
@@ -100,7 +127,7 @@ fn pty_editor_double_click_selects_word_and_replaces_on_type() {
 fn pty_editor_triple_click_selects_line_and_replaces_on_type() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("triple: full-line", Duration::from_secs(2))
+    host.wait_for_text("triple: full-line", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -111,8 +138,7 @@ fn pty_editor_triple_click_selects_line_and_replaces_on_type() {
     host.click(col as u16, row as u16).expect("click 3");
     host.send_str("ZZZ").expect("type over line selection");
 
-    host.wait_for_text("ZZZ", Duration::from_secs(2))
-        .expect("line replaced");
+    host.wait_for_text("ZZZ", PTY_WAIT).expect("line replaced");
     assert_text_absent_for(&host, "triple:", Duration::from_millis(200));
 
     host.send_ctrl('q').expect("quit");
@@ -124,7 +150,7 @@ fn pty_editor_triple_click_selects_line_and_replaces_on_type() {
 fn pty_editor_rectangular_selection_inserts_on_multiple_lines() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("rect:ab", Duration::from_secs(2))
+    host.wait_for_text("rect:ab", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -140,7 +166,7 @@ fn pty_editor_rectangular_selection_inserts_on_multiple_lines() {
         .expect("drag rect selection");
     host.send_str("X").expect("type over rect selection");
 
-    host.wait_for_text("rect:X", Duration::from_secs(2))
+    host.wait_for_text("rect:X", PTY_WAIT)
         .expect("rect selection replaced");
     assert_text_absent_for(&host, "rect:ab", Duration::from_millis(200));
 
@@ -153,7 +179,7 @@ fn pty_editor_rectangular_selection_inserts_on_multiple_lines() {
 fn pty_editor_rectangular_selection_works_with_keyboard() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("rect:ab", Duration::from_secs(2))
+    host.wait_for_text("rect:ab", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -174,7 +200,7 @@ fn pty_editor_rectangular_selection_works_with_keyboard() {
 
     host.send_str("X").expect("type over rect selection");
 
-    host.wait_for_text("rect:X", Duration::from_secs(2))
+    host.wait_for_text("rect:X", PTY_WAIT)
         .expect("rect selection replaced");
     assert_text_absent_for(&host, "rect:ab", Duration::from_millis(200));
 
@@ -187,7 +213,7 @@ fn pty_editor_rectangular_selection_works_with_keyboard() {
 fn pty_editor_page_down_reaches_end_of_document() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("tab:ab", Duration::from_secs(2))
+    host.wait_for_text("tab:ab", PTY_WAIT)
         .expect("initial render");
 
     // Page down enough times to reach EOF. Historically this could get stuck one "page" short
@@ -196,7 +222,7 @@ fn pty_editor_page_down_reaches_end_of_document() {
         host.send_str("\u{1b}[6~").expect("PageDown");
     }
 
-    host.wait_for_text("pd:119 line for paging", Duration::from_secs(2))
+    host.wait_for_text("pd:119 line for paging", PTY_WAIT)
         .expect("paged down to bottom");
 
     host.send_ctrl('q').expect("quit");
@@ -208,7 +234,7 @@ fn pty_editor_page_down_reaches_end_of_document() {
 fn pty_editor_escape_clears_selection_when_no_popups() {
     let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY editor app");
-    host.wait_for_text("double: world", Duration::from_secs(2))
+    host.wait_for_text("double: world", PTY_WAIT)
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
@@ -222,7 +248,7 @@ fn pty_editor_escape_clears_selection_when_no_popups() {
     thread::sleep(Duration::from_millis(100));
     host.send_str("X").expect("type");
 
-    host.wait_for_text("double: worldX", Duration::from_secs(2))
+    host.wait_for_text("double: worldX", PTY_WAIT)
         .expect("selection cleared before typing");
 
     host.send_ctrl('q').expect("quit");

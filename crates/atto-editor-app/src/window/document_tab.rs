@@ -59,8 +59,8 @@ impl DocumentTabView {
         language_id: String,
         syntax: atto_ui_editor::EditorSyntaxConfig,
         lsp: atto_ui_editor::EditorLspMode,
-    ) -> Self {
-        let primary = build_editor_view(
+    ) -> (Self, atto_ui_editor::EditorViewHandle) {
+        let (primary, primary_handle) = build_editor_view(
             text.clone(),
             clipboard.clone(),
             editor_theme.clone(),
@@ -69,7 +69,7 @@ impl DocumentTabView {
             lsp.clone(),
         );
 
-        Self {
+        let view = Self {
             commands,
             editor_theme,
             clipboard,
@@ -83,7 +83,8 @@ impl DocumentTabView {
             scrollbar_drag: None,
             last_layout: None,
             last_area: None,
-        }
+        };
+        (view, primary_handle)
     }
 
     fn handle_commands(&mut self) {
@@ -108,7 +109,7 @@ impl DocumentTabView {
 
         // Secondary view shares the same text binding but disables LSP to avoid starting multiple
         // servers for the same document.
-        let secondary = build_editor_view(
+        let (secondary, _secondary_handle) = build_editor_view(
             self.text.clone(),
             self.clipboard.clone(),
             self.editor_theme.clone(),
@@ -727,7 +728,7 @@ fn build_editor_view(
     language_id: String,
     syntax: atto_ui_editor::EditorSyntaxConfig,
     lsp: atto_ui_editor::EditorLspMode,
-) -> atto_ui_editor::EditorView {
+) -> (atto_ui_editor::EditorView, atto_ui_editor::EditorViewHandle) {
     let mut cfg = atto_ui_editor::EditorConfig::new(text);
     cfg.clipboard = clipboard;
     cfg.comment
@@ -736,6 +737,5 @@ fn build_editor_view(
     cfg.syntax.set(syntax);
     cfg.lsp.set(lsp);
 
-    let (view, _handle) = atto_ui_editor::EditorView::new(cfg, theme);
-    view
+    atto_ui_editor::EditorView::new(cfg, theme)
 }

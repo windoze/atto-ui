@@ -152,11 +152,12 @@ impl EditorView {
     fn render_gutter(&self, frame: &mut Frame<'_>, area: Rect, theme: &EditorTheme) {
         let show_line_numbers = self.config.show_line_numbers.get();
         let show_folding_markers = self.config.show_folding_markers.get();
-        if !show_line_numbers && !show_folding_markers {
+        let editor = self.state_manager.editor();
+        let show_diagnostics = !editor.diagnostics().is_empty();
+        if !show_line_numbers && !show_folding_markers && !show_diagnostics {
             return;
         }
 
-        let editor = self.state_manager.editor();
         let cursor_line = self.state_manager.get_cursor_state().position.line;
         let scroll_top = self.state_manager.get_viewport_state().scroll_top;
 
@@ -169,6 +170,26 @@ impl EditorView {
             fold_regions_by_start
                 .entry(r.start_line)
                 .or_insert_with(|| r.clone());
+        }
+
+        let mut diagnostic_by_line = std::collections::HashMap::<usize, DiagnosticSeverity>::new();
+        if show_diagnostics {
+            let line_index = editor.line_index();
+            for diagnostic in editor.diagnostics() {
+                let (line, _col) = line_index.char_offset_to_position(diagnostic.range.start);
+                let severity = diagnostic
+                    .severity
+                    .unwrap_or(DiagnosticSeverity::Information);
+                diagnostic_by_line
+                    .entry(line)
+                    .and_modify(|existing| {
+                        if diagnostic_severity_rank(severity) < diagnostic_severity_rank(*existing)
+                        {
+                            *existing = severity;
+                        }
+                    })
+                    .or_insert(severity);
+            }
         }
 
         let mut lines = Vec::<Line<'static>>::with_capacity(area.height as usize);
@@ -189,28 +210,52 @@ impl EditorView {
                 theme.gutter
             };
 
-            let mut s = String::new();
+            let mut spans = Vec::<Span<'static>>::new();
+            let mut base = String::new();
+            let mut used = 0usize;
 
             if show_line_numbers {
                 if is_wrapped {
-                    s.push_str(&" ".repeat(digits + 1));
+                    base.push_str(&" ".repeat(digits + 1));
                 } else {
-                    s.push_str(&format!("{:>width$} ", logical_line + 1, width = digits));
+                    base.push_str(&format!("{:>width$} ", logical_line + 1, width = digits));
                 }
             }
 
             if show_folding_markers {
                 if is_wrapped {
-                    s.push_str("  ");
+                    base.push_str("  ");
                 } else if let Some(region) = fold_regions_by_start.get(&logical_line) {
                     if region.is_collapsed {
-                        s.push('▶');
+                        base.push('▶');
                     } else {
-                        s.push('▼');
+                        base.push('▼');
                     }
-                    s.push(' ');
+                    base.push(' ');
                 } else {
-                    s.push_str("  ");
+                    base.push_str("  ");
+                }
+            }
+
+            used += base.chars().count();
+            if !base.is_empty() {
+                spans.push(Span::styled(base, gutter_style));
+            }
+
+            if show_diagnostics {
+                if is_wrapped {
+                    spans.push(Span::styled("  ".to_string(), gutter_style));
+                    used += 2;
+                } else if let Some(severity) = diagnostic_by_line.get(&logical_line).copied() {
+                    spans.push(Span::styled(
+                        diagnostic_marker(severity).to_string(),
+                        diagnostic_style(theme, severity),
+                    ));
+                    spans.push(Span::styled(" ".to_string(), gutter_style));
+                    used += 2;
+                } else {
+                    spans.push(Span::styled("  ".to_string(), gutter_style));
+                    used += 2;
                 }
             }
 
@@ -218,13 +263,13 @@ impl EditorView {
             if area.width > 0 {
                 // Ensure the separator is present even if gutter content is shorter.
                 let expected_w = area.width.saturating_sub(1) as usize;
-                if s.chars().count() < expected_w {
-                    s.push_str(&" ".repeat(expected_w - s.chars().count()));
+                if used < expected_w {
+                    spans.push(Span::styled(" ".repeat(expected_w - used), gutter_style));
                 }
-                s.push('│');
+                spans.push(Span::styled("│".to_string(), gutter_style));
             }
 
-            lines.push(Line::from(Span::styled(s, gutter_style)));
+            lines.push(Line::from(spans));
         }
 
         frame.render_widget(Paragraph::new(lines).style(theme.gutter), area);
@@ -467,6 +512,33 @@ impl EditorView {
         if focused && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+    }
+}
+
+fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
+    match severity {
+        DiagnosticSeverity::Error => 0,
+        DiagnosticSeverity::Warning => 1,
+        DiagnosticSeverity::Information => 2,
+        DiagnosticSeverity::Hint => 3,
+    }
+}
+
+fn diagnostic_marker(severity: DiagnosticSeverity) -> char {
+    match severity {
+        DiagnosticSeverity::Error => 'E',
+        DiagnosticSeverity::Warning => 'W',
+        DiagnosticSeverity::Information => 'I',
+        DiagnosticSeverity::Hint => 'H',
+    }
+}
+
+fn diagnostic_style(theme: &EditorTheme, severity: DiagnosticSeverity) -> Style {
+    match severity {
+        DiagnosticSeverity::Error => theme.diagnostic_error,
+        DiagnosticSeverity::Warning => theme.diagnostic_warning,
+        DiagnosticSeverity::Information => theme.diagnostic_info,
+        DiagnosticSeverity::Hint => theme.diagnostic_hint,
     }
 }
 

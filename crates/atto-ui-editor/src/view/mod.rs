@@ -10,8 +10,9 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use editor_core::{
-    Command, CursorCommand, EditCommand, EditorStateManager, Position, SearchOptions, Selection,
-    SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, char_width,
+    Command, CursorCommand, DiagnosticSeverity, EditCommand, EditorStateManager, Position,
+    SearchOptions, Selection, SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand,
+    char_width,
 };
 use editor_core_lsp::{
     LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession, locations_from_value,

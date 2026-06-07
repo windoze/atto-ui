@@ -768,6 +768,7 @@ impl EditorView {
     pub(super) fn layout_rects(&self, area: Rect) -> (Rect, Rect) {
         let show_line_numbers = self.config.show_line_numbers.get();
         let show_folding_markers = self.config.show_folding_markers.get();
+        let show_diagnostics = !self.state_manager.editor().diagnostics().is_empty();
 
         let line_count = self.state_manager.editor().line_index().line_count().max(1);
         let digits = line_count.to_string().len().max(2) as u16;
@@ -777,6 +778,9 @@ impl EditorView {
             gutter_w = gutter_w.saturating_add(digits.saturating_add(1));
         }
         if show_folding_markers {
+            gutter_w = gutter_w.saturating_add(2);
+        }
+        if show_diagnostics {
             gutter_w = gutter_w.saturating_add(2);
         }
 

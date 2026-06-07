@@ -9,12 +9,12 @@ use parking_lot::Mutex;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{
-    AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
+    AppControl, CrosstermAppConfig, CursorMode, Desktop, DesktopMode, MenuBar, MenuItem, MenuSpec,
     run_crossterm_desktop,
 };
 use atto_ui::composable::{Component, HStack, LayoutParams, Size, TextFn, VStack};
 use atto_ui::dialogs::FileDialog;
-use atto_ui::reactive::{EventQueue, Property};
+use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::widgets::{Button, TextBox};
 use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKind};
@@ -40,6 +40,7 @@ const MIN_EXPLORER_DOCK_SIZE: u16 = 20;
 
 struct AppState {
     editor_windows: HashMap<WindowId, EventQueue<EditorWindowCommand>>,
+    editor_diagnostics: HashMap<WindowId, Binding<atto_ui_editor::DiagnosticsSummary>>,
     last_focused_editor: Option<WindowId>,
     next_window_offset: u16,
 
@@ -57,6 +58,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             editor_windows: HashMap::new(),
+            editor_diagnostics: HashMap::new(),
             last_focused_editor: None,
             next_window_offset: 0,
             explorer_window: None,
@@ -161,11 +163,14 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let work = Desktop::layout(screen).work_area;
                 let rect = default_editor_rect(work, 0);
                 let commands = EventQueue::<EditorWindowCommand>::new();
+                let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
+                    atto_ui_editor::DiagnosticsSummary::default().into();
                 let view = EditorWindowView::new(
                     actions.clone(),
                     commands.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
+                    diagnostics_summary.clone(),
                 );
 
                 let id = desktop.add_window(
@@ -176,6 +181,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 {
                     let mut s = state.lock();
                     s.editor_windows.insert(id, commands.clone());
+                    s.editor_diagnostics.insert(id, diagnostics_summary);
                     s.last_focused_editor = Some(id);
                 }
 
@@ -210,6 +216,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 }
 
                 sync_explorer_dock_state(desktop, &state);
+                update_diagnostics_statusbar(desktop, &state);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
                 for action in actions.drain() {
@@ -256,6 +263,8 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                         cmds.push(EditorWindowCommand::SaveAs(path));
                     }
                 }
+
+                update_diagnostics_statusbar(desktop, &state);
 
                 Ok(AppControl::Continue)
             }
@@ -731,6 +740,64 @@ fn active_editor_commands(
     None
 }
 
+fn update_diagnostics_statusbar(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let summary = active_editor_diagnostics_summary(desktop, state).unwrap_or_default();
+    desktop.status.set_custom(
+        status_left_for_mode(desktop.mode),
+        format_diagnostics_summary(summary),
+    );
+}
+
+fn status_left_for_mode(mode: DesktopMode) -> &'static str {
+    match mode {
+        DesktopMode::Normal => "F10 Menu  Ctrl+W Window  F6 Next",
+        DesktopMode::Menu => "Menu: ←/→/↑/↓ Enter  Esc Close",
+        DesktopMode::WindowManagement => {
+            "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit"
+        }
+    }
+}
+
+fn format_diagnostics_summary(summary: atto_ui_editor::DiagnosticsSummary) -> String {
+    format!(
+        "E:{} W:{} I:{} H:{}",
+        summary.errors, summary.warnings, summary.infos, summary.hints
+    )
+}
+
+fn active_editor_diagnostics_summary(
+    desktop: &Desktop,
+    state: &Arc<Mutex<AppState>>,
+) -> Option<atto_ui_editor::DiagnosticsSummary> {
+    let focused = desktop.wm.focused();
+
+    {
+        let guard = state.lock();
+        if let Some(id) = focused
+            && desktop.wm.window(id).is_some()
+            && let Some(summary) = guard.editor_diagnostics.get(&id)
+        {
+            return Some(summary.get());
+        }
+
+        if let Some(id) = guard.last_focused_editor
+            && desktop.wm.window(id).is_some()
+            && let Some(summary) = guard.editor_diagnostics.get(&id)
+        {
+            return Some(summary.get());
+        }
+    }
+
+    let guard = state.lock();
+    for w in desktop.wm.windows().iter().rev() {
+        if let Some(summary) = guard.editor_diagnostics.get(&w.id()) {
+            return Some(summary.get());
+        }
+    }
+
+    None
+}
+
 fn add_editor_window(
     desktop: &mut Desktop,
     screen: Rect,
@@ -746,7 +813,15 @@ fn add_editor_window(
 
     let rect = default_editor_rect(work, offset);
     let commands = EventQueue::<EditorWindowCommand>::new();
-    let view = EditorWindowView::new(actions, commands.clone(), editor_theme, clipboard);
+    let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
+        atto_ui_editor::DiagnosticsSummary::default().into();
+    let view = EditorWindowView::new(
+        actions,
+        commands.clone(),
+        editor_theme,
+        clipboard,
+        diagnostics_summary.clone(),
+    );
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
             .with_tag("atto-editor-app"),
@@ -755,6 +830,7 @@ fn add_editor_window(
     {
         let mut s = state.lock();
         s.editor_windows.insert(id, commands.clone());
+        s.editor_diagnostics.insert(id, diagnostics_summary);
         s.last_focused_editor = Some(id);
     }
 
@@ -924,6 +1000,7 @@ mod tests {
             commands.clone(),
             editor_theme.clone(),
             clipboard.clone(),
+            atto_ui_editor::DiagnosticsSummary::default().into(),
         );
         let editor_id = desktop.add_window(
             Window::new(
@@ -990,7 +1067,13 @@ mod tests {
         let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
             atto_ui_editor::EditorThemeSet::default().into();
         let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
-        let editor = EditorWindowView::new(actions, editor_commands, editor_theme, clipboard);
+        let editor = EditorWindowView::new(
+            actions,
+            editor_commands,
+            editor_theme,
+            clipboard,
+            atto_ui_editor::DiagnosticsSummary::default().into(),
+        );
         let editor_id = desktop.add_window(
             Window::new(
                 WindowKind::Normal,
@@ -1188,8 +1271,13 @@ mod tests {
         let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
             atto_ui_editor::EditorThemeSet::default().into();
         let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
-        let editor =
-            EditorWindowView::new(actions, editor_commands.clone(), editor_theme, clipboard);
+        let editor = EditorWindowView::new(
+            actions,
+            editor_commands.clone(),
+            editor_theme,
+            clipboard,
+            atto_ui_editor::DiagnosticsSummary::default().into(),
+        );
         let editor_id = desktop.add_window(
             Window::new(
                 WindowKind::Normal,
@@ -1218,6 +1306,93 @@ mod tests {
             drained.as_slice(),
             [EditorWindowCommand::SaveActive]
         ));
+    }
+
+    #[test]
+    fn diagnostics_statusbar_uses_last_focused_editor_when_explorer_is_focused() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let explorer = ExplorerWindowView::new(
+            actions.clone(),
+            state.lock().explorer_commands.clone(),
+            Vec::new(),
+        );
+        let explorer_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Explorer",
+                Rect::default(),
+                Box::new(explorer),
+            )
+            .with_dock(Some(explorer_dock_config(
+                DockSide::Left,
+                DEFAULT_EXPLORER_DOCK_SIZE,
+            ))),
+            screen,
+        );
+
+        let editor_commands = EventQueue::<EditorWindowCommand>::new();
+        let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
+            atto_ui_editor::EditorThemeSet::default().into();
+        let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
+        let diagnostics_summary: atto_ui::reactive::Binding<atto_ui_editor::DiagnosticsSummary> =
+            atto_ui_editor::DiagnosticsSummary {
+                errors: 1,
+                warnings: 2,
+                infos: 3,
+                hints: 4,
+            }
+            .into();
+        let editor = EditorWindowView::new(
+            actions,
+            editor_commands.clone(),
+            editor_theme,
+            clipboard,
+            diagnostics_summary.clone(),
+        );
+        let editor_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Atto Editor",
+                default_editor_rect(Desktop::layout(screen).work_area, 0),
+                Box::new(editor),
+            ),
+            screen,
+        );
+        {
+            let mut s = state.lock();
+            s.explorer_window = Some(explorer_id);
+            s.editor_windows.insert(editor_id, editor_commands);
+            s.editor_diagnostics.insert(editor_id, diagnostics_summary);
+            s.last_focused_editor = Some(editor_id);
+        }
+
+        desktop.wm.focus(explorer_id);
+        update_diagnostics_statusbar(&mut desktop, &state);
+
+        let backend = TestBackend::new(90, 1);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| {
+                desktop
+                    .status
+                    .draw(f, Rect::new(0, 0, 90, 1), &desktop.theme)
+            })
+            .expect("draw statusbar");
+
+        let mut row = String::new();
+        let buf = terminal.backend().buffer();
+        for x in 0..90 {
+            row.push_str(buf[(x, 0)].symbol());
+        }
+        assert!(
+            row.contains("E:1 W:2 I:3 H:4"),
+            "expected diagnostics summary in statusbar, got {row:?}"
+        );
     }
 
     #[test]
@@ -1275,6 +1450,7 @@ mod tests {
             editor_commands.clone(),
             editor_theme.clone(),
             clipboard.clone(),
+            atto_ui_editor::DiagnosticsSummary::default().into(),
         );
         let editor_id = desktop.add_window(
             Window::new(

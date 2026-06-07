@@ -39,6 +39,13 @@ pub const SEARCH_MATCH_STYLE_ID: u32 = 0x0600_0001;
 /// Find/replace: "current match" highlight style id (optional).
 pub const SEARCH_CURRENT_STYLE_ID: u32 = 0x0600_0002;
 
+/// LSP diagnostics style id base used by `editor-core-lsp`.
+pub const LSP_DIAGNOSTIC_STYLE_BASE: u32 = 0x0400_0100;
+pub const LSP_DIAGNOSTIC_ERROR_STYLE_ID: u32 = LSP_DIAGNOSTIC_STYLE_BASE | 1;
+pub const LSP_DIAGNOSTIC_WARNING_STYLE_ID: u32 = LSP_DIAGNOSTIC_STYLE_BASE | 2;
+pub const LSP_DIAGNOSTIC_INFO_STYLE_ID: u32 = LSP_DIAGNOSTIC_STYLE_BASE | 3;
+pub const LSP_DIAGNOSTIC_HINT_STYLE_ID: u32 = LSP_DIAGNOSTIC_STYLE_BASE | 4;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SemanticTokenTheme {
     pub token_types: HashMap<String, Style>,
@@ -122,6 +129,11 @@ pub struct EditorTheme {
     pub gutter_active: Style,
     /// Folding marker style.
     pub fold_marker: Style,
+    /// Diagnostics marker/style colors.
+    pub diagnostic_error: Style,
+    pub diagnostic_warning: Style,
+    pub diagnostic_info: Style,
+    pub diagnostic_hint: Style,
 
     /// Popup background/foreground.
     pub popup: Style,
@@ -146,6 +158,18 @@ impl EditorTheme {
     pub fn dark_default() -> Self {
         let background = Style::default().bg(Color::Black);
         let text = Style::default().fg(Color::White);
+        let diagnostic_error = Style::default()
+            .fg(Color::LightRed)
+            .add_modifier(Modifier::UNDERLINED);
+        let diagnostic_warning = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::UNDERLINED);
+        let diagnostic_info = Style::default()
+            .fg(Color::LightBlue)
+            .add_modifier(Modifier::UNDERLINED);
+        let diagnostic_hint = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::UNDERLINED);
 
         let mut style_ids = HashMap::<u32, Style>::new();
         style_ids.insert(SIMPLE_STYLE_STRING, Style::default().fg(Color::Green));
@@ -216,6 +240,13 @@ impl EditorTheme {
             Style::default().bg(Color::LightYellow).fg(Color::Black),
         );
 
+        // LSP diagnostics styles match editor-core-lsp's stable severity encoding.
+        style_ids.insert(LSP_DIAGNOSTIC_STYLE_BASE, diagnostic_info);
+        style_ids.insert(LSP_DIAGNOSTIC_ERROR_STYLE_ID, diagnostic_error);
+        style_ids.insert(LSP_DIAGNOSTIC_WARNING_STYLE_ID, diagnostic_warning);
+        style_ids.insert(LSP_DIAGNOSTIC_INFO_STYLE_ID, diagnostic_info);
+        style_ids.insert(LSP_DIAGNOSTIC_HINT_STYLE_ID, diagnostic_hint);
+
         // A small out-of-the-box Sublime scope theme. This intentionally uses broad prefix keys
         // (e.g. "comment", "string") because `EditorView` applies hierarchical fallback
         // (`comment.line` -> `comment`) when resolving scopes.
@@ -251,6 +282,10 @@ impl EditorTheme {
             gutter: Style::default().bg(Color::Black).fg(Color::DarkGray),
             gutter_active: Style::default().bg(Color::Black).fg(Color::White),
             fold_marker: Style::default().bg(Color::Black).fg(Color::LightCyan),
+            diagnostic_error,
+            diagnostic_warning,
+            diagnostic_info,
+            diagnostic_hint,
             popup: Style::default().bg(Color::Black).fg(Color::White),
             popup_border: Style::default().fg(Color::DarkGray),
             popup_selected: Style::default().bg(Color::Blue).fg(Color::White),

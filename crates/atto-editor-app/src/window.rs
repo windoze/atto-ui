@@ -27,6 +27,7 @@ pub enum EditorWindowCommand {
 #[derive(Clone)]
 pub struct EditorWindowHandle {
     pub commands: EventQueue<EditorWindowCommand>,
+    pub diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
 }
 
 pub struct EditorWindowView {
@@ -35,6 +36,7 @@ pub struct EditorWindowView {
 
     editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
     clipboard: Binding<String>,
+    diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
 
     tab_window: atto_ui::composable::TabWindow,
     tabs: Vec<tabs::TabState>,
@@ -46,18 +48,33 @@ impl EditorWindowView {
         commands: EventQueue<EditorWindowCommand>,
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
+        diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     ) -> Self {
         Self {
             _actions: actions,
             commands,
             editor_theme,
             clipboard,
+            diagnostics_summary,
             tab_window: atto_ui::composable::TabWindow::new(),
             tabs: Vec::new(),
         }
     }
 
-    pub fn handle(commands: EventQueue<EditorWindowCommand>) -> EditorWindowHandle {
-        EditorWindowHandle { commands }
+    pub fn handle(
+        commands: EventQueue<EditorWindowCommand>,
+        diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
+    ) -> EditorWindowHandle {
+        EditorWindowHandle {
+            commands,
+            diagnostics_summary,
+        }
+    }
+
+    pub(super) fn sync_active_diagnostics_summary(&self) {
+        let summary = self.active_diagnostics_summary();
+        if self.diagnostics_summary.get() != summary {
+            self.diagnostics_summary.set(summary);
+        }
     }
 }

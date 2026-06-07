@@ -289,6 +289,9 @@ fn lsp_publish_diagnostics_updates_summary() {
             assert_eq!(summary.warnings, 0);
             assert_eq!(summary.infos, 0);
             assert_eq!(summary.hints, 0);
+            let buf = terminal.backend().buffer();
+            assert_eq!(buf.cell((5, 0)).expect("diagnostic marker").symbol(), "E");
+            assert_eq!(buf.cell((8, 0)).expect("text start").symbol(), "l");
             break;
         }
 

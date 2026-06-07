@@ -517,7 +517,7 @@
 - 确认 LSP `didChange`/poll/config restart/disable 错误路径调用 `clear_lsp_state` 清理 diagnostics style layer 与 core diagnostics，并重置 editor 侧 summary/controller diagnostics 状态。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T8 — L1 diagnostics gutter/statusbar 渲染与 F8 跳转
+### [DONE] T8 — L1 diagnostics gutter/statusbar 渲染与 F8 跳转
 
 **依赖**：T7。Statusbar 分段可先用旧 `set_left/set_right`，完整接入依赖 T11。
 
@@ -564,6 +564,15 @@
 **验收**：
 - 诊断 underline/style、gutter marker、summary 三者一致。
 - 无 diagnostics 时 gutter 不额外占用空间，或占用行为有明确配置。
+
+**完成记录（2026-06-08）**：
+- `EditorAction` 新增 `LspNextDiagnostic` / `LspPrevDiagnostic`，默认键位 `F8` / `Shift+F8`；跳转按当前 cursor offset 查找下一/上一条 editor-core diagnostics，并支持 wrap-around 与滚动调整。
+- diagnostics 渲染接入 gutter：有 diagnostics 时额外占用 2 列，按行显示最高严重级别 ASCII marker `E`/`W`/`I`/`H`；wrapped visual row 不重复显示 marker，无 diagnostics 时不额外占用 gutter。
+- `EditorTheme` 增加 diagnostics severity styles，并映射 `editor-core-lsp` 的 `0x0400_0100 | severity_bits` style id，使文本诊断 style、gutter marker 与 summary severity 保持一致。
+- `DocumentTabView` 保留 primary `EditorViewHandle` 的 `diagnostics_summary`；`EditorWindowView` 汇总 active tab summary；`atto-editor-app` on_tick 将 active/last-focused editor diagnostics summary 写入旧 `StatusBar` custom right text（如 `E:1 W:0 I:0 H:0`），Explorer focused 时仍使用 last focused editor。
+- `snapshot_editor_app --diagnostics` 使用 mock LSP 发布 deterministic diagnostics；新增/扩展测试覆盖 mock LSP gutter `E`、F8 跳回诊断行、诊断 gutter marker/style、F8 wrap-around、app statusbar last-focused fallback。
+- 修复同文件 PTY 测试在并行负载下 2 秒初始文本等待偶发超时的问题：`pty_editor.rs` 文本等待统一使用 5 秒 `PTY_WAIT`，单个测试仍远低于 1 分钟。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_editor`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R8 — 审阅 T8
 

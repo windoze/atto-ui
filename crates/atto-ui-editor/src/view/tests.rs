@@ -216,6 +216,102 @@ fn editor_view_applies_diagnostics_to_summary_and_core_state() {
 }
 
 #[test]
+fn editor_view_renders_diagnostics_gutter_marker() {
+    let (mut view, _text) = test_view_with_text("let bad = 1;\nlet ok = 2;\n");
+    view.apply_current_document_diagnostics(editor_core_lsp::LspPublishDiagnosticsParams {
+        uri: "file:///diagnostics.rs".to_string(),
+        version: Some(1),
+        diagnostics: vec![editor_core_lsp::LspDiagnostic {
+            range: editor_core_lsp::LspRange::new(
+                editor_core_lsp::LspPosition::new(0, 4),
+                editor_core_lsp::LspPosition::new(0, 7),
+            ),
+            severity: Some(editor_core_lsp::LspDiagnosticSeverity::Error),
+            code: None,
+            source: Some("test".to_string()),
+            message: "mock error".to_string(),
+            related_information: None,
+            data: None,
+        }],
+    });
+
+    let backend = ratatui::backend::TestBackend::new(40, 4);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = atto_ui::composable::ComponentContext {
+        theme: &app_theme,
+        window_id: atto_ui::wm::WindowId::default(),
+        is_focused: true,
+        scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+        tab_mode: atto_ui::composable::TabMode::Cycle,
+        mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+
+    terminal
+        .draw(|f| view.draw(f, Rect::new(0, 0, 40, 4), ctx))
+        .expect("draw");
+
+    let buf = terminal.backend().buffer();
+    let marker = buf.cell((5, 0)).expect("diagnostic marker cell");
+    assert_eq!(marker.symbol(), "E");
+    assert_eq!(marker.style().fg, Some(ratatui::style::Color::LightRed));
+    assert_eq!(buf.cell((7, 0)).expect("separator").symbol(), "│");
+    assert_eq!(buf.cell((8, 0)).expect("text start").symbol(), "l");
+}
+
+#[test]
+fn editor_actions_jump_between_diagnostics_with_wraparound() {
+    let (mut view, _text) = test_view_with_text("zero\none\ntwo\nthree\n");
+    view.apply_current_document_diagnostics(editor_core_lsp::LspPublishDiagnosticsParams {
+        uri: "file:///diagnostics.rs".to_string(),
+        version: Some(1),
+        diagnostics: vec![
+            editor_core_lsp::LspDiagnostic {
+                range: editor_core_lsp::LspRange::new(
+                    editor_core_lsp::LspPosition::new(1, 0),
+                    editor_core_lsp::LspPosition::new(1, 3),
+                ),
+                severity: Some(editor_core_lsp::LspDiagnosticSeverity::Warning),
+                code: None,
+                source: Some("test".to_string()),
+                message: "warning".to_string(),
+                related_information: None,
+                data: None,
+            },
+            editor_core_lsp::LspDiagnostic {
+                range: editor_core_lsp::LspRange::new(
+                    editor_core_lsp::LspPosition::new(3, 0),
+                    editor_core_lsp::LspPosition::new(3, 5),
+                ),
+                severity: Some(editor_core_lsp::LspDiagnosticSeverity::Error),
+                code: None,
+                source: Some("test".to_string()),
+                message: "error".to_string(),
+                related_information: None,
+                data: None,
+            },
+        ],
+    });
+
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 0,
+        column: 0,
+    }));
+    assert!(view.handle_action(EditorAction::LspNextDiagnostic));
+    assert_eq!(view.active_cursor_position(), Position::new(1, 0));
+
+    assert!(view.handle_action(EditorAction::LspNextDiagnostic));
+    assert_eq!(view.active_cursor_position(), Position::new(3, 0));
+
+    assert!(view.handle_action(EditorAction::LspNextDiagnostic));
+    assert_eq!(view.active_cursor_position(), Position::new(1, 0));
+
+    assert!(view.handle_action(EditorAction::LspPrevDiagnostic));
+    assert_eq!(view.active_cursor_position(), Position::new(3, 0));
+}
+
+#[test]
 fn clear_lsp_diagnostics_clears_all_controller_state() {
     let (mut view, _text) = test_view_with_text("let bad = 1;\n");
     view.lsp.diagnostics.push(editor_core_lsp::LspDiagnostic {
@@ -428,5 +524,13 @@ fn editor_default_keymap_includes_stage_three_actions_without_known_conflicts() 
     assert_eq!(
         keymap.get(KeyChord::new(KeyCode::F(12), KeyModifiers::NONE)),
         Some(EditorAction::LspGotoDefinition)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::F(8), KeyModifiers::NONE)),
+        Some(EditorAction::LspNextDiagnostic)
+    );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::F(8), KeyModifiers::SHIFT)),
+        Some(EditorAction::LspPrevDiagnostic)
     );
 }
