@@ -63,13 +63,19 @@
 - 新增 `src/composable/drag.rs` 单元测试，覆盖默认 `DropFeedback` reject/none 以及默认 `drag_over` 行为。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`。
 
-### [TODO] R1 — 审阅 T1
+### [DONE] R1 — 审阅 T1
 
 审阅 T1 改动：
 - 确认 `DragAndDrop` 是默认 no-op，未强迫所有组件写业务逻辑。
 - 确认所有 `ComponentContext` 构造点都设置了 `drag` 字段，且未用不安全占位或 panic。
 - 确认 public re-export 合理，不泄露 wm 内部私有类型。
 - 运行 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T1 拖拽基础类型、`DragAndDrop` supertrait、`ComponentContext.drag` 字段、`composable` re-export、workspace 中的 `ComponentContext` 构造点和手写 `impl Component` 类型补齐情况。
+- 确认 `DragAndDrop` 默认实现均为 no-op / reject，未强迫普通组件写业务拖拽逻辑；`ComponentContext` 构造点已显式设置 `drag: None`，未发现 panic、不安全占位或 unsafe；公开导出只暴露 composable 拖拽类型与既有 public `WindowId`。
+- 未发现需要修改代码的问题。
+- 验证通过：`cargo fmt`；`cargo check --workspace --all-targets`；`cargo clippy --workspace --all-targets -- -D warnings`。
 
 ### [TODO] T2 — C1 WindowManager 全局拖拽会话与反馈绘制
 
