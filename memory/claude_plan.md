@@ -34,4 +34,5 @@
 - 已完成验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、Node binding napi build 与 JS 测试、`packages/core` 类型检查与 JS 测试、`packages/react` 类型检查与 JS/headless 测试均通过。
 - 未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 - 已更新 `TODO.md` / `TODO-1.md` 的 `NT8` 完成状态与完成记录。
-- 下一步复查新增文件与 Git 状态，提交本次任务相关改动并停止。
+- 已复查新增文件、diff 与 Git 状态，并提交本次任务主要改动：`98c0bb7 [NT8] Add React reconciler static rendering`。
+- 下一步提交本进度文件的最终状态后停止，不继续处理 `NR8`。
