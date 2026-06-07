@@ -227,10 +227,15 @@
 - 新增 JS 测试：纯 reconciler 测试断言 `<vstack><label/></vstack>` 产出的 `set_tree` spec/op；headless 测试经真实 `AppHost` 渲染 React 树并在 snapshot 中断言文本。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR8 — 审阅 NT8
+### [DONE] NR8 — 审阅 NT8
 - 确认节点 id 稳定、唯一、随实例生命周期管理。
 - 确认 HostConfig 必需方法齐备、mutation 模式配置正确。
 - 运行 reconciler 单测 + headless。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/host.ts` 与 `packages/react/src/reconciler.ts`：确认 mutation HostConfig 使用 `LegacyRoot`，声明 `supportsMutation=true` / persistence、hydration 关闭，具备静态提交所需的 create/append/insert/remove/container/text/commit 调度方法，`resetAfterCommit` 统一 flush 当前静态树。
+- 确认 host instance 在 `createInstance` / `createTextInstance` 时分配稳定 string id；默认 container id 前缀使用进程级递增值避免不同 root 默认冲突，实例挂载时同步 `parent` 与 `windowId` 到子树。
+- 补充 `packages/react/__test__/reconciler.cjs` 覆盖 parent/windowId 生命周期、同一 React 实例重渲染时 id 保持稳定，以及默认 root id 前缀唯一性；现有 headless 测试继续验证真实 `AppHost` 静态渲染文本。
+- 验证通过：`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NT9 — props/子节点增删/事件 op 映射（U.1）
 **文件**：`packages/react/src/host.ts`、`src/reconciler.ts`

@@ -25,7 +25,7 @@
 | NT7 | DONE | [DONE] `RichText` + `TextSpan` 结构化富文本（R.2） | TODO-1.md · 阶段二 M2 |
 | NR7 | DONE | [DONE] 审阅 NT7 | TODO-1.md · 阶段二 M2 |
 | NT8 | DONE | [DONE] react-reconciler HostConfig 骨架 + 节点 id + 静态渲染（U.1） | TODO-1.md · 阶段三 M3+M4 |
-| NR8 | TODO | 审阅 NT8 | TODO-1.md · 阶段三 M3+M4 |
+| NR8 | DONE | [DONE] 审阅 NT8 | TODO-1.md · 阶段三 M3+M4 |
 | NT9 | TODO | props/子节点增删/事件 op 映射（U.1） | TODO-1.md · 阶段三 M3+M4 |
 | NR9 | TODO | 审阅 NT9 | TODO-1.md · 阶段三 M3+M4 |
 | NT10 | TODO | `render()` + tick 主循环（U.2） | TODO-1.md · 阶段三 M3+M4 |
