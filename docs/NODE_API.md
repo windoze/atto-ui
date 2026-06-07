@@ -166,11 +166,11 @@ deno run --allow-read --allow-env --allow-run --allow-ffi __test__/runtime_compa
 The compatibility suite includes:
 
 - Headless N-API load, `AppHost` construction, `applyTreeOps`, event injection, and callback drain.
-- PTY raw-mode startup and Ctrl+Q shutdown.
+- PTY raw-mode startup and Ctrl+Q shutdown on POSIX platforms; the PTY smoke is skipped on Windows.
 - Restoration assertions for alternate screen, cursor visibility, mouse capture, and terminal raw-mode flags.
 
 Known behavior:
 
-- Deno must be launched with `--allow-ffi` for native `.node` loading.
+- Deno must be launched with `--allow-ffi` for native `.node` loading; the local loader and PTY smoke also require `--allow-read --allow-env --allow-run`.
 - Real-terminal apps should avoid `console.log` while the alternate screen is active; render logs inside the UI or write them to a file.
 - `AppHost` is single-threaded and should stay on the main runtime thread. Do not move it across workers.

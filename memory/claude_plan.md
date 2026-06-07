@@ -1,42 +1,31 @@
-# 执行计划
+﻿# 执行计划
 
 ## 当前状态
 
-- 已开始本轮任务执行。
-- 计划文件仅记录可审阅的执行步骤、决策和进度，不包含隐藏推理链。
+- 已读取 `TODO.md`，第一个未完成任务是 `TODO-1.md` 中的 `NR20 — 审阅 NT20`。
+- 最近提交 `a04f9d0 [NT20] Add CI runtime compatibility docs` 与当前任务直接相关；本轮审阅该提交范围，不处理后续 `TODO-2.md` 任务。
+- 工作区已有未跟踪文件 `notification.sh`、`run_agent.sh`，本轮不会读取、修改或提交它们，除非后续发现其与当前任务直接相关。
 
-## 初始步骤
+## 执行步骤
 
-1. 读取 `TODO.md`，按文档顺序识别第一个标题未以 `[DONE]` 开头的任务。
-2. 检查最新提交是否明确提到与该任务直接相关的未完成问题。
-3. 阅读该任务相关代码、测试和项目约束，只处理当前任务范围内的问题。
-4. 实现当前任务；如遇到阻塞当前任务的真实前置缺口，则最小化更新 `TODO.md` 并停止。
-5. 按要求运行格式化、lint 和相关/完整测试；若发现未排期失败，修复或在 `TODO.md` 中排期。
-6. 在 `TODO.md` 中将完成的任务标题加上 `[DONE]`，更新完成记录。
-7. 检查 git 状态和差异，提交本轮全部相关变更，然后停止，不继续下一个任务。
+1. 审阅 NT20 改动范围：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、运行时兼容测试、package scripts、`README.md`、`docs/NODE_API.md`、`docs/RELEASE.md`、`NODE_BINDING.md`。
+2. 确认 CI 覆盖编译、测试、runtime 兼容、pack dry-run 和 tag 发布链路；如发现真实缺口，直接修复。
+3. 确认 Bun/Deno 兼容测试行为与 Node 一致，或文档明确记录差异；如发现脚本或测试不可运行，直接修复。
+4. 确认文档中的 API、命令和发布流程与实际 package scripts / 类型定义同步；如发现偏差，直接修复。
+5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，通过后运行相关 JS/runtime 测试与必要的完整 Rust 测试。
+6. 若发现未被显式排期的测试或夹具失败，按策略修复，或在 `TODO.md` 中加入最小必要前置任务并停止。
+7. 完成后在 `TODO-1.md` 和索引 `TODO.md` 中将 `NR20` 标记为 `[DONE]`，更新完成记录；仅当阶段计划变化时才更新 `PLAN.md`。
+8. 检查 `git status`、`git diff`、`git log --oneline -10`，确认只提交应提交内容。
+9. 使用清晰提交信息提交本轮相关变更，然后停止，不处理下一个任务。
 
 ## 进度记录
 
-- 已读取 `TODO.md` 与 `TODO-1.md`，首个未完成任务为 `NT20 — CI 流水线 + Bun/Deno + 文档（P.3）`。
-- 最新提交为 `35acecf [NR19] Review npm platform packaging`，未从提交标题发现直接相关的未完成前置问题。
-
-## NT20 执行计划
-
-1. 检查现有 CI/workflow、package scripts、README/API 文档与 Bun/Deno 相关测试覆盖。
-2. 补齐 CI：Rust/TS/JS 测试、napi 平台构建/pack 校验、tag 发布链路，并覆盖 reconciler 单测与 e2e。
-3. 补齐 Bun/Deno 冒烟脚本或测试，并记录 raw-mode/终端行为差异。
-4. 更新根 README 与 API/快速开始文档，使安装、Node/React 使用、发布和多运行时验证可上手。
-5. 运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、Rust/TS/JS 测试和 Bun/Deno 冒烟；若本机缺少运行时则安装/执行或记录明确跳过原因。
-6. 将 `TODO-1.md` 中 `NT20` 标题标为 `[DONE]` 并写入完成记录，同步更新根 `TODO.md` 索引状态。
-7. 检查 `git status`/`git diff`/最近提交，提交所有本轮相关变更后停止。
-
-## NT20 进度
-
-- 已确认仓库当前没有 `.github/workflows`；需要新增 CI 与 tag 发布 workflow。
-- 已确认现有 Node/Core/React 包和测试结构；可在 `packages/core` 增加跨 Node/Bun/Deno 的 headless 与 PTY raw-mode 冒烟脚本。
-- 已发现工作树中存在与本任务无关的未跟踪 `notification.sh`、`run_agent.sh`，不会修改或提交。
-- 已新增 `packages/core` 的 Node/Bun/Deno headless + PTY 兼容性冒烟脚本，并验证 Node、Deno、Bun 本地通过。
-- 已新增 `.github/workflows/ci.yml` 与 `.github/workflows/release.yml`，覆盖常规验证、Bun/Deno 冒烟、pack dry-run 与 tag 发布流程。
-- 已更新根 `README.md`，新增 `docs/NODE_API.md`、`docs/RELEASE.md`，并同步 `NODE_BINDING.md` 的已定实现与兼容性记录。
-- 已运行 required validation：Rust fmt/clippy/full tests、N-API build、core/react typecheck、Node/core/react tests、Bun/Deno compatibility smokes、npm artifact/pack dry-runs 和 `git diff --check` 均通过。
-- 已将 `TODO.md` 索引与 `TODO-1.md` 的 `NT20` 标记为 `[DONE]` 并写入完成记录；下一项 `NR20` 保持未开始。
+- 已创建本计划文件并定位当前任务为 `NR20`。
+- 已审阅 NT20 的 CI、运行时兼容测试与文档同步性。
+- 已修复 release workflow 缺少 tag 发布前完整测试门禁的问题，并同步 README / release 文档 / Node binding 设计记录 / Node API 文档中的命令、API 和运行时差异说明。
+- Rust 格式化、clippy 和全量 Rust 测试已通过。
+- JS native build 验证发现 `npm run build --prefix crates/atto-ui-node` 依赖本地 `node_modules` 中的 `napi`，不适合 clean checkout；也验证了 `npm --prefix ... exec` 不会改变 napi CLI 的工作目录。已将 README / release 文档改为可从仓库根目录运行的 `npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform`。
+- npm pack dry-run 验证发现 workflow 中的 `npm pack --prefix ...` 在无根 `package.json` 的仓库会失败；已将 CI/release workflow 改为 `npm pack --dry-run --json ./path` 本地包路径形式。
+- native build、JS typecheck/test、Node/Bun/Deno runtime 兼容测试、React 测试、可用本机平台 pack dry-run 与 `git diff --check` 已通过。
+- 已在 `TODO-1.md` 和 `TODO.md` 将 `NR20` 标记为 `[DONE]` 并写入完成记录。
+- 下一步复查 diff/status/log，随后提交本轮相关变更并停止。

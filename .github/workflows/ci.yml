@@ -90,10 +90,10 @@ jobs:
 
       - name: Dry-run npm packages
         run: |
-          npm pack --dry-run --json --prefix crates/atto-ui-node
-          npm pack --dry-run --json --prefix crates/atto-ui-node/npm/linux-x64-gnu
-          npm pack --dry-run --json --prefix packages/core
-          npm pack --dry-run --json --prefix packages/react
+          npm pack --dry-run --json ./crates/atto-ui-node
+          npm pack --dry-run --json ./crates/atto-ui-node/npm/linux-x64-gnu
+          npm pack --dry-run --json ./packages/core
+          npm pack --dry-run --json ./packages/react
 
       - name: Check whitespace
         run: git diff --check

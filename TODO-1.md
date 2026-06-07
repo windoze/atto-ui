@@ -549,10 +549,15 @@
 - 重写根 `README.md` 为项目概览、Rust/JS 快速开始、验证命令、运行时兼容和 CI/release 入口；新增 `docs/NODE_API.md` 记录 AppHost、ComponentSpec/TreeOp、core builders、React API 与 Bun/Deno 行为；新增 `docs/RELEASE.md` 记录 CI 覆盖、本地 preflight、tag 发布矩阵和发布顺序；同步 `NODE_BINDING.md` §11 的已定实现与兼容性记录。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm exec --yes --package=bun@1.3.14 -- npm run test:runtime:bun --prefix packages/core`；`npm run test:runtime:deno --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .`（`crates/atto-ui-node`）；`npm pack --dry-run --json`（`crates/atto-ui-node`、`packages/core`、`packages/react`、`crates/atto-ui-node/npm/darwin-arm64`、`crates/atto-ui-node/npm/darwin-x64`）。未找到 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 
-### [TODO] NR20 — 审阅 NT20
+### [DONE] NR20 — 审阅 NT20
 - 确认 CI 覆盖编译/测试/发布全链路。
 - 确认 Bun/Deno 行为与 Node 一致或已记录差异。
 - 确认文档与实际 API 同步。
+**完成记录（2026-06-08）**：
+- 审阅 `.github/workflows/ci.yml` 与 `.github/workflows/release.yml`，确认并修复发布链路缺口：release workflow 现在先运行完整 Linux Rust/JS/runtime 兼容测试门禁，通过后才进入四平台 native build、pack dry-run 与 tag publish；CI/release 中的 `npm pack` 命令改为本地包路径形式，避免无根 `package.json` 时 `--prefix` pack 失败。
+- 审阅 Bun/Deno/runtime 兼容测试与文档：确认 Node/Bun/Deno headless + PTY smoke 脚本存在并可运行；补充 Deno 需要 `--allow-read --allow-env --allow-run --allow-ffi`、PTY raw-mode smoke 为 POSIX 覆盖且 Windows 跳过的说明。
+- 审阅 README、`docs/NODE_API.md`、`docs/RELEASE.md` 与 `NODE_BINDING.md`，同步当前包名、`applyTreeOps(windowId, ops)` API、serialized spec/op snake_case 字段约定、发布包结构，以及 clean checkout 可执行的 `napi build --cwd crates/atto-ui-node` 命令；移除 `NODE_BINDING.md` 末尾遗留的 `</content>` 文本。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm ci --prefix packages/react --ignore-scripts`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix crates/atto-ui-node`；`npm test --prefix packages/core`；`npm exec --yes --package=bun@1.3.14 -- npm run test:runtime:bun --prefix packages/core`；`npm run test:runtime:deno --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .`（`crates/atto-ui-node`）；`npm pack --dry-run --json`（`./crates/atto-ui-node`、`./crates/atto-ui-node/npm/darwin-arm64`、`./crates/atto-ui-node/npm/darwin-x64`、`./packages/core`、`./packages/react`）；`git diff --check`。
 
 ---
 

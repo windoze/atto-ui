@@ -89,7 +89,7 @@ Node 侧用 `setImmediate` / `setInterval` 驱动微循环：
 
 ```js
 const host = new AppHost();
-host.addDynamicWindow("Chat", [0, 0, 80, 24], rootSpec);
+const windowId = host.addDynamicWindow("Chat", [0, 0, 80, 24], rootSpec);
 
 function tick() {
   if (!host.step()) return;                 // 非阻塞：绘制 + 处理至多一个输入事件
@@ -107,7 +107,7 @@ LLM 流式与 UI 更新天然组合（两者都在主 JS 线程，互不阻塞�
 let acc = "";
 for await (const delta of anthropic.messages.stream({ /* ... */ })) {
   acc += delta;
-  host.applyTreeOps([
+  host.applyTreeOps(windowId, [
     { op: "set_prop", id: "assistant-msg", name: "text", value: acc },
   ]);
   // 下一个 tick 自动重绘
@@ -151,7 +151,7 @@ napi-rs 提供 `ThreadsafeFunction` 可从 Rust 线程回调 JS，但：
 | `TreeOp` | discriminated union（`{ op: "set_prop", id, name, value }` 等） |
 | `CallbackInvocation` | `{ callbackId: string; targetId: string \| null; event: string; payload: ComponentValue \| null }` |
 
-命名约定：JS 侧用 camelCase，napi-rs 自动从 Rust snake_case 转换；`.d.ts` 自动生成。
+命名约定：公开方法名使用 camelCase（如 `applyTreeOps` / `drainCallbacks`）；序列化的 `ComponentSpec` / `TreeOp` 字段保持 runtime 的 snake_case（如 `parent_id` / `anchor_id`），`@atto-ui/core` builders 负责提供更顺手的 JS 构造入口。
 
 ### 6.3 回调模型
 
@@ -162,7 +162,7 @@ UI 事件不直接回调 JS 函数，而是经 `CallbackRegistry` 收集，由 J
 参考 Python `__init__.py` 的构造助手，提供 TS 侧便捷构造器（纯 JS/TS，不入 native）：
 
 ```ts
-import { VStack, Text, Button, ChatMessageList } from "atto-ui";
+import { VStack, Text, Button, ChatMessageList } from "@atto-ui/core";
 const callbackId = appHost.allocCallback();
 const root = VStack({ padding: 1 }, [
   Text("Hello"),
@@ -202,17 +202,19 @@ napi-build = "..."
 ### 7.2 npm 包
 
 ```
-atto-ui/                      # 主 npm 包（JS/TS 高层封装 + 加载 native）
-├── index.js / index.d.ts     # 高层 API + 自动生成的 native 类型
-├── package.json              # optionalDependencies 指向各平台二进制包
+crates/atto-ui-node/          # @atto-ui/node，低层 native N-API binding
+├── index.js / index.d.ts     # napi 生成入口和类型
+├── package.json              # optionalDependencies 指向 @atto-ui/node-* 平台包
 └── npm/
-    ├── darwin-arm64/         # @atto-ui/core-darwin-arm64 (预编译 .node)
-    ├── darwin-x64/
-    ├── linux-x64-gnu/
-    └── win32-x64-msvc/
+    ├── darwin-arm64/         # @atto-ui/node-darwin-arm64 (预编译 .node)
+    ├── darwin-x64/           # @atto-ui/node-darwin-x64
+    ├── linux-x64-gnu/        # @atto-ui/node-linux-x64-gnu
+    └── win32-x64-msvc/       # @atto-ui/node-win32-x64-msvc
+packages/core/                # @atto-ui/core，typed facade + builders
+packages/react/               # @atto-ui/react，React reconciler host
 ```
 
-由 `@napi-rs/cli` 在 CI 上交叉编译各平台 `.node` 并发布。用户 `npm install atto-ui` 时按平台拉取对应二进制，无需本地编译。
+由 `@napi-rs/cli` 在 CI 上交叉编译各平台 `.node` 并发布。用户安装 `@atto-ui/core` 或 `@atto-ui/react` 时按平台拉取对应 `@atto-ui/node-*` 二进制，无需本地编译。
 
 ---
 
@@ -415,6 +417,5 @@ React 库带来的净增改动很少，且都不大：
 - 锚点版 `InsertBefore`（10.4）已在 runtime、Node binding、`@atto-ui/core` 类型与 React reconciler 中落地。
 - 文本子系统首版采用结构化 `RichText`/`TextSpan`，链接事件 payload 为 URL string。
 - npm 包命名采用 `@atto-ui/node`、`@atto-ui/core`、`@atto-ui/react`，平台包采用 `@atto-ui/node-*`。
-- Bun/Deno 兼容性通过 `packages/core` 的 headless N-API 冒烟与 PTY raw-mode 冒烟验证；Deno 需要 `--allow-ffi`，Bun 直接加载 N-API `.node`。
+- Bun/Deno 兼容性通过 `packages/core` 的 headless N-API 冒烟与 POSIX PTY raw-mode 冒烟验证；Deno 需要 `--allow-read --allow-env --allow-run --allow-ffi`（native 加载核心要求是 `--allow-ffi`），Bun 直接加载 N-API `.node`。PTY raw-mode 冒烟在 Windows 上跳过。
 - `stepDrainInput()` 与限频重绘暂不作为首版公共 API；示例通过 JS 侧批量刷新和非阻塞 `step()` 保持流式 UI 可用。
-</content>

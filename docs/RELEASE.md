@@ -2,7 +2,7 @@
 
 ## Continuous Integration
 
-`.github/workflows/ci.yml` runs on pull requests, pushes to `main`/`master`, and manual dispatch.
+`.github/workflows/ci.yml` runs on pull requests, pushes to `main`/`master`, and manual dispatch. `.github/workflows/release.yml` repeats the same Linux test gate before any tag-based native build or publish job.
 
 Coverage:
 
@@ -11,11 +11,11 @@ Coverage:
 | Rust formatting | `cargo fmt --all -- --check` |
 | Rust lint | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust tests | `cargo test --all --all-targets` |
-| Native binding | `npm run build --prefix crates/atto-ui-node` |
+| Native binding | `npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform` |
 | Node binding tests | `npm test --prefix crates/atto-ui-node` |
 | Core package | `tsc` typecheck and `npm test --prefix packages/core` |
 | React package | `npm run typecheck --prefix packages/react` and `npm test --prefix packages/react` |
-| Runtime compatibility | `npm run test:runtime:bun` and `npm run test:runtime:deno` |
+| Runtime compatibility | `npm run test:runtime:bun --prefix packages/core` and `npm run test:runtime:deno --prefix packages/core` |
 | Packaging | `npm pack --dry-run --json` for native, platform, core, and React packages |
 
 The React test suite includes reconciler matrix tests, headless integration, PTY tests, and e2e coverage.
@@ -28,7 +28,8 @@ Run these before creating a release tag:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --all --all-targets
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
+npm ci --prefix packages/react --ignore-scripts
+npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform
 npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit
 npm test --prefix crates/atto-ui-node
 npm test --prefix packages/core
@@ -46,7 +47,7 @@ npm exec --yes --package=bun@1.3.14 -- npm run test:runtime:bun --prefix package
 
 ## Tag Release
 
-`.github/workflows/release.yml` runs on `v*` tags and manual dispatch. Manual dispatch performs the build and pack verification without publishing. Tag pushes publish when `secrets.NPM_TOKEN` is configured.
+`.github/workflows/release.yml` runs on `v*` tags and manual dispatch. Manual dispatch performs the test gate, build, and pack verification without publishing. Tag pushes publish only after the test gate, native builds, and pack verification pass, and when `secrets.NPM_TOKEN` is configured.
 
 Build matrix:
 
@@ -64,7 +65,7 @@ Publish order:
 3. `@atto-ui/core`.
 4. `@atto-ui/react`.
 
-The release workflow downloads all native artifacts, runs `napi artifacts --npm-dir npm --output-dir .`, verifies every package with `npm pack --dry-run --json`, then publishes.
+The release workflow first runs the Rust/JS/runtime compatibility gate, then builds native artifacts, downloads them, runs `napi artifacts --npm-dir npm --output-dir .`, verifies every package with `npm pack --dry-run --json`, then publishes.
 
 ## Creating A Release
 

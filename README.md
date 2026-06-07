@@ -46,8 +46,7 @@ cargo run --bin snapshot_app
 Build the local native binding before running JS examples or tests from a checkout:
 
 ```sh
-npm install --prefix crates/atto-ui-node --ignore-scripts
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
+npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform
 ```
 
 Low-level `@atto-ui/core` usage:
@@ -103,7 +102,7 @@ npm run test:runtime:bun --prefix packages/core
 npm run test:runtime:deno --prefix packages/core
 ```
 
-The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the package script supplies those permissions. The Bun and Deno PTY smokes start a real raw-mode terminal app and assert that alternate screen, cursor, mouse capture, and terminal flags are restored on exit.
+The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the package script supplies those permissions. On POSIX platforms, the Bun and Deno PTY smokes start a real raw-mode terminal app and assert that alternate screen, cursor, mouse capture, and terminal flags are restored on exit. The PTY raw-mode smoke is skipped on Windows.
 
 ## Documentation
 
@@ -115,4 +114,4 @@ The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the 
 
 CI runs Rust formatting, clippy, full Rust tests, native N-API build, Node/Core/React tests, React PTY/e2e coverage, Bun/Deno compatibility smokes, and npm pack dry-runs.
 
-Publishing is tag-based. Pushing a `v*` tag runs the release workflow, builds platform `.node` artifacts on macOS/Linux/Windows, verifies package contents, and publishes platform packages, `@atto-ui/node`, `@atto-ui/core`, and `@atto-ui/react` using `NPM_TOKEN`.
+Publishing is tag-based. Pushing a `v*` tag runs the release workflow, first repeats the full Linux CI gate, then builds platform `.node` artifacts on macOS/Linux/Windows, verifies package contents, and publishes platform packages, `@atto-ui/node`, `@atto-ui/core`, and `@atto-ui/react` using `NPM_TOKEN`.
