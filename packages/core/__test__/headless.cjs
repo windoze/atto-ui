@@ -31,9 +31,15 @@ async function main() {
   assert.equal(host.step(), true)
   assert.equal(host.applyTreeOps(windowId, { op: 'set_prop', id: 'title', name: 'text', value: 'After' }), false)
   assert.equal(host.getProperty('title', 'text'), 'After')
+  assert.equal(host.applyTreeOps(windowId, [
+    { op: 'insert_before', parent_id: 'root', anchor_id: 'ok', child: { type: 'Label', id: 'pre', props: { text: 'Pre' } } },
+    { op: 'insert_before', parent_id: 'root', anchor_id: null, child: { type: 'Label', id: 'tail', props: { text: 'Tail' } } },
+    { op: 'insert_before', parent_id: 'root', anchor_id: 'tail', child: { type: 'Label', id: 'title' } },
+  ]), true)
 
   const snapshot = host.snapshot()
   assert.equal(snapshot.bounds.width, 48)
+  assert.deepEqual(findNode(snapshot.tree, 'root').children.map((child) => child.id), ['pre', 'ok', 'title', 'tail'])
   assert.equal(findNode(snapshot.tree, 'title').text, 'After')
 
   const eventResult = host.sendEvent(windowId, { type: 'key', key: 'enter' })

@@ -1,7 +1,8 @@
 use super::tree::{PropertyApply, apply_property_to_view, move_node};
 use super::*;
 use crate::composable::{
-    Component, ComponentContext, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    Component, ComponentContext, ComponentId, EventResult, MouseCoordinateSpace, ScrollbarHost,
+    TabMode,
 };
 use crate::theme::Theme;
 use crate::wm::WindowId;
@@ -24,6 +25,13 @@ fn find_view_by_tag<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Com
         }
     }
     None
+}
+
+fn child_node_id_by_tag(view: &dyn Component, id: &str) -> Option<ComponentId> {
+    view.children()
+        .iter()
+        .find(|child| child.view.tag() == Some(id))
+        .map(|child| child.id)
 }
 
 #[test]
@@ -273,6 +281,89 @@ fn component_tree_incremental_insert_child() {
         .get_property("text")
         .expect("text property");
     assert_eq!(value, ComponentValue::String("Hello".into()));
+}
+
+#[test]
+fn component_tree_incremental_insert_before_appends_and_uses_anchor_without_rebuild() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("b"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+    let b_node_id = child_node_id_by_tag(tree.view(), "b").expect("b node id");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::InsertBefore {
+            parent_id: "root".into(),
+            anchor_id: Some("b".into()),
+            child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("x")),
+        }])
+        .expect("insert before anchor");
+    assert!(changed);
+    assert_eq!(
+        child_tags(tree.view()),
+        vec![Some("a"), Some("x"), Some("b")]
+    );
+    assert_eq!(child_node_id_by_tag(tree.view(), "b"), Some(b_node_id));
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::InsertBefore {
+            parent_id: "root".into(),
+            anchor_id: None,
+            child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("tail")),
+        }])
+        .expect("append without anchor");
+    assert!(changed);
+    assert_eq!(
+        child_tags(tree.view()),
+        vec![Some("a"), Some("x"), Some("b"), Some("tail")]
+    );
+    assert_eq!(child_node_id_by_tag(tree.view(), "b"), Some(b_node_id));
+}
+
+#[test]
+fn component_tree_incremental_insert_before_existing_child_moves_without_rebuild() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("a"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("b"),
+        ))
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label").with_id("c"),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+    let a_node_id = child_node_id_by_tag(tree.view(), "a").expect("a node id");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::InsertBefore {
+            parent_id: "root".into(),
+            anchor_id: Some("c".into()),
+            child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("a")),
+        }])
+        .expect("move before anchor");
+
+    assert!(changed);
+    assert_eq!(
+        child_tags(tree.view()),
+        vec![Some("b"), Some("a"), Some("c")]
+    );
+    assert_eq!(child_node_id_by_tag(tree.view(), "a"), Some(a_node_id));
+    let ids: Vec<Option<&str>> = tree
+        .root_spec()
+        .children
+        .iter()
+        .map(|child| child.node.id.as_deref())
+        .collect();
+    assert_eq!(ids, vec![Some("b"), Some("a"), Some("c")]);
 }
 
 #[test]

@@ -31,6 +31,8 @@ const values: readonly ComponentValue[] = [
 const ops: readonly TreeOp[] = [
   { op: 'set_tree', tree: root },
   { op: 'insert', parent_id: 'root', index: 0, child: { type: 'Button', id: 'ok' } },
+  { op: 'insert_before', parent_id: 'root', anchor_id: 'title', child: { type: 'Label', id: 'pre' } },
+  { op: 'insert_before', parent_id: 'root', anchor_id: null, child: { type: 'Label', id: 'tail' } },
   { op: 'set_prop', id: 'title', name: 'text', value: values[3] },
   { op: 'bind_event', id: 'ok', event: 'click', callback: 'atto:callback:1' },
   { op: 'clear_event', id: 'ok', event: 'click' },

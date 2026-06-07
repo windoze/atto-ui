@@ -134,6 +134,12 @@ export type TreeOp =
       readonly index: number
       readonly child: ComponentSpecChild
     }
+  | {
+      readonly op: 'insert_before'
+      readonly parent_id: string
+      readonly anchor_id?: string | null
+      readonly child: ComponentSpecChild
+    }
   | { readonly op: 'remove'; readonly id: string }
   | { readonly op: 'replace'; readonly id: string; readonly node: ComponentSpecChild }
   | {

@@ -150,7 +150,7 @@
 
 ## 阶段二：M2 runtime 改动（可与阶段一并行，改 `atto-ui` 核心）
 
-### [TODO] NT6 — `TreeOp::InsertBefore` 锚点版插入（R.1）
+### [DONE] NT6 — `TreeOp::InsertBefore` 锚点版插入（R.1）
 **文件**：`src/runtime/spec.rs`、`src/runtime/tree.rs`
 **现状**：现有 `Insert{parent_id,index,child}` 用数字 index；React `insertBefore` 给的是锚点节点引用，且重排对已挂载节点再次 `insertBefore`（§10.4 两个 gap）。
 **步骤**：
@@ -160,6 +160,12 @@
 4. 向后兼容：旧 `Insert{index}` 与 Python 路径不变。
 **测试**：单测覆盖 append / insert-before-anchor / 已存在节点→move 三态；增量路径不触发全量重建。
 **验收**：三态行为正确；现有 runtime 测试与 Python 路径全绿。
+**完成记录（2026-06-07）**：
+- `src/runtime/spec.rs` 新增 `TreeOp::InsertBefore { parent_id, anchor_id, child }`，支持 `anchor_id=None` append、按父节点直接子锚点插入，以及 child id 已存在时先 detach 再按锚点插入的 move 语义；保留旧 `Insert { index }` 行为不变。
+- 补齐移动保护：拒绝移动 root、拒绝移入自身或后代；锚点必须是目标父节点的直接子节点，移动到自身当前锚点位置按 no-op 处理。
+- `src/runtime/tree.rs` 的 `apply_ops_incremental` 增加 `InsertBefore` 分支；新增插入/锚点移动 helper，增量插入和重排保持既有 `ComponentNode` id，测试覆盖不触发全量重建。
+- Node 转换层与 `@atto-ui/core` 类型同步新增 `insert_before` discriminated union；JS headless 冒烟覆盖 anchor 插入、append 和已存在节点 move。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui runtime::`；`cargo test -p atto-ui-node convert::tests::tree_op_parses_every_variant`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`。
 
 ### [TODO] NR6 — 审阅 NT6
 - 确认 anchor 解析、move 等价语义与"不能移进自身子树"保护正确。

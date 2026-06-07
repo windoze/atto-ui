@@ -475,6 +475,11 @@ pub enum TreeOp {
         index: usize,
         child: ComponentSpecChild,
     },
+    InsertBefore {
+        parent_id: String,
+        anchor_id: Option<String>,
+        child: ComponentSpecChild,
+    },
     Remove {
         id: String,
     },
@@ -615,6 +620,14 @@ fn apply_tree_op(
             index.rebuild(root);
             Ok(true)
         }
+        TreeOp::InsertBefore {
+            parent_id,
+            anchor_id,
+            child,
+        } => {
+            insert_child_before_anchor(root, index, parent_id, anchor_id.as_deref(), child)?;
+            Ok(true)
+        }
         TreeOp::Remove { id } => {
             let path = index
                 .path(id)
@@ -737,6 +750,82 @@ fn remove_child_at_path(root: &mut ComponentSpec, path: &[usize]) -> Option<Comp
     }
 }
 
+fn insert_child_before_anchor(
+    root: &mut ComponentSpec,
+    index: &mut SpecPathIndex,
+    parent_id: &str,
+    anchor_id: Option<&str>,
+    child: &ComponentSpecChild,
+) -> Result<(), TreeError> {
+    if let Some(child_id) = child.node.id.as_deref()
+        && let Some(existing_path) = index.path(child_id).cloned()
+    {
+        if existing_path.is_empty() {
+            return Err(TreeError::InvalidTreeOp(
+                "cannot move root node".to_string(),
+            ));
+        }
+        let target_path = index
+            .path(parent_id)
+            .cloned()
+            .ok_or_else(|| TreeError::NotFound(parent_id.to_string()))?;
+        if target_path.starts_with(&existing_path) {
+            return Err(TreeError::InvalidTreeOp(
+                "cannot move node into itself or descendant".to_string(),
+            ));
+        }
+        if anchor_id == Some(child_id) {
+            let current_parent_path = &existing_path[..existing_path.len() - 1];
+            if target_path.as_slice() == current_parent_path {
+                return Ok(());
+            }
+            return Err(TreeError::NotFound(child_id.to_string()));
+        }
+
+        let node =
+            remove_child_at_path(root, &existing_path).expect("validated movable child exists");
+        index.rebuild(root);
+        insert_detached_child_before_anchor(root, index, parent_id, anchor_id, node)?;
+        index.rebuild(root);
+        return Ok(());
+    }
+
+    insert_detached_child_before_anchor(root, index, parent_id, anchor_id, child.clone())?;
+    index.rebuild(root);
+    Ok(())
+}
+
+fn insert_detached_child_before_anchor(
+    root: &mut ComponentSpec,
+    index: &SpecPathIndex,
+    parent_id: &str,
+    anchor_id: Option<&str>,
+    child: ComponentSpecChild,
+) -> Result<(), TreeError> {
+    let parent_path = index
+        .path(parent_id)
+        .cloned()
+        .ok_or_else(|| TreeError::NotFound(parent_id.to_string()))?;
+    let parent = spec_at_path_mut(root, &parent_path)
+        .ok_or_else(|| TreeError::NotFound(parent_id.into()))?;
+    let idx = child_index_before_anchor(&parent.children, anchor_id)?;
+    parent.children.insert(idx, child);
+    Ok(())
+}
+
+fn child_index_before_anchor(
+    children: &[ComponentSpecChild],
+    anchor_id: Option<&str>,
+) -> Result<usize, TreeError> {
+    let Some(anchor_id) = anchor_id else {
+        return Ok(children.len());
+    };
+    children
+        .iter()
+        .position(|child| child.node.id.as_deref() == Some(anchor_id))
+        .ok_or_else(|| TreeError::NotFound(anchor_id.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +839,13 @@ mod tests {
             .with_child(ComponentSpecChild::new(
                 ComponentSpec::new("Label").with_id("b"),
             ))
+    }
+
+    fn child_ids(node: &ComponentSpec) -> Vec<Option<&str>> {
+        node.children
+            .iter()
+            .map(|child| child.node.id.as_deref())
+            .collect()
     }
 
     #[test]
@@ -785,6 +881,94 @@ mod tests {
         }];
         assert!(apply_tree_ops(&mut tree, &ops).unwrap());
         assert_eq!(tree.children[0].node.id.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn tree_ops_insert_before_appends_or_inserts_before_anchor() {
+        let mut tree = sample_tree();
+
+        assert!(
+            apply_tree_ops(
+                &mut tree,
+                &[TreeOp::InsertBefore {
+                    parent_id: "root".into(),
+                    anchor_id: None,
+                    child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("c")),
+                }],
+            )
+            .unwrap()
+        );
+        assert_eq!(child_ids(&tree), vec![Some("a"), Some("b"), Some("c")]);
+
+        assert!(
+            apply_tree_ops(
+                &mut tree,
+                &[TreeOp::InsertBefore {
+                    parent_id: "root".into(),
+                    anchor_id: Some("b".into()),
+                    child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("x")),
+                }],
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            child_ids(&tree),
+            vec![Some("a"), Some("x"), Some("b"), Some("c")]
+        );
+    }
+
+    #[test]
+    fn tree_ops_insert_before_existing_child_moves_after_detach() {
+        let mut tree = ComponentSpec::new("VStack")
+            .with_id("root")
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("a"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("b"),
+            ))
+            .with_child(ComponentSpecChild::new(
+                ComponentSpec::new("Label").with_id("c"),
+            ));
+
+        assert!(
+            apply_tree_ops(
+                &mut tree,
+                &[TreeOp::InsertBefore {
+                    parent_id: "root".into(),
+                    anchor_id: Some("c".into()),
+                    child: ComponentSpecChild::new(ComponentSpec::new("Label").with_id("a")),
+                }],
+            )
+            .unwrap()
+        );
+        assert_eq!(child_ids(&tree), vec![Some("b"), Some("a"), Some("c")]);
+    }
+
+    #[test]
+    fn tree_ops_insert_before_rejects_move_into_descendant() {
+        let mut tree =
+            ComponentSpec::new("VStack")
+                .with_id("root")
+                .with_child(ComponentSpecChild::new(
+                    ComponentSpec::new("VStack").with_id("parent").with_child(
+                        ComponentSpecChild::new(ComponentSpec::new("Label").with_id("child")),
+                    ),
+                ));
+        let original = tree.clone();
+
+        let err = apply_tree_ops(
+            &mut tree,
+            &[TreeOp::InsertBefore {
+                parent_id: "child".into(),
+                anchor_id: None,
+                child: ComponentSpecChild::new(ComponentSpec::new("VStack").with_id("parent")),
+            }],
+        )
+        .expect_err("moving into a descendant should fail");
+
+        assert!(matches!(err, TreeError::InvalidTreeOp(_)));
+        assert_eq!(tree, original);
     }
 
     #[test]

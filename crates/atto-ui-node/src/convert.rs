@@ -220,6 +220,25 @@ pub fn tree_op_to_json(op: &TreeOp, callbacks: &mut CallbackHandles) -> Result<V
                 component_spec_child_to_json(child, callbacks)?,
             );
         }
+        TreeOp::InsertBefore {
+            parent_id,
+            anchor_id,
+            child,
+        } => {
+            object.insert("op".to_string(), Value::String("insert_before".to_string()));
+            object.insert("parent_id".to_string(), Value::String(parent_id.clone()));
+            object.insert(
+                "anchor_id".to_string(),
+                anchor_id
+                    .as_ref()
+                    .map(|id| Value::String(id.clone()))
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "child".to_string(),
+                component_spec_child_to_json(child, callbacks)?,
+            );
+        }
         TreeOp::Remove { id } => {
             object.insert("op".to_string(), Value::String("remove".to_string()));
             object.insert("id".to_string(), Value::String(id.clone()));
@@ -628,6 +647,19 @@ fn tree_op_from_value(value: &Value, callbacks: &CallbackHandles) -> Result<Tree
             )?,
             child: component_spec_child_from_value(
                 expect_field(object, "child", "insert child")?,
+                callbacks,
+            )?,
+        }),
+        "insertbefore" => Ok(TreeOp::InsertBefore {
+            parent_id: expect_string(
+                expect_field(object, "parent_id", "insert_before parent_id")?,
+                "insert_before parent_id",
+            )?,
+            anchor_id: get_field(object, "anchor_id")
+                .map(|value| expect_string(value, "insert_before anchor_id"))
+                .transpose()?,
+            child: component_spec_child_from_value(
+                expect_field(object, "child", "insert_before child")?,
                 callbacks,
             )?,
         }),
@@ -1371,6 +1403,8 @@ mod tests {
         let cases = vec![
             json!({ "op": "set_tree", "tree": spec }),
             json!({ "op": "insert", "parent_id": "root", "index": 0, "child": child }),
+            json!({ "op": "insert_before", "parent_id": "root", "anchor_id": "button", "child": { "type": "Label", "id": "label" } }),
+            json!({ "op": "insert_before", "parent_id": "root", "anchor_id": null, "child": { "type": "Label", "id": "tail" } }),
             json!({ "op": "remove", "id": "old" }),
             json!({ "op": "replace", "id": "old", "node": { "type": "Text", "id": "new" } }),
             json!({ "op": "move", "id": "node", "new_parent_id": "root", "index": 1 }),

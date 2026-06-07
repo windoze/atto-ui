@@ -237,6 +237,46 @@ impl ComponentTree {
                     }
                     structural = true;
                 }
+                TreeOp::InsertBefore {
+                    parent_id,
+                    anchor_id,
+                    child,
+                } => {
+                    if let Some(child_id) = child.node.id.as_deref()
+                        && view_index
+                            .path(child_id)
+                            .is_some_and(|path| !path.is_empty())
+                    {
+                        if !move_node_before_anchor_indexed(
+                            self.view.as_mut(),
+                            child_id,
+                            parent_id,
+                            anchor_id.as_deref(),
+                            &mut view_index,
+                        ) {
+                            return self.rebuild_next_or_restore(next_root, &original_root);
+                        }
+                    } else {
+                        let Some(parent_path) = view_index.path(parent_id).cloned() else {
+                            return self.rebuild_next_or_restore(next_root, &original_root);
+                        };
+                        if !try_view_update!(insert_child_spec_before_anchor_at_path(
+                            self.view.as_mut(),
+                            &parent_path,
+                            parent_id,
+                            anchor_id.as_deref(),
+                            child,
+                            &self.registry,
+                        )) {
+                            return self.rebuild_next_or_restore(next_root, &original_root);
+                        }
+                        view_index.rebuild(self.view.as_ref());
+                    }
+                    if !view_shape_matches_spec(root_after_op, self.view.as_ref()) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
+                    structural = true;
+                }
                 TreeOp::Remove { id } => {
                     let Some(path) = view_index.path(id).cloned() else {
                         return self.rebuild_next_or_restore(next_root, &original_root);
@@ -689,6 +729,49 @@ fn insert_child_spec_at_path(
     Ok(true)
 }
 
+fn insert_child_spec_before_anchor_at_path(
+    view: &mut dyn Component,
+    parent_path: &[usize],
+    parent_id: &str,
+    anchor_id: Option<&str>,
+    child: &ComponentSpecChild,
+    registry: &ComponentRegistry<Box<dyn Component>>,
+) -> Result<bool, TreeError> {
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return Ok(false);
+    };
+    if parent.tag() != Some(parent_id) || parent.is_tab_container() {
+        return Ok(false);
+    }
+    let Some(children) = parent.children_mut() else {
+        return Ok(false);
+    };
+    let Some(idx) = child_node_index_before_anchor(children, anchor_id) else {
+        return Ok(false);
+    };
+    let layout = child
+        .layout
+        .as_ref()
+        .map(layout_from_spec)
+        .unwrap_or_default();
+    let mut node = ComponentNode::new(registry.build(&child.node)?).with_layout(layout);
+    node.parent = children.first().and_then(|existing| existing.parent);
+    children.insert(idx, node);
+    Ok(true)
+}
+
+fn child_node_index_before_anchor(
+    children: &[ComponentNode],
+    anchor_id: Option<&str>,
+) -> Option<usize> {
+    match anchor_id {
+        Some(anchor_id) => children
+            .iter()
+            .position(|child| child.view.tag() == Some(anchor_id)),
+        None => Some(children.len()),
+    }
+}
+
 fn remove_node_at_path(view: &mut dyn Component, path: &[usize], id: &str) -> bool {
     let Some((&idx, parent_path)) = path.split_last() else {
         return false;
@@ -767,6 +850,67 @@ fn move_node_indexed(
     false
 }
 
+fn move_node_before_anchor_indexed(
+    view: &mut dyn Component,
+    id: &str,
+    new_parent_id: &str,
+    anchor_id: Option<&str>,
+    view_index: &mut ViewPathIndex,
+) -> bool {
+    let Some(parent_path) = view_index.path(new_parent_id).cloned() else {
+        return false;
+    };
+    if !can_insert_at_path(view, &parent_path, new_parent_id) {
+        return false;
+    }
+    let Some(path) = view_index.path(id).filter(|path| !path.is_empty()).cloned() else {
+        return false;
+    };
+    if parent_path.starts_with(&path) {
+        return false;
+    }
+    if anchor_id == Some(id) {
+        let current_parent_path = &path[..path.len() - 1];
+        return parent_path.as_slice() == current_parent_path;
+    }
+
+    let Some(taken) = take_node_at_path(view, &path, id) else {
+        return false;
+    };
+    let restore_path = taken.parent_path;
+    let restore_index = taken.index;
+    let mut node = Some(taken.node);
+    view_index.rebuild(view);
+    let inserted = view_index
+        .path(new_parent_id)
+        .cloned()
+        .is_some_and(|parent_path| {
+            insert_existing_node_before_anchor_at_path(
+                view,
+                &parent_path,
+                new_parent_id,
+                anchor_id,
+                &mut node,
+            )
+        });
+    debug_assert_eq!(inserted, node.is_none());
+    if inserted && node.is_none() {
+        view_index.rebuild(view);
+        return true;
+    }
+
+    if let Some(node) = node {
+        let restored = restore_node(view, &restore_path, restore_index, node).is_ok();
+        debug_assert!(
+            restored,
+            "failed to restore node after insert-before move insertion failure"
+        );
+    }
+    view_index.rebuild(view);
+
+    false
+}
+
 fn can_insert_at_path(view: &dyn Component, parent_path: &[usize], parent_id: &str) -> bool {
     let Some(parent) = view_at_path(view, parent_path) else {
         return false;
@@ -833,6 +977,34 @@ fn insert_existing_node_at_path(
     let mut node = node.take().expect("node present");
     node.parent = children.first().and_then(|existing| existing.parent);
     let idx = index.min(children.len());
+    children.insert(idx, node);
+    true
+}
+
+fn insert_existing_node_before_anchor_at_path(
+    view: &mut dyn Component,
+    parent_path: &[usize],
+    parent_id: &str,
+    anchor_id: Option<&str>,
+    node: &mut Option<ComponentNode>,
+) -> bool {
+    if node.is_none() {
+        return true;
+    }
+    let Some(parent) = view_at_path_mut(view, parent_path) else {
+        return false;
+    };
+    if parent.tag() != Some(parent_id) || parent.is_tab_container() {
+        return false;
+    }
+    let Some(children) = parent.children_mut() else {
+        return false;
+    };
+    let Some(idx) = child_node_index_before_anchor(children, anchor_id) else {
+        return false;
+    };
+    let mut node = node.take().expect("node present");
+    node.parent = children.first().and_then(|existing| existing.parent);
     children.insert(idx, node);
     true
 }
