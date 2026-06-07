@@ -17,6 +17,7 @@ impl ComponentPropertySchema for EditorView {
             PropertyMeta::new("language_id", ValueType::String),
             PropertyMeta::new("show_line_numbers", ValueType::Bool),
             PropertyMeta::new("show_folding_markers", ValueType::Bool),
+            PropertyMeta::new("read_only", ValueType::Bool),
             PropertyMeta::new("tab_width", ValueType::U64),
             PropertyMeta::new("insert_spaces", ValueType::Bool),
         ]
@@ -48,6 +49,9 @@ pub fn register_editor(
         }
         if let Some(show) = prop_bool(spec, "show_folding_markers")? {
             config.show_folding_markers.set(show);
+        }
+        if let Some(read_only) = prop_bool(spec, "read_only")? {
+            config.read_only.set(read_only);
         }
         if let Some(width) = prop_usize(spec, "tab_width")? {
             config.indent.tab_width.set(width);

@@ -25,6 +25,7 @@ use ratatui::layout::Rect;
 use self::pane::DiffPane;
 use self::render::{GutterLayout, gutter_width, line_number_digits, render_column};
 use self::session::{AFTER_SIDE, BEFORE_SIDE, DiffSession, SharedSession};
+use crate::EditorSyntaxConfig;
 use crate::theme::EditorThemeSet;
 
 const WHEEL_STEP: isize = 3;
@@ -54,6 +55,7 @@ pub struct DiffViewConfig {
     pub after: Binding<String>,
     pub mode: Binding<DiffViewMode>,
     pub show_line_numbers: Binding<bool>,
+    pub syntax: Binding<EditorSyntaxConfig>,
     pub line_diff: LineDiffConfig,
 }
 
@@ -64,6 +66,7 @@ impl DiffViewConfig {
             after: after.into(),
             mode: DiffViewMode::SideBySide.into(),
             show_line_numbers: true.into(),
+            syntax: EditorSyntaxConfig::None.into(),
             line_diff: LineDiffConfig::default(),
         }
     }
@@ -75,6 +78,11 @@ impl DiffViewConfig {
 
     pub fn show_line_numbers(mut self, show: impl Into<Binding<bool>>) -> Self {
         self.show_line_numbers = show.into();
+        self
+    }
+
+    pub fn syntax(mut self, syntax: impl Into<Binding<EditorSyntaxConfig>>) -> Self {
+        self.syntax = syntax.into();
         self
     }
 
@@ -91,6 +99,7 @@ pub struct DiffViewHandle {
     pub after: Binding<String>,
     pub mode: Binding<DiffViewMode>,
     pub show_line_numbers: Binding<bool>,
+    pub syntax: Binding<EditorSyntaxConfig>,
     pub theme: Binding<EditorThemeSet>,
 }
 
@@ -104,6 +113,7 @@ pub struct DiffView {
     after_observer: DirtyObserver,
     mode_observer: DirtyObserver,
     show_ln_observer: DirtyObserver,
+    syntax_observer: DirtyObserver,
 
     // Unified-mode viewport tracking (side-by-side scrolling lives in the panes).
     uni_viewport_rows: usize,
@@ -124,6 +134,7 @@ impl DiffView {
             config.line_diff,
             config.mode.get().into(),
             config.show_line_numbers.get(),
+            config.syntax.get(),
         );
         let shared = session.into_shared();
 
@@ -136,6 +147,7 @@ impl DiffView {
             after: config.after.clone(),
             mode: config.mode.clone(),
             show_line_numbers: config.show_line_numbers.clone(),
+            syntax: config.syntax.clone(),
             theme: theme.clone(),
         };
 
@@ -144,6 +156,7 @@ impl DiffView {
             after_observer: config.after.dirty_observer(),
             mode_observer: config.mode.dirty_observer(),
             show_ln_observer: config.show_line_numbers.dirty_observer(),
+            syntax_observer: config.syntax.dirty_observer(),
             config,
             theme,
             shared,
@@ -181,6 +194,12 @@ impl DiffView {
                 .unwrap()
                 .set_show_line_numbers(self.config.show_line_numbers.get());
         }
+        if self.config.syntax.check_dirty(&mut self.syntax_observer) {
+            self.shared
+                .lock()
+                .unwrap()
+                .set_syntax(self.config.syntax.get());
+        }
     }
 
     fn is_unified(&self) -> bool {
@@ -212,7 +231,7 @@ impl DiffView {
             frame,
             area,
             &theme,
-            sess.projection(),
+            sess.visible_projection(),
             0,
             scroll,
             layout,
@@ -242,6 +261,16 @@ impl DiffView {
                 let mut sess = self.shared.lock().unwrap();
                 let max = sess.max_scroll_top(rows);
                 sess.set_scroll_top(max, rows);
+            }
+            KeyCode::Char('z') => {
+                if !self
+                    .shared
+                    .lock()
+                    .unwrap()
+                    .toggle_hunk_at_or_after_scroll(self.uni_viewport_rows.max(1))
+                {
+                    return EventResult::ignored();
+                }
             }
             _ => return EventResult::ignored(),
         }

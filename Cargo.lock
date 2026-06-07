@@ -137,6 +137,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atto-ui",
+ "atto-ui-chat",
  "atto-ui-test-host",
  "crossterm",
  "editor-core",
@@ -147,6 +148,7 @@ dependencies = [
  "editor-core-sublime",
  "editor-core-treesitter",
  "ratatui",
+ "regex",
  "serde_json",
  "tree-sitter",
  "unicode-width",

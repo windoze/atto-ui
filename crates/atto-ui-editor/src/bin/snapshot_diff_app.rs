@@ -9,33 +9,37 @@ use atto_ui::app::{
 };
 use atto_ui::reactive::Binding;
 use atto_ui::wm::{Window, WindowKind};
-use atto_ui_editor::{DiffView, DiffViewConfig, DiffViewMode, EditorThemeSet};
+use atto_ui_editor::{DiffView, DiffViewConfig, DiffViewMode, EditorSyntaxConfig, EditorThemeSet};
 
 // Deterministic before/after sample used by PTY tests. Covers: a removed line, an added line,
 // a replaced line (remove+add), multiple hunks, and a long line that soft-wraps.
-const BEFORE: &str = "ctx top one\n\
-REMOVED_LINE gone\n\
-ctx shared two\n\
-ctx shared three\n\
-OLD_TEXT replaced\n\
-ctx shared four\n\
-LONG this is a deliberately long line that must soft wrap across several visual rows inside the diff column\n\
-ctx bottom five\n";
+const BEFORE: &str = "fn main() {\n\
+    println!(\"OLD_TEXT\");\n\
+    let removed_line = \"REMOVED_LINE\";\n\
+}\n\
+\n\
+fn helper() {\n\
+    let long_line = \"LONG this is a deliberately long line that must soft wrap across several visual rows inside the diff column\";\n\
+    println!(\"{long_line}\");\n\
+}\n";
 
-const AFTER: &str = "ctx top one\n\
-ctx shared two\n\
-ADDED_LINE fresh\n\
-ctx shared three\n\
-NEW_TEXT replaced\n\
-ctx shared four\n\
-LONG this is a deliberately long line that must soft wrap across several visual rows inside the diff column\n\
-ctx bottom five\n";
+const AFTER: &str = "fn main() {\n\
+    println!(\"NEW_TEXT\");\n\
+    let added_line = \"ADDED_LINE\";\n\
+}\n\
+\n\
+fn helper() {\n\
+    let long_line = \"LONG this is a deliberately long line that must soft wrap across several visual rows inside the diff column\";\n\
+    println!(\"{long_line}\");\n\
+}\n";
 
 fn main() -> Result<()> {
     let theme: Binding<EditorThemeSet> = EditorThemeSet::default().into();
     let mode: Binding<DiffViewMode> = DiffViewMode::SideBySide.into();
 
-    let config = DiffViewConfig::new(BEFORE.to_string(), AFTER.to_string()).mode(mode.clone());
+    let config = DiffViewConfig::new(BEFORE.to_string(), AFTER.to_string())
+        .mode(mode.clone())
+        .syntax(EditorSyntaxConfig::SimpleRust);
 
     let (diff_view, _handle) = DiffView::new(config, theme);
 

@@ -9,6 +9,7 @@ impl ::atto_ui::composable::Component for EditorView {
             "language_id",
             "show_line_numbers",
             "show_folding_markers",
+            "read_only",
             "tab_width",
             "insert_spaces",
         ]
@@ -22,6 +23,7 @@ impl ::atto_ui::composable::Component for EditorView {
             "show_folding_markers" => {
                 Some(ComponentValue::Bool(self.config.show_folding_markers.get()))
             }
+            "read_only" => Some(ComponentValue::Bool(self.config.read_only.get())),
             "tab_width" => Some(ComponentValue::U64(
                 self.config.indent.tab_width.get() as u64
             )),
@@ -50,6 +52,11 @@ impl ::atto_ui::composable::Component for EditorView {
             "show_folding_markers" => {
                 let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.config.show_folding_markers.set(v);
+                Ok(())
+            }
+            "read_only" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.read_only.set(v);
                 Ok(())
             }
             "tab_width" => {
@@ -194,6 +201,9 @@ impl ::atto_ui::composable::EventHandling for EditorView {
 
         let res = match event {
             Event::Paste(text) => {
+                if self.config.read_only.get() {
+                    return EventResult::ignored();
+                }
                 self.insert_text(text);
                 self.adjust_scroll();
                 EventResult::consumed()

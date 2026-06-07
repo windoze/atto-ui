@@ -4,6 +4,11 @@ use super::*;
 
 impl EditorView {
     pub(super) fn handle_action(&mut self, action: EditorAction) -> bool {
+        if self.config.read_only.get() && action_mutates_document(action) {
+            self.hide_popups();
+            return false;
+        }
+
         match action {
             EditorAction::Undo => {
                 self.hide_popups();
@@ -283,4 +288,19 @@ impl EditorView {
             }
         }
     }
+}
+
+fn action_mutates_document(action: EditorAction) -> bool {
+    matches!(
+        action,
+        EditorAction::Undo
+            | EditorAction::Redo
+            | EditorAction::Cut
+            | EditorAction::Paste
+            | EditorAction::Replace
+            | EditorAction::Backspace
+            | EditorAction::DeleteForward
+            | EditorAction::InsertNewline
+            | EditorAction::InsertTab
+    )
 }

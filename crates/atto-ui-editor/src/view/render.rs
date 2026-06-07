@@ -250,11 +250,12 @@ impl EditorView {
             }
 
             // Sublime: map StyleId -> scope string (if configured).
-            if let Some(scope) = self.syntax_processor.as_ref().and_then(|p| match p {
-                SyntaxProcessor::Sublime(p) => p.scope_mapper.scope_for_style_id(style_id),
-                _ => None,
-            }) {
-                if let Some(style) = syntax::style_for_sublime_scope(&theme, scope) {
+            if let Some(scope) = self
+                .syntax_processor
+                .as_ref()
+                .and_then(|p| p.sublime_scope_for_style_id(style_id))
+            {
+                if let Some(style) = crate::syntax::style_for_sublime_scope(&theme, scope) {
                     if style.fg.is_some() {
                         fg = style.fg;
                     }

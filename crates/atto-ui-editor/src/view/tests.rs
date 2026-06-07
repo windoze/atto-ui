@@ -1,4 +1,5 @@
 use super::*;
+use crate::EditorSyntaxConfig;
 use atto_ui::composable::{Component, EventHandling};
 
 fn buffer_row_string(

@@ -13,10 +13,7 @@ use editor_core::{
     Command, CursorCommand, EditCommand, EditorStateManager, Position, Selection,
     SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand, char_width,
 };
-use editor_core_highlight_simple::{RegexHighlightProcessor, SimpleIniStyles, SimpleJsonStyles};
 use editor_core_lsp::{LspContentChange, LspSession, locations_from_value};
-use editor_core_sublime::{SublimeProcessor, SublimeSyntaxSet};
-use editor_core_treesitter::{TreeSitterProcessor, TreeSitterProcessorConfig};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -24,10 +21,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use serde_json::json;
 
-use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode, EditorSyntaxConfig};
+use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
 use super::popup::{CompletionPopupModel, HoverPopupModel, LspCompletionItemEdit};
 use super::theme::{EditorTheme, EditorThemeSet};
+use crate::syntax::SyntaxProcessor;
 
 mod actions;
 mod component_impl;
@@ -80,29 +78,6 @@ struct ClickState {
     at: Instant,
     pos: Position,
     count: u8,
-}
-
-#[allow(clippy::large_enum_variant)]
-enum SyntaxProcessor {
-    Regex(RegexHighlightProcessor),
-    Sublime(SublimeProcessor),
-    TreeSitter(TreeSitterProcessor),
-}
-
-impl SyntaxProcessor {
-    fn apply(&mut self, state: &mut EditorStateManager) {
-        match self {
-            SyntaxProcessor::Regex(p) => {
-                let _ = state.apply_processor(p);
-            }
-            SyntaxProcessor::Sublime(p) => {
-                let _ = state.apply_processor(p);
-            }
-            SyntaxProcessor::TreeSitter(p) => {
-                let _ = state.apply_processor(p);
-            }
-        }
-    }
 }
 
 #[derive(Default)]

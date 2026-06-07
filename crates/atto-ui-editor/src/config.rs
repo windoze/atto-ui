@@ -62,6 +62,8 @@ pub enum EditorSyntaxConfig {
     SimpleJson,
     /// Regex-based lightweight highlighting (no folding).
     SimpleIni,
+    /// Regex-based lightweight Rust highlighting (no folding, intended for read-only previews).
+    SimpleRust,
     /// Tree-sitter highlighting + folding (incremental parsing).
     TreeSitter(EditorTreeSitterConfig),
     /// Sublime Text `.sublime-syntax` highlighting + folding.
@@ -222,6 +224,7 @@ pub struct EditorConfig {
 
     pub show_line_numbers: Binding<bool>,
     pub show_folding_markers: Binding<bool>,
+    pub read_only: Binding<bool>,
 
     pub scroll: EditorScrollConfig,
 
@@ -244,6 +247,7 @@ impl EditorConfig {
             indent: EditorIndentConfig::default(),
             show_line_numbers: true.into(),
             show_folding_markers: true.into(),
+            read_only: false.into(),
             scroll: EditorScrollConfig::default(),
             keymap: EditorKeymap::default().into(),
             hover: EditorHoverConfig::default(),

@@ -555,13 +555,8 @@
 
 ## 阶段五：M5 依赖就绪后（解锁 C.0 富 diff/code UI）
 
-> **进度（2026-06-07）**：T20A 已落地——工作区升级到 `editor-core* 0.4.1`（含 diff 已正式发布到
-> crates.io，vendor path / `[patch.crates-io]` 已移除）。`atto-ui-editor`
-> 新增 `DiffView` 控件（`src/diff/`）消费 headless diff 投影：Unified（单列只读）与 Side-by-side
-> （`Splitter` 左右分栏、两侧同步滚动、divider 移动时重建投影并保持滚动锚点）。验证应用
-> `snapshot_diff_app` + `tests/pty_diff.rs`（5 例）+ `tests/diff_projection_smoke.rs` 全绿；
-> 顺带修复 0.4 语义 token StyleId 改为 canonical 索引导致的高亮回归（`view/render.rs`）。
-> 余项：富 `ArtifactViewer`（hunk 折叠 / 语法高亮 / 接 chat）仍属 T20。
+> **进度（2026-06-07）**：T20A 已落地并显式解锁 editor-core diff 基础；T20 已完成富
+> `ArtifactViewer`、diff hunk 折叠/展开、code/diff 语法高亮与 chat 注入链路。余项：执行 R20 审阅。
 
 ### [DONE] T20A — editor-core diff 基础显式解锁（M5 前置）（2026-06-07）
 **文件**：`crates/atto-ui-editor/`（含新增 `src/diff/`）、根 `Cargo.toml`、各 crate `Cargo.toml`
@@ -580,7 +575,7 @@
 - ✅ 现有 editor 语法高亮/编辑/LSP 测试不回归。
 - ✅ 已运行指定测试与全 workspace clippy/build。
 
-### T20 — editor 完整化 → 富 ArtifactViewer
+### [DONE] T20 — editor 完整化 → 富 ArtifactViewer
 **文件**：`crates/atto-ui-editor/`、`crates/atto-ui-chat/`
 **现状**：T14 已提供最简 `TextArtifactViewer` 与稳定接口；T20A 已落地只读 `DiffView`（Unified/Side-by-side，消费 headless diff 投影）。**余项**：在 `DiffView` 上加 hunk 折叠/展开与 diff 内容语法高亮，并以富 `ArtifactViewer` 形式接入 chat（替换最简文本实现），可选地把 `DiffView` 接进 `atto-editor-app`。
 **依赖**：T20A ✅。
@@ -590,6 +585,13 @@
 3. chat 侧不改动，仅替换注入的 viewer 实现。
 **测试**：PTY：code 视图语法高亮、diff hunk 折叠/展开。
 **验收**：富 viewer 替换最简实现，chat 接口零改动；C.0 解锁。
+**完成记录（2026-06-07）**：
+- `DiffView` 增强完成：继续消费 `editor-core-diff` / `editor-core-diff-view` 的 headless model/projection，并用 `editor_core_diff::diff_line_hunks` 生成 hunk 折叠状态；按 `z` 可折叠/展开当前可见 hunk，折叠态插入稳定 placeholder row，统一/左右分栏模式共用同一 visible projection。
+- 新增共享语法处理模块和 `EditorSyntaxConfig::SimpleRust`，`EditorView` 与 `DiffView` 复用同一套轻量语法处理；`DiffView` 在 projected cells 上叠加语法 style id，同时保留 add/remove/spacer diff 背景。
+- `EditorView` 新增 `read_only` 配置/动态属性，富 code/file artifact 以只读 `EditorView` 打开并按文件名选择 syntax/language；diff artifact 从 unified diff hunk 内容重建 before/after 后用增强 `DiffView` 打开。
+- `atto-ui-editor` 新增 `RichArtifactViewer`，实现 T14 的同一 `ArtifactViewer::open(&mut self, Artifact) -> WindowId` 接口；`snapshot_rich_artifact_app` 通过既有 chat `on_open_artifact` 回调注入富 viewer，chat 消息列表与打开接口无需改动。
+- 测试覆盖：`pty_diff` 新增 hunk 折叠/展开与 projected cells Rust syntax 颜色断言；新增 `pty_rich_artifact` 覆盖 code link 打开富只读高亮 viewer、diff link 打开富 DiffView 并折叠/展开 hunk；新增 unified diff 内容重建单测。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`；`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ### R20 — 审阅 T20
 - 确认富 viewer 实现的接口与 T14 完全一致（chat 无需改动验证）。

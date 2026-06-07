@@ -35,7 +35,7 @@ fn pty_diff_side_by_side_shows_both_sides() {
         "replaced line shows old and new\n{screen}"
     );
     assert!(
-        screen.contains("ctx bottom five"),
+        screen.contains("println!(\"{long_line}\")"),
         "trailing context\n{screen}"
     );
 
@@ -112,7 +112,7 @@ fn pty_diff_side_by_side_synced_scroll() {
 
     let before = host.screen_contents().expect("screen");
     assert!(
-        before.contains("ctx top one"),
+        before.contains("fn main"),
         "top visible initially\n{before}"
     );
 
@@ -124,7 +124,7 @@ fn pty_diff_side_by_side_synced_scroll() {
     host.wait_for_screen(
         |lines| {
             let joined = lines.join("\n");
-            joined.contains("ctx bottom five") && !joined.contains("ctx top one")
+            joined.contains("println!(\"{long_line}\")") && !joined.contains("fn main")
         },
         Duration::from_secs(3),
     )
@@ -146,4 +146,50 @@ fn pty_diff_splitter_drag_reflows() {
         Duration::from_secs(3),
     )
     .expect("content still renders after divider drag");
+}
+
+#[test]
+fn pty_diff_hunk_toggle_collapses_and_expands_current_hunk() {
+    let mut host = spawn(120, 30);
+
+    host.send_str("z").expect("toggle hunk collapsed");
+    host.wait_for_screen(
+        |lines| {
+            let joined = lines.join("\n");
+            joined.contains("[+] hunk 1 collapsed")
+                && !joined.contains("REMOVED_LINE")
+                && !joined.contains("ADDED_LINE")
+        },
+        Duration::from_secs(3),
+    )
+    .expect("hunk collapsed");
+
+    host.send_str("z").expect("toggle hunk expanded");
+    host.wait_for_screen(
+        |lines| {
+            let joined = lines.join("\n");
+            joined.contains("REMOVED_LINE") && joined.contains("ADDED_LINE")
+        },
+        Duration::from_secs(3),
+    )
+    .expect("hunk expanded");
+}
+
+#[test]
+fn pty_diff_applies_rust_syntax_highlighting_to_projected_cells() {
+    let host = spawn(120, 30);
+    let screen = host.screen_contents().expect("screen");
+    let (row, col) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| line.find("fn main").map(|col| (row as u16, col as u16)))
+        .expect("fn main visible");
+
+    let fn_color = host.cell_fgcolor(col, row).expect("fn color");
+    let main_color = host.cell_fgcolor(col + 3, row).expect("main color");
+
+    assert_ne!(
+        fn_color, main_color,
+        "keyword and function spans should use distinct syntax colors\n{screen}"
+    );
 }

@@ -74,6 +74,16 @@ impl DiffPane {
                 let max = sess.max_scroll_top(rows);
                 sess.set_scroll_top(max, rows);
             }
+            KeyCode::Char('z') => {
+                if !self
+                    .shared
+                    .lock()
+                    .unwrap()
+                    .toggle_hunk_at_or_after_scroll(self.viewport_rows.max(1))
+                {
+                    return EventResult::ignored();
+                }
+            }
             _ => return EventResult::ignored(),
         }
         EventResult::consumed()
@@ -116,7 +126,7 @@ impl Component for DiffPane {
             frame,
             area,
             &theme,
-            sess.projection(),
+            sess.visible_projection(),
             self.column,
             scroll,
             layout,

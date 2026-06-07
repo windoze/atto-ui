@@ -69,6 +69,9 @@ impl EditorView {
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
+                if self.config.read_only.get() {
+                    return EventResult::ignored();
+                }
                 self.insert_text(&c.to_string());
                 self.adjust_scroll();
                 return EventResult::consumed();

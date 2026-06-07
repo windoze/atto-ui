@@ -10,14 +10,17 @@
 //! The editor maintains its own theming system (per-language) and does not depend on
 //! `atto_ui::theme::Theme` for text styling.
 
+mod artifact;
 mod config;
 mod diff;
 mod dynamic;
 mod keymap;
 mod popup;
+mod syntax;
 mod theme;
 mod view;
 
+pub use artifact::RichArtifactViewer;
 pub use config::{
     EditorCompletionConfig, EditorConfig, EditorHoverConfig, EditorIndentConfig, EditorLspConfig,
     EditorLspGotoKind, EditorLspMode, EditorScrollConfig, EditorSyntaxConfig,
