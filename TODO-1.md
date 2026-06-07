@@ -57,10 +57,15 @@
 - 新增 Rust 单测覆盖组件值、组件树、树操作、callback invocation、schema 和错误上下文；转换层代码复用 serde/JSON 桥接，避免 Python binding 的大段手写 dict 解析路径。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`。
 
-### [TODO] NR2 — 审阅 NT2
+### [DONE] NR2 — 审阅 NT2
 - 确认所有 `TreeOp` 变体、`ComponentValue` 分支均覆盖且与核心定义一致。
 - 确认错误（缺字段/类型不符）有清晰报错而非 panic。
 - 运行转换单测。
+**完成记录（2026-06-07）**：
+- 审阅 `crates/atto-ui-node/src/convert.rs` 与 `src/runtime/spec.rs`，确认现有 `TreeOp` 变体均有 discriminated union 解析与 round-trip 覆盖，且与当前核心定义一致。
+- 修复 `ComponentValue` plain JSON 歧义：空 `StringList`/`Table`、只含字符串或字符串数组的 `List`、矩形形状或保留 `$type` 形状的 `Map` 现在通过 `$type` + `data` 逃逸格式保持稳定 round-trip；非歧义数组/对象仍保持普通 JS 形态。
+- 补齐 `Rect` 的 `[x,y,width,height]` 输入解析，并扩展错误测试，确认缺字段/类型不符路径返回带上下文的 `napi::Error`，转换代码路径无 panic。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] NT3 — id handle 包装 + 错误映射（B.3 / B.4）
 **文件**：`crates/atto-ui-node/src/ids.rs`、`src/error.rs`

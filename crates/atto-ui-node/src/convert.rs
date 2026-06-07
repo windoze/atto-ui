@@ -20,6 +20,12 @@ use serde_json::{Map, Number, Value};
 const TYPE_TAG: &str = "$type";
 const DATA_FIELD: &str = "data";
 const BYTES_TAG: &str = "bytes";
+const LIST_TAG: &str = "list";
+const MAP_TAG: &str = "map";
+const RECT_TAG: &str = "rect";
+const STRING_LIST_TAG: &str = "string_list";
+const TABLE_TAG: &str = "table";
+const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// Convert an arbitrary JavaScript value into `serde_json::Value` using napi-rs serde support.
 pub fn unknown_to_json(env: &Env, value: Unknown<'_>) -> Result<Value> {
@@ -64,28 +70,45 @@ pub fn component_value_to_json(value: &ComponentValue) -> Result<Value> {
         ComponentValue::U64(v) => Ok(Value::Number(Number::from(*v))),
         ComponentValue::F64(v) => number_from_f64(*v).map(Value::Number),
         ComponentValue::String(v) => Ok(Value::String(v.clone())),
-        ComponentValue::StringList(values) => Ok(Value::Array(
-            values.iter().cloned().map(Value::String).collect(),
-        )),
-        ComponentValue::Table(rows) => Ok(Value::Array(
-            rows.iter()
-                .map(|row| Value::Array(row.iter().cloned().map(Value::String).collect()))
-                .collect(),
-        )),
+        ComponentValue::StringList(values) => {
+            let json = string_list_to_json(values);
+            if values.is_empty() {
+                Ok(tagged_component_value(STRING_LIST_TAG, json))
+            } else {
+                Ok(json)
+            }
+        }
+        ComponentValue::Table(rows) => {
+            let json = table_to_json(rows);
+            if rows.is_empty() {
+                Ok(tagged_component_value(TABLE_TAG, json))
+            } else {
+                Ok(json)
+            }
+        }
         ComponentValue::Rect(rect) => Ok(rect_to_json(rect)),
         ComponentValue::Bytes(bytes) => Ok(bytes_to_json(bytes)),
-        ComponentValue::List(values) => Ok(Value::Array(
-            values
+        ComponentValue::List(values) => {
+            let values = values
                 .iter()
                 .map(component_value_to_json)
-                .collect::<Result<Vec<_>>>()?,
-        )),
+                .collect::<Result<Vec<_>>>()?;
+            if array_decodes_as_specialized_value(&values) {
+                Ok(tagged_component_value(LIST_TAG, Value::Array(values)))
+            } else {
+                Ok(Value::Array(values))
+            }
+        }
         ComponentValue::Map(values) => {
             let mut object = Map::new();
             for (key, value) in values {
                 object.insert(key.clone(), component_value_to_json(value)?);
             }
-            Ok(Value::Object(object))
+            if object_decodes_as_specialized_value(&object) {
+                Ok(tagged_component_value(MAP_TAG, Value::Object(object)))
+            } else {
+                Ok(Value::Object(object))
+            }
         }
     }
 }
@@ -360,29 +383,17 @@ fn component_value_from_number(number: &Number) -> Result<ComponentValue> {
 }
 
 fn component_value_from_array(values: &[Value]) -> Result<ComponentValue> {
+    if values.len() == 4 && values.iter().all(Value::is_number) {
+        return rect_from_array(values).map(ComponentValue::Rect);
+    }
     if values.is_empty() {
         return Ok(ComponentValue::List(Vec::new()));
     }
     if values.iter().all(Value::is_string) {
-        let strings = values
-            .iter()
-            .map(|value| expect_string(value, "string list item"))
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(ComponentValue::StringList(strings));
+        return string_list_from_json(values).map(ComponentValue::StringList);
     }
     if values.iter().all(is_string_array) {
-        let rows = values
-            .iter()
-            .map(|value| {
-                value
-                    .as_array()
-                    .expect("checked by is_string_array")
-                    .iter()
-                    .map(|cell| expect_string(cell, "table cell"))
-                    .collect::<Result<Vec<_>>>()
-            })
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(ComponentValue::Table(rows));
+        return table_from_json(values).map(ComponentValue::Table);
     }
     Ok(ComponentValue::List(
         values
@@ -393,9 +404,24 @@ fn component_value_from_array(values: &[Value]) -> Result<ComponentValue> {
 }
 
 fn component_value_from_object(object: &Map<String, Value>) -> Result<ComponentValue> {
-    if is_bytes_object(object) {
-        return bytes_from_json(expect_field(object, DATA_FIELD, "bytes data")?)
-            .map(ComponentValue::Bytes);
+    if let Some(tag) = type_tag(object) {
+        let data = expect_field(object, DATA_FIELD, tag_data_context(tag))?;
+        return match tag {
+            BYTES_TAG => bytes_from_json(data).map(ComponentValue::Bytes),
+            LIST_TAG => expect_array(data, "component value list")?
+                .iter()
+                .map(component_value_from_value)
+                .collect::<Result<Vec<_>>>()
+                .map(ComponentValue::List),
+            MAP_TAG => value_map_from_json(data, "component value map").map(ComponentValue::Map),
+            RECT_TAG => rect_from_value(data).map(ComponentValue::Rect),
+            STRING_LIST_TAG => string_list_from_json(expect_array(data, "string list")?)
+                .map(ComponentValue::StringList),
+            TABLE_TAG => table_from_json(expect_array(data, "table")?).map(ComponentValue::Table),
+            _ => Err(invalid_arg(format!(
+                "unknown component value type tag: {tag}"
+            ))),
+        };
     }
     if is_rect_object(object) {
         return rect_from_object(object).map(ComponentValue::Rect);
@@ -800,6 +826,85 @@ fn callback_id_to_json(value: CallbackId) -> Value {
     Value::Number(Number::from(value.0))
 }
 
+fn tagged_component_value(tag: &str, data: Value) -> Value {
+    let mut object = Map::new();
+    object.insert(TYPE_TAG.to_string(), Value::String(tag.to_string()));
+    object.insert(DATA_FIELD.to_string(), data);
+    Value::Object(object)
+}
+
+fn string_list_from_json(values: &[Value]) -> Result<Vec<String>> {
+    values
+        .iter()
+        .map(|value| expect_string(value, "string list item"))
+        .collect()
+}
+
+fn string_list_to_json(values: &[String]) -> Value {
+    Value::Array(values.iter().cloned().map(Value::String).collect())
+}
+
+fn table_from_json(values: &[Value]) -> Result<Vec<Vec<String>>> {
+    values
+        .iter()
+        .map(|value| {
+            expect_array(value, "table row")?
+                .iter()
+                .map(|cell| expect_string(cell, "table cell"))
+                .collect::<Result<Vec<_>>>()
+        })
+        .collect()
+}
+
+fn table_to_json(rows: &[Vec<String>]) -> Value {
+    Value::Array(
+        rows.iter()
+            .map(|row| Value::Array(row.iter().cloned().map(Value::String).collect()))
+            .collect(),
+    )
+}
+
+fn type_tag(object: &Map<String, Value>) -> Option<&str> {
+    object
+        .get(TYPE_TAG)
+        .and_then(Value::as_str)
+        .filter(|tag| is_known_component_value_tag(tag))
+}
+
+fn is_known_component_value_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        BYTES_TAG | LIST_TAG | MAP_TAG | RECT_TAG | STRING_LIST_TAG | TABLE_TAG
+    )
+}
+
+fn tag_data_context(tag: &str) -> &'static str {
+    match tag {
+        BYTES_TAG => "bytes data",
+        LIST_TAG => "component value list data",
+        MAP_TAG => "component value map data",
+        RECT_TAG => "rect data",
+        STRING_LIST_TAG => "string list data",
+        TABLE_TAG => "table data",
+        _ => "component value data",
+    }
+}
+
+fn array_decodes_as_specialized_value(values: &[Value]) -> bool {
+    !values.is_empty()
+        && (values.iter().all(Value::is_string)
+            || values.iter().all(is_string_array)
+            || is_rect_array_shape(values))
+}
+
+fn object_decodes_as_specialized_value(object: &Map<String, Value>) -> bool {
+    is_rect_object(object)
+        || object
+            .get(TYPE_TAG)
+            .and_then(Value::as_str)
+            .is_some_and(is_known_component_value_tag)
+}
+
 fn rect_from_object(object: &Map<String, Value>) -> Result<RuntimeRect> {
     Ok(RuntimeRect {
         x: u16_from_value(expect_field(object, "x", "rect x")?, "rect x")?,
@@ -809,6 +914,26 @@ fn rect_from_object(object: &Map<String, Value>) -> Result<RuntimeRect> {
             expect_field(object, "height", "rect height")?,
             "rect height",
         )?,
+    })
+}
+
+fn rect_from_value(value: &Value) -> Result<RuntimeRect> {
+    match value {
+        Value::Object(object) => rect_from_object(object),
+        Value::Array(values) => rect_from_array(values),
+        _ => Err(invalid_arg("rect must be an object or 4-item array")),
+    }
+}
+
+fn rect_from_array(values: &[Value]) -> Result<RuntimeRect> {
+    if values.len() != 4 {
+        return Err(invalid_arg("rect array must contain 4 values"));
+    }
+    Ok(RuntimeRect {
+        x: u16_from_value(&values[0], "rect x")?,
+        y: u16_from_value(&values[1], "rect y")?,
+        width: u16_from_value(&values[2], "rect width")?,
+        height: u16_from_value(&values[3], "rect height")?,
     })
 }
 
@@ -835,10 +960,8 @@ fn bytes_from_json(value: &Value) -> Result<Vec<u8>> {
 }
 
 fn bytes_to_json(bytes: &[u8]) -> Value {
-    let mut object = Map::new();
-    object.insert(TYPE_TAG.to_string(), Value::String(BYTES_TAG.to_string()));
-    object.insert(
-        DATA_FIELD.to_string(),
+    tagged_component_value(
+        BYTES_TAG,
         Value::Array(
             bytes
                 .iter()
@@ -846,8 +969,7 @@ fn bytes_to_json(bytes: &[u8]) -> Value {
                 .map(|byte| Value::Number(Number::from(byte)))
                 .collect(),
         ),
-    );
-    Value::Object(object)
+    )
 }
 
 fn serialize_to_json<T>(value: &T, context: &str) -> Result<Value>
@@ -940,6 +1062,13 @@ fn u64_from_value(value: &Value, context: &str) -> Result<u64> {
     {
         return Ok(value as u64);
     }
+    if let Some(value) = number.as_f64()
+        && value.is_finite()
+        && value.fract() == 0.0
+        && (0.0..=JS_MAX_SAFE_INTEGER).contains(&value)
+    {
+        return Ok(value as u64);
+    }
     Err(invalid_arg(format!(
         "{context} must be a non-negative integer"
     )))
@@ -975,6 +1104,13 @@ fn i64_from_value(value: &Value, context: &str) -> Result<i64> {
     if let Some(value) = number.as_u64() {
         return i64::try_from(value).map_err(|_| invalid_arg(format!("{context} must fit in i64")));
     }
+    if let Some(value) = number.as_f64()
+        && value.is_finite()
+        && value.fract() == 0.0
+        && (-JS_MAX_SAFE_INTEGER..=JS_MAX_SAFE_INTEGER).contains(&value)
+    {
+        return Ok(value as i64);
+    }
     Err(invalid_arg(format!("{context} must be an integer")))
 }
 
@@ -999,12 +1135,8 @@ fn is_string_array(value: &Value) -> bool {
         .is_some_and(|values| values.iter().all(Value::is_string))
 }
 
-fn is_bytes_object(object: &Map<String, Value>) -> bool {
-    object
-        .get(TYPE_TAG)
-        .and_then(Value::as_str)
-        .is_some_and(|tag| tag == BYTES_TAG)
-        && object.contains_key(DATA_FIELD)
+fn is_rect_array_shape(values: &[Value]) -> bool {
+    values.len() == 4 && values.iter().all(Value::is_number)
 }
 
 fn is_rect_object(object: &Map<String, Value>) -> bool {
@@ -1048,7 +1180,9 @@ mod tests {
             ComponentValue::F64(3.25),
             ComponentValue::String("hello".to_string()),
             ComponentValue::StringList(vec!["a".to_string(), "b".to_string()]),
+            ComponentValue::StringList(Vec::new()),
             ComponentValue::Table(vec![vec!["a".to_string()], vec!["b".to_string()]]),
+            ComponentValue::Table(Vec::new()),
             ComponentValue::Rect(RuntimeRect {
                 x: 1,
                 y: 2,
@@ -1065,6 +1199,58 @@ mod tests {
             let decoded = component_value_from_json(encoded).unwrap();
             assert_eq!(decoded, case);
         }
+    }
+
+    #[test]
+    fn component_value_round_trips_ambiguous_json_shapes() {
+        let mut rect_like_map = BTreeMap::new();
+        rect_like_map.insert("x".to_string(), ComponentValue::U64(1));
+        rect_like_map.insert("y".to_string(), ComponentValue::U64(2));
+        rect_like_map.insert("width".to_string(), ComponentValue::U64(30));
+        rect_like_map.insert("height".to_string(), ComponentValue::U64(10));
+
+        let mut typed_like_map = BTreeMap::new();
+        typed_like_map.insert(
+            TYPE_TAG.to_string(),
+            ComponentValue::String(BYTES_TAG.to_string()),
+        );
+        typed_like_map.insert(
+            DATA_FIELD.to_string(),
+            ComponentValue::List(vec![ComponentValue::U64(1)]),
+        );
+
+        let cases = vec![
+            ComponentValue::List(vec![ComponentValue::String("value".to_string())]),
+            ComponentValue::List(vec![ComponentValue::StringList(vec!["cell".to_string()])]),
+            ComponentValue::List(vec![
+                ComponentValue::U64(1),
+                ComponentValue::U64(2),
+                ComponentValue::U64(3),
+                ComponentValue::U64(4),
+            ]),
+            ComponentValue::Map(rect_like_map),
+            ComponentValue::Map(typed_like_map),
+        ];
+
+        for case in cases {
+            let encoded = component_value_to_json(&case).unwrap();
+            let decoded = component_value_from_json(encoded).unwrap();
+            assert_eq!(decoded, case);
+        }
+    }
+
+    #[test]
+    fn component_value_accepts_rect_tuple_shape() {
+        let decoded = component_value_from_json(json!([1, 2, 30, 10])).unwrap();
+        assert_eq!(
+            decoded,
+            ComponentValue::Rect(RuntimeRect {
+                x: 1,
+                y: 2,
+                width: 30,
+                height: 10,
+            })
+        );
     }
 
     #[test]
@@ -1197,5 +1383,12 @@ mod tests {
 
         let missing_type = component_spec_from_json(json!({ "id": "root" })).unwrap_err();
         assert!(missing_type.reason.contains("component spec type"));
+
+        let missing_bytes_data =
+            component_value_from_json(json!({ "$type": "bytes" })).unwrap_err();
+        assert!(missing_bytes_data.reason.contains("bytes data"));
+
+        let invalid_rect = component_value_from_json(json!([1, 2, 3, 70000])).unwrap_err();
+        assert!(invalid_rect.reason.contains("rect height"));
     }
 }
