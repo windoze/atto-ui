@@ -759,6 +759,49 @@ fn auto_hidden_dock_reserves_one_cell_handle() {
 }
 
 #[test]
+fn maximized_modal_uses_dock_reserved_work_area() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(WindowDock::docked(DockSide::Left, 20))),
+        bounds,
+    );
+    let modal_id = wm.add_window(
+        Window::new(
+            WindowKind::Modal,
+            "Modal",
+            Rect::new(0, 0, 30, 10),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(wm.focused(), Some(modal_id));
+    assert_eq!(
+        wm.window(dock_id).expect("dock").rect.get(),
+        Rect::new(0, 0, 20, 24)
+    );
+    assert_eq!(
+        wm.window(modal_id).expect("modal").rect.get(),
+        Rect::new(20, 0, 60, 24),
+        "modals stay inside the dock-reserved work area instead of covering docked windows"
+    );
+    assert_eq!(
+        wm.window_at(5, 5),
+        None,
+        "active modals keep docked windows visible but block dock hit-testing outside the modal"
+    );
+}
+
+#[test]
 fn normal_window_minimize_updates_focus_and_restore_refocuses() {
     let bounds = Rect::new(0, 0, 80, 24);
     let mut wm = WindowManager::new();

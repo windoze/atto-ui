@@ -222,13 +222,21 @@
 - 在 `src/wm/manager/tests.rs` 增加覆盖：left dock reserve 后 maximized normal window 不覆盖 dock；right + bottom dock reserve 顺序正确；dock rect 不受 builder 原始 rect 影响且可绘制到边缘；普通 move/resize clamp 到 dock reserve；auto-hide invisible dock 只 reserve 1 cell。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R3 — 审阅 T3
+### [DONE] R3 — 审阅 T3
 
 审阅 T3 改动：
 - 确认 dock reserve 只在 desktop work_area 内计算，不覆盖 menu/statusbar。
 - 确认多个 dock window 的 reserve 顺序 deterministic。
 - 确认 maximized/normal/floating/modal window 行为未被错误统一；modal 是否覆盖 dock 需有明确设计和测试。
 - 确认 `WindowDock` public API 不暴露 manager 内部细节。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T3 docking public API：`DockSide`、`DockAutoHide`、`WindowDock` 只暴露窗口 docking 配置，并从 `wm` / crate root re-export，未泄露 manager 内部 layout 或 hit-test 细节。
+- 确认 dock reserve 由 `Desktop` 传入的 `work_area` 驱动，不覆盖 menu/statusbar；新增 `app::desktop::tests::dock_layout_is_confined_to_desktop_work_area` 固定该行为。
+- 确认多个 dock window 按 `WindowManager` 当前窗口顺序扣 reserve，已有 `right_and_bottom_docks_reserve_work_area_in_order` 覆盖 deterministic reserve 顺序。
+- 确认 docked window 与 normal/maximized window 路径未被错误统一：dock window 跳过普通 move/resize/maximize chrome，normal/maximized window 使用 dock-aware effective work area。
+- 明确 modal 设计：modal 不覆盖 dock reserve，而是停留在 dock-reserved work area 内；active modal 期间 dock 保持可见但不参与 hit-test。新增 `wm::manager::tests::maximized_modal_uses_dock_reserved_work_area` 覆盖该设计。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T4 — C2 Dock resize / auto-hide / hit-test
 

@@ -2,28 +2,29 @@
 
 ## 范围
 
-- 以 `TODO.md` 为任务顺序和完成状态的权威来源。
-- 只选择首个标题未标记 `[DONE]` 的任务；完成该任务后停止。
-- 若发现阻塞当前任务的规格缺口或未排期失败，先修复，或添加最小前置任务后停止。
-- 完成时更新 `TODO.md` / 详细 TODO 文件、记录验证结果，并提交当前任务相关改动。
+- 以 `TODO.md` 为任务顺序、任务要求、验证要求和完成状态的权威来源。
+- 只完成首个标题未标记 `[DONE]` 的任务；完成后停止，不进入下一项。
+- `PLAN.md` 仅在阶段级顺序、依赖、假设或完成标准变化时更新。
 
-## 步骤
+## 执行步骤
 
-1. 读取 `TODO.md`，定位首个未完成任务及其验证要求。
-2. 只检查最近提交中与该任务直接相关的未完成事项。
-3. 阅读任务涉及的 `Window`、`WindowManager`、Desktop 路由、re-export 与测试代码。
-4. 实现 T3 的 dock public API、dock layout、effective work area、绘制/事件/placement 接入。
-5. 增加 manager 单测覆盖 dock reserve、dock rect 覆盖、普通窗口 maximize/move/resize 与 auto-hide invisible reserve。
-6. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-7. 将 T3 在 `TODO.md` 和 `TODO-2.md` 显式标记 `[DONE]` 并写入完成记录。
-8. 查看 git 状态和 diff，只提交当前任务相关文件。
+1. 读取 `TODO.md`，确认首个标题未带 `[DONE]` 的任务。
+2. 只检查最新提交中与该任务直接相关的未完成事项。
+3. 阅读该任务在 `TODO-2.md` 中的审阅要求、依赖、验收点和相关实现文件。
+4. 按 `R3` 要求审阅 T3 docking API、reserve/layout、Desktop work area、window state 区分和测试覆盖。
+5. 若发现阻塞当前任务的缺陷，直接修复；若是无法在本任务内正确完成的前置问题，则在 `TODO.md` / `TODO-2.md` 插入最小前置任务并停止。
+6. 补足审阅任务要求中缺失的最小回归测试。
+7. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+8. 在 `TODO.md` 和 `TODO-2.md` 将 `R3` 标记为 `[DONE]`，并写入完成记录。
+9. 查看 git 状态、diff 和最近提交，只提交本任务相关文件。
+10. 提交后停止，不处理 `T4`。
 
-## 当前状态
+## 进度记录
 
-- 首个未完成任务已确定为 `T3 — C2 Docking 类型、work area reserve 与基础绘制`。
-- 最新提交 `[R2] Review global drag cleanup` 未显示与 T3 直接冲突的未完成问题。
-- 已实现 T3：新增 `DockSide`、`DockAutoHide`、`WindowDock`、`Window.dock`、`Window::with_dock`、`WindowDock::docked`，新增 `src/wm/manager/docking.rs`，并将 add/draw/dispatch/drag/drop/move/resize/maximize 路径接入 dock-aware effective work area。
-- 已补充单测：left/right/bottom dock reserve、dock rect 忽略原始 builder rect 且可绘制到边缘、普通窗口 move/resize clamp、auto-hide invisible 只 reserve 1 cell。
+- 已在仓库检查和实现前创建本计划。
+- 已从 `TODO.md` 确认首个未完成任务为 `R3` / `审阅 T3`，来源为 `TODO-2.md`。
+- 最新提交为 `[T3] Add window docking layout`，与 `R3` 直接相关；审阅范围聚焦 T3 docking public API、reserve/layout 行为、窗口状态差异和测试覆盖。
+- 已补充两条审阅回归测试：dock layout 限定在 Desktop `work_area` 内；maximized modal 保持在 dock-reserved work area 内，同时 active modal 阻止 dock hit-test。
 - 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- `TODO.md` 与 `TODO-2.md` 已将 T3 标记为 `[DONE]` 并写入完成记录。
+- 已在 `TODO.md` 和 `TODO-2.md` 将 `R3` 标记为 `[DONE]` 并写入完成记录。
 - 提交前检查发现未跟踪文件 `notification.sh`、`run_agent.sh`，它们不是本任务产物，将保持未提交。

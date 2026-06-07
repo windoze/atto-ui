@@ -639,7 +639,7 @@ mod tests {
         EventHandling, EventResult,
     };
     use crate::theme::Theme;
-    use crate::wm::{Window, WindowKind};
+    use crate::wm::{DockSide, Window, WindowDock, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1085,6 +1085,36 @@ mod tests {
         assert!(up_result.is_consumed());
         assert!(!desktop.wm.has_global_drag());
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dock_layout_is_confined_to_desktop_work_area() {
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let dock_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Dock",
+                Rect::new(20, 5, 5, 5),
+                Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
+            )
+            .with_dock(Some(WindowDock::docked(DockSide::Left, 12))),
+            screen,
+        );
+
+        let layout = Desktop::layout(screen);
+
+        assert_eq!(layout.work_area, Rect::new(0, 1, 80, 22));
+        assert_eq!(
+            desktop.wm.window(dock_id).expect("dock").rect.get(),
+            Rect::new(0, 1, 12, 22),
+            "desktop must pass work_area to WindowManager so docked windows do not cover menu/status bars"
+        );
     }
 
     #[test]
