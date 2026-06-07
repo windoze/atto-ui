@@ -11,6 +11,7 @@ import {
   createHostContainer,
   createHostInstance,
   createHostTextInstance,
+  detachDeletedHostInstance,
   flushStaticTree,
   insertBefore,
   insertInContainerBefore,
@@ -158,7 +159,9 @@ const hostConfig = {
 
   unhideTextInstance(): void {},
 
-  detachDeletedInstance(): void {},
+  detachDeletedInstance(instance: HostInstance): void {
+    detachDeletedHostInstance(instance)
+  },
 
   preparePortalMount(): void {},
 

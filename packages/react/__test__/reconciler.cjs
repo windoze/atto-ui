@@ -1,12 +1,14 @@
 const assert = require('node:assert/strict')
 const React = require('react')
-const { createRoot } = require('../dist')
+const { createRoot, dispatchHostCallbacks } = require('../dist')
 
 function createMockHost() {
   const ops = []
+  const releasedCallbacks = []
   let nextCallback = 0
   return {
     ops,
+    releasedCallbacks,
     host: {
       applyTreeOps(windowId, op) {
         ops.push({ windowId, op })
@@ -15,6 +17,10 @@ function createMockHost() {
       allocCallback() {
         nextCallback += 1
         return `callback-${nextCallback}`
+      },
+      releaseCallback(callbackId) {
+        releasedCallbacks.push(callbackId)
+        return true
       },
     },
   }
@@ -194,24 +200,33 @@ assert.deepEqual(appendMoveOps, [
   },
 ])
 
-const { host: eventHost, ops: eventOps } = createMockHost()
+const { host: eventHost, ops: eventOps, releasedCallbacks: eventReleasedCallbacks } = createMockHost()
 const eventRoot = createRoot(eventHost, 'event-window', { idPrefix: 'event' })
 eventRoot.render(React.createElement('button', { label: 'Push' }))
 const buttonId = eventRoot.container.rootChildren[0].id
 eventOps.length = 0
 
-eventRoot.render(React.createElement('button', { label: 'Push', onClick() {} }))
+let clicked = 'initial'
+eventRoot.render(React.createElement('button', { label: 'Push', onClick() { clicked = 'first' } }))
 assert.deepEqual(eventOps, [
   {
     windowId: 'event-window',
     op: { op: 'bind_event', id: buttonId, event: 'click', callback: 'callback-1' },
   },
 ])
+assert.equal(dispatchHostCallbacks(eventRoot.container, [
+  { callbackId: 'callback-1', targetId: buttonId, event: 'click', payload: null },
+]), 1)
+assert.equal(clicked, 'first')
 
 eventOps.length = 0
-eventRoot.render(React.createElement('button', { label: 'Push', onClick() {} }))
+eventRoot.render(React.createElement('button', { label: 'Push', onClick() { clicked = 'second' } }))
 assert.deepEqual(eventOps, [])
 assert.equal(eventRoot.container.rootChildren[0].events.click.callbackId, 'callback-1')
+assert.equal(dispatchHostCallbacks(eventRoot.container, [
+  { callbackId: 'callback-1', targetId: buttonId, event: 'click', payload: null },
+]), 1)
+assert.equal(clicked, 'second')
 
 eventRoot.render(React.createElement('button', { label: 'Push' }))
 assert.deepEqual(eventOps, [
@@ -220,3 +235,41 @@ assert.deepEqual(eventOps, [
     op: { op: 'clear_event', id: buttonId, event: 'click' },
   },
 ])
+assert.deepEqual(eventReleasedCallbacks, ['callback-1'])
+assert.equal(dispatchHostCallbacks(eventRoot.container, [
+  { callbackId: 'callback-1', targetId: buttonId, event: 'click', payload: null },
+]), 0)
+
+function MaybeButton({ show, onClick }) {
+  return React.createElement(
+    'vstack',
+    null,
+    show ? React.createElement('button', { label: 'Remove me', onClick }) : null,
+  )
+}
+
+const {
+  host: unmountHost,
+  ops: unmountOps,
+  releasedCallbacks: unmountReleasedCallbacks,
+} = createMockHost()
+const unmountRoot = createRoot(unmountHost, 'unmount-window', { idPrefix: 'unmount' })
+unmountRoot.render(React.createElement(MaybeButton, { show: true, onClick() {} }))
+const unmountParent = unmountRoot.container.rootChildren[0]
+const unmountButton = unmountParent.children[0]
+unmountOps.length = 0
+
+unmountRoot.render(React.createElement(MaybeButton, { show: false, onClick() {} }))
+assert.deepEqual(unmountOps, [
+  {
+    windowId: 'unmount-window',
+    op: [
+      { op: 'clear_event', id: unmountButton.id, event: 'click' },
+      { op: 'remove', id: unmountButton.id },
+    ],
+  },
+])
+assert.deepEqual(unmountReleasedCallbacks, ['callback-1'])
+assert.equal(dispatchHostCallbacks(unmountRoot.container, [
+  { callbackId: 'callback-1', targetId: unmountButton.id, event: 'click', payload: null },
+]), 0)

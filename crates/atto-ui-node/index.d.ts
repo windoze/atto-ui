@@ -16,6 +16,8 @@ export declare class AppHost {
   drainCallbacks(): any
   /** Allocate a callback id handle for use in component event props. */
   allocCallback(): string
+  /** Release a callback id handle after its component event binding is removed. */
+  releaseCallback(callbackId: string): boolean
   /** Send an input event directly to one window. */
   sendEvent(windowId: string, event: any): any
   /** Close a window and invalidate its handle when successful. */

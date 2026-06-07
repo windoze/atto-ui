@@ -6,6 +6,7 @@ declare class NativeAppHost {
   dispose(): void
   drainCallbacks(): unknown
   allocCallback(): string
+  releaseCallback(callbackId: string): boolean
   sendEvent(windowId: string, event: unknown): unknown
   closeWindow(windowId: string): boolean
   focusWindow(windowId: string): boolean

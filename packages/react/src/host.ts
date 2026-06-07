@@ -1,12 +1,17 @@
 import type {
   AppHost,
+  CallbackInvocation,
   ComponentSpec,
   ComponentSpecChild,
   ComponentValue,
   TreeOp,
 } from '@atto-ui/core'
 
-export type RenderHost = Pick<AppHost, 'applyTreeOps' | 'allocCallback'>
+import { CallbackEventDispatcher } from './events'
+
+export type RenderHost = Pick<AppHost, 'applyTreeOps' | 'allocCallback'> & {
+  releaseCallback?(callbackId: string): boolean
+}
 
 export interface HostContainerOptions {
   readonly idPrefix?: string
@@ -18,6 +23,7 @@ export interface HostContainer {
   readonly idPrefix: string
   readonly rootChildren: HostInstance[]
   readonly pendingOps: TreeOp[]
+  readonly eventDispatcher: CallbackEventDispatcher
   nextId: number
   needsTreeFlush: boolean
   lastTree: ComponentSpec | null
@@ -75,6 +81,10 @@ export function createHostContainer(
     idPrefix,
     rootChildren: [],
     pendingOps: [],
+    eventDispatcher: new CallbackEventDispatcher({
+      allocCallback: () => host.allocCallback(),
+      releaseCallback: host.releaseCallback?.bind(host),
+    }),
     nextId: 0,
     needsTreeFlush: false,
     lastTree: null,
@@ -141,14 +151,17 @@ export function insertBefore(
 
 export function removeChild(parent: HostInstance, child: HostInstance): void {
   const shouldQueue = parent.windowId !== null && child.windowId !== null
+  if (shouldQueue) {
+    enqueueClearEventsForSubtree(parent, child)
+    enqueueTreeOpForInstance(parent, { op: 'remove', id: child.id })
+  }
+  releaseEventBindingsForSubtree(child)
   detachFromParent(child)
   if (child.parent === parent) {
     child.parent = null
   }
   setSubtreeWindowId(child, null)
-  if (shouldQueue) {
-    enqueueTreeOpForInstance(parent, { op: 'remove', id: child.id })
-  } else {
+  if (!shouldQueue) {
     markContainerForFlush(parent)
   }
 }
@@ -168,6 +181,7 @@ export function insertInContainerBefore(
 }
 
 export function removeChildFromContainer(container: HostContainer, child: HostInstance): void {
+  releaseEventBindingsForSubtree(child)
   detachFromParent(child)
   if (child.parent === container) {
     child.parent = null
@@ -178,12 +192,17 @@ export function removeChildFromContainer(container: HostContainer, child: HostIn
 
 export function clearContainer(container: HostContainer): boolean {
   for (const child of container.rootChildren) {
+    releaseEventBindingsForSubtree(child)
     child.parent = null
     setSubtreeWindowId(child, null)
   }
   container.rootChildren.length = 0
   container.needsTreeFlush = true
   return false
+}
+
+export function detachDeletedHostInstance(instance: HostInstance): void {
+  releaseEventBindingsForSubtree(instance)
 }
 
 export function updateTextInstance(textInstance: HostInstance, text: string): void {
@@ -255,6 +274,13 @@ export function flushStaticTree(container: HostContainer): void {
   container.lastTree = container.rootChildren.length === 0
     ? emptyRootSpec(container)
     : toComponentSpec(container.rootChildren[0])
+}
+
+export function dispatchHostCallbacks(
+  container: HostContainer,
+  invocations: readonly CallbackInvocation[],
+): number {
+  return container.eventDispatcher.dispatchAll(invocations)
 }
 
 export function prepareHostUpdate(
@@ -334,12 +360,16 @@ export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayl
   }
 
   for (const event of payload.clearEvents) {
-    delete instance.events[event]
+    const binding = instance.events[event]
     enqueueTreeOpForMountedInstance(instance, { op: 'clear_event', id: instance.id, event })
+    if (binding) {
+      unregisterEventBinding(instance, binding)
+      delete instance.events[event]
+    }
   }
 
   for (const { event, handler } of payload.bindEvents) {
-    const callbackId = allocateCallbackForInstance(instance)
+    const callbackId = registerEventBindingForInstance(instance, handler)
     instance.events[event] = { callbackId, handler }
     enqueueTreeOpForMountedInstance(instance, {
       op: 'bind_event',
@@ -353,6 +383,7 @@ export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayl
     const binding = instance.events[event]
     if (binding) {
       binding.handler = handler
+      updateEventBinding(instance, binding, handler)
     }
   }
 }
@@ -382,7 +413,7 @@ function createEventBindings(
 ): HostEventBindings {
   const bindings: HostEventBindings = {}
   for (const [event, handler] of eventProps(props)) {
-    bindings[event] = { callbackId: container.host.allocCallback(), handler }
+    bindings[event] = { callbackId: container.eventDispatcher.register(handler), handler }
   }
   return bindings
 }
@@ -413,12 +444,28 @@ function eventNameFromProp(name: string): string | null {
   return raw[0].toLowerCase() + raw.slice(1)
 }
 
-function allocateCallbackForInstance(instance: HostInstance): string {
+function registerEventBindingForInstance(instance: HostInstance, handler: unknown): string {
   const container = containerForInstance(instance)
   if (!container) {
     throw new Error(`Cannot allocate callback for detached node ${instance.id}`)
   }
-  return container.host.allocCallback()
+  return container.eventDispatcher.register(handler)
+}
+
+function updateEventBinding(
+  instance: HostInstance,
+  binding: HostEventBinding,
+  handler: unknown,
+): void {
+  const container = containerForInstance(instance)
+  if (!container) return
+  container.eventDispatcher.update(binding.callbackId, handler)
+}
+
+function unregisterEventBinding(instance: HostInstance, binding: HostEventBinding): void {
+  const container = containerForInstance(instance)
+  if (!container) return
+  container.eventDispatcher.unregister(binding.callbackId)
 }
 
 function enqueueChildInsert(
@@ -432,6 +479,28 @@ function enqueueChildInsert(
     anchor_id: beforeChild?.id ?? null,
     child: toComponentSpec(child),
   })
+}
+
+function enqueueClearEventsForSubtree(anchor: HostInstance, instance: HostInstance): void {
+  for (const event of Object.keys(instance.events)) {
+    enqueueTreeOpForInstance(anchor, { op: 'clear_event', id: instance.id, event })
+  }
+  for (const child of instance.children) {
+    enqueueClearEventsForSubtree(anchor, child)
+  }
+}
+
+function releaseEventBindingsForSubtree(instance: HostInstance): void {
+  for (const event of Object.keys(instance.events)) {
+    const binding = instance.events[event]
+    if (binding) {
+      unregisterEventBinding(instance, binding)
+      delete instance.events[event]
+    }
+  }
+  for (const child of instance.children) {
+    releaseEventBindingsForSubtree(child)
+  }
 }
 
 function enqueueTreeOpForMountedInstance(instance: HostInstance, op: TreeOp): void {

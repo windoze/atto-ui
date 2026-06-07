@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { AppHost, type AppHostConfig, type Rect } from '@atto-ui/core'
 
+import { dispatchHostCallbacks } from './host'
 import { createRoot, type AttoRoot, type AttoRootOptions } from './reconciler'
 
 export interface RenderOptions extends AttoRootOptions {
@@ -86,6 +87,7 @@ function startTickLoop(host: AppHost, root: AttoRoot, windowId: string): RenderH
         stop()
         return
       }
+      dispatchHostCallbacks(root.container, host.drainCallbacks())
     } catch (error) {
       try {
         stop()

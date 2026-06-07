@@ -197,6 +197,7 @@ export interface AppHost {
   dispose(): void
   drainCallbacks(): CallbackInvocation[]
   allocCallback(): string
+  releaseCallback(callbackId: string): boolean
   sendEvent(windowId: string, event: InputEvent): DesktopEventResult
   closeWindow(windowId: string): boolean
   focusWindow(windowId: string): boolean

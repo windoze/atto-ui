@@ -43,6 +43,7 @@ const host = new AppHost({ headless: true, cols: 40, rows: 12, tickRate: 0 })
 const windowId: string = host.addDynamicWindow('Typed', [0, 0, 20, 6], root)
 const changed: boolean = host.applyTreeOps(windowId, ops)
 const callbacks: CallbackInvocation[] = host.drainCallbacks()
+const released: boolean = host.releaseCallback(host.allocCallback())
 const windows: WindowInfo[] = host.listWindows()
 const snapshot: DesktopSnapshot = host.snapshot()
 
@@ -52,5 +53,6 @@ type _SnapshotIsTyped = AssertFalse<IsAny<typeof snapshot>>
 
 void changed
 void callbacks
+void released
 void windows
 void snapshot

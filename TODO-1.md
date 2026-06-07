@@ -289,7 +289,7 @@
 - 补充 `packages/react/__test__/render_pty.cjs`：在原有 alternate-screen 与 cursor restore 断言外，增加 mouse-capture restore 序列和 PTY raw mode flags 恢复检查。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NT11 — 事件分发桥（U.3）
+### [DONE] NT11 — 事件分发桥（U.3）
 **文件**：`packages/react/src/events.ts`
 **现状**：UI 事件经 `CallbackRegistry` 收集，`drainCallbacks()` 拉取（§10.8）。
 **步骤**：
@@ -298,11 +298,22 @@
 3. 组件卸载时 `ClearEvent` + 回收 callbackId。
 **测试**：reconciler/集成单测——handler 不重复 bind；卸载后不再触发；PTY——点击 Button→`onClick`→`setState`→屏幕更新（计数器 +1）。
 **验收**：UI 事件→React 状态→重渲染闭环成立；无 handler 泄漏/stale。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/src/events.ts`，维护 `callbackId -> 最新 handler` 分发表；React host container 在事件 prop 初始创建、handler 更新、事件清理和组件卸载时同步注册、更新和移除 handler。
+- `render()` tick loop 在 `host.step()` 后执行 `host.drainCallbacks()` 并分发到 React handler，handler 内 `setState` 会经 reconciler commit 刷新 TreeOp，实现 UI 事件到 React 状态再到屏幕更新的闭环。
+- 组件事件清理现在会发送 `clear_event`、删除 JS handler 映射，并通过新增 `AppHost.releaseCallback()` 回收 Node binding callback handle；native `drainCallbacks()` 会丢弃已释放 callback 的 stale invocation，避免卸载后触发。
+- 补充测试：reconciler 单测覆盖 handler 更新不重复 bind、卸载 clear/release 后 stale callback 不触发；headless/render 集成测试覆盖 callback 分发后状态更新；新增 PTY 点击 Button 测试覆盖真实终端点击后 `onClick -> setState -> screen update`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR11 — 审阅 NT11
+### [DONE] NR11 — 审阅 NT11
 - 确认闭环无重入/丢事件；callbackId 回收正确。
 - 确认 LLM 流式与 UI 共存（`for await` 灌 `setState` 不阻塞，§5.2）。
 - 运行 PTY + 流式示例。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/events.ts`、`host.ts`、`render.ts` 与 `crates/atto-ui-node/src/lib.rs`：确认 tick 中 `host.step()` 后统一 `drainCallbacks()`，分发器按 `callbackId -> 最新 handler` 查表执行，handler 内 `setState` 可同步触发 React commit 与 TreeOp flush，不需要重复 bind。
+- 确认事件清理/卸载会先发送 `clear_event`、删除 JS handler 映射并调用 `AppHost.releaseCallback()`；Node `drainCallbacks()` 会过滤已释放 callback id，避免 stale invocation 在卸载后触发。
+- 补充 `packages/react/__test__/render.cjs` 的 `for await` 流式回归：模拟 LLM chunk 流持续 `setState`，验证 tick loop 不阻塞 Promise/timer，最终 headless snapshot 渲染到完整流式文本；既有 headless 与 PTY 点击 Button 用例继续覆盖 `onClick -> setState -> screen update` 闭环。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ---
 

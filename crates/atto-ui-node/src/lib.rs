@@ -202,11 +202,17 @@ impl AppHost {
     #[napi]
     pub fn drain_callbacks(&mut self) -> napi::Result<Value> {
         let callbacks = self.callbacks.drain();
-        callbacks
-            .iter()
-            .map(|event| callback_invocation_to_json(event, &mut self.callback_handles))
-            .collect::<napi::Result<Vec<_>>>()
-            .map(Value::Array)
+        let mut out = Vec::new();
+        for event in &callbacks {
+            if !self.callback_handles.contains_id(event.callback_id) {
+                continue;
+            }
+            out.push(callback_invocation_to_json(
+                event,
+                &mut self.callback_handles,
+            )?);
+        }
+        Ok(Value::Array(out))
     }
 
     /// Allocate a callback id handle for use in component event props.
@@ -214,6 +220,13 @@ impl AppHost {
     pub fn alloc_callback(&mut self) -> String {
         let id = self.callbacks.register();
         self.callback_handles.handle_for(id)
+    }
+
+    /// Release a callback id handle after its component event binding is removed.
+    #[napi]
+    pub fn release_callback(&mut self, callback_id: String) -> napi::Result<bool> {
+        self.callback_handles.release_handle(&callback_id)?;
+        Ok(true)
     }
 
     /// Send an input event directly to one window.
@@ -654,6 +667,36 @@ mod tests {
         assert_eq!(callbacks[0]["callbackId"], json!(callback));
         assert_eq!(callbacks[0]["targetId"], json!("ok"));
         assert_eq!(callbacks[0]["event"], json!("click"));
+    }
+
+    #[test]
+    fn released_callback_handles_are_not_drained() {
+        let mut host = AppHost::new(Some(AppHostConfig {
+            headless: Some(true),
+            cols: Some(40),
+            rows: Some(12),
+            ..AppHostConfig::default()
+        }))
+        .unwrap();
+
+        let callback = host.alloc_callback();
+        let window = host
+            .add_dynamic_window(
+                "Release".to_string(),
+                json!({ "x": 1, "y": 1, "width": 24, "height": 8 }),
+                json!({
+                    "type": "Button",
+                    "id": "button",
+                    "props": { "label": "OK" },
+                    "events": { "click": callback.clone() }
+                }),
+            )
+            .unwrap();
+
+        host.send_event(window, json!({ "type": "key", "key": "enter" }))
+            .unwrap();
+        assert!(host.release_callback(callback).unwrap());
+        assert_eq!(host.drain_callbacks().unwrap(), json!([]));
     }
 
     #[test]

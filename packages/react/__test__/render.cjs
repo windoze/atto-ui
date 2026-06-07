@@ -11,6 +11,15 @@ function findNode(node, id) {
   return undefined
 }
 
+function findNodeByText(node, text) {
+  if (node.text === text) return node
+  for (const child of node.children ?? []) {
+    const found = findNodeByText(child, text)
+    if (found) return found
+  }
+  return undefined
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -23,6 +32,13 @@ async function waitFor(predicate) {
     await delay(10)
   }
   assert.fail('timed out waiting for render loop')
+}
+
+async function* streamChunks(chunks) {
+  for (const chunk of chunks) {
+    await delay(0)
+    yield chunk
+  }
 }
 
 async function main() {
@@ -50,6 +66,51 @@ async function main() {
   })
   await delay(0)
   assert.equal(promiseRan, true)
+
+  function StreamingLabel() {
+    const [text, setText] = React.useState('Streaming:')
+    React.useEffect(() => {
+      let cancelled = false
+      ;(async () => {
+        let next = 'Streaming:'
+        for await (const chunk of streamChunks([' one', ' two', ' done'])) {
+          if (cancelled) return
+          next += chunk
+          setText(next)
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }, [])
+    return React.createElement('label', { text })
+  }
+
+  const streamHandle = render(
+    React.createElement(StreamingLabel),
+    { headless: true, cols: 50, rows: 14, idPrefix: 'stream' },
+  )
+  await waitFor(() => findNodeByText(streamHandle.host.snapshot().tree, 'Streaming: one two done'))
+  streamHandle.stop()
+
+  function ClickCounter() {
+    const [count, setCount] = React.useState(0)
+    return React.createElement('button', {
+      label: `Count: ${count}`,
+      onClick() {
+        setCount((current) => current + 1)
+      },
+    })
+  }
+
+  const eventHandle = render(
+    React.createElement(ClickCounter),
+    { headless: true, cols: 50, rows: 14, idPrefix: 'event-render' },
+  )
+  await waitFor(() => findNode(eventHandle.host.snapshot().tree, 'event-render-1')?.text === 'Count: 0')
+  eventHandle.host.sendEvent(eventHandle.windowId, { type: 'key', key: 'enter' })
+  await waitFor(() => findNode(eventHandle.host.snapshot().tree, 'event-render-1')?.text === 'Count: 1')
+  eventHandle.stop()
 
   handle.stop()
   handle.stop()

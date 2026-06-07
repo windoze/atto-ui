@@ -13,6 +13,7 @@ export {
 
 export {
   createHostContainer,
+  dispatchHostCallbacks,
   flushStaticTree,
   normalizeHostType,
   sanitizeProps,
@@ -23,3 +24,9 @@ export {
   type HostProps,
   type RenderHost,
 } from './host'
+
+export {
+  CallbackEventDispatcher,
+  type AttoUiCallbackEvent,
+  type AttoUiEventHandler,
+} from './events'
