@@ -334,6 +334,11 @@ impl Theme {
             "drop-insertion-marker".into(),
             self.widget.accent.add_modifier(Modifier::BOLD),
         );
+        self.named_styles.insert(
+            "dock-auto-hide-handle".into(),
+            self.window_bg
+                .patch(self.status_bar_key.add_modifier(Modifier::BOLD)),
+        );
 
         self.named_styles
             .insert("scrollbar-track".into(), self.scrollbar_track);

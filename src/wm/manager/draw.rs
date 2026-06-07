@@ -16,7 +16,8 @@ use crate::drawing::draw_shadow;
 use crate::theme::Theme;
 
 use super::{
-    GlobalDragState, WindowBorderStyle, WindowId, WindowManager, WindowState, chrome, placement,
+    GlobalDragState, WindowBorderStyle, WindowDock, WindowId, WindowManager, WindowState, chrome,
+    docking, placement,
 };
 
 impl WindowManager {
@@ -30,103 +31,136 @@ impl WindowManager {
         }
         let global_drag = self.global_drag.as_ref();
 
-        for window in self.windows.iter_mut() {
-            let state = window.state.get();
-            if state == WindowState::Minimized {
-                continue;
-            }
-
-            let enforced_min_size = placement::window_enforced_min_size(window);
-            let rect = if window.dock.get().is_some() {
-                window.rect.get()
-            } else {
-                match state {
-                    WindowState::Maximized => effective_bounds,
-                    _ => placement::normalize_rect(
-                        window.rect.get(),
-                        effective_bounds,
-                        enforced_min_size,
-                    ),
+        for overlay_pass in [false, true] {
+            for window in self.windows.iter_mut() {
+                let is_auto_hide_overlay =
+                    modal.is_none() && docking::window_is_visible_auto_hide_dock(window);
+                if is_auto_hide_overlay != overlay_pass {
+                    continue;
                 }
-            };
-            window.rect.set(rect);
 
-            if modal.is_some() && Some(window.id) != modal {
-                // Block non-modal windows visually by dimming their chrome.
-            }
-
-            let decorations = window.decorations.get();
-            if decorations.shadow {
-                draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);
-            }
-
-            fill_rect(frame.buffer_mut(), rect, theme.window_bg, ' ');
-
-            let is_focused = focused == Some(window.id);
-            let border_style = theme.window_bg.patch(if is_focused {
-                theme.window_border_focused
-            } else {
-                theme.window_border
-            });
-            let title_style = theme.window_bg.patch(if is_focused {
-                theme.window_title_focused
-            } else {
-                theme.window_title
-            });
-
-            if decorations.border.has_border() {
-                let border_set = match decorations.border {
-                    WindowBorderStyle::Normal => theme.border_set(is_focused),
-                    WindowBorderStyle::Thin => theme.border_set(false),
-                    WindowBorderStyle::Borderless => theme.border_set(false),
-                };
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .border_set(border_set);
-                frame.render_widget(block, rect);
-                let buttons = chrome::effective_titlebar_buttons(window, &decorations);
-                let layout = chrome::titlebar_layout(rect, &buttons);
-                let titlebar_ctx = TitleBarContext {
-                    theme,
-                    window_id: window.id,
-                    is_focused,
-                    area: layout.text_area,
-                };
-                if let Some(content) = window.view.titlebar(titlebar_ctx) {
-                    chrome::draw_titlebar_spans(frame.buffer_mut(), &layout, &content, title_style);
-                } else {
-                    let title = window.title.get();
-                    chrome::draw_titlebar_text(frame.buffer_mut(), &layout, &title, title_style);
+                let state = window.state.get();
+                if state == WindowState::Minimized {
+                    continue;
                 }
-                chrome::draw_titlebar_buttons(frame.buffer_mut(), &layout, title_style, theme);
-            }
 
-            let inner = window.inner_rect();
-            let drag = drag_context_for_window(global_drag, window.id);
-            let ctx = ComponentContext {
-                theme,
-                window_id: window.id,
-                is_focused,
-                scrollbar_host: if decorations.border.has_border() {
-                    ScrollbarHost::Window
+                let enforced_min_size = placement::window_enforced_min_size(window);
+                let rect = if window.dock.get().is_some() {
+                    window.rect.get()
                 } else {
-                    ScrollbarHost::Component
-                },
-                tab_mode: TabMode::Cycle,
-                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
-                drag,
-            };
-            window.view.draw(frame, inner, ctx);
+                    match state {
+                        WindowState::Maximized => effective_bounds,
+                        _ => placement::normalize_rect(
+                            window.rect.get(),
+                            effective_bounds,
+                            enforced_min_size,
+                        ),
+                    }
+                };
+                window.rect.set(rect);
+                let dock = window.dock.get();
+                let is_auto_hidden = dock.as_ref().is_some_and(|dock| {
+                    matches!(
+                        dock.auto_hide,
+                        super::DockAutoHide::Enabled { visible: false }
+                    )
+                });
 
-            if decorations.border.has_border() {
-                chrome::draw_window_border_scrollbars(
-                    frame.buffer_mut(),
-                    rect,
-                    inner,
-                    window.view.as_ref(),
-                    theme,
-                );
+                if modal.is_some() && Some(window.id) != modal {
+                    // Block non-modal windows visually by dimming their chrome.
+                }
+
+                let decorations = window.decorations.get();
+                if decorations.shadow {
+                    draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);
+                }
+
+                fill_rect(frame.buffer_mut(), rect, theme.window_bg, ' ');
+
+                let is_focused = focused == Some(window.id);
+                let border_style = theme.window_bg.patch(if is_focused {
+                    theme.window_border_focused
+                } else {
+                    theme.window_border
+                });
+                let title_style = theme.window_bg.patch(if is_focused {
+                    theme.window_title_focused
+                } else {
+                    theme.window_title
+                });
+
+                if decorations.border.has_border() {
+                    let border_set = match decorations.border {
+                        WindowBorderStyle::Normal => theme.border_set(is_focused),
+                        WindowBorderStyle::Thin => theme.border_set(false),
+                        WindowBorderStyle::Borderless => theme.border_set(false),
+                    };
+                    let block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border_style)
+                        .border_set(border_set);
+                    frame.render_widget(block, rect);
+                    let buttons = chrome::effective_titlebar_buttons(window, &decorations);
+                    let layout = chrome::titlebar_layout(rect, &buttons);
+                    let titlebar_ctx = TitleBarContext {
+                        theme,
+                        window_id: window.id,
+                        is_focused,
+                        area: layout.text_area,
+                    };
+                    if let Some(content) = window.view.titlebar(titlebar_ctx) {
+                        chrome::draw_titlebar_spans(
+                            frame.buffer_mut(),
+                            &layout,
+                            &content,
+                            title_style,
+                        );
+                    } else {
+                        let title = window.title.get();
+                        chrome::draw_titlebar_text(
+                            frame.buffer_mut(),
+                            &layout,
+                            &title,
+                            title_style,
+                        );
+                    }
+                    chrome::draw_titlebar_buttons(frame.buffer_mut(), &layout, title_style, theme);
+                }
+
+                let inner = window.inner_rect();
+                if !is_auto_hidden {
+                    let drag = drag_context_for_window(global_drag, window.id);
+                    let ctx = ComponentContext {
+                        theme,
+                        window_id: window.id,
+                        is_focused,
+                        scrollbar_host: if decorations.border.has_border() {
+                            ScrollbarHost::Window
+                        } else {
+                            ScrollbarHost::Component
+                        },
+                        tab_mode: TabMode::Cycle,
+                        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                        drag,
+                    };
+                    window.view.draw(frame, inner, ctx);
+                }
+
+                if !is_auto_hidden && decorations.border.has_border() {
+                    chrome::draw_window_border_scrollbars(
+                        frame.buffer_mut(),
+                        rect,
+                        inner,
+                        window.view.as_ref(),
+                        theme,
+                    );
+                }
+
+                if let Some(dock) = dock.as_ref()
+                    && matches!(dock.auto_hide, super::DockAutoHide::Enabled { .. })
+                {
+                    draw_dock_auto_hide_handle(frame.buffer_mut(), rect, dock, theme);
+                }
             }
         }
 
@@ -144,6 +178,51 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style, ch: char) {
                 cell.set_symbol(&symbol);
             }
         }
+    }
+}
+
+fn draw_dock_auto_hide_handle(buf: &mut Buffer, rect: Rect, dock: &WindowDock, theme: &Theme) {
+    let handle = docking::dock_handle_rect(rect, dock);
+    if handle.width == 0 || handle.height == 0 {
+        return;
+    }
+
+    let style = theme
+        .named_style("dock-auto-hide-handle")
+        .unwrap_or(theme.status_bar_key);
+    fill_rect(buf, handle, style, ' ');
+
+    let fallback = match dock.side {
+        super::DockSide::Left => ">",
+        super::DockSide::Right => "<",
+        super::DockSide::Bottom => "^",
+        super::DockSide::Top => "v",
+    };
+    let label = dock.handle_label.as_deref().unwrap_or(fallback);
+    if matches!(dock.side, super::DockSide::Left | super::DockSide::Right) {
+        draw_vertical_handle_label(buf, handle, label, style);
+    } else {
+        draw_overlay_text(buf, handle, handle.x, handle.y, label, style);
+    }
+}
+
+fn draw_vertical_handle_label(buf: &mut Buffer, rect: Rect, label: &str, style: Style) {
+    let style = reset_style(style);
+    let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+    let mut row = rect.y;
+
+    for grapheme in label.graphemes(true) {
+        if row > bottom {
+            break;
+        }
+        if UnicodeWidthStr::width(grapheme) != 1 {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((rect.x, row)) {
+            cell.set_symbol(grapheme);
+            cell.set_style(style);
+        }
+        row = row.saturating_add(1);
     }
 }
 

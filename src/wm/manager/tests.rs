@@ -151,6 +151,12 @@ fn left_mouse_event(kind: MouseEventKind, column: u16, row: u16) -> Event {
     })
 }
 
+fn dock_auto_hide_visible(wm: &WindowManager, id: crate::wm::WindowId) -> bool {
+    wm.window(id)
+        .and_then(|window| window.dock.get())
+        .is_some_and(|dock| matches!(dock.auto_hide, DockAutoHide::Enabled { visible: true }))
+}
+
 #[test]
 fn window_manager_can_replace_view() {
     let bounds = Rect::new(0, 0, 80, 24);
@@ -756,6 +762,156 @@ fn auto_hidden_dock_reserves_one_cell_handle() {
         wm.window(normal_id).expect("normal").rect.get(),
         Rect::new(1, 0, 79, 24)
     );
+}
+
+#[test]
+fn left_dock_resize_drag_updates_dock_size_without_touching_normal_rect() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let mut dock = WindowDock::docked(DockSide::Left, 18);
+    dock.min_size = 10;
+    dock.max_size = Some(30);
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(35, 4, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let normal_before = wm.window(normal_id).expect("normal").rect.get();
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 17, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 24, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Up(MouseButton::Left), 24, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    let dock = wm
+        .window(dock_id)
+        .expect("dock")
+        .dock
+        .get()
+        .expect("dock config");
+    assert_eq!(dock.size, 25);
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 25);
+    assert_eq!(
+        wm.window(normal_id).expect("normal").rect.get(),
+        normal_before
+    );
+}
+
+#[test]
+fn auto_hide_handle_click_shows_overlay_and_outside_click_hides_it() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let mut dock = WindowDock::docked(DockSide::Left, 20);
+    dock.auto_hide = DockAutoHide::Enabled { visible: false };
+    dock.handle_label = Some("D".to_string());
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+    let _normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(3, 3, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(wm.effective_work_area(bounds), Rect::new(1, 0, 79, 24));
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 1);
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 0, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    assert!(dock_auto_hide_visible(&wm, dock_id));
+    assert_eq!(wm.effective_work_area(bounds), Rect::new(1, 0, 79, 24));
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 20);
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 30, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    assert!(!dock_auto_hide_visible(&wm, dock_id));
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 1);
+}
+
+#[test]
+fn visible_auto_hide_dock_overlays_normal_windows_for_hit_test() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut dock = WindowDock::docked(DockSide::Left, 20);
+    dock.auto_hide = DockAutoHide::Enabled { visible: true };
+    let mut wm = WindowManager::new();
+    let dock_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Dock",
+            Rect::new(2, 2, 5, 5),
+            Box::new(DummyView),
+        )
+        .with_dock(Some(dock)),
+        bounds,
+    );
+    let normal_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Main",
+            Rect::new(3, 3, 20, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    wm.toggle_maximize_focused(bounds);
+
+    assert_eq!(wm.effective_work_area(bounds), Rect::new(1, 0, 79, 24));
+    assert_eq!(wm.window(dock_id).expect("dock").rect.get().width, 20);
+    assert_eq!(wm.window(normal_id).expect("normal").rect.get().x, 1);
+    assert_eq!(wm.window_at(5, 5), Some(dock_id));
 }
 
 #[test]

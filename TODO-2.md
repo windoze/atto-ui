@@ -238,7 +238,7 @@
 - 明确 modal 设计：modal 不覆盖 dock reserve，而是停留在 dock-reserved work area 内；active modal 期间 dock 保持可见但不参与 hit-test。新增 `wm::manager::tests::maximized_modal_uses_dock_reserved_work_area` 覆盖该设计。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T4 — C2 Dock resize / auto-hide / hit-test
+### [DONE] T4 — C2 Dock resize / auto-hide / hit-test
 
 **依赖**：T3。
 
@@ -279,6 +279,16 @@
 **验收**：
 - Dock resize 不影响非 dock window 的 persisted rect。
 - Auto-hide 不需要动画，但状态切换和 reserve 必须正确。
+
+**完成记录（2026-06-08）**：
+- 扩展 WM hit-test 与 drag 状态：新增 `DockResizeEdge(DockSide)`、`DockAutoHideHandle` 和 `DragKind::DockResize { start_size, side }`，dock resize 只更新 `WindowDock.size`，不直接持久化 window rect。
+- 在 `docking.rs` 增加 dock 内侧 resize edge、auto-hide handle rect、resize size clamp、dock 专属可用区域计算和 auto-hide hide/show helper；Left/Right/Top/Bottom 均按内侧边规则计算。
+- 调整 auto-hide reserve：`visible=false` 只 reserve 1 cell handle；`visible=true` 作为 overlay 绘制/命中，但 work area 仍只扣 handle，避免普通窗口 persisted rect 被 dock resize/auto-hide 状态污染。
+- `handle_mouse` 支持点击 handle 显示 auto-hide dock、点击 dock 外或焦点离开隐藏；visible auto-hide dock 在 hit-test 中优先于普通窗口，避免事件穿透到被 overlay 遮住的窗口。
+- `draw.rs` 绘制 auto-hide handle，hidden 状态不绘制 dock view；visible auto-hide overlay 在无 modal 时绘制到普通窗口之上。
+- 新增 `dock-auto-hide-handle` named style，便于主题覆盖 handle 样式。
+- 新增 WM 单元测试覆盖：left dock resize 更新 `dock.size` 且不改普通窗口 rect；hidden auto-hide handle click 后 visible=true 且 reserve 仍为 1 cell；点击外部后 hidden；visible auto-hide overlay 优先命中 dock。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R4 — 审阅 T4
 

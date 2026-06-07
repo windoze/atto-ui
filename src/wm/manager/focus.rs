@@ -1,6 +1,6 @@
 // Focus management helpers for WindowManager.
 
-use super::{WindowId, WindowManager, WindowState, chrome};
+use super::{WindowId, WindowManager, WindowState, chrome, docking};
 
 impl WindowManager {
     pub fn has_active_modal(&self) -> bool {
@@ -18,8 +18,16 @@ impl WindowManager {
         if !self.window(id).is_some_and(|w| w.kind.is_focusable()) {
             return;
         }
+        let keep_auto_hide = self
+            .window(id)
+            .is_some_and(docking::window_is_auto_hide_dock)
+            .then_some(id);
+        let is_docked = self.window(id).is_some_and(|w| w.dock.get().is_some());
+        self.hide_auto_hide_docks_except(keep_auto_hide);
         self.focused = Some(id);
-        self.bring_to_front(id);
+        if !is_docked {
+            self.bring_to_front(id);
+        }
     }
 
     pub fn focus_next(&mut self) {
@@ -41,8 +49,16 @@ impl WindowManager {
             Some(idx) => ids[(idx + 1) % ids.len()],
             None => ids[0],
         };
+        let keep_auto_hide = self
+            .window(next)
+            .is_some_and(docking::window_is_auto_hide_dock)
+            .then_some(next);
+        let is_docked = self.window(next).is_some_and(|w| w.dock.get().is_some());
+        self.hide_auto_hide_docks_except(keep_auto_hide);
         self.focused = Some(next);
-        self.bring_to_front(next);
+        if !is_docked {
+            self.bring_to_front(next);
+        }
     }
 
     pub fn minimize_focused(&mut self) {

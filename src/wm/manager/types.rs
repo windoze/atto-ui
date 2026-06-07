@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use crate::composable::scroll::ScrollbarDrag;
 use crate::composable::{ComponentId, DragSource, DropFeedback};
 
-use super::{Window, WindowId};
+use super::{DockSide, Window, WindowId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowManagerInputMode {
@@ -36,6 +36,10 @@ pub(crate) enum DragKind {
     Resize {
         start_rect: Rect,
         corner: ResizeCorner,
+    },
+    DockResize {
+        start_size: u16,
+        side: DockSide,
     },
     Scrollbar {
         drag: ScrollbarDrag,
@@ -69,6 +73,8 @@ pub(crate) enum HitRegion {
     MaximizeButton,
     CloseButton,
     ResizeHandle(ResizeCorner),
+    DockResizeEdge(DockSide),
+    DockAutoHideHandle,
     VScrollbar,
     HScrollbar,
     Body,

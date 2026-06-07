@@ -16,7 +16,7 @@ use crate::theme::Theme;
 use super::{
     DragKind, DragState, GlobalDragState, HitRegion, HitTest, ResizeCorner, Window, WindowId,
     WindowKind, WindowManager, WindowManagerAction, WindowManagerInputMode, WindowState, chrome,
-    placement,
+    docking, placement,
 };
 
 impl WindowManager {
@@ -127,6 +127,9 @@ impl WindowManager {
                 self.drag = None;
                 self.mouse_capture = false;
                 let Some(hit) = self.hit_test(m.column, m.row, modal) else {
+                    if self.hide_auto_hide_docks_except(None) {
+                        self.apply_dock_layout(bounds);
+                    }
                     return WindowManagerAction::default();
                 };
 
@@ -137,6 +140,14 @@ impl WindowManager {
                 };
 
                 let window_id = hit.window_id;
+                let auto_hide_keep = self
+                    .window(window_id)
+                    .is_some_and(docking::window_is_auto_hide_dock)
+                    .then_some(window_id);
+                if self.hide_auto_hide_docks_except(auto_hide_keep) {
+                    self.apply_dock_layout(bounds);
+                }
+
                 if modal.is_none()
                     && self
                         .window(window_id)
@@ -146,6 +157,40 @@ impl WindowManager {
                 }
 
                 match hit.region {
+                    HitRegion::DockAutoHideHandle => {
+                        let mut changed = false;
+                        if let Some(w) = self.window_mut(window_id)
+                            && let Some(mut dock) = w.dock.get()
+                            && matches!(dock.auto_hide, super::DockAutoHide::Enabled { .. })
+                        {
+                            dock.auto_hide = super::DockAutoHide::Enabled { visible: true };
+                            w.dock.set(Some(dock));
+                            changed = true;
+                        }
+                        if changed {
+                            self.apply_dock_layout(bounds);
+                        }
+                        action.consumed = true;
+                    }
+                    HitRegion::DockResizeEdge(side) => {
+                        if let Some(w) = self.window_mut(window_id)
+                            && let Some(dock) = w.dock.get()
+                            && dock.side == side
+                            && w.resizable.get()
+                            && !matches!(
+                                dock.auto_hide,
+                                super::DockAutoHide::Enabled { visible: false }
+                            )
+                        {
+                            self.drag = Some(DragState {
+                                window_id,
+                                kind: DragKind::DockResize {
+                                    start_size: dock.size,
+                                    side,
+                                },
+                            });
+                        }
+                    }
                     HitRegion::CloseButton => {
                         if let Some(w) = self.window_mut(window_id)
                             && w.closable.get()
@@ -375,10 +420,17 @@ impl WindowManager {
                     return WindowManagerAction::default();
                 };
                 let effective_bounds = self.effective_work_area(bounds);
+                let dock_area = match drag.kind {
+                    DragKind::DockResize { .. } => {
+                        Some(self.dock_area_for_window(drag.window_id, bounds))
+                    }
+                    _ => None,
+                };
                 let Some(w) = self.window_mut(drag.window_id) else {
                     self.drag = None;
                     return WindowManagerAction::default();
                 };
+                let mut dock_layout_changed = false;
                 match drag.kind {
                     DragKind::Move { offset_x, offset_y } => {
                         if w.dock.get().is_some()
@@ -413,6 +465,28 @@ impl WindowManager {
                             effective_bounds,
                             placement::window_enforced_min_size(w),
                         ));
+                    }
+                    DragKind::DockResize { start_size, side } => {
+                        let Some(area) = dock_area else {
+                            return WindowManagerAction::default();
+                        };
+                        if let Some(mut dock) = w.dock.get() {
+                            if dock.side != side
+                                || !w.resizable.get()
+                                || matches!(
+                                    dock.auto_hide,
+                                    super::DockAutoHide::Enabled { visible: false }
+                                )
+                            {
+                                return WindowManagerAction::default();
+                            }
+                            let raw_size = docking::dock_size_from_pointer(
+                                area, side, m.column, m.row, start_size,
+                            );
+                            dock.size = docking::clamp_dock_size(&dock, area, raw_size);
+                            w.dock.set(Some(dock));
+                            dock_layout_changed = true;
+                        }
                     }
                     DragKind::Scrollbar { drag } => {
                         if !w.decorations.get().border.has_border() {
@@ -497,6 +571,9 @@ impl WindowManager {
                             }
                         }
                     }
+                }
+                if dock_layout_changed {
+                    self.apply_dock_layout(bounds);
                 }
                 WindowManagerAction {
                     consumed: true,
@@ -861,111 +938,156 @@ impl WindowManager {
     }
 
     fn hit_test(&self, x: u16, y: u16, modal: Option<WindowId>) -> Option<HitTest> {
-        let iter: Box<dyn Iterator<Item = &Window>> = if let Some(modal_id) = modal {
-            Box::new(self.windows.iter().filter(move |w| w.id == modal_id))
-        } else {
-            Box::new(self.windows.iter().rev())
-        };
-
-        for w in iter {
-            let state = w.state.get();
-            if state == WindowState::Minimized {
-                continue;
-            }
-            let rect = w.rect.get();
-            if !placement::contains(rect, x, y) {
-                continue;
-            }
-            let decorations = w.decorations.get();
-
-            if decorations.border.has_border()
-                && w.dock.get().is_none()
-                && w.resizable.get()
-                && state != WindowState::Maximized
-                && rect.width >= 2
-                && rect.height >= 2
-            {
-                let left = rect.x;
-                let top = rect.y;
-                let right = rect.x.saturating_add(rect.width).saturating_sub(1);
-                let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
-
-                let corner = if x == left && y == top {
-                    Some(ResizeCorner::TopLeft)
-                } else if x == right && y == top {
-                    Some(ResizeCorner::TopRight)
-                } else if x == left && y == bottom {
-                    Some(ResizeCorner::BottomLeft)
-                } else if x == right && y == bottom {
-                    Some(ResizeCorner::BottomRight)
-                } else {
-                    None
-                };
-
-                if let Some(corner) = corner {
-                    return Some(HitTest {
-                        window_id: w.id,
-                        region: HitRegion::ResizeHandle(corner),
-                    });
-                }
-            }
-
-            if let Some(titlebar) = w.titlebar_rect()
-                && y == titlebar.y
-                && x >= titlebar.x
-                && x < titlebar.x + titlebar.width
-            {
-                if let Some(btn) = chrome::hit_test_buttons(w, x, y) {
-                    return Some(HitTest {
-                        window_id: w.id,
-                        region: btn,
-                    });
-                }
-                return Some(HitTest {
-                    window_id: w.id,
-                    region: HitRegion::TitleBar,
-                });
-            }
-
-            if decorations.border.has_border()
-                && w.view.is_scrollable()
-                && rect.width > 1
-                && rect.height > 1
-            {
-                let cfg = w.view.scroll_config();
-                let (content_w, content_h) = w.view.content_size();
-                let (viewport_w, viewport_h) = w.view.viewport_size();
-
-                let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
-                let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
-
-                let left = rect.x;
-                let top = rect.y;
-                let right = rect.x.saturating_add(rect.width).saturating_sub(1);
-                let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
-
-                // Scrollbars occupy the right/bottom border lines (excluding the corners).
-                if show_v && x == right && y > top && y < bottom {
-                    return Some(HitTest {
-                        window_id: w.id,
-                        region: HitRegion::VScrollbar,
-                    });
-                }
-                if show_h && y == bottom && x > left && x < right {
-                    return Some(HitTest {
-                        window_id: w.id,
-                        region: HitRegion::HScrollbar,
-                    });
-                }
-            }
-
-            return Some(HitTest {
-                window_id: w.id,
-                region: HitRegion::Body,
-            });
+        if let Some(modal_id) = modal {
+            return self
+                .window(modal_id)
+                .and_then(|window| hit_test_window(window, x, y));
         }
+
+        for window in self
+            .windows
+            .iter()
+            .rev()
+            .filter(|window| docking::window_is_visible_auto_hide_dock(window))
+        {
+            if let Some(hit) = hit_test_window(window, x, y) {
+                return Some(hit);
+            }
+        }
+
+        for window in self.windows.iter().rev() {
+            if docking::window_is_visible_auto_hide_dock(window) {
+                continue;
+            }
+            if let Some(hit) = hit_test_window(window, x, y) {
+                return Some(hit);
+            }
+        }
+
         None
     }
+}
+
+fn hit_test_window(w: &Window, x: u16, y: u16) -> Option<HitTest> {
+    let state = w.state.get();
+    if state == WindowState::Minimized {
+        return None;
+    }
+    let rect = w.rect.get();
+    if !placement::contains(rect, x, y) {
+        return None;
+    }
+    let decorations = w.decorations.get();
+
+    if let Some(dock) = w.dock.get() {
+        if matches!(dock.auto_hide, super::DockAutoHide::Enabled { .. })
+            && placement::contains(docking::dock_handle_rect(rect, &dock), x, y)
+        {
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::DockAutoHideHandle,
+            });
+        }
+
+        if w.resizable.get()
+            && !matches!(
+                dock.auto_hide,
+                super::DockAutoHide::Enabled { visible: false }
+            )
+            && placement::contains(docking::dock_resize_edge_rect(rect, dock.side), x, y)
+        {
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::DockResizeEdge(dock.side),
+            });
+        }
+    }
+
+    if decorations.border.has_border()
+        && w.dock.get().is_none()
+        && w.resizable.get()
+        && state != WindowState::Maximized
+        && rect.width >= 2
+        && rect.height >= 2
+    {
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        let corner = if x == left && y == top {
+            Some(ResizeCorner::TopLeft)
+        } else if x == right && y == top {
+            Some(ResizeCorner::TopRight)
+        } else if x == left && y == bottom {
+            Some(ResizeCorner::BottomLeft)
+        } else if x == right && y == bottom {
+            Some(ResizeCorner::BottomRight)
+        } else {
+            None
+        };
+
+        if let Some(corner) = corner {
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::ResizeHandle(corner),
+            });
+        }
+    }
+
+    if let Some(titlebar) = w.titlebar_rect()
+        && y == titlebar.y
+        && x >= titlebar.x
+        && x < titlebar.x + titlebar.width
+    {
+        if let Some(btn) = chrome::hit_test_buttons(w, x, y) {
+            return Some(HitTest {
+                window_id: w.id,
+                region: btn,
+            });
+        }
+        return Some(HitTest {
+            window_id: w.id,
+            region: HitRegion::TitleBar,
+        });
+    }
+
+    if decorations.border.has_border()
+        && w.view.is_scrollable()
+        && rect.width > 1
+        && rect.height > 1
+    {
+        let cfg = w.view.scroll_config();
+        let (content_w, content_h) = w.view.content_size();
+        let (viewport_w, viewport_h) = w.view.viewport_size();
+
+        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_h, viewport_h);
+        let show_h = should_show_scrollbar(cfg.horizontal_scrollbar, content_w, viewport_w);
+
+        let left = rect.x;
+        let top = rect.y;
+        let right = rect.x.saturating_add(rect.width).saturating_sub(1);
+        let bottom = rect.y.saturating_add(rect.height).saturating_sub(1);
+
+        // Scrollbars occupy the right/bottom border lines (excluding the corners).
+        if show_v && x == right && y > top && y < bottom {
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::VScrollbar,
+            });
+        }
+        if show_h && y == bottom && x > left && x < right {
+            return Some(HitTest {
+                window_id: w.id,
+                region: HitRegion::HScrollbar,
+            });
+        }
+    }
+
+    Some(HitTest {
+        window_id: w.id,
+        region: HitRegion::Body,
+    })
 }
 
 fn drag_distance_reached_threshold(state: &GlobalDragState, x: u16, y: u16) -> bool {
