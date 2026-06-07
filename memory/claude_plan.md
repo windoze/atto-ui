@@ -31,5 +31,6 @@
 - 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`、`npm test --prefix crates/atto-ui-node`、`npm test --prefix packages/core`、`npm test --prefix packages/react`、`git diff --check`。
 - 已更新 `TODO.md` 与 `TODO-1.md`，将 NT16 标记为 `[DONE]` 并写入完成记录。
 - 补强事件清理断言后，已重跑 `npm test --prefix packages/react` 与 `git diff --check`，均通过。
-- 提交前检查发现工作区另有未跟踪 `notification.sh`、`run_agent.sh`，它们不是本任务变更，提交时不纳入。
-- 下一步暂存本任务相关文件并提交 `[NT16] Add reconciler test matrix`。
+- 提交前检查发现工作区另有未跟踪 `notification.sh`、`run_agent.sh`，它们不是本任务变更，未纳入提交。
+- 已提交本任务实现：`c1fd6b8 [NT16] Add reconciler test matrix`。
+- 当前任务完成后停止，不继续 `NR16`。
