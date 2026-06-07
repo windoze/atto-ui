@@ -1,24 +1,29 @@
 # 执行计划
 
-本文件记录本次调用的可执行计划与进度。内容为简明依据和操作步骤，不包含不可公开的内部推理。
+## 范围
 
-## 本次调用计划
+- 以 `TODO.md` 为唯一任务顺序和完成状态来源。
+- 本次只完成第一个标题尚未带 `[DONE]` 的任务，然后停止。
+- 若遇到阻塞当前任务的缺陷、规格不匹配或缺失能力，先修复；若无法在本次按规格修复，则在 `TODO.md` 中添加最小必要前置任务并提交后停止。
 
-1. 先读取 `TODO.md`，识别第一个标题未带 `[DONE]` 或索引状态未完成的任务。
-2. 仅检查最近提交中与所选任务直接相关的未完成上下文。
-3. 阅读该任务的要求、依赖、验证命令和完成记录格式。
-4. 只执行该任务；除非出现必须插入 `TODO.md` 的具体前置阻塞项。
-5. 按要求顺序验证：`cargo fmt`，再 `cargo clippy --workspace --all-targets -- -D warnings`，再运行相关/完整测试。
-6. 完成后更新 `TODO.md`/详细任务文件，将任务标记为完成并记录验证结果；如遇阻塞则记录前置任务且不标记完成。
-7. 仅当阶段级顺序或验收标准变化时更新 `PLAN.md`。
-8. 检查 git status/diff/log，然后用清晰的任务消息提交本次相关改动。
-9. 完成一个任务后停止。
+## 步骤
 
-## 进度记录
+1. 读取 `TODO.md`，定位第一个未完成任务。
+2. 查看与该任务直接相关的上下文文件；如最新提交明确提到该任务的未完成事项，也纳入当前范围。
+3. 按任务要求做最小正确实现，避免无关重构或绕过规格。
+4. 运行格式化、lint 和相关测试；若代码有实质变更，按要求执行完整验证。
+5. 更新 `TODO.md`：将完成任务标题加 `[DONE]`，填写完成记录和验证结果；仅在阶段计划变化时更新 `PLAN.md`。
+6. 检查 `git status`、`git diff` 和近期提交，确认只提交本次相关改动。
+7. 使用清晰的任务编号提交信息创建 Git commit。
+8. 停止，不继续下一个任务。
 
-- 已在读取项目任务文件前初始化计划。
-- 已读取 `TODO.md`；权威索引中的首个未完成任务是 `NR1`（`审阅 NT1`）。下一步读取 `TODO-1.md` 的具体审阅范围，并只检查与 `NR1`/`NT1` 直接相关的最近提交。
-- 已读取 `TODO-1.md`；`NR1` 要求审阅 NT1 Node napi 脚手架，确认 workspace/依赖选择，证明 native `.node` 可被 require，并运行 `cargo build --workspace` 与 JS 冒烟。最近提交为 `[NT1] Add Node napi binding scaffold`，与本审阅直接相关。
-- 已检查 Node crate 脚手架：`crates/atto-ui-node` 是 `cdylib`，使用带 `serde-json` feature 的 `napi`，包含 `napi-build`，暴露 `version()`，包含生成的 JS/类型入口，并已加入根 workspace。下一步按要求验证。
-- 已通过验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`、`node __test__/version.cjs`。接下来运行完整 Rust 测试套件。
-- 完整验证 `cargo test --all --all-targets` 已通过。已在 `TODO.md` 和 `TODO-1.md` 标记 `NR1` 完成；阶段级顺序未变化，因此无需更新 `PLAN.md`。
+## 进度日志
+
+- 已创建初始执行计划；下一步读取 `TODO.md` 识别首个未完成任务。
+- 已读取 `TODO.md`；首个未完成任务为 `NT2`（`serde 数据转换层（B.2）`），详情来源 `TODO-1.md`。
+- 已确认最新提交为 `[NR1] Review Node napi scaffold`，未发现直接声明 `NT2` 未完成事项。
+- 已读取 `TODO-1.md`、`PLAN-1.md`、`NODE_BINDING.md` 和现有 Node/Python binding；`NT2` 的实现范围为 `crates/atto-ui-node/src/convert.rs`，使用 napi `serde-json` 把 JS 值桥接为 `serde_json::Value`，再转换为 runtime 类型。
+- 下一步实施：新增 `convert.rs`，覆盖 `ComponentValue`、`ComponentSpec`/child/layout、`TreeOp`、`CallbackInvocation` 和 `ComponentSchema` 的双向转换与单测；随后执行格式化、clippy、测试和任务记录更新。
+- 已实现 `convert.rs` 并接入 Node crate；新增单测覆盖 `ComponentValue` 全主要分支、`ComponentSpec`/layout/meta、全部现有 `TreeOp` 变体、callback invocation、schema round-trip 和错误上下文。
+- 验证通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-node`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md` 和 `TODO-1.md`，将 `NT2` 标记为 `[DONE]`/`DONE` 并写入完成记录。下一步检查 git diff/status 后提交本任务。

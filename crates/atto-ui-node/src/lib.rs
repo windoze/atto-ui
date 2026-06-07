@@ -5,6 +5,8 @@
 
 use napi_derive::napi;
 
+pub mod convert;
+
 /// Return the native package version exposed to JavaScript smoke tests.
 #[napi]
 pub fn version() -> String {

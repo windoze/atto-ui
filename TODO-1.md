@@ -41,7 +41,7 @@
 - 检查 Node crate 依赖图未包含 `tokio`；workspace 既有 `atto-ui-async` 仍仅以可选 feature 声明 tokio，NT1 未新增核心/Node tokio 依赖。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`node __test__/version.cjs`；`cargo test --all --all-targets`。
 
-### [TODO] NT2 — serde 数据转换层（B.2）
+### [DONE] NT2 — serde 数据转换层（B.2）
 **文件**：`crates/atto-ui-node/src/convert.rs`
 **现状**：核心类型 `ComponentSpec`/`ComponentSpecChild`/`LayoutSpec`/`ComponentValue`/`TreeOp`/`CallbackInvocation`/`ComponentSchema` 均已 `derive(Serialize,Deserialize)`（`src/runtime/spec.rs`）。Python 侧是手写 dict→struct（近千行），Node 改走 serde。
 **步骤**：
@@ -50,6 +50,12 @@
 3. `ComponentValue` 全分支：bool/number/string/string[]/string[][]/bytes/list/map（§6.2 类型映射）。
 **测试**：Rust 单测——`ComponentSpec`/`TreeOp`/`ComponentValue` round-trip；每种 op 解析正确。
 **验收**：JS 对象与核心类型双向转换正确，且转换代码量显著小于 Python 手写路径。
+**完成记录（2026-06-07）**：
+- 新增 `crates/atto-ui-node/src/convert.rs`，提供 napi `Unknown`/`Object` 与 `serde_json::Value` 的桥接函数，并实现 `ComponentValue`、`ComponentSpec`/`ComponentSpecChild`/`LayoutSpec`、`TreeOp`、`CallbackInvocation`、`ComponentSchema` 的双向转换。
+- `TreeOp` 采用 JS discriminated union 形态并输出 snake_case `op`（`set_tree`/`set_prop`/`bind_event` 等）；单测覆盖现有全部 `TreeOp` 变体解析与 round-trip。
+- `ComponentValue` 覆盖 null/bool/i64/u64/f64/string/string[]/string[][]/rect/bytes/list/map 分支；`ComponentSpec` 支持 JS `type` 字段、可选 props/events/children，以及 child layout/meta。
+- 新增 Rust 单测覆盖组件值、组件树、树操作、callback invocation、schema 和错误上下文；转换层代码复用 serde/JSON 桥接，避免 Python binding 的大段手写 dict 解析路径。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`。
 
 ### [TODO] NR2 — 审阅 NT2
 - 确认所有 `TreeOp` 变体、`ComponentValue` 分支均覆盖且与核心定义一致。
