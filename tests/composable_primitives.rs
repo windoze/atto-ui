@@ -30,6 +30,7 @@ fn composable_text_renders() {
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
 
             let mut view = Text::new("Hello, World!");
@@ -55,6 +56,7 @@ fn composable_divider_horizontal_renders() {
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
 
             let mut view = Divider::horizontal();

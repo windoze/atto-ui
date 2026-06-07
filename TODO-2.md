@@ -10,7 +10,7 @@
 
 ## 阶段一：框架底座 + editor 快速增益
 
-### [TODO] T1 — C1 通用拖拽数据模型与 Component hooks
+### [DONE] T1 — C1 通用拖拽数据模型与 Component hooks
 
 **依赖**：无。
 
@@ -54,6 +54,14 @@
 **验收**：
 - 全 workspace 编译通过。
 - 现有滚动条、splitter 局部拖拽行为无变化。
+
+**完成记录（2026-06-08）**：
+- 新增 `src/composable/drag.rs`，定义通用拖拽 payload、operation、source、offer、drop feedback 与 drag context 类型，并从 `src/composable/mod.rs` re-export。
+- 在 `ComponentContext` 增加 `drag: Option<DragContext<'_>>`，所有现有构造点显式设置 `drag: None`，为 T2 active drag 注入保留入口。
+- 新增 `DragAndDrop` supertrait，提供 `drag_source_at`、`drag_over`、`drop`、`drag_cancelled` 的 no-op 默认实现，并将其纳入 `Component` 约束。
+- 更新 `impl_component_default_traits!` 宏，使简单组件自动获得默认 no-op drag/drop hooks；补齐 workspace、demos、examples、tests 中手写 `impl Component` 类型的默认 `DragAndDrop` 实现。
+- 新增 `src/composable/drag.rs` 单元测试，覆盖默认 `DropFeedback` reject/none 以及默认 `drag_over` 行为。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test`。
 
 ### [TODO] R1 — 审阅 T1
 
@@ -1488,4 +1496,3 @@
 - 确认完成记录不是泛泛描述，能追踪文件和测试。
 - 确认文档没有过期路径/函数名。
 - 确认 README 只记录用户可见行为，不泄露内部实现细节。
-

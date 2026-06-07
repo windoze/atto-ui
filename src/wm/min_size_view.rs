@@ -231,6 +231,7 @@ impl WindowMinSizeView {
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
 
         let backend =
@@ -294,6 +295,7 @@ impl WindowMinSizeView {
             scrollbar_host: ctx.scrollbar_host.for_child(),
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+            drag: None,
         };
 
         if let Event::Mouse(m) = event {
@@ -380,6 +382,8 @@ impl Component for WindowMinSizeView {
         }
     }
 }
+
+impl crate::composable::DragAndDrop for WindowMinSizeView {}
 
 impl Layout for WindowMinSizeView {
     fn min_width(&self) -> u16 {

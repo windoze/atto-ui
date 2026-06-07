@@ -138,6 +138,8 @@ impl Component for WindowedText {
     }
 }
 
+impl crate::composable::DragAndDrop for WindowedText {}
+
 impl Layout for WindowedText {
     fn desired_width(&self) -> Option<u16> {
         Some(self.content_width_for_text(&self.text()))

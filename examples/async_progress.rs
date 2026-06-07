@@ -91,6 +91,8 @@ impl ::atto_ui::composable::Component for ProgressView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ProgressView {}
+
 impl ::atto_ui::composable::Layout for ProgressView {}
 
 impl ::atto_ui::composable::Scrollable for ProgressView {}

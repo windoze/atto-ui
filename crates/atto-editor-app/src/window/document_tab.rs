@@ -516,6 +516,7 @@ impl ::atto_ui::composable::Component for DocumentTabView {
 
         let primary_ctx = ComponentContext {
             is_focused: primary_focused,
+            drag: None,
             ..ctx
         };
         self.primary.draw(frame, layout.primary, primary_ctx);
@@ -525,6 +526,7 @@ impl ::atto_ui::composable::Component for DocumentTabView {
         {
             let secondary_ctx = ComponentContext {
                 is_focused: secondary_focused,
+                drag: None,
                 ..ctx
             };
             view.draw(frame, r, secondary_ctx);
@@ -555,6 +557,8 @@ impl ::atto_ui::composable::Component for DocumentTabView {
         self.draw_split_scrollbars(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for DocumentTabView {}
 
 impl ::atto_ui::composable::Layout for DocumentTabView {}
 
@@ -690,6 +694,7 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
             SplitFocus::Primary => {
                 let child_ctx = ComponentContext {
                     is_focused: primary_focused,
+                    drag: None,
                     ..ctx
                 };
                 self.primary.handle_event(event, child_ctx)
@@ -698,12 +703,14 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
                 if let Some(view) = self.secondary.as_mut() {
                     let child_ctx = ComponentContext {
                         is_focused: secondary_focused,
+                        drag: None,
                         ..ctx
                     };
                     view.handle_event(event, child_ctx)
                 } else {
                     let child_ctx = ComponentContext {
                         is_focused: primary_focused,
+                        drag: None,
                         ..ctx
                     };
                     self.primary.handle_event(event, child_ctx)

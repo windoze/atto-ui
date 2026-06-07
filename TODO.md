@@ -57,7 +57,7 @@
 
 | ID | 状态 | 标题 | 来源位置 |
 |----|------|------|----------|
-| T1 | TODO | C1 通用拖拽数据模型与 Component hooks | TODO-2.md · 阶段一 |
+| T1 | DONE | [DONE] C1 通用拖拽数据模型与 Component hooks | TODO-2.md · 阶段一 |
 | R1 | TODO | 审阅 T1 | TODO-2.md · 阶段一 |
 | T2 | TODO | C1 WindowManager 全局拖拽会话与反馈绘制 | TODO-2.md · 阶段一 |
 | R2 | TODO | 审阅 T2 | TODO-2.md · 阶段一 |

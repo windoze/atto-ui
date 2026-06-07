@@ -45,6 +45,8 @@ impl ::atto_ui::composable::Component for BgView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for BgView {}
+
 impl ::atto_ui::composable::Layout for BgView {}
 
 impl ::atto_ui::composable::Scrollable for BgView {}
@@ -68,6 +70,8 @@ impl ::atto_ui::composable::Component for FgView {
         frame.buffer_mut().set_string(area.x, area.y, "FG", style);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for FgView {}
 
 impl ::atto_ui::composable::Layout for FgView {}
 

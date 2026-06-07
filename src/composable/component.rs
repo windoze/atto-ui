@@ -10,6 +10,8 @@ use crate::theme::Theme;
 use crate::wm::WindowId;
 use crate::{ComponentCommand, ComponentError, ComponentValue};
 
+use super::drag::{DragContext, DragOffer, DragSource, DropFeedback};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EventOutcome {
     Consumed,
@@ -25,6 +27,7 @@ pub struct ComponentContext<'a> {
     pub scrollbar_host: ScrollbarHost,
     pub tab_mode: TabMode,
     pub mouse_coordinate_space: MouseCoordinateSpace,
+    pub drag: Option<DragContext<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,12 +138,13 @@ pub enum ComponentAction {
 /// Implements default component subtraits for a concrete component type.
 ///
 /// Use this when a component only needs `Component::draw` and core hooks for the listed
-/// responsibilities; components with custom behavior should implement the corresponding subtrait
-/// explicitly instead of listing it here.
+/// responsibilities. The macro also installs the default no-op drag/drop hooks; components with
+/// custom behavior should implement the corresponding subtrait explicitly instead of listing it here.
 #[macro_export]
 macro_rules! impl_component_default_traits {
     ($ty:ty => $($trait_name:ident),+ $(,)?) => {
         $(impl $crate::composable::$trait_name for $ty {})+
+        impl $crate::composable::DragAndDrop for $ty {}
     };
 }
 
@@ -393,7 +397,35 @@ pub trait EventHandling: Send {
     }
 }
 
-pub trait Component: Layout + Scrollable + FocusNav + DynamicTree + EventHandling + Send {
+/// Drag/drop hooks used by the window manager to coordinate cross-component drags.
+pub trait DragAndDrop: Send {
+    /// Returns a drag source for a pointer position, or `None` when dragging should not start.
+    fn drag_source_at(
+        &self,
+        _screen_x: u16,
+        _screen_y: u16,
+        _ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        None
+    }
+
+    /// Reports target feedback for the current drag offer.
+    fn drag_over(&mut self, _offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> DropFeedback {
+        DropFeedback::default()
+    }
+
+    /// Applies a drop offer to this component.
+    fn drop(&mut self, _offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> EventResult {
+        EventResult::ignored()
+    }
+
+    /// Notifies a source component that its drag was cancelled or rejected.
+    fn drag_cancelled(&mut self, _ctx: ComponentContext<'_>) {}
+}
+
+pub trait Component:
+    Layout + Scrollable + FocusNav + DynamicTree + EventHandling + DragAndDrop + Send
+{
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -544,6 +576,29 @@ impl EventHandling for Box<dyn Component> {
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.as_mut().handle_event(event, ctx)
+    }
+}
+
+impl DragAndDrop for Box<dyn Component> {
+    fn drag_source_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        self.as_ref().drag_source_at(screen_x, screen_y, ctx)
+    }
+
+    fn drag_over(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> DropFeedback {
+        self.as_mut().drag_over(offer, ctx)
+    }
+
+    fn drop(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> EventResult {
+        DragAndDrop::drop(self.as_mut(), offer, ctx)
+    }
+
+    fn drag_cancelled(&mut self, ctx: ComponentContext<'_>) {
+        self.as_mut().drag_cancelled(ctx);
     }
 }
 

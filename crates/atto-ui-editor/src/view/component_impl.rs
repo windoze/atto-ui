@@ -105,6 +105,8 @@ impl ::atto_ui::composable::Component for EditorView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for EditorView {}
+
 impl ::atto_ui::composable::Layout for EditorView {
     fn min_width(&self) -> u16 {
         8

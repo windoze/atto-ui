@@ -58,6 +58,8 @@ impl ::atto_ui::composable::Component for TextView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for TextView {}
+
 impl ::atto_ui::composable::Layout for TextView {}
 
 impl ::atto_ui::composable::Scrollable for TextView {}
@@ -140,6 +142,8 @@ impl ::atto_ui::composable::Component for DialogView {
         self.root.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for DialogView {}
 
 impl ::atto_ui::composable::Layout for DialogView {
     fn min_width(&self) -> u16 {
@@ -477,6 +481,8 @@ impl ::atto_ui::composable::Component for WidgetsView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for WidgetsView {}
+
 impl ::atto_ui::composable::Layout for WidgetsView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -568,6 +574,8 @@ impl ::atto_ui::composable::Component for LoadingWidgetsView {
         self.root.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for LoadingWidgetsView {}
 
 impl ::atto_ui::composable::Layout for LoadingWidgetsView {
     fn min_width(&self) -> u16 {
@@ -683,6 +691,8 @@ impl ::atto_ui::composable::Component for TabWindowDemo {
         self.tabs.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for TabWindowDemo {}
 
 impl ::atto_ui::composable::Layout for TabWindowDemo {
     fn min_width(&self) -> u16 {
@@ -885,6 +895,8 @@ impl ::atto_ui::composable::Component for MarkdownDemoView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for MarkdownDemoView {}
+
 impl ::atto_ui::composable::Layout for MarkdownDemoView {
     fn min_width(&self) -> u16 {
         self.root.min_width()
@@ -1034,6 +1046,8 @@ impl ::atto_ui::composable::Component for DisabledWidgetsView {
         self.root.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for DisabledWidgetsView {}
 
 impl ::atto_ui::composable::Layout for DisabledWidgetsView {
     fn min_width(&self) -> u16 {

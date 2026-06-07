@@ -7,8 +7,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use super::component::{
-    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
-    Scrollable,
+    Component, ComponentContext, DragAndDrop, DynamicTree, EventHandling, EventResult, FocusNav,
+    Layout, Scrollable,
 };
 use super::geom::{align_within, focusable_children_in_tab_order, position_anchored};
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -947,6 +947,8 @@ impl Component for StackCore {
     }
 }
 
+impl DragAndDrop for StackCore {}
+
 impl FocusNav for StackCore {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused
@@ -1265,6 +1267,8 @@ macro_rules! define_stack {
                 self.core.handle_event(event, ctx)
             }
         }
+
+        impl DragAndDrop for $name {}
     };
 }
 

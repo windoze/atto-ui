@@ -161,10 +161,13 @@ impl ::atto_ui::composable::Component for ExplorerWindowView {
             },
             tab_mode: ctx.tab_mode.for_child(),
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
         self.file_tree.draw(frame, area, child_ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for ExplorerWindowView {}
 
 impl ::atto_ui::composable::Layout for ExplorerWindowView {}
 
@@ -235,6 +238,7 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
             },
             tab_mode: ctx.tab_mode.for_child(),
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
 
         match event {

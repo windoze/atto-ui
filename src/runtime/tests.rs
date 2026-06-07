@@ -54,6 +54,7 @@ fn component_button_click_emits_callback() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let event = Event::Key(KeyEvent {
         code: KeyCode::Enter,
@@ -92,6 +93,7 @@ fn component_checkbox_change_emits_callback() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let event = Event::Key(KeyEvent {
         code: KeyCode::Char(' '),
@@ -131,6 +133,7 @@ fn component_textbox_change_emits_text_payload() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let event = Event::Key(KeyEvent {
         code: KeyCode::Char('A'),
@@ -892,6 +895,7 @@ fn component_tree_incremental_bind_and_clear_event() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let event = Event::Key(KeyEvent {
         code: KeyCode::Enter,

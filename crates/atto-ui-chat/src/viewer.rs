@@ -124,6 +124,8 @@ impl Component for TextArtifactBody {
     }
 }
 
+impl atto_ui::composable::DragAndDrop for TextArtifactBody {}
+
 impl Layout for TextArtifactBody {
     fn min_width(&self) -> u16 {
         1

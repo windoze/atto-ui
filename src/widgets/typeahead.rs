@@ -804,6 +804,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Window,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

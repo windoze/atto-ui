@@ -53,6 +53,8 @@ impl ::atto_ui::composable::Component for HelloView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for HelloView {}
+
 impl ::atto_ui::composable::Layout for HelloView {}
 
 impl ::atto_ui::composable::Scrollable for HelloView {}

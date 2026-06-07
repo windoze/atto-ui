@@ -36,6 +36,8 @@ impl ::atto_ui::composable::Component for ChatPanel {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatPanel {}
+
 impl ::atto_ui::composable::Layout for ChatPanel {
     fn min_width(&self) -> u16 {
         self.view.min_width()

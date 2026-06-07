@@ -586,12 +586,15 @@ impl Component for TabView {
                     },
                     tab_mode: ctx.tab_mode.for_child(),
                     mouse_coordinate_space: ctx.mouse_coordinate_space,
+                    drag: None,
                 };
                 child.view.draw(frame, content_abs, child_ctx);
             }
         }
     }
 }
+
+impl crate::composable::DragAndDrop for TabView {}
 
 impl Layout for TabView {
     fn min_width(&self) -> u16 {
@@ -834,6 +837,7 @@ impl EventHandling for TabView {
                     },
                     tab_mode: ctx.tab_mode.for_child(),
                     mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+                    drag: None,
                 };
                 return child.view.handle_event(&child_event, child_ctx);
             }
@@ -857,6 +861,7 @@ impl EventHandling for TabView {
                 },
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
             let res = child.view.handle_event(event, child_ctx);
             if res.is_consumed() {

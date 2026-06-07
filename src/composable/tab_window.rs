@@ -411,6 +411,8 @@ impl Component for TabWindow {
     }
 }
 
+impl crate::composable::DragAndDrop for TabWindow {}
+
 impl Layout for TabWindow {
     fn min_width(&self) -> u16 {
         self.tabs

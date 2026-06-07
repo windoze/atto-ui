@@ -155,6 +155,7 @@ fn draw_view(view: &mut dyn Component, area: Rect) {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let backend = TestBackend::new(80, 40);
@@ -171,6 +172,7 @@ fn test_context() -> ComponentContext<'static> {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     }
 }
 
@@ -642,6 +644,7 @@ fn event_routing_translates_absolute_mouse_coords_to_child_local() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let res = outer.handle_event(&click, ctx);
     assert!(res.is_consumed());
@@ -676,6 +679,7 @@ fn capture_phase_consumes_tab_before_children_receive_it() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
     let res = vstack.handle_event(&tab, ctx);
     assert!(res.is_consumed());
@@ -707,6 +711,7 @@ fn keyboard_events_route_to_focused_child() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let key_a = Event::Key(KeyEvent {
@@ -773,6 +778,7 @@ fn tab_traversal_enters_nested_container_before_advancing_to_next_sibling() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let key_1 = Event::Key(KeyEvent {
@@ -857,6 +863,7 @@ fn tab_traversal_respects_tab_index_over_insertion_order() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let tab = Event::Key(KeyEvent {
@@ -1498,6 +1505,7 @@ fn scrollbar_position_left_places_vertical_scrollbar_on_left_edge() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let backend = TestBackend::new(10, 5);
@@ -1573,6 +1581,7 @@ fn scrollbar_position_top_places_horizontal_scrollbar_on_top_edge() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let backend = TestBackend::new(10, 4);

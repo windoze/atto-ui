@@ -113,6 +113,8 @@ impl ::atto_ui::composable::Component for Visibility {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for Visibility {}
+
 impl ::atto_ui::composable::Layout for Visibility {
     fn min_width(&self) -> u16 {
         if self.visible.get() {

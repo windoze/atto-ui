@@ -257,6 +257,7 @@ impl TabDemoView {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+                drag: None,
             },
         )
     }
@@ -303,11 +304,14 @@ impl ::atto_ui::composable::Component for TabDemoView {
                     scrollbar_host: ctx.scrollbar_host.for_child(),
                     tab_mode: ctx.tab_mode.for_child(),
                     mouse_coordinate_space: ctx.mouse_coordinate_space,
+                    drag: None,
                 },
             );
         }
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for TabDemoView {}
 
 impl ::atto_ui::composable::Layout for TabDemoView {
     fn min_width(&self) -> u16 {
@@ -373,6 +377,7 @@ impl ::atto_ui::composable::EventHandling for TabDemoView {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             },
         )
     }

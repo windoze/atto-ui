@@ -192,6 +192,7 @@ impl Component for ListBox {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.draw(frame, area, body_ctx);
@@ -246,6 +247,7 @@ impl EventHandling for ListBox {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.handle_event(event, body_ctx)
@@ -520,6 +522,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Window,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

@@ -38,6 +38,11 @@ where
     }
 }
 
+impl<T> crate::composable::DragAndDrop for FocusBindingComponent<T> where
+    T: Component + Clone + Send + 'static
+{
+}
+
 impl<T> Layout for FocusBindingComponent<T>
 where
     T: Component + Clone + Send + 'static,
@@ -925,6 +930,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         };
 
         let area = Rect::new(0, 0, 80, 24);

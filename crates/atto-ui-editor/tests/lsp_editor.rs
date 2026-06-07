@@ -50,6 +50,7 @@ fn lsp_semantic_tokens_and_folding_markers_render_and_toggle() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let area = Rect::new(0, 0, 80, 10);
@@ -147,6 +148,7 @@ fn lsp_hover_popup_tracks_mouse_and_suppresses_until_move() {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     let area = Rect::new(0, 0, 80, 10);

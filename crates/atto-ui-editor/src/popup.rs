@@ -114,6 +114,8 @@ impl ::atto_ui::composable::Component for HoverPopupView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for HoverPopupView {}
+
 impl ::atto_ui::composable::Layout for HoverPopupView {}
 
 impl ::atto_ui::composable::Scrollable for HoverPopupView {}
@@ -217,6 +219,8 @@ impl ::atto_ui::composable::Component for CompletionPopupView {
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for CompletionPopupView {}
 
 impl ::atto_ui::composable::Layout for CompletionPopupView {}
 

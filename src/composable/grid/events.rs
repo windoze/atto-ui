@@ -120,6 +120,7 @@ impl Grid {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
 
             let res = self.children[child_idx]
@@ -351,6 +352,7 @@ impl Grid {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+                drag: None,
             };
 
             let res = self.children[child_idx]
@@ -379,6 +381,7 @@ impl Grid {
                 scrollbar_host: ctx.scrollbar_host.for_child(),
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {

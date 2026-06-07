@@ -613,6 +613,8 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for TerminalEmulator {}
+
 impl ::atto_ui::composable::Layout for TerminalEmulator {
     fn min_width(&self) -> u16 {
         1

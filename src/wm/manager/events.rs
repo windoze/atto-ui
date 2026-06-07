@@ -85,6 +85,7 @@ impl WindowManager {
                 },
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
             w.view.handle_event(event, ctx)
         };

@@ -99,6 +99,7 @@ impl WindowManager {
                 },
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
             window.view.draw(frame, inner, ctx);
 

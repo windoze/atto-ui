@@ -139,6 +139,8 @@ impl ::atto_ui::composable::Component for EventLogView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for EventLogView {}
+
 impl ::atto_ui::composable::Layout for EventLogView {}
 
 impl ::atto_ui::composable::Scrollable for EventLogView {}
@@ -259,6 +261,8 @@ impl ::atto_ui::composable::Component for InteractiveView {
         frame.render_widget(paragraph, area);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for InteractiveView {}
 
 impl ::atto_ui::composable::Layout for InteractiveView {}
 

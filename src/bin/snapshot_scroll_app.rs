@@ -47,6 +47,8 @@ impl ::atto_ui::composable::Component for TallClickTarget {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for TallClickTarget {}
+
 impl ::atto_ui::composable::Layout for TallClickTarget {
     fn desired_height(&self) -> Option<u16> {
         Some(40)

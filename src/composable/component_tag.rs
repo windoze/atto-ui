@@ -87,6 +87,8 @@ impl Component for ComponentTag {
     }
 }
 
+impl crate::composable::DragAndDrop for ComponentTag {}
+
 impl Layout for ComponentTag {
     fn min_width(&self) -> u16 {
         self.inner.min_width()

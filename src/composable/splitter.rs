@@ -749,6 +749,7 @@ impl Component for Splitter {
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
             first.view.draw(frame, abs, child_ctx);
         }
@@ -771,6 +772,7 @@ impl Component for Splitter {
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
             second.view.draw(frame, abs, child_ctx);
         }
@@ -797,6 +799,8 @@ impl Component for Splitter {
         self.draw_child_border_scrollbars(frame, area, ctx);
     }
 }
+
+impl crate::composable::DragAndDrop for Splitter {}
 
 impl Layout for Splitter {
     fn min_width(&self) -> u16 {
@@ -1070,6 +1074,7 @@ impl EventHandling for Splitter {
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+                drag: None,
             };
 
             let res = self.children[child_idx]
@@ -1098,6 +1103,7 @@ impl EventHandling for Splitter {
                 scrollbar_host: ScrollbarHost::Window,
                 tab_mode: ctx.tab_mode.for_child(),
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             };
             let res = self.children[child_idx].view.handle_event(event, child_ctx);
             if res.is_consumed() {

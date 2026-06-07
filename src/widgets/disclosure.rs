@@ -291,6 +291,7 @@ impl Disclosure {
             },
             tab_mode: ctx.tab_mode.for_child(),
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         }
     }
 
@@ -434,6 +435,8 @@ impl Component for Disclosure {
         }
     }
 }
+
+impl crate::composable::DragAndDrop for Disclosure {}
 
 impl Layout for Disclosure {
     fn min_width(&self) -> u16 {
@@ -602,6 +605,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

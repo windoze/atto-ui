@@ -430,6 +430,8 @@ impl Component for Grid {
     }
 }
 
+impl crate::composable::DragAndDrop for Grid {}
+
 impl FocusNav for Grid {
     fn focused_child(&self) -> Option<ComponentId> {
         self.focused

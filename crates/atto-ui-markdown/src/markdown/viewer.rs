@@ -135,6 +135,8 @@ impl ::atto_ui::composable::Component for MarkdownViewer {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for MarkdownViewer {}
+
 impl ::atto_ui::composable::Layout for MarkdownViewer {
     fn min_width(&self) -> u16 {
         self.scroll.min_width()

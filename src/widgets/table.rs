@@ -243,6 +243,7 @@ impl Component for TableView {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.draw(frame, body_area, body_ctx);
@@ -311,6 +312,7 @@ impl EventHandling for TableView {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.handle_event(event, body_ctx)
@@ -631,6 +633,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Window,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

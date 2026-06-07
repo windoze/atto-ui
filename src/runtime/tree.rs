@@ -410,6 +410,8 @@ impl Component for ComponentTree {
     }
 }
 
+impl crate::composable::DragAndDrop for ComponentTree {}
+
 impl Layout for ComponentTree {
     fn min_width(&self) -> u16 {
         self.view.min_width()

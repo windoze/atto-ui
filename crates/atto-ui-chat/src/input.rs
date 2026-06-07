@@ -854,6 +854,8 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatInputPanel {}
+
 impl ::atto_ui::composable::Layout for ChatInputPanel {
     fn min_width(&self) -> u16 {
         match &self.view {
@@ -972,6 +974,8 @@ impl ::atto_ui::composable::Component for SharedComponent {
         self.inner.lock().unwrap().draw(frame, area, ctx)
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for SharedComponent {}
 
 impl ::atto_ui::composable::Layout for SharedComponent {
     fn min_width(&self) -> u16 {

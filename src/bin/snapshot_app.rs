@@ -104,6 +104,8 @@ impl ::atto_ui::composable::Component for LogView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for LogView {}
+
 impl ::atto_ui::composable::Layout for LogView {}
 
 impl ::atto_ui::composable::Scrollable for LogView {}
@@ -158,6 +160,8 @@ impl ::atto_ui::composable::Component for TraceContainer {
         self.inner.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for TraceContainer {}
 
 impl ::atto_ui::composable::Layout for TraceContainer {
     fn min_width(&self) -> u16 {
@@ -232,6 +236,8 @@ impl ::atto_ui::composable::Component for TraceTarget {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for TraceTarget {}
+
 impl ::atto_ui::composable::Layout for TraceTarget {
     fn min_width(&self) -> u16 {
         11
@@ -277,6 +283,8 @@ impl ::atto_ui::composable::Component for TraceLogView {
         frame.render_widget(Paragraph::new(trace).style(ctx.theme.widget.normal), area);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for TraceLogView {}
 
 impl ::atto_ui::composable::Layout for TraceLogView {
     fn min_width(&self) -> u16 {
@@ -405,6 +413,8 @@ impl ::atto_ui::composable::Component for WidgetsView {
         self.root.draw(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for WidgetsView {}
 
 impl ::atto_ui::composable::Layout for WidgetsView {
     fn min_width(&self) -> u16 {
@@ -581,6 +591,7 @@ impl T19WidgetsView {
     fn child_ctx<'a>(ctx: ComponentContext<'a>, focused: bool) -> ComponentContext<'a> {
         ComponentContext {
             is_focused: focused,
+            drag: None,
             ..ctx
         }
     }
@@ -707,6 +718,8 @@ impl Component for T19WidgetsView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for T19WidgetsView {}
+
 impl Layout for T19WidgetsView {
     fn min_width(&self) -> u16 {
         70
@@ -828,6 +841,8 @@ impl ::atto_ui::composable::Component for AboutView {
         );
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for AboutView {}
 
 impl ::atto_ui::composable::Layout for AboutView {}
 

@@ -305,6 +305,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                         scrollbar_host: child_scrollbar_host,
                         tab_mode: ctx.tab_mode,
                         mouse_coordinate_space: ctx.mouse_coordinate_space,
+                        drag: None,
                     },
                     info,
                 };
@@ -351,6 +352,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                     scrollbar_host: child_scrollbar_host,
                     tab_mode: ctx.tab_mode,
                     mouse_coordinate_space: ctx.mouse_coordinate_space,
+                    drag: None,
                 },
                 info,
             };
@@ -416,6 +418,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                 scrollbar_host: child_scrollbar_host,
                 tab_mode: ctx.tab_mode,
                 mouse_coordinate_space: ctx.mouse_coordinate_space,
+                drag: None,
             },
             info,
         };
@@ -445,6 +448,7 @@ impl ::atto_ui::composable::Component for ScrollContainer {
                     scrollbar_host: child_scrollbar_host,
                     tab_mode: ctx.tab_mode,
                     mouse_coordinate_space: ctx.mouse_coordinate_space,
+                    drag: None,
                 },
                 info,
             };
@@ -460,6 +464,8 @@ impl ::atto_ui::composable::Component for ScrollContainer {
         self.draw_scrollbars(frame, area, ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for ScrollContainer {}
 
 impl ::atto_ui::composable::Layout for ScrollContainer {
     fn desired_width(&self) -> Option<u16> {
@@ -578,6 +584,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         };
 
         let backend = TestBackend::new(10, 10);

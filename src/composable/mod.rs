@@ -4,6 +4,7 @@ mod border;
 mod clipped;
 mod component;
 mod component_tag;
+mod drag;
 mod for_each;
 mod geom;
 mod grid;
@@ -27,11 +28,15 @@ pub use crate::widgets::{
 };
 pub use border::Border;
 pub use component::{
-    Component, ComponentAction, ComponentContext, DynamicTree, EventHandling, EventOutcome,
-    EventResult, FocusNav, Layout, MouseCoordinateSpace, Scrollable, ScrollbarHost, TabMode,
-    TitleBarContent, TitleBarContext, TitleBarSpan,
+    Component, ComponentAction, ComponentContext, DragAndDrop, DynamicTree, EventHandling,
+    EventOutcome, EventResult, FocusNav, Layout, MouseCoordinateSpace, Scrollable, ScrollbarHost,
+    TabMode, TitleBarContent, TitleBarContext, TitleBarSpan,
 };
 pub use component_tag::{ComponentTag, ComponentTagExt};
+pub use drag::{
+    DragContext, DragOffer, DragOperation, DragPayload, DragPayloadType, DragSource, DropEffect,
+    DropFeedback,
+};
 pub use for_each::{ForEach, ForEachIdentifiable};
 pub use grid::Grid;
 pub use identifiable::Identifiable;

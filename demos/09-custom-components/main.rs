@@ -155,6 +155,8 @@ macro_rules! delegate_component {
                 self.$inner.handle_event(event, ctx)
             }
         }
+
+        impl ::atto_ui::composable::DragAndDrop for $ty {}
     };
 }
 

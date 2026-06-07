@@ -424,6 +424,7 @@ impl ::atto_ui::composable::Component for FileTree {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.draw(frame, area, body_ctx);
@@ -435,6 +436,8 @@ impl ::atto_ui::composable::Component for FileTree {
         }
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for FileTree {}
 
 impl ::atto_ui::composable::Layout for FileTree {
     fn min_width(&self) -> u16 {
@@ -513,6 +516,7 @@ impl ::atto_ui::composable::EventHandling for FileTree {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
+            drag: None,
             ..ctx
         };
         self.scroll.handle_event(event, body_ctx)

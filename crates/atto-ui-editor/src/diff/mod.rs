@@ -303,6 +303,8 @@ impl Component for DiffView {
     }
 }
 
+impl atto_ui::composable::DragAndDrop for DiffView {}
+
 impl Layout for DiffView {
     fn min_width(&self) -> u16 {
         16

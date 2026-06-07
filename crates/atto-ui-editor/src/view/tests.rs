@@ -61,6 +61,7 @@ fn editor_view_renders_simple_json_highlight_as_green_cells() {
         scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
         tab_mode: atto_ui::composable::TabMode::Cycle,
         mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     terminal
@@ -111,6 +112,7 @@ fn editor_view_mouse_wheel_scrolls_even_at_viewport_edge() {
         scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
         tab_mode: atto_ui::composable::TabMode::Cycle,
         mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
     };
 
     terminal

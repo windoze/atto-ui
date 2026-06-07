@@ -719,6 +719,7 @@ mod tests {
             scrollbar_host: crate::composable::ScrollbarHost::Component,
             tab_mode: crate::composable::TabMode::Cycle,
             mouse_coordinate_space: crate::composable::MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

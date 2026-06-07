@@ -31,6 +31,7 @@ fn composable_vstack_layout_with_spacing() {
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
 
             let row = LayoutParams {
@@ -66,6 +67,7 @@ fn composable_vstack_padding_moves_content_inward() {
                 scrollbar_host: ScrollbarHost::Component,
                 tab_mode: TabMode::Cycle,
                 mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
             };
 
             let mut view = VStack::new().child(Text::new("Padded")).padding(2);

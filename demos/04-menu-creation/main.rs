@@ -245,6 +245,8 @@ impl ::atto_ui::composable::Component for StatusView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for StatusView {}
+
 impl ::atto_ui::composable::Layout for StatusView {}
 
 impl ::atto_ui::composable::Scrollable for StatusView {}

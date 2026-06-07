@@ -7,8 +7,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use super::component::{
-    Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
-    Scrollable,
+    Component, ComponentContext, DragAndDrop, DynamicTree, EventHandling, EventResult, FocusNav,
+    Layout, Scrollable,
 };
 use super::identifiable::Identifiable;
 use super::layout::{EdgeInsets, LayoutParams, Size};
@@ -379,6 +379,13 @@ where
     }
 }
 
+impl<T, V> DragAndDrop for ForEach<T, V>
+where
+    T: Clone + PartialEq + Send + Sync + 'static,
+    V: Component + 'static,
+{
+}
+
 /// ForEach 的优化变体 - 使用 Identifiable trait 进行增量更新
 ///
 /// 此结构通过 ID 跟踪列表元素，实现了视图缓存和差异更新。
@@ -584,6 +591,14 @@ where
     }
 }
 
+impl<T, V> DragAndDrop for ForEachIdentifiable<T, V>
+where
+    T: Clone + PartialEq + Identifiable + Send + Sync + 'static,
+    T::Id: Hash + Eq + Send + Sync,
+    V: Component + 'static,
+{
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +622,7 @@ mod tests {
             scrollbar_host,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         };
 
         let backend = TestBackend::new(area.width.max(1), area.height.max(1));

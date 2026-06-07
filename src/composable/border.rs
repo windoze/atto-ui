@@ -130,6 +130,7 @@ impl ::atto_ui::composable::Component for Border {
             },
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
 
         self.inner.draw(frame, inner_area, inner_ctx);
@@ -229,6 +230,8 @@ impl ::atto_ui::composable::Component for Border {
         }
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for Border {}
 
 impl ::atto_ui::composable::Layout for Border {
     fn min_width(&self) -> u16 {
@@ -343,6 +346,7 @@ impl ::atto_ui::composable::EventHandling for Border {
             },
             tab_mode: ctx.tab_mode,
             mouse_coordinate_space: ctx.mouse_coordinate_space.for_child(),
+            drag: None,
         };
 
         if let Event::Mouse(m) = event {
@@ -693,6 +697,8 @@ mod tests {
         }
     }
 
+    impl ::atto_ui::composable::DragAndDrop for RecordingChild {}
+
     fn context(theme: &Theme) -> ComponentContext<'_> {
         ComponentContext {
             theme,
@@ -701,6 +707,7 @@ mod tests {
             scrollbar_host: ScrollbarHost::Component,
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 

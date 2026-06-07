@@ -72,6 +72,8 @@ impl ::atto_ui::composable::Component for WindowInfoView {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for WindowInfoView {}
+
 impl ::atto_ui::composable::Layout for WindowInfoView {}
 
 impl ::atto_ui::composable::Scrollable for WindowInfoView {}
@@ -244,6 +246,8 @@ impl ::atto_ui::composable::Component for ModalView {
         frame.render_widget(paragraph, area);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for ModalView {}
 
 impl ::atto_ui::composable::Layout for ModalView {}
 

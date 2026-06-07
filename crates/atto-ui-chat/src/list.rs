@@ -308,6 +308,8 @@ impl ::atto_ui::composable::Component for ChatMessageList {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatMessageList {}
+
 impl ::atto_ui::composable::Layout for ChatMessageList {
     fn min_width(&self) -> u16 {
         self.list.min_width()
@@ -599,6 +601,8 @@ impl ::atto_ui::composable::Component for ChatMessageRow {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatMessageRow {}
+
 impl ::atto_ui::composable::Layout for ChatMessageRow {
     fn min_width(&self) -> u16 {
         self.sync_body_bindings();
@@ -733,6 +737,8 @@ impl ::atto_ui::composable::Component for ChatTimestampDivider {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatTimestampDivider {}
+
 impl ::atto_ui::composable::Layout for ChatTimestampDivider {
     fn desired_height(&self) -> Option<u16> {
         Some(1)
@@ -847,6 +853,8 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
     }
 }
 
+impl ::atto_ui::composable::DragAndDrop for ChatMessageBody {}
+
 impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn min_width(&self) -> u16 {
         match self {
@@ -950,6 +958,8 @@ impl ::atto_ui::composable::Component for ArtifactLink {
         frame.render_widget(Paragraph::new(Line::styled(self.label(), style)), area);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for ArtifactLink {}
 
 impl ::atto_ui::composable::Layout for ArtifactLink {
     fn min_width(&self) -> u16 {

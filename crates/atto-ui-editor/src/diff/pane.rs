@@ -135,6 +135,8 @@ impl Component for DiffPane {
     }
 }
 
+impl atto_ui::composable::DragAndDrop for DiffPane {}
+
 impl Layout for DiffPane {
     fn min_width(&self) -> u16 {
         8

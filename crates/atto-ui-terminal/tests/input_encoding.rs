@@ -32,6 +32,7 @@ fn context(theme: &Theme) -> ComponentContext<'_> {
         scrollbar_host: ScrollbarHost::Component,
         tab_mode: TabMode::Cycle,
         mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
     }
 }
 

@@ -33,10 +33,13 @@ impl ::atto_ui::composable::Component for EditorWindowView {
             },
             tab_mode: ctx.tab_mode.for_child(),
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
         self.tab_window.draw(frame, area, child_ctx);
     }
 }
+
+impl ::atto_ui::composable::DragAndDrop for EditorWindowView {}
 
 impl ::atto_ui::composable::Layout for EditorWindowView {
     fn min_width(&self) -> u16 {
@@ -115,6 +118,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
             },
             tab_mode: ctx.tab_mode.for_child(),
             mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
         };
         self.tab_window.handle_event(event, child_ctx)
     }
