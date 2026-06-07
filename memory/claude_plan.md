@@ -1,29 +1,24 @@
 # 执行计划
 
-## 当前目标
-- 按 `TODO.md` 的顺序识别并完成第一个标题未带 `[DONE]` 的任务。
-- 完成后更新任务记录、运行要求的验证，并提交一次包含本任务相关改动的 Git commit。
+本文件记录本次调用的可执行计划与进度。内容为简明依据和操作步骤，不包含不可公开的内部推理。
 
-## 步骤
-1. 读取 `TODO.md`，只选择第一个未完成任务，不做开放式历史问题扫描。
-2. 读取该任务相关的代码、测试和计划上下文，确认任务要求、依赖和验证命令。
-3. 如遇到阻塞当前任务的具体缺陷或缺失能力，优先修复；若无法在本任务内正确修复，则在 `TODO.md` 中插入最小 prerequisite 任务并提交后停止。
-4. 以最小正确改动实现当前任务，避免 workaround 或规格弱化。
-5. 运行格式化、lint 和相关测试；若代码改动影响范围需要完整验证，则按要求运行完整测试。
-6. 在 `TODO.md` 中将完成任务标题加 `[DONE]`，填写完成记录；仅当阶段计划实际变化时更新 `PLAN.md`。
-7. 检查 Git 状态和差异，提交本任务相关全部改动，然后停止。
+## 本次调用计划
 
-## 进度
-- 已读取 `TODO.md` / `TODO-1.md`，首个未完成任务为 `NT1 — atto-ui-node crate 脚手架 + napi build（B.0）`。
-- 最近提交为计划更新，未发现标题中直接指向 NT1 的未完成 issue。
-- 已确认 `crates/atto-ui-node` 脚手架和 workspace 注册已有未提交实现；正在补齐与任务要求的细节并验证。
-- 尝试使用 `#![forbid(unsafe_code)]` 时，`napi` 宏展开中的局部 `allow(unsafe_code)` 与之冲突，`cargo clippy` 报 E0453。
-- 已按 NT1 允许的 napi-rs 冲突例外放宽为 `#![deny(unsafe_code)]` + `#![allow(unsafe_op_in_unsafe_fn)]`，继续保留 unsafe lint 保护。
-- `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build -p atto-ui-node`、`cargo test` 已通过。
-- `npm exec --package=@napi-rs/cli -- napi build --platform` 首次失败，原因是 `package.json` 中 `napi.targets` 被写成对象；当前 CLI 期望数组或省略该字段。
-- 已移除错误的 `targets` 对象，下一步重新运行 napi build 和 JS smoke。
-- 重新运行 napi build 和 `node __test__/version.cjs` 已通过。
-- 已将 JS smoke 改为 `require('..')`，覆盖 package 入口和生成的 napi loader；`package.json` 增加 `main` / `types` 指向生成文件。
-- 重新运行 `node __test__/version.cjs` 已通过。
-- 已在 `TODO-1.md` 将 NT1 标记为 `[DONE]` 并填写完成记录；已在 `TODO.md` 索引中将 NT1 状态改为 `DONE`。
-- 下一步确认最终 diff、提交范围并创建 NT1 commit。
+1. 先读取 `TODO.md`，识别第一个标题未带 `[DONE]` 或索引状态未完成的任务。
+2. 仅检查最近提交中与所选任务直接相关的未完成上下文。
+3. 阅读该任务的要求、依赖、验证命令和完成记录格式。
+4. 只执行该任务；除非出现必须插入 `TODO.md` 的具体前置阻塞项。
+5. 按要求顺序验证：`cargo fmt`，再 `cargo clippy --workspace --all-targets -- -D warnings`，再运行相关/完整测试。
+6. 完成后更新 `TODO.md`/详细任务文件，将任务标记为完成并记录验证结果；如遇阻塞则记录前置任务且不标记完成。
+7. 仅当阶段级顺序或验收标准变化时更新 `PLAN.md`。
+8. 检查 git status/diff/log，然后用清晰的任务消息提交本次相关改动。
+9. 完成一个任务后停止。
+
+## 进度记录
+
+- 已在读取项目任务文件前初始化计划。
+- 已读取 `TODO.md`；权威索引中的首个未完成任务是 `NR1`（`审阅 NT1`）。下一步读取 `TODO-1.md` 的具体审阅范围，并只检查与 `NR1`/`NT1` 直接相关的最近提交。
+- 已读取 `TODO-1.md`；`NR1` 要求审阅 NT1 Node napi 脚手架，确认 workspace/依赖选择，证明 native `.node` 可被 require，并运行 `cargo build --workspace` 与 JS 冒烟。最近提交为 `[NT1] Add Node napi binding scaffold`，与本审阅直接相关。
+- 已检查 Node crate 脚手架：`crates/atto-ui-node` 是 `cdylib`，使用带 `serde-json` feature 的 `napi`，包含 `napi-build`，暴露 `version()`，包含生成的 JS/类型入口，并已加入根 workspace。下一步按要求验证。
+- 已通过验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace`、`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`、`node __test__/version.cjs`。接下来运行完整 Rust 测试套件。
+- 完整验证 `cargo test --all --all-targets` 已通过。已在 `TODO.md` 和 `TODO-1.md` 标记 `NR1` 完成；阶段级顺序未变化，因此无需更新 `PLAN.md`。

@@ -31,10 +31,15 @@
 - 新增 `__test__/version.cjs`，通过 package 入口 require 生成的 napi loader 并断言 `version()` 返回 `0.1.0`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build -p atto-ui-node`；`cargo test`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`node __test__/version.cjs`。
 
-### [TODO] NR1 — 审阅 NT1
+### [DONE] NR1 — 审阅 NT1
 - 确认 crate-type/feature/依赖正确，workspace 不引入 tokio。
 - 确认 `.node` 产物可被 Node require。
 - 运行 `cargo build --workspace` + JS 冒烟。
+**完成记录（2026-06-07）**：
+- 审阅 `crates/atto-ui-node` 脚手架：`Cargo.toml` 使用 `cdylib`，启用 `napi` 的 `serde-json` feature，包含 `napi-derive`、`atto-ui`、`atto-ui-components`、`serde_json` 和 `napi-build`；根 workspace 已包含该 crate。
+- 检查 Node 入口与类型文件：生成的 `index.js`/`index.d.ts` 导出 `version()`，JS 冒烟通过 package 入口 require native `.node`。
+- 检查 Node crate 依赖图未包含 `tokio`；workspace 既有 `atto-ui-async` 仍仅以可选 feature 声明 tokio，NT1 未新增核心/Node tokio 依赖。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build --workspace`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`node __test__/version.cjs`；`cargo test --all --all-targets`。
 
 ### [TODO] NT2 — serde 数据转换层（B.2）
 **文件**：`crates/atto-ui-node/src/convert.rs`
