@@ -195,6 +195,31 @@ mod tests {
     }
 
     #[test]
+    fn released_id_gets_new_handle_without_revalidating_stale_handle() {
+        let mut handles = CallbackHandles::new();
+        let stale = handles.handle_for(CallbackId(7));
+
+        assert!(handles.release(CallbackId(7)));
+        let current = handles.handle_for(CallbackId(7));
+
+        assert_ne!(current, stale);
+        assert!(handles.resolve(&stale).is_err());
+        assert_eq!(handles.resolve(&current).unwrap(), CallbackId(7));
+    }
+
+    #[test]
+    fn handles_are_rejected_across_namespaces() {
+        let mut callbacks = CallbackHandles::new();
+        let mut windows = WindowHandles::new();
+
+        let callback = callbacks.handle_for(CallbackId(1));
+        let window = windows.handle_for(WindowId::from_raw(1));
+
+        assert!(callbacks.resolve(&window).is_err());
+        assert!(windows.resolve(&callback).is_err());
+    }
+
+    #[test]
     fn release_handle_returns_runtime_id() {
         let mut handles = WindowHandles::new();
         let handle = handles.handle_for(WindowId::from_raw(9));

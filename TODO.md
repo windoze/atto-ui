@@ -15,7 +15,7 @@
 | NT2 | DONE | serde 数据转换层（B.2） | TODO-1.md · 阶段一 M0+M1 |
 | NR2 | DONE | 审阅 NT2 | TODO-1.md · 阶段一 M0+M1 |
 | NT3 | DONE | id handle 包装 + 错误映射（B.3 / B.4） | TODO-1.md · 阶段一 M0+M1 |
-| NR3 | TODO | 审阅 NT3 | TODO-1.md · 阶段一 M0+M1 |
+| NR3 | DONE | 审阅 NT3 | TODO-1.md · 阶段一 M0+M1 |
 | NT4 | TODO | `#[napi] AppHost` 全方法暴露（B.1） | TODO-1.md · 阶段一 M0+M1 |
 | NR4 | TODO | 审阅 NT4 | TODO-1.md · 阶段一 M0+M1 |
 | NT5 | TODO | `@atto-ui/core` native 加载（L.1） | TODO-1.md · 阶段一 M0+M1 |

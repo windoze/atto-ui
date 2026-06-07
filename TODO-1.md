@@ -81,10 +81,15 @@
 - 更新 `convert.rs` 中事件 callback id 的 JS 形态为 string handle，`ComponentSpec`/`TreeOp::BindEvent`/`CallbackInvocation` 不再接受数字 callback id，避免 JS 侧接触 BigInt 或做 id 算术。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] NR3 — 审阅 NT3
+### [DONE] NR3 — 审阅 NT3
 - 确认 handle 包装无泄漏（窗口/回调销毁后 handle 失效处理合理）。
 - 确认错误信息不丢失、不暴露内部细节。
 - 运行单测。
+**完成记录（2026-06-07）**：
+- 审阅 `crates/atto-ui-node/src/ids.rs`，确认 `CallbackId`/`WindowId` 使用独立 string handle 命名空间，JS 侧不接触 BigInt；补充 stale handle 回归测试，确保释放后旧 handle 失效，同一 runtime id 重新分配不会重新验证旧 handle。
+- 审阅 `crates/atto-ui-node/src/convert.rs` 的 callback id 接线，确认 `ComponentSpec`/`TreeOp::BindEvent`/`CallbackInvocation` 均通过 `CallbackHandles` 解析与编码，数字 callback id 被拒绝并返回上下文错误。
+- 修复 `crates/atto-ui-node/src/error.rs` 的 `anyhow::Error` 映射：JS `Error` reason 现在保留 display source chain（例如外层 context + 根因），不使用 debug/backtrace 细节；`TreeError` display 消息保持原样透传。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] NT4 — `#[napi] AppHost` 全方法暴露（B.1）
 **文件**：`crates/atto-ui-node/src/lib.rs`

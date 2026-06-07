@@ -3,30 +3,37 @@
 ## Scope
 
 - Follow `TODO.md` as the authoritative task list.
-- Complete exactly the first task whose heading is not prefixed with `[DONE]`, then stop.
-- Do not perform broad triage before identifying that task.
-- Keep this file updated when the plan changes or a key step is completed.
+- Identify the first task whose heading is not prefixed with `[DONE]`.
+- Complete exactly that one task, then stop after committing the result.
 
-## Execution Plan
+## Initial Steps
 
-1. Read `TODO.md` and identify the first incomplete task by heading prefix.
-2. Read only the immediately relevant project files needed to understand that task.
-3. Check the latest commit message only for unfinished work directly relevant to the selected task.
-4. Implement the selected task as written, without narrowing scope or introducing workarounds.
-5. If a concrete blocker prevents correct implementation, update `TODO.md` with the minimum prerequisite task, keep the current task incomplete, commit that bookkeeping, and stop.
-6. Run validation in the requested order when code changes are made: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task.
-7. If any unscheduled test or fixture failure is observed, either fix it or add the minimum scheduled task before marking the current task complete.
-8. Mark the task complete by prefixing its `TODO.md` title with `[DONE]` and updating its completion record.
-9. Commit all changes related to this invocation with a clear task-specific message.
-10. Stop without starting the next task.
+1. Read `TODO.md` to find the first incomplete task and its validation requirements.
+2. Check the latest commit only for directly relevant unfinished work after the task is identified.
+3. Inspect the code paths and tests needed for that task.
+4. Implement the smallest spec-correct change that fully satisfies the task.
+5. Run formatting first, then clippy with warnings denied, then the relevant/full tests required by the task.
+6. If an unscheduled blocking failure appears, either fix it or add the minimum prerequisite task to `TODO.md` and stop.
+7. Mark the task heading `[DONE]`, update its completion record, and update this plan with progress.
+8. Inspect git status/diff/log, stage only intended files, commit with a task-specific message, and stop.
 
 ## Progress Log
 
-- Started: created this execution plan before inspecting task details.
-- Identified first incomplete task from `TODO.md`: `NT3` (`id handle 包装 + 错误映射（B.3 / B.4）`), with details in `TODO-1.md`.
-- Reviewed `TODO-1.md` and `PLAN-1.md` for NT3 requirements; latest commit is `[NR2] Review serde conversion layer`, with no directly relevant unfinished issue noted.
-- Current implementation plan for NT3: add `ids.rs` handle maps for `CallbackId` and `WindowId`, add `error.rs` conversions into `napi::Error`, update Node conversion helpers to use string callback handles, then validate and mark NT3 done.
-- Implemented the initial NT3 code changes: added Node id handle maps, added error conversion helpers, and changed callback ids in conversion helpers/tests to use string handles instead of numeric ids.
+- Plan initialized before task discovery.
+- First incomplete task identified: `NR3 — 审阅 NT3` in `TODO-1.md`.
+- Latest commit is `[NT3] Add Node id handles and error mapping`; no explicit unfinished issue was present in the commit summary.
+- Review found that `anyhow::Error` conversion preserved only the outer display message, dropping source-chain context. This is in scope for NR3 and will be fixed with tests.
+- Review will also add handle lifecycle tests for stale handles after release/reallocation and cross-namespace rejection.
+- `cargo clippy --workspace --all-targets -- -D warnings` first run failed on an unused test import introduced by the review fix; remove the import and rerun validation.
+- Implemented the NR3 review fixes: `anyhow::Error` conversion now preserves the display source chain, and id handle tests cover stale handles after release/reallocation plus namespace rejection.
 - Validation passed: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --all --all-targets`.
-- Marked `NT3` as `[DONE]` in `TODO-1.md`, updated the `TODO.md` index status to `DONE`, and added the NT3 completion record.
-- Pre-commit review found unrelated untracked files `notification.sh` and `run_agent.sh`; they will not be staged.
+- Marked `NR3` done in `TODO.md` and `TODO-1.md` with the completion record. No `PLAN.md` update is needed because phase ordering did not change.
+
+## NR3 Review Plan
+
+1. Inspect `crates/atto-ui-node/src/ids.rs`, `src/error.rs`, and the conversion call sites changed by NT3.
+2. Verify string handle semantics for `CallbackId` and `WindowId`, including reuse, release, invalid-handle behavior, and namespace separation.
+3. Verify error mapping preserves useful messages while not exposing unnecessary internals.
+4. Check Rust tests for handle lifecycle and error conversion coverage; add or fix tests/code if the review finds gaps.
+5. Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --all --all-targets` unless a blocker requires updating `TODO.md` first.
+6. Mark `NR3` as `[DONE]` with a completion record, update the index in `TODO.md`, commit all intended changes, and stop.
