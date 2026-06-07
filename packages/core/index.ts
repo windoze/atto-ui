@@ -194,6 +194,7 @@ export interface AppHost {
   addDynamicWindow(title: string, rect: RectLike, root: ComponentSpec): string
   applyTreeOps(windowId: string, ops: TreeOp | readonly TreeOp[]): boolean
   step(): boolean
+  dispose(): void
   drainCallbacks(): CallbackInvocation[]
   allocCallback(): string
   sendEvent(windowId: string, event: InputEvent): DesktopEventResult

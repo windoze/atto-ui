@@ -6,6 +6,12 @@ export {
 } from './reconciler'
 
 export {
+  render,
+  type RenderHandle,
+  type RenderOptions,
+} from './render'
+
+export {
   createHostContainer,
   flushStaticTree,
   normalizeHostType,

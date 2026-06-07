@@ -10,6 +10,8 @@ export declare class AppHost {
   applyTreeOps(windowId: string, ops: any): boolean
   /** Advance the host by one frame. Returns false when the host requests exit. */
   step(): boolean
+  /** Restore terminal state for real-terminal hosts. Idempotent and a no-op for headless hosts. */
+  dispose(): void
   /** Drain queued UI callback invocations. */
   drainCallbacks(): any
   /** Allocate a callback id handle for use in component event props. */

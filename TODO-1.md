@@ -264,7 +264,7 @@
 - 发现并修复 props diff 缺口：React prop 删除此前不会产出 op 且会保留旧 props；新增 runtime `TreeOp::ClearProp`、增量 tree 应用、Node/Python 转换、`@atto-ui/core` 类型与 React `clear_prop` 映射，确保删除 prop 不产生多余 `set_prop` 且 runtime 恢复组件默认值。
 - 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NT10 — `render()` + tick 主循环（U.2）
+### [DONE] NT10 — `render()` + tick 主循环（U.2）
 **文件**：`packages/react/src/render.ts`
 **现状**：`AppHost::step()` 在 `tickRate=0` 下非阻塞（§5.2）。
 **步骤**：
@@ -273,6 +273,11 @@
 3. 退出（Ctrl+Q→`step` 返回 false）→cleanup 恢复终端。
 **测试**：PTY——启动渲染、退出干净恢复终端。
 **验收**：React 树能持续渲染并响应 tick；进程退出不留终端残状态。
+**完成记录（2026-06-07）**：
+- 新增 `packages/react/src/render.ts`，导出 `render(element, { cols?, rows?, singleWindow?, headless?, idPrefix? })` 与 `RenderHandle{ host, root, windowId, stop }`；`render()` 构造 `AppHost(tickRate=0)`、创建单窗口 runtime root、挂载 React LegacyRoot，并用 `setImmediate` tick loop 调 `host.step()`，确保 Promise/IO 可继续运行。
+- 为真实终端退出补齐显式 cleanup：`src/app/run.rs` 新增 `AppHost::restore_terminal()`，Node binding 暴露 `AppHost.dispose()`；`RenderHandle.stop()` 和 Ctrl+Q/`step()==false` 路径会卸载 React root、关闭窗口并恢复 raw mode/alternate screen/cursor/mouse 状态。
+- 更新 `@atto-ui/core`/native 类型声明和 `@atto-ui/react` 导出；新增 React headless 测试覆盖持续 tick 与事件循环让出，新增 Python stdlib PTY 驱动的 JS 测试覆盖启动绘制、Ctrl+Q 退出以及 alternate-screen/cursor 恢复序列。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR10 — 审阅 NT10
 - 确认微循环让出事件循环（不阻塞 Promise/IO）。

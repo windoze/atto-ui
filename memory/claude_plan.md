@@ -1,19 +1,29 @@
-# 执行计划
+# Claude 执行计划
 
-1. 读取 `TODO.md`，按标题是否带 `[DONE]` 确认第一个未完成任务。
-2. 检查最新提交和工作区状态，确认是否存在与当前任务直接相关的未完成事项或并行改动。
-3. 阅读当前任务涉及的代码、测试和计划说明，只做与该任务相关的上下文收集。
-4. 以最小正确改动实现当前任务；若发现阻塞任务的真实前置问题，按要求更新 `TODO.md` 并停止。
-5. 按顺序运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行相关或完整测试；修复所有未被明确排期的失败。
-6. 更新 `TODO.md`，给完成任务标题加 `[DONE]` 并填写完成记录；仅在阶段计划实际变化时更新 `PLAN.md`。
-7. 检查 diff，提交本次任务相关的全部未提交变更，然后停止，不继续下一个任务。
+## 范围
 
-## 进度
+- 以 `TODO.md` 作为权威任务来源。
+- 只完成第一个标题未带 `[DONE]` 的任务。
+- 完成该任务的实现、验证、记录与提交后停止；如果需要新增前置/阻塞任务，则提交该任务清单调整后停止。
 
-- 已读取 `TODO.md`，首个未完成任务是 `NR9`：审阅 `NT9`（props/子节点增删/事件 op 映射），来源 `TODO-1.md`。
-- 已读取 `TODO-1.md` 中 `NT9`/`NR9` 的验收要求；最新提交 `cebb369 [NT9] Add React reconciler incremental ops` 直接对应本次审阅，未发现提交信息声明额外未完成事项。
-- 已初步检查 `packages/react/src/host.ts`、`reconciler.ts` 与现有测试；`npm run typecheck --prefix packages/react` 和 `npm test --prefix packages/react` 当前通过。
-- 审阅发现 props diff 缺口：prop 删除未被检测，且现有 runtime `TreeOp` 无清除属性表达，导致 React 删除 prop 后 runtime 仍保留旧值。下一步补充 `clear_prop` TreeOp、Node/Python 转换、TS 类型与 React op 映射，并增加回归测试。
-- 已实现 `clear_prop`：runtime spec/tree、Node/Python op 转换、`@atto-ui/core` 类型、React props diff 映射、相关 Rust/JS/TS 回归测试和 `NODE_BINDING.md` 映射说明均已更新。下一步按要求运行格式化、lint 与测试验证。
-- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`；napi build；Node/core/react 的 npm test 与 TS typecheck；`git diff --check`。未找到 `tools/run_fixtures.py`。
-- 已更新 `TODO-1.md` 与 `TODO.md`，将 `NR9` 标记为 `[DONE]` 并写入完成记录。下一步检查最终 diff、暂存本任务相关文件并提交。
+## 分步计划
+
+1. 先读取 `TODO.md`，按标题前缀识别第一个未完成任务。
+2. 阅读该任务的要求、依赖、验证要求和完成记录。
+3. 仅围绕当前任务检查必要的 git 上下文，包括最新提交是否提到与该任务直接相关的未完成事项。
+4. 检查当前任务相关源码和测试文件，确定最小正确实现路径。
+5. 如果存在阻止正确实现的具体前置问题，则在 `TODO.md` 加入最少前置任务，提交该清单变更并停止。
+6. 否则用小而聚焦的补丁完成实现。
+7. 按要求运行验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行任务和仓库策略要求的相关/完整测试。
+8. 对遇到的未排期失败测试或 fixture，要么修复，要么在标记完成前加入最少的前置/后续任务。
+9. 更新 `TODO.md`，给完成任务标题加 `[DONE]` 并填写包含验证细节的完成记录。
+10. 用清晰的任务相关提交信息提交所有相关变更。
+11. 停止，不开始下一个任务。
+
+## 进度记录
+
+- 已在读取任务细节或运行项目命令前初始化计划文件。
+- 已从 `TODO.md` 识别第一个未完成任务：`NT10`（`render()` + tick 主循环），完整细节位于 `TODO-1.md`。
+- 已阅读 NT10 要求和当前 React/Node host 代码。实现路径为先加入显式 native 终端清理 hook，再实现 `packages/react/src/render.ts` 的非阻塞 `setImmediate` tick loop 与聚焦的 JS/PTY 测试。
+- 已实现 native cleanup hook、React `render()` tick loop、包导出和 headless/PTY JS 测试。`cargo fmt`、clippy 和 TypeScript typecheck 已通过。
+- 已完成 NT10 验证：Rust 完整测试、native build、Node/core/react JS 测试、TypeScript typecheck 和 diff whitespace 检查均通过。期间修复 PTY runner 终端尺寸设置，并让 `dispose()` 在读取终端尺寸失败时仍能恢复终端。已在 `TODO.md` 和 `TODO-1.md` 将 NT10 标为 `[DONE]` 并写入完成记录。

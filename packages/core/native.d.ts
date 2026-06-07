@@ -3,6 +3,7 @@ declare class NativeAppHost {
   addDynamicWindow(title: string, rect: object | readonly [number, number, number, number], root: unknown): string
   applyTreeOps(windowId: string, ops: unknown): boolean
   step(): boolean
+  dispose(): void
   drainCallbacks(): unknown
   allocCallback(): string
   sendEvent(windowId: string, event: unknown): unknown

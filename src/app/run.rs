@@ -183,6 +183,13 @@ impl HostSession {
     fn is_headless(&self) -> bool {
         matches!(self, Self::Headless { .. })
     }
+
+    fn restore_terminal(&mut self) {
+        if let Self::Terminal(_) = self {
+            let screen = self.screen().unwrap_or_else(|_| Rect::new(0, 0, 80, 24));
+            *self = Self::Headless { screen };
+        }
+    }
 }
 
 impl Drop for TerminalSession {
@@ -302,6 +309,10 @@ impl AppHost {
 
     pub fn screen(&self) -> Result<Rect> {
         self.session.screen()
+    }
+
+    pub fn restore_terminal(&mut self) {
+        self.session.restore_terminal();
     }
 
     pub fn send_event(&mut self, window_id: WindowId, event: Event) -> Result<DesktopEventResult> {

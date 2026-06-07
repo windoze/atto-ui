@@ -192,6 +192,12 @@ impl AppHost {
         }
     }
 
+    /// Restore terminal state for real-terminal hosts. Idempotent and a no-op for headless hosts.
+    #[napi]
+    pub fn dispose(&mut self) {
+        self.host.restore_terminal();
+    }
+
     /// Drain queued UI callback invocations.
     #[napi]
     pub fn drain_callbacks(&mut self) -> napi::Result<Value> {
