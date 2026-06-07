@@ -1,8 +1,16 @@
 import {
   AppHost,
   Button,
+  ChatInputMode,
+  ChatInputPanel,
+  ChatMessageList,
+  ChatTextMessage,
+  FileTree,
+  FileTreeNode,
   Grid,
+  MarkdownViewer,
   Text,
+  TerminalEmulator,
   VStack,
   child,
   tab,
@@ -70,11 +78,26 @@ const builtRoot = VStack({ id: 'built-root', padding: 1 }, [
 ])
 const builtSpec: ComponentSpec = builtRoot
 const shortcutButton: ComponentSpec = Button('Send', { onClick: 'atto:callback:3' })
+const markdownSpec: ComponentSpec = MarkdownViewer('**doc**', { onLink: 'atto:callback:4' })
+const terminalSpec: ComponentSpec = TerminalEmulator({ command: 'sh', args: ['-lc', 'true'], onInput: 'atto:callback:5' })
+const fileTreeSpec: ComponentSpec = FileTree({
+  title: 'Files',
+  nodes: [FileTreeNode(1, 'src', { kind: 'directory', children: [FileTreeNode(2, 'main.rs')] })],
+  onSelect: 'atto:callback:6',
+})
+const chatMode: ComponentValue = ChatInputMode('choice', { options: ['yes', 'no'] })
+const chatListSpec: ComponentSpec = ChatMessageList({
+  messages: [ChatTextMessage(1, 'hello', { sender: 'user' })],
+  onLoadMore: 'atto:callback:7',
+})
+const chatInputSpec: ComponentSpec = ChatInputPanel({ mode: ChatInputMode(), onSubmit: 'atto:callback:8' })
 
 // @ts-expect-error callback handles must be strings from AppHost.allocCallback().
 Button({ label: 'Bad', onClick: 1 })
 // @ts-expect-error Text content must be a string.
 Text(123)
+// @ts-expect-error file tree node ids must be numeric runtime ids.
+FileTreeNode('bad', 'name')
 
 type _CallbacksAreTyped = AssertFalse<IsAny<typeof callbacks>>
 type _WindowsAreTyped = AssertFalse<IsAny<typeof windows>>
@@ -88,3 +111,9 @@ void windows
 void snapshot
 void builtSpec
 void shortcutButton
+void markdownSpec
+void terminalSpec
+void fileTreeSpec
+void chatMode
+void chatListSpec
+void chatInputSpec

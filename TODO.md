@@ -39,7 +39,7 @@
 | NT14 | DONE | [DONE] host 组件库 + JSX 类型 + 受控输入（U.6） | TODO-1.md · 阶段六 M7 |
 | NR14 | DONE | [DONE] 审阅 NT14 | TODO-1.md · 阶段六 M7 |
 | NT15 | DONE | [DONE] `@atto-ui/core` 命令式构造器（L.2） | TODO-1.md · 阶段六 M7 |
-| NR15 | TODO | 审阅 NT15 | TODO-1.md · 阶段六 M7 |
+| NR15 | DONE | [DONE] 审阅 NT15 | TODO-1.md · 阶段六 M7 |
 | NT16 | TODO | reconciler 单测矩阵（T.1） | TODO-1.md · 阶段七 M8 |
 | NR16 | TODO | 审阅 NT16 | TODO-1.md · 阶段七 M8 |
 | NT17 | TODO | PTY 端到端（T.2） | TODO-1.md · 阶段七 M8 |

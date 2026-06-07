@@ -4,6 +4,7 @@ import type {
   ComponentSpec,
   ComponentSpecChild,
   ComponentValue,
+  ComponentValueMap,
   EdgeInsetsSpec,
   LayoutSpec,
 } from '../index'
@@ -196,6 +197,121 @@ export interface TypeAheadOptions extends BuilderBaseOptions, EnabledOptions {
 }
 
 export interface CommandPaletteOptions extends TypeAheadOptions {}
+
+export type ScrollbarVisibility = 'always' | 'auto' | 'never' | (string & {})
+export type FileTreeNodeKind = 'file' | 'dir' | 'directory' | (string & {})
+export type ChatSender = 'user' | 'assistant' | 'system' | `tool:${string}` | `custom:${string}` | (string & {})
+export type ChatMessageStatus = 'final' | 'in_progress' | 'inprogress' | (string & {})
+export type ChatToolCallStatus = 'running' | 'done' | 'error' | (string & {})
+export type ChatArtifactKind = 'code' | 'diff' | 'file' | (string & {})
+
+export interface MarkdownViewerOptions extends BuilderBaseOptions {
+  readonly markdown?: string
+  readonly text?: string
+  readonly wrapWidth?: number
+  readonly showMarkers?: boolean
+  readonly verticalScrollbar?: ScrollbarVisibility
+  readonly codeBlockMaxHeight?: number
+  readonly tableMaxHeight?: number
+  readonly onLink?: CallbackHandle
+}
+
+export interface TerminalEmulatorOptions extends BuilderBaseOptions {
+  readonly command?: string
+  readonly args?: readonly string[]
+  readonly scrollbackLen?: number
+  readonly capture?: boolean
+  readonly captureOnClick?: boolean
+  readonly scrollStep?: number
+  readonly onInput?: CallbackHandle
+  readonly onClose?: CallbackHandle
+}
+
+export type FileTreeNodeLike = FileTreeNodeInput | ComponentValueMap
+
+export interface FileTreeNodeOptions {
+  readonly kind?: FileTreeNodeKind
+  readonly children?: readonly FileTreeNodeLike[]
+  readonly nodes?: readonly FileTreeNodeLike[]
+  readonly expanded?: boolean
+  readonly isExpanded?: boolean
+}
+
+export interface FileTreeNodeInput extends FileTreeNodeOptions {
+  readonly id: number
+  readonly name: string
+}
+
+export interface FileTreeOptions extends BuilderBaseOptions, EnabledOptions {
+  readonly title?: string
+  readonly nodes?: readonly FileTreeNodeLike[]
+  readonly roots?: readonly FileTreeNodeLike[]
+  readonly selection?: number | null
+  readonly height?: number
+  readonly onSelect?: CallbackHandle
+  readonly onRename?: CallbackHandle
+  readonly onDelete?: CallbackHandle
+}
+
+export interface ChatMessageBaseOptions {
+  readonly sender?: ChatSender
+  readonly status?: ChatMessageStatus
+  readonly timestamp?: string | null
+}
+
+export interface ChatTextMessageOptions extends ChatMessageBaseOptions {}
+
+export interface ChatFileMessageOptions extends ChatMessageBaseOptions {
+  readonly url?: string | null
+}
+
+export interface ChatToolCallMessageOptions extends ChatMessageBaseOptions {
+  readonly output?: string
+  readonly toolStatus?: ChatToolCallStatus
+}
+
+export interface ChatArtifactMessageOptions extends ChatMessageBaseOptions {
+  readonly kind: ChatArtifactKind
+  readonly anchor: string | number
+  readonly title: string
+}
+
+export type ChatMessageInput = ComponentValueMap
+
+export interface ChatMessageListOptions extends BuilderBaseOptions {
+  readonly messages?: readonly ChatMessageInput[]
+  readonly spacing?: number
+  readonly padding?: EdgeInsetsSpec
+  readonly wrapWidth?: number
+  readonly showTimestamps?: boolean
+  readonly autoScroll?: boolean
+  readonly onLoadMore?: CallbackHandle
+  readonly onOpenArtifact?: CallbackHandle
+}
+
+export interface ChatInputModeOptions {
+  readonly title?: string
+  readonly prompt?: string | null
+  readonly placeholder?: string | null
+  readonly height?: number
+  readonly options?: readonly string[]
+  readonly allowCustom?: boolean
+  readonly submitLabel?: string
+  readonly yesLabel?: string
+  readonly noLabel?: string
+}
+
+export type ChatInputModeInput = ComponentValueMap
+
+export interface ChatInputPanelOptions extends BuilderBaseOptions, EnabledOptions {
+  readonly mode?: ChatInputModeInput
+  readonly draft?: string
+  readonly custom?: string
+  readonly history?: readonly string[]
+  readonly selection?: number
+  readonly clearOnSubmit?: boolean
+  readonly onSubmit?: CallbackHandle
+}
 
 /** Build a raw runtime component spec for custom or less common component types. */
 export function component(type: string, options: ComponentBuilderOptions = {}): ComponentSpec {
@@ -455,6 +571,142 @@ export function CommandPalette(options: CommandPaletteOptions = {}): ComponentSp
   return makeSpec('CommandPalette', options.id, typeAheadProps(options), typeAheadEvents(options))
 }
 
+export function MarkdownViewer(markdown: string, options?: Omit<MarkdownViewerOptions, 'markdown' | 'text'>): ComponentSpec
+export function MarkdownViewer(options?: MarkdownViewerOptions): ComponentSpec
+export function MarkdownViewer(
+  first: string | MarkdownViewerOptions = {},
+  second: Omit<MarkdownViewerOptions, 'markdown' | 'text'> = {},
+): ComponentSpec {
+  const options: MarkdownViewerOptions = typeof first === 'string' ? { ...second, markdown: first } : first
+  return makeSpec('MarkdownViewer', options.id, {
+    markdown: options.markdown ?? options.text,
+    wrap_width: options.wrapWidth,
+    show_markers: options.showMarkers,
+    vertical_scrollbar: options.verticalScrollbar,
+    code_block_max_height: options.codeBlockMaxHeight,
+    table_max_height: options.tableMaxHeight,
+  }, events(options.events, { link: options.onLink }))
+}
+
+export function TerminalEmulator(options: TerminalEmulatorOptions = {}): ComponentSpec {
+  return makeSpec('TerminalEmulator', options.id, {
+    command: options.command,
+    args: options.args,
+    scrollback_len: options.scrollbackLen,
+    capture: options.capture,
+    capture_on_click: options.captureOnClick,
+    scroll_step: options.scrollStep,
+  }, events(options.events, { input: options.onInput, close: options.onClose }))
+}
+
+export function FileTreeNode(id: number, name: string, options: FileTreeNodeOptions = {}): ComponentValueMap {
+  return fileTreeNodeValue({ ...options, id, name })
+}
+
+export function FileTree(options: FileTreeOptions = {}): ComponentSpec {
+  const nodes = options.nodes ?? options.roots
+  return makeSpec('FileTree', options.id, {
+    title: options.title,
+    nodes: nodes?.map(fileTreeNodeValue),
+    selection: options.selection,
+    height: options.height,
+    enabled: enabledValue(options),
+  }, events(options.events, {
+    select: options.onSelect,
+    rename: options.onRename,
+    delete: options.onDelete,
+  }))
+}
+
+export function ChatTextMessage(
+  messageId: number,
+  markdown: string,
+  options: ChatTextMessageOptions = {},
+): ComponentValueMap {
+  return chatMessage(messageId, { markdown }, options)
+}
+
+export function ChatFileMessage(
+  messageId: number,
+  name: string,
+  options: ChatFileMessageOptions = {},
+): ComponentValueMap {
+  return chatMessage(messageId, { file: { name, url: options.url ?? null } }, options)
+}
+
+export function ChatToolCallMessage(
+  messageId: number,
+  name: string,
+  options: ChatToolCallMessageOptions = {},
+): ComponentValueMap {
+  return chatMessage(messageId, {
+    tool_call: {
+      name,
+      status: options.toolStatus ?? 'running',
+      output: options.output ?? '',
+    },
+  }, {
+    ...options,
+    status: options.status ?? 'in_progress',
+  })
+}
+
+export function ChatArtifactMessage(
+  messageId: number,
+  options: ChatArtifactMessageOptions,
+): ComponentValueMap {
+  return chatMessage(messageId, {
+    artifact: {
+      kind: options.kind,
+      anchor: options.anchor,
+      title: options.title,
+    },
+  }, options)
+}
+
+export function ChatMessageList(options: ChatMessageListOptions = {}): ComponentSpec {
+  return makeSpec('ChatMessageList', options.id, {
+    messages: options.messages,
+    spacing: options.spacing,
+    padding: options.padding,
+    wrap_width: options.wrapWidth,
+    show_timestamps: options.showTimestamps,
+    auto_scroll: options.autoScroll,
+  }, events(options.events, {
+    load_more: options.onLoadMore,
+    open_artifact: options.onOpenArtifact,
+  }))
+}
+
+export function ChatInputMode(mode = 'text', options: ChatInputModeOptions = {}): ComponentValueMap {
+  const title = options.title ?? 'Input'
+  const prompt = options.prompt ?? (['choice', 'confirm'].includes(normalizeName(mode)) ? title : undefined)
+  return compactRecord({
+    type: mode,
+    title,
+    prompt,
+    placeholder: options.placeholder,
+    height: options.height,
+    options: options.options,
+    allow_custom: options.allowCustom,
+    submit_label: options.submitLabel,
+    yes_label: options.yesLabel,
+    no_label: options.noLabel,
+  }) ?? {}
+}
+
+export function ChatInputPanel(options: ChatInputPanelOptions = {}): ComponentSpec {
+  return makeSpec('ChatInputPanel', options.id, {
+    mode: options.mode ?? ChatInputMode(),
+    draft: options.draft,
+    custom: options.custom,
+    history: options.history,
+    selection: options.selection,
+    enabled: enabledValue(options),
+    clear_on_submit: options.clearOnSubmit,
+  }, events(options.events, { submit: options.onSubmit }))
+}
+
 function makeSpec(
   type: string,
   id?: string,
@@ -545,6 +797,43 @@ function typeAheadEvents(options: TypeAheadOptions): ComponentEvents | undefined
     accept: options.onAccept,
     close: options.onClose,
   })
+}
+
+function fileTreeNodeValue(node: FileTreeNodeLike): ComponentValueMap {
+  if (!isFileTreeNodeInput(node)) return node
+  const children = node.children ?? node.nodes
+  return compactRecord({
+    id: node.id,
+    name: node.name,
+    kind: node.kind,
+    children: children?.map(fileTreeNodeValue),
+    expanded: node.expanded ?? node.isExpanded,
+  }) ?? {}
+}
+
+function isFileTreeNodeInput(node: FileTreeNodeLike): node is FileTreeNodeInput {
+  return typeof node.id === 'number' && typeof node.name === 'string'
+}
+
+function chatMessage(
+  messageId: number,
+  content: ComponentValueMap,
+  options: ChatMessageBaseOptions,
+): ComponentValueMap {
+  return compactRecord({
+    id: messageId,
+    sender: options.sender ?? 'assistant',
+    timestamp: options.timestamp ?? null,
+    status: options.status ?? 'final',
+    content,
+  }) ?? {}
+}
+
+function normalizeName(name: string): string {
+  return Array.from(name)
+    .filter((char) => char !== '_' && char !== '-' && char !== ' ')
+    .join('')
+    .toLowerCase()
 }
 
 function isEmptyRecord(record: ComponentProps | undefined): boolean {

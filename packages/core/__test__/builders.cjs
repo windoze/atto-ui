@@ -3,11 +3,19 @@
 const assert = require('node:assert/strict')
 const {
   Button,
+  ChatInputMode,
+  ChatInputPanel,
+  ChatMessageList,
+  ChatTextMessage,
+  FileTree,
+  FileTreeNode,
   Grid,
+  MarkdownViewer,
   RichText,
   TabView,
   Text,
   TextSpan,
+  TerminalEmulator,
   VStack,
   child,
   component,
@@ -89,3 +97,54 @@ assert.deepStrictEqual(
     ],
   },
 )
+
+assert.deepStrictEqual(MarkdownViewer('# Title', { id: 'doc', wrapWidth: 60, onLink: 'atto:callback:5' }), {
+  type: 'MarkdownViewer',
+  id: 'doc',
+  props: { markdown: '# Title', wrap_width: 60 },
+  events: { link: 'atto:callback:5' },
+})
+
+assert.deepStrictEqual(TerminalEmulator({ command: 'sh', args: ['-lc', 'true'], captureOnClick: true, onClose: 'atto:callback:6' }), {
+  type: 'TerminalEmulator',
+  props: { command: 'sh', args: ['-lc', 'true'], capture_on_click: true },
+  events: { close: 'atto:callback:6' },
+})
+
+const fileTreeNodes = [
+  FileTreeNode(1, 'src', { kind: 'directory', expanded: true, children: [FileTreeNode(2, 'main.rs', { kind: 'file' })] }),
+]
+assert.deepStrictEqual(FileTree({ title: 'Files', nodes: fileTreeNodes, selection: 2, onSelect: 'atto:callback:7' }), {
+  type: 'FileTree',
+  props: { title: 'Files', nodes: fileTreeNodes, selection: 2 },
+  events: { select: 'atto:callback:7' },
+})
+
+const chatMessage = ChatTextMessage(1, 'hello', { sender: 'user', timestamp: '2026-06-07T00:00:00Z' })
+assert.deepStrictEqual(chatMessage, {
+  id: 1,
+  sender: 'user',
+  timestamp: '2026-06-07T00:00:00Z',
+  status: 'final',
+  content: { markdown: 'hello' },
+})
+
+assert.deepStrictEqual(ChatMessageList({ messages: [chatMessage], autoScroll: true, onOpenArtifact: 'atto:callback:8' }), {
+  type: 'ChatMessageList',
+  props: { messages: [chatMessage], auto_scroll: true },
+  events: { open_artifact: 'atto:callback:8' },
+})
+
+const choiceMode = ChatInputMode('choice', { title: 'Pick one', options: ['A', 'B'] })
+assert.deepStrictEqual(choiceMode, {
+  type: 'choice',
+  title: 'Pick one',
+  prompt: 'Pick one',
+  options: ['A', 'B'],
+})
+
+assert.deepStrictEqual(ChatInputPanel({ mode: choiceMode, draft: 'A', onSubmit: 'atto:callback:9' }), {
+  type: 'ChatInputPanel',
+  props: { mode: choiceMode, draft: 'A' },
+  events: { submit: 'atto:callback:9' },
+})

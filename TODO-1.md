@@ -428,9 +428,14 @@
 - 修复当前 TypeScript 版本下 `moduleResolution: "Node"` 的阻塞性弃用错误：`packages/core` 与 `packages/react` 改用 `module`/`moduleResolution: "Node16"`，保持后续 `tsc` 验证可运行。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/core`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm test --prefix crates/atto-ui-node`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR15 — 审阅 NT15
+### [DONE] NR15 — 审阅 NT15
 - 确认构造器产出的 spec 与核心类型一致、无字段遗漏。
 - 运行单测 + `tsc`。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/core/src/builders.ts` / `builders.js`、`NODE_BINDING.md` §6.4、runtime `schemas()` 与 Python 低层 helper，发现文档示例和 Python 已暴露的 `ChatMessageList` 及相关 Markdown/Terminal/FileTree/Chat 构造器未在 `@atto-ui/core` 中补齐。
+- 补齐 `MarkdownViewer`、`TerminalEmulator`、`FileTreeNode`、`FileTree`、`ChatTextMessage`、`ChatFileMessage`、`ChatToolCallMessage`、`ChatArtifactMessage`、`ChatMessageList`、`ChatInputMode`、`ChatInputPanel` 构造器；输出保持标准 `ComponentSpec`/`ComponentValueMap` plain object，camelCase 入参映射到 runtime snake_case props，事件别名映射到 string callback handle。
+- 扩展 `packages/core/__test__/builders.cjs` 与 `__test__/types.ts`，覆盖新增构造器输出与类型约束，确认构造器 spec 与核心 runtime 字段一致且回调 handle 不泄漏为 `any`。
+- 验证通过：`npm run typecheck --prefix packages/core`；`npm test --prefix packages/core`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`npm test --prefix crates/atto-ui-node`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ---
 

@@ -241,6 +241,122 @@ function CommandPalette(options = {}) {
   return makeSpec('CommandPalette', options.id, typeAheadProps(options), typeAheadEvents(options))
 }
 
+function MarkdownViewer(first = {}, second = {}) {
+  const options = typeof first === 'string' ? { ...second, markdown: first } : first
+  return makeSpec('MarkdownViewer', options.id, {
+    markdown: options.markdown ?? options.text,
+    wrap_width: options.wrapWidth,
+    show_markers: options.showMarkers,
+    vertical_scrollbar: options.verticalScrollbar,
+    code_block_max_height: options.codeBlockMaxHeight,
+    table_max_height: options.tableMaxHeight,
+  }, events(options.events, { link: options.onLink }))
+}
+
+function TerminalEmulator(options = {}) {
+  return makeSpec('TerminalEmulator', options.id, {
+    command: options.command,
+    args: options.args,
+    scrollback_len: options.scrollbackLen,
+    capture: options.capture,
+    capture_on_click: options.captureOnClick,
+    scroll_step: options.scrollStep,
+  }, events(options.events, { input: options.onInput, close: options.onClose }))
+}
+
+function FileTreeNode(id, name, options = {}) {
+  return fileTreeNodeValue({ ...options, id, name })
+}
+
+function FileTree(options = {}) {
+  const nodes = options.nodes ?? options.roots
+  return makeSpec('FileTree', options.id, {
+    title: options.title,
+    nodes: nodes?.map(fileTreeNodeValue),
+    selection: options.selection,
+    height: options.height,
+    enabled: enabledValue(options),
+  }, events(options.events, {
+    select: options.onSelect,
+    rename: options.onRename,
+    delete: options.onDelete,
+  }))
+}
+
+function ChatTextMessage(messageId, markdown, options = {}) {
+  return chatMessage(messageId, { markdown }, options)
+}
+
+function ChatFileMessage(messageId, name, options = {}) {
+  return chatMessage(messageId, { file: { name, url: options.url ?? null } }, options)
+}
+
+function ChatToolCallMessage(messageId, name, options = {}) {
+  return chatMessage(messageId, {
+    tool_call: {
+      name,
+      status: options.toolStatus ?? 'running',
+      output: options.output ?? '',
+    },
+  }, {
+    ...options,
+    status: options.status ?? 'in_progress',
+  })
+}
+
+function ChatArtifactMessage(messageId, options) {
+  return chatMessage(messageId, {
+    artifact: {
+      kind: options.kind,
+      anchor: options.anchor,
+      title: options.title,
+    },
+  }, options)
+}
+
+function ChatMessageList(options = {}) {
+  return makeSpec('ChatMessageList', options.id, {
+    messages: options.messages,
+    spacing: options.spacing,
+    padding: options.padding,
+    wrap_width: options.wrapWidth,
+    show_timestamps: options.showTimestamps,
+    auto_scroll: options.autoScroll,
+  }, events(options.events, {
+    load_more: options.onLoadMore,
+    open_artifact: options.onOpenArtifact,
+  }))
+}
+
+function ChatInputMode(mode = 'text', options = {}) {
+  const title = options.title ?? 'Input'
+  const prompt = options.prompt ?? (['choice', 'confirm'].includes(normalizeName(mode)) ? title : undefined)
+  return compactRecord({
+    type: mode,
+    title,
+    prompt,
+    placeholder: options.placeholder,
+    height: options.height,
+    options: options.options,
+    allow_custom: options.allowCustom,
+    submit_label: options.submitLabel,
+    yes_label: options.yesLabel,
+    no_label: options.noLabel,
+  }) ?? {}
+}
+
+function ChatInputPanel(options = {}) {
+  return makeSpec('ChatInputPanel', options.id, {
+    mode: options.mode ?? ChatInputMode(),
+    draft: options.draft,
+    custom: options.custom,
+    history: options.history,
+    selection: options.selection,
+    enabled: enabledValue(options),
+    clear_on_submit: options.clearOnSubmit,
+  }, events(options.events, { submit: options.onSubmit }))
+}
+
 function makeSpec(type, id, props, eventInput, children) {
   const spec = { type }
   const compactProps = compactRecord(props)
@@ -324,6 +440,32 @@ function typeAheadEvents(options) {
   })
 }
 
+function fileTreeNodeValue(node) {
+  if (typeof node.id !== 'number' || typeof node.name !== 'string') return node
+  const children = node.children ?? node.nodes
+  return compactRecord({
+    id: node.id,
+    name: node.name,
+    kind: node.kind,
+    children: children?.map(fileTreeNodeValue),
+    expanded: node.expanded ?? node.isExpanded,
+  }) ?? {}
+}
+
+function chatMessage(messageId, content, options) {
+  return compactRecord({
+    id: messageId,
+    sender: options.sender ?? 'assistant',
+    timestamp: options.timestamp ?? null,
+    status: options.status ?? 'final',
+    content,
+  }) ?? {}
+}
+
+function normalizeName(name) {
+  return Array.from(name).filter((char) => char !== '_' && char !== '-' && char !== ' ').join('').toLowerCase()
+}
+
 function isEmptyRecord(record) {
   return record === undefined || Object.keys(record).length === 0
 }
@@ -361,4 +503,15 @@ module.exports = {
   Disclosure,
   TypeAhead,
   CommandPalette,
+  MarkdownViewer,
+  TerminalEmulator,
+  FileTreeNode,
+  FileTree,
+  ChatTextMessage,
+  ChatFileMessage,
+  ChatToolCallMessage,
+  ChatArtifactMessage,
+  ChatMessageList,
+  ChatInputMode,
+  ChatInputPanel,
 }
