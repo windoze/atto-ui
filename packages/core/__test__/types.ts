@@ -4,6 +4,7 @@ import {
   type ComponentSpec,
   type ComponentValue,
   type DesktopSnapshot,
+  type MenuBarSpec,
   type TreeOp,
   type WindowInfo,
 } from '..'
@@ -39,9 +40,15 @@ const ops: readonly TreeOp[] = [
   { op: 'clear_event', id: 'ok', event: 'click' },
 ]
 
+const menu: MenuBarSpec = {
+  menus: [{ title: 'File', items: [{ label: 'Open', shortcut: 'Ctrl+O', callback: 'atto:callback:1' }] }],
+}
+
 const host = new AppHost({ headless: true, cols: 40, rows: 12, tickRate: 0 })
 const windowId: string = host.addDynamicWindow('Typed', [0, 0, 20, 6], root)
 const changed: boolean = host.applyTreeOps(windowId, ops)
+host.setMenuBar(menu)
+host.setStatusBar('Ready', 'Ln 1')
 const callbacks: CallbackInvocation[] = host.drainCallbacks()
 const released: boolean = host.releaseCallback(host.allocCallback())
 const windows: WindowInfo[] = host.listWindows()

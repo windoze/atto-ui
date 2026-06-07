@@ -538,20 +538,22 @@ impl Desktop {
 
         self.menu.draw(frame, layout.menu_bar, &self.theme);
 
-        let status_left = match self.mode {
-            DesktopMode::Normal => "F10 Menu  Ctrl+W Window  F6 Next",
-            DesktopMode::Menu => "Menu: ←/→/↑/↓ Enter  Esc Close",
-            DesktopMode::WindowManagement => {
-                "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit"
-            }
-        };
-        self.status.set_left(status_left);
-        let focused = self
-            .wm
-            .focused()
-            .map(|id| format!("Focus: {:?}", id.0))
-            .unwrap_or_else(|| "Focus: none".to_string());
-        self.status.set_right(focused);
+        if !self.status.has_custom() {
+            let status_left = match self.mode {
+                DesktopMode::Normal => "F10 Menu  Ctrl+W Window  F6 Next",
+                DesktopMode::Menu => "Menu: ←/→/↑/↓ Enter  Esc Close",
+                DesktopMode::WindowManagement => {
+                    "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit"
+                }
+            };
+            self.status.set_left(status_left);
+            let focused = self
+                .wm
+                .focused()
+                .map(|id| format!("Focus: {:?}", id.0))
+                .unwrap_or_else(|| "Focus: none".to_string());
+            self.status.set_right(focused);
+        }
         self.status.draw(frame, layout.status_bar, &self.theme);
         self.toasts.draw(frame, layout.work_area, &self.theme);
 

@@ -4,6 +4,9 @@ import type {
   ComponentSpec,
   ComponentSpecChild,
   ComponentValue,
+  MenuBarSpec,
+  MenuItemSpec,
+  Rect,
   TreeOp,
 } from '@atto-ui/core'
 
@@ -13,16 +16,29 @@ export type RenderHost = Pick<AppHost, 'applyTreeOps' | 'allocCallback'> & {
   releaseCallback?(callbackId: string): boolean
 }
 
+export type DesktopRenderHost = RenderHost & Pick<
+  AppHost,
+  'addDynamicWindow' | 'closeWindow' | 'moveWindow' | 'resizeWindow' | 'setTitle' | 'setMenuBar' | 'setStatusBar'
+>
+
+type HostContainerMode = 'window' | 'desktop'
+
+interface PendingTreeOp {
+  readonly windowId: string
+  readonly op: TreeOp
+}
+
 export interface HostContainerOptions {
   readonly idPrefix?: string
 }
 
 export interface HostContainer {
   readonly host: RenderHost
-  readonly windowId: string
+  readonly mode: HostContainerMode
+  readonly windowId: string | null
   readonly idPrefix: string
   readonly rootChildren: HostInstance[]
-  readonly pendingOps: TreeOp[]
+  readonly pendingOps: PendingTreeOp[]
   readonly eventDispatcher: CallbackEventDispatcher
   nextId: number
   needsTreeFlush: boolean
@@ -37,6 +53,9 @@ export interface HostInstance {
   readonly children: HostInstance[]
   windowId: string | null
   parent: HostContainer | HostInstance | null
+  needsTreeFlush: boolean
+  needsDesktopSync: boolean
+  lastTree: ComponentSpec | null
 }
 
 export type HostProps = Readonly<Record<string, ComponentValue>>
@@ -77,7 +96,31 @@ export function createHostContainer(
   const idPrefix = options.idPrefix ?? `atto-react-${nextContainerId++}`
   return {
     host,
+    mode: 'window',
     windowId,
+    idPrefix,
+    rootChildren: [],
+    pendingOps: [],
+    eventDispatcher: new CallbackEventDispatcher({
+      allocCallback: () => host.allocCallback(),
+      releaseCallback: host.releaseCallback?.bind(host),
+    }),
+    nextId: 0,
+    needsTreeFlush: false,
+    lastTree: null,
+  }
+}
+
+/** Create the virtual desktop container used by declarative multi-window rendering. */
+export function createDesktopHostContainer(
+  host: DesktopRenderHost,
+  options: HostContainerOptions = {},
+): HostContainer {
+  const idPrefix = options.idPrefix ?? `atto-react-${nextContainerId++}`
+  return {
+    host,
+    mode: 'desktop',
+    windowId: null,
     idPrefix,
     rootChildren: [],
     pendingOps: [],
@@ -105,6 +148,9 @@ export function createHostInstance(
     children: [],
     windowId: null,
     parent: null,
+    needsTreeFlush: false,
+    needsDesktopSync: false,
+    lastTree: null,
   }
 }
 
@@ -118,6 +164,9 @@ export function createHostTextInstance(container: HostContainer, text: string): 
     children: [],
     windowId: null,
     parent: null,
+    needsTreeFlush: false,
+    needsDesktopSync: false,
+    lastTree: null,
   }
 }
 
@@ -126,9 +175,18 @@ export function appendInitialChild(parent: HostInstance, child: HostInstance): v
 }
 
 export function appendChild(parent: HostInstance, child: HostInstance): void {
-  const shouldQueue = parent.windowId !== null
+  if (isMenuTreeInstance(parent)) {
+    attachChild(parent, child, null)
+    markMenuBarForSync(parent)
+    return
+  }
+
+  const shouldFlushWindowRoot = isWindowInstance(parent)
+  const shouldQueue = parent.windowId !== null && !shouldFlushWindowRoot
   attachChild(parent, child, null)
-  if (shouldQueue) {
+  if (shouldFlushWindowRoot) {
+    markWindowForTreeFlush(parent)
+  } else if (shouldQueue) {
     enqueueChildInsert(parent, child, null)
   } else {
     markContainerForFlush(parent)
@@ -140,9 +198,18 @@ export function insertBefore(
   child: HostInstance,
   beforeChild: HostInstance,
 ): void {
-  const shouldQueue = parent.windowId !== null
+  if (isMenuTreeInstance(parent)) {
+    attachChild(parent, child, beforeChild)
+    markMenuBarForSync(parent)
+    return
+  }
+
+  const shouldFlushWindowRoot = isWindowInstance(parent)
+  const shouldQueue = parent.windowId !== null && !shouldFlushWindowRoot
   attachChild(parent, child, beforeChild)
-  if (shouldQueue) {
+  if (shouldFlushWindowRoot) {
+    markWindowForTreeFlush(parent)
+  } else if (shouldQueue) {
     enqueueChildInsert(parent, child, beforeChild)
   } else {
     markContainerForFlush(parent)
@@ -150,10 +217,24 @@ export function insertBefore(
 }
 
 export function removeChild(parent: HostInstance, child: HostInstance): void {
-  const shouldQueue = parent.windowId !== null && child.windowId !== null
+  if (isMenuTreeInstance(parent)) {
+    releaseEventBindingsForSubtree(child)
+    detachFromParent(child)
+    if (child.parent === parent) {
+      child.parent = null
+    }
+    markMenuBarForSync(parent)
+    return
+  }
+
+  const shouldFlushWindowRoot = isWindowInstance(parent)
+  const shouldQueue = parent.windowId !== null && child.windowId !== null && !shouldFlushWindowRoot
   if (shouldQueue) {
     enqueueClearEventsForSubtree(parent, child)
     enqueueTreeOpForInstance(parent, { op: 'remove', id: child.id })
+  } else if (shouldFlushWindowRoot) {
+    enqueueClearEventsForSubtree(parent, child)
+    markWindowForTreeFlush(parent)
   }
   releaseEventBindingsForSubtree(child)
   detachFromParent(child)
@@ -167,6 +248,12 @@ export function removeChild(parent: HostInstance, child: HostInstance): void {
 }
 
 export function appendChildToContainer(container: HostContainer, child: HostInstance): void {
+  if (container.mode === 'desktop') {
+    attachRootChild(container, child, null)
+    mountDesktopChild(container, child)
+    return
+  }
+
   attachRootChild(container, child, null)
   container.needsTreeFlush = true
 }
@@ -176,11 +263,28 @@ export function insertInContainerBefore(
   child: HostInstance,
   beforeChild: HostInstance,
 ): void {
+  if (container.mode === 'desktop') {
+    attachRootChild(container, child, beforeChild)
+    mountDesktopChild(container, child)
+    return
+  }
+
   attachRootChild(container, child, beforeChild)
   container.needsTreeFlush = true
 }
 
 export function removeChildFromContainer(container: HostContainer, child: HostInstance): void {
+  if (container.mode === 'desktop') {
+    unmountDesktopChild(container, child)
+    releaseEventBindingsForSubtree(child)
+    detachFromParent(child)
+    if (child.parent === container) {
+      child.parent = null
+    }
+    setSubtreeWindowId(child, null)
+    return
+  }
+
   releaseEventBindingsForSubtree(child)
   detachFromParent(child)
   if (child.parent === container) {
@@ -191,6 +295,18 @@ export function removeChildFromContainer(container: HostContainer, child: HostIn
 }
 
 export function clearContainer(container: HostContainer): boolean {
+  if (container.mode === 'desktop') {
+    for (const child of [...container.rootChildren]) {
+      unmountDesktopChild(container, child)
+      releaseEventBindingsForSubtree(child)
+      child.parent = null
+      setSubtreeWindowId(child, null)
+    }
+    container.rootChildren.length = 0
+    container.pendingOps.length = 0
+    return false
+  }
+
   for (const child of container.rootChildren) {
     releaseEventBindingsForSubtree(child)
     child.parent = null
@@ -222,6 +338,10 @@ export function updateTextInstance(textInstance: HostInstance, text: string): vo
 }
 
 export function toComponentSpec(instance: HostInstance): ComponentSpec {
+  if (isVirtualDesktopInstance(instance)) {
+    throw new Error(`${instance.type} is a virtual desktop node and cannot be lowered to ComponentSpec`)
+  }
+
   const spec: {
     type: string
     id: string
@@ -249,6 +369,12 @@ export function toComponentSpec(instance: HostInstance): ComponentSpec {
 
 /** Flush root replacement or incremental TreeOp mutations into the target atto-ui window. */
 export function flushStaticTree(container: HostContainer): void {
+  if (container.mode === 'desktop') {
+    flushDesktopContainer(container)
+    return
+  }
+
+  const windowId = requireContainerWindowId(container)
   if (container.needsTreeFlush) {
     if (container.rootChildren.length > 1) {
       throw new Error('atto-ui React root currently requires at most one host child')
@@ -258,22 +384,71 @@ export function flushStaticTree(container: HostContainer): void {
       ? emptyRootSpec(container)
       : toComponentSpec(container.rootChildren[0])
     const op: TreeOp = { op: 'set_tree', tree }
-    container.host.applyTreeOps(container.windowId, op)
+    container.host.applyTreeOps(windowId, op)
     container.lastTree = tree
     container.pendingOps.length = 0
     container.needsTreeFlush = false
     return
   }
 
-  if (container.pendingOps.length === 0) return
-  const ops = container.pendingOps.length === 1
-    ? container.pendingOps[0]
-    : container.pendingOps.slice()
-  container.host.applyTreeOps(container.windowId, ops)
-  container.pendingOps.length = 0
+  flushPendingOps(container)
   container.lastTree = container.rootChildren.length === 0
     ? emptyRootSpec(container)
     : toComponentSpec(container.rootChildren[0])
+}
+
+function flushDesktopContainer(container: HostContainer): void {
+  const resetWindows = new Set<string>()
+
+  for (const child of container.rootChildren) {
+    if (isWindowInstance(child) && child.needsTreeFlush && child.windowId !== null) {
+      const tree = windowRootSpec(child)
+      container.host.applyTreeOps(child.windowId, { op: 'set_tree', tree })
+      child.lastTree = tree
+      child.needsTreeFlush = false
+      resetWindows.add(child.windowId)
+    } else if (isMenuBarInstance(child) && child.needsDesktopSync) {
+      syncMenuBarInstance(child)
+    } else if (isStatusBarInstance(child) && child.needsDesktopSync) {
+      syncStatusBarInstance(child)
+    }
+  }
+
+  if (resetWindows.size > 0) {
+    container.pendingOps.splice(
+      0,
+      container.pendingOps.length,
+      ...container.pendingOps.filter((pending) => !resetWindows.has(pending.windowId)),
+    )
+  }
+
+  flushPendingOps(container)
+}
+
+function flushPendingOps(container: HostContainer): void {
+  if (container.pendingOps.length === 0) return
+
+  const buckets = new Map<string, TreeOp[]>()
+  for (const { windowId, op } of container.pendingOps) {
+    const bucket = buckets.get(windowId)
+    if (bucket) {
+      bucket.push(op)
+    } else {
+      buckets.set(windowId, [op])
+    }
+  }
+
+  for (const [windowId, ops] of buckets) {
+    container.host.applyTreeOps(windowId, ops.length === 1 ? ops[0] : ops)
+  }
+  container.pendingOps.length = 0
+}
+
+function requireContainerWindowId(container: HostContainer): string {
+  if (container.windowId === null) {
+    throw new Error('single-window React root is missing a window id')
+  }
+  return container.windowId
 }
 
 export function dispatchHostCallbacks(
@@ -340,6 +515,22 @@ export function prepareHostUpdate(
 }
 
 export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayload): void {
+  if (isWindowInstance(instance)) {
+    commitWindowUpdate(instance, payload)
+    return
+  }
+  if (isStatusBarInstance(instance)) {
+    instance.props = payload.props
+    syncStatusBarInstance(instance)
+    return
+  }
+  if (isMenuTreeInstance(instance)) {
+    instance.props = payload.props
+    commitEventUpdates(instance, payload, false)
+    markMenuBarForSync(instance)
+    return
+  }
+
   instance.props = payload.props
 
   for (const { name, value } of payload.setProps) {
@@ -359,9 +550,19 @@ export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayl
     })
   }
 
+  commitEventUpdates(instance, payload, true)
+}
+
+function commitEventUpdates(
+  instance: HostInstance,
+  payload: HostUpdatePayload,
+  queueTreeOps: boolean,
+): void {
   for (const event of payload.clearEvents) {
     const binding = instance.events[event]
-    enqueueTreeOpForMountedInstance(instance, { op: 'clear_event', id: instance.id, event })
+    if (queueTreeOps) {
+      enqueueTreeOpForMountedInstance(instance, { op: 'clear_event', id: instance.id, event })
+    }
     if (binding) {
       unregisterEventBinding(instance, binding)
       delete instance.events[event]
@@ -371,12 +572,14 @@ export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayl
   for (const { event, handler } of payload.bindEvents) {
     const callbackId = registerEventBindingForInstance(instance, handler)
     instance.events[event] = { callbackId, handler }
-    enqueueTreeOpForMountedInstance(instance, {
-      op: 'bind_event',
-      id: instance.id,
-      event,
-      callback: callbackId,
-    })
+    if (queueTreeOps) {
+      enqueueTreeOpForMountedInstance(instance, {
+        op: 'bind_event',
+        id: instance.id,
+        event,
+        callback: callbackId,
+      })
+    }
   }
 
   for (const { event, handler } of payload.updateEvents) {
@@ -516,8 +719,13 @@ function enqueueTreeOpForInstance(instance: HostInstance, op: TreeOp): void {
   if (!container) {
     throw new Error(`Cannot enqueue TreeOp for detached node ${instance.id}`)
   }
+  const windowId = instance.windowId
+  if (windowId === null) {
+    markNearestTreeRootForFlush(instance)
+    return
+  }
   if (!container.needsTreeFlush) {
-    container.pendingOps.push(op)
+    container.pendingOps.push({ windowId, op })
   }
 }
 
@@ -572,6 +780,7 @@ function attachChild(
   child: HostInstance,
   beforeChild: HostInstance | null,
 ): void {
+  validateChildForParent(parent, child)
   detachFromParent(child)
   const index = beforeChild === null ? parent.children.length : parent.children.indexOf(beforeChild)
   if (index < 0) {
@@ -587,6 +796,7 @@ function attachRootChild(
   child: HostInstance,
   beforeChild: HostInstance | null,
 ): void {
+  validateRootChild(container, child)
   detachFromParent(child)
   const index = beforeChild === null
     ? container.rootChildren.length
@@ -596,7 +806,7 @@ function attachRootChild(
   }
   container.rootChildren.splice(index, 0, child)
   child.parent = container
-  setSubtreeWindowId(child, container.windowId)
+  setSubtreeWindowId(child, container.mode === 'window' ? container.windowId : child.windowId)
 }
 
 function detachFromParent(child: HostInstance): void {
@@ -619,12 +829,337 @@ function setSubtreeWindowId(instance: HostInstance, windowId: string | null): vo
 function markContainerForFlush(instance: HostInstance): void {
   let cursor: HostContainer | HostInstance | null = instance
   while (cursor !== null) {
+    if (!('rootChildren' in cursor) && isWindowInstance(cursor)) {
+      cursor.needsTreeFlush = true
+      return
+    }
     if ('rootChildren' in cursor) {
       cursor.needsTreeFlush = true
       return
     }
     cursor = cursor.parent
   }
+}
+
+function markNearestTreeRootForFlush(instance: HostInstance): void {
+  let cursor: HostContainer | HostInstance | null = instance
+  while (cursor !== null) {
+    if (!('rootChildren' in cursor) && isWindowInstance(cursor)) {
+      markWindowForTreeFlush(cursor)
+      return
+    }
+    if ('rootChildren' in cursor) {
+      cursor.needsTreeFlush = true
+      return
+    }
+    cursor = cursor.parent
+  }
+}
+
+function markWindowForTreeFlush(instance: HostInstance): void {
+  if (!isWindowInstance(instance)) {
+    throw new Error(`Cannot mark non-window node ${instance.type} for window root flush`)
+  }
+  instance.needsTreeFlush = true
+}
+
+function mountDesktopChild(container: HostContainer, child: HostInstance): void {
+  if (isWindowInstance(child)) {
+    if (child.windowId === null) {
+      const host = requireDesktopHost(container)
+      const { title, rect } = windowOptions(child)
+      const tree = windowRootSpec(child)
+      const windowId = host.addDynamicWindow(title, rect, tree)
+      setSubtreeWindowId(child, windowId)
+      child.lastTree = tree
+      child.needsTreeFlush = false
+    }
+    return
+  }
+
+  if (isMenuBarInstance(child)) {
+    syncMenuBarInstance(child)
+    return
+  }
+
+  if (isStatusBarInstance(child)) {
+    syncStatusBarInstance(child)
+  }
+}
+
+function unmountDesktopChild(container: HostContainer, child: HostInstance): void {
+  const host = requireDesktopHost(container)
+  if (isWindowInstance(child)) {
+    const windowId = child.windowId
+    if (windowId !== null) {
+      host.closeWindow(windowId)
+      container.pendingOps.splice(
+        0,
+        container.pendingOps.length,
+        ...container.pendingOps.filter((pending) => pending.windowId !== windowId),
+      )
+    }
+    child.lastTree = null
+    child.needsTreeFlush = false
+    return
+  }
+
+  if (isMenuBarInstance(child)) {
+    host.setMenuBar({ menus: [] })
+    child.needsDesktopSync = false
+    return
+  }
+
+  if (isStatusBarInstance(child)) {
+    host.setStatusBar(null, null)
+    child.needsDesktopSync = false
+  }
+}
+
+function commitWindowUpdate(instance: HostInstance, payload: HostUpdatePayload): void {
+  const oldOptions = instance.windowId === null ? null : windowOptions(instance)
+  instance.props = payload.props
+  commitEventUpdates(instance, payload, false)
+
+  const windowId = instance.windowId
+  if (windowId === null) return
+
+  const host = requireDesktopHostForInstance(instance)
+  const nextOptions = windowOptions(instance)
+  if (oldOptions === null || oldOptions.title !== nextOptions.title) {
+    host.setTitle(windowId, nextOptions.title)
+  }
+  if (oldOptions === null || oldOptions.rect.x !== nextOptions.rect.x || oldOptions.rect.y !== nextOptions.rect.y) {
+    host.moveWindow(windowId, nextOptions.rect.x, nextOptions.rect.y)
+  }
+  if (
+    oldOptions === null
+    || oldOptions.rect.width !== nextOptions.rect.width
+    || oldOptions.rect.height !== nextOptions.rect.height
+  ) {
+    host.resizeWindow(windowId, nextOptions.rect.width, nextOptions.rect.height)
+  }
+}
+
+function syncStatusBarInstance(instance: HostInstance): void {
+  const host = requireDesktopHostForInstance(instance)
+  host.setStatusBar(stringProp(instance, 'left'), stringProp(instance, 'right'))
+  instance.needsDesktopSync = false
+}
+
+function syncMenuBarInstance(instance: HostInstance): void {
+  const host = requireDesktopHostForInstance(instance)
+  host.setMenuBar(menuBarSpec(instance))
+  instance.needsDesktopSync = false
+}
+
+function markMenuBarForSync(instance: HostInstance): void {
+  const menuBar = findMenuBarAncestor(instance)
+  if (menuBar) {
+    menuBar.needsDesktopSync = true
+  }
+}
+
+function findMenuBarAncestor(instance: HostInstance): HostInstance | null {
+  let cursor: HostContainer | HostInstance | null = instance
+  while (cursor !== null) {
+    if (!('rootChildren' in cursor) && isMenuBarInstance(cursor)) return cursor
+    if ('rootChildren' in cursor) return null
+    cursor = cursor.parent
+  }
+  return null
+}
+
+function windowRootSpec(windowInstance: HostInstance): ComponentSpec {
+  if (windowInstance.children.length > 1) {
+    throw new Error('<Window> requires at most one runtime root child')
+  }
+  if (windowInstance.children.length === 0) {
+    return { type: 'Spacer', id: `${windowInstance.id}-empty-root` }
+  }
+  return toComponentSpec(windowInstance.children[0])
+}
+
+function windowOptions(instance: HostInstance): { title: string; rect: Rect } {
+  return {
+    title: stringProp(instance, 'title') ?? 'atto-ui React',
+    rect: rectProp(instance, 'rect'),
+  }
+}
+
+function menuBarSpec(instance: HostInstance): MenuBarSpec {
+  if (!isMenuBarInstance(instance)) {
+    throw new Error(`Expected MenuBar node, got ${instance.type}`)
+  }
+  return {
+    menus: instance.children.map((child) => {
+      if (!isMenuInstance(child)) {
+        throw new Error('<MenuBar> children must be <Menu> nodes')
+      }
+      return {
+        id: stringProp(child, 'id') ?? child.id,
+        title: requiredStringProp(child, 'title'),
+        items: child.children.map(menuItemSpec),
+      }
+    }),
+  }
+}
+
+function menuItemSpec(instance: HostInstance): MenuItemSpec {
+  if (!isMenuItemInstance(instance)) {
+    throw new Error('<Menu> and <MenuItem> children must be <MenuItem> nodes')
+  }
+  const click = instance.events.click?.callbackId
+  return {
+    id: stringProp(instance, 'id') ?? instance.id,
+    label: requiredStringProp(instance, 'label'),
+    shortcut: stringProp(instance, 'shortcut'),
+    enabled: boolProp(instance, 'enabled') ?? true,
+    callback: click ?? null,
+    items: instance.children.map(menuItemSpec),
+  }
+}
+
+function requiredStringProp(instance: HostInstance, name: string): string {
+  const value = stringProp(instance, name)
+  if (value === null) {
+    throw new Error(`${instance.type} requires string prop ${name}`)
+  }
+  return value
+}
+
+function stringProp(instance: HostInstance, name: string): string | null {
+  const value = instance.props[name]
+  return typeof value === 'string' ? value : null
+}
+
+function boolProp(instance: HostInstance, name: string): boolean | null {
+  const value = instance.props[name]
+  return typeof value === 'boolean' ? value : null
+}
+
+function rectProp(instance: HostInstance, name: string): Rect {
+  const value = instance.props[name]
+  if (Array.isArray(value)) {
+    const [x, y, width, height] = value
+    if (
+      typeof x === 'number'
+      && typeof y === 'number'
+      && typeof width === 'number'
+      && typeof height === 'number'
+    ) {
+      return { x, y, width, height }
+    }
+  }
+  if (isComponentValueMap(value)) {
+    const rect = value as Record<string, ComponentValue>
+    const { x, y, width, height } = rect
+    if (
+      typeof x === 'number'
+      && typeof y === 'number'
+      && typeof width === 'number'
+      && typeof height === 'number'
+    ) {
+      return { x, y, width, height }
+    }
+  }
+  throw new Error(`<Window> requires rect prop as { x, y, width, height } or [x, y, width, height]`)
+}
+
+function requireDesktopHost(container: HostContainer): DesktopRenderHost {
+  const host = container.host as Partial<DesktopRenderHost>
+  if (
+    typeof host.addDynamicWindow !== 'function'
+    || typeof host.closeWindow !== 'function'
+    || typeof host.moveWindow !== 'function'
+    || typeof host.resizeWindow !== 'function'
+    || typeof host.setTitle !== 'function'
+    || typeof host.setMenuBar !== 'function'
+    || typeof host.setStatusBar !== 'function'
+  ) {
+    throw new Error('DesktopContainer requires AppHost window and desktop chrome methods')
+  }
+  return host as DesktopRenderHost
+}
+
+function requireDesktopHostForInstance(instance: HostInstance): DesktopRenderHost {
+  const container = containerForInstance(instance)
+  if (!container) {
+    throw new Error(`Cannot find DesktopContainer for ${instance.id}`)
+  }
+  return requireDesktopHost(container)
+}
+
+function validateRootChild(container: HostContainer, child: HostInstance): void {
+  if (container.mode === 'desktop') {
+    if (!isDesktopRootChild(child)) {
+      throw new Error('DesktopContainer direct children must be <Window>, <MenuBar>, or <StatusBar>')
+    }
+    return
+  }
+
+  if (isVirtualDesktopInstance(child)) {
+    throw new Error(`${child.type} can only be mounted under a DesktopContainer`)
+  }
+}
+
+function validateChildForParent(parent: HostInstance, child: HostInstance): void {
+  if (isWindowInstance(parent)) {
+    if (isVirtualDesktopInstance(child)) {
+      throw new Error('<Window> children must be regular runtime components')
+    }
+    return
+  }
+
+  if (isMenuBarInstance(parent)) {
+    if (!isMenuInstance(child)) {
+      throw new Error('<MenuBar> children must be <Menu> nodes')
+    }
+    return
+  }
+
+  if (isMenuInstance(parent) || isMenuItemInstance(parent)) {
+    if (!isMenuItemInstance(child)) {
+      throw new Error('<Menu> and <MenuItem> children must be <MenuItem> nodes')
+    }
+    return
+  }
+
+  if (isStatusBarInstance(parent) || isVirtualDesktopInstance(child)) {
+    throw new Error(`${child.type} cannot be mounted under ${parent.type}`)
+  }
+}
+
+function isDesktopRootChild(instance: HostInstance): boolean {
+  return isWindowInstance(instance) || isMenuBarInstance(instance) || isStatusBarInstance(instance)
+}
+
+function isVirtualDesktopInstance(instance: HostInstance): boolean {
+  return isDesktopRootChild(instance) || isMenuInstance(instance) || isMenuItemInstance(instance)
+}
+
+function isWindowInstance(instance: HostInstance): boolean {
+  return instance.type === 'Window'
+}
+
+function isMenuBarInstance(instance: HostInstance): boolean {
+  return instance.type === 'MenuBar'
+}
+
+function isMenuInstance(instance: HostInstance): boolean {
+  return instance.type === 'Menu'
+}
+
+function isMenuItemInstance(instance: HostInstance): boolean {
+  return instance.type === 'MenuItem'
+}
+
+function isMenuTreeInstance(instance: HostInstance): boolean {
+  return isMenuBarInstance(instance) || isMenuInstance(instance) || isMenuItemInstance(instance)
+}
+
+function isStatusBarInstance(instance: HostInstance): boolean {
+  return instance.type === 'StatusBar'
 }
 
 function shouldSkipProp(name: string, value: unknown): boolean {
@@ -674,6 +1209,11 @@ const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   listbox: 'ListBox',
   markdownViewer: 'MarkdownViewer',
   markdownviewer: 'MarkdownViewer',
+  menu: 'Menu',
+  menuBar: 'MenuBar',
+  menubar: 'MenuBar',
+  menuItem: 'MenuItem',
+  menuitem: 'MenuItem',
   progressBar: 'ProgressBar',
   progressbar: 'ProgressBar',
   radioGroup: 'RadioGroup',
@@ -701,4 +1241,5 @@ const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   typeahead: 'TypeAhead',
   visibility: 'Visibility',
   vstack: 'VStack',
+  window: 'Window',
 }

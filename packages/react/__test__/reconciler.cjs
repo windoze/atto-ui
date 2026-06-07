@@ -1,18 +1,77 @@
 const assert = require('node:assert/strict')
 const React = require('react')
-const { B, I, Link, Markdown, S, Text, U, createRoot, dispatchHostCallbacks } = require('../dist')
+const {
+  B,
+  I,
+  Link,
+  Markdown,
+  Menu,
+  MenuBar,
+  MenuItem,
+  S,
+  StatusBar,
+  Text,
+  U,
+  Window,
+  createDesktopRoot,
+  createRoot,
+  dispatchHostCallbacks,
+} = require('../dist')
 
 function createMockHost() {
   const ops = []
   const releasedCallbacks = []
+  const windows = []
+  const closedWindows = []
+  const titles = []
+  const moves = []
+  const resizes = []
+  const menus = []
+  const statusBars = []
   let nextCallback = 0
+  let nextWindow = 0
   return {
     ops,
     releasedCallbacks,
+    windows,
+    closedWindows,
+    titles,
+    moves,
+    resizes,
+    menus,
+    statusBars,
     host: {
+      addDynamicWindow(title, rect, root) {
+        nextWindow += 1
+        const id = `dynamic-window-${nextWindow}`
+        windows.push({ id, title, rect, root })
+        return id
+      },
       applyTreeOps(windowId, op) {
         ops.push({ windowId, op })
         return true
+      },
+      closeWindow(windowId) {
+        closedWindows.push(windowId)
+        return true
+      },
+      moveWindow(windowId, x, y) {
+        moves.push({ windowId, x, y })
+        return true
+      },
+      resizeWindow(windowId, width, height) {
+        resizes.push({ windowId, width, height })
+        return true
+      },
+      setTitle(windowId, title) {
+        titles.push({ windowId, title })
+        return true
+      },
+      setMenuBar(spec) {
+        menus.push(spec)
+      },
+      setStatusBar(left, right) {
+        statusBars.push({ left, right })
       },
       allocCallback() {
         nextCallback += 1
@@ -84,6 +143,114 @@ assert.notEqual(
   firstDefaultRoot.container.rootChildren[0].id,
   secondDefaultRoot.container.rootChildren[0].id,
 )
+
+const SharedContext = React.createContext('initial')
+function SharedLabel({ prefix }) {
+  const value = React.useContext(SharedContext)
+  return React.createElement('label', { text: `${prefix}:${value}` })
+}
+function MultiWindowApp({ value, showSecond = true }) {
+  return React.createElement(
+    SharedContext.Provider,
+    { value },
+    React.createElement(Window, { title: 'One', rect: [1, 1, 20, 6] },
+      React.createElement(SharedLabel, { prefix: 'one' })),
+    showSecond && React.createElement(Window, { title: 'Two', rect: [24, 1, 20, 6] },
+      React.createElement('vstack', null, React.createElement(SharedLabel, { prefix: 'two' }))),
+  )
+}
+
+const {
+  host: desktopHost,
+  ops: desktopOps,
+  windows: desktopWindows,
+  closedWindows: desktopClosedWindows,
+} = createMockHost()
+const desktopRoot = createDesktopRoot(desktopHost, { idPrefix: 'desktop' })
+desktopRoot.render(React.createElement(MultiWindowApp, { value: 'A' }))
+assert.equal(desktopWindows.length, 2)
+assert.equal(desktopWindows[0].title, 'One')
+assert.deepEqual(desktopWindows[0].root.props, { text: 'one:A' })
+assert.equal(desktopWindows[1].root.children[0].props.text, 'two:A')
+const firstWindow = desktopRoot.container.rootChildren[0]
+const secondWindow = desktopRoot.container.rootChildren[1]
+const firstWindowLabel = firstWindow.children[0]
+const secondWindowLabel = secondWindow.children[0].children[0]
+assert.equal(firstWindow.windowId, desktopWindows[0].id)
+assert.equal(secondWindow.children[0].windowId, desktopWindows[1].id)
+
+desktopOps.length = 0
+desktopRoot.render(React.createElement(MultiWindowApp, { value: 'B' }))
+assert.deepEqual(desktopOps, [
+  {
+    windowId: desktopWindows[0].id,
+    op: { op: 'set_prop', id: firstWindowLabel.id, name: 'text', value: 'one:B' },
+  },
+  {
+    windowId: desktopWindows[1].id,
+    op: { op: 'set_prop', id: secondWindowLabel.id, name: 'text', value: 'two:B' },
+  },
+])
+
+desktopRoot.render(React.createElement(MultiWindowApp, { value: 'B', showSecond: false }))
+assert.deepEqual(desktopClosedWindows, [desktopWindows[1].id])
+
+const {
+  host: windowPropHost,
+  titles: windowPropTitles,
+  moves: windowPropMoves,
+  resizes: windowPropResizes,
+} = createMockHost()
+const windowPropRoot = createDesktopRoot(windowPropHost, { idPrefix: 'window-prop' })
+windowPropRoot.render(React.createElement(Window, { title: 'Before', rect: [1, 2, 20, 6] },
+  React.createElement('label', { text: 'body' })))
+const windowPropId = windowPropRoot.container.rootChildren[0].windowId
+windowPropRoot.render(React.createElement(Window, { title: 'After', rect: [3, 4, 24, 8] },
+  React.createElement('label', { text: 'body' })))
+assert.deepEqual(windowPropTitles, [{ windowId: windowPropId, title: 'After' }])
+assert.deepEqual(windowPropMoves, [{ windowId: windowPropId, x: 3, y: 4 }])
+assert.deepEqual(windowPropResizes, [{ windowId: windowPropId, width: 24, height: 8 }])
+
+const { host: invalidDesktopHost } = createMockHost()
+const invalidDesktopRoot = createDesktopRoot(invalidDesktopHost, { idPrefix: 'invalid-desktop' })
+const originalConsoleError = console.error
+console.error = () => {}
+try {
+  assert.throws(
+    () => invalidDesktopRoot.render(React.createElement('label', { text: 'not a window' })),
+    /DesktopContainer direct children/,
+  )
+} finally {
+  console.error = originalConsoleError
+}
+
+const {
+  host: chromeHost,
+  menus: chromeMenus,
+  statusBars: chromeStatusBars,
+} = createMockHost()
+const chromeRoot = createDesktopRoot(chromeHost, { idPrefix: 'chrome' })
+let menuClicked = false
+chromeRoot.render(React.createElement(
+  React.Fragment,
+  null,
+  React.createElement(MenuBar, null,
+    React.createElement(Menu, { title: 'File' },
+      React.createElement(MenuItem, { label: 'Open', shortcut: 'Ctrl+O', onClick() { menuClicked = true } }))),
+  React.createElement(StatusBar, { left: 'Ready', right: 'Ln 1' }),
+  React.createElement(Window, { title: 'Main', rect: [1, 1, 20, 6] },
+    React.createElement('label', { text: 'body' })),
+))
+assert.deepEqual(chromeMenus[0].menus[0], {
+  id: 'chrome-2',
+  title: 'File',
+  items: [{ id: 'chrome-1', label: 'Open', shortcut: 'Ctrl+O', enabled: true, callback: 'callback-1', items: [] }],
+})
+assert.deepEqual(chromeStatusBars, [{ left: 'Ready', right: 'Ln 1' }])
+assert.equal(dispatchHostCallbacks(chromeRoot.container, [
+  { callbackId: 'callback-1', targetId: 'chrome-1', event: 'click', payload: null },
+]), 1)
+assert.equal(menuClicked, true)
 
 const { host: stateHost, ops: stateOps } = createMockHost()
 const stateRoot = createRoot(stateHost, 'state-window', { idPrefix: 'state' })

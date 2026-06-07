@@ -8,6 +8,7 @@ import {
   appendInitialChild,
   clearContainer,
   commitHostUpdate,
+  createDesktopHostContainer,
   createHostContainer,
   createHostInstance,
   createHostTextInstance,
@@ -23,6 +24,7 @@ import {
   type HostContainerOptions,
   type HostInstance,
   type HostUpdatePayload,
+  type DesktopRenderHost,
   type RenderHost,
 } from './host'
 
@@ -197,6 +199,31 @@ export function createRoot(
   options: AttoRootOptions = {},
 ): AttoRoot {
   const container = createHostContainer(host, windowId, options)
+  const root = reconciler.createContainer(
+    container,
+    LegacyRoot,
+    null,
+    false,
+    null,
+    '',
+    reportRecoverableError,
+    null,
+  )
+
+  return {
+    container,
+    render(element: ReactNode): void {
+      reconciler.updateContainer(element, root, null, null)
+    },
+  }
+}
+
+/** Create a React root bound to the virtual desktop container. */
+export function createDesktopRoot(
+  host: DesktopRenderHost,
+  options: AttoRootOptions = {},
+): AttoRoot {
+  const container = createDesktopHostContainer(host, options)
   const root = reconciler.createContainer(
     container,
     LegacyRoot,

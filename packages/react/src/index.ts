@@ -1,4 +1,5 @@
 export {
+  createDesktopRoot,
   createRoot,
   renderToWindow,
   type AttoRoot,
@@ -13,6 +14,7 @@ export {
 
 export {
   createHostContainer,
+  createDesktopHostContainer,
   dispatchHostCallbacks,
   flushStaticTree,
   normalizeHostType,
@@ -22,6 +24,7 @@ export {
   type HostContainerOptions,
   type HostInstance,
   type HostProps,
+  type DesktopRenderHost,
   type RenderHost,
 } from './host'
 
@@ -30,6 +33,21 @@ export {
   type AttoUiCallbackEvent,
   type AttoUiEventHandler,
 } from './events'
+
+export {
+  Desktop,
+  Menu,
+  MenuBar,
+  MenuItem,
+  StatusBar,
+  Window,
+  type DesktopProps,
+  type MenuBarProps,
+  type MenuItemProps,
+  type MenuProps,
+  type StatusBarProps,
+  type WindowProps,
+} from './desktop'
 
 export {
   B,

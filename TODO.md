@@ -34,7 +34,7 @@
 | NR11 | DONE | [DONE] 审阅 NT11 | TODO-1.md · 阶段三 M3+M4 |
 | NT12 | DONE | [DONE] React 文本组件（U.5） | TODO-1.md · 阶段四 M5 |
 | NR12 | DONE | [DONE] 审阅 NT12 | TODO-1.md · 阶段四 M5 |
-| NT13 | TODO | 虚拟 DesktopContainer + `<Window>` host 节点 + op 分桶（U.4） | TODO-1.md · 阶段五 M6 |
+| NT13 | DONE | [DONE] 虚拟 DesktopContainer + `<Window>` host 节点 + op 分桶（U.4） | TODO-1.md · 阶段五 M6 |
 | NR13 | TODO | 审阅 NT13 | TODO-1.md · 阶段五 M6 |
 | NT14 | TODO | host 组件库 + JSX 类型 + 受控输入（U.6） | TODO-1.md · 阶段六 M7 |
 | NR14 | TODO | 审阅 NT14 | TODO-1.md · 阶段六 M7 |

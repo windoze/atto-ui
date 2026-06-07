@@ -351,7 +351,7 @@
 
 ## 阶段五：M6 Window 映射
 
-### [TODO] NT13 — 虚拟 DesktopContainer + `<Window>` host 节点 + op 分桶（U.4）
+### [DONE] NT13 — 虚拟 DesktopContainer + `<Window>` host 节点 + op 分桶（U.4）
 **文件**：`packages/react/src/desktop.ts`、`src/host.ts`（路由）
 **现状**：`Desktop` 刻意非 spec 树；window 高频增删；`apply_tree_ops` 是 per-window（§10.6）。React 单一 root 约束在 fiber 层（§10.2）。
 **步骤**：
@@ -363,6 +363,13 @@
 6.（可选）Portal：`createPortal(children, windowContainer)`。
 **测试**：PTY——开/关窗口、改 title/rect；reconciler 单测——两窗口 op 各归各位；单测——Context 跨窗口贯通。
 **验收**：多窗口声明式管理；window 增删不进 TreeOp；跨窗口共享状态成立。
+**完成记录（2026-06-07）**：
+- `@atto-ui/react` 新增虚拟 desktop root：`createDesktopRoot()` 使用 `DesktopContainer` 模式，root 直接子节点运行时限制为 `Window`/`MenuBar`/`StatusBar`；普通组件直接挂 desktop root 会报错。
+- 新增 `packages/react/src/desktop.ts` wrapper：`Window`、`Desktop`、`MenuBar`、`Menu`、`MenuItem`、`StatusBar`；`render()` 默认使用 desktop root 并在 `singleWindow !== false` 时自动包全屏 `Window`，`singleWindow:false` 支持用户声明多个窗口。
+- `Window` host 节点作为虚拟节点处理：mount/unmount 映射到 `addDynamicWindow`/`closeWindow`，`title`/`rect` prop 更新映射到 `setTitle`、`moveWindow`、`resizeWindow`；window 根子树变化使用该窗口的 `set_tree`，普通子树增量 op 按 `windowId` 分桶后逐窗口 `applyTreeOps`。
+- 为避免 chrome 节点空壳，Node/core 新增 `setMenuBar` 与 `setStatusBar`；React `MenuBar`/`StatusBar` 会设置 native desktop 固定槽位，`MenuItem.onClick` 经既有 callback registry/drainCallbacks 进入 JS。
+- 补充测试覆盖两窗口 op 分桶、window 开关和 title/rect 更新、跨窗口 Context、desktop root 非法子节点、MenuBar/StatusBar lowering、`render()` 单窗口自动包装和 `singleWindow:false` 多窗口 headless 路径；Node binding 冒烟覆盖 native chrome setter。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NR13 — 审阅 NT13
 - 确认 DesktopContainer 仅接受合法子节点，非法子节点编译期/运行期被拦。

@@ -78,5 +78,17 @@ assert.equal(windows[0].title, 'Smoke')
 
 assert.equal(host.setTitle(windowId, 'Renamed'), true)
 assert.equal(host.listWindows()[0].title, 'Renamed')
+
+host.setMenuBar({
+  menus: [{
+    id: 'menu-file',
+    title: 'File',
+    items: [{ id: 'menu-open', label: 'Open', shortcut: 'Ctrl+O', callback }],
+  }],
+})
+host.setStatusBar('Ready', 'Ln 1')
+assert.equal(findNode(host.snapshot().tree, 'menu-file').name, 'File')
+assert.equal(findNode(host.snapshot().tree, 'menu-open').name, 'Open')
+
 assert.equal(host.closeWindow(windowId), true)
 assert.throws(() => host.focusWindow(windowId), /unknown window id handle/)

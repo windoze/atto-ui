@@ -32,6 +32,10 @@ export declare class AppHost {
   listWindows(): any
   /** Set a window title. */
   setTitle(windowId: string, title: string): boolean
+  /** Replace the desktop menu bar from a JavaScript menu spec. */
+  setMenuBar(spec: any): void
+  /** Replace or clear custom desktop status bar text. */
+  setStatusBar(left?: string | undefined | null, right?: string | undefined | null): void
   /** Set a component property by component id. */
   setProperty(id: string, name: string, value: any): void
   /** Read a component property by component id. */

@@ -7,10 +7,12 @@ use std::time::Duration;
 
 use atto_ui::app::{
     AppControl, AppHost as CoreAppHost, CrosstermAppConfig, CursorMode, Desktop, DesktopAction,
-    DesktopEventResult, MenuBar, WindowInfo,
+    DesktopEventResult, MenuBar, MenuItem, MenuSpec, WindowInfo,
 };
 use atto_ui::inspect::{DesktopSnapshot, DesktopSnapshotNode, NodeKind};
-use atto_ui::runtime::{CallbackRegistry, Rect as RuntimeRect, global_registry};
+use atto_ui::runtime::{
+    CallbackInvocation, CallbackRegistry, Rect as RuntimeRect, global_registry,
+};
 use atto_ui::theme::Theme;
 use atto_ui::{WindowId, WindowKind};
 use napi_derive::napi;
@@ -305,6 +307,27 @@ impl AppHost {
         Ok(self.host.set_title(window_id, title))
     }
 
+    /// Replace the desktop menu bar from a JavaScript menu spec.
+    #[napi]
+    pub fn set_menu_bar(&mut self, spec: Value) -> napi::Result<()> {
+        self.host.desktop().menu =
+            menu_bar_from_json(spec, self.callbacks.clone(), &self.callback_handles)?;
+        Ok(())
+    }
+
+    /// Replace or clear custom desktop status bar text.
+    #[napi]
+    pub fn set_status_bar(&mut self, left: Option<String>, right: Option<String>) {
+        match (left, right) {
+            (None, None) => self.host.desktop().status.clear_custom(),
+            (left, right) => self
+                .host
+                .desktop()
+                .status
+                .set_custom(left.unwrap_or_default(), right.unwrap_or_default()),
+        }
+    }
+
     /// Set a component property by component id.
     #[napi]
     pub fn set_property(&mut self, id: String, name: String, value: Value) -> napi::Result<()> {
@@ -373,6 +396,121 @@ pub fn register_all_runtime_components() {
 
 fn build_empty_desktop(_screen: TuiRect) -> anyhow::Result<Desktop> {
     Ok(Desktop::new(Theme::dark(), MenuBar::new(vec![])))
+}
+
+fn menu_bar_from_json(
+    value: Value,
+    callbacks: CallbackRegistry,
+    handles: &CallbackHandles,
+) -> napi::Result<MenuBar> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| error::invalid_arg("menu bar spec must be an object"))?;
+    let menus = optional_array_field(object, "menus")?
+        .unwrap_or(&[])
+        .iter()
+        .map(|menu| menu_spec_from_json(menu, callbacks.clone(), handles))
+        .collect::<napi::Result<Vec<_>>>()?;
+    Ok(MenuBar::new(menus))
+}
+
+fn menu_spec_from_json(
+    value: &Value,
+    callbacks: CallbackRegistry,
+    handles: &CallbackHandles,
+) -> napi::Result<MenuSpec> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| error::invalid_arg("menu spec must be an object"))?;
+    let title = required_string_field(object, "title")?;
+    let items = optional_array_field(object, "items")?
+        .unwrap_or(&[])
+        .iter()
+        .map(|item| menu_item_from_json(item, callbacks.clone(), handles))
+        .collect::<napi::Result<Vec<_>>>()?;
+
+    Ok(MenuSpec {
+        tag: optional_string_field(object, "id")?,
+        title: title.into(),
+        items,
+    })
+}
+
+fn menu_item_from_json(
+    value: &Value,
+    callbacks: CallbackRegistry,
+    handles: &CallbackHandles,
+) -> napi::Result<MenuItem> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| error::invalid_arg("menu item spec must be an object"))?;
+    let tag = optional_string_field(object, "id")?;
+    let label = required_string_field(object, "label")?;
+    let shortcut = optional_string_field(object, "shortcut")?;
+    let enabled = optional_bool_field(object, "enabled")?.unwrap_or(true);
+    let submenu = optional_array_field(object, "items")?
+        .unwrap_or(&[])
+        .iter()
+        .map(|item| menu_item_from_json(item, callbacks.clone(), handles))
+        .collect::<napi::Result<Vec<_>>>()?;
+    let callback = optional_string_field(object, "callback")?
+        .map(|handle| handles.resolve(&handle))
+        .transpose()?;
+    let target_id = tag.clone();
+    let on_activate: Option<std::sync::Arc<dyn Fn() + Send + Sync>> = callback.map(|callback_id| {
+        let callbacks = callbacks.clone();
+        std::sync::Arc::new(move || {
+            callbacks.emit(CallbackInvocation {
+                callback_id,
+                target_id: target_id.clone(),
+                event: "click".to_string(),
+                payload: None,
+            });
+        }) as std::sync::Arc<dyn Fn() + Send + Sync>
+    });
+
+    Ok(MenuItem {
+        tag,
+        label: label.into(),
+        shortcut: shortcut.into(),
+        enabled: enabled.into(),
+        on_activate,
+        submenu,
+    })
+}
+
+fn required_string_field(object: &Map<String, Value>, name: &str) -> napi::Result<String> {
+    optional_string_field(object, name)?
+        .ok_or_else(|| error::invalid_arg(format!("missing string field {name}")))
+}
+
+fn optional_string_field(object: &Map<String, Value>, name: &str) -> napi::Result<Option<String>> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(error::invalid_arg(format!("field {name} must be a string"))),
+    }
+}
+
+fn optional_bool_field(object: &Map<String, Value>, name: &str) -> napi::Result<Option<bool>> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(error::invalid_arg(format!(
+            "field {name} must be a boolean"
+        ))),
+    }
+}
+
+fn optional_array_field<'a>(
+    object: &'a Map<String, Value>,
+    name: &str,
+) -> napi::Result<Option<&'a [Value]>> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => Ok(Some(values.as_slice())),
+        Some(_) => Err(error::invalid_arg(format!("field {name} must be an array"))),
+    }
 }
 
 fn rect_from_json(value: Value) -> napi::Result<TuiRect> {

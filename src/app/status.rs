@@ -12,6 +12,7 @@ use crate::theme::Theme;
 pub struct StatusBar {
     left: String,
     right: String,
+    custom: Option<(String, String)>,
 }
 
 impl StatusBar {
@@ -23,12 +24,29 @@ impl StatusBar {
         self.right = text.into();
     }
 
+    pub fn set_custom(&mut self, left: impl Into<String>, right: impl Into<String>) {
+        self.custom = Some((left.into(), right.into()));
+    }
+
+    pub fn clear_custom(&mut self) {
+        self.custom = None;
+    }
+
+    pub fn has_custom(&self) -> bool {
+        self.custom.is_some()
+    }
+
     pub fn draw(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         if area.height == 0 {
             return;
         }
         let width = area.width as usize;
-        let line = build_status_line(&self.left, &self.right, width);
+        let (left, right) = self
+            .custom
+            .as_ref()
+            .map(|(left, right)| (left.as_str(), right.as_str()))
+            .unwrap_or((self.left.as_str(), self.right.as_str()));
+        let line = build_status_line(left, right, width);
 
         let p = Paragraph::new(Line::from(vec![Span::styled(line, theme.status_bar)]));
         frame.render_widget(p, area);

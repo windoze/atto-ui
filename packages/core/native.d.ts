@@ -14,6 +14,8 @@ declare class NativeAppHost {
   resizeWindow(windowId: string, width: number, height: number): boolean
   listWindows(): unknown
   setTitle(windowId: string, title: string): boolean
+  setMenuBar(spec: unknown): void
+  setStatusBar(left?: string | null, right?: string | null): void
   setProperty(id: string, name: string, value: unknown): void
   getProperty(id: string, name: string): unknown
   snapshot(): unknown

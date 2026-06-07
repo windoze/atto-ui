@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { AppHost, type AppHostConfig, type Rect } from '@atto-ui/core'
 
 import { dispatchHostCallbacks } from './host'
-import { createRoot, type AttoRoot, type AttoRootOptions } from './reconciler'
+import { Window } from './desktop'
+import { createDesktopRoot, type AttoRoot, type AttoRootOptions } from './reconciler'
 
 export interface RenderOptions extends AttoRootOptions {
   readonly cols?: number
@@ -14,27 +15,22 @@ export interface RenderOptions extends AttoRootOptions {
 export interface RenderHandle {
   readonly host: AppHost
   readonly root: AttoRoot
-  readonly windowId: string
+  readonly windowId: string | null
+  windowIds(): string[]
   stop(): void
 }
 
-/** Render a React tree into a single atto-ui window and start the non-blocking tick loop. */
+/** Render a React tree into the virtual desktop container and start the non-blocking tick loop. */
 export function render(element: ReactNode, options: RenderOptions = {}): RenderHandle {
-  if (options.singleWindow === false) {
-    throw new Error('render() supports only singleWindow mode until DesktopContainer support lands')
-  }
-
   const host = new AppHost(appHostConfig(options))
-  let windowId: string | null = null
 
   try {
     const bounds = host.snapshot().bounds
-    windowId = host.addDynamicWindow('atto-ui React', fullScreenRect(bounds), emptyRootSpec(options))
-    const root = createRoot(host, windowId, { idPrefix: options.idPrefix })
-    root.render(element)
-    return startTickLoop(host, root, windowId)
+    const root = createDesktopRoot(host, { idPrefix: options.idPrefix })
+    root.render(renderElementForOptions(element, options, bounds))
+    return startTickLoop(host, root)
   } catch (error) {
-    cleanupHost(host, null, windowId)
+    cleanupHost(host, null)
     throw error
   }
 }
@@ -57,14 +53,17 @@ function fullScreenRect(bounds: Rect): Rect {
   }
 }
 
-function emptyRootSpec(options: RenderOptions) {
-  return {
-    type: 'Spacer',
-    id: `${options.idPrefix ?? 'atto-react-render'}-empty-root`,
+function renderElementForOptions(element: ReactNode, options: RenderOptions, bounds: Rect): ReactNode {
+  if (options.singleWindow === false) {
+    return element
   }
+  return createElement(Window, {
+    title: 'atto-ui React',
+    rect: fullScreenRect(bounds),
+  }, element)
 }
 
-function startTickLoop(host: AppHost, root: AttoRoot, windowId: string): RenderHandle {
+function startTickLoop(host: AppHost, root: AttoRoot): RenderHandle {
   let active = true
   let scheduled: NodeJS.Immediate | null = null
 
@@ -75,7 +74,7 @@ function startTickLoop(host: AppHost, root: AttoRoot, windowId: string): RenderH
       clearImmediate(scheduled)
       scheduled = null
     }
-    cleanupHost(host, root, windowId)
+    cleanupHost(host, root)
   }
 
   const tick = (): void => {
@@ -104,10 +103,20 @@ function startTickLoop(host: AppHost, root: AttoRoot, windowId: string): RenderH
 
   scheduled = setImmediate(tick)
 
-  return { host, root, windowId, stop }
+  return {
+    host,
+    root,
+    get windowId(): string | null {
+      return windowIdsFromRoot(root)[0] ?? null
+    },
+    windowIds(): string[] {
+      return windowIdsFromRoot(root)
+    },
+    stop,
+  }
 }
 
-function cleanupHost(host: AppHost, root: AttoRoot | null, windowId: string | null): void {
+function cleanupHost(host: AppHost, root: AttoRoot | null): void {
   let cleanupError: unknown
 
   if (root !== null) {
@@ -118,9 +127,9 @@ function cleanupHost(host: AppHost, root: AttoRoot | null, windowId: string | nu
     }
   }
 
-  if (windowId !== null) {
+  for (const window of host.listWindows()) {
     try {
-      host.closeWindow(windowId)
+      host.closeWindow(window.id)
     } catch (error) {
       cleanupError ??= error
     }
@@ -135,4 +144,10 @@ function cleanupHost(host: AppHost, root: AttoRoot | null, windowId: string | nu
   if (cleanupError !== undefined) {
     throw cleanupError
   }
+}
+
+function windowIdsFromRoot(root: AttoRoot): string[] {
+  return root.container.rootChildren
+    .map((child) => child.windowId)
+    .filter((windowId): windowId is string => windowId !== null)
 }

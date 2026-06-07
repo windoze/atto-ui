@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const React = require('react')
-const { render } = require('../dist')
+const { Window, render } = require('../dist')
 
 function findNode(node, id) {
   if (node.id === id) return node
@@ -58,6 +58,8 @@ async function main() {
 
   const label = await waitFor(() => findNode(handle.host.snapshot().tree, 'render-1'))
   assert.equal(label.name, 'Label')
+  assert.equal(handle.host.listWindows().length, 1)
+  assert.equal(handle.windowIds().length, 1)
   await waitFor(() => findNode(handle.host.snapshot().tree, 'render-1')?.text === 'Timer updated')
 
   let promiseRan = false
@@ -92,6 +94,20 @@ async function main() {
   )
   await waitFor(() => findNodeByText(streamHandle.host.snapshot().tree, 'Streaming: one two done'))
   streamHandle.stop()
+
+  const multiHandle = render(
+    React.createElement(React.Fragment, null,
+      React.createElement(Window, { title: 'Left', rect: [1, 1, 20, 6] },
+        React.createElement('label', { text: 'Left window' })),
+      React.createElement(Window, { title: 'Right', rect: [24, 1, 22, 6] },
+        React.createElement('label', { text: 'Right window' }))),
+    { singleWindow: false, headless: true, cols: 60, rows: 16, idPrefix: 'multi-render' },
+  )
+  await waitFor(() => multiHandle.host.listWindows().length === 2)
+  assert.deepEqual(multiHandle.host.listWindows().map((window) => window.title), ['Left', 'Right'])
+  assert.equal(multiHandle.windowIds().length, 2)
+  await waitFor(() => findNodeByText(multiHandle.host.snapshot().tree, 'Right window'))
+  multiHandle.stop()
 
   function ClickCounter() {
     const [count, setCount] = React.useState(0)

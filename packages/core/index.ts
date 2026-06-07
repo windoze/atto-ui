@@ -205,12 +205,33 @@ export interface AppHost {
   resizeWindow(windowId: string, width: number, height: number): boolean
   listWindows(): WindowInfo[]
   setTitle(windowId: string, title: string): boolean
+  setMenuBar(spec: MenuBarSpec): void
+  setStatusBar(left?: string | null, right?: string | null): void
   setProperty(id: string, name: string, value: ComponentValue): void
   getProperty(id: string, name: string): ComponentValue
   snapshot(): DesktopSnapshot
   setTheme(name: ThemeName): void
   loadTheme(path: string, base?: ThemeName | null): void
   schemas(): ComponentSchema[]
+}
+
+export interface MenuBarSpec {
+  readonly menus: readonly MenuSpec[]
+}
+
+export interface MenuSpec {
+  readonly id?: string | null
+  readonly title: string
+  readonly items?: readonly MenuItemSpec[]
+}
+
+export interface MenuItemSpec {
+  readonly id?: string | null
+  readonly label: string
+  readonly shortcut?: string | null
+  readonly enabled?: boolean
+  readonly callback?: string | null
+  readonly items?: readonly MenuItemSpec[]
 }
 
 export type ThemeName = 'dark' | 'light'
