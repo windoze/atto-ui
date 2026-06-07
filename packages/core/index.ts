@@ -155,6 +155,11 @@ export type TreeOp =
       readonly value: ComponentValue
     }
   | {
+      readonly op: 'clear_prop'
+      readonly id: string
+      readonly name: string
+    }
+  | {
       readonly op: 'bind_event'
       readonly id: string
       readonly event: string

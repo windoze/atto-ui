@@ -194,6 +194,25 @@ impl ComponentTree {
                         }
                     }
                 }
+                TreeOp::ClearProp { id, .. } => {
+                    let Some(path) = view_index.path(id).cloned() else {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    };
+                    if path.is_empty() {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
+                    if !try_view_update!(replace_node_with_spec_at_path(
+                        self.view.as_mut(),
+                        &path,
+                        id,
+                        root_after_op,
+                        &self.registry,
+                    )) {
+                        return self.rebuild_next_or_restore(next_root, &original_root);
+                    }
+                    view_index.rebuild(self.view.as_ref());
+                    structural = true;
+                }
                 TreeOp::BindEvent { id, .. } | TreeOp::ClearEvent { id, .. } => {
                     let Some(path) = view_index.path(id).cloned() else {
                         return self.rebuild_next_or_restore(next_root, &original_root);

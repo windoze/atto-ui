@@ -174,6 +174,40 @@ fn component_tree_incremental_set_prop_updates_view() {
 }
 
 #[test]
+fn component_tree_incremental_clear_prop_rebuilds_view_with_default() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
+            ComponentSpec::new("Label")
+                .with_id("title")
+                .with_prop("text", ComponentValue::String("A".into())),
+        ));
+    let mut tree = ComponentTree::new(root, callbacks).expect("tree");
+
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::ClearProp {
+            id: "title".into(),
+            name: "text".into(),
+        }])
+        .expect("apply");
+    assert!(changed);
+
+    let spec_child = tree
+        .root_spec()
+        .children
+        .iter()
+        .find(|child| child.node.id.as_deref() == Some("title"))
+        .expect("title spec");
+    assert_eq!(spec_child.node.props.get("text"), None);
+    let title = find_view_by_tag(tree.view(), "title").expect("title view");
+    assert_eq!(
+        title.get_property("text"),
+        Some(ComponentValue::String(String::new()))
+    );
+}
+
+#[test]
 fn apply_property_distinguishes_unsupported_property_from_missing_node() {
     let callbacks = CallbackRegistry::new();
     let root = ComponentSpec::new("VStack")

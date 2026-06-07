@@ -44,6 +44,7 @@ export interface HostEventBinding {
 export interface HostUpdatePayload {
   readonly props: HostProps
   readonly setProps: readonly HostPropUpdate[]
+  readonly clearProps: readonly string[]
   readonly bindEvents: readonly HostEventUpdate[]
   readonly clearEvents: readonly string[]
   readonly updateEvents: readonly HostEventUpdate[]
@@ -269,6 +270,9 @@ export function prepareHostUpdate(
       setProps.push({ name, value })
     }
   }
+  const clearProps = Object.keys(oldHostProps).filter(
+    (name) => !Object.prototype.hasOwnProperty.call(newHostProps, name),
+  )
 
   const oldEvents = eventProps(oldProps)
   const newEvents = eventProps(newProps)
@@ -291,6 +295,7 @@ export function prepareHostUpdate(
 
   if (
     setProps.length === 0
+    && clearProps.length === 0
     && bindEvents.length === 0
     && clearEvents.length === 0
     && updateEvents.length === 0
@@ -301,6 +306,7 @@ export function prepareHostUpdate(
   return {
     props: newHostProps,
     setProps,
+    clearProps,
     bindEvents,
     clearEvents,
     updateEvents,
@@ -316,6 +322,14 @@ export function commitHostUpdate(instance: HostInstance, payload: HostUpdatePayl
       id: instance.id,
       name,
       value,
+    })
+  }
+
+  for (const name of payload.clearProps) {
+    enqueueTreeOpForMountedInstance(instance, {
+      op: 'clear_prop',
+      id: instance.id,
+      name,
     })
   }
 

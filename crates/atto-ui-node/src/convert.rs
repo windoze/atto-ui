@@ -270,6 +270,11 @@ pub fn tree_op_to_json(op: &TreeOp, callbacks: &mut CallbackHandles) -> Result<V
             object.insert("name".to_string(), Value::String(name.clone()));
             object.insert("value".to_string(), component_value_to_json(value)?);
         }
+        TreeOp::ClearProp { id, name } => {
+            object.insert("op".to_string(), Value::String("clear_prop".to_string()));
+            object.insert("id".to_string(), Value::String(id.clone()));
+            object.insert("name".to_string(), Value::String(name.clone()));
+        }
         TreeOp::BindEvent {
             id,
             event,
@@ -688,6 +693,16 @@ fn tree_op_from_value(value: &Value, callbacks: &CallbackHandles) -> Result<Tree
                 "set_prop name",
             )?,
             value: component_value_from_value(expect_field(object, "value", "set_prop value")?)?,
+        }),
+        "clearprop" => Ok(TreeOp::ClearProp {
+            id: expect_string(
+                expect_field(object, "id", "clear_prop id")?,
+                "clear_prop id",
+            )?,
+            name: expect_string(
+                expect_field(object, "name", "clear_prop name")?,
+                "clear_prop name",
+            )?,
         }),
         "bindevent" => Ok(TreeOp::BindEvent {
             id: expect_string(
@@ -1409,6 +1424,7 @@ mod tests {
             json!({ "op": "replace", "id": "old", "node": { "type": "Text", "id": "new" } }),
             json!({ "op": "move", "id": "node", "new_parent_id": "root", "index": 1 }),
             json!({ "op": "set_prop", "id": "node", "name": "text", "value": "New" }),
+            json!({ "op": "clear_prop", "id": "node", "name": "text" }),
             json!({ "op": "bind_event", "id": "node", "event": "click", "callback": callback }),
             json!({ "op": "clear_event", "id": "node", "event": "click" }),
         ];

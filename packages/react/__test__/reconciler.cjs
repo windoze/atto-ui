@@ -97,6 +97,30 @@ assert.deepEqual(stateOps, [
   },
 ])
 
+const { host: propHost, ops: propOps } = createMockHost()
+const propRoot = createRoot(propHost, 'prop-window', { idPrefix: 'prop' })
+propRoot.render(React.createElement('label', { text: 'Stable', enabled: true }))
+const propId = propRoot.container.rootChildren[0].id
+propOps.length = 0
+
+propRoot.render(React.createElement('label', { text: 'Stable' }))
+assert.deepEqual(propOps, [
+  {
+    windowId: 'prop-window',
+    op: { op: 'clear_prop', id: propId, name: 'enabled' },
+  },
+])
+assert.deepEqual(propRoot.container.rootChildren[0].props, { text: 'Stable' })
+
+propOps.length = 0
+propRoot.render(React.createElement('label', { text: 'Changed' }))
+assert.deepEqual(propOps, [
+  {
+    windowId: 'prop-window',
+    op: { op: 'set_prop', id: propId, name: 'text', value: 'Changed' },
+  },
+])
+
 function LabelList({ items }) {
   return React.createElement(
     'vstack',
@@ -147,6 +171,26 @@ assert.deepEqual(listOps, [
   {
     windowId: 'list-window',
     op: { op: 'remove', id: aId },
+  },
+])
+
+const { host: appendMoveHost, ops: appendMoveOps } = createMockHost()
+const appendMoveRoot = createRoot(appendMoveHost, 'append-move-window', { idPrefix: 'append-move' })
+appendMoveRoot.render(React.createElement(LabelList, { items: ['A', 'B', 'C'] }))
+const appendMoveParent = appendMoveRoot.container.rootChildren[0]
+const appendMoveAId = appendMoveParent.children[0].id
+appendMoveOps.length = 0
+
+appendMoveRoot.render(React.createElement(LabelList, { items: ['B', 'C', 'A'] }))
+assert.deepEqual(appendMoveOps, [
+  {
+    windowId: 'append-move-window',
+    op: {
+      op: 'insert_before',
+      parent_id: appendMoveParent.id,
+      anchor_id: null,
+      child: { type: 'Label', id: appendMoveAId, props: { text: 'A' } },
+    },
   },
 ])
 

@@ -41,6 +41,19 @@ assert.equal(
   false,
 )
 assert.equal(host.getProperty('title', 'text'), 'After')
+assert.equal(
+  host.applyTreeOps(windowId, [
+    { op: 'clear_prop', id: 'title', name: 'text' },
+  ]),
+  true,
+)
+assert.equal(host.getProperty('title', 'text'), '')
+assert.equal(
+  host.applyTreeOps(windowId, [
+    { op: 'set_prop', id: 'title', name: 'text', value: 'After' },
+  ]),
+  false,
+)
 
 const snapshot = host.snapshot()
 assert.equal(snapshot.bounds.width, 48)

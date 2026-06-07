@@ -497,6 +497,10 @@ pub enum TreeOp {
         name: String,
         value: ComponentValue,
     },
+    ClearProp {
+        id: String,
+        name: String,
+    },
     BindEvent {
         id: String,
         event: String,
@@ -692,6 +696,16 @@ fn apply_tree_op(
             let node =
                 spec_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
             node.props.insert(name.clone(), value.clone());
+            Ok(false)
+        }
+        TreeOp::ClearProp { id, name } => {
+            let path = index
+                .path(id)
+                .cloned()
+                .ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            let node =
+                spec_at_path_mut(root, &path).ok_or_else(|| TreeError::NotFound(id.clone()))?;
+            node.props.remove(name);
             Ok(false)
         }
         TreeOp::BindEvent {
@@ -1089,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_ops_set_prop_and_event() {
+    fn tree_ops_set_clear_prop_and_event() {
         let mut tree = sample_tree();
         let cb = CallbackId(42);
         let ops = vec![
@@ -1097,6 +1111,10 @@ mod tests {
                 id: "a".to_string(),
                 name: "text".to_string(),
                 value: ComponentValue::String("hi".into()),
+            },
+            TreeOp::ClearProp {
+                id: "a".to_string(),
+                name: "text".to_string(),
             },
             TreeOp::BindEvent {
                 id: "a".to_string(),
@@ -1110,10 +1128,7 @@ mod tests {
             .iter()
             .find(|child| child.node.id.as_deref() == Some("a"))
             .unwrap();
-        assert_eq!(
-            node.node.props.get("text"),
-            Some(&ComponentValue::String("hi".into()))
-        );
+        assert_eq!(node.node.props.get("text"), None);
         assert_eq!(node.node.events.get("click"), Some(&cb));
     }
 

@@ -34,6 +34,7 @@ const ops: readonly TreeOp[] = [
   { op: 'insert_before', parent_id: 'root', anchor_id: 'title', child: { type: 'Label', id: 'pre' } },
   { op: 'insert_before', parent_id: 'root', anchor_id: null, child: { type: 'Label', id: 'tail' } },
   { op: 'set_prop', id: 'title', name: 'text', value: values[3] },
+  { op: 'clear_prop', id: 'title', name: 'text' },
   { op: 'bind_event', id: 'ok', event: 'click', callback: 'atto:callback:1' },
   { op: 'clear_event', id: 'ok', event: 'click' },
 ]

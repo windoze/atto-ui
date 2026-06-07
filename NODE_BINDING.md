@@ -274,7 +274,7 @@ Node binding: AppHost (napi-rs)                       ← 第 1-9 节
 atto-ui runtime (Rust): ComponentTree / TreeOp        ← 已存在
 ```
 
-`react-reconciler` 在 commit 阶段产出的就是"增量变更"，与 atto-ui 的 `TreeOp`（`Insert`/`Remove`/`Replace`/`Move`/`SetProp`/`BindEvent`/`ClearEvent`）语义同构——这是本方案最契合的基础。
+`react-reconciler` 在 commit 阶段产出的就是"增量变更"，与 atto-ui 的 `TreeOp`（`Insert`/`Remove`/`Replace`/`Move`/`SetProp`/`ClearProp`/`BindEvent`/`ClearEvent`）语义同构——这是本方案最契合的基础。
 
 ### 10.4 节点 id 与 TreeOp 对齐
 
@@ -288,7 +288,7 @@ React（mutation 模式）commit 阶段调用的 host 方法与 `TreeOp` 的映�
 |---|---|---|
 | `appendChild` / `appendInitialChild` | `Insert { index: len }` | `apply_tree_op` 里 `idx.min(len)` 会钳制 |
 | `removeChild` | `Remove { id }` | React 给节点引用，取其 id |
-| `commitUpdate`（props diff） | 一批 `SetProp` + 事件变化 `BindEvent`/`ClearEvent` | |
+| `commitUpdate`（props diff） | 一批 `SetProp`/`ClearProp` + 事件变化 `BindEvent`/`ClearEvent` | |
 | `commitTextUpdate` | `SetProp text`（或 TextSpan，见 10.7） | |
 | `clearContainer` | `SetTree(空)` 或批量 `Remove` | |
 

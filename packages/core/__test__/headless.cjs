@@ -31,6 +31,9 @@ async function main() {
   assert.equal(host.step(), true)
   assert.equal(host.applyTreeOps(windowId, { op: 'set_prop', id: 'title', name: 'text', value: 'After' }), false)
   assert.equal(host.getProperty('title', 'text'), 'After')
+  assert.equal(host.applyTreeOps(windowId, { op: 'clear_prop', id: 'title', name: 'text' }), true)
+  assert.equal(host.getProperty('title', 'text'), '')
+  assert.equal(host.applyTreeOps(windowId, { op: 'set_prop', id: 'title', name: 'text', value: 'After' }), false)
   assert.equal(host.applyTreeOps(windowId, [
     { op: 'insert_before', parent_id: 'root', anchor_id: 'ok', child: { type: 'Label', id: 'pre', props: { text: 'Pre' } } },
     { op: 'insert_before', parent_id: 'root', anchor_id: null, child: { type: 'Label', id: 'tail', props: { text: 'Tail' } } },

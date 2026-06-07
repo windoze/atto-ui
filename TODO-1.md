@@ -253,11 +253,16 @@
 - 扩展 `packages/react/__test__/reconciler.cjs` 覆盖 `useState` 文本更新、列表新增/重排/删除、事件 bind/handler 更新/clear；headless React 测试继续通过真实 `AppHost` 路径。
 - 验证通过：`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR9 — 审阅 NT9
+### [DONE] NR9 — 审阅 NT9
 - 确认重排的 move 判定正确（已挂载→Move，新建→Insert）。
 - 确认事件 prop 仅在增删时 Bind/Clear（不每次 render 重绑）。
 - 确认 diff payload 精确（无多余 SetProp）。
 - 运行 reconciler 单测。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/host.ts` 与 `reconciler.ts`：确认已挂载子节点重排统一发 `insert_before`，由 Rust `InsertBefore` 对已存在 child id 执行 move 语义；补充 append-to-tail 重排回归测试覆盖 `anchor_id: null` 的已挂载 move。
+- 审阅事件 prop diff：新增事件才 `bind_event`，移除事件才 `clear_event`，handler 函数替换只更新 instance binding，不重复 re-bind；现有回归测试继续覆盖 handler 更新零 op。
+- 发现并修复 props diff 缺口：React prop 删除此前不会产出 op 且会保留旧 props；新增 runtime `TreeOp::ClearProp`、增量 tree 应用、Node/Python 转换、`@atto-ui/core` 类型与 React `clear_prop` 映射，确保删除 prop 不产生多余 `set_prop` 且 runtime 恢复组件默认值。
+- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NT10 — `render()` + tick 主循环（U.2）
 **文件**：`packages/react/src/render.ts`

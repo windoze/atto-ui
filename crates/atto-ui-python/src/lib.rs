@@ -570,6 +570,11 @@ fn py_to_tree_op(obj: &Bound<'_, PyAny>) -> PyResult<TreeOp> {
             let value = py_to_component_value(&value_obj)?;
             Ok(TreeOp::SetProp { id, name, value })
         }
+        "clearprop" => {
+            let id = expect_string_key(data, "id")?;
+            let name = expect_string_key(data, "name")?;
+            Ok(TreeOp::ClearProp { id, name })
+        }
         "bindevent" => {
             let id = expect_string_key(data, "id")?;
             let event = expect_string_key(data, "event")?;
@@ -1463,14 +1468,26 @@ mod tests {
             op.set_item("name", "text").unwrap();
             op.set_item("value", "Hi").unwrap();
             ops.append(op).unwrap();
+            let clear = PyDict::new(py);
+            clear.set_item("op", "clear_prop").unwrap();
+            clear.set_item("id", "title").unwrap();
+            clear.set_item("name", "text").unwrap();
+            ops.append(clear).unwrap();
 
             let parsed = py_to_tree_ops(&ops).unwrap();
-            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed.len(), 2);
             match &parsed[0] {
                 TreeOp::SetProp { id, name, value } => {
                     assert_eq!(id, "title");
                     assert_eq!(name, "text");
                     assert_eq!(value, &ComponentValue::String("Hi".to_string()));
+                }
+                other => panic!("unexpected op: {other:?}"),
+            }
+            match &parsed[1] {
+                TreeOp::ClearProp { id, name } => {
+                    assert_eq!(id, "title");
+                    assert_eq!(name, "text");
                 }
                 other => panic!("unexpected op: {other:?}"),
             }
