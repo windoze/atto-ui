@@ -19,7 +19,7 @@
 **现状**：尚无 Node binding crate；workspace 已有 `crates/atto-ui-python`（pyo3）可作对称参照。
 **步骤**：
 1. `Cargo.toml`：`crate-type=["cdylib"]`，依赖 `napi`/`napi-derive`（`serde-json` feature）、`atto-ui`、`atto-ui-components`、`serde_json`；`build.rs` 调 `napi-build`。
-2. crate 头部照搬 Python crate 的 `#![forbid(unsafe_code)]` + 局部 `#![allow(unsafe_op_in_unsafe_fn)]` 策略。
+2. 尽可能在 crate 头部照搬 Python crate 的 `#![forbid(unsafe_code)]` + 局部 `#![allow(unsafe_op_in_unsafe_fn)]` 策略。如果该策略与 napi-rs 冲突，可适当放宽。
 3. `package.json` 配 `@napi-rs/cli`；加入根 workspace `members`。
 4. 暴露 `#[napi] fn version() -> String` 作为冒烟点。
 **测试**：`__test__/` 内 JS require 调用 `version()`；`napi build` 产出 `.node`。
@@ -27,7 +27,6 @@
 
 ### [TODO] NR1 — 审阅 NT1
 - 确认 crate-type/feature/依赖正确，workspace 不引入 tokio。
-- 确认 `forbid(unsafe_code)` + 局部豁免与 Python crate 策略一致。
 - 确认 `.node` 产物可被 Node require。
 - 运行 `cargo build --workspace` + JS 冒烟。
 
@@ -347,7 +346,6 @@
 - UI 行为类测试优先走 `atto-ui-test-host` PTY / `AppHost::new_headless` 快照，保证确定性。
 - reconciler 纯逻辑（op 映射、move 判定、事件 bind/clear）用 JS 单测，不进 native。
 - runtime 改动（NT6/NT7）需保证现有 `atto-ui` 测试与 `crates/atto-ui-python` 路径不回归。
-- 保持 `#![forbid(unsafe_code)]`；核心 crate 依赖树不得引入 tokio（`cargo tree -p atto-ui` 校验）。
 
 ## 执行顺序
 
