@@ -26,3 +26,5 @@
 - 已补充一个聚焦回归测试，固定 wrapped diagnostics continuation row 只保留 gutter 空白，不重复显示 marker，也不覆盖文本起始列。
 - 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
 - 已在 `TODO.md` 和 `TODO-2.md` 将 `R8` 标记为 `[DONE]`，并写入审阅结论与验证结果。
+- 已提交 R8 审阅变更：`7425ded [R8] Review diagnostics gutter and status`。
+- 本轮任务完成后停止，不进入 `T9`。
