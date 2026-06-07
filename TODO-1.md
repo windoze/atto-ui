@@ -279,10 +279,15 @@
 - 更新 `@atto-ui/core`/native 类型声明和 `@atto-ui/react` 导出；新增 React headless 测试覆盖持续 tick 与事件循环让出，新增 Python stdlib PTY 驱动的 JS 测试覆盖启动绘制、Ctrl+Q 退出以及 alternate-screen/cursor 恢复序列。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`npm run typecheck --prefix packages/react`；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm test --prefix packages/core`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
-### [TODO] NR10 — 审阅 NT10
+### [DONE] NR10 — 审阅 NT10
 - 确认微循环让出事件循环（不阻塞 Promise/IO）。
 - 确认退出路径恢复终端（raw mode/光标/鼠标）。
 - 运行 PTY。
+**完成记录（2026-06-07）**：
+- 审阅 `packages/react/src/render.ts`、`crates/atto-ui-node/src/lib.rs` 与 `src/app/run.rs`，确认 `render()` 以 `tickRate=0` 构造 `AppHost`，用 `setImmediate` 驱动非阻塞 `host.step()`，`RenderHandle.stop()` 与 `step()==false` 路径会卸载 React root、关闭窗口并调用 `AppHost.dispose()` 恢复终端。
+- 补充 `packages/react/__test__/render.cjs`：通过 `setTimeout` 触发 React state 更新并等待 snapshot 变化，覆盖 tick 微循环让出事件循环且不会阻塞 timer/Promise 驱动的 React 更新。
+- 补充 `packages/react/__test__/render_pty.cjs`：在原有 alternate-screen 与 cursor restore 断言外，增加 mouse-capture restore 序列和 PTY raw mode flags 恢复检查。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`（`crates/atto-ui-node`）；`npm test`（`crates/atto-ui-node`）；`npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit`；`npm test --prefix packages/core`；`npm run typecheck --prefix packages/react`；`npm test --prefix packages/react`；`git diff --check`。未找到 `tools/run_fixtures.py`，无独立 fixture 套件可运行。
 
 ### [TODO] NT11 — 事件分发桥（U.3）
 **文件**：`packages/react/src/events.ts`

@@ -29,7 +29,7 @@
 | NT9 | DONE | [DONE] props/子节点增删/事件 op 映射（U.1） | TODO-1.md · 阶段三 M3+M4 |
 | NR9 | DONE | [DONE] 审阅 NT9 | TODO-1.md · 阶段三 M3+M4 |
 | NT10 | DONE | [DONE] `render()` + tick 主循环（U.2） | TODO-1.md · 阶段三 M3+M4 |
-| NR10 | TODO | 审阅 NT10 | TODO-1.md · 阶段三 M3+M4 |
+| NR10 | DONE | [DONE] 审阅 NT10 | TODO-1.md · 阶段三 M3+M4 |
 | NT11 | TODO | 事件分发桥（U.3） | TODO-1.md · 阶段三 M3+M4 |
 | NR11 | TODO | 审阅 NT11 | TODO-1.md · 阶段三 M3+M4 |
 | NT12 | TODO | React 文本组件（U.5） | TODO-1.md · 阶段四 M5 |

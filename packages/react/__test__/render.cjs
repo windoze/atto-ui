@@ -26,14 +26,23 @@ async function waitFor(predicate) {
 }
 
 async function main() {
+  function TickingLabel() {
+    const [text, setText] = React.useState('Waiting for timer')
+    React.useEffect(() => {
+      const timer = setTimeout(() => setText('Timer updated'), 0)
+      return () => clearTimeout(timer)
+    }, [])
+    return React.createElement('label', { text })
+  }
+
   const handle = render(
-    React.createElement('label', { text: 'Rendered through render()' }),
+    React.createElement(TickingLabel),
     { headless: true, cols: 50, rows: 14, idPrefix: 'render' },
   )
 
   const label = await waitFor(() => findNode(handle.host.snapshot().tree, 'render-1'))
   assert.equal(label.name, 'Label')
-  assert.equal(label.text, 'Rendered through render()')
+  await waitFor(() => findNode(handle.host.snapshot().tree, 'render-1')?.text === 'Timer updated')
 
   let promiseRan = false
   Promise.resolve().then(() => {

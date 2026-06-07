@@ -23,6 +23,8 @@ import time
 app = sys.argv[1]
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+raw_mode_mask = termios.ICANON | termios.ECHO
+original_lflag = termios.tcgetattr(master)[3] & raw_mode_mask
 env = os.environ.copy()
 env.setdefault('TERM', 'xterm-256color')
 proc = subprocess.Popen(['node', app], stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=env)
@@ -91,6 +93,13 @@ if b'\x1b[?1049l' not in raw:
     sys.exit(1)
 if b'\x1b[?25h' not in raw:
     sys.stderr.write('missing cursor-show restore sequence\n')
+    sys.exit(1)
+if b'\x1b[?1000l' not in raw:
+    sys.stderr.write('missing mouse-capture restore sequence\n')
+    sys.exit(1)
+restored_lflag = termios.tcgetattr(master)[3] & raw_mode_mask
+if restored_lflag != original_lflag:
+    sys.stderr.write('raw mode flags were not restored\n')
     sys.exit(1)
 `
 
