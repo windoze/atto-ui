@@ -32,7 +32,7 @@ fn enter_in_explorer_opens_file() -> anyhow::Result<()> {
 
     // Click the file entry, then press Enter to open in a tab.
     let click_x = 6;
-    let click_y = 5;
+    let click_y = 4;
     host.click(click_x, click_y)?;
     std::thread::sleep(Duration::from_millis(50));
     host.send_str("\r")?;

@@ -20,7 +20,7 @@ pub enum AppAction {
     SplitHorizontal,
     CloseSplit,
 
-    /// Toggles the standalone Explorer window (file tree) visibility.
+    /// Toggles the docked Explorer window (file tree) visibility.
     ToggleExplorer,
     ExplorerLeft,
     ExplorerRight,

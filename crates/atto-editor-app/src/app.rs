@@ -17,7 +17,7 @@ use atto_ui::dialogs::FileDialog;
 use atto_ui::reactive::{EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::widgets::{Button, TextBox};
-use atto_ui::wm::{Window, WindowId, WindowKind};
+use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKind};
 
 use crate::actions::{AppAction, OpenTarget};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
@@ -35,14 +35,9 @@ impl AttoEditorConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ExplorerDock {
-    #[default]
-    Left,
-    Right,
-}
+const DEFAULT_EXPLORER_DOCK_SIZE: u16 = 34;
+const MIN_EXPLORER_DOCK_SIZE: u16 = 20;
 
-#[derive(Default)]
 struct AppState {
     editor_windows: HashMap<WindowId, EventQueue<EditorWindowCommand>>,
     last_focused_editor: Option<WindowId>,
@@ -50,12 +45,29 @@ struct AppState {
 
     explorer_window: Option<WindowId>,
     explorer_commands: EventQueue<ExplorerWindowCommand>,
-    explorer_rect: Option<Rect>,
-    explorer_dock: ExplorerDock,
+    explorer_dock: DockSide,
+    explorer_size: Option<u16>,
     workspace_roots: Vec<PathBuf>,
 
     open_folder_modal: Option<WindowId>,
     open_file_target: Option<OpenTarget>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            editor_windows: HashMap::new(),
+            last_focused_editor: None,
+            next_window_offset: 0,
+            explorer_window: None,
+            explorer_commands: EventQueue::new(),
+            explorer_dock: DockSide::Left,
+            explorer_size: None,
+            workspace_roots: Vec::new(),
+            open_folder_modal: None,
+            open_file_target: None,
+        }
+    }
 }
 
 pub fn run(config: AttoEditorConfig) -> Result<()> {
@@ -92,7 +104,6 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let menu = build_menu(actions.clone());
                 let mut desktop = Desktop::new(Theme::dark(), menu);
 
-                let work = Desktop::layout(screen).work_area;
                 let (workspace_roots, initial_files) = split_initial_paths(&config.initial_paths);
                 let workspace_roots = workspace_roots
                     .into_iter()
@@ -105,12 +116,14 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 }
 
                 // Explorer window (file tree).
-                let explorer_commands = state.lock().explorer_commands.clone();
-                let dock = state.lock().explorer_dock;
-                let explorer_rect = state
-                    .lock()
-                    .explorer_rect
-                    .unwrap_or_else(|| default_explorer_rect(work, dock));
+                let (explorer_side, explorer_size, explorer_commands) = {
+                    let s = state.lock();
+                    (
+                        s.explorer_dock,
+                        s.explorer_size.unwrap_or(DEFAULT_EXPLORER_DOCK_SIZE),
+                        s.explorer_commands.clone(),
+                    )
+                };
                 let explorer_view = ExplorerWindowView::new(
                     actions.clone(),
                     explorer_commands.clone(),
@@ -120,9 +133,10 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     Window::new(
                         WindowKind::Normal,
                         "Explorer",
-                        explorer_rect,
+                        Rect::default(),
                         Box::new(explorer_view),
                     )
+                    .with_dock(Some(explorer_dock_config(explorer_side, explorer_size)))
                     .with_tag("atto-editor-app-explorer")
                     .with_close_hook({
                         let state = state.clone();
@@ -139,12 +153,13 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 {
                     let mut s = state.lock();
                     s.explorer_window = Some(explorer_id);
-                    s.explorer_rect = Some(explorer_rect);
+                    s.explorer_dock = explorer_side;
+                    s.explorer_size = Some(explorer_size);
                 }
 
                 // Initial editor window.
-                let editor_work = work_without_explorer(work, explorer_rect, dock);
-                let rect = default_editor_rect(editor_work, 0);
+                let work = Desktop::layout(screen).work_area;
+                let rect = default_editor_rect(work, 0);
                 let commands = EventQueue::<EditorWindowCommand>::new();
                 let view = EditorWindowView::new(
                     actions.clone(),
@@ -193,6 +208,8 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                         s.last_focused_editor = Some(focused);
                     }
                 }
+
+                sync_explorer_dock_state(desktop, &state);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
                 for action in actions.drain() {
@@ -402,10 +419,10 @@ fn handle_action(
             toggle_explorer_window(desktop, screen, state, actions.clone());
         }
         AppAction::ExplorerLeft => {
-            dock_explorer_window(desktop, screen, state, ExplorerDock::Left);
+            dock_explorer_window(desktop, screen, state, DockSide::Left);
         }
         AppAction::ExplorerRight => {
-            dock_explorer_window(desktop, screen, state, ExplorerDock::Right);
+            dock_explorer_window(desktop, screen, state, DockSide::Right);
         }
 
         AppAction::OpenFolderDialog => {
@@ -544,19 +561,49 @@ fn add_workspace_root(state: &Arc<Mutex<AppState>>, root: PathBuf) {
     explorer_cmds.push(ExplorerWindowCommand::SetWorkspaceRoots(roots));
 }
 
+fn sync_explorer_dock_state(desktop: &Desktop, state: &Arc<Mutex<AppState>>) {
+    let Some(id) = state.lock().explorer_window else {
+        return;
+    };
+
+    let Some(window) = desktop.wm.window(id) else {
+        state.lock().explorer_window = None;
+        return;
+    };
+
+    if let Some(dock) = window.dock.get() {
+        let mut s = state.lock();
+        s.explorer_dock = dock.side;
+        s.explorer_size = Some(dock.size);
+    }
+}
+
+fn explorer_dock_config(side: DockSide, size: u16) -> WindowDock {
+    WindowDock {
+        side,
+        size,
+        min_size: MIN_EXPLORER_DOCK_SIZE,
+        max_size: None,
+        auto_hide: DockAutoHide::Disabled,
+        handle_label: Some("Explorer".to_string()),
+    }
+}
+
 fn toggle_explorer_window(
     desktop: &mut Desktop,
     screen: Rect,
     state: &Arc<Mutex<AppState>>,
     actions: EventQueue<AppAction>,
 ) {
-    let work = Desktop::layout(screen).work_area;
-
     // Close if currently open.
     let open_id = state.lock().explorer_window;
     if let Some(id) = open_id {
         if let Some(w) = desktop.wm.window(id) {
-            state.lock().explorer_rect = Some(w.rect.get());
+            if let Some(dock) = w.dock.get() {
+                let mut s = state.lock();
+                s.explorer_dock = dock.side;
+                s.explorer_size = Some(dock.size);
+            }
             desktop.wm.close(id);
             state.lock().explorer_window = None;
             return;
@@ -567,12 +614,11 @@ fn toggle_explorer_window(
     }
 
     // Open a new Explorer window.
-    let (dock, rect, roots, explorer_cmds) = {
+    let (side, size, roots, explorer_cmds) = {
         let s = state.lock();
         (
             s.explorer_dock,
-            s.explorer_rect
-                .unwrap_or_else(|| default_explorer_rect(work, s.explorer_dock)),
+            s.explorer_size.unwrap_or(DEFAULT_EXPLORER_DOCK_SIZE),
             s.workspace_roots.clone(),
             s.explorer_commands.clone(),
         )
@@ -580,55 +626,67 @@ fn toggle_explorer_window(
 
     let view = ExplorerWindowView::new(actions.clone(), explorer_cmds, roots);
     let id = desktop.add_window(
-        Window::new(WindowKind::Normal, "Explorer", rect, Box::new(view))
-            .with_tag("atto-editor-app-explorer")
-            .with_close_hook({
-                let state = state.clone();
-                move |id| {
-                    let mut s = state.lock();
-                    if s.explorer_window == Some(id) {
-                        s.explorer_window = None;
-                    }
-                    true
+        Window::new(
+            WindowKind::Normal,
+            "Explorer",
+            Rect::default(),
+            Box::new(view),
+        )
+        .with_dock(Some(explorer_dock_config(side, size)))
+        .with_tag("atto-editor-app-explorer")
+        .with_close_hook({
+            let state = state.clone();
+            move |id| {
+                let mut s = state.lock();
+                if s.explorer_window == Some(id) {
+                    s.explorer_window = None;
                 }
-            }),
+                true
+            }
+        }),
         screen,
     );
 
     let mut s = state.lock();
     s.explorer_window = Some(id);
-    s.explorer_rect = Some(rect);
-    s.explorer_dock = dock;
+    s.explorer_dock = side;
+    s.explorer_size = Some(size);
 }
 
 fn dock_explorer_window(
     desktop: &mut Desktop,
-    screen: Rect,
+    _screen: Rect,
     state: &Arc<Mutex<AppState>>,
-    dock: ExplorerDock,
+    side: DockSide,
 ) {
-    let work = Desktop::layout(screen).work_area;
-
-    let (current_rect, id) = {
+    let (size, id) = {
         let s = state.lock();
         (
-            s.explorer_rect
-                .unwrap_or_else(|| default_explorer_rect(work, dock)),
+            s.explorer_size.unwrap_or(DEFAULT_EXPLORER_DOCK_SIZE),
             s.explorer_window,
         )
     };
 
-    let docked = docked_explorer_rect(work, dock, current_rect.width, current_rect.height);
-
     {
         let mut s = state.lock();
-        s.explorer_dock = dock;
-        s.explorer_rect = Some(docked);
+        s.explorer_dock = side;
+        s.explorer_size = Some(size);
     }
 
     if let Some(id) = id {
         if let Some(w) = desktop.wm.window_mut(id) {
-            w.rect.set(docked);
+            let mut dock = w
+                .dock
+                .get()
+                .unwrap_or_else(|| explorer_dock_config(side, size));
+            dock.side = side;
+            dock.size = size;
+            dock.min_size = MIN_EXPLORER_DOCK_SIZE;
+            dock.auto_hide = DockAutoHide::Disabled;
+            if dock.handle_label.is_none() {
+                dock.handle_label = Some("Explorer".to_string());
+            }
+            w.dock.set(Some(dock));
         } else {
             state.lock().explorer_window = None;
         }
@@ -781,64 +839,6 @@ fn default_editor_rect(work: Rect, offset: u16) -> Rect {
     }
 }
 
-fn docked_explorer_rect(work: Rect, dock: ExplorerDock, width: u16, height: u16) -> Rect {
-    let w = width.min(work.width.saturating_sub(2)).max(20);
-    let h = height.min(work.height.saturating_sub(2)).max(8);
-    let y = work.y.saturating_add(1);
-
-    let x = match dock {
-        ExplorerDock::Left => work.x.saturating_add(1),
-        ExplorerDock::Right => work
-            .x
-            .saturating_add(work.width.saturating_sub(w).saturating_sub(1)),
-    };
-
-    Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    }
-}
-
-fn default_explorer_rect(work: Rect, dock: ExplorerDock) -> Rect {
-    docked_explorer_rect(work, dock, 34, work.height.saturating_sub(2))
-}
-
-fn work_without_explorer(work: Rect, explorer: Rect, dock: ExplorerDock) -> Rect {
-    if work.width == 0 || work.height == 0 || explorer.width == 0 {
-        return work;
-    }
-
-    match dock {
-        ExplorerDock::Left => {
-            let start_x = explorer
-                .x
-                .saturating_add(explorer.width)
-                .saturating_add(1)
-                .max(work.x);
-            let end_x = work.x.saturating_add(work.width);
-            let width = end_x.saturating_sub(start_x);
-            Rect {
-                x: start_x,
-                y: work.y,
-                width,
-                height: work.height,
-            }
-        }
-        ExplorerDock::Right => {
-            let end_x = explorer.x.saturating_sub(1).max(work.x);
-            let width = end_x.saturating_sub(work.x);
-            Rect {
-                x: work.x,
-                y: work.y,
-                width,
-                height: work.height,
-            }
-        }
-    }
-}
-
 fn split_initial_paths(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut roots = Vec::<PathBuf>::new();
     let mut files = Vec::<PathBuf>::new();
@@ -958,6 +958,163 @@ mod tests {
     }
 
     #[test]
+    fn explorer_window_uses_wm_dock_and_editor_clamps_to_reserved_area() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let work = Desktop::layout(screen).work_area;
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let actions: EventQueue<AppAction> = EventQueue::new();
+
+        let explorer = ExplorerWindowView::new(
+            actions.clone(),
+            state.lock().explorer_commands.clone(),
+            Vec::new(),
+        );
+        let explorer_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Explorer",
+                Rect::default(),
+                Box::new(explorer),
+            )
+            .with_dock(Some(explorer_dock_config(
+                DockSide::Left,
+                DEFAULT_EXPLORER_DOCK_SIZE,
+            ))),
+            screen,
+        );
+        state.lock().explorer_window = Some(explorer_id);
+
+        let editor_commands = EventQueue::<EditorWindowCommand>::new();
+        let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
+            atto_ui_editor::EditorThemeSet::default().into();
+        let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
+        let editor = EditorWindowView::new(actions, editor_commands, editor_theme, clipboard);
+        let editor_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Atto Editor",
+                default_editor_rect(work, 0),
+                Box::new(editor),
+            ),
+            screen,
+        );
+
+        assert_eq!(
+            desktop.wm.window(explorer_id).expect("explorer").rect.get(),
+            Rect::new(0, 1, DEFAULT_EXPLORER_DOCK_SIZE, 26)
+        );
+
+        let editor_rect = desktop.wm.window(editor_id).expect("editor").rect.get();
+        assert!(
+            editor_rect.x >= DEFAULT_EXPLORER_DOCK_SIZE,
+            "editor should be clamped into WM effective work area, got {editor_rect:?}"
+        );
+    }
+
+    #[test]
+    fn dock_explorer_window_updates_dock_side_and_preserves_size() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let explorer = ExplorerWindowView::new(
+            actions.clone(),
+            state.lock().explorer_commands.clone(),
+            Vec::new(),
+        );
+        let explorer_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Explorer",
+                Rect::default(),
+                Box::new(explorer),
+            )
+            .with_dock(Some(explorer_dock_config(DockSide::Left, 41))),
+            screen,
+        );
+        {
+            let mut s = state.lock();
+            s.explorer_window = Some(explorer_id);
+            s.explorer_size = Some(41);
+        }
+
+        dock_explorer_window(&mut desktop, screen, &state, DockSide::Right);
+
+        let dock = desktop
+            .wm
+            .window(explorer_id)
+            .expect("explorer")
+            .dock
+            .get()
+            .expect("dock config");
+        assert_eq!(dock.side, DockSide::Right);
+        assert_eq!(dock.size, 41);
+        assert_eq!(state.lock().explorer_dock, DockSide::Right);
+        assert_eq!(state.lock().explorer_size, Some(41));
+
+        let backend = TestBackend::new(screen.width, screen.height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| desktop.draw(f)).expect("draw");
+
+        assert_eq!(
+            desktop.wm.window(explorer_id).expect("explorer").rect.get(),
+            Rect::new(49, 1, 41, 26)
+        );
+    }
+
+    #[test]
+    fn sync_explorer_dock_state_records_resized_dock_size() {
+        let screen = Rect::new(0, 0, 90, 28);
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let menu = MenuBar::new(Vec::new());
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let explorer =
+            ExplorerWindowView::new(actions, state.lock().explorer_commands.clone(), Vec::new());
+        let explorer_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Explorer",
+                Rect::default(),
+                Box::new(explorer),
+            )
+            .with_dock(Some(explorer_dock_config(
+                DockSide::Left,
+                DEFAULT_EXPLORER_DOCK_SIZE,
+            ))),
+            screen,
+        );
+        state.lock().explorer_window = Some(explorer_id);
+
+        let mut dock = desktop
+            .wm
+            .window(explorer_id)
+            .expect("explorer")
+            .dock
+            .get()
+            .expect("dock config");
+        dock.size = 43;
+        dock.side = DockSide::Right;
+        desktop
+            .wm
+            .window_mut(explorer_id)
+            .expect("explorer")
+            .dock
+            .set(Some(dock));
+
+        sync_explorer_dock_state(&desktop, &state);
+
+        let s = state.lock();
+        assert_eq!(s.explorer_dock, DockSide::Right);
+        assert_eq!(s.explorer_size, Some(43));
+    }
+
+    #[test]
     fn explorer_double_click_opens_file_in_editor() -> anyhow::Result<()> {
         let root = unique_temp_dir("explorer_double_click_opens");
         fs::create_dir_all(&root)?;
@@ -983,7 +1140,6 @@ mod tests {
         let work = Desktop::layout(screen).work_area;
 
         // Explorer window.
-        let explorer_rect = default_explorer_rect(work, ExplorerDock::Left);
         let explorer_commands = state.lock().explorer_commands.clone();
         let explorer_view = ExplorerWindowView::new(
             actions.clone(),
@@ -994,18 +1150,19 @@ mod tests {
             Window::new(
                 WindowKind::Normal,
                 "Explorer",
-                explorer_rect,
+                Rect::default(),
                 Box::new(explorer_view),
-            ),
+            )
+            .with_dock(Some(explorer_dock_config(
+                DockSide::Left,
+                DEFAULT_EXPLORER_DOCK_SIZE,
+            ))),
             screen,
         );
         state.lock().explorer_window = Some(explorer_id);
 
         // Editor window.
-        let editor_rect = default_editor_rect(
-            work_without_explorer(work, explorer_rect, ExplorerDock::Left),
-            0,
-        );
+        let editor_rect = default_editor_rect(work, 0);
         let editor_commands: EventQueue<EditorWindowCommand> = EventQueue::new();
         let editor_view = EditorWindowView::new(
             actions.clone(),

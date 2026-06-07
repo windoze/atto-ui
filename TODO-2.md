@@ -304,7 +304,7 @@
 - 新增 WM 回归测试覆盖：四个 `DockSide` 的 resize edge off-by-one、min/max/available clamp、hidden auto-hide 不绘制 view 且仍绘制 handle、visible auto-hide overlay mouse 不穿透 normal window。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T5 — C2 atto-editor-app Explorer 改用 WM Docking
+### [DONE] T5 — C2 atto-editor-app Explorer 改用 WM Docking
 
 **依赖**：T3；若实现 auto-hide UI，则依赖 T4。
 
@@ -341,6 +341,14 @@
 **验收**：
 - app 层不再手算 Explorer reserve。
 - View 菜单中的 Explorer left/right 行为保持可用。
+
+**完成记录（2026-06-08）**：
+- `atto-editor-app` 的 Explorer 创建、toggle 与 Dock Explorer Left/Right 操作改用 WM `WindowDock`；Explorer window 以 `DockSide` + dock size 表达位置和宽度，不再写入手算 dock rect。
+- 移除 app 层 `ExplorerDock`、`default_explorer_rect`、`docked_explorer_rect`、`work_without_explorer`；初始 editor window 使用完整 desktop work area，并交由 WM effective work area clamp，避免 app 手算 Explorer reserve。
+- `AppState` 改为记录 `DockSide` 与上次 dock size；tick 中同步已打开 Explorer 的 dock side/size，保留 dock resize 后 close/reopen 的尺寸语义。
+- 新增 `crates/atto-editor-app/tests/explorer_docking.rs`，覆盖 Explorer 左侧 dock reserve、Dock Explorer Right 后右侧 reserve、terminal resize 后 dock reserve 仍正确；补充 app 单测覆盖 dock helper/action 状态同步。
+- 调整既有 Explorer PTY smoke 测试点击坐标，以匹配 WM dock 贴齐 work area 边缘后的文件树内容行。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R5 — 审阅 T5
 
