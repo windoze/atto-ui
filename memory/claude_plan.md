@@ -40,4 +40,5 @@
 - 已确认仓库中没有 `tools/run_fixtures.py`，无单独 fixture 套件可运行。
 - 已更新 `TODO.md` 与 `TODO-1.md`，`NT17` 已标记为 `[DONE]` 并写入完成记录。
 - 最终 `git diff --check` 已通过；已复查 status/diff/log，未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。
-- 下一步：暂存并提交本任务相关变更。
+- 已提交 NT17 变更：`325cfb0 [NT17] Add React e2e coverage`。
+- 当前任务已完成，按要求停止，不继续 `NR17`。
