@@ -27,3 +27,5 @@ T20 执行要点：
 进度更新：已实现共享语法处理、`SimpleRust`、read-only `EditorView` 配置、`DiffView` hunk 折叠/语法叠加、`RichArtifactViewer` 与 `snapshot_rich_artifact_app`。定向 PTY 初跑通过：`cargo test -p atto-ui-editor --test pty_diff -- --nocapture`、`cargo test -p atto-ui-editor --test pty_rich_artifact -- --nocapture`。
 
 进度更新：验证已完成。通过 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。下一步更新 `TODO.md` 中 T20 标题与完成记录，然后检查 git 差异并提交。
+
+最终状态：`TODO.md` 已将 T20 标记为 `[DONE]` 并写入完成记录；实现与验证结果已提交为 `e3438c0 [T20] Implement rich artifact viewer`。本轮停止在 T20，不执行 R20。
