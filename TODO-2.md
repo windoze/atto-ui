@@ -1464,12 +1464,19 @@
 - 新增 direct renderer/LSP 测试覆盖 virtual text 显示、toggle off 清理与 backing text 不变；新增 PTY 测试覆盖端到端 inlay hints 显示和 F7 toggle off。
 - 验证通过：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor lsp_inlay_hints_render_as_virtual_text_and_toggle_off -- --nocapture`；`cargo test -p atto-ui-editor --test pty_editor pty_editor_inlay_hints_render_and_toggle_off -- --nocapture`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R21 — 审阅 T21
+### [DONE] R21 — 审阅 T21
 
 审阅 T21 改动：
 - 确认 composed grid 渲染不破坏现有 syntax/semantic token style。
 - 确认 virtual text 不参与 copy/save。
 - 确认 viewport range 计算覆盖 soft wrap/folding 情况，至少不 panic。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T21 的 inlay hints config/action wiring、LSP request/response tracking、`get_viewport_content_composed` 渲染路径、style id 映射、toggle-off 清理、mock LSP 与 PTY/direct 测试覆盖。
+- 确认 composed grid 渲染仍通过统一 `style_for_style_ids` 解析 syntax / semantic token / LSP virtual text style；补充回归测试覆盖 inlay hints 与 semantic tokens、folding markers 同时启用时 string token 仍保留绿色 semantic style。
+- 确认 virtual text 只作为 `INLAY_HINTS` decoration/composed virtual cells 渲染，不写入 backing text；copy 使用 editor text ranges，save 使用 tab/workspace backing text。补充回归测试确认 select-all copy 不包含 `: i32` virtual text。
+- 确认 inlay request range 基于当前 viewport visual rows 映射到 logical line offsets，soft wrap 会覆盖可见 visual rows 对应的完整 logical lines，folded viewport 下通过 `visual_to_logical_line` 获取可见 logical line，且既有 folding + 新增组合测试覆盖无 panic 路径。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_inlay_hints_preserve_semantic_styles_and_copy_backing_text -- --nocapture`；`cargo test --workspace --all-targets`。
 
 ---
 

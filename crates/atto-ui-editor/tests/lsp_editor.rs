@@ -384,6 +384,81 @@ fn lsp_inlay_hints_render_as_virtual_text_and_toggle_off() {
 }
 
 #[test]
+fn lsp_inlay_hints_preserve_semantic_styles_and_copy_backing_text() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let original = "fn main() {\n    let s = \"hello\";\n}\n";
+    let text: atto_ui::reactive::Binding<String> = original.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    let clipboard = cfg.clipboard.clone();
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.inlay_hints.enabled.set(true);
+    cfg.inlay_hints.refresh_delay.set(Duration::from_millis(0));
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///mock.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: true,
+        folding_ranges: true,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        let buf = terminal.backend().buffer();
+        let text_start = 6u16;
+        let inlay_colon = buf.cell((text_start + 9, 0)).expect("inlay colon");
+        let string_h = buf.cell((text_start + 13, 1)).expect("string token cell");
+        let fold_marker = buf.cell((3, 0)).expect("fold marker cell");
+
+        if inlay_colon.symbol() == ":"
+            && string_h.symbol() == "h"
+            && string_h.style().fg == Some(Color::Green)
+            && fold_marker.symbol() == "▼"
+        {
+            assert!(view.handle_editor_action(EditorAction::SelectAll));
+            assert!(view.handle_editor_action(EditorAction::Copy));
+            assert_eq!(clipboard.get(), original);
+            assert_eq!(text.get(), original);
+            break;
+        }
+
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for inlay + semantic/folding render; inlay='{}' string_h='{}' fg={:?} fold='{}'",
+                inlay_colon.symbol(),
+                string_h.symbol(),
+                string_h.style().fg,
+                fold_marker.symbol()
+            );
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn lsp_signature_help_popup_triggers_after_open_paren_and_esc_closes() {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 
