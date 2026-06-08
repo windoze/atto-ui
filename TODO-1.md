@@ -57,6 +57,7 @@
 - `ComponentValue` 覆盖 null/bool/i64/u64/f64/string/string[]/string[][]/rect/bytes/list/map 分支；`ComponentSpec` 支持 JS `type` 字段、可选 props/events/children，以及 child layout/meta。
 - 新增 Rust 单测覆盖组件值、组件树、树操作、callback invocation、schema 和错误上下文；转换层代码复用 serde/JSON 桥接，避免 Python binding 的大段手写 dict 解析路径。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-node`；`cargo test --all --all-targets`。
+- 2026-06-08 索引同步：根 `TODO.md` 中 `NT2` 标题已补齐 `[DONE]` 前缀；本轮仅修改任务文档与执行计划文件，未改动编译代码；代码验证复用上述既有绿色结果，未重新运行 cargo/npm 套件。
 
 ### [DONE] NR2 — 审阅 NT2
 - 确认所有 `TreeOp` 变体、`ComponentValue` 分支均覆盖且与核心定义一致。
