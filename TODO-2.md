@@ -1139,13 +1139,20 @@
 - 已新增 editor UTF-16 symbol/jump 单测、picker query-submit 单测、app picker action 单测、search helper 单测，以及 Global Search PTY 测试。
 - 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R16 — 审阅 T16
+### [DONE] R16 — 审阅 T16
 
 审阅 T16 改动：
 - 确认 document symbol range 使用 UTF-16/LSP 坐标转 editor position 正确。
 - 确认 workspace symbol accept 对 unopened file 走统一 `open_path`。
 - 确认 global search 尊重 ignore/.gitignore 或明确 MVP 限制。
 - 确认搜索大文件有 size limit，避免卡 UI。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T16 document/workspace symbol 与 global search picker 变更：document symbols 经 `lsp_document_symbols_to_outline` 转为 editor char offset，accept 使用 selection range offset；workspace symbol accept 将 `file://` URI 转本地路径后走统一 `OpenPathAndJump` / `OpenFileAndJump` 路径，未打开文件也会先打开再跳转，非 `file://` URI 明确显示 unsupported status。
+- 已确认 global search 使用 `ignore::WalkBuilder` 尊重 `.gitignore` / `.ignore` / git exclude，并跳过 `.git`、`target`、`.build`；搜索配置保留单文件 size limit 与结果上限，避免大文件拖慢 UI。
+- 审阅中发现并修复：global search 原先遇到一个小型非 UTF-8 文件会让整次搜索失败；现在仅跳过 UTF-8 解码失败的文件，其他读取错误仍显式返回，并新增覆盖测试。
+- 修复 T16 相关 clippy 问题：将 editor window reactive bindings 分组，避免过长构造函数参数列表；清理 one-item slice clone 警告。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ---
 

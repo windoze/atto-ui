@@ -55,6 +55,38 @@ pub struct EditorWindowHandle {
     pub tab_summaries: Binding<Vec<EditorTabSummary>>,
 }
 
+#[derive(Clone)]
+pub struct EditorWindowBindings {
+    pub diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
+    pub status: Binding<EditorStatus>,
+    pub tab_summaries: Binding<Vec<EditorTabSummary>>,
+}
+
+impl EditorWindowBindings {
+    pub fn new(
+        diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
+        status: Binding<EditorStatus>,
+        tab_summaries: Binding<Vec<EditorTabSummary>>,
+    ) -> Self {
+        Self {
+            diagnostics_summary,
+            status,
+            tab_summaries,
+        }
+    }
+
+    pub fn with_status(
+        diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
+        status: Binding<EditorStatus>,
+    ) -> Self {
+        Self::new(
+            diagnostics_summary,
+            status,
+            Vec::<EditorTabSummary>::new().into(),
+        )
+    }
+}
+
 pub struct EditorWindowView {
     _actions: EventQueue<AppAction>,
     commands: EventQueue<EditorWindowCommand>,
@@ -100,27 +132,23 @@ impl EditorWindowView {
         diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
         status: Binding<EditorStatus>,
     ) -> Self {
-        Self::new_with_status_and_tabs(
+        Self::new_with_bindings(
             actions,
             commands,
             events,
             editor_theme,
             clipboard,
-            diagnostics_summary,
-            status,
-            Vec::<EditorTabSummary>::new().into(),
+            EditorWindowBindings::with_status(diagnostics_summary, status),
         )
     }
 
-    pub fn new_with_status_and_tabs(
+    pub fn new_with_bindings(
         actions: EventQueue<AppAction>,
         commands: EventQueue<EditorWindowCommand>,
         events: EventQueue<atto_ui_editor::EditorEvent>,
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
-        diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
-        status: Binding<EditorStatus>,
-        tab_summaries: Binding<Vec<EditorTabSummary>>,
+        bindings: EditorWindowBindings,
     ) -> Self {
         Self {
             _actions: actions,
@@ -128,9 +156,9 @@ impl EditorWindowView {
             events,
             editor_theme,
             clipboard,
-            diagnostics_summary,
-            status,
-            tab_summaries,
+            diagnostics_summary: bindings.diagnostics_summary,
+            status: bindings.status,
+            tab_summaries: bindings.tab_summaries,
             tab_window: atto_ui::composable::TabWindow::new(),
             tabs: Vec::new(),
             next_tab_id: 1,

@@ -88,7 +88,7 @@
 | T15 | DONE | [DONE] File picker 与 Buffer/tab picker | TODO-2.md · 阶段二 |
 | R15 | DONE | [DONE] 审阅 T15 | TODO-2.md · 阶段二 |
 | T16 | DONE | [DONE] Document symbols / Workspace symbols / Global search pickers | TODO-2.md · 阶段二 |
-| R16 | TODO | 审阅 T16 | TODO-2.md · 阶段二 |
+| R16 | DONE | [DONE] 审阅 T16 | TODO-2.md · 阶段二 |
 | T17 | TODO | Workspace / LSP Bridge 状态层 | TODO-2.md · 阶段三 |
 | R17 | TODO | 审阅 T17 | TODO-2.md · 阶段三 |
 | T18 | TODO | L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用 | TODO-2.md · 阶段三 |

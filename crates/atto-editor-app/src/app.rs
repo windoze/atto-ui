@@ -27,7 +27,9 @@ use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use crate::picker::{PickerEvent, PickerItem, PickerView};
 use crate::search::{GlobalSearchConfig, GlobalSearchResult, search_workspace};
-use crate::window::{EditorStatus, EditorTabSummary, EditorWindowCommand, EditorWindowView};
+use crate::window::{
+    EditorStatus, EditorTabSummary, EditorWindowBindings, EditorWindowCommand, EditorWindowView,
+};
 use crate::workspace::{WorkspaceFileIndex, build_workspace_file_index};
 
 #[derive(Clone, Debug)]
@@ -229,15 +231,17 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     atto_ui_editor::DiagnosticsSummary::default().into();
                 let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
                 let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
-                let view = EditorWindowView::new_with_status_and_tabs(
+                let view = EditorWindowView::new_with_bindings(
                     actions.clone(),
                     commands.clone(),
                     editor_events.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
-                    diagnostics_summary.clone(),
-                    editor_status.clone(),
-                    tab_summaries.clone(),
+                    EditorWindowBindings::new(
+                        diagnostics_summary.clone(),
+                        editor_status.clone(),
+                        tab_summaries.clone(),
+                    ),
                 );
 
                 let id = desktop.add_window(
@@ -2177,15 +2181,17 @@ fn add_editor_window(
         atto_ui_editor::DiagnosticsSummary::default().into();
     let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
     let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
-    let view = EditorWindowView::new_with_status_and_tabs(
+    let view = EditorWindowView::new_with_bindings(
         actions,
         commands.clone(),
         editor_events.clone(),
         editor_theme,
         clipboard,
-        diagnostics_summary.clone(),
-        editor_status.clone(),
-        tab_summaries.clone(),
+        EditorWindowBindings::new(
+            diagnostics_summary.clone(),
+            editor_status.clone(),
+            tab_summaries.clone(),
+        ),
     );
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
@@ -2749,7 +2755,7 @@ mod tests {
             ranges: Vec::new(),
         };
 
-        let items = global_search_items(std::slice::from_ref(&root), &[result.clone()]);
+        let items = global_search_items(std::slice::from_ref(&root), std::slice::from_ref(&result));
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "src/main.rs:5:9");
@@ -2786,15 +2792,17 @@ mod tests {
             atto_ui_editor::DiagnosticsSummary::default().into();
         let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
         let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
-        let editor = EditorWindowView::new_with_status_and_tabs(
+        let editor = EditorWindowView::new_with_bindings(
             actions.clone(),
             commands.clone(),
             editor_events,
             editor_theme.clone(),
             clipboard.clone(),
-            diagnostics_summary.clone(),
-            editor_status.clone(),
-            tab_summaries.clone(),
+            EditorWindowBindings::new(
+                diagnostics_summary.clone(),
+                editor_status.clone(),
+                tab_summaries.clone(),
+            ),
         );
         let editor_id = desktop.add_window(
             Window::new(

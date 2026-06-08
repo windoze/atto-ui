@@ -90,8 +90,11 @@ fn search_root(
             continue;
         }
 
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::InvalidData => continue,
+            Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+        };
         let text = normalize_newlines_to_lf(&text);
         for (line, line_text) in text.lines().enumerate() {
             let ranges = editor_core::search::find_all(line_text, query, options)
@@ -141,7 +144,7 @@ mod tests {
         std::fs::write(root.join("keep.txt"), "TODO keep\n")?;
 
         let results = search_workspace(
-            &[root.clone()],
+            std::slice::from_ref(&root),
             "TODO",
             SearchOptions::default(),
             GlobalSearchConfig::default(),
@@ -168,7 +171,7 @@ mod tests {
         std::fs::write(root.join("b.txt"), "TODO\n")?;
 
         let results = search_workspace(
-            &[root.clone()],
+            std::slice::from_ref(&root),
             "TODO",
             SearchOptions::default(),
             GlobalSearchConfig {
@@ -193,7 +196,7 @@ mod tests {
         std::fs::write(root.join("a.txt"), "first\r\nTODO here\r\n")?;
 
         let results = search_workspace(
-            &[root.clone()],
+            std::slice::from_ref(&root),
             "TODO",
             SearchOptions::default(),
             GlobalSearchConfig::default(),
@@ -202,6 +205,33 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].line, 1);
         assert_eq!(results[0].text, "TODO here");
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn global_search_skips_non_utf8_files_without_failing() -> Result<()> {
+        let root = unique_temp_dir("non_utf8");
+        std::fs::create_dir_all(&root)?;
+        std::fs::write(
+            root.join("binary.bin"),
+            [0xff, 0xfe, b'T', b'O', b'D', b'O'],
+        )?;
+        std::fs::write(root.join("keep.txt"), "TODO keep\n")?;
+
+        let results = search_workspace(
+            std::slice::from_ref(&root),
+            "TODO",
+            SearchOptions::default(),
+            GlobalSearchConfig::default(),
+        )?;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].path.file_name().and_then(|name| name.to_str()),
+            Some("keep.txt")
+        );
 
         std::fs::remove_dir_all(root)?;
         Ok(())
