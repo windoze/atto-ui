@@ -20,11 +20,13 @@ use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::widgets::{Button, TextBox};
 use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKind};
+use editor_core::{DocumentOutline, DocumentSymbol, SearchOptions, SymbolKind, WorkspaceSymbol};
 
-use crate::actions::{AppAction, OpenTarget};
+use crate::actions::{AppAction, JumpTarget, OpenTarget};
 use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use crate::picker::{PickerEvent, PickerItem, PickerView};
+use crate::search::{GlobalSearchConfig, GlobalSearchResult, search_workspace};
 use crate::window::{EditorStatus, EditorTabSummary, EditorWindowCommand, EditorWindowView};
 use crate::workspace::{WorkspaceFileIndex, build_workspace_file_index};
 
@@ -43,13 +45,17 @@ impl AttoEditorConfig {
 const DEFAULT_EXPLORER_DOCK_SIZE: u16 = 34;
 const MIN_EXPLORER_DOCK_SIZE: u16 = 20;
 const MAX_FILE_PICKER_ENTRIES: usize = 20_000;
+const MAX_SYMBOL_PICKER_RESULTS: usize = 300;
+const MAX_GLOBAL_SEARCH_RESULTS: usize = 1_000;
 
 struct AppState {
     editor_windows: HashMap<WindowId, EventQueue<EditorWindowCommand>>,
+    editor_events: HashMap<WindowId, EventQueue<atto_ui_editor::EditorEvent>>,
     editor_diagnostics: HashMap<WindowId, Binding<atto_ui_editor::DiagnosticsSummary>>,
     editor_statuses: HashMap<WindowId, Binding<EditorStatus>>,
     editor_tab_summaries: HashMap<WindowId, Binding<Vec<EditorTabSummary>>>,
     last_focused_editor: Option<WindowId>,
+    status_message: Option<String>,
     next_window_offset: u16,
 
     explorer_window: Option<WindowId>,
@@ -70,16 +76,27 @@ struct AppState {
     buffer_picker_window: Option<WindowId>,
     buffer_picker_restore_focus: Option<WindowId>,
     buffer_picker_events: EventQueue<PickerEvent<AppAction>>,
+    document_symbol_picker_window: Option<WindowId>,
+    document_symbol_picker_restore_focus: Option<WindowId>,
+    document_symbol_picker_events: EventQueue<PickerEvent<AppAction>>,
+    workspace_symbol_picker_window: Option<WindowId>,
+    workspace_symbol_picker_restore_focus: Option<WindowId>,
+    workspace_symbol_picker_events: EventQueue<PickerEvent<AppAction>>,
+    global_search_picker_window: Option<WindowId>,
+    global_search_picker_restore_focus: Option<WindowId>,
+    global_search_picker_events: EventQueue<PickerEvent<AppAction>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             editor_windows: HashMap::new(),
+            editor_events: HashMap::new(),
             editor_diagnostics: HashMap::new(),
             editor_statuses: HashMap::new(),
             editor_tab_summaries: HashMap::new(),
             last_focused_editor: None,
+            status_message: None,
             next_window_offset: 0,
             explorer_window: None,
             explorer_commands: EventQueue::new(),
@@ -98,6 +115,15 @@ impl Default for AppState {
             buffer_picker_window: None,
             buffer_picker_restore_focus: None,
             buffer_picker_events: EventQueue::new(),
+            document_symbol_picker_window: None,
+            document_symbol_picker_restore_focus: None,
+            document_symbol_picker_events: EventQueue::new(),
+            workspace_symbol_picker_window: None,
+            workspace_symbol_picker_restore_focus: None,
+            workspace_symbol_picker_events: EventQueue::new(),
+            global_search_picker_window: None,
+            global_search_picker_restore_focus: None,
+            global_search_picker_events: EventQueue::new(),
         }
     }
 }
@@ -198,6 +224,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let work = Desktop::layout(screen).work_area;
                 let rect = default_editor_rect(work, 0);
                 let commands = EventQueue::<EditorWindowCommand>::new();
+                let editor_events = EventQueue::<atto_ui_editor::EditorEvent>::new();
                 let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
                     atto_ui_editor::DiagnosticsSummary::default().into();
                 let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
@@ -205,6 +232,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let view = EditorWindowView::new_with_status_and_tabs(
                     actions.clone(),
                     commands.clone(),
+                    editor_events.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
                     diagnostics_summary.clone(),
@@ -227,6 +255,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 {
                     let mut s = state.lock();
                     s.editor_windows.insert(id, commands.clone());
+                    s.editor_events.insert(id, editor_events);
                     s.editor_diagnostics.insert(id, diagnostics_summary);
                     s.editor_statuses.insert(id, editor_status);
                     s.editor_tab_summaries.insert(id, tab_summaries);
@@ -269,6 +298,10 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 process_command_palette_events(desktop, &state, &actions);
                 process_file_picker_events(desktop, &state, &actions);
                 process_buffer_picker_events(desktop, &state, &actions);
+                process_document_symbol_picker_events(desktop, &state, &actions);
+                process_workspace_symbol_picker_events(desktop, screen, &state, &actions);
+                process_global_search_picker_events(desktop, screen, &state, &actions);
+                process_editor_events(desktop, screen, &state);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
                 for action in actions.drain() {
@@ -398,6 +431,24 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
             ],
         ),
         MenuSpec::new(
+            "&Navigate",
+            vec![
+                MenuItem::action("Document Symbols…", {
+                    let actions = actions.clone();
+                    move || actions.push(AppAction::OpenDocumentSymbolPicker)
+                }),
+                MenuItem::action("Workspace Symbols…", {
+                    let actions = actions.clone();
+                    move || actions.push(AppAction::OpenWorkspaceSymbolPicker)
+                }),
+                MenuItem::action("Global Search…", {
+                    let actions = actions.clone();
+                    move || actions.push(AppAction::OpenGlobalSearch)
+                })
+                .accelerator("Ctrl+Shift+F"),
+            ],
+        ),
+        MenuSpec::new(
             "&Split",
             vec![
                 MenuItem::action("Split Vertical", {
@@ -483,6 +534,15 @@ fn handle_action(
         AppAction::OpenBufferPicker => {
             open_buffer_picker(desktop, screen, state);
         }
+        AppAction::OpenDocumentSymbolPicker => {
+            request_document_symbols(desktop, state);
+        }
+        AppAction::OpenWorkspaceSymbolPicker => {
+            open_workspace_symbol_query_picker(desktop, screen, state);
+        }
+        AppAction::OpenGlobalSearch => {
+            open_global_search_query_picker(desktop, screen, state);
+        }
 
         AppAction::CloseTab => {
             if let Some(cmds) = active_editor_commands(desktop, state) {
@@ -566,6 +626,25 @@ fn handle_action(
                 path,
             );
         }
+        AppAction::OpenPathAndJump { path, target } => {
+            open_path_with_jump(
+                desktop,
+                screen,
+                state,
+                actions.clone(),
+                editor_theme,
+                clipboard,
+                path,
+                target,
+            );
+        }
+        AppAction::JumpTo(target) => {
+            if let Some(cmds) = active_editor_commands(desktop, state) {
+                cmds.push(EditorWindowCommand::JumpTo(target));
+            } else {
+                set_status_message(state, "No active editor for jump target");
+            }
+        }
         AppAction::SelectEditorTab { window, tab_id } => {
             if let Some(cmds) = state.lock().editor_windows.get(&window).cloned()
                 && desktop.wm.window(window).is_some()
@@ -573,6 +652,9 @@ fn handle_action(
                 desktop.focus_window(window);
                 cmds.push(EditorWindowCommand::SelectTabById(tab_id));
             }
+        }
+        AppAction::ShowStatusMessage(message) => {
+            set_status_message(state, message);
         }
     }
 
@@ -673,6 +755,7 @@ fn process_command_palette_events(
                 restore_command_palette_focus(desktop, state);
                 execute_command_action(desktop, state, actions, action);
             }
+            PickerEvent::Submitted(_) => restore_command_palette_focus(desktop, state),
             PickerEvent::Closed => restore_command_palette_focus(desktop, state),
         }
     }
@@ -763,6 +846,7 @@ fn process_file_picker_events(
                 restore_file_picker_focus(desktop, state);
                 actions.push(action);
             }
+            PickerEvent::Submitted(_) => restore_file_picker_focus(desktop, state),
             PickerEvent::Closed => restore_file_picker_focus(desktop, state),
         }
     }
@@ -886,6 +970,7 @@ fn process_buffer_picker_events(
                 restore_buffer_picker_focus(desktop, state);
                 actions.push(action);
             }
+            PickerEvent::Submitted(_) => restore_buffer_picker_focus(desktop, state),
             PickerEvent::Closed => restore_buffer_picker_focus(desktop, state),
         }
     }
@@ -993,6 +1078,605 @@ fn buffer_picker_item(window: WindowId, summary: EditorTabSummary) -> PickerItem
     .subtitle(format!("{active} · Window {} · {path}", window.raw()))
 }
 
+fn process_document_symbol_picker_events(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().document_symbol_picker_events.clone();
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_document_symbol_picker_focus(desktop, state);
+                actions.push(action);
+            }
+            PickerEvent::Submitted(_) => restore_document_symbol_picker_focus(desktop, state),
+            PickerEvent::Closed => restore_document_symbol_picker_focus(desktop, state),
+        }
+    }
+}
+
+fn restore_document_symbol_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.document_symbol_picker_window = None;
+        s.document_symbol_picker_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn request_document_symbols(desktop: &Desktop, state: &Arc<Mutex<AppState>>) {
+    if let Some(cmds) = active_editor_commands(desktop, state) {
+        set_status_message(state, "Requesting document symbols…");
+        cmds.push(EditorWindowCommand::RequestDocumentSymbols);
+    } else {
+        set_status_message(state, "No active editor for document symbols");
+    }
+}
+
+fn open_document_symbol_results_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    outline: DocumentOutline,
+) {
+    if let Some(id) = state.lock().document_symbol_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().document_symbol_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.document_symbol_picker_events.clone();
+        let _ = events.drain();
+        s.document_symbol_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new(
+        "Document Symbols",
+        document_symbol_items(&outline),
+        events.clone(),
+    )
+    .placeholder("Type a document symbol")
+    .max_results(MAX_SYMBOL_PICKER_RESULTS);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 82, 20);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Document Symbols", rect, Box::new(view))
+            .with_tag("atto-editor-app-document-symbols")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.document_symbol_picker_window == Some(id) {
+                        s.document_symbol_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().document_symbol_picker_window = Some(id);
+}
+
+fn document_symbol_items(outline: &DocumentOutline) -> Vec<PickerItem<AppAction>> {
+    let mut items = Vec::new();
+    for symbol in &outline.symbols {
+        push_document_symbol_item(&mut items, symbol, 0);
+    }
+    items
+}
+
+fn push_document_symbol_item(
+    items: &mut Vec<PickerItem<AppAction>>,
+    symbol: &DocumentSymbol,
+    depth: usize,
+) {
+    let title = format!("{}{}", "  ".repeat(depth), symbol.name);
+    let mut subtitle = symbol_kind_label(symbol.kind).to_string();
+    if let Some(detail) = &symbol.detail
+        && !detail.is_empty()
+    {
+        subtitle.push_str(" · ");
+        subtitle.push_str(detail);
+    }
+    items.push(
+        PickerItem::new(
+            title,
+            AppAction::JumpTo(JumpTarget::CharOffset {
+                offset: symbol.selection_range.start,
+            }),
+        )
+        .subtitle(subtitle),
+    );
+    for child in &symbol.children {
+        push_document_symbol_item(items, child, depth + 1);
+    }
+}
+
+fn process_workspace_symbol_picker_events(
+    desktop: &mut Desktop,
+    _screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().workspace_symbol_picker_events.clone();
+    let mut submitted_query = None;
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_workspace_symbol_picker_focus(desktop, state);
+                actions.push(action);
+            }
+            PickerEvent::Submitted(query) => {
+                restore_workspace_symbol_picker_focus(desktop, state);
+                submitted_query = Some(query);
+            }
+            PickerEvent::Closed => restore_workspace_symbol_picker_focus(desktop, state),
+        }
+    }
+    if let Some(query) = submitted_query {
+        request_workspace_symbols(desktop, state, query);
+    }
+}
+
+fn restore_workspace_symbol_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.workspace_symbol_picker_window = None;
+        s.workspace_symbol_picker_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn open_workspace_symbol_query_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
+    if let Some(id) = state.lock().workspace_symbol_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().workspace_symbol_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.workspace_symbol_picker_events.clone();
+        let _ = events.drain();
+        s.workspace_symbol_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::<AppAction>::new("Workspace Symbols", Vec::new(), events.clone())
+        .placeholder("Type a symbol query and press Enter")
+        .submit_query_on_empty(true);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 82, 12);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Workspace Symbols", rect, Box::new(view))
+            .with_tag("atto-editor-app-workspace-symbols")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.workspace_symbol_picker_window == Some(id) {
+                        s.workspace_symbol_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().workspace_symbol_picker_window = Some(id);
+}
+
+fn request_workspace_symbols(
+    desktop: &Desktop,
+    state: &Arc<Mutex<AppState>>,
+    query: impl Into<String>,
+) {
+    let query = query.into();
+    if query.trim().is_empty() {
+        set_status_message(state, "Workspace symbol query is empty");
+        return;
+    }
+    if let Some(cmds) = active_editor_commands(desktop, state) {
+        set_status_message(
+            state,
+            format!("Requesting workspace symbols for “{query}”…"),
+        );
+        cmds.push(EditorWindowCommand::RequestWorkspaceSymbols(query));
+    } else {
+        set_status_message(state, "No active editor for workspace symbols");
+    }
+}
+
+fn open_workspace_symbol_results_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    symbols: Vec<WorkspaceSymbol>,
+) {
+    if let Some(id) = state.lock().workspace_symbol_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().workspace_symbol_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.workspace_symbol_picker_events.clone();
+        let _ = events.drain();
+        s.workspace_symbol_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new(
+        "Workspace Symbols",
+        workspace_symbol_items(&symbols),
+        events.clone(),
+    )
+    .placeholder("Type to filter workspace symbols")
+    .max_results(MAX_SYMBOL_PICKER_RESULTS);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 88, 20);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Workspace Symbols", rect, Box::new(view))
+            .with_tag("atto-editor-app-workspace-symbols")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.workspace_symbol_picker_window == Some(id) {
+                        s.workspace_symbol_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().workspace_symbol_picker_window = Some(id);
+}
+
+fn workspace_symbol_items(symbols: &[WorkspaceSymbol]) -> Vec<PickerItem<AppAction>> {
+    symbols
+        .iter()
+        .map(|symbol| {
+            let action = match editor_core_lsp::file_uri_to_path(&symbol.location.uri) {
+                Some(path) => AppAction::OpenPathAndJump {
+                    path,
+                    target: JumpTarget::Utf16Position {
+                        line: symbol.location.range.start.line,
+                        character: symbol.location.range.start.character,
+                    },
+                },
+                None => AppAction::ShowStatusMessage(format!(
+                    "Unsupported workspace symbol URI: {}",
+                    symbol.location.uri
+                )),
+            };
+            let subtitle = workspace_symbol_subtitle(symbol);
+            PickerItem::new(symbol.name.clone(), action).subtitle(subtitle)
+        })
+        .collect()
+}
+
+fn workspace_symbol_subtitle(symbol: &WorkspaceSymbol) -> String {
+    let mut parts = vec![symbol_kind_label(symbol.kind).to_string()];
+    if let Some(container) = &symbol.container_name
+        && !container.is_empty()
+    {
+        parts.push(container.clone());
+    }
+    if let Some(detail) = &symbol.detail
+        && !detail.is_empty()
+    {
+        parts.push(detail.clone());
+    }
+    parts.push(format!(
+        "{}:{}:{}",
+        symbol.location.uri,
+        symbol.location.range.start.line.saturating_add(1),
+        symbol.location.range.start.character.saturating_add(1)
+    ));
+    parts.join(" · ")
+}
+
+fn process_global_search_picker_events(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().global_search_picker_events.clone();
+    let mut submitted_query = None;
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_global_search_picker_focus(desktop, state);
+                actions.push(action);
+            }
+            PickerEvent::Submitted(query) => {
+                restore_global_search_picker_focus(desktop, state);
+                submitted_query = Some(query);
+            }
+            PickerEvent::Closed => restore_global_search_picker_focus(desktop, state),
+        }
+    }
+    if let Some(query) = submitted_query {
+        open_global_search_results_for_query(desktop, screen, state, query);
+    }
+}
+
+fn restore_global_search_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.global_search_picker_window = None;
+        s.global_search_picker_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn open_global_search_query_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+) {
+    if let Some(id) = state.lock().global_search_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().global_search_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.global_search_picker_events.clone();
+        let _ = events.drain();
+        s.global_search_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::<AppAction>::new("Global Search", Vec::new(), events.clone())
+        .placeholder("Type search text and press Enter")
+        .submit_query_on_empty(true);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 82, 12);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Global Search", rect, Box::new(view))
+            .with_tag("atto-editor-app-global-search")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.global_search_picker_window == Some(id) {
+                        s.global_search_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().global_search_picker_window = Some(id);
+}
+
+fn open_global_search_results_for_query(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    query: String,
+) {
+    let roots = {
+        let s = state.lock();
+        canonical_workspace_roots(&s.workspace_roots)
+    };
+    if roots.is_empty() {
+        set_status_message(state, "No workspace roots for global search");
+        return;
+    }
+
+    let config = GlobalSearchConfig {
+        max_total_matches: MAX_GLOBAL_SEARCH_RESULTS,
+        ..GlobalSearchConfig::default()
+    };
+    match search_workspace(&roots, &query, SearchOptions::default(), config) {
+        Ok(results) => {
+            let count = results.len();
+            open_global_search_results_picker(desktop, screen, state, &roots, results);
+            set_status_message(state, format!("Global search found {count} result(s)"));
+        }
+        Err(err) => {
+            set_status_message(state, format!("Global search failed: {err:#}"));
+        }
+    }
+}
+
+fn open_global_search_results_picker(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    roots: &[PathBuf],
+    results: Vec<GlobalSearchResult>,
+) {
+    if let Some(id) = state.lock().global_search_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().global_search_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.global_search_picker_events.clone();
+        let _ = events.drain();
+        s.global_search_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new(
+        "Global Search",
+        global_search_items(roots, &results),
+        events.clone(),
+    )
+    .placeholder("Type to filter search results")
+    .max_results(MAX_GLOBAL_SEARCH_RESULTS);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 90, 22);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Global Search", rect, Box::new(view))
+            .with_tag("atto-editor-app-global-search")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.global_search_picker_window == Some(id) {
+                        s.global_search_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().global_search_picker_window = Some(id);
+}
+
+fn global_search_items(
+    roots: &[PathBuf],
+    results: &[GlobalSearchResult],
+) -> Vec<PickerItem<AppAction>> {
+    results
+        .iter()
+        .map(|result| {
+            let display_path = display_path_for_roots(&result.path, roots);
+            PickerItem::new(
+                format!("{}:{}:{}", display_path, result.line + 1, result.column + 1),
+                AppAction::OpenPathAndJump {
+                    path: result.path.clone(),
+                    target: JumpTarget::CharPosition {
+                        line: result.line,
+                        column: result.column,
+                    },
+                },
+            )
+            .subtitle(result.text.trim().to_string())
+        })
+        .collect()
+}
+
+fn display_path_for_roots(path: &Path, roots: &[PathBuf]) -> String {
+    for root in roots {
+        if let Ok(rel) = path.strip_prefix(root)
+            && !rel.as_os_str().is_empty()
+        {
+            return rel.to_string_lossy().to_string();
+        }
+    }
+    path.to_string_lossy().to_string()
+}
+
+fn process_editor_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+    let queues = {
+        let s = state.lock();
+        s.editor_events
+            .iter()
+            .map(|(id, events)| (*id, events.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    for (window, events) in queues {
+        if desktop.wm.window(window).is_none() {
+            continue;
+        }
+        for event in events.drain() {
+            match event {
+                atto_ui_editor::EditorEvent::LspGoto { .. } => {}
+                atto_ui_editor::EditorEvent::DocumentSymbols { outline } => {
+                    open_document_symbol_results_picker(desktop, screen, state, outline);
+                }
+                atto_ui_editor::EditorEvent::WorkspaceSymbols { query: _, symbols } => {
+                    open_workspace_symbol_results_picker(desktop, screen, state, symbols);
+                }
+                atto_ui_editor::EditorEvent::CodeActionMessage { message } => {
+                    set_status_message(state, message);
+                }
+            }
+        }
+    }
+}
+
+fn symbol_kind_label(kind: SymbolKind) -> &'static str {
+    match kind {
+        SymbolKind::File => "File",
+        SymbolKind::Module => "Module",
+        SymbolKind::Namespace => "Namespace",
+        SymbolKind::Package => "Package",
+        SymbolKind::Class => "Class",
+        SymbolKind::Method => "Method",
+        SymbolKind::Property => "Property",
+        SymbolKind::Field => "Field",
+        SymbolKind::Constructor => "Constructor",
+        SymbolKind::Enum => "Enum",
+        SymbolKind::Interface => "Interface",
+        SymbolKind::Function => "Function",
+        SymbolKind::Variable => "Variable",
+        SymbolKind::Constant => "Constant",
+        SymbolKind::String => "String",
+        SymbolKind::Number => "Number",
+        SymbolKind::Boolean => "Boolean",
+        SymbolKind::Array => "Array",
+        SymbolKind::Object => "Object",
+        SymbolKind::Key => "Key",
+        SymbolKind::Null => "Null",
+        SymbolKind::EnumMember => "EnumMember",
+        SymbolKind::Struct => "Struct",
+        SymbolKind::Event => "Event",
+        SymbolKind::Operator => "Operator",
+        SymbolKind::TypeParameter => "TypeParameter",
+        SymbolKind::Custom(_) => "Custom",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn open_path(
     desktop: &mut Desktop,
@@ -1054,6 +1738,49 @@ fn open_path(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn open_path_with_jump(
+    desktop: &mut Desktop,
+    screen: Rect,
+    state: &Arc<Mutex<AppState>>,
+    actions: EventQueue<AppAction>,
+    editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet>,
+    clipboard: atto_ui::reactive::Binding<String>,
+    path: PathBuf,
+    target: JumpTarget,
+) {
+    let path = canonicalize_best_effort(&path);
+
+    if path.is_dir() {
+        add_workspace_root(state, path);
+        set_status_message(state, "Opened folder; no jump target applied");
+        return;
+    }
+
+    let should_add_root = {
+        let s = state.lock();
+        !s.workspace_roots.iter().any(|root| path.starts_with(root))
+    };
+    if should_add_root {
+        add_workspace_root(state, parent_dir_or_cwd(&path));
+    }
+
+    if let Some(cmds) = active_editor_commands(desktop, state) {
+        cmds.push(EditorWindowCommand::OpenFileAndJump { path, target });
+    } else {
+        let cmds = add_editor_window(
+            desktop,
+            screen,
+            state,
+            actions,
+            editor_theme,
+            clipboard,
+            Vec::new(),
+        );
+        cmds.push(EditorWindowCommand::OpenFileAndJump { path, target });
+    }
+}
+
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -1077,6 +1804,7 @@ fn add_workspace_root(state: &Arc<Mutex<AppState>>, root: PathBuf) {
 fn remove_editor_window_state(state: &Arc<Mutex<AppState>>, id: WindowId) {
     let mut s = state.lock();
     s.editor_windows.remove(&id);
+    s.editor_events.remove(&id);
     s.editor_diagnostics.remove(&id);
     s.editor_statuses.remove(&id);
     s.editor_tab_summaries.remove(&id);
@@ -1258,9 +1986,17 @@ fn active_editor_commands(
 fn update_diagnostics_statusbar(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
     let summary = active_editor_diagnostics_summary(desktop, state).unwrap_or_default();
     let editor_status = active_editor_status(desktop, state).unwrap_or_default();
-    desktop
-        .status
-        .set_segments(status_segments_for(desktop.mode, editor_status, summary));
+    let status_message = state.lock().status_message.clone();
+    desktop.status.set_segments(status_segments_for(
+        desktop.mode,
+        editor_status,
+        summary,
+        status_message,
+    ));
+}
+
+fn set_status_message(state: &Arc<Mutex<AppState>>, message: impl Into<String>) {
+    state.lock().status_message = Some(message.into());
 }
 
 fn status_left_for_mode(mode: DesktopMode) -> &'static str {
@@ -1281,6 +2017,7 @@ fn status_segments_for(
     mode: DesktopMode,
     editor_status: EditorStatus,
     summary: atto_ui_editor::DiagnosticsSummary,
+    status_message: Option<String>,
 ) -> Vec<StatusSegment> {
     let mut segments = vec![
         StatusSegment::new("app", "Atto Editor")
@@ -1297,6 +2034,17 @@ fn status_segments_for(
             StatusSegment::new("dirty", "*")
                 .style("status-segment-warning")
                 .priority(90),
+        );
+    }
+
+    if let Some(message) = status_message
+        && !message.is_empty()
+    {
+        segments.push(
+            StatusSegment::new("message", message)
+                .style("status-segment-warning")
+                .priority(95)
+                .min_width(8),
         );
     }
 
@@ -1417,13 +2165,14 @@ fn add_editor_window(
     editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet>,
     clipboard: atto_ui::reactive::Binding<String>,
     initial_files: Vec<PathBuf>,
-) {
+) -> EventQueue<EditorWindowCommand> {
     let work = Desktop::layout(screen).work_area;
     let offset = state.lock().next_window_offset;
     state.lock().next_window_offset = offset.saturating_add(2);
 
     let rect = default_editor_rect(work, offset);
     let commands = EventQueue::<EditorWindowCommand>::new();
+    let editor_events = EventQueue::<atto_ui_editor::EditorEvent>::new();
     let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
         atto_ui_editor::DiagnosticsSummary::default().into();
     let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
@@ -1431,6 +2180,7 @@ fn add_editor_window(
     let view = EditorWindowView::new_with_status_and_tabs(
         actions,
         commands.clone(),
+        editor_events.clone(),
         editor_theme,
         clipboard,
         diagnostics_summary.clone(),
@@ -1452,6 +2202,7 @@ fn add_editor_window(
     {
         let mut s = state.lock();
         s.editor_windows.insert(id, commands.clone());
+        s.editor_events.insert(id, editor_events);
         s.editor_diagnostics.insert(id, diagnostics_summary);
         s.editor_statuses.insert(id, editor_status);
         s.editor_tab_summaries.insert(id, tab_summaries);
@@ -1461,6 +2212,8 @@ fn add_editor_window(
     for file in initial_files {
         commands.push(EditorWindowCommand::OpenFile(file));
     }
+
+    commands
 }
 
 fn build_open_folder_view(
@@ -1734,6 +2487,29 @@ mod tests {
     }
 
     #[test]
+    fn global_search_shortcut_dispatches_open_action() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_shift_key('f'),
+            screen,
+            &DesktopEventResult::ignored(),
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("global search shortcut handled");
+
+        assert_eq!(actions.drain(), vec![AppAction::OpenGlobalSearch]);
+    }
+
+    #[test]
     fn command_palette_items_come_from_command_registry() {
         let items = command_palette_items();
 
@@ -1746,6 +2522,9 @@ mod tests {
         assert!(items.iter().any(|item| item.title == "File Picker"));
         assert!(items.iter().any(|item| item.title == "Command Palette"));
         assert!(items.iter().any(|item| item.title == "Buffer Picker"));
+        assert!(items.iter().any(|item| item.title == "Document Symbols"));
+        assert!(items.iter().any(|item| item.title == "Workspace Symbols"));
+        assert!(items.iter().any(|item| item.title == "Global Search"));
     }
 
     #[test]
@@ -1911,6 +2690,79 @@ mod tests {
     }
 
     #[test]
+    fn document_symbol_items_jump_to_selection_offset() {
+        let outline = DocumentOutline::new(vec![DocumentSymbol {
+            name: "main".to_string(),
+            detail: Some("fn()".to_string()),
+            kind: SymbolKind::Function,
+            range: editor_core::SymbolRange::new(0, 10),
+            selection_range: editor_core::SymbolRange::new(3, 7),
+            children: Vec::new(),
+            data_json: None,
+        }]);
+
+        let items = document_symbol_items(&outline);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "main");
+        assert_eq!(
+            items[0].action,
+            AppAction::JumpTo(JumpTarget::CharOffset { offset: 3 })
+        );
+    }
+
+    #[test]
+    fn workspace_symbol_items_reject_non_file_uris_explicitly() {
+        let symbols = vec![WorkspaceSymbol {
+            name: "remote".to_string(),
+            detail: None,
+            kind: SymbolKind::Function,
+            location: editor_core::SymbolLocation {
+                uri: "untitled://remote".to_string(),
+                range: editor_core::Utf16Range::new(
+                    editor_core::Utf16Position::new(2, 4),
+                    editor_core::Utf16Position::new(2, 10),
+                ),
+            },
+            container_name: None,
+            data_json: None,
+        }];
+
+        let items = workspace_symbol_items(&symbols);
+
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0].action,
+            AppAction::ShowStatusMessage(message)
+                if message.contains("Unsupported workspace symbol URI")
+        ));
+    }
+
+    #[test]
+    fn global_search_items_open_file_and_jump_to_match() {
+        let root = PathBuf::from("/tmp/workspace");
+        let result = GlobalSearchResult {
+            path: root.join("src/main.rs"),
+            line: 4,
+            column: 8,
+            text: "let todo = \"TODO\";".to_string(),
+            ranges: Vec::new(),
+        };
+
+        let items = global_search_items(std::slice::from_ref(&root), &[result.clone()]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "src/main.rs:5:9");
+        assert_eq!(
+            items[0].action,
+            AppAction::OpenPathAndJump {
+                path: result.path,
+                target: JumpTarget::CharPosition { line: 4, column: 8 },
+            }
+        );
+    }
+
+    #[test]
     fn buffer_picker_selects_tab_by_stable_id_after_close() -> anyhow::Result<()> {
         let root = unique_temp_dir("buffer_picker_tabs");
         fs::create_dir_all(&root)?;
@@ -1929,6 +2781,7 @@ mod tests {
             atto_ui_editor::EditorThemeSet::default().into();
         let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
         let commands = EventQueue::<EditorWindowCommand>::new();
+        let editor_events = EventQueue::<atto_ui_editor::EditorEvent>::new();
         let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
             atto_ui_editor::DiagnosticsSummary::default().into();
         let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
@@ -1936,6 +2789,7 @@ mod tests {
         let editor = EditorWindowView::new_with_status_and_tabs(
             actions.clone(),
             commands.clone(),
+            editor_events,
             editor_theme.clone(),
             clipboard.clone(),
             diagnostics_summary.clone(),
@@ -2339,6 +3193,7 @@ mod tests {
         let editor = EditorWindowView::new_with_status(
             actions,
             editor_commands.clone(),
+            EventQueue::<atto_ui_editor::EditorEvent>::new(),
             editor_theme,
             clipboard,
             diagnostics_summary.clone(),

@@ -1082,7 +1082,7 @@
 - 未发现需要修改 T15 功能代码的问题。
 - 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo clippy --workspace --all-targets -- -D warnings`；最终 `cargo test --all --all-targets`。
 
-### [TODO] T16 — Document symbols / Workspace symbols / Global search pickers
+### [DONE] T16 — Document symbols / Workspace symbols / Global search pickers
 
 **依赖**：T14；workspace symbols 最好依赖 T20/T21 workspace LSP refactor，MVP 可单文档 LSP。
 
@@ -1130,6 +1130,14 @@
 **验收**：
 - LSP response 异步到达时，如果 picker 已关闭，不应 panic。
 - Workspace symbol URI 非 file:// 时明确提示 unsupported。
+
+**完成记录（2026-06-09）**：
+- 已为 `atto-ui-editor` 增加 Document Symbols / Workspace Symbols LSP request 与 response 事件，document symbol response 通过 `lsp_document_symbols_to_outline` 转换，workspace symbol response 通过 `lsp_workspace_symbols_to_results` 转换。
+- 已在 `atto-editor-app` 中桥接 editor events，新增 Document Symbols、Workspace Symbols query/results、Global Search query/results picker 生命周期，并将 accept 动作接到 active editor jump 或统一 open-and-jump 路径。
+- Workspace symbol accept 使用 `file://` URI 转本地路径并保留 UTF-16 坐标到 editor 侧转换；非 `file://` URI 会在 status bar 明确提示 unsupported。
+- Global Search 使用本地 Rust helper，尊重 `.gitignore`/`.ignore`/git exclude，跳过 `.git`/`target`/`.build`，包含单文件大小限制与全局结果上限，且只在确认输入后执行搜索。
+- 已新增 editor UTF-16 symbol/jump 单测、picker query-submit 单测、app picker action 单测、search helper 单测，以及 Global Search PTY 测试。
+- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R16 — 审阅 T16
 

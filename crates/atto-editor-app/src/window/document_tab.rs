@@ -9,14 +9,19 @@ use crossterm::event::{Event, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
+use crate::actions::JumpTarget;
+
 use super::util::{contains, mouse_coords_local_to_area};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TabCommand {
     SplitVertical,
     SplitHorizontal,
     CloseSplit,
     EditorAction(atto_ui_editor::EditorAction),
+    JumpTo(JumpTarget),
+    RequestDocumentSymbols,
+    RequestWorkspaceSymbols(String),
 }
 
 pub(super) struct DocumentTabView {
@@ -101,6 +106,15 @@ impl DocumentTabView {
                 TabCommand::EditorAction(action) => {
                     let _ = self.handle_editor_action(action);
                 }
+                TabCommand::JumpTo(target) => {
+                    let _ = self.jump_to(target);
+                }
+                TabCommand::RequestDocumentSymbols => {
+                    let _ = self.primary.request_document_symbols();
+                }
+                TabCommand::RequestWorkspaceSymbols(query) => {
+                    let _ = self.primary.request_workspace_symbols(query);
+                }
             }
         }
     }
@@ -114,6 +128,26 @@ impl DocumentTabView {
                 } else {
                     self.primary.handle_editor_action(action)
                 }
+            }
+        }
+    }
+
+    fn jump_to(&mut self, target: JumpTarget) -> bool {
+        let view = match self.focused {
+            SplitFocus::Primary => &mut self.primary,
+            SplitFocus::Secondary => {
+                if let Some(view) = self.secondary.as_mut() {
+                    view
+                } else {
+                    &mut self.primary
+                }
+            }
+        };
+        match target {
+            JumpTarget::CharOffset { offset } => view.jump_to_offset(offset),
+            JumpTarget::CharPosition { line, column } => view.jump_to_position(line, column),
+            JumpTarget::Utf16Position { line, character } => {
+                view.jump_to_utf16_position(line, character)
             }
         }
     }

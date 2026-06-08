@@ -113,6 +113,11 @@ fn main() -> Result<()> {
                             let _ = loc;
                         }
                     }
+                    atto_ui_editor::EditorEvent::DocumentSymbols { outline: _ } => {}
+                    atto_ui_editor::EditorEvent::WorkspaceSymbols {
+                        query: _,
+                        symbols: _,
+                    } => {}
                     atto_ui_editor::EditorEvent::CodeActionMessage { message: _ } => {}
                 }
             }

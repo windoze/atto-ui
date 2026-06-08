@@ -10,9 +10,9 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use editor_core::{
-    Command, CursorCommand, DiagnosticSeverity, EditCommand, EditorStateManager, Position,
-    SearchOptions, Selection, SelectionDirection, StyleCommand, TabKeyBehavior, ViewCommand,
-    char_width,
+    Command, CursorCommand, DiagnosticSeverity, DocumentOutline, EditCommand, EditorStateManager,
+    Position, SearchOptions, Selection, SelectionDirection, StyleCommand, TabKeyBehavior,
+    ViewCommand, WorkspaceSymbol, char_width,
 };
 use editor_core_lsp::{
     LspCodeActionItem, LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession,
@@ -54,6 +54,13 @@ pub enum EditorEvent {
     LspGoto {
         kind: EditorLspGotoKind,
         locations: Vec<editor_core_lsp::LspLocation>,
+    },
+    DocumentSymbols {
+        outline: DocumentOutline,
+    },
+    WorkspaceSymbols {
+        query: String,
+        symbols: Vec<WorkspaceSymbol>,
     },
     CodeActionMessage {
         message: String,
@@ -134,6 +141,8 @@ struct EditorLspController {
 
     // Pending goto request id -> kind.
     pending_goto: Option<(u64, EditorLspGotoKind)>,
+    pending_document_symbols: Option<u64>,
+    pending_workspace_symbols: Option<(u64, String)>,
 
     // Code action request/list state.
     pending_code_action: Option<u64>,

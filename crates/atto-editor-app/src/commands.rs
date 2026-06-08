@@ -215,6 +215,27 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
             "Picker",
             AppCommandAction::App(AppAction::OpenBufferPicker),
         ),
+        command(
+            "picker.documentSymbols",
+            "Document Symbols",
+            "Picker",
+            AppCommandAction::App(AppAction::OpenDocumentSymbolPicker),
+        )
+        .with_default_sequence(prefixed('s')),
+        command(
+            "picker.workspaceSymbols",
+            "Workspace Symbols",
+            "Picker",
+            AppCommandAction::App(AppAction::OpenWorkspaceSymbolPicker),
+        )
+        .with_default_sequence(prefixed('w')),
+        command(
+            "search.global",
+            "Global Search",
+            "Search",
+            AppCommandAction::App(AppAction::OpenGlobalSearch),
+        )
+        .with_default_sequence(ctrl_shift('f')),
     ])
     .expect("app command ids must be unique")
 }
@@ -267,5 +288,8 @@ mod tests {
         assert!(registry.get("picker.file").is_some());
         assert!(registry.get("picker.commandPalette").is_some());
         assert!(registry.get("picker.buffer").is_some());
+        assert!(registry.get("picker.documentSymbols").is_some());
+        assert!(registry.get("picker.workspaceSymbols").is_some());
+        assert!(registry.get("search.global").is_some());
     }
 }

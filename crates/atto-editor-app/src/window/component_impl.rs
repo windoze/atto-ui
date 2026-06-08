@@ -25,6 +25,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.handle_commands();
         self.update_tab_titles();
+        self.sync_editor_events();
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
         self.sync_tab_summaries();
@@ -43,6 +44,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
             drag: None,
         };
         self.tab_window.draw(frame, area, child_ctx);
+        self.sync_editor_events();
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
         self.sync_tab_summaries();
@@ -131,6 +133,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
             drag: None,
         };
         let result = self.tab_window.handle_event(event, child_ctx);
+        self.sync_editor_events();
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
         self.sync_tab_summaries();

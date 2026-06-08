@@ -69,6 +69,7 @@ pub fn picker_item_matches<A>(item: &PickerItem<A>, query: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PickerEvent<A> {
     Accepted(A),
+    Submitted(String),
     Closed,
 }
 
@@ -84,6 +85,7 @@ pub struct PickerView<A> {
     selected: usize,
     scroll: usize,
     max_results: usize,
+    submit_query_on_empty: bool,
     last_filter_query: Option<String>,
     last_area: Option<Rect>,
     events: EventQueue<PickerEvent<A>>,
@@ -111,6 +113,7 @@ impl<A> PickerView<A> {
             selected: 0,
             scroll: 0,
             max_results: 200,
+            submit_query_on_empty: false,
             last_filter_query: None,
             last_area: None,
             events,
@@ -129,6 +132,11 @@ impl<A> PickerView<A> {
     pub fn max_results(mut self, max_results: usize) -> Self {
         self.max_results = max_results.max(1);
         self.invalidate_filter();
+        self
+    }
+
+    pub fn submit_query_on_empty(mut self, submit: bool) -> Self {
+        self.submit_query_on_empty = submit;
         self
     }
 
@@ -235,6 +243,13 @@ impl<A> PickerView<A> {
     {
         self.refresh_filter();
         let Some(item_index) = self.filtered.get(self.selected).copied() else {
+            if self.submit_query_on_empty {
+                let query = self.query.get();
+                if !query.trim().is_empty() {
+                    self.events.push(PickerEvent::Submitted(query));
+                    return EventResult::close_window();
+                }
+            }
             return EventResult::consumed();
         };
         self.events
@@ -561,5 +576,22 @@ mod tests {
 
         assert_eq!(result, EventResult::close_window());
         assert_eq!(events.drain(), vec![PickerEvent::Accepted("save")]);
+    }
+
+    #[test]
+    fn picker_can_submit_non_empty_query_without_matches() {
+        let theme = Theme::dark();
+        let events = EventQueue::new();
+        let mut picker = PickerView::<&'static str>::new("Search", Vec::new(), events.clone())
+            .submit_query_on_empty(true);
+        picker.set_query("TODO");
+
+        let result = picker.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            context(&theme),
+        );
+
+        assert_eq!(result, EventResult::close_window());
+        assert_eq!(events.drain(), vec![PickerEvent::Submitted("TODO".into())]);
     }
 }

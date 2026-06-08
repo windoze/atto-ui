@@ -3,6 +3,28 @@
 use super::*;
 
 impl EditorView {
+    pub fn jump_to_position(&mut self, line: usize, column: usize) -> bool {
+        self.execute_cursor_action(CursorCommand::MoveTo { line, column }, true)
+    }
+
+    pub fn jump_to_offset(&mut self, offset: usize) -> bool {
+        let editor = self.state_manager.editor();
+        let target = offset.min(editor.char_count());
+        let (line, column) = editor.line_index().char_offset_to_position(target);
+        self.jump_to_position(line, column)
+    }
+
+    pub fn jump_to_utf16_position(&mut self, line: u32, character: u32) -> bool {
+        let mut line = usize::try_from(line).unwrap_or(usize::MAX);
+        let utf16_column = usize::try_from(character).unwrap_or(usize::MAX);
+        let line_index = self.state_manager.editor().line_index();
+        line = line.min(line_index.line_count().saturating_sub(1));
+        let line_text = line_index.get_line_text(line).unwrap_or_default();
+        let column =
+            editor_core_lsp::LspCoordinateConverter::utf16_to_char_offset(&line_text, utf16_column);
+        self.jump_to_position(line, column)
+    }
+
     fn execute_cursor_action(&mut self, command: CursorCommand, clear_selection: bool) -> bool {
         self.hide_popups();
         if !self.execute(Command::Cursor(command)) {

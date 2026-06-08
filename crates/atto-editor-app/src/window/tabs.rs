@@ -20,6 +20,7 @@ pub(super) struct TabState {
     text_observer: DirtyObserver,
     pub(super) is_dirty: bool,
     diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
+    pub(super) events: EventQueue<atto_ui_editor::EditorEvent>,
     commands: EventQueue<TabCommand>,
 }
 
@@ -85,6 +86,7 @@ impl EditorWindowView {
             text_observer,
             is_dirty: false,
             diagnostics_summary: tab_handle.diagnostics_summary.clone(),
+            events: tab_handle.events.clone(),
             commands: tab_commands.clone(),
         });
     }
@@ -111,6 +113,10 @@ impl EditorWindowView {
         if let Some(tab) = self.tabs.get(active) {
             tab.commands.push(cmd);
         }
+    }
+
+    fn jump_active_tab_to(&mut self, target: crate::actions::JumpTarget) {
+        self.send_tab_command_to_active(TabCommand::JumpTo(target));
     }
 
     fn save_active(&mut self) -> Result<()> {
@@ -193,7 +199,18 @@ impl EditorWindowView {
         for cmd in self.commands.drain() {
             match cmd {
                 EditorWindowCommand::OpenFile(path) => self.open_file_in_tab(path),
+                EditorWindowCommand::OpenFileAndJump { path, target } => {
+                    self.open_file_in_tab(path);
+                    self.jump_active_tab_to(target);
+                }
                 EditorWindowCommand::SelectTabById(tab_id) => self.select_tab_by_id(tab_id),
+                EditorWindowCommand::JumpTo(target) => self.jump_active_tab_to(target),
+                EditorWindowCommand::RequestDocumentSymbols => {
+                    self.send_tab_command_to_active(TabCommand::RequestDocumentSymbols)
+                }
+                EditorWindowCommand::RequestWorkspaceSymbols(query) => {
+                    self.send_tab_command_to_active(TabCommand::RequestWorkspaceSymbols(query))
+                }
                 EditorWindowCommand::SaveActive => {
                     let _ = self.save_active();
                 }

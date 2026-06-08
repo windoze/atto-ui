@@ -61,7 +61,7 @@ impl EditorView {
         }
     }
 
-    fn handle_lsp_response(&mut self, resp: editor_core_lsp::LspResponse) {
+    pub(super) fn handle_lsp_response(&mut self, resp: editor_core_lsp::LspResponse) {
         let method = resp.method;
         let id = resp.id;
         let result = resp.result;
@@ -79,6 +79,36 @@ impl EditorView {
                 locations: locs,
             });
             self.lsp.pending_goto = None;
+        }
+
+        if let Some(pending_id) = self.lsp.pending_document_symbols
+            && pending_id == id
+            && method.as_str() == "textDocument/documentSymbol"
+        {
+            self.lsp.pending_document_symbols = None;
+            let outline = result
+                .as_ref()
+                .map(|value| {
+                    editor_core_lsp::lsp_document_symbols_to_outline(
+                        self.state_manager.editor().line_index(),
+                        value,
+                    )
+                })
+                .unwrap_or_default();
+            self.events.push(EditorEvent::DocumentSymbols { outline });
+        }
+
+        if let Some((pending_id, query)) = self.lsp.pending_workspace_symbols.clone()
+            && pending_id == id
+            && method.as_str() == "workspace/symbol"
+        {
+            self.lsp.pending_workspace_symbols = None;
+            let symbols = result
+                .as_ref()
+                .map(editor_core_lsp::lsp_workspace_symbols_to_results)
+                .unwrap_or_default();
+            self.events
+                .push(EditorEvent::WorkspaceSymbols { query, symbols });
         }
 
         if let Some(pending_id) = self.lsp.hover_pending_request
@@ -301,6 +331,7 @@ impl EditorView {
                 "workspace": {
                     "configuration": true,
                     "workspaceFolders": true,
+                    "symbol": { "dynamicRegistration": false },
                 },
                 "textDocument": {
                     "hover": { "dynamicRegistration": false },
@@ -326,6 +357,7 @@ impl EditorView {
                     "typeDefinition": { "dynamicRegistration": false },
                     "implementation": { "dynamicRegistration": false },
                     "references": { "dynamicRegistration": false },
+                    "documentSymbol": { "dynamicRegistration": false },
                     "codeAction": { "dynamicRegistration": false },
                 },
             },
@@ -607,6 +639,40 @@ impl EditorView {
             context,
         ) {
             self.lsp.pending_code_action = Some(id);
+        }
+    }
+
+    pub fn request_document_symbols(&mut self) -> bool {
+        self.hide_popups();
+        self.lsp.pending_document_symbols = None;
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return false;
+        };
+        match lsp.request_document_symbols() {
+            Ok(id) => {
+                self.lsp.pending_document_symbols = Some(id);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn request_workspace_symbols(&mut self, query: impl Into<String>) -> bool {
+        let query = query.into();
+        if query.trim().is_empty() {
+            return false;
+        }
+        self.hide_popups();
+        self.lsp.pending_workspace_symbols = None;
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return false;
+        };
+        match lsp.request_workspace_symbol(query.clone()) {
+            Ok(id) => {
+                self.lsp.pending_workspace_symbols = Some((id, query));
+                true
+            }
+            Err(_) => false,
         }
     }
 

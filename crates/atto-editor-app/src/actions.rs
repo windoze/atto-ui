@@ -7,6 +7,13 @@ pub enum OpenTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JumpTarget {
+    CharOffset { offset: usize },
+    CharPosition { line: usize, column: usize },
+    Utf16Position { line: u32, character: u32 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppAction {
     Quit,
 
@@ -17,6 +24,9 @@ pub enum AppAction {
     OpenCommandPalette,
     OpenFilePicker,
     OpenBufferPicker,
+    OpenDocumentSymbolPicker,
+    OpenWorkspaceSymbolPicker,
+    OpenGlobalSearch,
 
     CloseTab,
     SplitVertical,
@@ -37,8 +47,14 @@ pub enum AppAction {
         path: PathBuf,
         target: OpenTarget,
     },
+    OpenPathAndJump {
+        path: PathBuf,
+        target: JumpTarget,
+    },
+    JumpTo(JumpTarget),
     SelectEditorTab {
         window: atto_ui::wm::WindowId,
         tab_id: u64,
     },
+    ShowStatusMessage(String),
 }

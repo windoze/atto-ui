@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use atto_ui::reactive::{Binding, EventQueue};
 
-use crate::actions::AppAction;
+use crate::actions::{AppAction, JumpTarget};
 
 mod component_impl;
 mod document_tab;
@@ -14,7 +14,11 @@ mod util;
 #[derive(Clone, Debug)]
 pub enum EditorWindowCommand {
     OpenFile(PathBuf),
+    OpenFileAndJump { path: PathBuf, target: JumpTarget },
     SelectTabById(u64),
+    JumpTo(JumpTarget),
+    RequestDocumentSymbols,
+    RequestWorkspaceSymbols(String),
 
     SaveActive,
     SaveAs(PathBuf),
@@ -46,6 +50,7 @@ pub struct EditorTabSummary {
 #[derive(Clone)]
 pub struct EditorWindowHandle {
     pub commands: EventQueue<EditorWindowCommand>,
+    pub events: EventQueue<atto_ui_editor::EditorEvent>,
     pub diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     pub tab_summaries: Binding<Vec<EditorTabSummary>>,
 }
@@ -53,6 +58,7 @@ pub struct EditorWindowHandle {
 pub struct EditorWindowView {
     _actions: EventQueue<AppAction>,
     commands: EventQueue<EditorWindowCommand>,
+    events: EventQueue<atto_ui_editor::EditorEvent>,
 
     editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
     clipboard: Binding<String>,
@@ -73,9 +79,11 @@ impl EditorWindowView {
         clipboard: Binding<String>,
         diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     ) -> Self {
+        let events = EventQueue::new();
         Self::new_with_status(
             actions,
             commands,
+            events,
             editor_theme,
             clipboard,
             diagnostics_summary,
@@ -86,6 +94,7 @@ impl EditorWindowView {
     pub fn new_with_status(
         actions: EventQueue<AppAction>,
         commands: EventQueue<EditorWindowCommand>,
+        events: EventQueue<atto_ui_editor::EditorEvent>,
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
         diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
@@ -94,6 +103,7 @@ impl EditorWindowView {
         Self::new_with_status_and_tabs(
             actions,
             commands,
+            events,
             editor_theme,
             clipboard,
             diagnostics_summary,
@@ -105,6 +115,7 @@ impl EditorWindowView {
     pub fn new_with_status_and_tabs(
         actions: EventQueue<AppAction>,
         commands: EventQueue<EditorWindowCommand>,
+        events: EventQueue<atto_ui_editor::EditorEvent>,
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
         diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
@@ -114,6 +125,7 @@ impl EditorWindowView {
         Self {
             _actions: actions,
             commands,
+            events,
             editor_theme,
             clipboard,
             diagnostics_summary,
@@ -127,10 +139,12 @@ impl EditorWindowView {
 
     pub fn handle(
         commands: EventQueue<EditorWindowCommand>,
+        events: EventQueue<atto_ui_editor::EditorEvent>,
         diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     ) -> EditorWindowHandle {
         EditorWindowHandle {
             commands,
+            events,
             diagnostics_summary,
             tab_summaries: Vec::<EditorTabSummary>::new().into(),
         }
@@ -169,6 +183,14 @@ impl EditorWindowView {
         let summaries = self.tab_summaries();
         if self.tab_summaries.get() != summaries {
             self.tab_summaries.set(summaries);
+        }
+    }
+
+    pub(super) fn sync_editor_events(&self) {
+        for tab in &self.tabs {
+            for event in tab.events.drain() {
+                self.events.push(event);
+            }
         }
     }
 }

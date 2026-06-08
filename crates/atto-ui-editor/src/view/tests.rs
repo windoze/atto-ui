@@ -356,6 +356,59 @@ fn editor_actions_jump_between_diagnostics_with_wraparound() {
 }
 
 #[test]
+fn editor_lsp_document_symbols_response_emits_utf16_converted_outline() {
+    let text: atto_ui::reactive::Binding<String> = "fn 👋target() {}\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+
+    view.lsp.pending_document_symbols = Some(42);
+    view.handle_lsp_response(editor_core_lsp::LspResponse {
+        id: 42,
+        method: "textDocument/documentSymbol".to_string(),
+        result: Some(serde_json::json!([
+            {
+                "name": "target",
+                "kind": 12,
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 17 }
+                },
+                "selectionRange": {
+                    "start": { "line": 0, "character": 5 },
+                    "end": { "line": 0, "character": 11 }
+                }
+            }
+        ])),
+        error: None,
+    });
+
+    let events = handle.events.drain();
+    let [EditorEvent::DocumentSymbols { outline }] = events.as_slice() else {
+        panic!("expected document symbol event, got {events:?}");
+    };
+    let symbols = outline.flatten_preorder();
+    assert_eq!(symbols.len(), 1);
+    let (line, column) = view
+        .state_manager
+        .editor()
+        .line_index()
+        .char_offset_to_position(symbols[0].selection_range.start);
+    assert_eq!((line, column), (0, 4));
+}
+
+#[test]
+fn editor_jump_to_utf16_position_converts_to_char_column() {
+    let text: atto_ui::reactive::Binding<String> = "fn 👋target() {}\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+
+    assert!(view.jump_to_utf16_position(0, 5));
+    assert_eq!(view.active_cursor_position(), Position::new(0, 4));
+}
+
+#[test]
 fn clear_lsp_diagnostics_clears_all_controller_state() {
     let (mut view, _text) = test_view_with_text("let bad = 1;\n");
     view.lsp.diagnostics.push(editor_core_lsp::LspDiagnostic {

@@ -9,10 +9,12 @@ atto-ui = { path = "../.." }
 atto-ui-editor = { path = "../atto-ui-editor" }
 atto-ui-file-tree = { path = "../atto-ui-file-tree" }
 crossterm = "0.29.0"
+ignore = "0.4"
 parking_lot = "0.12.5"
 ratatui = "0.30.0"
 
 editor-core = "0.4.1"
+editor-core-lsp = "0.4.1"
 
 tree-sitter-rust = "0.24"
 tree-sitter-json = "0.24"
