@@ -58,6 +58,30 @@ fn publish_mock_diagnostics<W: io::Write>(
     )
 }
 
+fn publish_command_executed_diagnostic<W: io::Write>(writer: &mut W, uri: &str) -> io::Result<()> {
+    editor_core_lsp::write_lsp_message(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "diagnostics": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 3 }
+                        },
+                        "severity": 3,
+                        "source": "atto-ui-mock-lsp",
+                        "message": "command executed"
+                    }
+                ]
+            }
+        }),
+    )
+}
+
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin.lock());
@@ -136,39 +160,73 @@ fn main() -> io::Result<()> {
                     .and_then(|text_document| text_document.get("uri"))
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let target_uri = if uri.ends_with("/code_action_cross.rs")
-                    || uri == "file:///code_action_cross.rs"
+                let result = if uri.ends_with("/code_action_command.rs")
+                    || uri == "file:///code_action_command.rs"
                 {
-                    "file:///other.rs"
-                } else {
-                    uri
-                };
-                let mut changes = Map::new();
-                changes.insert(
-                    target_uri.to_string(),
                     json!([
                         {
-                            "range": {
-                                "start": { "line": 0, "character": 4 },
-                                "end": { "line": 0, "character": 7 }
-                            },
-                            "newText": "good"
+                            "title": "Run mock command",
+                            "kind": "quickfix",
+                            "command": {
+                                "title": "Run mock command",
+                                "command": "atto-ui.mock.command",
+                                "arguments": [{ "uri": uri }]
+                            }
                         }
-                    ]),
-                );
-                let result = json!([
+                    ])
+                } else {
+                    let target_uri = if uri.ends_with("/code_action_cross.rs")
+                        || uri == "file:///code_action_cross.rs"
                     {
-                        "title": "Replace bad with good",
-                        "kind": "quickfix",
-                        "isPreferred": true,
-                        "edit": {
-                            "changes": Value::Object(changes)
+                        "file:///other.rs"
+                    } else {
+                        uri
+                    };
+                    let mut changes = Map::new();
+                    changes.insert(
+                        target_uri.to_string(),
+                        json!([
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 4 },
+                                    "end": { "line": 0, "character": 7 }
+                                },
+                                "newText": "good"
+                            }
+                        ]),
+                    );
+                    json!([
+                        {
+                            "title": "Replace bad with good",
+                            "kind": "quickfix",
+                            "isPreferred": true,
+                            "edit": {
+                                "changes": Value::Object(changes)
+                            }
                         }
-                    }
-                ]);
+                    ])
+                };
                 respond(&mut stdout, id, result)?;
             }
             ("workspace/executeCommand", Some(id)) => {
+                let command = msg
+                    .get("params")
+                    .and_then(|params| params.get("command"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if command == "atto-ui.mock.command" {
+                    let uri = msg
+                        .get("params")
+                        .and_then(|params| params.get("arguments"))
+                        .and_then(Value::as_array)
+                        .and_then(|args| args.first())
+                        .and_then(|arg| arg.get("uri"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if !uri.is_empty() {
+                        publish_command_executed_diagnostic(&mut stdout, uri)?;
+                    }
+                }
                 respond(&mut stdout, id, Value::Null)?;
             }
             // Notifications.

@@ -419,6 +419,75 @@ fn lsp_code_action_cross_file_edit_is_reported_and_not_applied() {
     );
 }
 
+#[test]
+fn lsp_code_action_command_without_edit_executes() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///code_action_command.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let code_action = Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL));
+    view.handle_event(&code_action, ctx);
+
+    wait_for_code_action_popup(&mut terminal, &mut view, &handle, area, ctx);
+    let popup = handle.code_action_popup.get().expect("code action popup");
+    assert_eq!(popup.items[0].title, "Run mock command");
+
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    view.handle_event(&enter, ctx);
+    assert_eq!(text.get(), "let bad = 1;\n");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        let summary = handle.diagnostics_summary.get();
+        if summary.infos == 1 {
+            assert_eq!(summary.errors, 0);
+            assert_eq!(summary.warnings, 0);
+            assert_eq!(summary.hints, 0);
+            break;
+        }
+
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for command-only code action execution; got {summary:?}");
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn wait_for_code_action_popup(
     terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
     view: &mut EditorView,

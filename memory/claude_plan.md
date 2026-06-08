@@ -1,31 +1,29 @@
-# 执行计划
+# 当前调用计划
 
 ## 范围
 
-- 以 `TODO.md` 为唯一任务顺序和完成状态来源。
-- 本次只完成第一个未在标题中标记 `[DONE]` 的任务，然后停止。
-- 如遇阻塞当前任务的真实缺口，只添加最小必要前置任务并提交，不绕过规格。
+- 以 `TODO.md` 作为任务顺序与完成状态的权威来源。
+- 本次只完成第一个标题未标记 `[DONE]` 的任务，然后停止。
+- 如发现阻塞当前任务的真实缺口，只做当前任务所需的最小正确修复，不绕过规格。
 
-## 步骤
+## 执行步骤
 
-1. 读取 `TODO.md`，确定第一个未完成任务及其验证要求。
-2. 检查最近提交信息是否提到与该任务直接相关的未完成问题。
-3. 读取当前任务涉及的代码、测试和文档，确认最小正确改动范围。
-4. 实现当前任务；如发现阻塞性规格缺口，更新 `TODO.md` 记录前置任务并停止。
-5. 按要求运行格式化、lint 和相关测试；若有未安排的失败，修复或记录为正确顺序的任务。
-6. 更新 `TODO.md`：在任务标题加 `[DONE]`，填写完成记录。
-7. 仅在阶段计划实际变化时更新 `PLAN.md`。
-8. 查看 git 状态和差异，提交本次任务相关全部变更。
+1. 读取 `TODO.md`，确定第一个未完成任务及验证要求。
+2. 只检查与当前任务直接相关的最近提交背景。
+3. 审阅当前任务涉及的最小代码、测试与任务记录。
+4. 如发现审阅问题，修复并补充覆盖；否则只更新完成记录。
+5. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+6. 将完成任务标题显式改为 `[DONE]`，并同步 `TODO.md` 索引。
+7. 检查 git 状态、差异和最近提交，只暂存本次任务相关文件。
+8. 提交本次任务并停止，不继续下一个任务。
 
-## 当前状态
+## 进度记录
 
-- 已读取 `TODO.md`，首个未完成任务为 `TODO-2.md` 中的 `T9`：L2 Code Action 请求、列表 popup 与单文档应用。
-- 最近提交为 `462f174 [NT1] Update execution log`，未发现与 `T9` 直接相关的未完成事项。
-- 已读取 `T9` 任务详情与 `atto-ui-editor` 现有 LSP、popup、输入、渲染和 mock LSP 测试结构。
-- 实现方案：复用 `EditorView` 的 LSP poll；新增 `EditorAction::LspCodeAction` 和 `Ctrl+.` 默认键；新增 code action popup model/binding；响应 `textDocument/codeAction` 后填充 keyboard popup；Enter 使用 editor-core-lsp 的 code action apply plan，只应用当前 URI 的 WorkspaceEdit，跨 URI 通过 `EditorEvent` 明确提示跳过；命令动作走 `workspace/executeCommand`。
-- 已完成代码实现和 mock LSP 集成测试补充；`cargo fmt` 与 `cargo clippy --workspace --all-targets -- -D warnings` 已通过。
-- 完整测试套件 `cargo test --workspace --all-targets` 已通过。
-- 已将 `TODO.md` 索引和 `TODO-2.md` 的 `T9` 标记为 `[DONE]`，并写入完成记录。
-- 已检查 git status/diff，并通过 `git diff --check`；未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。
-- 已提交本任务相关变更，提交为 `41f4203 [T9] Add LSP code actions`。
-- 本次调用到此停止，不继续处理 `R9`。
+- 已初始化计划并读取任务清单。
+- 已选定首个未完成任务：`R9 — 审阅 T9`。
+- 审阅范围：T9 的 code action 请求/响应、popup keyboard 分发、单文档 WorkspaceEdit 应用、跨文件 edit 跳过、command 执行、LSP didChange 与 syntax refresh。
+- 审阅结论：跨文件 edit 拒绝、popup 优先级、单文档 edit 后同步路径未发现代码缺陷；但 command-only code action 缺少可观测回归测试。
+- 已通过 `mock_lsp_server` 与 `tests/lsp_editor.rs` 补充 command-only code action 集成测试，确认无 edit 时仍发送 `workspace/executeCommand`。
+- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+- 已将 `TODO-2.md` 中 `R9` 标记为 `[DONE]`，并同步 `TODO.md` 索引。
+- 已检查 `git diff --check`，未发现 whitespace 错误；未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。

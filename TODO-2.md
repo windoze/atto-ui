@@ -654,13 +654,21 @@
 - mock LSP 增加 codeAction/executeCommand 支持；集成测试覆盖 popup title/kind/preferred 标记、Enter 应用单文档 edit、undo 恢复，以及跨文件 edit 跳过并发出事件。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R9 — 审阅 T9
+### [DONE] R9 — 审阅 T9
 
 审阅 T9 改动：
 - 确认跨文件 WorkspaceEdit 没有被静默部分应用。
 - 确认 code action command 即使没有 edit 也能 execute。
 - 确认 popup keyboard 与 completion popup 不冲突。
 - 确认应用 edit 后 LSP didChange 和 syntax refresh 都发生。
+
+**完成记录（2026-06-08）**：
+- 已审阅 T9 的 code action request/response、popup keyboard 分发、WorkspaceEdit 应用、command 执行、LSP didChange 与 syntax refresh 路径。
+- 确认跨文件 WorkspaceEdit 会整体跳过并发出 `CodeActionMessage`，不会静默部分应用当前文件 edits。
+- 确认 code action popup 打开时优先处理 Up/Down/PageUp/PageDown/Enter/Esc，发起 code action 会关闭 completion，发起 completion 也会关闭 code action，二者 keyboard 路径不冲突。
+- 确认单文档 edit 应用后会同步 `config.text`、刷新 syntax、调整滚动，并发送 full-document LSP didChange；已有测试覆盖 edit 后 undo 可恢复。
+- 补充 mock LSP 与集成测试 `lsp_code_action_command_without_edit_executes`，覆盖无 edit 的 command-only code action 仍会发送 `workspace/executeCommand`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ---
 
