@@ -83,7 +83,7 @@
 | R12 | DONE | [DONE] 审阅 T12 | TODO-2.md · 阶段二 |
 | T13 | DONE | [DONE] Command registry 与 which-key popup | TODO-2.md · 阶段二 |
 | R13 | DONE | [DONE] 审阅 T13 | TODO-2.md · 阶段二 |
-| T14 | TODO | 通用 Picker component 与 Command Palette | TODO-2.md · 阶段二 |
+| T14 | DONE | [DONE] 通用 Picker component 与 Command Palette | TODO-2.md · 阶段二 |
 | R14 | TODO | 审阅 T14 | TODO-2.md · 阶段二 |
 | T15 | TODO | File picker 与 Buffer/tab picker | TODO-2.md · 阶段二 |
 | R15 | TODO | 审阅 T15 | TODO-2.md · 阶段二 |

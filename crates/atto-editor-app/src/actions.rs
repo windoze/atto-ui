@@ -14,6 +14,7 @@ pub enum AppAction {
     OpenFolderDialog,
     Save,
     SaveAsDialog,
+    OpenCommandPalette,
 
     CloseTab,
     SplitVertical,

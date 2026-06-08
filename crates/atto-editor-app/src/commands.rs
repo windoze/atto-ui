@@ -200,7 +200,8 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
             "Command Palette",
             "Picker",
             AppCommandAction::OpenCommandPalette,
-        ),
+        )
+        .with_default_sequence(ctrl_shift('p')),
     ])
     .expect("app command ids must be unique")
 }
@@ -224,6 +225,13 @@ fn prefixed(ch: char) -> KeySequence {
 
 fn ctrl_alt(ch: char) -> KeyChord {
     KeyChord::new(KeyCode::Char(ch), KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
+fn ctrl_shift(ch: char) -> KeyChord {
+    KeyChord::new(
+        KeyCode::Char(ch),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    )
 }
 
 #[cfg(test)]

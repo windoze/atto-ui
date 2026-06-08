@@ -955,7 +955,7 @@
 - 未发现需要修改 T13 功能代码的问题。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T14 — 通用 Picker component 与 Command Palette
+### [DONE] T14 — 通用 Picker component 与 Command Palette
 
 **依赖**：T13 推荐；无 T13 时也可先做独立 picker。
 
@@ -991,6 +991,14 @@
 **验收**：
 - Picker 可复用到 file/buffer/symbol/search。
 - Esc 必须关闭 picker 并恢复原窗口焦点。
+
+**完成记录（2026-06-09）**：
+- 新增 `crates/atto-editor-app/src/picker.rs`，提供泛型 `PickerItem<A>`、`PickerView<A>` 与 `PickerEvent<A>`；`PickerView` 内部使用 `TextBox` 作为 query 输入，query 变化时才用 `atto_ui::fuzzy::{fuzzy_filter, fuzzy_match}` 更新过滤结果，并支持 Enter accept、Esc close、Up/Down/PageUp/PageDown navigation。
+- `atto-editor-app` 新增 `AppAction::OpenCommandPalette`，使用 modal window 打开 Command Palette；close hook 与 picker close 事件会清理 `AppState` 并恢复打开前的窗口焦点。
+- Command Palette items 从 `commands.rs` 的 command registry 生成，保留 command id/title/category/action/default sequence 语义，选中项通过既有 `execute_command_action` 路径执行，不绕过命令分发规则。
+- `picker.commandPalette` 增加默认快捷键 `Ctrl+Shift+P`；app command keymap 可打开 palette，palette 内输入 `save` 后 Enter 会触发 Save。
+- 新增 picker 单元测试覆盖 query 过滤、tie order、`fuzzy_match` 搜索、selected clamp、Enter accept；新增 app 单元测试覆盖 `Ctrl+Shift+P` 分发、registry item 生成、关闭后恢复焦点；新增 PTY 测试覆盖 `Ctrl+Shift+P` 打开 Command Palette、输入 `save` 并执行 Save 写入文件。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R14 — 审阅 T14
 

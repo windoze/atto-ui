@@ -24,6 +24,7 @@ use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKi
 use crate::actions::{AppAction, OpenTarget};
 use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
+use crate::picker::{PickerEvent, PickerItem, PickerView};
 use crate::window::{EditorStatus, EditorWindowCommand, EditorWindowView};
 
 #[derive(Clone, Debug)]
@@ -56,6 +57,9 @@ struct AppState {
 
     open_folder_modal: Option<WindowId>,
     open_file_target: Option<OpenTarget>,
+    command_palette_window: Option<WindowId>,
+    command_palette_restore_focus: Option<WindowId>,
+    command_palette_events: EventQueue<PickerEvent<AppCommandAction>>,
 }
 
 impl Default for AppState {
@@ -73,6 +77,9 @@ impl Default for AppState {
             workspace_roots: Vec::new(),
             open_folder_modal: None,
             open_file_target: None,
+            command_palette_window: None,
+            command_palette_restore_focus: None,
+            command_palette_events: EventQueue::new(),
         }
     }
 }
@@ -227,6 +234,8 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
 
                 sync_explorer_dock_state(desktop, &state);
                 update_diagnostics_statusbar(desktop, &state);
+
+                process_command_palette_events(desktop, &state, &actions);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
                 for action in actions.drain() {
@@ -427,6 +436,9 @@ fn handle_action(
                 screen,
             );
         }
+        AppAction::OpenCommandPalette => {
+            open_command_palette(desktop, screen, state);
+        }
 
         AppAction::CloseTab => {
             if let Some(cmds) = active_editor_commands(desktop, state) {
@@ -593,8 +605,98 @@ fn execute_command_action(
                 cmds.push(EditorWindowCommand::EditorAction(action));
             }
         }
-        AppCommandAction::OpenCommandPalette => {}
+        AppCommandAction::OpenCommandPalette => actions.push(AppAction::OpenCommandPalette),
     }
+}
+
+fn process_command_palette_events(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().command_palette_events.clone();
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_command_palette_focus(desktop, state);
+                execute_command_action(desktop, state, actions, action);
+            }
+            PickerEvent::Closed => restore_command_palette_focus(desktop, state),
+        }
+    }
+}
+
+fn restore_command_palette_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.command_palette_window = None;
+        s.command_palette_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn open_command_palette(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+    if let Some(id) = state.lock().command_palette_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().command_palette_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.command_palette_events.clone();
+        let _ = events.drain();
+        s.command_palette_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new("Command Palette", command_palette_items(), events.clone())
+        .placeholder("Type a command")
+        .max_results(200);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 76, 18);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Command Palette", rect, Box::new(view))
+            .with_tag("atto-editor-app-command-palette")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.command_palette_window == Some(id) {
+                        s.command_palette_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().command_palette_window = Some(id);
+}
+
+fn command_palette_items() -> Vec<PickerItem<AppCommandAction>> {
+    let registry = commands::app_command_registry();
+    registry
+        .commands()
+        .iter()
+        .map(|command| {
+            let mut item = PickerItem::new(command.title.clone(), command.action.clone())
+                .subtitle(command.category.clone());
+            if let Some(sequence) = &command.default_sequence {
+                item = item.shortcut(sequence.label());
+            }
+            item
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1187,6 +1289,13 @@ mod tests {
         ))
     }
 
+    fn ctrl_shift_key(ch: char) -> Event {
+        Event::Key(KeyEvent::new(
+            KeyCode::Char(ch),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ))
+    }
+
     #[test]
     fn command_prefix_shows_which_key_and_exact_dispatches_action() {
         let screen = Rect::new(0, 0, 80, 24);
@@ -1256,6 +1365,72 @@ mod tests {
         assert!(desktop.which_key().is_none());
         assert!(keymap.pending().is_empty());
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn command_palette_shortcut_dispatches_open_action() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_shift_key('p'),
+            screen,
+            &DesktopEventResult::ignored(),
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("command palette shortcut handled");
+
+        assert_eq!(actions.drain(), vec![AppAction::OpenCommandPalette]);
+    }
+
+    #[test]
+    fn command_palette_items_come_from_command_registry() {
+        let items = command_palette_items();
+
+        let save = items
+            .iter()
+            .find(|item| item.title == "Save")
+            .expect("save command item");
+        assert_eq!(save.subtitle, "File");
+        assert_eq!(save.shortcut.as_deref(), Some("Ctrl+Alt+K Ctrl+Alt+A"));
+        assert!(items.iter().any(|item| item.title == "Command Palette"));
+    }
+
+    #[test]
+    fn command_palette_close_restores_prior_focus() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let editor_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Editor",
+                Rect::new(4, 4, 40, 10),
+                Box::new(TextFn::new(|| "editor".to_string())),
+            ),
+            screen,
+        );
+        assert_eq!(desktop.wm.focused(), Some(editor_id));
+
+        open_command_palette(&mut desktop, screen, &state);
+        let palette_id = state
+            .lock()
+            .command_palette_window
+            .expect("command palette window");
+        assert_eq!(desktop.wm.focused(), Some(palette_id));
+
+        assert!(desktop.close_window(palette_id));
+        process_command_palette_events(&mut desktop, &state, &actions);
+
+        assert_eq!(desktop.wm.focused(), Some(editor_id));
     }
 
     #[test]

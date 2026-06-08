@@ -19,6 +19,7 @@ pub mod app;
 pub mod commands;
 pub mod explorer_window;
 pub mod language;
+pub mod picker;
 pub mod window;
 pub mod workspace;
 
