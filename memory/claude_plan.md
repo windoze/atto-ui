@@ -11,7 +11,7 @@
 - 已运行 `cargo clippy --workspace --all-targets -- -D warnings`，通过。
 - 已运行 `cargo test --workspace --all-targets`，通过。
 - 已将 T15 在 `TODO.md` / `TODO-2.md` 标记为 `[DONE]` 并填写完成记录。
-- 下一步检查 git 状态与差异，然后提交本任务变更。
+- 已提交本任务变更，提交为 `[T15] Implement file and buffer pickers`。
 - 本文件用于记录可审阅的执行计划、关键决策、进度和验证结果。
 
 ## 步骤
