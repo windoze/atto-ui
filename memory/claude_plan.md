@@ -27,4 +27,5 @@
 - 完整测试套件 `cargo test --workspace --all-targets` 已通过。
 - 已将 `TODO.md` 索引和 `TODO-2.md` 的 `T9` 标记为 `[DONE]`，并写入完成记录。
 - 已检查 git status/diff，并通过 `git diff --check`；未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。
-- 下一步提交本任务相关变更。
+- 已提交本任务相关变更，提交为 `41f4203 [T9] Add LSP code actions`。
+- 本次调用到此停止，不继续处理 `R9`。
