@@ -30,6 +30,7 @@
 - 新增 `src/lib.rs` 暴露 `#[napi] version() -> String`；因 napi-rs 宏展开会局部 `allow(unsafe_code)`，crate 级别采用 `#![deny(unsafe_code)]` + `#![allow(unsafe_op_in_unsafe_fn)]`，符合本任务允许的 napi-rs 冲突放宽。
 - 新增 `__test__/version.cjs`，通过 package 入口 require 生成的 napi loader 并断言 `version()` 返回 `0.1.0`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo build -p atto-ui-node`；`cargo test`；`npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform`；`node __test__/version.cjs`。
+- 2026-06-08 索引同步：`TODO.md` 中 `NT1` 标题已补齐 `[DONE]` 前缀；复核 `crates/atto-ui-node/{Cargo.toml,build.rs,package.json,src/lib.rs,__test__/version.cjs}` 与根 workspace member 配置仍满足本任务要求。本轮仅修改任务文档与执行计划文件，未改动编译代码；代码验证复用上述既有绿色结果，未重新运行 cargo/npm 套件。
 
 ### [DONE] NR1 — 审阅 NT1
 - 确认 crate-type/feature/依赖正确，workspace 不引入 tokio。

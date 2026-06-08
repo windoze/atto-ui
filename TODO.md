@@ -10,7 +10,7 @@
 
 | ID | 状态 | 标题 | 来源位置 |
 |----|------|------|----------|
-| NT1 | DONE | `atto-ui-node` crate 脚手架 + napi build（B.0） | TODO-1.md · 阶段一 M0+M1 |
+| NT1 | DONE | [DONE] `atto-ui-node` crate 脚手架 + napi build（B.0） | TODO-1.md · 阶段一 M0+M1 |
 | NR1 | DONE | 审阅 NT1 | TODO-1.md · 阶段一 M0+M1 |
 | NT2 | DONE | serde 数据转换层（B.2） | TODO-1.md · 阶段一 M0+M1 |
 | NR2 | DONE | 审阅 NT2 | TODO-1.md · 阶段一 M0+M1 |
