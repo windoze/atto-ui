@@ -128,6 +128,57 @@ fn theme_named_style_can_be_set_programmatically() {
 }
 
 #[test]
+fn theme_config_overlays_menu_named_styles() {
+    let json = r##"
+    {
+      "colors": {
+        "menu-mnemonic": { "fg": "red" },
+        "menu-item-shortcut": { "fg": "#112233" }
+      },
+      "styles": {
+        "menu-mnemonic": ["bold"]
+      }
+    }
+    "##;
+
+    let cfg = ThemeConfig::from_str(json, ThemeConfigFormat::Json).expect("parse json");
+    let mut theme = Theme::dark();
+    theme
+        .apply_config_overlay(&cfg)
+        .expect("apply json overlay");
+
+    let mnemonic = theme
+        .named_style("menu-mnemonic")
+        .expect("menu mnemonic token");
+    assert_eq!(mnemonic.fg, Some(Color::Red));
+    assert!(mnemonic.has_modifier(Modifier::BOLD));
+    assert_eq!(
+        theme
+            .named_style("menu-item-shortcut")
+            .expect("menu shortcut token")
+            .fg,
+        Some(Color::Rgb(0x11, 0x22, 0x33))
+    );
+
+    let yaml = r#"
+colors:
+  menu-border:
+    fg: blue
+"#;
+    let cfg = ThemeConfig::from_str(yaml, ThemeConfigFormat::Yaml).expect("parse yaml");
+    theme
+        .apply_config_overlay(&cfg)
+        .expect("apply yaml overlay");
+    assert_eq!(
+        theme
+            .named_style("menu-border")
+            .expect("menu border token")
+            .fg,
+        Some(Color::Blue)
+    );
+}
+
+#[test]
 fn theme_config_reports_malformed_json_and_yaml_errors() {
     let json_err = ThemeConfig::from_str("{", ThemeConfigFormat::Json)
         .expect_err("malformed JSON should fail");

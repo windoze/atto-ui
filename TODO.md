@@ -76,7 +76,7 @@
 | T9 | DONE | [DONE] L2 Code Action 请求、列表 popup 与单文档应用 | TODO-2.md · 阶段一 |
 | R9 | DONE | [DONE] 审阅 T9 | TODO-2.md · 阶段一 |
 | T10 | DONE | [DONE] C4 MenuBar mnemonic/accelerator 与 Turbo Vision 绘制 | TODO-2.md · 阶段二 |
-| R10 | TODO | 审阅 T10 | TODO-2.md · 阶段二 |
+| R10 | DONE | [DONE] 审阅 T10 | TODO-2.md · 阶段二 |
 | T11 | TODO | C4 分段式 StatusBar 与 editor diagnostics 接入 | TODO-2.md · 阶段二 |
 | R11 | TODO | 审阅 T11 | TODO-2.md · 阶段二 |
 | T12 | TODO | C3 框架级多键序列 keymap engine | TODO-2.md · 阶段二 |

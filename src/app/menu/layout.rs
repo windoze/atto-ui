@@ -121,6 +121,16 @@ mod tests {
         let (width, height) = dropdown_size(&[item]);
 
         assert_eq!(height, 3);
-        assert!(width >= 14, "width was {width}");
+        assert_eq!(width, 14);
+    }
+
+    #[test]
+    fn dropdown_size_reserves_space_for_submenu_arrow() {
+        let item = MenuItem::submenu("&More", vec![MenuItem::action("Child", || {})])
+            .accelerator("Ctrl+M");
+        let (width, height) = dropdown_size(&[item]);
+
+        assert_eq!(height, 3);
+        assert_eq!(width, 16);
     }
 }

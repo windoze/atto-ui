@@ -8,13 +8,32 @@ use crate::wm::WindowId;
 
 use super::MenuCallback;
 use super::layout::{
-    contains, display_label, dropdown_size, label_mnemonic_or_first, menu_title_x,
+    contains, display_label, dropdown_size, explicit_mnemonic, label_mnemonic_or_first,
+    menu_title_x,
 };
 use super::minimized::minimized_window_id;
 use super::model::{MenuAction, MenuBar, MenuItem};
 
 fn char_eq_ignore_case(a: char, b: char) -> bool {
     a == b || a.to_lowercase().to_string() == b.to_lowercase().to_string()
+}
+
+fn single_char_shortcut(shortcut: Option<String>) -> Option<char> {
+    let shortcut = shortcut?;
+    let mut chars = shortcut.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => Some(ch),
+        _ => None,
+    }
+}
+
+fn item_mnemonic_or_first(item: &MenuItem) -> Option<char> {
+    let label = item.label.get();
+    item.mnemonic
+        .get()
+        .or_else(|| explicit_mnemonic(&label))
+        .or_else(|| single_char_shortcut(item.shortcut.get()))
+        .or_else(|| display_label(&label).text.trim_start().chars().next())
 }
 
 impl MenuBar {
@@ -361,11 +380,7 @@ impl MenuBar {
                 if !enabled {
                     continue;
                 }
-                let Some(mnemonic) = item
-                    .mnemonic
-                    .get()
-                    .or_else(|| label_mnemonic_or_first(&item.label.get()))
-                else {
+                let Some(mnemonic) = item_mnemonic_or_first(item) else {
                     continue;
                 };
                 if char_eq_ignore_case(mnemonic, c) {
@@ -516,6 +531,26 @@ mod tests {
         menu.activate();
 
         assert_eq!(menu.handle_shortcut_char('Q'), MenuAction::Closed);
+        assert!(activated.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn shortcut_binding_single_character_still_acts_as_legacy_mnemonic() {
+        let activated = Arc::new(AtomicBool::new(false));
+        let menu_activated = activated.clone();
+        let shortcut = crate::reactive::Binding::from(Some("x".to_string()));
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&File",
+            vec![
+                MenuItem::action("Quit", move || {
+                    menu_activated.store(true, Ordering::SeqCst);
+                })
+                .shortcut_binding(shortcut),
+            ],
+        )]);
+        menu.activate();
+
+        assert_eq!(menu.handle_shortcut_char('x'), MenuAction::Closed);
         assert!(activated.load(Ordering::SeqCst));
     }
 }

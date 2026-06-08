@@ -729,13 +729,21 @@
 - 处理验证中观察到的 `pty_diff` 并行负载下初始 3 秒等待偶发空屏超时：统一该 fixture 的 PTY wait 为 5 秒，单个用例仍远低于 1 分钟。
 - 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R10 — 审阅 T10
+### [DONE] R10 — 审阅 T10
 
 审阅 T10 改动：
 - 确认 `shortcut` 兼容路径不会改变现有 demo/menu 行为。
 - 确认 Unicode label 下 mnemonic 绘制不会破坏列宽。
 - 确认 dropdown width 计算包含 stripped label + accelerator + arrow。
 - 确认主题 named styles 可由 JSON/YAML overlay 覆盖。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T10 的 `MenuItem` shortcut/accelerator/mnemonic API、菜单输入匹配、marker-aware layout/draw、`atto-editor-app` 菜单迁移、Node binding 菜单 JSON 转换和主题 named style overlay 路径。
+- 发现并修复旧 `shortcut` 兼容缺口：静态 `.shortcut("q")` 已设置 mnemonic，但公开 `shortcut` binding / `.shortcut_binding(...)` 的单字符动态路径不会再被 `handle_shortcut_char` 匹配；现改为 explicit mnemonic / label marker 优先，其次单字符 `shortcut` fallback，最后 label 首字符 fallback。
+- 确认 Unicode mnemonic 绘制按 display columns 推进，不会把 accelerator 覆盖到 CJK 宽字符列；新增回归测试固定 `_文件` / `_打开` 下 accelerator 的列位置。
+- 确认 dropdown width 计算使用 stripped label，并包含 accelerator 与 submenu arrow reserve；新增精确宽度测试覆盖 accelerator-only 与 submenu arrow 场景。
+- 确认 `menu-mnemonic`、`menu-item-shortcut`、`menu-border` 注册为 named styles，且可经 JSON/YAML overlay 覆盖；新增主题 overlay 回归测试。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T11 — C4 分段式 StatusBar 与 editor diagnostics 接入
 

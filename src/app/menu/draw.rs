@@ -320,4 +320,26 @@ mod tests {
         assert!(!screen.contains("&File"), "screen was:\n{screen}");
         assert!(!screen.contains("&Open"), "screen was:\n{screen}");
     }
+
+    #[test]
+    fn draw_unicode_mnemonic_uses_display_columns_for_accelerator_layout() {
+        let theme = Theme::dark();
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "_文件",
+            vec![MenuItem::action("_打开", || {}).accelerator("Ctrl+O")],
+        )]);
+        menu.activate();
+
+        let mut terminal = Terminal::new(TestBackend::new(32, 5)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 32, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(1, 0)].symbol(), "文");
+        assert_eq!(buf[(3, 0)].symbol(), "件");
+        assert_eq!(buf[(1, 2)].symbol(), "打");
+        assert_eq!(buf[(3, 2)].symbol(), "开");
+        assert_eq!(buf[(7, 2)].symbol(), "C");
+    }
 }
