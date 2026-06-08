@@ -480,6 +480,10 @@ impl EditorView {
     }
 
     fn handle_lsp_completion_response(&mut self, value: &serde_json::Value) {
+        if self.rename_popup.get().is_some() {
+            self.completion_popup.set(None);
+            return;
+        }
         self.hide_hover_popup_only();
         if self
             .lsp
@@ -543,6 +547,11 @@ impl EditorView {
     }
 
     fn handle_lsp_code_action_response(&mut self, value: &serde_json::Value) {
+        if self.rename_popup.get().is_some() {
+            self.lsp.code_action_items.clear();
+            self.code_action_popup.set(None);
+            return;
+        }
         self.hide_hover_popup_only();
         self.completion_popup.set(None);
 
@@ -1269,6 +1278,13 @@ impl EditorView {
             });
             return;
         };
+        self.hide_hover_popup_only();
+        self.completion_popup.set(None);
+        self.lsp.completion_pending_request = None;
+        self.lsp.completion_requested_position = None;
+        self.code_action_popup.set(None);
+        self.lsp.pending_code_action = None;
+        self.lsp.code_action_items.clear();
         self.lsp.rename_target = Some(target);
         self.rename_popup.set(Some(RenamePopupModel {
             rect,

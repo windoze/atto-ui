@@ -12,8 +12,9 @@ use atto_ui::composable::{
 };
 use atto_ui::wm::WindowId;
 use atto_ui_editor::{
+    CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
     DiagnosticsSummary, EditorConfig, EditorEvent, EditorLspConfig, EditorLspMode,
-    EditorSyntaxConfig, EditorViewHandle,
+    EditorSyntaxConfig, EditorViewHandle, LspCompletionItemEdit,
 };
 use atto_ui_editor::{EditorThemeSet, EditorView};
 
@@ -553,6 +554,143 @@ fn lsp_rename_popup_submits_workspace_edit_event() {
     );
 }
 
+#[test]
+fn lsp_rename_prepare_null_reports_message_without_popup() {
+    assert_rename_prepare_message(
+        "file:///rename_unavailable.rs",
+        "Rename is not available at the cursor",
+    );
+}
+
+#[test]
+fn lsp_rename_prepare_error_reports_message_without_popup() {
+    assert_rename_prepare_message(
+        "file:///rename_error.rs",
+        "Rename is not available: mock prepare rename error",
+    );
+}
+
+#[test]
+fn lsp_rename_request_clears_completion_and_code_action_popups() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///rename.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    handle.completion_popup.set(Some(CompletionPopupModel {
+        rect: Rect::new(2, 2, 20, 3),
+        items: vec![CompletionItem {
+            label: "bad".to_string(),
+            detail: None,
+            edit: LspCompletionItemEdit::Raw(serde_json::json!({ "label": "bad" })),
+        }],
+        selected: 0,
+        scroll: 0,
+        accept: None,
+    }));
+    handle.code_action_popup.set(Some(CodeActionPopupModel {
+        rect: Rect::new(2, 5, 24, 3),
+        items: vec![CodeActionItemView {
+            title: "Replace bad with good".to_string(),
+            kind: Some("quickfix".to_string()),
+            is_preferred: true,
+        }],
+        selected: 0,
+        scroll: 0,
+        accept: None,
+    }));
+
+    let rename = Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    view.handle_event(&rename, ctx);
+
+    assert!(handle.completion_popup.get().is_none());
+    assert!(handle.code_action_popup.get().is_none());
+    wait_for_rename_popup(&mut terminal, &mut view, &handle, area, ctx);
+    assert!(handle.completion_popup.get().is_none());
+    assert!(handle.code_action_popup.get().is_none());
+}
+
+fn assert_rename_prepare_message(document_uri: &str, expected: &str) {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: document_uri.to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let rename = Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    view.handle_event(&rename, ctx);
+
+    let message = wait_for_lsp_message(&mut terminal, &mut view, &handle, area, ctx, expected);
+    assert!(
+        message.contains(expected),
+        "expected rename prepare message containing {expected:?}, got {message:?}"
+    );
+    assert!(handle.rename_popup.get().is_none());
+}
+
 fn wait_for_code_action_popup(
     terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
     view: &mut EditorView,
@@ -612,6 +750,33 @@ fn wait_for_rename_workspace_edit(
         }
         if Instant::now() >= deadline {
             panic!("timed out waiting for rename workspace edit; saw {seen:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_lsp_message(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+    expected: &str,
+) -> String {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::LspMessage { message } if message.contains(expected) => {
+                    return message;
+                }
+                other => seen.push(other),
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for LSP message {expected:?}; saw {seen:?}");
         }
         thread::sleep(Duration::from_millis(10));
     }

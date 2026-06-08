@@ -10,24 +10,53 @@
 
 ## Current task
 
-First incomplete task: `T18 — L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用`.
+First incomplete task: `R18 — 审阅 T18`.
 
 Task scope:
-- Add `EditorAction::LspRename` with default `F2`.
-- Request prepare-rename at the active editor position, then show rename input with a default name from the prepare range or current word.
-- Submit rename on Enter, cancel on Esc.
-- Apply returned `WorkspaceEdit` through the shared workspace LSP bridge to all opened buffers, report skipped unopened URIs, and refresh tab bindings/dirty state.
-- Add tests for single-file rename, cross-open-file rename, and skipped unopened URI behavior.
+- Review the completed T18 rename UI and workspace edit implementation.
+- Confirm prepare-rename error/null feedback, skipped unopened URI behavior, multi-buffer dirty tab updates, and popup exclusivity.
+- Add focused fixes or regression coverage if the review finds an uncovered issue.
 
 ## Implementation approach
 
-- Extend `atto-ui-editor` with a non-modal rename popup model/window, local key handling, pending prepare/rename request state, and `EditorEvent::LspRenameWorkspaceEdit`.
-- Keep actual multi-file edit application in `atto-editor-app`: consume the rename event, call `WorkspaceState::apply_workspace_edit`, and set a clear status message for applied/skipped files.
-- Reuse the existing `WorkspaceState` binding synchronization so open tabs update and dirty markers refresh through existing draw/title sync.
-- Extend the mock LSP server and tests for prepare/rename, emitted workspace edits, cross-open-file application, and skipped unopened URIs.
+- Inspect T18 implementation and existing tests against the R18 checklist.
+- Strengthen rename popup exclusivity if any stale popup path can conflict.
+- Add review tests for prepare-rename null/error feedback and popup clearing.
+- Run formatting, clippy, focused rename/workspace-edit tests, and the full workspace test suite.
 
 ## Completion
 
-- Implemented T18 rename UI and workspace edit application.
-- Updated `TODO.md` and `TODO-2.md` to mark T18 `[DONE]` with a completion record.
-- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted rename tests, and `cargo test --workspace --all-targets`.
+- Completed R18 review of T18 rename UI and workspace edit behavior.
+- Added rename popup exclusivity guards plus regression tests for prepare-rename null/error and completion/code-action popup clearing.
+- Updated `TODO.md` and `TODO-2.md` to mark R18 `[DONE]` with a completion record.
+- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, focused rename/workspace-edit tests, and `cargo test --workspace --all-targets`.
+
+## Progress update
+
+- Resuming with the required plan file already present; next step is selecting the first incomplete TODO task.
+
+## Progress update
+
+- Selected first incomplete task: R18 review of T18 rename workspace edits.
+- Reviewing TODO-2 task requirements and the latest T18 implementation commit before making any changes.
+
+## Progress update
+
+- Added rename popup exclusivity guards and tests for prepare-rename null/error feedback plus popup clearing.
+- Starting validation with cargo fmt.
+
+## Progress update
+
+- cargo fmt and workspace clippy passed; running focused rename review tests.
+
+## Progress update
+
+- Focused rename and app workspace-edit tests passed; running full workspace test suite.
+
+## Progress update
+
+- Full workspace test suite passed; updating TODO records for R18 only.
+
+## Progress update
+
+- R18 is marked [DONE] in TODO.md and TODO-2.md with validation notes; reviewing final diff before commit.

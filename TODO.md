@@ -92,7 +92,7 @@
 | T17 | DONE | [DONE] Workspace / LSP Bridge 状态层 | TODO-2.md · 阶段三 |
 | R17 | DONE | [DONE] 审阅 T17 | TODO-2.md · 阶段三 |
 | T18 | DONE | [DONE] L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用 | TODO-2.md · 阶段三 |
-| R18 | TODO | 审阅 T18 | TODO-2.md · 阶段三 |
+| R18 | DONE | [DONE] 审阅 T18 | TODO-2.md · 阶段三 |
 | T19 | TODO | L4 Signature Help | TODO-2.md · 阶段三 |
 | R19 | TODO | 审阅 T19 | TODO-2.md · 阶段三 |
 | T20 | TODO | L5 Formatting 手动格式化与保存前格式化接口 | TODO-2.md · 阶段三 |

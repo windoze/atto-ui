@@ -218,7 +218,10 @@ fn main() -> io::Result<()> {
                     .and_then(|text_document| text_document.get("uri"))
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if uri.ends_with("/rename_unavailable.rs") || uri == "file:///rename_unavailable.rs"
+                if uri.ends_with("/rename_error.rs") || uri == "file:///rename_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock prepare rename error")?;
+                } else if uri.ends_with("/rename_unavailable.rs")
+                    || uri == "file:///rename_unavailable.rs"
                 {
                     respond(&mut stdout, id, Value::Null)?;
                 } else {

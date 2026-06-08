@@ -1280,13 +1280,21 @@
 - 新增/更新测试覆盖：mock LSP prepare+rename 单文件 edit 事件、两个已打开文件 cross-file rename edit 同步、未打开 URI skipped 且磁盘文件不变、默认 keymap `F2`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_rename_popup_submits_workspace_edit_event`；`cargo test -p atto-editor-app rename_workspace_edit`；`cargo test --workspace --all-targets`。
 
-### [TODO] R18 — 审阅 T18
+### [DONE] R18 — 审阅 T18
 
 审阅 T18 改动：
 - 确认 prepare rename error/null 时 UI 提示合理。
 - 确认 skipped unopened URI 不写磁盘。
 - 确认 multiple buffers 更新后 tab dirty markers 正确。
 - 确认 rename popup 不与 completion/code action popup 状态冲突。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T18 rename UI / workspace edit 路径：prepare rename error/null 通过 `EditorEvent::LspMessage` 给出明确状态提示且不打开 rename popup。
+- 确认 skipped unopened URI 只进入 `ApplyWorkspaceEditResult::skipped_uris`，不会写未打开文件磁盘内容；跨两个已打开文件的 rename edit 会同步对应 tab binding。
+- 确认 workspace edit 同步到打开 tab 后会触发 tab dirty marker；补充回归覆盖保持 dirty title 更新。
+- 加固 rename popup 互斥：rename 打开/响应处理会清理 hover、completion、code action popup 和相关 pending 状态，避免与 completion/code action popup 冲突。
+- 新增回归测试覆盖 prepare-rename null/error 提示、rename 请求清理 completion/code action popup；扩展 mock LSP 支持 prepare-rename error 响应。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_rename`；`cargo test -p atto-editor-app rename_workspace_edit`；`cargo test -p atto-editor-app workspace_edit_marks_open_tab_dirty`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T19 — L4 Signature Help
 
