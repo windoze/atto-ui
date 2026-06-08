@@ -1259,6 +1259,45 @@ mod tests {
     }
 
     #[test]
+    fn command_prefix_escape_clears_pending_and_which_key() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+        let ignored = DesktopEventResult::ignored();
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_alt_key('k'),
+            screen,
+            &ignored,
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("prefix handled");
+        assert!(!keymap.pending().is_empty());
+        assert!(desktop.which_key().is_some());
+
+        handle_command_key_event(
+            &mut desktop,
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            screen,
+            &DesktopEventResult::consumed(),
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("escape handled");
+
+        assert!(keymap.pending().is_empty());
+        assert!(desktop.which_key().is_none());
+        assert!(actions.is_empty());
+    }
+
+    #[test]
     fn opening_file_inside_workspace_does_not_add_new_root() {
         let root = unique_temp_dir("workspace_open");
         fs::create_dir_all(root.join("src")).expect("create temp dirs");

@@ -939,13 +939,21 @@
 - 新增/扩展单元测试覆盖 command id 唯一性、registry 构建 key sequence engine、which-key overlay 绘制与 modal 隐藏、app command registry 覆盖矩阵、prefix 显示 choices、完整序列触发 Save、已消费 key 不启动 which-key。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R13 — 审阅 T13
+### [DONE] R13 — 审阅 T13
 
 审阅 T13 改动：
 - 确认 command id 唯一性有测试或 debug assertion。
 - 确认 which-key overlay 绘制在窗口之上但不破坏 modal。
 - 确认 prefix pending 时 Esc 可取消。
 - 确认 app command registry 不持有短生命周期引用。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T13 的 `CommandRegistry` / `CommandDescriptor`、which-key overlay、`atto-editor-app` command registry、prefix keymap 分发和 editor command 转发路径。
+- 确认 command id 唯一性由 `CommandRegistry::new` 拒绝 duplicate id，并有框架单测与 app registry 构建测试覆盖；app registry 使用 owned command metadata/action，不持有短生命周期引用。
+- 确认 which-key overlay 在 `wm.draw` 之后绘制到窗口之上，并在 modal active 时隐藏；既有测试覆盖 overlay 文本绘制与 modal 隐藏。
+- 确认 command prefix pending 时 `Esc` 会在底层 consumed 结果检查前清理 pending 与 which-key overlay；新增 `command_prefix_escape_clears_pending_and_which_key` 回归测试固定该行为。
+- 未发现需要修改 T13 功能代码的问题。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T14 — 通用 Picker component 与 Command Palette
 
