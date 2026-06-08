@@ -203,6 +203,12 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
         )
         .with_default_sequence(prefixed('.')),
         command(
+            "lsp.rename",
+            "Rename Symbol",
+            "LSP",
+            AppCommandAction::Editor(atto_ui_editor::EditorAction::LspRename),
+        ),
+        command(
             "picker.commandPalette",
             "Command Palette",
             "Picker",

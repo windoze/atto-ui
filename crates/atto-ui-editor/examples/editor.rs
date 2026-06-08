@@ -119,6 +119,8 @@ fn main() -> Result<()> {
                         symbols: _,
                     } => {}
                     atto_ui_editor::EditorEvent::CodeActionMessage { message: _ } => {}
+                    atto_ui_editor::EditorEvent::LspRenameWorkspaceEdit { edit: _ } => {}
+                    atto_ui_editor::EditorEvent::LspMessage { message: _ } => {}
                 }
             }
 

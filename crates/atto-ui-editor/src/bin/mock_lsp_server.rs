@@ -118,6 +118,9 @@ fn main() -> io::Result<()> {
                         },
                         "foldingRangeProvider": true,
                         "codeActionProvider": true,
+                        "renameProvider": {
+                            "prepareProvider": true
+                        },
                         "executeCommandProvider": {
                             "commands": ["atto-ui.mock.command"]
                         },
@@ -207,6 +210,79 @@ fn main() -> io::Result<()> {
                     ])
                 };
                 respond(&mut stdout, id, result)?;
+            }
+            ("textDocument/prepareRename", Some(id)) => {
+                let uri = msg
+                    .get("params")
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if uri.ends_with("/rename_unavailable.rs") || uri == "file:///rename_unavailable.rs"
+                {
+                    respond(&mut stdout, id, Value::Null)?;
+                } else {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!({
+                            "range": {
+                                "start": { "line": 0, "character": 4 },
+                                "end": { "line": 0, "character": 7 }
+                            },
+                            "placeholder": "bad"
+                        }),
+                    )?;
+                }
+            }
+            ("textDocument/rename", Some(id)) => {
+                let params = msg.get("params");
+                let uri = params
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let new_name = params
+                    .and_then(|params| params.get("newName"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("renamed");
+
+                let mut changes = Map::new();
+                changes.insert(
+                    uri.to_string(),
+                    json!([
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 4 },
+                                "end": { "line": 0, "character": 7 }
+                            },
+                            "newText": new_name
+                        }
+                    ]),
+                );
+
+                if uri.ends_with("/rename_cross.rs") {
+                    let sibling =
+                        uri.trim_end_matches("/rename_cross.rs").to_string() + "/rename_other.rs";
+                    changes.insert(
+                        sibling,
+                        json!([
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 4 },
+                                    "end": { "line": 0, "character": 7 }
+                                },
+                                "newText": new_name
+                            }
+                        ]),
+                    );
+                }
+
+                respond(
+                    &mut stdout,
+                    id,
+                    json!({ "changes": Value::Object(changes) }),
+                )?;
             }
             ("workspace/executeCommand", Some(id)) => {
                 let command = msg

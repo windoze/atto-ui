@@ -128,6 +128,7 @@ pub enum EditorAction {
     LspNextDiagnostic,
     LspPrevDiagnostic,
     LspCodeAction,
+    LspRename,
 
     // --- UI toggles
     ToggleLineNumbers,
@@ -390,6 +391,10 @@ impl EditorKeymap {
         map.insert(
             KeyChord::new(KeyCode::Char('.'), KeyModifiers::CONTROL),
             A::LspCodeAction,
+        );
+        map.insert(
+            KeyChord::new(KeyCode::F(2), KeyModifiers::NONE),
+            A::LspRename,
         );
 
         Self { bindings: map }

@@ -79,6 +79,17 @@ pub struct CodeActionPopupModel {
     pub accept: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenamePopupModel {
+    /// Desired popup rect in screen coordinates.
+    pub rect: Rect,
+    pub value: String,
+    /// Cursor position as a character index within `value`.
+    pub cursor: usize,
+    /// When true, the next text-editing key replaces the prepared default value.
+    pub replace_on_input: bool,
+}
+
 #[derive(Clone, Debug)]
 struct HoverPopupView {
     model: Binding<Option<HoverPopupModel>>,
@@ -478,6 +489,80 @@ impl ::atto_ui::composable::EventHandling for CodeActionPopupView {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RenamePopupView {
+    model: Binding<Option<RenamePopupModel>>,
+    theme: Binding<EditorThemeSet>,
+    language_id: Binding<String>,
+}
+
+impl RenamePopupView {
+    fn new(
+        model: Binding<Option<RenamePopupModel>>,
+        theme: Binding<EditorThemeSet>,
+        language_id: Binding<String>,
+    ) -> Self {
+        Self {
+            model,
+            theme,
+            language_id,
+        }
+    }
+
+    fn editor_theme(&self) -> EditorTheme {
+        let theme_set = self.theme.get();
+        let language_id = self.language_id.get();
+        theme_set.for_language(language_id.as_str()).clone()
+    }
+}
+
+impl ::atto_ui::composable::Component for RenamePopupView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        let Some(model) = self.model.get() else {
+            return;
+        };
+        let theme = self.editor_theme();
+        let cursor = model.cursor.min(model.value.chars().count());
+        let mut before = String::new();
+        let mut at_cursor = " ".to_string();
+        let mut after = String::new();
+        for (idx, ch) in model.value.chars().enumerate() {
+            if idx < cursor {
+                before.push(ch);
+            } else if idx == cursor {
+                at_cursor = ch.to_string();
+            } else {
+                after.push(ch);
+            }
+        }
+
+        let line = Line::from(vec![
+            Span::styled("Rename: ", theme.popup),
+            Span::styled(before, theme.popup),
+            Span::styled(at_cursor, theme.popup_selected),
+            Span::styled(after, theme.popup),
+        ]);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(Paragraph::new(vec![line]).block(block), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for RenamePopupView {}
+
+impl ::atto_ui::composable::Layout for RenamePopupView {}
+
+impl ::atto_ui::composable::Scrollable for RenamePopupView {}
+
+impl ::atto_ui::composable::FocusNav for RenamePopupView {}
+
+impl ::atto_ui::composable::DynamicTree for RenamePopupView {}
+
+impl ::atto_ui::composable::EventHandling for RenamePopupView {}
+
 pub(crate) fn code_action_line(item: &CodeActionItemView, max_width: usize) -> String {
     let mut line = String::new();
     if item.is_preferred {
@@ -524,10 +609,12 @@ pub struct EditorPopupWindows {
     hover_id: Option<WindowId>,
     completion_id: Option<WindowId>,
     code_action_id: Option<WindowId>,
+    rename_id: Option<WindowId>,
     hover: Binding<Option<HoverPopupModel>>,
     hover_dismissed: Binding<Option<Position>>,
     completion: Binding<Option<CompletionPopupModel>>,
     code_action: Binding<Option<CodeActionPopupModel>>,
+    rename: Binding<Option<RenamePopupModel>>,
     theme: Binding<EditorThemeSet>,
     language_id: Binding<String>,
 }
@@ -566,10 +653,12 @@ impl EditorPopupWindows {
             hover_id: None,
             completion_id: None,
             code_action_id: None,
+            rename_id: None,
             hover: handle.hover_popup.clone(),
             hover_dismissed: handle.hover_popup_dismissed.clone(),
             completion: handle.completion_popup.clone(),
             code_action: handle.code_action_popup.clone(),
+            rename: handle.rename_popup.clone(),
             theme: handle.theme.clone(),
             language_id: handle.language_id.clone(),
         }
@@ -579,6 +668,7 @@ impl EditorPopupWindows {
         self.sync_hover(wm, bounds);
         self.sync_completion(wm, bounds);
         self.sync_code_action(wm, bounds);
+        self.sync_rename(wm, bounds);
     }
 
     fn sync_hover(&mut self, wm: &mut WindowManager, bounds: Rect) {
@@ -681,6 +771,39 @@ impl EditorPopupWindows {
         }
     }
 
+    fn sync_rename(&mut self, wm: &mut WindowManager, bounds: Rect) {
+        let model = self.rename.get();
+        match (model, self.rename_id) {
+            (None, Some(id)) => {
+                wm.close(id);
+                self.rename_id = None;
+            }
+            (Some(model), None) => {
+                let window = Window::new(
+                    WindowKind::Tooltip,
+                    "rename",
+                    model.rect,
+                    Box::new(RenamePopupView::new(
+                        self.rename.clone(),
+                        self.theme.clone(),
+                        self.language_id.clone(),
+                    )),
+                )
+                .with_decorations(popup_decorations());
+                let id = wm.add_window(window, bounds);
+                self.rename_id = Some(id);
+            }
+            (Some(model), Some(id)) => {
+                if let Some(w) = wm.window_mut(id) {
+                    w.rect.set(model.rect);
+                    w.decorations.set(popup_decorations());
+                }
+                wm.bring_to_front(id);
+            }
+            (None, None) => {}
+        }
+    }
+
     pub fn close_all(&mut self, wm: &mut WindowManager) {
         if let Some(id) = self.hover_id.take() {
             wm.close(id);
@@ -689,6 +812,9 @@ impl EditorPopupWindows {
             wm.close(id);
         }
         if let Some(id) = self.code_action_id.take() {
+            wm.close(id);
+        }
+        if let Some(id) = self.rename_id.take() {
             wm.close(id);
         }
     }

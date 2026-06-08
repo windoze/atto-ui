@@ -1230,7 +1230,7 @@
 - 审阅中发现并修复：多 `(workspace_root, language_id)` LSP sync 轮询时，inactive sync 原先会被传入全局 active buffer，可能因该 buffer 不属于该 sync 而反复 poll 失败。现在只有 owning active sync 使用 `poll_workspace`，inactive sync 通过 raw session poll drain workspace symbol / applyEdit / message events，避免丢事件且不把派生编辑应用到错误 buffer；新增 active poll key 单测。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T18 — L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用
+### [DONE] T18 — L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用
 
 **依赖**：T17。
 
@@ -1271,6 +1271,14 @@
 **验收**：
 - Rename 不会部分静默成功。
 - Rename edit 是 undoable（至少 per buffer 可 undo；若 bridge 不支持，记录限制）。
+
+**完成记录（2026-06-09）**：
+- `EditorAction::LspRename` 已接入默认 `F2` 与命令面板命令；EditorView 现在支持 prepare-rename 请求、rename input popup、Enter 提交、Esc 取消，并从 prepare range / placeholder / 当前 word 推导默认文本。
+- Rename response 不在单文档 editor 内做 partial apply，而是通过 `EditorEvent::LspRenameWorkspaceEdit` 交给 `atto-editor-app` 的共享 `WorkspaceState::apply_workspace_edit`，跨已打开文件同步 tab binding/dirty title；对 skipped unopened URI 显示明确状态提示且不写磁盘。
+- Rename popup 与 completion/code action/hover popup 状态互斥；prepare/rename error、null/no-edit response 会通过 LSP message 事件提示，不静默失败。
+- Undo 限制记录：workspace edit 回写 tab binding 后，现有 EditorView 外部文本同步使用 editor-core `Replace` edit path，因此同步后的每个打开 buffer 仍走 per-view undo 路径。
+- 新增/更新测试覆盖：mock LSP prepare+rename 单文件 edit 事件、两个已打开文件 cross-file rename edit 同步、未打开 URI skipped 且磁盘文件不变、默认 keymap `F2`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_rename_popup_submits_workspace_edit_event`；`cargo test -p atto-editor-app rename_workspace_edit`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R18 — 审阅 T18
 

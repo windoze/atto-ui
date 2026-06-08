@@ -488,6 +488,71 @@ fn lsp_code_action_command_without_edit_executes() {
     }
 }
 
+#[test]
+fn lsp_rename_popup_submits_workspace_edit_event() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///rename.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let rename = Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    view.handle_event(&rename, ctx);
+
+    wait_for_rename_popup(&mut terminal, &mut view, &handle, area, ctx);
+    let popup = handle.rename_popup.get().expect("rename popup");
+    assert_eq!(popup.value, "bad");
+    assert!(popup.replace_on_input);
+
+    for ch in "good".chars() {
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+            ctx,
+        );
+    }
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    view.handle_event(&enter, ctx);
+
+    let edit = wait_for_rename_workspace_edit(&mut terminal, &mut view, &handle, area, ctx);
+    assert_eq!(text.get(), "let bad = 1;\n");
+    assert_eq!(
+        edit.pointer("/changes/file:~1~1~1rename.rs/0/newText")
+            .and_then(serde_json::Value::as_str),
+        Some("good")
+    );
+}
+
 fn wait_for_code_action_popup(
     terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
     view: &mut EditorView,
@@ -503,6 +568,50 @@ fn wait_for_code_action_popup(
         }
         if Instant::now() >= deadline {
             panic!("timed out waiting for code action popup");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_rename_popup(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if handle.rename_popup.get().is_some() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for rename popup");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_rename_workspace_edit(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::LspRenameWorkspaceEdit { edit } => return edit,
+                other => seen.push(other),
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for rename workspace edit; saw {seen:?}");
         }
         thread::sleep(Duration::from_millis(10));
     }

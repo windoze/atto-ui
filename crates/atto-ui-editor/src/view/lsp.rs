@@ -174,6 +174,61 @@ impl EditorView {
                 self.code_action_popup.set(None);
             }
         }
+
+        if let Some((pending_id, target)) = self.lsp.pending_prepare_rename
+            && pending_id == id
+            && method.as_str() == "textDocument/prepareRename"
+        {
+            self.lsp.pending_prepare_rename = None;
+            if let Some(err) = error {
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Rename is not available: {}", err.message),
+                });
+                return;
+            }
+
+            let Some(result) = result.as_ref().filter(|value| !value.is_null()) else {
+                self.events.push(EditorEvent::LspMessage {
+                    message: "Rename is not available at the cursor".to_string(),
+                });
+                return;
+            };
+
+            let default_text = self
+                .rename_default_from_prepare_response(result)
+                .or_else(|| self.current_word_at_cursor())
+                .unwrap_or_default();
+            if default_text.is_empty() {
+                self.events.push(EditorEvent::LspMessage {
+                    message: "Rename is not available at the cursor".to_string(),
+                });
+                return;
+            }
+
+            self.open_rename_popup(target, default_text);
+        }
+
+        if let Some(pending_id) = self.lsp.pending_rename
+            && pending_id == id
+            && method.as_str() == "textDocument/rename"
+        {
+            self.lsp.pending_rename = None;
+            self.lsp.rename_target = None;
+            if let Some(err) = error {
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Rename failed: {}", err.message),
+                });
+                return;
+            }
+            let Some(edit) = result.filter(|value| !value.is_null()) else {
+                self.events.push(EditorEvent::LspMessage {
+                    message: "Rename produced no workspace edit".to_string(),
+                });
+                return;
+            };
+            self.events
+                .push(EditorEvent::LspRenameWorkspaceEdit { edit });
+        }
     }
 
     fn apply_publish_diagnostics(&mut self, params: editor_core_lsp::LspPublishDiagnosticsParams) {
@@ -394,6 +449,9 @@ impl EditorView {
         if self.code_action_popup.get().is_some() {
             return;
         }
+        if self.rename_popup.get().is_some() {
+            return;
+        }
         if self.lsp.hover_suppressed_position == Some(anchor.position) {
             return;
         }
@@ -604,6 +662,10 @@ impl EditorView {
         self.code_action_popup.set(None);
         self.lsp.pending_code_action = None;
         self.lsp.code_action_items.clear();
+        self.rename_popup.set(None);
+        self.lsp.rename_target = None;
+        self.lsp.pending_prepare_rename = None;
+        self.lsp.pending_rename = None;
         let pos = self.active_cursor_position();
         let Some(lsp) = self.lsp.session.as_mut() else {
             return;
@@ -626,6 +688,10 @@ impl EditorView {
         self.lsp.completion_requested_position = None;
         self.code_action_popup.set(None);
         self.lsp.code_action_items.clear();
+        self.rename_popup.set(None);
+        self.lsp.rename_target = None;
+        self.lsp.pending_prepare_rename = None;
+        self.lsp.pending_rename = None;
 
         let Some(lsp) = self.lsp.session.as_mut() else {
             return;
@@ -640,6 +706,154 @@ impl EditorView {
         ) {
             self.lsp.pending_code_action = Some(id);
         }
+    }
+
+    pub(super) fn request_prepare_rename_now(&mut self) {
+        self.hide_hover_popup_only();
+        self.completion_popup.set(None);
+        self.lsp.completion_pending_request = None;
+        self.lsp.completion_requested_position = None;
+        self.code_action_popup.set(None);
+        self.lsp.pending_code_action = None;
+        self.lsp.code_action_items.clear();
+        self.rename_popup.set(None);
+        self.lsp.pending_prepare_rename = None;
+        self.lsp.pending_rename = None;
+        self.lsp.rename_target = None;
+
+        let position = self.active_cursor_position();
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            self.events.push(EditorEvent::LspMessage {
+                message: "Rename requires an active LSP session".to_string(),
+            });
+            return;
+        };
+
+        let line_index = self.state_manager.editor().line_index();
+        match lsp.request_prepare_rename(line_index, position.line, position.column) {
+            Ok(id) => {
+                self.lsp.pending_prepare_rename = Some((id, RenameTarget { position }));
+            }
+            Err(err) => self.events.push(EditorEvent::LspMessage {
+                message: format!("Rename prepare request failed: {err}"),
+            }),
+        }
+    }
+
+    pub(super) fn cancel_rename_popup(&mut self) {
+        self.rename_popup.set(None);
+        self.lsp.rename_target = None;
+    }
+
+    pub(super) fn submit_rename_popup(&mut self) {
+        let Some(model) = self.rename_popup.get() else {
+            return;
+        };
+        let new_name = model.value;
+        if new_name.is_empty() {
+            self.events.push(EditorEvent::LspMessage {
+                message: "Rename target cannot be empty".to_string(),
+            });
+            return;
+        }
+        let Some(target) = self.lsp.rename_target else {
+            self.rename_popup.set(None);
+            self.events.push(EditorEvent::LspMessage {
+                message: "Rename target is no longer available".to_string(),
+            });
+            return;
+        };
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            self.rename_popup.set(None);
+            self.lsp.rename_target = None;
+            self.events.push(EditorEvent::LspMessage {
+                message: "Rename requires an active LSP session".to_string(),
+            });
+            return;
+        };
+
+        let line_index = self.state_manager.editor().line_index();
+        match lsp.request_rename(
+            line_index,
+            target.position.line,
+            target.position.column,
+            new_name,
+        ) {
+            Ok(id) => {
+                self.rename_popup.set(None);
+                self.lsp.pending_rename = Some(id);
+            }
+            Err(err) => {
+                self.rename_popup.set(None);
+                self.lsp.rename_target = None;
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Rename request failed: {err}"),
+                });
+            }
+        }
+    }
+
+    pub(super) fn insert_rename_popup_char(&mut self, ch: char) {
+        let Some(mut model) = self.rename_popup.get() else {
+            return;
+        };
+        if model.replace_on_input {
+            model.value.clear();
+            model.cursor = 0;
+            model.replace_on_input = false;
+        }
+        insert_char_at(&mut model.value, model.cursor, ch);
+        model.cursor = model.cursor.saturating_add(1);
+        self.rename_popup.set(Some(model));
+    }
+
+    pub(super) fn backspace_rename_popup(&mut self) {
+        let Some(mut model) = self.rename_popup.get() else {
+            return;
+        };
+        if model.replace_on_input {
+            model.value.clear();
+            model.cursor = 0;
+            model.replace_on_input = false;
+        } else if model.cursor > 0 {
+            model.cursor = model.cursor.saturating_sub(1);
+            remove_char_at(&mut model.value, model.cursor);
+        }
+        self.rename_popup.set(Some(model));
+    }
+
+    pub(super) fn delete_rename_popup(&mut self) {
+        let Some(mut model) = self.rename_popup.get() else {
+            return;
+        };
+        if model.replace_on_input {
+            model.value.clear();
+            model.cursor = 0;
+            model.replace_on_input = false;
+        } else {
+            remove_char_at(&mut model.value, model.cursor);
+        }
+        self.rename_popup.set(Some(model));
+    }
+
+    pub(super) fn move_rename_popup_cursor(&mut self, delta: isize) {
+        let Some(mut model) = self.rename_popup.get() else {
+            return;
+        };
+        model.replace_on_input = false;
+        let len = model.value.chars().count() as isize;
+        let next = (model.cursor as isize + delta).clamp(0, len);
+        model.cursor = next as usize;
+        self.rename_popup.set(Some(model));
+    }
+
+    pub(super) fn move_rename_popup_cursor_to(&mut self, cursor: usize) {
+        let Some(mut model) = self.rename_popup.get() else {
+            return;
+        };
+        model.replace_on_input = false;
+        model.cursor = cursor.min(model.value.chars().count());
+        self.rename_popup.set(Some(model));
     }
 
     pub fn request_document_symbols(&mut self) -> bool {
@@ -736,6 +950,11 @@ impl EditorView {
             self.lsp.hover_target = None;
             return;
         }
+        if self.rename_popup.get().is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
         if !self.config.hover.enabled.get() {
             self.lsp.hover_due = None;
             self.lsp.hover_target = None;
@@ -788,6 +1007,9 @@ impl EditorView {
             return;
         }
         if self.code_action_popup.get().is_some() {
+            return;
+        }
+        if self.rename_popup.get().is_some() {
             return;
         }
 
@@ -1029,6 +1251,80 @@ impl EditorView {
         })
     }
 
+    fn rename_popup_rect_for_cursor(&self, value: &str) -> Option<Rect> {
+        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
+        let width = (value.chars().count() + "Rename: ".len() + 4).clamp(24, 80) as u16;
+        Some(Rect {
+            x: cursor_x.saturating_add(1),
+            y: cursor_y.saturating_add(1),
+            width,
+            height: 3,
+        })
+    }
+
+    fn open_rename_popup(&mut self, target: RenameTarget, value: String) {
+        let Some(rect) = self.rename_popup_rect_for_cursor(&value) else {
+            self.events.push(EditorEvent::LspMessage {
+                message: "Rename popup cannot be shown at the current cursor".to_string(),
+            });
+            return;
+        };
+        self.lsp.rename_target = Some(target);
+        self.rename_popup.set(Some(RenamePopupModel {
+            rect,
+            cursor: value.chars().count(),
+            value,
+            replace_on_input: true,
+        }));
+    }
+
+    fn rename_default_from_prepare_response(&self, value: &serde_json::Value) -> Option<String> {
+        if let Some(placeholder) = value.get("placeholder").and_then(|v| v.as_str())
+            && !placeholder.is_empty()
+        {
+            return Some(placeholder.to_string());
+        }
+
+        if let Some(range) = value.get("range").and_then(lsp_range_from_value) {
+            return self
+                .text_for_lsp_range(range)
+                .filter(|text| !text.is_empty());
+        }
+
+        if value.get("defaultBehavior").and_then(|v| v.as_bool()) == Some(true) {
+            return self.current_word_at_cursor();
+        }
+
+        lsp_range_from_value(value).and_then(|range| self.text_for_lsp_range(range))
+    }
+
+    fn text_for_lsp_range(&self, range: editor_core_lsp::LspRange) -> Option<String> {
+        let line_index = self.state_manager.editor().line_index();
+        let (start, end) = editor_core_lsp::char_offsets_for_lsp_range(line_index, &range);
+        if start == end {
+            return None;
+        }
+        Some(
+            self.state_manager
+                .editor()
+                .get_text()
+                .chars()
+                .skip(start)
+                .take(end.saturating_sub(start))
+                .collect(),
+        )
+    }
+
+    fn current_word_at_cursor(&self) -> Option<String> {
+        let pos = self.active_cursor_position();
+        let line = self
+            .state_manager
+            .editor()
+            .line_index()
+            .get_line_text(pos.line)?;
+        word_at_char_column(&line, pos.column)
+    }
+
     pub(super) fn cursor_screen_position(&self) -> Option<Option<(u16, u16)>> {
         let area = self.last_area?;
         let (_gutter, text_area) = self.layout_rects(area);
@@ -1148,4 +1444,77 @@ fn code_action_item_view(item: &LspCodeActionItem) -> CodeActionItemView {
             is_preferred: false,
         },
     }
+}
+
+fn lsp_range_from_value(value: &serde_json::Value) -> Option<editor_core_lsp::LspRange> {
+    let start = value.get("start")?;
+    let end = value.get("end")?;
+    Some(editor_core_lsp::LspRange::new(
+        lsp_position_from_value(start)?,
+        lsp_position_from_value(end)?,
+    ))
+}
+
+fn lsp_position_from_value(value: &serde_json::Value) -> Option<editor_core_lsp::LspPosition> {
+    Some(editor_core_lsp::LspPosition::new(
+        value
+            .get("line")?
+            .as_u64()
+            .map(|line| u32::try_from(line).unwrap_or(u32::MAX))?,
+        value
+            .get("character")?
+            .as_u64()
+            .map(|character| u32::try_from(character).unwrap_or(u32::MAX))?,
+    ))
+}
+
+fn word_at_char_column(line: &str, column: usize) -> Option<String> {
+    let chars = line.chars().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return None;
+    }
+
+    let mut idx = column.min(chars.len().saturating_sub(1));
+    if !is_rename_word_char(chars[idx]) && idx > 0 && is_rename_word_char(chars[idx - 1]) {
+        idx -= 1;
+    }
+    if !is_rename_word_char(chars[idx]) {
+        return None;
+    }
+
+    let mut start = idx;
+    while start > 0 && is_rename_word_char(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < chars.len() && is_rename_word_char(chars[end]) {
+        end += 1;
+    }
+    Some(chars[start..end].iter().collect())
+}
+
+fn is_rename_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn byte_index_for_char(value: &str, char_idx: usize) -> usize {
+    value
+        .char_indices()
+        .nth(char_idx)
+        .map(|(idx, _)| idx)
+        .unwrap_or(value.len())
+}
+
+fn insert_char_at(value: &mut String, char_idx: usize, ch: char) {
+    let byte_idx = byte_index_for_char(value, char_idx);
+    value.insert(byte_idx, ch);
+}
+
+fn remove_char_at(value: &mut String, char_idx: usize) {
+    let start = byte_index_for_char(value, char_idx);
+    if start >= value.len() {
+        return;
+    }
+    let end = byte_index_for_char(value, char_idx.saturating_add(1));
+    value.replace_range(start..end, "");
 }

@@ -31,7 +31,7 @@ pub use dynamic::{editor_schema, register_editor, register_runtime_components};
 pub use keymap::{EditorAction, EditorKeymap, KeyChord};
 pub use popup::{
     CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
-    EditorPopupWindows, HoverPopupModel, LspCompletionItemEdit, LspHoverContents,
+    EditorPopupWindows, HoverPopupModel, LspCompletionItemEdit, LspHoverContents, RenamePopupModel,
 };
 pub use theme::{
     EditorTheme, EditorThemeSet, LSP_DIAGNOSTIC_ERROR_STYLE_ID, LSP_DIAGNOSTIC_HINT_STYLE_ID,

@@ -12,6 +12,53 @@ impl EditorView {
             return self.handle_search_key_event(key);
         }
 
+        if self.rename_popup.get().is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.cancel_rename_popup();
+                    return EventResult::consumed();
+                }
+                KeyCode::Enter => {
+                    self.submit_rename_popup();
+                    return EventResult::consumed();
+                }
+                KeyCode::Backspace => {
+                    self.backspace_rename_popup();
+                    return EventResult::consumed();
+                }
+                KeyCode::Delete => {
+                    self.delete_rename_popup();
+                    return EventResult::consumed();
+                }
+                KeyCode::Left => {
+                    self.move_rename_popup_cursor(-1);
+                    return EventResult::consumed();
+                }
+                KeyCode::Right => {
+                    self.move_rename_popup_cursor(1);
+                    return EventResult::consumed();
+                }
+                KeyCode::Home => {
+                    self.move_rename_popup_cursor_to(0);
+                    return EventResult::consumed();
+                }
+                KeyCode::End => {
+                    if let Some(model) = self.rename_popup.get() {
+                        self.move_rename_popup_cursor_to(model.value.chars().count());
+                    }
+                    return EventResult::consumed();
+                }
+                KeyCode::Char(ch)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.insert_rename_popup_char(ch);
+                    return EventResult::consumed();
+                }
+                _ => return EventResult::consumed(),
+            }
+        }
+
         // Code action popup keyboard navigation/accept.
         if let Some(popup) = self.code_action_popup.get() {
             match key.code {

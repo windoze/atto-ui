@@ -356,6 +356,13 @@ impl EditorView {
             }
 
             EditorAction::CancelPopup => {
+                if self.rename_popup.get().is_some() || self.lsp.pending_prepare_rename.is_some() {
+                    self.rename_popup.set(None);
+                    self.lsp.pending_prepare_rename = None;
+                    self.lsp.pending_rename = None;
+                    self.lsp.rename_target = None;
+                    return true;
+                }
                 if self.code_action_popup.get().is_some() {
                     self.code_action_popup.set(None);
                     self.lsp.code_action_items.clear();
@@ -408,6 +415,10 @@ impl EditorView {
             }
             EditorAction::LspCodeAction => {
                 self.request_code_action_now();
+                true
+            }
+            EditorAction::LspRename => {
+                self.request_prepare_rename_now();
                 true
             }
             EditorAction::LspGotoDefinition => {
@@ -479,5 +490,6 @@ fn action_mutates_document(action: EditorAction) -> bool {
             | EditorAction::DuplicateLines
             | EditorAction::DeleteLines
             | EditorAction::LspCodeAction
+            | EditorAction::LspRename
     )
 }

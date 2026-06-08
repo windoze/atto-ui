@@ -1708,8 +1708,50 @@ fn process_editor_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<
                 atto_ui_editor::EditorEvent::CodeActionMessage { message } => {
                     set_status_message(state, message);
                 }
+                atto_ui_editor::EditorEvent::LspRenameWorkspaceEdit { edit } => {
+                    apply_rename_workspace_edit(state, edit);
+                }
+                atto_ui_editor::EditorEvent::LspMessage { message } => {
+                    set_status_message(state, message);
+                }
             }
         }
+    }
+}
+
+fn apply_rename_workspace_edit(state: &Arc<Mutex<AppState>>, edit: serde_json::Value) {
+    let workspace_state = state.lock().workspace_state.clone();
+    let result = {
+        let mut workspace = workspace_state.lock();
+        if workspace.active_buffer_id().is_none() {
+            set_status_message(state, "Rename requires workspace support");
+            return;
+        }
+        workspace.apply_workspace_edit(&edit)
+    };
+
+    match result {
+        Ok(result) => {
+            let applied = result.applied.len();
+            let skipped = result.skipped_uris.len();
+            match (applied, skipped) {
+                (0, 0) => set_status_message(state, "Rename produced no changes"),
+                (0, _) => set_status_message(
+                    state,
+                    format!("Rename skipped {skipped} unopened file(s); no open files updated"),
+                ),
+                (_, 0) => {
+                    set_status_message(state, format!("Rename applied to {applied} file(s)"));
+                }
+                (_, _) => set_status_message(
+                    state,
+                    format!(
+                        "Rename applied to {applied} file(s), skipped {skipped} unopened file(s)"
+                    ),
+                ),
+            }
+        }
+        Err(err) => set_status_message(state, format!("Rename failed: {err}")),
     }
 }
 

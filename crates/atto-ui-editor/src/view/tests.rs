@@ -630,4 +630,8 @@ fn editor_default_keymap_includes_stage_three_actions_without_known_conflicts() 
         keymap.get(KeyChord::new(KeyCode::F(8), KeyModifiers::SHIFT)),
         Some(EditorAction::LspPrevDiagnostic)
     );
+    assert_eq!(
+        keymap.get(KeyChord::new(KeyCode::F(2), KeyModifiers::NONE)),
+        Some(EditorAction::LspRename)
+    );
 }

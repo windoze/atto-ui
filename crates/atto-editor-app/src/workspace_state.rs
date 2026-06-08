@@ -509,6 +509,103 @@ mod tests {
     }
 
     #[test]
+    fn rename_workspace_edit_updates_two_open_file_bindings() {
+        let root = unique_temp_dir("rename_cross_file");
+        fs::create_dir_all(&root).expect("create temp root");
+        let first = root.join("one.rs");
+        let second = root.join("two.rs");
+
+        let mut state = WorkspaceState::default();
+        state.set_workspace_roots(vec![root.clone()]);
+        let first_binding = open_test_tab(
+            &mut state,
+            &first,
+            "let bad = 1;\n",
+            TabRef::new(WindowId::from_raw(1), 1),
+        );
+        let second_binding = open_test_tab(
+            &mut state,
+            &second,
+            "let bad = 2;\n",
+            TabRef::new(WindowId::from_raw(1), 2),
+        );
+
+        let mut changes = serde_json::Map::new();
+        for path in [&first, &second] {
+            changes.insert(
+                editor_core_lsp::path_to_file_uri(path),
+                json!([
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 4 },
+                            "end": { "line": 0, "character": 7 }
+                        },
+                        "newText": "good"
+                    }
+                ]),
+            );
+        }
+
+        let result = state
+            .apply_workspace_edit(&json!({ "changes": changes }))
+            .expect("apply rename edit");
+
+        assert_eq!(result.applied.len(), 2);
+        assert!(result.skipped_uris.is_empty());
+        assert_eq!(first_binding.get(), "let good = 1;\n");
+        assert_eq!(second_binding.get(), "let good = 2;\n");
+    }
+
+    #[test]
+    fn rename_workspace_edit_skips_unopened_uri_without_writing_disk() {
+        let root = unique_temp_dir("rename_skip_unopened");
+        fs::create_dir_all(&root).expect("create temp root");
+        let opened = root.join("opened.rs");
+        let unopened = root.join("unopened.rs");
+        fs::write(&unopened, "let bad = 2;\n").expect("write unopened file");
+
+        let mut state = WorkspaceState::default();
+        state.set_workspace_roots(vec![root.clone()]);
+        let binding = open_test_tab(
+            &mut state,
+            &opened,
+            "let bad = 1;\n",
+            TabRef::new(WindowId::from_raw(1), 1),
+        );
+
+        let mut changes = serde_json::Map::new();
+        for path in [&opened, &unopened] {
+            changes.insert(
+                editor_core_lsp::path_to_file_uri(path),
+                json!([
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 4 },
+                            "end": { "line": 0, "character": 7 }
+                        },
+                        "newText": "good"
+                    }
+                ]),
+            );
+        }
+
+        let result = state
+            .apply_workspace_edit(&json!({ "changes": changes }))
+            .expect("apply rename edit");
+
+        assert_eq!(result.applied.len(), 1);
+        assert_eq!(
+            result.skipped_uris,
+            vec![editor_core_lsp::path_to_file_uri(&unopened)]
+        );
+        assert_eq!(binding.get(), "let good = 1;\n");
+        assert_eq!(
+            fs::read_to_string(&unopened).expect("read unopened file"),
+            "let bad = 2;\n"
+        );
+    }
+
+    #[test]
     fn active_tab_switch_updates_workspace_active_buffer() {
         let root = unique_temp_dir("active");
         fs::create_dir_all(&root).expect("create temp root");
