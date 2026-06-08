@@ -22,6 +22,30 @@ impl KeyChord {
             modifiers: event.modifiers,
         })
     }
+
+    pub fn from_framework(chord: atto_ui::app::KeyChord) -> Self {
+        chord.into()
+    }
+
+    pub fn to_framework(self) -> atto_ui::app::KeyChord {
+        self.into()
+    }
+
+    pub fn label(self) -> String {
+        self.to_framework().label()
+    }
+}
+
+impl From<atto_ui::app::KeyChord> for KeyChord {
+    fn from(value: atto_ui::app::KeyChord) -> Self {
+        Self::new(value.code, value.modifiers)
+    }
+}
+
+impl From<KeyChord> for atto_ui::app::KeyChord {
+    fn from(value: KeyChord) -> Self {
+        Self::new(value.code, value.modifiers)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -391,5 +415,19 @@ impl EditorKeymap {
 impl Default for EditorKeymap {
     fn default() -> Self {
         Self::default_bindings()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framework_key_chord_round_trips() {
+        let editor = KeyChord::new(KeyCode::F(8), KeyModifiers::SHIFT);
+        let framework = editor.to_framework();
+
+        assert_eq!(framework.label(), "Shift+F8");
+        assert_eq!(KeyChord::from_framework(framework), editor);
     }
 }

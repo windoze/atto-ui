@@ -824,7 +824,7 @@
 - 确认 `atto-editor-app` 在 Explorer focused 时 `active_editor_status` / diagnostics summary 会回退到 `last_focused_editor`，既有单测覆盖 diagnostics/language fallback，PTY 覆盖 statusbar 显示。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T12 — C3 框架级多键序列 keymap engine
+### [DONE] T12 — C3 框架级多键序列 keymap engine
 
 **依赖**：无；与 T13 command registry 配套。
 
@@ -867,6 +867,14 @@
 **验收**：
 - 不影响现有 `EditorKeymap::get(chord)`。
 - 新 engine 可独立用于 app command registry。
+
+**完成记录（2026-06-09）**：
+- 新增 `src/app/keymap.rs`，提供框架级 `KeyChord`、`KeySequence`、`KeySequenceEngine<A>`、`KeymapMatch<A>` 与 `WhichKeyChoice`，支持单 chord、multi-chord、prefix pending、ambiguous exact 和可注入 `Instant` 的 timeout。
+- keymap engine 使用 trie 存储序列，并通过 `insert_with_metadata` 保存 command id/title，prefix choices 按 key label / command id / title deterministic 排序，便于后续 T13 command registry 与 which-key popup 复用。
+- 新增 `key_chord_label` / `key_sequence_label` 与对应方法，覆盖 `Ctrl+K`、`Shift+F8`、`Ctrl+K Ctrl+F` 等 accelerator/which-key label 生成。
+- 从 `src/app/mod.rs` 与 `src/lib.rs` re-export 框架 keymap API；`atto-ui-editor::KeyChord` 增加与 `atto_ui::app::KeyChord` 的双向转换和 label helper，现有 `EditorKeymap::get(chord)` 与单 chord bindings 保持不变。
+- 新增单元测试覆盖单键 exact、`Ctrl+K` prefix、`Ctrl+K Ctrl+F` exact、ambiguous exact、timeout 清理 pending、invalid chord 清理 pending、label 生成和 editor/framework chord round-trip。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R12 — 审阅 T12
 

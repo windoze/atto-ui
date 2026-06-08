@@ -1,4 +1,5 @@
 mod desktop;
+mod keymap;
 mod menu;
 mod run;
 mod status;
@@ -6,6 +7,10 @@ mod toast;
 
 pub use desktop::{
     Desktop, DesktopAction, DesktopEventResult, DesktopLayout, DesktopMode, WindowInfo,
+};
+pub use keymap::{
+    DEFAULT_KEY_SEQUENCE_TIMEOUT, KeyChord, KeySequence, KeySequenceEngine, KeymapMatch,
+    WhichKeyChoice, key_chord_label, key_sequence_label,
 };
 pub use menu::{MenuAction, MenuBar, MenuItem, MenuSpec};
 pub use run::{

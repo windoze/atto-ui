@@ -18,6 +18,10 @@ pub mod theme;
 pub mod widgets;
 pub mod wm;
 
+pub use app::{
+    DEFAULT_KEY_SEQUENCE_TIMEOUT, KeyChord, KeySequence, KeySequenceEngine, KeymapMatch,
+    WhichKeyChoice, key_chord_label, key_sequence_label,
+};
 pub use component_api::{
     ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget, ComponentValueCodec,
 };
