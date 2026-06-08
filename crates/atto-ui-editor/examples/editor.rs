@@ -106,10 +106,14 @@ fn main() -> Result<()> {
         move |_desktop: &mut Desktop, _screen: Rect| {
             // Drain goto results (host callback hook).
             for ev in editor_events.drain() {
-                let atto_ui_editor::EditorEvent::LspGoto { kind: _, locations } = ev;
-                // For the demo, just open a tooltip window with the first target.
-                if let Some(loc) = locations.first() {
-                    let _ = loc;
+                match ev {
+                    atto_ui_editor::EditorEvent::LspGoto { kind: _, locations } => {
+                        // For the demo, just open a tooltip window with the first target.
+                        if let Some(loc) = locations.first() {
+                            let _ = loc;
+                        }
+                    }
+                    atto_ui_editor::EditorEvent::CodeActionMessage { message: _ } => {}
                 }
             }
 

@@ -329,6 +329,11 @@ impl EditorView {
             }
 
             EditorAction::CancelPopup => {
+                if self.code_action_popup.get().is_some() {
+                    self.code_action_popup.set(None);
+                    self.lsp.code_action_items.clear();
+                    return true;
+                }
                 if self.completion_popup.get().is_some() {
                     self.completion_popup.set(None);
                     return true;
@@ -372,6 +377,10 @@ impl EditorView {
             }
             EditorAction::LspRequestCompletion => {
                 self.request_completion_now();
+                true
+            }
+            EditorAction::LspCodeAction => {
+                self.request_code_action_now();
                 true
             }
             EditorAction::LspGotoDefinition => {
@@ -442,5 +451,6 @@ fn action_mutates_document(action: EditorAction) -> bool {
             | EditorAction::MoveLinesDown
             | EditorAction::DuplicateLines
             | EditorAction::DeleteLines
+            | EditorAction::LspCodeAction
     )
 }

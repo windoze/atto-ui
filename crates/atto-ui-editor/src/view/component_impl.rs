@@ -100,6 +100,7 @@ impl ::atto_ui::composable::Component for EditorView {
 
         // Handle completion accept requested by mouse events on the completion popup window.
         self.process_completion_accept();
+        self.process_code_action_accept();
 
         self.render(frame, area, ctx);
     }
@@ -200,6 +201,7 @@ impl ::atto_ui::composable::EventHandling for EditorView {
 
         // Apply completion accept queued by mouse (from tooltip popup window).
         self.process_completion_accept();
+        self.process_code_action_accept();
 
         let res = match event {
             Event::Paste(text) => {

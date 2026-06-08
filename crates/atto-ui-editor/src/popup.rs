@@ -60,6 +60,25 @@ pub struct CompletionPopupModel {
     pub accept: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeActionItemView {
+    pub title: String,
+    pub kind: Option<String>,
+    pub is_preferred: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeActionPopupModel {
+    /// Desired popup rect in screen coordinates.
+    pub rect: Rect,
+    pub items: Vec<CodeActionItemView>,
+    pub selected: usize,
+    /// First visible item index (for scrolling long lists).
+    pub scroll: usize,
+    /// When set, the editor should apply the selected code action and then clear this field.
+    pub accept: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 struct HoverPopupView {
     model: Binding<Option<HoverPopupModel>>,
@@ -307,6 +326,183 @@ impl ::atto_ui::composable::EventHandling for CompletionPopupView {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CodeActionPopupView {
+    model: Binding<Option<CodeActionPopupModel>>,
+    theme: Binding<EditorThemeSet>,
+    language_id: Binding<String>,
+    last_area: Option<Rect>,
+}
+
+impl CodeActionPopupView {
+    fn new(
+        model: Binding<Option<CodeActionPopupModel>>,
+        theme: Binding<EditorThemeSet>,
+        language_id: Binding<String>,
+    ) -> Self {
+        Self {
+            model,
+            theme,
+            language_id,
+            last_area: None,
+        }
+    }
+
+    fn editor_theme(&self) -> EditorTheme {
+        let theme_set = self.theme.get();
+        let language_id = self.language_id.get();
+        theme_set.for_language(language_id.as_str()).clone()
+    }
+}
+
+impl ::atto_ui::composable::Component for CodeActionPopupView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        let Some(model) = self.model.get() else {
+            return;
+        };
+        let theme = self.editor_theme();
+
+        let inner_height = area.height.saturating_sub(2) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner_height);
+        for row in 0..inner_height {
+            let idx = model.scroll.saturating_add(row);
+            if idx >= model.items.len() {
+                lines.push(Line::from(""));
+                continue;
+            }
+
+            let item = &model.items[idx];
+            let mut style = theme.popup;
+            if idx == model.selected {
+                style = theme.popup_selected;
+            }
+            lines.push(Line::from(Span::styled(
+                code_action_line(item, area.width.saturating_sub(2) as usize),
+                style,
+            )));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for CodeActionPopupView {}
+
+impl ::atto_ui::composable::Layout for CodeActionPopupView {}
+
+impl ::atto_ui::composable::Scrollable for CodeActionPopupView {}
+
+impl ::atto_ui::composable::FocusNav for CodeActionPopupView {}
+
+impl ::atto_ui::composable::DynamicTree for CodeActionPopupView {}
+
+impl ::atto_ui::composable::EventHandling for CodeActionPopupView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Some(mut model) = self.model.get() else {
+            return EventResult::ignored();
+        };
+
+        let Event::Mouse(m) = event else {
+            return EventResult::ignored();
+        };
+        let Some(area) = self.last_area else {
+            return EventResult::ignored();
+        };
+
+        let Some((local_x, local_y)) =
+            mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+        else {
+            return EventResult::ignored();
+        };
+
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if area.width < 3 || area.height < 3 {
+                    return EventResult::ignored();
+                }
+                if local_x == 0
+                    || local_y == 0
+                    || local_x + 1 >= area.width
+                    || local_y + 1 >= area.height
+                {
+                    return EventResult::ignored();
+                }
+
+                let item_row = (local_y - 1) as usize;
+                let idx = model.scroll.saturating_add(item_row);
+                if idx >= model.items.len() {
+                    return EventResult::ignored();
+                }
+
+                model.selected = idx;
+                model.accept = Some(idx);
+                self.model.set(Some(model));
+                EventResult::consumed()
+            }
+            MouseEventKind::ScrollUp => {
+                let visible = area.height.saturating_sub(2) as usize;
+                model.scroll = model.scroll.saturating_sub(1);
+                model.selected = model.selected.min(model.items.len().saturating_sub(1));
+                if model.selected < model.scroll {
+                    model.selected = model.scroll;
+                }
+                if visible > 0 && model.selected >= model.scroll + visible {
+                    model.selected = model.scroll + visible - 1;
+                }
+                self.model.set(Some(model));
+                EventResult::consumed()
+            }
+            MouseEventKind::ScrollDown => {
+                let visible = area.height.saturating_sub(2) as usize;
+                if visible > 0 && model.scroll + visible < model.items.len() {
+                    model.scroll = model.scroll.saturating_add(1);
+                    model.selected = model.selected.min(model.items.len().saturating_sub(1));
+                    if model.selected < model.scroll {
+                        model.selected = model.scroll;
+                    }
+                    if model.selected >= model.scroll + visible {
+                        model.selected = model.scroll + visible - 1;
+                    }
+                    self.model.set(Some(model));
+                }
+                EventResult::consumed()
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+}
+
+pub(crate) fn code_action_line(item: &CodeActionItemView, max_width: usize) -> String {
+    let mut line = String::new();
+    if item.is_preferred {
+        line.push_str("* ");
+    } else {
+        line.push_str("  ");
+    }
+    line.push_str(&item.title);
+    if let Some(kind) = &item.kind
+        && !kind.is_empty()
+    {
+        line.push_str("  ");
+        line.push_str(kind);
+    }
+
+    if max_width >= 3 && line.chars().count() > max_width {
+        line.chars()
+            .take(max_width.saturating_sub(3))
+            .collect::<String>()
+            + "..."
+    } else {
+        line
+    }
+}
+
 fn popup_decorations() -> WindowDecorations {
     WindowDecorations {
         border: atto_ui::wm::WindowBorderStyle::Borderless,
@@ -327,9 +523,11 @@ fn popup_decorations() -> WindowDecorations {
 pub struct EditorPopupWindows {
     hover_id: Option<WindowId>,
     completion_id: Option<WindowId>,
+    code_action_id: Option<WindowId>,
     hover: Binding<Option<HoverPopupModel>>,
     hover_dismissed: Binding<Option<Position>>,
     completion: Binding<Option<CompletionPopupModel>>,
+    code_action: Binding<Option<CodeActionPopupModel>>,
     theme: Binding<EditorThemeSet>,
     language_id: Binding<String>,
 }
@@ -367,9 +565,11 @@ impl EditorPopupWindows {
         Self {
             hover_id: None,
             completion_id: None,
+            code_action_id: None,
             hover: handle.hover_popup.clone(),
             hover_dismissed: handle.hover_popup_dismissed.clone(),
             completion: handle.completion_popup.clone(),
+            code_action: handle.code_action_popup.clone(),
             theme: handle.theme.clone(),
             language_id: handle.language_id.clone(),
         }
@@ -378,6 +578,7 @@ impl EditorPopupWindows {
     pub fn sync(&mut self, wm: &mut WindowManager, bounds: Rect) {
         self.sync_hover(wm, bounds);
         self.sync_completion(wm, bounds);
+        self.sync_code_action(wm, bounds);
     }
 
     fn sync_hover(&mut self, wm: &mut WindowManager, bounds: Rect) {
@@ -447,11 +648,47 @@ impl EditorPopupWindows {
         }
     }
 
+    fn sync_code_action(&mut self, wm: &mut WindowManager, bounds: Rect) {
+        let model = self.code_action.get();
+        match (model, self.code_action_id) {
+            (None, Some(id)) => {
+                wm.close(id);
+                self.code_action_id = None;
+            }
+            (Some(model), None) => {
+                let window = Window::new(
+                    WindowKind::Tooltip,
+                    "code actions",
+                    model.rect,
+                    Box::new(CodeActionPopupView::new(
+                        self.code_action.clone(),
+                        self.theme.clone(),
+                        self.language_id.clone(),
+                    )),
+                )
+                .with_decorations(popup_decorations());
+                let id = wm.add_window(window, bounds);
+                self.code_action_id = Some(id);
+            }
+            (Some(model), Some(id)) => {
+                if let Some(w) = wm.window_mut(id) {
+                    w.rect.set(model.rect);
+                    w.decorations.set(popup_decorations());
+                }
+                wm.bring_to_front(id);
+            }
+            (None, None) => {}
+        }
+    }
+
     pub fn close_all(&mut self, wm: &mut WindowManager) {
         if let Some(id) = self.hover_id.take() {
             wm.close(id);
         }
         if let Some(id) = self.completion_id.take() {
+            wm.close(id);
+        }
+        if let Some(id) = self.code_action_id.take() {
             wm.close(id);
         }
     }

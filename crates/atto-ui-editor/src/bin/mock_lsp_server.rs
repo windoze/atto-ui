@@ -1,6 +1,6 @@
 use std::io::{self, BufReader};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 fn respond<W: io::Write>(writer: &mut W, id: u64, result: Value) -> io::Result<()> {
     editor_core_lsp::write_lsp_message(
@@ -93,6 +93,10 @@ fn main() -> io::Result<()> {
                             "full": true
                         },
                         "foldingRangeProvider": true,
+                        "codeActionProvider": true,
+                        "executeCommandProvider": {
+                            "commands": ["atto-ui.mock.command"]
+                        },
                     }
                 });
                 respond(&mut stdout, id, result)?;
@@ -124,6 +128,48 @@ fn main() -> io::Result<()> {
                     "contents": { "kind": "plaintext", "value": "HOVER" }
                 });
                 respond(&mut stdout, id, result)?;
+            }
+            ("textDocument/codeAction", Some(id)) => {
+                let uri = msg
+                    .get("params")
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let target_uri = if uri.ends_with("/code_action_cross.rs")
+                    || uri == "file:///code_action_cross.rs"
+                {
+                    "file:///other.rs"
+                } else {
+                    uri
+                };
+                let mut changes = Map::new();
+                changes.insert(
+                    target_uri.to_string(),
+                    json!([
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 4 },
+                                "end": { "line": 0, "character": 7 }
+                            },
+                            "newText": "good"
+                        }
+                    ]),
+                );
+                let result = json!([
+                    {
+                        "title": "Replace bad with good",
+                        "kind": "quickfix",
+                        "isPreferred": true,
+                        "edit": {
+                            "changes": Value::Object(changes)
+                        }
+                    }
+                ]);
+                respond(&mut stdout, id, result)?;
+            }
+            ("workspace/executeCommand", Some(id)) => {
+                respond(&mut stdout, id, Value::Null)?;
             }
             // Notifications.
             ("textDocument/didOpen", None) => {

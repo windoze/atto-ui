@@ -590,7 +590,7 @@
 - 确认 Explorer focused 时 statusbar 使用 `last_focused_editor` 的 diagnostics summary，且已有 app 单测覆盖 `E:1 W:2 I:3 H:4` fallback 渲染。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T9 — L2 Code Action 请求、列表 popup 与单文档应用
+### [DONE] T9 — L2 Code Action 请求、列表 popup 与单文档应用
 
 **依赖**：T7；建议 T8 后做。
 
@@ -644,6 +644,15 @@
 **验收**：
 - Popup 与 completion/hover 不互相遮挡；Esc 能关闭。
 - Code action 应用后 undo 可恢复（单文档 edit 应走 editor-core edit path）。
+
+**完成记录（2026-06-08）**：
+- `EditorAction` 新增 `LspCodeAction`，默认键位为 `Ctrl+.`；请求使用当前 selection offsets，无 selection 时使用 cursor 空 range，并通过 `textDocument/codeAction` 发送空 diagnostics context。
+- `EditorLspController` 增加 `pending_code_action` 与 `code_action_items`；LSP response 通过 `code_action_items_from_value` 解析，preferred action 排前并以 `*` 标记，生成 keyboard code action popup。
+- 新增 `CodeActionPopupModel` / `CodeActionItemView`、`EditorViewHandle.code_action_popup` 与 inline/tooltip popup 绘制；Up/Down/PageUp/PageDown/Enter/Esc 行为与 completion popup 对齐，打开 code action 时会关闭 hover/completion 并清理 pending completion。
+- Enter 应用 `apply_plan_for_code_action_item`：当前 URI 的 WorkspaceEdit 走 `LspSession::apply_workspace_edit` / editor-core edit path，随后同步 `config.text`、syntax、scroll 与 LSP didChange；command-only 或 edit 成功后的 command 通过 `request_execute_command` 执行。
+- 跨 URI WorkspaceEdit 不做静默部分应用，保持文本不变并通过 `EditorEvent::CodeActionMessage` 报告 skipped/unsupported URI。
+- mock LSP 增加 codeAction/executeCommand 支持；集成测试覆盖 popup title/kind/preferred 标记、Enter 应用单文档 edit、undo 恢复，以及跨文件 edit 跳过并发出事件。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R9 — 审阅 T9
 

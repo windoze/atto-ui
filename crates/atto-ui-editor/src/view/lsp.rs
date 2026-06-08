@@ -125,6 +125,25 @@ impl EditorView {
                 self.completion_popup.set(None);
             }
         }
+
+        if let Some(pending_id) = self.lsp.pending_code_action
+            && pending_id == id
+            && method.as_str() == "textDocument/codeAction"
+        {
+            self.lsp.pending_code_action = None;
+            if error.is_some() {
+                self.lsp.code_action_items.clear();
+                self.code_action_popup.set(None);
+                return;
+            }
+
+            if let Some(result) = result.as_ref() {
+                self.handle_lsp_code_action_response(result);
+            } else {
+                self.lsp.code_action_items.clear();
+                self.code_action_popup.set(None);
+            }
+        }
     }
 
     fn apply_publish_diagnostics(&mut self, params: editor_core_lsp::LspPublishDiagnosticsParams) {
@@ -307,6 +326,7 @@ impl EditorView {
                     "typeDefinition": { "dynamicRegistration": false },
                     "implementation": { "dynamicRegistration": false },
                     "references": { "dynamicRegistration": false },
+                    "codeAction": { "dynamicRegistration": false },
                 },
             },
             "clientInfo": { "name": "atto-ui editor" },
@@ -337,6 +357,9 @@ impl EditorView {
 
     fn handle_lsp_hover_response(&mut self, value: &serde_json::Value, anchor: HoverAnchor) {
         if self.completion_popup.get().is_some() {
+            return;
+        }
+        if self.code_action_popup.get().is_some() {
             return;
         }
         if self.lsp.hover_suppressed_position == Some(anchor.position) {
@@ -423,6 +446,36 @@ impl EditorView {
         self.completion_popup.set(Some(CompletionPopupModel {
             rect,
             items,
+            selected: 0,
+            scroll: 0,
+            accept: None,
+        }));
+    }
+
+    fn handle_lsp_code_action_response(&mut self, value: &serde_json::Value) {
+        self.hide_hover_popup_only();
+        self.completion_popup.set(None);
+
+        let mut items = editor_core_lsp::code_action_items_from_value(value);
+        items.sort_by_key(|item| !code_action_item_is_preferred(item));
+
+        let views = items.iter().map(code_action_item_view).collect::<Vec<_>>();
+        if views.is_empty() {
+            self.lsp.code_action_items.clear();
+            self.code_action_popup.set(None);
+            return;
+        }
+
+        let Some(rect) = self.code_action_popup_rect_for_cursor(&views) else {
+            self.lsp.code_action_items.clear();
+            self.code_action_popup.set(None);
+            return;
+        };
+
+        self.lsp.code_action_items = items;
+        self.code_action_popup.set(Some(CodeActionPopupModel {
+            rect,
+            items: views,
             selected: 0,
             scroll: 0,
             accept: None,
@@ -516,6 +569,9 @@ impl EditorView {
         if !self.config.completion.enabled.get() {
             return;
         }
+        self.code_action_popup.set(None);
+        self.lsp.pending_code_action = None;
+        self.lsp.code_action_items.clear();
         let pos = self.active_cursor_position();
         let Some(lsp) = self.lsp.session.as_mut() else {
             return;
@@ -528,6 +584,43 @@ impl EditorView {
             self.lsp.completion_pending_request = Some(id);
             self.lsp.completion_requested_position = Some(pos);
         }
+    }
+
+    pub(super) fn request_code_action_now(&mut self) {
+        let (start, end) = self.code_action_request_offsets();
+        self.hide_hover_popup_only();
+        self.completion_popup.set(None);
+        self.lsp.completion_pending_request = None;
+        self.lsp.completion_requested_position = None;
+        self.code_action_popup.set(None);
+        self.lsp.code_action_items.clear();
+
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+
+        let context = json!({ "diagnostics": [] });
+        if let Ok(id) = lsp.request_code_action(
+            self.state_manager.editor().line_index(),
+            start,
+            end,
+            context,
+        ) {
+            self.lsp.pending_code_action = Some(id);
+        }
+    }
+
+    fn code_action_request_offsets(&self) -> (usize, usize) {
+        let cursor_state = self.state_manager.get_cursor_state();
+        let primary = cursor_state.primary_selection_index;
+        let selection = cursor_state.selections.get(primary);
+        selection
+            .filter(|s| s.start != s.end)
+            .map(|s| self.selection_offsets(s))
+            .unwrap_or_else(|| {
+                let offset = self.cursor_offset();
+                (offset, offset)
+            })
     }
 
     pub(super) fn request_goto(&mut self, kind: EditorLspGotoKind) {
@@ -568,6 +661,11 @@ impl EditorView {
             return;
         }
         if self.completion_popup.get().is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.code_action_popup.get().is_some() {
             self.lsp.hover_due = None;
             self.lsp.hover_target = None;
             return;
@@ -623,6 +721,9 @@ impl EditorView {
         if self.completion_popup.get().is_some() {
             return;
         }
+        if self.code_action_popup.get().is_some() {
+            return;
+        }
 
         let Some(target) = self.lsp.hover_target else {
             self.lsp.hover_due = None;
@@ -654,6 +755,108 @@ impl EditorView {
         self.completion_popup.set(Some(popup.clone()));
         self.apply_completion_index(idx);
         self.completion_popup.set(None);
+    }
+
+    pub(super) fn process_code_action_accept(&mut self) {
+        let Some(mut popup) = self.code_action_popup.get() else {
+            return;
+        };
+        let Some(idx) = popup.accept.take() else {
+            return;
+        };
+        self.code_action_popup.set(Some(popup.clone()));
+        self.apply_code_action_index(idx);
+        self.code_action_popup.set(None);
+    }
+
+    fn apply_code_action_index(&mut self, idx: usize) {
+        if self.config.read_only.get() {
+            self.lsp.code_action_items.clear();
+            return;
+        }
+        let Some(item) = self.lsp.code_action_items.get(idx).cloned() else {
+            return;
+        };
+        self.lsp.code_action_items.clear();
+
+        let plan = editor_core_lsp::apply_plan_for_code_action_item(&item);
+        let mut edit_applied_or_absent = true;
+        if let Some(edit) = plan.edit.as_ref() {
+            edit_applied_or_absent = self.apply_code_action_workspace_edit(edit);
+        }
+
+        if edit_applied_or_absent && let Some(command) = plan.command {
+            self.request_code_action_command(command);
+        }
+    }
+
+    fn apply_code_action_workspace_edit(&mut self, edit: &serde_json::Value) -> bool {
+        let Some(current_uri) = self
+            .lsp
+            .session
+            .as_ref()
+            .map(|lsp| lsp.document().uri.clone())
+        else {
+            return false;
+        };
+
+        let summary = editor_core_lsp::summarize_workspace_edit(edit);
+        let unsupported = summary
+            .documents
+            .iter()
+            .filter(|doc| doc.uri != current_uri)
+            .map(|doc| doc.uri.clone())
+            .collect::<Vec<_>>();
+        if !unsupported.is_empty() || summary.documents.len() > 1 {
+            self.events.push(EditorEvent::CodeActionMessage {
+                message: format!(
+                    "Skipped code action: workspace edit targets unsupported URI(s): {}",
+                    unsupported.join(", ")
+                ),
+            });
+            return false;
+        }
+
+        let before_text = self.state_manager.editor().get_text();
+        let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
+            let old_char_count = self.state_manager.editor().char_count();
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
+        });
+
+        let result = {
+            let Some(lsp) = self.lsp.session.as_mut() else {
+                return false;
+            };
+            lsp.apply_workspace_edit(&mut self.state_manager, edit)
+        };
+        if result.is_err() {
+            self.events.push(EditorEvent::CodeActionMessage {
+                message: "Skipped code action: failed to apply workspace edit".to_string(),
+            });
+            return false;
+        }
+
+        let after_text = self.state_manager.editor().get_text();
+        if after_text != before_text {
+            self.config.text.set(after_text.clone());
+            self.last_insert_time = None;
+            self.maybe_apply_syntax_highlighting();
+            self.adjust_scroll();
+            self.hide_hover_popup_only();
+            if let Some(mut change) = full_lsp_change {
+                change.text = after_text;
+                self.lsp_did_change(change);
+            }
+        }
+
+        true
+    }
+
+    fn request_code_action_command(&mut self, command: editor_core_lsp::LspCommand) {
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+        let _ = lsp.request_execute_command(command.command, command.arguments);
     }
 
     fn apply_completion_index(&mut self, idx: usize) {
@@ -728,6 +931,30 @@ impl EditorView {
         let (cursor_x, cursor_y) = self.cursor_screen_position()??;
         let height = (item_count.min(8) + 2).max(3) as u16;
         let width = 40u16;
+        Some(Rect {
+            x: cursor_x.saturating_add(1),
+            y: cursor_y.saturating_add(1),
+            width,
+            height,
+        })
+    }
+
+    fn code_action_popup_rect_for_cursor(&self, items: &[CodeActionItemView]) -> Option<Rect> {
+        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
+        let height = (items.len().min(8) + 2).max(3) as u16;
+        let max_line = items
+            .iter()
+            .map(|item| {
+                let kind_len = item
+                    .kind
+                    .as_ref()
+                    .map(|k| k.chars().count() + 2)
+                    .unwrap_or(0);
+                2 + item.title.chars().count() + kind_len
+            })
+            .max()
+            .unwrap_or(20);
+        let width = (max_line + 2).clamp(24, 80) as u16;
         Some(Rect {
             x: cursor_x.saturating_add(1),
             y: cursor_y.saturating_add(1),
@@ -833,4 +1060,26 @@ fn hover_contents_to_plain_text(contents: &serde_json::Value) -> Option<Vec<Stri
     }
 
     None
+}
+
+fn code_action_item_is_preferred(item: &LspCodeActionItem) -> bool {
+    match item {
+        LspCodeActionItem::CodeAction(action) => action.is_preferred,
+        LspCodeActionItem::Command(_) => false,
+    }
+}
+
+fn code_action_item_view(item: &LspCodeActionItem) -> CodeActionItemView {
+    match item {
+        LspCodeActionItem::CodeAction(action) => CodeActionItemView {
+            title: action.title.clone(),
+            kind: action.kind.clone(),
+            is_preferred: action.is_preferred,
+        },
+        LspCodeActionItem::Command(command) => CodeActionItemView {
+            title: command.title.clone(),
+            kind: Some("command".to_string()),
+            is_preferred: false,
+        },
+    }
 }

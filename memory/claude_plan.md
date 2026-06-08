@@ -1,32 +1,30 @@
-# 当前执行计划
+# 执行计划
 
-## 任务边界
+## 范围
 
-- 以 `TODO.md` 为唯一的任务排序与完成状态来源。
-- 本轮只完成 `TODO.md` 中第一个标题未以 `[DONE]` 开头的任务，然后停止。
-- 若遇到会阻塞当前任务的既有缺陷、测试失败、规格不匹配或缺失能力，先修复；若无法在本轮正确修复，则在 `TODO.md` 中插入最小必要前置任务并提交后停止。
-- 不为了方便拆分当前任务；只有存在无法继续的具体前置依赖时才调整任务列表。
+- 以 `TODO.md` 为唯一任务顺序和完成状态来源。
+- 本次只完成第一个未在标题中标记 `[DONE]` 的任务，然后停止。
+- 如遇阻塞当前任务的真实缺口，只添加最小必要前置任务并提交，不绕过规格。
 
-## 步骤计划
+## 步骤
 
-1. 读取 `TODO.md`，识别第一个标题未标记 `[DONE]` 的任务，并记录任务要求、验证要求与依赖。
-2. 检查最近提交摘要；仅当其明确提到与当前任务直接相关的未完成事项时，将其纳入当前任务或作为前置任务记录到 `TODO.md`。
-3. 根据当前任务定位相关代码与测试，先建立最小必要上下文，避免无关历史问题扫描。
-4. 实现当前任务要求；若发现任务被具体缺陷或缺失能力阻塞，优先处理该阻塞或更新 `TODO.md` 后停止。
-5. 按要求运行格式化、lint 与相关测试；如果代码有变更，顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、再运行完整测试或任务指定测试。
-6. 对任何新观察到且未被明确排期的测试/fixture 失败，修复或在 `TODO.md` 中加入最小必要任务；不在存在未排期失败时标记当前任务完成。
-7. 完成后更新 `TODO.md`：在当前任务标题前加 `[DONE]`，并补充完成记录、验证结果与必要说明；仅当阶段计划确实变化时更新 `PLAN.md`。
-8. 检查工作区差异，确认只包含本轮相关改动与必须纳入的既有未提交状态。
-9. 按项目规范提交 Git commit，提交信息包含当前任务编号与简明说明。
-10. 停止，不继续处理下一个任务。
+1. 读取 `TODO.md`，确定第一个未完成任务及其验证要求。
+2. 检查最近提交信息是否提到与该任务直接相关的未完成问题。
+3. 读取当前任务涉及的代码、测试和文档，确认最小正确改动范围。
+4. 实现当前任务；如发现阻塞性规格缺口，更新 `TODO.md` 记录前置任务并停止。
+5. 按要求运行格式化、lint 和相关测试；若有未安排的失败，修复或记录为正确顺序的任务。
+6. 更新 `TODO.md`：在任务标题加 `[DONE]`，填写完成记录。
+7. 仅在阶段计划实际变化时更新 `PLAN.md`。
+8. 查看 git 状态和差异，提交本次任务相关全部变更。
 
-## 进度记录
+## 当前状态
 
-- 已写入初始执行计划。
-- 已读取 `TODO.md` 与最近提交；最近提交未提到与当前条目直接相关的未完成事项。
-- 按用户规则，`TODO.md` 索引中首个标题缺少 `[DONE]` 的条目是 `NT1`；`TODO-1.md` 的详细任务标题和完成记录已显示 `NT1` 实际完成，因此本轮处理范围是修正索引完成标记并进行针对性状态验证。
-- 已复核 NT1 关键文件：Node crate、`napi-build`、package 脚本、`version()` 冒烟测试与根 workspace member 均存在。
-- 已更新 `TODO.md` 的 `NT1` 标题前缀，并在 `TODO-1.md` 的 NT1 完成记录中追加本轮索引同步说明。
-- 已检查差异范围：本轮只修改 `TODO.md`、`TODO-1.md` 和 `memory/claude_plan.md`；因未改动编译代码，代码格式化、lint、测试套件复用既有绿色记录并跳过重跑。
-- 已提交 `NT1` 索引同步改动：`af2b3e6 [NT1] Sync task completion index`。
-- 本轮任务完成后停止，不进入下一个未完成条目。
+- 已读取 `TODO.md`，首个未完成任务为 `TODO-2.md` 中的 `T9`：L2 Code Action 请求、列表 popup 与单文档应用。
+- 最近提交为 `462f174 [NT1] Update execution log`，未发现与 `T9` 直接相关的未完成事项。
+- 已读取 `T9` 任务详情与 `atto-ui-editor` 现有 LSP、popup、输入、渲染和 mock LSP 测试结构。
+- 实现方案：复用 `EditorView` 的 LSP poll；新增 `EditorAction::LspCodeAction` 和 `Ctrl+.` 默认键；新增 code action popup model/binding；响应 `textDocument/codeAction` 后填充 keyboard popup；Enter 使用 editor-core-lsp 的 code action apply plan，只应用当前 URI 的 WorkspaceEdit，跨 URI 通过 `EditorEvent` 明确提示跳过；命令动作走 `workspace/executeCommand`。
+- 已完成代码实现和 mock LSP 集成测试补充；`cargo fmt` 与 `cargo clippy --workspace --all-targets -- -D warnings` 已通过。
+- 完整测试套件 `cargo test --workspace --all-targets` 已通过。
+- 已将 `TODO.md` 索引和 `TODO-2.md` 的 `T9` 标记为 `[DONE]`，并写入完成记录。
+- 已检查 git status/diff，并通过 `git diff --check`；未纳入无关未跟踪文件 `notification.sh`、`run_agent.sh`。
+- 下一步提交本任务相关变更。

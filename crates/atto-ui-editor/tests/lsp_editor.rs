@@ -12,7 +12,8 @@ use atto_ui::composable::{
 };
 use atto_ui::wm::WindowId;
 use atto_ui_editor::{
-    DiagnosticsSummary, EditorConfig, EditorLspConfig, EditorLspMode, EditorSyntaxConfig,
+    DiagnosticsSummary, EditorConfig, EditorEvent, EditorLspConfig, EditorLspMode,
+    EditorSyntaxConfig, EditorViewHandle,
 };
 use atto_ui_editor::{EditorThemeSet, EditorView};
 
@@ -299,6 +300,141 @@ fn lsp_publish_diagnostics_updates_summary() {
             panic!("timed out waiting for diagnostics summary; got {summary:?}");
         }
 
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn lsp_code_action_popup_displays_and_applies_single_document_edit() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///code_action.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let code_action = Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL));
+    view.handle_event(&code_action, ctx);
+
+    wait_for_code_action_popup(&mut terminal, &mut view, &handle, area, ctx);
+    let popup = handle.code_action_popup.get().expect("code action popup");
+    assert_eq!(popup.items[0].title, "Replace bad with good");
+    assert_eq!(popup.items[0].kind.as_deref(), Some("quickfix"));
+    assert!(popup.items[0].is_preferred);
+
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    view.handle_event(&enter, ctx);
+    assert_eq!(text.get(), "let good = 1;\n");
+
+    let undo = Event::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    view.handle_event(&undo, ctx);
+    assert_eq!(text.get(), "let bad = 1;\n");
+}
+
+#[test]
+fn lsp_code_action_cross_file_edit_is_reported_and_not_applied() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let bad = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///code_action_cross.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let code_action = Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL));
+    view.handle_event(&code_action, ctx);
+
+    wait_for_code_action_popup(&mut terminal, &mut view, &handle, area, ctx);
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    view.handle_event(&enter, ctx);
+
+    assert_eq!(text.get(), "let bad = 1;\n");
+    let messages = handle.events.drain();
+    assert!(
+        messages.iter().any(|event| matches!(
+            event,
+            EditorEvent::CodeActionMessage { message }
+                if message.contains("Skipped code action") && message.contains("file:///other.rs")
+        )),
+        "expected cross-file skip event, got {messages:?}"
+    );
+}
+
+fn wait_for_code_action_popup(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if handle.code_action_popup.get().is_some() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for code action popup");
+        }
         thread::sleep(Duration::from_millis(10));
     }
 }

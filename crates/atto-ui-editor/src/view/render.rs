@@ -51,9 +51,56 @@ impl EditorView {
     }
 
     fn render_inline_popups(&mut self, frame: &mut Frame<'_>, bounds: Rect, theme: &EditorTheme) {
-        // Completion tends to be more interactive and should take precedence visually.
-        self.render_inline_completion_popup(frame, bounds, theme);
+        // Interactive popups are mutually exclusive in normal flow; draw them above hover if a
+        // stale binding briefly overlaps during event processing.
         self.render_inline_hover_popup(frame, bounds, theme);
+        self.render_inline_completion_popup(frame, bounds, theme);
+        self.render_inline_code_action_popup(frame, bounds, theme);
+    }
+
+    fn render_inline_code_action_popup(
+        &mut self,
+        frame: &mut Frame<'_>,
+        bounds: Rect,
+        theme: &EditorTheme,
+    ) {
+        let Some(model) = self.code_action_popup.get() else {
+            return;
+        };
+
+        let rect = intersect_rect(model.rect, bounds);
+        if rect.width == 0 || rect.height == 0 {
+            return;
+        }
+
+        let inner_height = rect.height.saturating_sub(2) as usize;
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(inner_height);
+
+        for row in 0..inner_height {
+            let idx = model.scroll.saturating_add(row);
+            if idx >= model.items.len() {
+                lines.push(Line::from(""));
+                continue;
+            }
+
+            let item = &model.items[idx];
+            let mut style = theme.popup;
+            if idx == model.selected {
+                style = theme.popup_selected;
+            }
+            lines.push(Line::from(Span::styled(
+                crate::popup::code_action_line(item, rect.width.saturating_sub(2) as usize),
+                style,
+            )));
+        }
+
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(ratatui::widgets::Clear, rect);
+        frame.render_widget(Paragraph::new(lines).style(theme.popup).block(block), rect);
     }
 
     fn render_inline_hover_popup(

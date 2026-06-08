@@ -12,6 +12,49 @@ impl EditorView {
             return self.handle_search_key_event(key);
         }
 
+        // Code action popup keyboard navigation/accept.
+        if let Some(popup) = self.code_action_popup.get() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.code_action_popup.set(None);
+                    self.lsp.code_action_items.clear();
+                    return EventResult::consumed();
+                }
+                KeyCode::Enter => {
+                    if popup.selected < popup.items.len() {
+                        let mut popup = popup;
+                        popup.accept = Some(popup.selected);
+                        self.code_action_popup.set(Some(popup));
+                        self.process_code_action_accept();
+                    } else {
+                        self.code_action_popup.set(None);
+                        self.lsp.code_action_items.clear();
+                    }
+                    return EventResult::consumed();
+                }
+                KeyCode::Up => {
+                    self.select_code_action_relative(-1);
+                    return EventResult::consumed();
+                }
+                KeyCode::Down => {
+                    self.select_code_action_relative(1);
+                    return EventResult::consumed();
+                }
+                KeyCode::PageUp => {
+                    self.select_code_action_relative(-5);
+                    return EventResult::consumed();
+                }
+                KeyCode::PageDown => {
+                    self.select_code_action_relative(5);
+                    return EventResult::consumed();
+                }
+                _ => {
+                    self.code_action_popup.set(None);
+                    self.lsp.code_action_items.clear();
+                }
+            }
+        }
+
         // Completion popup keyboard navigation/accept (editor keeps focus, popup stays non-modal).
         if let Some(popup) = self.completion_popup.get() {
             match key.code {
@@ -80,6 +123,35 @@ impl EditorView {
         }
 
         EventResult::ignored()
+    }
+
+    fn select_code_action_relative(&mut self, delta: isize) {
+        let Some(mut popup) = self.code_action_popup.get() else {
+            return;
+        };
+        if popup.items.is_empty() {
+            return;
+        }
+        let len = popup.items.len() as isize;
+        let mut selected = popup.selected as isize + delta;
+        if selected < 0 {
+            selected = 0;
+        }
+        if selected >= len {
+            selected = len - 1;
+        }
+        popup.selected = selected as usize;
+
+        let visible = popup.rect.height.saturating_sub(2) as usize;
+        if visible > 0 {
+            if popup.selected < popup.scroll {
+                popup.scroll = popup.selected;
+            } else if popup.selected >= popup.scroll + visible {
+                popup.scroll = popup.selected.saturating_sub(visible.saturating_sub(1));
+            }
+        }
+
+        self.code_action_popup.set(Some(popup));
     }
 
     fn select_completion_relative(&mut self, delta: isize) {

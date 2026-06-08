@@ -30,8 +30,8 @@ pub use diff::{DiffView, DiffViewConfig, DiffViewHandle, DiffViewMode};
 pub use dynamic::{editor_schema, register_editor, register_runtime_components};
 pub use keymap::{EditorAction, EditorKeymap, KeyChord};
 pub use popup::{
-    CompletionItem, CompletionPopupModel, EditorPopupWindows, HoverPopupModel,
-    LspCompletionItemEdit, LspHoverContents,
+    CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
+    EditorPopupWindows, HoverPopupModel, LspCompletionItemEdit, LspHoverContents,
 };
 pub use theme::{
     EditorTheme, EditorThemeSet, LSP_DIAGNOSTIC_ERROR_STYLE_ID, LSP_DIAGNOSTIC_HINT_STYLE_ID,

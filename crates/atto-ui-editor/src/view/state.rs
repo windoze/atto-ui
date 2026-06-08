@@ -45,6 +45,9 @@ impl EditorView {
         if self.completion_popup.get().is_some() {
             self.completion_popup.set(None);
         }
+        if self.code_action_popup.get().is_some() {
+            self.code_action_popup.set(None);
+        }
         self.lsp.hover_due = None;
         self.lsp.hover_pending_request = None;
         self.lsp.hover_anchor = None;
@@ -55,6 +58,8 @@ impl EditorView {
         self.lsp.completion_pending_request = None;
         self.lsp.completion_requested_position = None;
         self.lsp.pending_goto = None;
+        self.lsp.pending_code_action = None;
+        self.lsp.code_action_items.clear();
     }
 
     pub(super) fn selection_offsets(&self, selection: &Selection) -> (usize, usize) {
