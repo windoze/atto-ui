@@ -19,6 +19,7 @@ pub(super) enum TabCommand {
     SplitHorizontal,
     CloseSplit,
     EditorAction(atto_ui_editor::EditorAction),
+    FormatDocument { save_after: bool },
     JumpTo(JumpTarget),
     RequestDocumentSymbols,
     RequestWorkspaceSymbols(String),
@@ -29,6 +30,7 @@ pub(super) struct DocumentTabView {
     editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
     clipboard: Binding<String>,
     text: Binding<String>,
+    format_on_save: Binding<bool>,
     language_id: String,
     syntax: atto_ui_editor::EditorSyntaxConfig,
 
@@ -57,17 +59,20 @@ struct TabLayout {
 }
 
 impl DocumentTabView {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         commands: EventQueue<TabCommand>,
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
         text: Binding<String>,
+        format_on_save: Binding<bool>,
         language_id: String,
         syntax: atto_ui_editor::EditorSyntaxConfig,
         lsp: atto_ui_editor::EditorLspMode,
     ) -> (Self, atto_ui_editor::EditorViewHandle) {
         let (primary, primary_handle) = build_editor_view(
             text.clone(),
+            format_on_save.clone(),
             clipboard.clone(),
             editor_theme.clone(),
             language_id.clone(),
@@ -80,6 +85,7 @@ impl DocumentTabView {
             editor_theme,
             clipboard,
             text,
+            format_on_save,
             language_id,
             syntax,
             focused: SplitFocus::Primary,
@@ -106,6 +112,9 @@ impl DocumentTabView {
                 TabCommand::EditorAction(action) => {
                     let _ = self.handle_editor_action(action);
                 }
+                TabCommand::FormatDocument { save_after } => {
+                    let _ = self.request_format_document(save_after);
+                }
                 TabCommand::JumpTo(target) => {
                     let _ = self.jump_to(target);
                 }
@@ -130,6 +139,10 @@ impl DocumentTabView {
                 }
             }
         }
+    }
+
+    fn request_format_document(&mut self, save_after: bool) -> bool {
+        self.primary.request_format_document_now(save_after)
     }
 
     fn jump_to(&mut self, target: JumpTarget) -> bool {
@@ -162,6 +175,7 @@ impl DocumentTabView {
         // servers for the same document.
         let (secondary, _secondary_handle) = build_editor_view(
             self.text.clone(),
+            self.format_on_save.clone(),
             self.clipboard.clone(),
             self.editor_theme.clone(),
             self.language_id.clone(),
@@ -774,6 +788,7 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
 
 fn build_editor_view(
     text: Binding<String>,
+    format_on_save: Binding<bool>,
     clipboard: Binding<String>,
     theme: Binding<atto_ui_editor::EditorThemeSet>,
     language_id: String,
@@ -782,6 +797,7 @@ fn build_editor_view(
 ) -> (atto_ui_editor::EditorView, atto_ui_editor::EditorViewHandle) {
     let mut cfg = atto_ui_editor::EditorConfig::new(text);
     cfg.clipboard = clipboard;
+    cfg.format_on_save = format_on_save;
     cfg.comment
         .set(crate::language::comment_config_for_language(&language_id));
     cfg.language_id.set(language_id);

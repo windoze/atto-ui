@@ -433,6 +433,7 @@ impl EditorView {
                 self.request_prepare_rename_now();
                 true
             }
+            EditorAction::LspFormatDocument => self.request_format_document_now(false),
             EditorAction::LspGotoDefinition => {
                 self.request_goto(EditorLspGotoKind::Definition);
                 true
@@ -503,5 +504,6 @@ fn action_mutates_document(action: EditorAction) -> bool {
             | EditorAction::DeleteLines
             | EditorAction::LspCodeAction
             | EditorAction::LspRename
+            | EditorAction::LspFormatDocument
     )
 }

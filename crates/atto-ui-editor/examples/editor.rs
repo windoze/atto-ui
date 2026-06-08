@@ -121,6 +121,10 @@ fn main() -> Result<()> {
                     atto_ui_editor::EditorEvent::CodeActionMessage { message: _ } => {}
                     atto_ui_editor::EditorEvent::LspRenameWorkspaceEdit { edit: _ } => {}
                     atto_ui_editor::EditorEvent::LspMessage { message: _ } => {}
+                    atto_ui_editor::EditorEvent::FormatFinished {
+                        success: _,
+                        changed: _,
+                    } => {}
                 }
             }
 

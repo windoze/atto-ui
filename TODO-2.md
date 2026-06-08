@@ -1354,7 +1354,7 @@
 - 补充回归测试 `stale_completion_response_does_not_clear_signature_help_popup`，覆盖旧 completion response 不会清除当前 signature help popup。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor stale_completion_response_does_not_clear_signature_help_popup`；`cargo test -p atto-ui-editor --test lsp_editor lsp_signature_help`；`cargo test --workspace --all-targets`。
 
-### [TODO] T20 — L5 Formatting 手动格式化与保存前格式化接口
+### [DONE] T20 — L5 Formatting 手动格式化与保存前格式化接口
 
 **依赖**：T7；format-on-save 完整体验可依赖 T17。
 
@@ -1394,6 +1394,13 @@
 **验收**：
 - Formatting edit 可 undo。
 - 保存时格式化不应造成重复 didChange 或 dirty 状态错乱。
+
+**完成记录（2026-06-09）**：
+- 新增 `EditorAction::LspFormatDocument`、`EditorConfig::format_on_save`（默认 false）与 `EditorWindowCommand::FormatActive`；命令面板注册 `Format Document`，并接入可工作的 `Ctrl+K Ctrl+F` 默认序列。
+- 手动 formatting 使用当前 `tab_width` / `insert_spaces` 生成 `FormattingOptions` 并调用 `LspSession::request_formatting`；response 通过 `text_edits_from_value` 解析，并用 `EditCommand::ApplyTextEdits` 作为单个 undo step 应用，随后同步 `config.text`、syntax 与 LSP didChange。
+- 保存前格式化已接入 `SaveActive`：当 active tab 的 `format_on_save=true` 时先请求格式化，成功后保存同一 tab；失败通过 `LspMessage`/status path 明确提示并跳过保存。
+- Mock LSP 增加 `documentFormattingProvider` 与 formatting response；新增测试覆盖 edits 改变文本、`Ctrl+K Ctrl+F`、单步 undo、当前 indentation options、空 edits 不改文本、error message、无 LSP ignored。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_format_document -- --nocapture`；`cargo test -p atto-editor-app app_command_registry_binds_format_document_sequence`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R20 — 审阅 T20
 

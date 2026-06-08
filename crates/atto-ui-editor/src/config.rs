@@ -236,6 +236,7 @@ pub struct EditorConfig {
 
     pub hover: EditorHoverConfig,
     pub completion: EditorCompletionConfig,
+    pub format_on_save: Binding<bool>,
 
     pub lsp: Binding<EditorLspMode>,
 }
@@ -256,6 +257,7 @@ impl EditorConfig {
             keymap: EditorKeymap::default().into(),
             hover: EditorHoverConfig::default(),
             completion: EditorCompletionConfig::default(),
+            format_on_save: false.into(),
             lsp: EditorLspMode::Disabled.into(),
         }
     }

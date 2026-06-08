@@ -209,6 +209,13 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
             AppCommandAction::Editor(atto_ui_editor::EditorAction::LspRename),
         ),
         command(
+            "lsp.formatDocument",
+            "Format Document",
+            "LSP",
+            AppCommandAction::EditorWindow(EditorWindowCommand::FormatActive),
+        )
+        .with_default_sequence(KeySequence::new(vec![ctrl('k'), ctrl('f')])),
+        command(
             "picker.commandPalette",
             "Command Palette",
             "Picker",
@@ -291,11 +298,29 @@ mod tests {
         assert!(registry.get("split.vertical").is_some());
         assert!(registry.get("editor.toggleComment").is_some());
         assert!(registry.get("lsp.codeAction").is_some());
+        assert!(registry.get("lsp.formatDocument").is_some());
         assert!(registry.get("picker.file").is_some());
         assert!(registry.get("picker.commandPalette").is_some());
         assert!(registry.get("picker.buffer").is_some());
         assert!(registry.get("picker.documentSymbols").is_some());
         assert!(registry.get("picker.workspaceSymbols").is_some());
         assert!(registry.get("search.global").is_some());
+    }
+
+    #[test]
+    fn app_command_registry_binds_format_document_sequence() {
+        let registry = app_command_registry();
+        let command = registry
+            .get("lsp.formatDocument")
+            .expect("format document command");
+
+        assert_eq!(
+            command
+                .default_sequence
+                .as_ref()
+                .map(KeySequence::label)
+                .as_deref(),
+            Some("Ctrl+K Ctrl+F")
+        );
     }
 }

@@ -1714,6 +1714,15 @@ fn process_editor_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<
                 atto_ui_editor::EditorEvent::LspMessage { message } => {
                     set_status_message(state, message);
                 }
+                atto_ui_editor::EditorEvent::FormatFinished { success, changed } => {
+                    if success {
+                        if changed {
+                            set_status_message(state, "Formatted document");
+                        } else {
+                            set_status_message(state, "Format produced no changes");
+                        }
+                    }
+                }
             }
         }
     }

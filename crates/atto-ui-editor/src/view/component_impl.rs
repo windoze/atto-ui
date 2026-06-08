@@ -12,6 +12,7 @@ impl ::atto_ui::composable::Component for EditorView {
             "read_only",
             "tab_width",
             "insert_spaces",
+            "format_on_save",
         ]
     }
 
@@ -28,6 +29,7 @@ impl ::atto_ui::composable::Component for EditorView {
                 self.config.indent.tab_width.get() as u64
             )),
             "insert_spaces" => Some(ComponentValue::Bool(self.config.indent.insert_spaces.get())),
+            "format_on_save" => Some(ComponentValue::Bool(self.config.format_on_save.get())),
             _ => None,
         }
     }
@@ -67,6 +69,11 @@ impl ::atto_ui::composable::Component for EditorView {
             "insert_spaces" => {
                 let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.config.indent.insert_spaces.set(v);
+                Ok(())
+            }
+            "format_on_save" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.format_on_save.set(v);
                 Ok(())
             }
             _ => Err(ComponentError::unsupported_property(name)),

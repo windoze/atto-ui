@@ -24,6 +24,7 @@ pub enum EditorWindowCommand {
 
     SaveActive,
     SaveAs(PathBuf),
+    FormatActive,
     CloseActiveTab,
 
     SplitVertical,
@@ -240,10 +241,35 @@ impl EditorWindowView {
         }
     }
 
-    pub(super) fn sync_editor_events(&self) {
-        for tab in &self.tabs {
-            for event in tab.events.drain() {
+    pub(super) fn sync_editor_events(&mut self) {
+        let mut save_after_format = Vec::new();
+
+        for idx in 0..self.tabs.len() {
+            for event in self.tabs[idx].events.drain() {
+                if let atto_ui_editor::EditorEvent::FormatFinished {
+                    success,
+                    changed: _,
+                } = &event
+                    && self.tabs[idx].pending_save_after_format
+                {
+                    self.tabs[idx].pending_save_after_format = false;
+                    if *success {
+                        save_after_format.push(idx);
+                    } else {
+                        self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                            message: "Format-on-save failed; save skipped".to_string(),
+                        });
+                    }
+                }
                 self.events.push(event);
+            }
+        }
+
+        for idx in save_after_format {
+            if let Err(err) = self.save_tab_at(idx) {
+                self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                    message: format!("Save failed: {err:#}"),
+                });
             }
         }
     }

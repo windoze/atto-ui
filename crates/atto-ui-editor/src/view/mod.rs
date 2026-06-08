@@ -12,7 +12,7 @@ use crossterm::event::{
 use editor_core::{
     Command, CursorCommand, DiagnosticSeverity, DocumentOutline, EditCommand, EditorStateManager,
     Position, SearchOptions, Selection, SelectionDirection, StyleCommand, TabKeyBehavior,
-    ViewCommand, WorkspaceSymbol, char_width,
+    TextEditSpec, ViewCommand, WorkspaceSymbol, char_width,
 };
 use editor_core_lsp::{
     LspCodeActionItem, LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession,
@@ -70,6 +70,10 @@ pub enum EditorEvent {
     },
     LspMessage {
         message: String,
+    },
+    FormatFinished {
+        success: bool,
+        changed: bool,
     },
 }
 
@@ -170,6 +174,9 @@ struct EditorLspController {
     pending_rename: Option<u64>,
     rename_target: Option<RenameTarget>,
 
+    // Formatting request state.
+    pending_formatting: Option<u64>,
+
     // Diagnostics state.
     diagnostics: Vec<LspDiagnostic>,
     diagnostic_result_id: Option<String>,
@@ -215,6 +222,7 @@ pub struct EditorView {
 
     // Undo grouping
     last_insert_time: Option<Instant>,
+    pending_ctrl_k: Option<Instant>,
 
     focused_last_frame: bool,
 }
@@ -275,6 +283,7 @@ impl EditorView {
             rect_selection_anchor: None,
             last_click: None,
             last_insert_time: None,
+            pending_ctrl_k: None,
             focused_last_frame: false,
         };
 

@@ -59,6 +59,24 @@ impl EditorView {
             }
         }
 
+        if let Some(since) = self.pending_ctrl_k.take()
+            && since.elapsed() <= atto_ui::app::DEFAULT_KEY_SEQUENCE_TIMEOUT
+            && is_ctrl_char_chord(chord, 'f')
+        {
+            let requested = self.request_format_document_now(false);
+            return if requested {
+                EventResult::consumed()
+            } else {
+                EventResult::ignored()
+            };
+        }
+
+        if is_ctrl_char_chord(chord, 'k') {
+            self.clear_secondary_selections();
+            self.pending_ctrl_k = Some(Instant::now());
+            return EventResult::consumed();
+        }
+
         // Code action popup keyboard navigation/accept.
         if let Some(popup) = self.code_action_popup.get() {
             match key.code {
@@ -235,4 +253,8 @@ impl EditorView {
 
         self.completion_popup.set(Some(popup));
     }
+}
+
+fn is_ctrl_char_chord(chord: KeyChord, ch: char) -> bool {
+    chord.code == KeyCode::Char(ch) && chord.modifiers == KeyModifiers::CONTROL
 }

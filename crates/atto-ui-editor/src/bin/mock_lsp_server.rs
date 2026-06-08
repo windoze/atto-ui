@@ -121,6 +121,7 @@ fn main() -> io::Result<()> {
                         },
                         "foldingRangeProvider": true,
                         "codeActionProvider": true,
+                        "documentFormattingProvider": true,
                         "renameProvider": {
                             "prepareProvider": true
                         },
@@ -239,6 +240,83 @@ fn main() -> io::Result<()> {
                     ])
                 };
                 respond(&mut stdout, id, result)?;
+            }
+            ("textDocument/formatting", Some(id)) => {
+                let params = msg.get("params");
+                let uri = params
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if uri.ends_with("/formatting_error.rs") || uri == "file:///formatting_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock formatting error")?;
+                } else if uri.ends_with("/formatting_empty.rs")
+                    || uri == "file:///formatting_empty.rs"
+                {
+                    respond(&mut stdout, id, json!([]))?;
+                } else if uri.ends_with("/formatting_options.rs")
+                    || uri == "file:///formatting_options.rs"
+                {
+                    let options = params.and_then(|params| params.get("options"));
+                    let tab_size = options
+                        .and_then(|options| options.get("tabSize"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default();
+                    let insert_spaces = options
+                        .and_then(|options| options.get("insertSpaces"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": { "line": 1, "character": 0 }
+                                },
+                                "newText": format!("tabSize={tab_size} insertSpaces={insert_spaces}\n")
+                            }
+                        ]),
+                    )?;
+                } else if uri.ends_with("/formatting_multi.rs")
+                    || uri == "file:///formatting_multi.rs"
+                {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 4 },
+                                    "end": { "line": 0, "character": 7 }
+                                },
+                                "newText": "good"
+                            },
+                            {
+                                "range": {
+                                    "start": { "line": 1, "character": 4 },
+                                    "end": { "line": 1, "character": 9 }
+                                },
+                                "newText": "better"
+                            }
+                        ]),
+                    )?;
+                } else {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": { "line": 1, "character": 0 }
+                                },
+                                "newText": "formatted\n"
+                            }
+                        ]),
+                    )?;
+                }
             }
             ("textDocument/prepareRename", Some(id)) => {
                 let uri = msg

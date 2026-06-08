@@ -12,9 +12,8 @@ Steps:
 7. Mark the completed task title with [DONE], update its completion record, commit all task-related changes, and stop before starting any next task.
 
 Progress:
-- Selected first incomplete task: R19 — review T19 Signature Help.
-- Review found a task-relevant race: stale completion responses can clear a newer signature help popup because completion_requested_position is cleared before the response handler's stale-position guard runs.
-- Implemented fix: completion responses now take and compare their requested cursor position before mutating completion/signature popup state; stale responses return without clearing an active signature help popup.
-- Added regression test `stale_completion_response_does_not_clear_signature_help_popup`.
-- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted stale completion/signature help tests, and `cargo test --workspace --all-targets`.
-- R19 marked done in TODO.md and TODO-2.md. Next step: commit the task changes and stop.
+- Selected first incomplete task: T20 — L5 Formatting manual formatting and format-on-save interface.
+- Inspected `TODO-2.md`, `PLAN-2.md`, editor LSP/action/config code, app command/window save paths, and the `editor-core-lsp` formatting APIs.
+- Implementation plan: add editor formatting config/action/state, request `textDocument/formatting` with current indentation options, apply returned edits as a single undoable batch, surface format completion/failure events, expose app `FormatActive` command and command-palette entry, add format-on-save plumbing behind the new config, extend the mock LSP, and add focused tests.
+- Implemented T20 formatting support, added focused tests and mock LSP formatting responses, added working `Ctrl+K Ctrl+F` editor handling, ran formatting/clippy/full tests successfully, and marked T20 `[DONE]` in `TODO.md` / `TODO-2.md`.
+- Next step: review git status and commit the task changes.

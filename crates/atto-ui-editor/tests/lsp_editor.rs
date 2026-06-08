@@ -686,6 +686,293 @@ fn lsp_code_action_command_without_edit_executes() {
 }
 
 #[test]
+fn lsp_format_document_applies_edits_and_undoes_as_single_step() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let original = "let bad = 1;\nlet worse = 2;\n";
+    let text: atto_ui::reactive::Binding<String> = original.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting_multi.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(
+        view.handle_editor_action(EditorAction::LspFormatDocument),
+        "format request events: {:?}",
+        handle.events.drain()
+    );
+
+    let (success, changed) = wait_for_format_finished(&mut terminal, &mut view, &handle, area, ctx);
+    assert!(success);
+    assert!(changed);
+    assert_eq!(text.get(), "let good = 1;\nlet better = 2;\n");
+
+    assert!(view.handle_editor_action(EditorAction::Undo));
+    assert_eq!(text.get(), original);
+}
+
+#[test]
+fn lsp_format_document_uses_current_indentation_options() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "options\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.indent.tab_width.set(2);
+    cfg.indent.insert_spaces.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting_options.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(
+        view.handle_editor_action(EditorAction::LspFormatDocument),
+        "format request events: {:?}",
+        handle.events.drain()
+    );
+    let (success, changed) = wait_for_format_finished(&mut terminal, &mut view, &handle, area, ctx);
+
+    assert!(success);
+    assert!(changed);
+    assert_eq!(text.get(), "tabSize=2 insertSpaces=false\n");
+}
+
+#[test]
+fn lsp_format_document_ctrl_k_ctrl_f_sequence_triggers_formatting() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "unformatted\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            ctx,
+        )
+        .is_consumed()
+    );
+    assert!(
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+            ctx,
+        )
+        .is_consumed()
+    );
+
+    let (success, changed) = wait_for_format_finished(&mut terminal, &mut view, &handle, area, ctx);
+    assert!(success);
+    assert!(changed);
+    assert_eq!(text.get(), "formatted\n");
+}
+
+#[test]
+fn lsp_format_document_empty_edits_leave_text_unchanged() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let original = "unchanged\n";
+    let text: atto_ui::reactive::Binding<String> = original.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting_empty.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(
+        view.handle_editor_action(EditorAction::LspFormatDocument),
+        "format request events: {:?}",
+        handle.events.drain()
+    );
+    let (success, changed) = wait_for_format_finished(&mut terminal, &mut view, &handle, area, ctx);
+
+    assert!(success);
+    assert!(!changed);
+    assert_eq!(text.get(), original);
+    assert!(!view.handle_editor_action(EditorAction::Undo));
+    assert_eq!(text.get(), original);
+}
+
+#[test]
+fn lsp_format_document_error_reports_message() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "bad\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting_error.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspFormatDocument));
+    let message = wait_for_lsp_message(
+        &mut terminal,
+        &mut view,
+        &handle,
+        area,
+        ctx,
+        "Formatting failed: mock formatting error",
+    );
+
+    assert!(message.contains("Formatting failed: mock formatting error"));
+    assert_eq!(text.get(), "bad\n");
+}
+
+#[test]
+fn lsp_format_document_without_lsp_is_ignored() {
+    let text: atto_ui::reactive::Binding<String> = "plain\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+
+    assert!(!view.handle_editor_action(EditorAction::LspFormatDocument));
+    assert_eq!(text.get(), "plain\n");
+    assert!(handle.events.drain().is_empty());
+}
+
+#[test]
 fn lsp_rename_popup_submits_workspace_edit_event() {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 
@@ -986,6 +1273,30 @@ fn wait_for_rename_workspace_edit(
         }
         if Instant::now() >= deadline {
             panic!("timed out waiting for rename workspace edit; saw {seen:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_format_finished(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) -> (bool, bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::FormatFinished { success, changed } => return (success, changed),
+                other => seen.push(other),
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for format completion; saw {seen:?}");
         }
         thread::sleep(Duration::from_millis(10));
     }

@@ -130,6 +130,7 @@ pub enum EditorAction {
     LspPrevDiagnostic,
     LspCodeAction,
     LspRename,
+    LspFormatDocument,
 
     // --- UI toggles
     ToggleLineNumbers,

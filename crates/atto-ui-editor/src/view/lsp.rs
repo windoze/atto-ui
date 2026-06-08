@@ -203,6 +203,33 @@ impl EditorView {
             }
         }
 
+        if let Some(pending_id) = self.lsp.pending_formatting
+            && pending_id == id
+            && method.as_str() == "textDocument/formatting"
+        {
+            self.lsp.pending_formatting = None;
+            if let Some(err) = error.as_ref() {
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Formatting failed: {}", err.message),
+                });
+                self.events.push(EditorEvent::FormatFinished {
+                    success: false,
+                    changed: false,
+                });
+                return;
+            }
+
+            let Some(result) = result.as_ref().filter(|value| !value.is_null()) else {
+                self.events.push(EditorEvent::FormatFinished {
+                    success: true,
+                    changed: false,
+                });
+                return;
+            };
+
+            self.handle_lsp_formatting_response(result);
+        }
+
         if let Some((pending_id, target)) = self.lsp.pending_prepare_rename
             && pending_id == id
             && method.as_str() == "textDocument/prepareRename"
@@ -820,6 +847,40 @@ impl EditorView {
         }
     }
 
+    pub fn request_format_document_now(&mut self, report_unavailable: bool) -> bool {
+        self.hide_popups();
+        let options = self.formatting_options();
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            if report_unavailable {
+                self.events.push(EditorEvent::LspMessage {
+                    message: "Format-on-save requires an active LSP session".to_string(),
+                });
+                self.events.push(EditorEvent::FormatFinished {
+                    success: false,
+                    changed: false,
+                });
+            }
+            return false;
+        };
+
+        match lsp.request_formatting(options) {
+            Ok(id) => {
+                self.lsp.pending_formatting = Some(id);
+                true
+            }
+            Err(err) => {
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Formatting request failed: {err}"),
+                });
+                self.events.push(EditorEvent::FormatFinished {
+                    success: false,
+                    changed: false,
+                });
+                false
+            }
+        }
+    }
+
     pub(super) fn request_prepare_rename_now(&mut self) {
         self.hide_hover_popup_only();
         self.completion_popup.set(None);
@@ -1001,6 +1062,76 @@ impl EditorView {
             }
             Err(_) => false,
         }
+    }
+
+    fn formatting_options(&self) -> serde_json::Value {
+        let tab_width = self.config.indent.tab_width.get().max(1);
+        let insert_spaces = self.config.indent.insert_spaces.get();
+        editor_core_lsp::lsp_formatting_options(tab_width, insert_spaces)
+    }
+
+    fn handle_lsp_formatting_response(&mut self, value: &serde_json::Value) {
+        let lsp_edits = editor_core_lsp::text_edits_from_value(value);
+        if lsp_edits.is_empty() {
+            self.events.push(EditorEvent::FormatFinished {
+                success: true,
+                changed: false,
+            });
+            return;
+        }
+
+        let line_index = self.state_manager.editor().line_index().clone();
+        let edits = lsp_edits
+            .iter()
+            .map(|edit| {
+                let (start, end) =
+                    editor_core_lsp::char_offsets_for_lsp_range(&line_index, &edit.range);
+                TextEditSpec {
+                    start,
+                    end,
+                    text: edit.new_text.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let full_lsp_change = self.lsp.session.as_ref().map(|lsp| {
+            let old_char_count = self.state_manager.editor().char_count();
+            lsp.full_document_change(self.state_manager.editor().line_index(), old_char_count, "")
+        });
+
+        let before_text = self.state_manager.editor().get_text();
+        let apply_result = self
+            .state_manager
+            .execute(Command::Edit(EditCommand::ApplyTextEdits { edits }));
+        if let Err(err) = apply_result {
+            self.events.push(EditorEvent::LspMessage {
+                message: format!("Formatting failed to apply edits: {err}"),
+            });
+            self.events.push(EditorEvent::FormatFinished {
+                success: false,
+                changed: false,
+            });
+            return;
+        }
+
+        let after_text = self.state_manager.editor().get_text();
+        let changed = after_text != before_text;
+        if changed {
+            self.config.text.set(after_text.clone());
+            self.last_insert_time = None;
+            self.maybe_apply_syntax_highlighting();
+            self.adjust_scroll();
+            self.hide_hover_popup_only();
+            if let Some(mut change) = full_lsp_change {
+                change.text = after_text;
+                self.lsp_did_change(change);
+            }
+        }
+
+        self.events.push(EditorEvent::FormatFinished {
+            success: true,
+            changed,
+        });
     }
 
     fn code_action_request_offsets(&self) -> (usize, usize) {

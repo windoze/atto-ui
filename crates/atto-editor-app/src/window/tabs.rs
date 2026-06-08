@@ -18,6 +18,7 @@ pub(super) struct TabState {
     pub(super) title_base: String,
     language_id: String,
     text: Binding<String>,
+    pub(super) format_on_save: Binding<bool>,
     last_saved_text: String,
     text_observer: DirtyObserver,
     pub(super) is_dirty: bool,
@@ -26,6 +27,7 @@ pub(super) struct TabState {
     commands: EventQueue<TabCommand>,
     workspace_buffer_id: Option<BufferId>,
     workspace_tab: Option<TabRef>,
+    pub(super) pending_save_after_format: bool,
 }
 
 impl EditorWindowView {
@@ -77,6 +79,7 @@ impl EditorWindowView {
             .unwrap_or(disk_text);
 
         let text: Binding<String> = initial_text.clone().into();
+        let format_on_save: Binding<bool> = false.into();
         let tab_commands: EventQueue<TabCommand> = EventQueue::new();
 
         let (tab_view, tab_handle) = DocumentTabView::new(
@@ -84,6 +87,7 @@ impl EditorWindowView {
             self.editor_theme.clone(),
             self.clipboard.clone(),
             text.clone(),
+            format_on_save.clone(),
             language_id.clone(),
             syntax,
             lsp,
@@ -105,6 +109,7 @@ impl EditorWindowView {
             title_base,
             language_id,
             text: text.clone(),
+            format_on_save,
             last_saved_text: initial_text,
             text_observer,
             is_dirty: false,
@@ -113,6 +118,7 @@ impl EditorWindowView {
             commands: tab_commands.clone(),
             workspace_buffer_id,
             workspace_tab,
+            pending_save_after_format: false,
         });
 
         if let (Some(tab_ref), Some(opened)) = (workspace_tab, workspace_open.as_ref()) {
@@ -164,10 +170,7 @@ impl EditorWindowView {
         self.send_tab_command_to_active(TabCommand::JumpTo(target));
     }
 
-    fn save_active(&mut self) -> Result<()> {
-        let Some(active) = self.tab_window.active_tab() else {
-            return Ok(());
-        };
+    pub(super) fn save_tab_at(&mut self, active: usize) -> Result<()> {
         let Some(tab) = self.tabs.get_mut(active) else {
             return Ok(());
         };
@@ -202,6 +205,35 @@ impl EditorWindowView {
         self.tab_window
             .set_tab_title(active, tab.title_base.clone());
         Ok(())
+    }
+
+    fn format_active(&mut self, save_after: bool) {
+        let Some(active) = self.tab_window.active_tab() else {
+            return;
+        };
+        if save_after && let Some(tab) = self.tabs.get_mut(active) {
+            tab.pending_save_after_format = true;
+        }
+        self.send_tab_command_to_active(TabCommand::FormatDocument { save_after });
+    }
+
+    fn save_active_with_format_on_save(&mut self) {
+        let Some(active) = self.tab_window.active_tab() else {
+            return;
+        };
+        let format_on_save = self
+            .tabs
+            .get(active)
+            .is_some_and(|tab| tab.format_on_save.get());
+        if format_on_save {
+            self.format_active(true);
+            return;
+        }
+        if let Err(err) = self.save_tab_at(active) {
+            self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                message: format!("Save failed: {err:#}"),
+            });
+        }
     }
 
     fn save_as_active(&mut self, path: PathBuf) -> Result<()> {
@@ -314,10 +346,17 @@ impl EditorWindowView {
                     self.send_tab_command_to_active(TabCommand::RequestWorkspaceSymbols(query))
                 }
                 EditorWindowCommand::SaveActive => {
-                    let _ = self.save_active();
+                    self.save_active_with_format_on_save();
                 }
                 EditorWindowCommand::SaveAs(path) => {
-                    let _ = self.save_as_active(path);
+                    if let Err(err) = self.save_as_active(path) {
+                        self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                            message: format!("Save As failed: {err:#}"),
+                        });
+                    }
+                }
+                EditorWindowCommand::FormatActive => {
+                    self.format_active(false);
                 }
                 EditorWindowCommand::CloseActiveTab => self.close_active_tab(),
                 EditorWindowCommand::SplitVertical => {
