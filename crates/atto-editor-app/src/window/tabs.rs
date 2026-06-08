@@ -2,10 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
+use editor_core::BufferId;
 
 use crate::language::{guess_language_id, lsp_mode_for_file, syntax_config_for_file};
+use crate::workspace_state::TabRef;
 
 use super::document_tab::{DocumentTabView, TabCommand};
 use super::{EditorStatus, EditorWindowCommand, EditorWindowView};
@@ -22,6 +24,8 @@ pub(super) struct TabState {
     diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     pub(super) events: EventQueue<atto_ui_editor::EditorEvent>,
     commands: EventQueue<TabCommand>,
+    workspace_buffer_id: Option<BufferId>,
+    workspace_tab: Option<TabRef>,
 }
 
 impl EditorWindowView {
@@ -39,22 +43,41 @@ impl EditorWindowView {
             .find(|(_i, tab)| tab.path.as_ref().is_some_and(|p| p == &path))
         {
             let _ = self.tab_window.select_tab(idx);
+            self.sync_active_workspace_document();
             return;
         }
 
-        let initial_text = std::fs::read_to_string(&path).unwrap_or_default();
+        let disk_text = std::fs::read_to_string(&path).unwrap_or_default();
         let title_base = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("<file>")
             .to_string();
 
-        let text: Binding<String> = initial_text.clone().into();
-        let tab_commands: EventQueue<TabCommand> = EventQueue::new();
-
         let language_id = guess_language_id(&path);
         let syntax = syntax_config_for_file(&path, &language_id);
         let lsp = lsp_mode_for_file(&path, &language_id);
+        let tab_id = self.next_tab_id;
+        let workspace_tab = self.tab_ref(tab_id);
+        let workspace_open = if workspace_tab.is_some() {
+            let mut workspace = self.workspace_state.lock();
+            match workspace.prepare_file_tab(&path, &disk_text, 80, &language_id, &lsp) {
+                Ok(opened) => Some(opened),
+                Err(err) => {
+                    workspace.record_error(err);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let initial_text = workspace_open
+            .as_ref()
+            .map(|opened| opened.text.clone())
+            .unwrap_or(disk_text);
+
+        let text: Binding<String> = initial_text.clone().into();
+        let tab_commands: EventQueue<TabCommand> = EventQueue::new();
 
         let (tab_view, tab_handle) = DocumentTabView::new(
             tab_commands.clone(),
@@ -74,8 +97,8 @@ impl EditorWindowView {
         let mut text_observer = text.dirty_observer();
         text.check_dirty(&mut text_observer);
 
-        let tab_id = self.next_tab_id;
         self.next_tab_id += 1;
+        let workspace_buffer_id = workspace_open.as_ref().map(|opened| opened.buffer_id);
         self.tabs.push(TabState {
             tab_id,
             path: Some(path.clone()),
@@ -88,12 +111,27 @@ impl EditorWindowView {
             diagnostics_summary: tab_handle.diagnostics_summary.clone(),
             events: tab_handle.events.clone(),
             commands: tab_commands.clone(),
+            workspace_buffer_id,
+            workspace_tab,
         });
+
+        if let (Some(tab_ref), Some(opened)) = (workspace_tab, workspace_open.as_ref()) {
+            let mut workspace = self.workspace_state.lock();
+            if let Err(err) = workspace.register_tab_binding(
+                tab_ref,
+                opened.buffer_id,
+                opened.view_id,
+                text.clone(),
+            ) {
+                workspace.record_error(err);
+            }
+        }
     }
 
     fn select_tab_by_id(&mut self, tab_id: u64) {
         if let Some(index) = self.tabs.iter().position(|tab| tab.tab_id == tab_id) {
             let _ = self.tab_window.select_tab(index);
+            self.sync_active_workspace_document();
         }
     }
 
@@ -102,7 +140,14 @@ impl EditorWindowView {
             return;
         };
         if self.tab_window.remove_tab(active).is_some() && active < self.tabs.len() {
-            self.tabs.remove(active);
+            let tab = self.tabs.remove(active);
+            if let Some(tab_ref) = tab.workspace_tab {
+                let mut workspace = self.workspace_state.lock();
+                if let Err(err) = workspace.unregister_tab(tab_ref) {
+                    workspace.record_error(err);
+                }
+            }
+            self.sync_active_workspace_document();
         }
     }
 
@@ -130,8 +175,29 @@ impl EditorWindowView {
             return Ok(());
         };
 
-        std::fs::write(&path, tab.text.get())?;
-        tab.last_saved_text = tab.text.get();
+        let save_text = if let Some(buffer_id) = tab.workspace_buffer_id {
+            let mut workspace = self.workspace_state.lock();
+            if let Some(tab_ref) = tab.workspace_tab
+                && let Err(err) = workspace.sync_tab_to_buffer(tab_ref)
+            {
+                return Err(anyhow!(err));
+            }
+            workspace
+                .buffer_text_for_saving(buffer_id)
+                .map_err(|err| anyhow!(err))?
+        } else {
+            tab.text.get()
+        };
+
+        std::fs::write(&path, save_text)?;
+        if let Some(buffer_id) = tab.workspace_buffer_id {
+            let mut workspace = self.workspace_state.lock();
+            workspace
+                .mark_buffer_saved(buffer_id)
+                .map_err(|err| anyhow!(err))?;
+        }
+        let current_text = tab.text.get();
+        tab.last_saved_text = current_text;
         tab.is_dirty = false;
         self.tab_window
             .set_tab_title(active, tab.title_base.clone());
@@ -146,14 +212,43 @@ impl EditorWindowView {
             return Ok(());
         };
 
-        std::fs::write(&path, tab.text.get())?;
-        tab.path = Some(Self::canonicalize_best_effort(&path));
+        let path = Self::canonicalize_best_effort(&path);
+        if let Some(buffer_id) = tab.workspace_buffer_id {
+            let mut workspace = self.workspace_state.lock();
+            if let Some(tab_ref) = tab.workspace_tab
+                && let Err(err) = workspace.sync_tab_to_buffer(tab_ref)
+            {
+                return Err(anyhow!(err));
+            }
+            let lsp = lsp_mode_for_file(&path, &tab.language_id);
+            workspace
+                .set_buffer_path(buffer_id, &path, &tab.language_id, &lsp)
+                .map_err(|err| anyhow!(err))?;
+        }
+        let save_text = if let Some(buffer_id) = tab.workspace_buffer_id {
+            let workspace = self.workspace_state.lock();
+            workspace
+                .buffer_text_for_saving(buffer_id)
+                .map_err(|err| anyhow!(err))?
+        } else {
+            tab.text.get()
+        };
+
+        std::fs::write(&path, save_text)?;
+        if let Some(buffer_id) = tab.workspace_buffer_id {
+            let mut workspace = self.workspace_state.lock();
+            workspace
+                .mark_buffer_saved(buffer_id)
+                .map_err(|err| anyhow!(err))?;
+        }
+        tab.path = Some(path.clone());
         tab.title_base = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("<file>")
             .to_string();
-        tab.last_saved_text = tab.text.get();
+        let current_text = tab.text.get();
+        tab.last_saved_text = current_text;
         tab.is_dirty = false;
         self.tab_window
             .set_tab_title(active, tab.title_base.clone());
@@ -164,6 +259,13 @@ impl EditorWindowView {
         for (idx, tab) in self.tabs.iter_mut().enumerate() {
             if !tab.text.check_dirty(&mut tab.text_observer) {
                 continue;
+            }
+            if let Some(buffer_id) = tab.workspace_buffer_id {
+                let current_text = tab.text.get();
+                let mut workspace = self.workspace_state.lock();
+                if let Err(err) = workspace.sync_buffer_text(buffer_id, &current_text) {
+                    workspace.record_error(err);
+                }
             }
             tab.is_dirty = tab.text.get() != tab.last_saved_text;
             let title = if tab.is_dirty {

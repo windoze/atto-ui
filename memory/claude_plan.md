@@ -1,25 +1,31 @@
-# Execution Plan
+# Claude Execution Plan
 
-## Guardrails
-- Use `TODO.md` as the authoritative task list and complete exactly the first task whose heading is not prefixed with `[DONE]`.
-- Do not perform broad triage before selecting that task.
-- If a blocker or unscheduled failing test prevents completion, update `TODO.md` with the minimum prerequisite task and stop after committing.
-- Do not expose private chain-of-thought; keep this file to actionable rationale, decisions, and progress.
+## Objective
+Complete exactly the first incomplete task listed in TODO.md, then stop after marking it done and committing the result.
 
-## Steps
-1. Inspect repository status, latest commit summary, and `TODO.md` to identify the first incomplete task and any directly relevant unfinished issue in the latest commit.
-2. Read only the task-relevant files needed to understand the selected task.
-3. Implement the task without changing unrelated behavior.
-4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite required by the task.
-5. If validation reveals unscheduled failures, fix them if in scope or add prerequisite/follow-up tasks in `TODO.md` before marking completion.
-6. Mark the completed task heading with `[DONE]`, update its completion record, and update this plan file at key milestones.
-7. Commit all task-related changes with a descriptive message and the required co-author trailer, then stop.
+## Plan
+1. Read TODO.md to identify the first task whose heading is not prefixed with [DONE].
+2. Review the selected task requirements, dependencies, validation instructions, and completion-record format.
+3. Inspect only the relevant project files for that task and check the latest commit for any directly relevant unfinished note.
+4. Implement the task without workarounds or scope narrowing; if a concrete blocker appears, add the minimum prerequisite task to TODO.md instead.
+5. Run formatting, linting, and the relevant tests required by TODO.md; address any unscheduled failures before marking the task done.
+6. Update TODO.md by prefixing the completed task title with [DONE] and filling its completion record. Update PLAN.md only if phase-level sequencing changes.
+7. Commit all task-related changes with a clear message and the required co-author trailer.
 
 ## Progress
-- Plan initialized before task execution.
-- Read `TODO.md`; the first incomplete task is `R16` in `TODO-2.md`, reviewing the T16 symbol/global-search picker implementation.
-- Reviewed R16 criteria and the latest `[T16]` commit.
-- Found and fixed a global-search robustness issue where one non-UTF8 file under the size limit aborted the whole search; added a helper test that skips non-UTF8 files while still finding text matches.
-- First validation run found clippy warnings in T16 code/tests; refactored editor-window binding arguments and cleaned one-item slice construction instead of suppressing warnings.
-- Validation passed after rerunning `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Marked `R16` as `[DONE]` in `TODO.md` and `TODO-2.md` with a completion record.
+- Initial plan recorded before task execution.
+- Selected first incomplete task: `T17 — Workspace / LSP Bridge 状态层` from `TODO-2.md`.
+- Added shared workspace-state and workspace-LSP bridge modules.
+- Wired editor-window tab open/save/close/active-tab paths to the shared workspace.
+- Routed workspace-symbol requests through the workspace LSP bridge and added workspace LSP polling to the app tick loop.
+- Validation completed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+- Marked T17 `[DONE]` in `TODO.md` and `TODO-2.md`.
+
+## T17 Execution Steps
+1. Inspect the existing editor app tab/window/open/save flow and current LSP integration points.
+2. Inspect available `editor-core` workspace and `editor-core-lsp` workspace sync APIs to use their URI helpers and avoid duplicating protocol logic.
+3. Add workspace state and LSP workspace bridge modules for buffer identity, path-to-buffer reuse, tab binding synchronization, workspace edit application, and active-document tracking.
+4. Wire the bridge into file open, tab switching, save/edit synchronization, tick polling, and any existing workspace-symbol path that needs shared LSP state.
+5. Add focused tests for duplicate open buffer reuse, multi-tab workspace edit propagation, active tab LSP tracking, and preservation of dirty/open behavior.
+6. Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+7. Mark T17 `[DONE]` in `TODO-2.md` and update `TODO.md`, then commit all task-related files.

@@ -25,12 +25,14 @@ use editor_core::{DocumentOutline, DocumentSymbol, SearchOptions, SymbolKind, Wo
 use crate::actions::{AppAction, JumpTarget, OpenTarget};
 use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
+use crate::lsp_workspace::LspWorkspaceEvent;
 use crate::picker::{PickerEvent, PickerItem, PickerView};
 use crate::search::{GlobalSearchConfig, GlobalSearchResult, search_workspace};
 use crate::window::{
     EditorStatus, EditorTabSummary, EditorWindowBindings, EditorWindowCommand, EditorWindowView,
 };
 use crate::workspace::{WorkspaceFileIndex, build_workspace_file_index};
+use crate::workspace_state::{SharedWorkspaceState, WorkspaceState};
 
 #[derive(Clone, Debug)]
 pub struct AttoEditorConfig {
@@ -57,6 +59,7 @@ struct AppState {
     editor_statuses: HashMap<WindowId, Binding<EditorStatus>>,
     editor_tab_summaries: HashMap<WindowId, Binding<Vec<EditorTabSummary>>>,
     last_focused_editor: Option<WindowId>,
+    workspace_state: SharedWorkspaceState,
     status_message: Option<String>,
     next_window_offset: u16,
 
@@ -98,6 +101,7 @@ impl Default for AppState {
             editor_statuses: HashMap::new(),
             editor_tab_summaries: HashMap::new(),
             last_focused_editor: None,
+            workspace_state: WorkspaceState::shared(),
             status_message: None,
             next_window_offset: 0,
             explorer_window: None,
@@ -176,6 +180,9 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     let mut s = state.lock();
                     if s.workspace_roots != workspace_roots {
                         s.workspace_roots = workspace_roots.clone();
+                        s.workspace_state
+                            .lock()
+                            .set_workspace_roots(workspace_roots.clone());
                         s.file_picker_cache = None;
                     }
                 }
@@ -231,12 +238,14 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     atto_ui_editor::DiagnosticsSummary::default().into();
                 let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
                 let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
-                let view = EditorWindowView::new_with_bindings(
+                let workspace_state = state.lock().workspace_state.clone();
+                let view = EditorWindowView::new_with_workspace_bindings(
                     actions.clone(),
                     commands.clone(),
                     editor_events.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
+                    workspace_state,
                     EditorWindowBindings::new(
                         diagnostics_summary.clone(),
                         editor_status.clone(),
@@ -305,6 +314,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 process_document_symbol_picker_events(desktop, &state, &actions);
                 process_workspace_symbol_picker_events(desktop, screen, &state, &actions);
                 process_global_search_picker_events(desktop, screen, &state, &actions);
+                process_workspace_lsp_events(desktop, screen, &state);
                 process_editor_events(desktop, screen, &state);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
@@ -1298,7 +1308,7 @@ fn open_workspace_symbol_query_picker(
 }
 
 fn request_workspace_symbols(
-    desktop: &Desktop,
+    _desktop: &Desktop,
     state: &Arc<Mutex<AppState>>,
     query: impl Into<String>,
 ) {
@@ -1307,14 +1317,23 @@ fn request_workspace_symbols(
         set_status_message(state, "Workspace symbol query is empty");
         return;
     }
-    if let Some(cmds) = active_editor_commands(desktop, state) {
-        set_status_message(
+
+    let workspace_state = state.lock().workspace_state.clone();
+    let request = workspace_state
+        .lock()
+        .request_workspace_symbols(query.clone());
+    match request {
+        Ok(true) => set_status_message(
             state,
             format!("Requesting workspace symbols for “{query}”…"),
-        );
-        cmds.push(EditorWindowCommand::RequestWorkspaceSymbols(query));
-    } else {
-        set_status_message(state, "No active editor for workspace symbols");
+        ),
+        Ok(false) => {
+            set_status_message(
+                state,
+                "Workspace symbols require an active workspace LSP session",
+            );
+        }
+        Err(err) => set_status_message(state, format!("Workspace symbol request failed: {err}")),
     }
 }
 
@@ -1619,6 +1638,51 @@ fn display_path_for_roots(path: &Path, roots: &[PathBuf]) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn process_workspace_lsp_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+    let workspace_state = state.lock().workspace_state.clone();
+    let (events, last_error) = {
+        let mut workspace = workspace_state.lock();
+        let events = workspace.poll_lsp();
+        let last_error = workspace.take_last_error();
+        (events, last_error)
+    };
+
+    if let Some(error) = last_error {
+        set_status_message(state, error);
+    }
+
+    for event in events {
+        match event {
+            LspWorkspaceEvent::WorkspaceSymbols { query, symbols } => {
+                let count = symbols.len();
+                open_workspace_symbol_results_picker(desktop, screen, state, symbols);
+                set_status_message(
+                    state,
+                    format!("Workspace symbols for “{query}”: {count} result(s)"),
+                );
+            }
+            LspWorkspaceEvent::WorkspaceEditApplied { result } => {
+                let applied = result.applied.len();
+                if result.skipped_uris.is_empty() {
+                    set_status_message(
+                        state,
+                        format!("Workspace edit applied to {applied} file(s)"),
+                    );
+                } else {
+                    set_status_message(
+                        state,
+                        format!(
+                            "Workspace edit applied to {applied} file(s), skipped {} unopened file(s)",
+                            result.skipped_uris.len()
+                        ),
+                    );
+                }
+            }
+            LspWorkspaceEvent::Message(message) => set_status_message(state, message),
+        }
+    }
+}
+
 fn process_editor_events(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
     let queues = {
         let s = state.lock();
@@ -1798,6 +1862,9 @@ fn add_workspace_root(state: &Arc<Mutex<AppState>>, root: PathBuf) {
             return;
         }
         s.workspace_roots.push(root);
+        s.workspace_state
+            .lock()
+            .set_workspace_roots(s.workspace_roots.clone());
         s.file_picker_cache = None;
         (s.workspace_roots.clone(), s.explorer_commands.clone())
     };
@@ -1807,6 +1874,10 @@ fn add_workspace_root(state: &Arc<Mutex<AppState>>, root: PathBuf) {
 
 fn remove_editor_window_state(state: &Arc<Mutex<AppState>>, id: WindowId) {
     let mut s = state.lock();
+    let unregister_result = s.workspace_state.lock().unregister_window(id);
+    if let Err(err) = unregister_result {
+        s.status_message = Some(err);
+    }
     s.editor_windows.remove(&id);
     s.editor_events.remove(&id);
     s.editor_diagnostics.remove(&id);
@@ -2181,12 +2252,14 @@ fn add_editor_window(
         atto_ui_editor::DiagnosticsSummary::default().into();
     let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
     let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
-    let view = EditorWindowView::new_with_bindings(
+    let workspace_state = state.lock().workspace_state.clone();
+    let view = EditorWindowView::new_with_workspace_bindings(
         actions,
         commands.clone(),
         editor_events.clone(),
         editor_theme,
         clipboard,
+        workspace_state,
         EditorWindowBindings::new(
             diagnostics_summary.clone(),
             editor_status.clone(),

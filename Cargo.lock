@@ -68,6 +68,7 @@ dependencies = [
  "ignore",
  "parking_lot",
  "ratatui",
+ "serde_json",
  "tree-sitter-javascript",
  "tree-sitter-json",
  "tree-sitter-python",

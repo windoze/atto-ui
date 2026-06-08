@@ -1158,7 +1158,7 @@
 
 ## 阶段三：Workspace LSP 与高级 LSP 功能
 
-### [TODO] T17 — Workspace / LSP Bridge 状态层
+### [DONE] T17 — Workspace / LSP Bridge 状态层
 
 **依赖**：建议 T7-T9 后做。
 
@@ -1206,6 +1206,14 @@
 **验收**：
 - 不破坏当前打开/保存/dirty title。
 - 同一个文件重复打开仍只对应一个 buffer。
+
+**完成记录（2026-06-09）**：
+- 新增 `workspace_state` 共享状态层，集中维护 `editor_core::Workspace`、path/buffer/tab 映射、tab binding 同步、重复打开 buffer 复用、workspace edit 应用后 binding 回写、active tab 到 active workspace buffer 的同步。
+- 新增 `lsp_workspace` bridge，按 `(workspace_root, language_id)` 管理 `LspWorkspaceSync`，打开/关闭 workspace documents，切换 active document，转发 binding text delta，处理 workspace symbol request，以及 deferred `workspace/applyEdit`。
+- `EditorWindowView` 现在接收共享 workspace state；打开、关闭、切换、保存、另存、dirty title 更新都会同步 workspace buffer，不改变现有 tab UI 和 per-view LSP bridge 限制。
+- `atto-editor-app` AppState 接入共享 workspace roots/state，tick 中轮询 workspace LSP events，Workspace Symbols 改由 workspace LSP bridge 请求并显示结果。
+- 已新增 workspace state 单测覆盖重复打开复用同一 buffer、workspace edit 回写多个 tab binding、active tab 切换更新 active workspace buffer。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R17 — 审阅 T17
 

@@ -19,9 +19,11 @@ pub mod app;
 pub mod commands;
 pub mod explorer_window;
 pub mod language;
+pub mod lsp_workspace;
 pub mod picker;
 pub mod search;
 pub mod window;
 pub mod workspace;
+pub mod workspace_state;
 
 pub use app::{AttoEditorConfig, run};

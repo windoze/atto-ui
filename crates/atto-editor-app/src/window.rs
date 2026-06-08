@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 use atto_ui::reactive::{Binding, EventQueue};
+use atto_ui::wm::WindowId;
 
 use crate::actions::{AppAction, JumpTarget};
+use crate::workspace_state::{SharedWorkspaceState, TabRef, WorkspaceState};
 
 mod component_impl;
 mod document_tab;
@@ -101,6 +103,8 @@ pub struct EditorWindowView {
     tab_window: atto_ui::composable::TabWindow,
     tabs: Vec<tabs::TabState>,
     next_tab_id: u64,
+    window_id: Option<WindowId>,
+    workspace_state: SharedWorkspaceState,
 }
 
 impl EditorWindowView {
@@ -150,6 +154,26 @@ impl EditorWindowView {
         clipboard: Binding<String>,
         bindings: EditorWindowBindings,
     ) -> Self {
+        Self::new_with_workspace_bindings(
+            actions,
+            commands,
+            events,
+            editor_theme,
+            clipboard,
+            WorkspaceState::shared(),
+            bindings,
+        )
+    }
+
+    pub fn new_with_workspace_bindings(
+        actions: EventQueue<AppAction>,
+        commands: EventQueue<EditorWindowCommand>,
+        events: EventQueue<atto_ui_editor::EditorEvent>,
+        editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
+        clipboard: Binding<String>,
+        workspace_state: SharedWorkspaceState,
+        bindings: EditorWindowBindings,
+    ) -> Self {
         Self {
             _actions: actions,
             commands,
@@ -162,6 +186,8 @@ impl EditorWindowView {
             tab_window: atto_ui::composable::TabWindow::new(),
             tabs: Vec::new(),
             next_tab_id: 1,
+            window_id: None,
+            workspace_state,
         }
     }
 
@@ -219,6 +245,31 @@ impl EditorWindowView {
             for event in tab.events.drain() {
                 self.events.push(event);
             }
+        }
+    }
+
+    pub(super) fn set_window_id(&mut self, window_id: WindowId) {
+        self.window_id = Some(window_id);
+    }
+
+    pub(super) fn tab_ref(&self, tab_id: u64) -> Option<TabRef> {
+        self.window_id
+            .map(|window_id| TabRef::new(window_id, tab_id))
+    }
+
+    pub(super) fn sync_active_workspace_document(&self) {
+        let Some(active) = self.tab_window.active_tab() else {
+            return;
+        };
+        let Some(tab) = self.tabs.get(active) else {
+            return;
+        };
+        let Some(tab_ref) = self.tab_ref(tab.tab_id) else {
+            return;
+        };
+        let mut workspace = self.workspace_state.lock();
+        if let Err(err) = workspace.set_active_tab(tab_ref) {
+            workspace.record_error(err);
         }
     }
 }
