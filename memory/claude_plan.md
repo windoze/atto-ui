@@ -32,3 +32,4 @@
 - 补充了 `command_prefix_escape_clears_pending_and_which_key` 单测，固定 prefix pending 时 `Esc` 会清理 keymap pending 和 which-key overlay，即使底层事件结果已 consumed。
 - 已运行验证：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`，全部通过。
 - 已将 `TODO.md` 与 `TODO-2.md` 中 `R13` 标记为 `[DONE]`，并写入完成记录。
+- 已提交主要改动：`82f327d [R13] Review command registry and which-key`。
