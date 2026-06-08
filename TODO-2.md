@@ -1065,13 +1065,22 @@
 - 新增/更新测试：workspace file index files-only/hidden filtering/entry limit；app 单元覆盖 `Ctrl+P` dispatch、file picker cache invalidation、buffer picker 在关闭 tab 后仍按 stable id 选择；PTY 覆盖 `Ctrl+P` fuzzy 找到并打开 `src/main.rs`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R15 — 审阅 T15
+### [DONE] R15 — 审阅 T15
 
 审阅 T15 改动：
 - 确认 file picker 不显示目录和隐藏 `.git` 内容。
 - 确认 workspace root 变化后 index invalidation 正确。
 - 确认 buffer picker accept 不依赖过期 tab index。
 - 确认打开文件沿用现有 `open_path`，不会重复添加 workspace root。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T15 的 `WorkspaceFileIndex` 构建、File Picker item 生成/cache、`OpenPath` accept 路径、`EditorTabSummary`/stable `tab_id` 同步，以及 Buffer Picker accept 到 `SelectTabById` 的分发路径。
+- 确认 File Picker 从 workspace tree flatten 时只收集 `FileTreeNodeKind::File`，沿用默认 hidden/`.git` 过滤，不显示目录或 `.git` 内容。
+- 确认 workspace roots 初始化、`add_workspace_root` 与 cache root 比对都会在 root 变化后失效或重建 file picker index。
+- 确认 Buffer Picker item action 携带 stable `tab_id`，accept 后发送 `EditorWindowCommand::SelectTabById(u64)`，不依赖可能过期的 tab index。
+- 确认 File Picker accept 复用 `AppAction::OpenPath { target: NewTab }` 和既有 `open_path` 流程；workspace 内文件不会重复添加 workspace root。
+- 未发现需要修改 T15 功能代码的问题。
+- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo clippy --workspace --all-targets -- -D warnings`；最终 `cargo test --all --all-targets`。
 
 ### [TODO] T16 — Document symbols / Workspace symbols / Global search pickers
 

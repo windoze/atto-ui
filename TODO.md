@@ -86,7 +86,7 @@
 | T14 | DONE | [DONE] 通用 Picker component 与 Command Palette | TODO-2.md · 阶段二 |
 | R14 | DONE | [DONE] 审阅 T14 | TODO-2.md · 阶段二 |
 | T15 | DONE | [DONE] File picker 与 Buffer/tab picker | TODO-2.md · 阶段二 |
-| R15 | TODO | 审阅 T15 | TODO-2.md · 阶段二 |
+| R15 | DONE | [DONE] 审阅 T15 | TODO-2.md · 阶段二 |
 | T16 | TODO | Document symbols / Workspace symbols / Global search pickers | TODO-2.md · 阶段二 |
 | R16 | TODO | 审阅 T16 | TODO-2.md · 阶段二 |
 | T17 | TODO | Workspace / LSP Bridge 状态层 | TODO-2.md · 阶段三 |

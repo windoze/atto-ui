@@ -1,26 +1,28 @@
 # 执行计划
 
-## 当前状态
+## 范围
 
-- 已读取 `TODO.md` 和 `TODO-2.md`，第一个未完成任务为 `T15 — File picker 与 Buffer/tab picker`。
-- `PLAN.md` 在仓库根目录不存在；相关阶段计划位于 `PLAN-2.md`，已查看 file picker / buffer picker 章节。
-- 最新提交为 `[R14] Review command palette picker`，未发现直接提示 T15 的未完成阻塞事项。
-- 已完成核心实现草稿：新增 workspace file index、`OpenFilePicker` / `OpenBufferPicker` / `SelectEditorTab` actions、file/buffer picker modal 事件流、tab stable id 和选择命令。
-- 已增加单元与 PTY 测试草稿，覆盖 file picker cache invalidation、`Ctrl+P` 打开 workspace 文件、buffer picker stable tab id selection。
-- 已运行 `cargo fmt`。
-- 已运行 `cargo clippy --workspace --all-targets -- -D warnings`，通过。
-- 已运行 `cargo test --workspace --all-targets`，通过。
-- 已将 T15 在 `TODO.md` / `TODO-2.md` 标记为 `[DONE]` 并填写完成记录。
-- 已提交本任务变更，提交为 `[T15] Implement file and buffer pickers`。
-- 本文件用于记录可审阅的执行计划、关键决策、进度和验证结果。
+- 以 `TODO.md` 为任务顺序和完成状态的权威来源。
+- 本轮只完成第一个未标记 `[DONE]` 的任务，然后停止。
+- 若遇到阻塞当前任务的真实前置问题，则只更新任务列表、记录阻塞、提交并停止。
 
 ## 步骤
 
-1. 阅读 T15 相关文件：`actions.rs`、`app.rs`、`workspace.rs`、`window.rs`、`window/tabs.rs`、`picker.rs`，确认现有 command palette、open path、workspace tree、tab 状态和测试模式。
-2. 设计并实现 `AppAction::OpenFilePicker`、`OpenBufferPicker`、`SelectEditorTab { window, tab_id }`，复用现有 action 分发路径。
-3. 实现 file picker：基于 workspace roots / `build_workspace_tree` flatten file nodes，排除目录和隐藏 `.git` 内容，加入缓存和 roots invalidation，accept 时调用 `OpenPath { target: NewTab }`。
-4. 实现 buffer/tab picker：为 `TabState` 增加 stable `tab_id`，暴露 tab summaries，增加 `EditorWindowCommand::SelectTabById(u64)`，accept 后按窗口和 tab id 切换。
-5. 接入快捷键与命令：`Ctrl+P` 打开 file picker；buffer picker 通过 command palette 命令暴露。
-6. 增加或更新单元/PTY 测试，覆盖 file picker fuzzy 打开 `src/main.rs`、buffer picker 在两个 tabs 间按 stable id 切换。
-7. 运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-8. 更新 `TODO.md` / `TODO-2.md` 完成记录并提交本任务变更后停止。
+1. 读取 `TODO.md`，确认第一个未完成任务及其来源文件。
+2. 读取 `TODO-2.md` 中该任务的完整要求、依赖、验收和完成记录。
+3. 只围绕当前任务检查相关提交、源码、测试和文档，不做无关历史问题扫描。
+4. 如发现阻塞当前任务的缺陷或缺失前置项，按最小范围更新 `TODO.md` / `TODO-2.md` 并停止。
+5. 对当前任务执行必要实现或审阅；本轮任务为 `R15`，因此重点审阅 `T15` 的实现路径。
+6. 按顺序运行格式化、lint 和测试验证：先 `cargo fmt`，再 clippy，最后测试。
+7. 将当前任务标题标记为 `[DONE]`，补充完成记录，并同步根 `TODO.md` 索引。
+8. 检查 `git status`、`git diff` 和最近提交，只暂存本轮 intended files。
+9. 用任务范围内的清晰提交信息提交，然后停止，不进入下一个任务。
+
+## 进度记录
+
+- 已在任务检查前初始化本执行计划。
+- 已确认第一个未完成任务为 `R15 — 审阅 T15`。
+- 审阅范围：File Picker 的文件/目录过滤和 `.git` 隐藏、workspace root 变化后的 index invalidation、Buffer Picker stable tab id accept 路径、File Picker accept 复用 `open_path` 且不重复添加 workspace root。
+- 已完成实现审阅，未发现需要修改 `T15` 功能代码的问题。
+- 验证已通过：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo clippy --workspace --all-targets -- -D warnings`，以及 workspace clippy 通过后的最终 `cargo test --all --all-targets`。
+- 已在 `TODO-2.md` 和根 `TODO.md` 索引中将 `R15` 标记为 `[DONE]`。
