@@ -876,13 +876,22 @@
 - 新增单元测试覆盖单键 exact、`Ctrl+K` prefix、`Ctrl+K Ctrl+F` exact、ambiguous exact、timeout 清理 pending、invalid chord 清理 pending、label 生成和 editor/framework chord round-trip。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R12 — 审阅 T12
+### [DONE] R12 — 审阅 T12
 
 审阅 T12 改动：
 - 确认 trie 匹配 deterministic。
 - 确认 timeout 不依赖 wall clock hidden global，测试可注入 now。
 - 确认 KeyModifiers 比较与 crossterm 语义一致。
 - 确认没有把 editor 专用 action 类型引入 core keymap。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T12 的框架级 `KeyChord` / `KeySequence` / `KeySequenceEngine` / `KeymapMatch` / `WhichKeyChoice`、`app` 与 crate root re-export，以及 `atto-ui-editor` 的 `KeyChord` 桥接。
+- 确认 trie 查找按精确 chord 匹配，prefix choices 经 key label / command id / title 排序，输出对 which-key 使用保持 deterministic。
+- 发现并修复多段序列 timeout 计时语义：成功推进 prefix 后现在会重新开始等待下一段 chord，避免三段及以上 key sequence 被首段累计超时误取消；新增 `timeout_resets_after_each_successful_prefix_chord` 回归测试。
+- 确认 timeout API 由调用方传入 `Instant`，不依赖隐藏 wall clock；既有 timeout 测试和新增回归测试均使用可注入时间。
+- 确认 `KeyModifiers` 以 crossterm bitset 精确比较；新增测试覆盖 `Ctrl+S` 不匹配 `Ctrl+Shift+S`。
+- 确认 core keymap 模块保持泛型 action `A`，未引入 editor 专用 `EditorAction`；editor crate 仅提供双向 `KeyChord` 转换和 label helper。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T13 — Command registry 与 which-key popup
 

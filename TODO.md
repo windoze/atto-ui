@@ -80,7 +80,7 @@
 | T11 | DONE | [DONE] C4 分段式 StatusBar 与 editor diagnostics 接入 | TODO-2.md · 阶段二 |
 | R11 | DONE | [DONE] 审阅 T11 | TODO-2.md · 阶段二 |
 | T12 | DONE | [DONE] C3 框架级多键序列 keymap engine | TODO-2.md · 阶段二 |
-| R12 | TODO | 审阅 T12 | TODO-2.md · 阶段二 |
+| R12 | DONE | [DONE] 审阅 T12 | TODO-2.md · 阶段二 |
 | T13 | TODO | Command registry 与 which-key popup | TODO-2.md · 阶段二 |
 | R13 | TODO | 审阅 T13 | TODO-2.md · 阶段二 |
 | T14 | TODO | 通用 Picker component 与 Command Palette | TODO-2.md · 阶段二 |

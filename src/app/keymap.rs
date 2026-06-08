@@ -219,11 +219,8 @@ impl<A: Clone> KeySequenceEngine<A> {
     }
 
     fn set_pending(&mut self, pending: Vec<KeyChord>, now: Instant) {
-        let starts_new_prefix = self.pending.is_empty();
         self.pending = pending;
-        if starts_new_prefix || self.pending_since.is_none() {
-            self.pending_since = Some(now);
-        }
+        self.pending_since = Some(now);
     }
 }
 
@@ -524,6 +521,42 @@ mod tests {
 
         assert_eq!(result, KeymapMatch::Timeout);
         assert!(engine.pending().is_empty());
+    }
+
+    #[test]
+    fn timeout_resets_after_each_successful_prefix_chord() {
+        let mut engine = KeySequenceEngine::new(Duration::from_millis(50));
+        engine.insert(vec![ctrl('k'), ctrl('f'), ctrl('s')], Action::Format);
+        let now = Instant::now();
+
+        assert!(matches!(
+            engine.handle_key(ctrl('k'), now),
+            KeymapMatch::Prefix { .. }
+        ));
+        assert!(matches!(
+            engine.handle_key(ctrl('f'), now + Duration::from_millis(40)),
+            KeymapMatch::Prefix { .. }
+        ));
+        let result = engine.handle_key(ctrl('s'), now + Duration::from_millis(80));
+
+        assert_eq!(result, KeymapMatch::Exact(Action::Format));
+        assert!(engine.pending().is_empty());
+    }
+
+    #[test]
+    fn modifier_comparison_uses_exact_crossterm_bitset() {
+        let mut engine = KeySequenceEngine::new(Duration::from_secs(1));
+        engine.insert(ctrl('s'), Action::Save);
+
+        let result = engine.handle_key(
+            KeyChord::new(
+                KeyCode::Char('s'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            Instant::now(),
+        );
+
+        assert_eq!(result, KeymapMatch::None);
     }
 
     #[test]
