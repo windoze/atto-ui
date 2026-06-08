@@ -16,6 +16,7 @@ pub(super) enum TabCommand {
     SplitVertical,
     SplitHorizontal,
     CloseSplit,
+    EditorAction(atto_ui_editor::EditorAction),
 }
 
 pub(super) struct DocumentTabView {
@@ -97,6 +98,22 @@ impl DocumentTabView {
                     self.ensure_split(Some(atto_ui::composable::SplitterOrientation::Horizontal))
                 }
                 TabCommand::CloseSplit => self.close_split(),
+                TabCommand::EditorAction(action) => {
+                    let _ = self.handle_editor_action(action);
+                }
+            }
+        }
+    }
+
+    fn handle_editor_action(&mut self, action: atto_ui_editor::EditorAction) -> bool {
+        match self.focused {
+            SplitFocus::Primary => self.primary.handle_editor_action(action),
+            SplitFocus::Secondary => {
+                if let Some(view) = self.secondary.as_mut() {
+                    view.handle_editor_action(action)
+                } else {
+                    self.primary.handle_editor_action(action)
+                }
             }
         }
     }

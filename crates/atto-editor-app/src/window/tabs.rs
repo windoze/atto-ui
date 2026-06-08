@@ -199,6 +199,9 @@ impl EditorWindowView {
                 EditorWindowCommand::CloseSplit => {
                     self.send_tab_command_to_active(TabCommand::CloseSplit)
                 }
+                EditorWindowCommand::EditorAction(action) => {
+                    self.send_tab_command_to_active(TabCommand::EditorAction(action))
+                }
             }
         }
     }

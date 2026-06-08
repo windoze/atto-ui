@@ -2,6 +2,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
@@ -13,6 +15,7 @@ use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 use super::menu::{MenuAction, MenuBar};
 use super::status::StatusBar;
 use super::toast::{Toast, ToastQueue};
+use super::{WhichKeyChoice, WhichKeyModel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopMode {
@@ -84,6 +87,7 @@ pub struct Desktop {
     pub menu: MenuBar,
     pub status: StatusBar,
     pub toasts: ToastQueue,
+    pub which_key: Option<WhichKeyModel>,
     pub mode: DesktopMode,
 }
 
@@ -95,8 +99,29 @@ impl Desktop {
             menu,
             status: StatusBar::default(),
             toasts: ToastQueue::default(),
+            which_key: None,
             mode: DesktopMode::Normal,
         }
+    }
+
+    pub fn set_which_key(&mut self, model: Option<WhichKeyModel>) {
+        self.which_key = model;
+    }
+
+    pub fn show_which_key(
+        &mut self,
+        prefix_label: impl Into<String>,
+        choices: Vec<WhichKeyChoice>,
+    ) {
+        self.which_key = Some(WhichKeyModel::new(prefix_label, choices));
+    }
+
+    pub fn clear_which_key(&mut self) {
+        self.which_key = None;
+    }
+
+    pub fn which_key(&self) -> Option<&WhichKeyModel> {
+        self.which_key.as_ref()
     }
 
     pub fn push_toast(&mut self, toast: Toast) {
@@ -391,6 +416,7 @@ impl Desktop {
 
         // Menu captures all input while active.
         if self.mode == DesktopMode::Menu || self.menu.is_active() {
+            self.clear_which_key();
             if self.mode != DesktopMode::Menu {
                 self.mode = DesktopMode::Menu;
             }
@@ -499,6 +525,7 @@ impl Desktop {
         // Modals act as an event sink: even if the modal view ignores an event, it should not
         // propagate to desktop-level shortcuts.
         if modal_active {
+            self.clear_which_key();
             return DesktopEventResult::consumed();
         }
 
@@ -561,6 +588,15 @@ impl Desktop {
         // Draw windows before chrome overlays so dropdown menus/tooltips can render on top.
         self.wm.draw(frame, layout.work_area, &self.theme);
 
+        if self.mode == DesktopMode::Normal && !self.wm.has_active_modal() {
+            draw_which_key_popup(
+                frame,
+                layout.work_area,
+                &self.theme,
+                self.which_key.as_ref(),
+            );
+        }
+
         self.menu.draw(frame, layout.menu_bar, &self.theme);
 
         if !self.status.has_custom() {
@@ -589,6 +625,90 @@ impl Desktop {
         // ensure wide glyphs never straddle non-blank cells.
         sanitize_wide_glyph_overlaps(frame.buffer_mut());
     }
+}
+
+fn draw_which_key_popup(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &Theme,
+    model: Option<&WhichKeyModel>,
+) {
+    let Some(model) = model else {
+        return;
+    };
+    if model.is_empty() || area.width == 0 || area.height < 3 {
+        return;
+    }
+
+    let visible_rows = model
+        .choices
+        .len()
+        .min(area.height.saturating_sub(2) as usize);
+    if visible_rows == 0 {
+        return;
+    }
+
+    let key_width = model
+        .choices
+        .iter()
+        .map(|choice| UnicodeWidthStr::width(choice.key_label.as_str()))
+        .max()
+        .unwrap_or(0);
+    let row_width = model
+        .choices
+        .iter()
+        .map(|choice| key_width + 2 + UnicodeWidthStr::width(choice.title.as_str()))
+        .max()
+        .unwrap_or(0);
+    let title_width = UnicodeWidthStr::width(model.prefix_label.as_str()) + "Which Key: ".len();
+    let content_width = row_width.max(title_width).max(18);
+    let width = (content_width + 4).min(area.width as usize) as u16;
+    let height = (visible_rows + 2).min(area.height as usize) as u16;
+    let rect = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height),
+        width,
+        height,
+    };
+
+    let popup_style = theme
+        .named_style("which-key-popup")
+        .unwrap_or(theme.window_bg);
+    let key_style = theme
+        .named_style("which-key-key")
+        .unwrap_or(theme.status_bar_key);
+    let title_style = theme
+        .named_style("which-key-title")
+        .unwrap_or(theme.widget.normal);
+
+    let lines = model
+        .choices
+        .iter()
+        .take(visible_rows)
+        .map(|choice| {
+            Line::from(vec![
+                Span::styled(pad_display_width(&choice.key_label, key_width), key_style),
+                Span::raw("  "),
+                Span::styled(choice.title.clone(), title_style),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Which Key: {} ", model.prefix_label))
+        .style(popup_style);
+
+    frame.render_widget(Clear, rect);
+    frame.render_widget(Paragraph::new(lines).block(block).style(popup_style), rect);
+}
+
+fn pad_display_width(text: &str, width: usize) -> String {
+    let current = UnicodeWidthStr::width(text);
+    let padding = width.saturating_sub(current);
+    if padding == 0 {
+        return text.to_string();
+    }
+    format!("{text}{}", " ".repeat(padding))
 }
 
 fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
@@ -643,6 +763,8 @@ mod tests {
     use crate::theme::Theme;
     use crate::wm::{DockSide, Window, WindowDock, WindowKind};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -768,6 +890,18 @@ mod tests {
     }
 
     crate::impl_component_default_traits!(RecordingView => Layout, Scrollable, FocusNav, DynamicTree);
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16, height: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
 
     #[test]
     fn focused_view_can_consume_event_before_window_manager() {
@@ -968,6 +1102,70 @@ mod tests {
             !desktop.menu.is_active(),
             "expected menu to remain inactive"
         );
+    }
+
+    #[test]
+    fn which_key_overlay_draws_choices() {
+        let screen = Rect::new(0, 0, 60, 12);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        desktop.show_which_key(
+            "Ctrl+Alt+K",
+            vec![WhichKeyChoice {
+                key_label: "Ctrl+Alt+S".to_string(),
+                command_id: "file.save".to_string(),
+                title: "Save".to_string(),
+            }],
+        );
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(screen.width, screen.height)).expect("terminal");
+        terminal.draw(|frame| desktop.draw(frame)).expect("draw");
+
+        let screen_text = screen_contents(&terminal, screen.width, screen.height);
+        assert!(screen_text.contains("Which Key: Ctrl+Alt+K"));
+        assert!(screen_text.contains("Ctrl+Alt+S"));
+        assert!(screen_text.contains("Save"));
+    }
+
+    #[test]
+    fn which_key_overlay_is_hidden_while_modal_is_active() {
+        struct IgnoreAllView;
+
+        impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+
+        impl EventHandling for IgnoreAllView {}
+
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
+
+        let screen = Rect::new(0, 0, 60, 12);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        desktop.add_window(
+            Window::new(
+                WindowKind::Modal,
+                "Modal",
+                Rect::new(10, 3, 24, 6),
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+        desktop.show_which_key(
+            "Ctrl+Alt+K",
+            vec![WhichKeyChoice {
+                key_label: "Ctrl+Alt+S".to_string(),
+                command_id: "file.save".to_string(),
+                title: "Save".to_string(),
+            }],
+        );
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(screen.width, screen.height)).expect("terminal");
+        terminal.draw(|frame| desktop.draw(frame)).expect("draw");
+
+        let screen_text = screen_contents(&terminal, screen.width, screen.height);
+        assert!(!screen_text.contains("Which Key: Ctrl+Alt+K"));
+        assert!(!screen_text.contains("Ctrl+Alt+S"));
     }
 
     #[test]

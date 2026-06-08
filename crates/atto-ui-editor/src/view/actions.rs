@@ -52,6 +52,11 @@ impl EditorView {
         moved
     }
 
+    /// Executes an editor command action without synthesizing a key event.
+    pub fn handle_editor_action(&mut self, action: EditorAction) -> bool {
+        self.handle_action(action)
+    }
+
     pub(super) fn handle_action(&mut self, action: EditorAction) -> bool {
         if self.config.read_only.get() && action_mutates_document(action) {
             self.hide_popups();

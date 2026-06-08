@@ -893,7 +893,7 @@
 - 确认 core keymap 模块保持泛型 action `A`，未引入 editor 专用 `EditorAction`；editor crate 仅提供双向 `KeyChord` 转换和 label helper。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T13 — Command registry 与 which-key popup
+### [DONE] T13 — Command registry 与 which-key popup
 
 **依赖**：T12。
 
@@ -929,6 +929,15 @@
 **验收**：
 - 命令面板和 keymap 能共享同一 command id/title。
 - which-key 不抢占普通单键输入。
+
+**完成记录（2026-06-09）**：
+- 框架层 `src/app/keymap.rs` 新增 `CommandDescriptor<A>`、`CommandRegistry<A>` 与 duplicate command id 校验，并可从 registry 的 default key sequence 构建 `KeySequenceEngine<A>`；`app` 和 crate root 均 re-export 新 API。
+- 新增 `WhichKeyModel` 与 Desktop which-key overlay；prefix choices 使用 `which-key-popup`、`which-key-key`、`which-key-title` named styles 绘制在窗口之上，modal/menu 状态会隐藏或清理 overlay。
+- `atto-editor-app` 新增 `commands.rs`，集中登记 File/View/Split/editor/LSP/picker command id/title/category/action/default sequence；全局 prefix keymap 使用 `Ctrl+Alt+K`，只处理 Desktop 未消费的 key，避免抢占普通单键输入。
+- app on_event 接入 command keymap：prefix 后显示 which-key choices，完整序列触发 action 并关闭 popup，Esc/无效输入清理 pending；Split/editor/LSP command 可通过 editor window/tab command queue 转发到 active editor。
+- `atto-ui-editor` 暴露 `EditorView::handle_editor_action`，供 app command registry 不合成按键地执行 editor/LSP action。
+- 新增/扩展单元测试覆盖 command id 唯一性、registry 构建 key sequence engine、which-key overlay 绘制与 modal 隐藏、app command registry 覆盖矩阵、prefix 显示 choices、完整序列触发 Save、已消费 key 不启动 which-key。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R13 — 审阅 T13
 

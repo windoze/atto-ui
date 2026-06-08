@@ -361,6 +361,16 @@ impl Theme {
             .insert("menu-item-shortcut".into(), self.widget.dim);
         self.named_styles
             .insert("menu-border".into(), self.window_border);
+        self.named_styles.insert(
+            "which-key-popup".into(),
+            self.window_bg.patch(self.window_border),
+        );
+        self.named_styles.insert(
+            "which-key-key".into(),
+            self.status_bar_key.add_modifier(Modifier::BOLD),
+        );
+        self.named_styles
+            .insert("which-key-title".into(), self.widget.normal);
         self.named_styles.insert("selection".into(), self.selection);
 
         self.named_styles

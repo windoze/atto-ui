@@ -2,17 +2,19 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use crossterm::event::{Event, KeyCode};
 use parking_lot::Mutex;
 use ratatui::layout::Rect;
 
 use atto_ui::app::{
-    AppControl, CrosstermAppConfig, CursorMode, Desktop, DesktopMode, MenuBar, MenuItem, MenuSpec,
-    StatusSegment, StatusSegmentAlign, run_crossterm_desktop,
+    AppControl, CrosstermAppConfig, CursorMode, DEFAULT_KEY_SEQUENCE_TIMEOUT, Desktop,
+    DesktopEventResult, DesktopMode, KeyChord, KeySequenceEngine, KeymapMatch, MenuBar, MenuItem,
+    MenuSpec, StatusSegment, StatusSegmentAlign, WhichKeyModel, run_crossterm_desktop,
 };
-use atto_ui::composable::{Component, HStack, LayoutParams, Size, TextFn, VStack};
+use atto_ui::composable::{Component, EventOutcome, HStack, LayoutParams, Size, TextFn, VStack};
 use atto_ui::dialogs::FileDialog;
 use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
@@ -20,6 +22,7 @@ use atto_ui::widgets::{Button, TextBox};
 use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKind};
 
 use crate::actions::{AppAction, OpenTarget};
+use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use crate::window::{EditorStatus, EditorWindowCommand, EditorWindowView};
 
@@ -86,6 +89,8 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
     let open_folder_input: Property<String> = Property::new(String::new());
 
     let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+    let mut command_keymap =
+        commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
 
     let app_cfg = CrosstermAppConfig::default()
         .tick_rate(Duration::from_millis(16))
@@ -274,7 +279,22 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 Ok(AppControl::Continue)
             }
         },
-        |_desktop, _event, _screen, _res| Ok(AppControl::Continue),
+        {
+            let actions = actions.clone();
+            let state = state.clone();
+
+            move |desktop, event, screen, res| {
+                handle_command_key_event(
+                    desktop,
+                    event,
+                    screen,
+                    res,
+                    &mut command_keymap,
+                    &state,
+                    &actions,
+                )
+            }
+        },
     )
 }
 
@@ -493,6 +513,88 @@ fn handle_action(
     }
 
     Ok(AppControl::Continue)
+}
+
+fn handle_command_key_event(
+    desktop: &mut Desktop,
+    event: &Event,
+    _screen: Rect,
+    result: &DesktopEventResult,
+    keymap: &mut KeySequenceEngine<AppCommandAction>,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) -> Result<AppControl> {
+    if desktop.wm.has_active_modal() {
+        keymap.clear_pending();
+        desktop.clear_which_key();
+        return Ok(AppControl::Continue);
+    }
+
+    let Event::Key(key) = event else {
+        if !keymap.pending().is_empty() {
+            keymap.clear_pending();
+            desktop.clear_which_key();
+        }
+        return Ok(AppControl::Continue);
+    };
+    let Some(chord) = KeyChord::from_key_event(*key) else {
+        return Ok(AppControl::Continue);
+    };
+
+    if key.code == KeyCode::Esc && !keymap.pending().is_empty() {
+        keymap.clear_pending();
+        desktop.clear_which_key();
+        return Ok(AppControl::Continue);
+    }
+
+    if result.outcome != EventOutcome::Ignored {
+        if !keymap.pending().is_empty() {
+            keymap.clear_pending();
+            desktop.clear_which_key();
+        }
+        return Ok(AppControl::Continue);
+    }
+
+    match keymap.handle_key(chord, Instant::now()) {
+        KeymapMatch::None | KeymapMatch::Timeout => {
+            desktop.clear_which_key();
+        }
+        KeymapMatch::Prefix { choices } => {
+            desktop.set_which_key(Some(WhichKeyModel::for_prefix(keymap.pending(), choices)));
+        }
+        KeymapMatch::Exact(action) => {
+            desktop.clear_which_key();
+            execute_command_action(desktop, state, actions, action);
+        }
+        KeymapMatch::AmbiguousExact { action, choices } => {
+            execute_command_action(desktop, state, actions, action);
+            desktop.set_which_key(Some(WhichKeyModel::for_prefix(keymap.pending(), choices)));
+        }
+    }
+
+    Ok(AppControl::Continue)
+}
+
+fn execute_command_action(
+    desktop: &Desktop,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+    action: AppCommandAction,
+) {
+    match action {
+        AppCommandAction::App(action) => actions.push(action),
+        AppCommandAction::EditorWindow(command) => {
+            if let Some(cmds) = active_editor_commands(desktop, state) {
+                cmds.push(command);
+            }
+        }
+        AppCommandAction::Editor(action) => {
+            if let Some(cmds) = active_editor_commands(desktop, state) {
+                cmds.push(EditorWindowCommand::EditorAction(action));
+            }
+        }
+        AppCommandAction::OpenCommandPalette => {}
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1064,7 +1166,9 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use crossterm::event::{
+        Event, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -1074,6 +1178,84 @@ mod tests {
             .expect("clock should be after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("atto_editor_app_{prefix}_{nanos}"))
+    }
+
+    fn ctrl_alt_key(ch: char) -> Event {
+        Event::Key(KeyEvent::new(
+            KeyCode::Char(ch),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+    }
+
+    #[test]
+    fn command_prefix_shows_which_key_and_exact_dispatches_action() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+        let ignored = DesktopEventResult::ignored();
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_alt_key('k'),
+            screen,
+            &ignored,
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("prefix handled");
+
+        let popup = desktop.which_key().expect("which-key popup");
+        assert_eq!(popup.prefix_label, commands::command_prefix().label());
+        assert!(
+            popup
+                .choices
+                .iter()
+                .any(|choice| choice.command_id == "file.save" && choice.title == "Save")
+        );
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_alt_key('a'),
+            screen,
+            &ignored,
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("exact handled");
+
+        assert!(desktop.which_key().is_none());
+        assert_eq!(actions.drain(), vec![AppAction::Save]);
+    }
+
+    #[test]
+    fn command_keymap_ignores_consumed_single_keys() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+        let consumed = DesktopEventResult::consumed();
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_alt_key('k'),
+            screen,
+            &consumed,
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("consumed key ignored");
+
+        assert!(desktop.which_key().is_none());
+        assert!(keymap.pending().is_empty());
+        assert!(actions.is_empty());
     }
 
     #[test]

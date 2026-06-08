@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -82,6 +84,115 @@ pub struct WhichKeyChoice {
     pub key_label: String,
     pub command_id: String,
     pub title: String,
+}
+
+/// Static metadata for one command that can be shared by menus, palettes, and keymaps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandDescriptor<A> {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub default_sequence: Option<KeySequence>,
+    pub action: A,
+}
+
+impl<A> CommandDescriptor<A> {
+    /// Creates a command descriptor without a default key sequence.
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        category: impl Into<String>,
+        action: A,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            category: category.into(),
+            default_sequence: None,
+            action,
+        }
+    }
+
+    /// Assigns a default key sequence used when building a `KeySequenceEngine`.
+    pub fn with_default_sequence(mut self, sequence: impl Into<KeySequence>) -> Self {
+        self.default_sequence = Some(sequence.into());
+        self
+    }
+}
+
+/// Error returned when command registry metadata is inconsistent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandRegistryError {
+    DuplicateId(String),
+}
+
+impl fmt::Display for CommandRegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateId(id) => write!(f, "duplicate command id `{id}`"),
+        }
+    }
+}
+
+impl std::error::Error for CommandRegistryError {}
+
+/// Collection of command descriptors indexed by stable command id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandRegistry<A> {
+    commands: Vec<CommandDescriptor<A>>,
+    by_id: HashMap<String, usize>,
+}
+
+impl<A> CommandRegistry<A> {
+    /// Builds a registry and rejects duplicate command ids.
+    pub fn new(commands: Vec<CommandDescriptor<A>>) -> Result<Self, CommandRegistryError> {
+        let mut by_id = HashMap::with_capacity(commands.len());
+        for (index, command) in commands.iter().enumerate() {
+            if by_id.insert(command.id.clone(), index).is_some() {
+                return Err(CommandRegistryError::DuplicateId(command.id.clone()));
+            }
+        }
+        Ok(Self { commands, by_id })
+    }
+
+    /// Returns all commands in deterministic registry order.
+    pub fn commands(&self) -> &[CommandDescriptor<A>] {
+        &self.commands
+    }
+
+    /// Returns a command by stable id.
+    pub fn get(&self, id: &str) -> Option<&CommandDescriptor<A>> {
+        self.by_id.get(id).map(|index| &self.commands[*index])
+    }
+
+    /// Returns true if the registry contains no commands.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    /// Returns the number of registered commands.
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+}
+
+impl<A: Clone> CommandRegistry<A> {
+    /// Builds a key sequence engine from commands that declare default sequences.
+    pub fn key_sequence_engine(&self, timeout: Duration) -> KeySequenceEngine<A> {
+        let mut engine = KeySequenceEngine::new(timeout);
+        for command in &self.commands {
+            let Some(sequence) = command.default_sequence.clone() else {
+                continue;
+            };
+            engine.insert_with_metadata(
+                sequence,
+                command.id.clone(),
+                command.title.clone(),
+                command.action.clone(),
+            );
+        }
+        engine
+    }
 }
 
 /// Result returned after feeding a chord to a key sequence engine.
@@ -590,6 +701,47 @@ mod tests {
         let event = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
 
         assert_eq!(KeyChord::from_key_event(event), Some(ctrl('s')));
+    }
+
+    #[test]
+    fn command_registry_rejects_duplicate_ids() {
+        let result = CommandRegistry::new(vec![
+            CommandDescriptor::new("file.save", "Save", "File", Action::Save),
+            CommandDescriptor::new("file.save", "Save Again", "File", Action::Clear),
+        ]);
+
+        assert_eq!(
+            result.expect_err("duplicate id should fail"),
+            CommandRegistryError::DuplicateId("file.save".to_string())
+        );
+    }
+
+    #[test]
+    fn command_registry_builds_key_sequence_engine_from_defaults() {
+        let registry = CommandRegistry::new(vec![
+            CommandDescriptor::new("file.save", "Save", "File", Action::Save)
+                .with_default_sequence(ctrl('s')),
+            CommandDescriptor::new("editor.format", "Format Document", "Editor", Action::Format)
+                .with_default_sequence(vec![ctrl('k'), ctrl('f')]),
+            CommandDescriptor::new("editor.unbound", "Unbound", "Editor", Action::Clear),
+        ])
+        .expect("unique registry");
+        let mut engine = registry.key_sequence_engine(Duration::from_secs(1));
+
+        assert_eq!(
+            engine.handle_key(ctrl('s'), Instant::now()),
+            KeymapMatch::Exact(Action::Save)
+        );
+        assert!(matches!(
+            engine.handle_key(ctrl('k'), Instant::now()),
+            KeymapMatch::Prefix { .. }
+        ));
+        assert_eq!(
+            engine.handle_key(ctrl('f'), Instant::now()),
+            KeymapMatch::Exact(Action::Format)
+        );
+        assert!(registry.get("editor.unbound").is_some());
+        assert_eq!(registry.len(), 3);
     }
 
     #[test]

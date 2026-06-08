@@ -22,6 +22,8 @@ pub enum EditorWindowCommand {
     SplitVertical,
     SplitHorizontal,
     CloseSplit,
+
+    EditorAction(atto_ui_editor::EditorAction),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

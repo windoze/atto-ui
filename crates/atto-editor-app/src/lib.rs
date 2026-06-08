@@ -16,6 +16,7 @@
 
 pub mod actions;
 pub mod app;
+pub mod commands;
 pub mod explorer_window;
 pub mod language;
 pub mod window;
