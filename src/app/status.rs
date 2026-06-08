@@ -102,6 +102,7 @@ pub struct StatusBar {
     custom: Option<(String, String)>,
     segments: Vec<StatusSegment>,
     hit_boxes: Arc<Mutex<Vec<StatusSegmentHitBox>>>,
+    last_separator_width: Arc<Mutex<usize>>,
 }
 
 impl Default for StatusBar {
@@ -112,6 +113,7 @@ impl Default for StatusBar {
             custom: None,
             segments: Vec::new(),
             hit_boxes: Arc::new(Mutex::new(Vec::new())),
+            last_separator_width: Arc::new(Mutex::new(1)),
         }
     }
 }
@@ -172,7 +174,8 @@ impl StatusBar {
             return self.trigger_segment(&id);
         }
 
-        let fallback_layout = layout_status_segments(&self.segments, area, 1);
+        let separator_width = *self.last_separator_width.lock();
+        let fallback_layout = layout_status_segments(&self.segments, area, separator_width);
         if let Some(id) = fallback_layout.segments.iter().find_map(|layout| {
             contains(layout.rect, event.column, event.row).then(|| layout.id.clone())
         }) {
@@ -227,6 +230,7 @@ impl StatusBar {
     fn draw_segments(&self, frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         let separator = theme.glyph("status-separator").unwrap_or(" ");
         let separator_width = UnicodeWidthStr::width(separator).max(1);
+        *self.last_separator_width.lock() = separator_width;
         let layout = layout_status_segments(&self.segments, area, separator_width);
 
         let buf = frame.buffer_mut();
@@ -734,6 +738,62 @@ mod tests {
         );
 
         assert!(result.is_consumed());
+        assert_eq!(clicks.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn segment_click_fallback_uses_last_drawn_separator_width() {
+        let clicks = Arc::new(AtomicUsize::new(0));
+        let mut status = StatusBar::default();
+        let mut theme = Theme::dark();
+        theme.set_glyph("status-separator", "||");
+
+        let segments = |clicks: &Arc<AtomicUsize>| {
+            vec![
+                StatusSegment::new("left", "A"),
+                StatusSegment::new("right", "B").on_click({
+                    let clicks = Arc::clone(clicks);
+                    move || {
+                        clicks.fetch_add(1, Ordering::SeqCst);
+                    }
+                }),
+            ]
+        };
+
+        status.set_segments(segments(&clicks));
+        let mut terminal = Terminal::new(TestBackend::new(8, 1)).expect("terminal");
+        terminal
+            .draw(|frame| status.draw(frame, Rect::new(0, 0, 8, 1), &theme))
+            .expect("draw status");
+        assert!(row_contents(terminal.backend().buffer(), 8).starts_with("A||B"));
+
+        // Updating segments clears cached hit boxes; fallback layout must still match the
+        // last drawn separator width until the next frame repopulates hit boxes.
+        status.set_segments(segments(&clicks));
+
+        let separator_click = status.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 8, 1),
+        );
+        assert!(!separator_click.is_consumed());
+        assert_eq!(clicks.load(Ordering::SeqCst), 0);
+
+        let segment_click = status.handle_mouse(
+            &MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 3,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 8, 1),
+        );
+
+        assert!(segment_click.is_consumed());
         assert_eq!(clicks.load(Ordering::SeqCst), 1);
     }
 

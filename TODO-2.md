@@ -808,13 +808,21 @@
 - 新增/更新测试覆盖 ASCII/CJK/emoji 分段对齐、priority 隐藏、grapheme 截断、click hit-test、Desktop status click 路由、Explorer focused 状态栏 fallback，以及 editor app PTY diagnostics/language 显示。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R11 — 审阅 T11
+### [DONE] R11 — 审阅 T11
 
 审阅 T11 改动：
 - 确认 segment truncation 在 grapheme 边界且列宽正确。
 - 确认 click hit-test 与绘制坐标一致。
 - 确认 `Desktop::layout` 不因 statusbar 内部分段而改变。
 - 确认 editor app 在 Explorer focused 时仍显示 last focused editor 状态。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T11 的 `StatusBar` segment API、priority layout、grapheme/列宽截断、手写宽字符绘制、Desktop status bar mouse 路由、主题 named styles/glyph 以及 `atto-editor-app` active/last-focused editor statusbar 接入。
+- 确认 segment 截断经 grapheme 边界和 `UnicodeWidthStr` 计算，CJK/emoji 宽度测试覆盖仍通过，状态栏背景样式会填满 segment 和普通间隙。
+- 发现并修复 click hit-test fallback 与绘制坐标不一致的问题：`set_segments` 清空 cached hit boxes 后，fallback 原固定使用 1 列 separator，遇到多列 `status-separator` glyph 会错算后续 segment 坐标；现缓存最近一次绘制的 separator 显示宽度并用于 fallback，新增回归测试覆盖多列 separator。
+- 确认 `Desktop::layout` 仍只由 menu/status bar 固定高度决定，不依赖 statusbar 内部分段内容；status bar mouse click 被 Desktop chrome 消费，不穿透窗口 view。
+- 确认 `atto-editor-app` 在 Explorer focused 时 `active_editor_status` / diagnostics summary 会回退到 `last_focused_editor`，既有单测覆盖 diagnostics/language fallback，PTY 覆盖 statusbar 显示。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T12 — C3 框架级多键序列 keymap engine
 
