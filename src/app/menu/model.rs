@@ -9,6 +9,8 @@ pub struct MenuItem {
     pub tag: Option<String>,
     pub label: Binding<String>,
     pub shortcut: Binding<Option<String>>,
+    pub accelerator: Binding<Option<String>>,
+    pub mnemonic: Binding<Option<char>>,
     pub enabled: Binding<bool>,
     pub on_activate: Option<MenuCallback>,
     pub submenu: Vec<MenuItem>,
@@ -23,6 +25,8 @@ impl MenuItem {
             tag: None,
             label: label.into(),
             shortcut: None.into(),
+            accelerator: None.into(),
+            mnemonic: None.into(),
             enabled: true.into(),
             on_activate: Some(std::sync::Arc::new(on_activate)),
             submenu: Vec::new(),
@@ -34,6 +38,8 @@ impl MenuItem {
             tag: None,
             label: label.into(),
             shortcut: None.into(),
+            accelerator: None.into(),
+            mnemonic: None.into(),
             enabled: true.into(),
             on_activate: None,
             submenu,
@@ -52,12 +58,39 @@ impl MenuItem {
     }
 
     pub fn shortcut(self, shortcut: impl Into<String>) -> Self {
-        self.shortcut.set(Some(shortcut.into()));
+        let shortcut = shortcut.into();
+        self.shortcut.set(Some(shortcut.clone()));
+        self.accelerator.set(Some(shortcut.clone()));
+        if shortcut.chars().count() == 1 {
+            self.mnemonic.set(shortcut.chars().next());
+        }
         self
     }
 
     pub fn shortcut_binding(mut self, shortcut: impl Into<Binding<Option<String>>>) -> Self {
-        self.shortcut = shortcut.into();
+        let shortcut = shortcut.into();
+        self.shortcut = shortcut.clone();
+        self.accelerator = shortcut;
+        self
+    }
+
+    pub fn accelerator(self, accelerator: impl Into<String>) -> Self {
+        self.accelerator.set(Some(accelerator.into()));
+        self
+    }
+
+    pub fn accelerator_binding(mut self, accelerator: impl Into<Binding<Option<String>>>) -> Self {
+        self.accelerator = accelerator.into();
+        self
+    }
+
+    pub fn mnemonic(self, mnemonic: char) -> Self {
+        self.mnemonic.set(Some(mnemonic));
+        self
+    }
+
+    pub fn mnemonic_binding(mut self, mnemonic: impl Into<Binding<Option<char>>>) -> Self {
+        self.mnemonic = mnemonic.into();
         self
     }
 
@@ -69,6 +102,10 @@ impl MenuItem {
     pub fn with_tag(mut self, id: impl Into<String>) -> Self {
         self.tag = Some(id.into());
         self
+    }
+
+    pub(super) fn accelerator_text(&self) -> Option<String> {
+        self.accelerator.get().or_else(|| self.shortcut.get())
     }
 }
 

@@ -276,13 +276,13 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
 fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
     MenuBar::new(vec![
         MenuSpec::new(
-            "File",
+            "&File",
             vec![
                 MenuItem::action("Open File…", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::OpenFileDialog(OpenTarget::NewTab))
                 })
-                .shortcut("Ctrl+O"),
+                .accelerator("Ctrl+O"),
                 MenuItem::action("Open File (New Window)…", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::OpenFileDialog(OpenTarget::NewWindow))
@@ -295,7 +295,7 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
                     let actions = actions.clone();
                     move || actions.push(AppAction::Save)
                 })
-                .shortcut("Ctrl+S"),
+                .accelerator("Ctrl+S"),
                 MenuItem::action("Save As…", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::SaveAsDialog)
@@ -304,17 +304,17 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
                     let actions = actions.clone();
                     move || actions.push(AppAction::Quit)
                 })
-                .shortcut("Ctrl+Q"),
+                .accelerator("Ctrl+Q"),
             ],
         ),
         MenuSpec::new(
-            "View",
+            "&View",
             vec![
                 MenuItem::action("Toggle Explorer Window", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::ToggleExplorer)
                 })
-                .shortcut("Ctrl+E"),
+                .accelerator("Ctrl+E"),
                 MenuItem::action("Dock Explorer Left", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::ExplorerLeft)
@@ -326,7 +326,7 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
             ],
         ),
         MenuSpec::new(
-            "Split",
+            "&Split",
             vec![
                 MenuItem::action("Split Vertical", {
                     let actions = actions.clone();

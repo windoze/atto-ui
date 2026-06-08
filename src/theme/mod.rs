@@ -353,6 +353,14 @@ impl Theme {
         self.named_styles.insert("menu-item".into(), self.menu_item);
         self.named_styles
             .insert("menu-item-selected".into(), self.menu_item_selected);
+        self.named_styles.insert(
+            "menu-mnemonic".into(),
+            self.widget.accent.add_modifier(Modifier::UNDERLINED),
+        );
+        self.named_styles
+            .insert("menu-item-shortcut".into(), self.widget.dim);
+        self.named_styles
+            .insert("menu-border".into(), self.window_border);
         self.named_styles.insert("selection".into(), self.selection);
 
         self.named_styles

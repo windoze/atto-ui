@@ -674,7 +674,7 @@
 
 ## 阶段二：界面统一、快捷键与 pickers
 
-### [TODO] T10 — C4 MenuBar mnemonic/accelerator 与 Turbo Vision 绘制
+### [DONE] T10 — C4 MenuBar mnemonic/accelerator 与 Turbo Vision 绘制
 
 **依赖**：无。
 
@@ -718,6 +718,16 @@
 **验收**：
 - 旧代码调用 `.shortcut()` 仍编译。
 - 菜单 accelerator 显示不影响 mnemonic 输入。
+
+**完成记录（2026-06-08）**：
+- `MenuItem` 新增 `accelerator` 与 `mnemonic` binding，并提供 `.accelerator(...)`、`.accelerator_binding(...)`、`.mnemonic(...)`、`.mnemonic_binding(...)` builder；旧 `.shortcut(...)` 保持可用，设置 accelerator，单字符 shortcut 同步为 mnemonic。
+- 菜单输入改为优先匹配 explicit mnemonic，其次匹配 label 中 `&` / `_` marker，最后 fallback 到显示 label 首字符；顶部 Alt mnemonic 同样使用 marker-aware label。
+- 菜单绘制新增 marker stripping 与 mnemonic highlight：顶部菜单和下拉项绘制时不显示 `&` / `_`，下拉行按 label、accelerator、submenu arrow 分段，accelerator 右对齐且不参与 mnemonic 输入。
+- `Theme` 注册 `menu-mnemonic`、`menu-item-shortcut`、`menu-border` named styles，绘制路径通过 named style 读取，支持主题 overlay 覆盖。
+- `atto-editor-app` 菜单构建迁移为 `.accelerator("Ctrl+...")`，并用 `&File` / `&View` / `&Split` 设置顶部菜单 mnemonic；Node binding 菜单 JSON 同步支持 `accelerator` / `mnemonic` 字段。
+- 新增/扩展单元测试覆盖 marker stripping、Unicode marker byte offset、mnemonic 命中、旧 `.shortcut("q")` 兼容、accelerator 显示；新增 PTY 覆盖菜单 marker 隐藏和 mnemonic 激活 Quit。
+- 处理验证中观察到的 `pty_diff` 并行负载下初始 3 秒等待偶发空屏超时：统一该 fixture 的 PTY wait 为 5 秒，单个用例仍远低于 1 分钟。
+- 验证通过：`cargo fmt`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R10 — 审阅 T10
 

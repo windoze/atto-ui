@@ -447,6 +447,27 @@ fn menu_item_from_json(
     let tag = optional_string_field(object, "id")?;
     let label = required_string_field(object, "label")?;
     let shortcut = optional_string_field(object, "shortcut")?;
+    let accelerator = optional_string_field(object, "accelerator")?.or_else(|| shortcut.clone());
+    let mnemonic = optional_string_field(object, "mnemonic")?
+        .map(|value| {
+            let mut chars = value.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(ch),
+                _ => Err(error::invalid_arg(
+                    "field mnemonic must be a single character",
+                )),
+            }
+        })
+        .transpose()?
+        .or_else(|| {
+            shortcut.as_ref().and_then(|shortcut| {
+                let mut chars = shortcut.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) => Some(ch),
+                    _ => None,
+                }
+            })
+        });
     let enabled = optional_bool_field(object, "enabled")?.unwrap_or(true);
     let submenu = optional_array_field(object, "items")?
         .unwrap_or(&[])
@@ -473,6 +494,8 @@ fn menu_item_from_json(
         tag,
         label: label.into(),
         shortcut: shortcut.into(),
+        accelerator: accelerator.into(),
+        mnemonic: mnemonic.into(),
         enabled: enabled.into(),
         on_activate,
         submenu,

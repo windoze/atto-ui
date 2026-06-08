@@ -10,7 +10,7 @@ use crate::drawing::draw_shadow;
 use crate::theme::Theme;
 
 use super::super::status::Fill;
-use super::layout::{dropdown_size, menu_title_x};
+use super::layout::{display_label, display_label_width, dropdown_size, menu_title_x};
 use super::model::{MenuBar, MenuItem};
 
 impl MenuBar {
@@ -27,9 +27,19 @@ impl MenuBar {
             } else {
                 theme.menu_bar
             };
-            let label = format!(" {} ", menu.title.get());
-            let w = UnicodeWidthStr::width(label.as_str()) as u16;
-            draw_text(frame.buffer_mut(), x, area.y, &label, style);
+            let title = menu.title.get();
+            let title_width = display_label_width(&title) as u16;
+            let w = title_width.saturating_add(2);
+            fill_line(frame.buffer_mut(), x, area.y, w, style);
+            draw_mnemonic_text(
+                frame.buffer_mut(),
+                x.saturating_add(1),
+                area.y,
+                &title,
+                title_width,
+                style,
+                mnemonic_style(style, theme),
+            );
             x = x.saturating_add(w).saturating_add(1);
         }
 
@@ -70,7 +80,13 @@ impl MenuBar {
             );
             let block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme.menu_item.patch(theme.window_border))
+                .border_style(
+                    theme.menu_item.patch(
+                        theme
+                            .named_style("menu-border")
+                            .unwrap_or(theme.window_border),
+                    ),
+                )
                 .border_set(theme.border_set(false));
             frame.render_widget(block, rect);
 
@@ -118,21 +134,61 @@ fn draw_menu_items(
         fill_line(buf, area.x, y, area.width, style);
 
         let label = item.label.get();
-        draw_text(buf, area.x, y, &label, style);
+        let accelerator = item.accelerator_text();
+        let accelerator_width = accelerator
+            .as_ref()
+            .map(|accelerator| UnicodeWidthStr::width(accelerator.as_str()) as u16)
+            .unwrap_or(0);
+        let accelerator_reserved = if accelerator_width > 0 {
+            accelerator_width.saturating_add(2)
+        } else {
+            0
+        };
+        let arrow_reserved = if item.submenu.is_empty() { 0 } else { 2 };
+        let reserved = accelerator_reserved.saturating_add(arrow_reserved);
+        let label_width = area.width.saturating_sub(reserved);
+        let mnemonic_style = if item.enabled.get() {
+            mnemonic_style(style, theme)
+        } else {
+            style
+        };
+        draw_mnemonic_text(buf, area.x, y, &label, label_width, style, mnemonic_style);
 
-        if let Some(sc) = item.shortcut.get() {
-            let sc_w = UnicodeWidthStr::width(sc.as_str()) as u16;
-            if sc_w + 1 < area.width {
-                let x = area.x + area.width - sc_w - 1;
-                draw_text(buf, x, y, &sc, style);
-            }
+        if let Some(accelerator) = accelerator
+            && accelerator_width < area.width
+        {
+            let accelerator_right = area
+                .x
+                .saturating_add(area.width)
+                .saturating_sub(arrow_reserved);
+            let x = accelerator_right.saturating_sub(accelerator_width);
+            draw_text_clipped(
+                buf,
+                x,
+                y,
+                &accelerator,
+                accelerator_width,
+                shortcut_style(style, theme),
+            );
         }
 
-        if !item.submenu.is_empty() && area.width >= 2 {
-            let x = area.x + area.width - 2;
-            draw_text(buf, x, y, "▶", style);
+        if !item.submenu.is_empty() && area.width >= 1 {
+            let x = area.x + area.width - 1;
+            draw_text_clipped(buf, x, y, "▶", 1, style);
         }
     }
+}
+
+fn mnemonic_style(style: Style, theme: &Theme) -> Style {
+    style.patch(
+        theme
+            .named_style("menu-mnemonic")
+            .unwrap_or(theme.status_bar_key),
+    )
+}
+
+fn shortcut_style(style: Style, theme: &Theme) -> Style {
+    style.patch(theme.named_style("menu-item-shortcut").unwrap_or(style))
 }
 
 fn fill_line(buf: &mut Buffer, x: u16, y: u16, width: u16, style: Style) {
@@ -144,11 +200,15 @@ fn fill_line(buf: &mut Buffer, x: u16, y: u16, width: u16, style: Style) {
     }
 }
 
-fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
+fn draw_text_clipped(buf: &mut Buffer, x: u16, y: u16, text: &str, max_width: u16, style: Style) {
     let mut cx = x;
+    let mut drawn_width: u16 = 0;
     let buf_right = buf.area.x.saturating_add(buf.area.width);
     for g in text.graphemes(true) {
         let w = (UnicodeWidthStr::width(g) as u16).max(1);
+        if drawn_width.saturating_add(w) > max_width {
+            break;
+        }
         if cx >= buf_right {
             break;
         }
@@ -169,6 +229,95 @@ fn draw_text(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
             }
         }
 
+        drawn_width = drawn_width.saturating_add(w);
         cx = cx.saturating_add(w);
+    }
+}
+
+fn draw_mnemonic_text(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    label: &str,
+    max_width: u16,
+    style: Style,
+    mnemonic_style: Style,
+) {
+    let display = display_label(label);
+    let mut cx = x;
+    let mut drawn_width: u16 = 0;
+    let buf_right = buf.area.x.saturating_add(buf.area.width);
+
+    for (byte_offset, grapheme) in display.text.grapheme_indices(true) {
+        let w = (UnicodeWidthStr::width(grapheme) as u16).max(1);
+        if drawn_width.saturating_add(w) > max_width {
+            break;
+        }
+        if cx >= buf_right || cx.saturating_add(w) > buf_right {
+            break;
+        }
+
+        let cell_style = if display.mnemonic_byte == Some(byte_offset) {
+            mnemonic_style
+        } else {
+            style
+        };
+        let Some(cell) = buf.cell_mut((cx, y)) else {
+            break;
+        };
+        cell.set_style(cell_style);
+        cell.set_symbol(grapheme);
+
+        for dx in 1..w {
+            if let Some(trailing) = buf.cell_mut((cx.saturating_add(dx), y)) {
+                trailing.reset();
+            }
+        }
+
+        drawn_width = drawn_width.saturating_add(w);
+        cx = cx.saturating_add(w);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::super::model::MenuSpec;
+    use super::*;
+
+    fn screen_contents(terminal: &Terminal<TestBackend>, width: u16, height: u16) -> String {
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn draw_strips_mnemonic_markers_and_shows_accelerator() {
+        let theme = Theme::dark();
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&File",
+            vec![MenuItem::action("&Open", || {}).accelerator("Ctrl+O")],
+        )]);
+        menu.activate();
+
+        let mut terminal = Terminal::new(TestBackend::new(32, 5)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 32, 1), &theme))
+            .expect("draw");
+
+        let screen = screen_contents(&terminal, 32, 5);
+        assert!(screen.contains("File"), "screen was:\n{screen}");
+        assert!(screen.contains("Open"), "screen was:\n{screen}");
+        assert!(screen.contains("Ctrl+O"), "screen was:\n{screen}");
+        assert!(!screen.contains("&File"), "screen was:\n{screen}");
+        assert!(!screen.contains("&Open"), "screen was:\n{screen}");
     }
 }

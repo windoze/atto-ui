@@ -883,8 +883,10 @@ fn menu_set_property(
             let v: String = ComponentValueCodec::from_component_value(value, name)?;
             if v.is_empty() {
                 item.shortcut.set(None);
+                item.accelerator.set(None);
             } else {
-                item.shortcut.set(Some(v));
+                item.shortcut.set(Some(v.clone()));
+                item.accelerator.set(Some(v));
             }
             Ok(true)
         }

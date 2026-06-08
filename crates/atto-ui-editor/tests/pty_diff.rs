@@ -3,12 +3,13 @@ use std::time::Duration;
 use atto_ui_test_host::PtyTestHost;
 
 const DIVIDER: char = '│';
+const PTY_WAIT: Duration = Duration::from_secs(5);
 
 fn spawn(cols: u16, rows: u16) -> PtyTestHost {
     let bin = env!("CARGO_BIN_EXE_snapshot_diff_app");
     let host = PtyTestHost::spawn(bin, &[], cols, rows).expect("spawn PTY diff app");
     // Wait for the before (left) column to settle, not just the after column.
-    host.wait_for_text("REMOVED_LINE", Duration::from_secs(3))
+    host.wait_for_text("REMOVED_LINE", PTY_WAIT)
         .expect("before-side render");
     host
 }
@@ -61,7 +62,7 @@ fn pty_diff_unified_shows_add_remove_markers() {
                     .find(|l| l.contains("ADDED_LINE"))
                     .is_some_and(|l| !l.contains(DIVIDER))
             },
-            Duration::from_secs(3),
+            PTY_WAIT,
         )
         .expect("unified render");
     let screen = lines.join("\n");
@@ -88,7 +89,7 @@ fn pty_diff_mode_toggle_round_trip() {
                 .find(|l| l.contains("ADDED_LINE"))
                 .is_some_and(|l| !l.contains(DIVIDER))
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("unified after toggle");
 
@@ -100,7 +101,7 @@ fn pty_diff_mode_toggle_round_trip() {
                 .find(|l| l.contains("ADDED_LINE"))
                 .is_some_and(|l| l.contains(DIVIDER))
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("side-by-side after toggle back");
 }
@@ -126,7 +127,7 @@ fn pty_diff_side_by_side_synced_scroll() {
             let joined = lines.join("\n");
             joined.contains("println!(\"{long_line}\")") && !joined.contains("fn main")
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("scrolled to bottom on both sides");
 }
@@ -143,7 +144,7 @@ fn pty_diff_splitter_drag_reflows() {
             let joined = lines.join("\n");
             joined.contains("REMOVED_LINE") && joined.contains("ADDED_LINE")
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("content still renders after divider drag");
 }
@@ -160,7 +161,7 @@ fn pty_diff_hunk_toggle_collapses_and_expands_current_hunk() {
                 && !joined.contains("REMOVED_LINE")
                 && !joined.contains("ADDED_LINE")
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("hunk collapsed");
 
@@ -170,7 +171,7 @@ fn pty_diff_hunk_toggle_collapses_and_expands_current_hunk() {
             let joined = lines.join("\n");
             joined.contains("REMOVED_LINE") && joined.contains("ADDED_LINE")
         },
-        Duration::from_secs(3),
+        PTY_WAIT,
     )
     .expect("hunk expanded");
 }

@@ -1367,7 +1367,7 @@ fn main() -> Result<()> {
     let mut is_dark = true;
     let menu = MenuBar::new(vec![
         MenuSpec::new(
-            "File",
+            "&File",
             vec![
                 MenuItem::submenu(
                     "Theme",
@@ -1392,7 +1392,7 @@ fn main() -> Result<()> {
             ],
         ),
         MenuSpec::new(
-            "Help",
+            "&Help",
             vec![
                 MenuItem::action("About", {
                     let actions = actions.clone();

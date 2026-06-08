@@ -7,9 +7,15 @@ use unicode_width::UnicodeWidthStr;
 use crate::wm::WindowId;
 
 use super::MenuCallback;
-use super::layout::{contains, dropdown_size, menu_title_x};
+use super::layout::{
+    contains, display_label, dropdown_size, label_mnemonic_or_first, menu_title_x,
+};
 use super::minimized::minimized_window_id;
 use super::model::{MenuAction, MenuBar, MenuItem};
+
+fn char_eq_ignore_case(a: char, b: char) -> bool {
+    a == b || a.to_lowercase().to_string() == b.to_lowercase().to_string()
+}
 
 impl MenuBar {
     pub fn handle_event(&mut self, event: &Event) -> MenuAction {
@@ -321,14 +327,9 @@ impl MenuBar {
     }
 
     pub fn menu_index_for_shortcut(&self, c: char) -> Option<usize> {
-        let target = c.to_ascii_lowercase();
         self.menus.iter().position(|menu| {
-            menu.title
-                .get()
-                .trim_start()
-                .chars()
-                .next()
-                .is_some_and(|first| first.to_ascii_lowercase() == target)
+            label_mnemonic_or_first(&menu.title.get())
+                .is_some_and(|mnemonic| char_eq_ignore_case(mnemonic, c))
         })
     }
 
@@ -340,7 +341,6 @@ impl MenuBar {
             self.state.stack = vec![0];
         }
 
-        let target = c.to_ascii_lowercase();
         let depth = self.state.stack.len().saturating_sub(1);
 
         let (hit_idx, has_submenu, on_activate, enabled, restore_id) = {
@@ -361,16 +361,14 @@ impl MenuBar {
                 if !enabled {
                     continue;
                 }
-                let Some(sc) = item.shortcut.get() else {
+                let Some(mnemonic) = item
+                    .mnemonic
+                    .get()
+                    .or_else(|| label_mnemonic_or_first(&item.label.get()))
+                else {
                     continue;
                 };
-                if sc.chars().count() != 1 {
-                    continue;
-                }
-                let Some(sc_char) = sc.chars().next() else {
-                    continue;
-                };
-                if sc_char.to_ascii_lowercase() == target {
+                if char_eq_ignore_case(mnemonic, c) {
                     hit = Some((
                         idx,
                         !item.submenu.is_empty(),
@@ -450,7 +448,7 @@ impl MenuBar {
     fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {
         let mut cur_x = menu_bar_area.x;
         for (idx, menu) in self.menus.iter().enumerate() {
-            let label = format!(" {} ", menu.title.get());
+            let label = format!(" {} ", display_label(&menu.title.get()).text);
             let w = UnicodeWidthStr::width(label.as_str()) as u16;
             let start = cur_x;
             let end = cur_x.saturating_add(w);
@@ -460,5 +458,64 @@ impl MenuBar {
             cur_x = cur_x.saturating_add(w).saturating_add(1);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::super::model::MenuSpec;
+    use super::*;
+
+    #[test]
+    fn top_level_shortcut_uses_marker_before_first_char_fallback() {
+        let menu = MenuBar::new(vec![
+            MenuSpec::new("&File", Vec::new()),
+            MenuSpec::new("Tools", Vec::new()),
+        ]);
+
+        assert_eq!(menu.menu_index_for_shortcut('f'), Some(0));
+        assert_eq!(menu.menu_index_for_shortcut('t'), Some(1));
+    }
+
+    #[test]
+    fn item_mnemonic_activates_without_using_accelerator_text() {
+        let activated = Arc::new(AtomicBool::new(false));
+        let menu_activated = activated.clone();
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&File",
+            vec![
+                MenuItem::action("Save", move || {
+                    menu_activated.store(true, Ordering::SeqCst);
+                })
+                .accelerator("Ctrl+S")
+                .mnemonic('S'),
+            ],
+        )]);
+        menu.activate();
+
+        assert_eq!(menu.handle_shortcut_char('s'), MenuAction::Closed);
+        assert!(activated.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn shortcut_builder_single_character_still_sets_mnemonic() {
+        let activated = Arc::new(AtomicBool::new(false));
+        let menu_activated = activated.clone();
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&File",
+            vec![
+                MenuItem::action("Quit", move || {
+                    menu_activated.store(true, Ordering::SeqCst);
+                })
+                .shortcut("q"),
+            ],
+        )]);
+        menu.activate();
+
+        assert_eq!(menu.handle_shortcut_char('Q'), MenuAction::Closed);
+        assert!(activated.load(Ordering::SeqCst));
     }
 }

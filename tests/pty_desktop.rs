@@ -31,6 +31,26 @@ fn pty_menu_dropdown_renders_above_windows() {
 }
 
 #[test]
+fn pty_menu_mnemonic_markers_are_hidden_and_activate_item() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Widgets", Duration::from_secs(2))
+        .expect("initial render");
+
+    host.send_str("\x1b[21~").expect("F10");
+    host.wait_for_text("Quit", Duration::from_secs(2))
+        .expect("dropdown is visible");
+
+    let screen = host.screen_contents().expect("screen");
+    assert!(screen.contains("File"), "screen was:\n{screen}");
+    assert!(!screen.contains("&File"), "screen was:\n{screen}");
+
+    host.send_str("q").expect("mnemonic quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("mnemonic activated quit");
+}
+
+#[test]
 fn pty_bracketed_paste_inserts_unicode() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
