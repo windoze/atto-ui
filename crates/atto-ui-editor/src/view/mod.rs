@@ -29,7 +29,7 @@ use super::config::{EditorConfig, EditorLspGotoKind, EditorLspMode};
 use super::keymap::{EditorAction, EditorKeymap, KeyChord};
 use super::popup::{
     CodeActionItemView, CodeActionPopupModel, CompletionPopupModel, HoverPopupModel,
-    LspCompletionItemEdit, RenamePopupModel,
+    LspCompletionItemEdit, RenamePopupModel, SignatureHelpPopupModel,
 };
 use super::theme::{EditorTheme, EditorThemeSet};
 use crate::syntax::SyntaxProcessor;
@@ -103,6 +103,7 @@ pub struct EditorViewHandle {
     pub hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
     pub hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
     pub completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
+    pub signature_help_popup: atto_ui::reactive::Binding<Option<SignatureHelpPopupModel>>,
     pub code_action_popup: atto_ui::reactive::Binding<Option<CodeActionPopupModel>>,
     pub rename_popup: atto_ui::reactive::Binding<Option<RenamePopupModel>>,
     pub diagnostics_summary: atto_ui::reactive::Binding<DiagnosticsSummary>,
@@ -151,6 +152,10 @@ struct EditorLspController {
     completion_pending_request: Option<u64>,
     completion_requested_position: Option<Position>,
 
+    // Signature help scheduling/state.
+    pending_signature_help: Option<u64>,
+    signature_help_requested_position: Option<Position>,
+
     // Pending goto request id -> kind.
     pending_goto: Option<(u64, EditorLspGotoKind)>,
     pending_document_symbols: Option<u64>,
@@ -183,6 +188,7 @@ pub struct EditorView {
     hover_popup: atto_ui::reactive::Binding<Option<HoverPopupModel>>,
     hover_popup_dismissed: atto_ui::reactive::Binding<Option<Position>>,
     completion_popup: atto_ui::reactive::Binding<Option<CompletionPopupModel>>,
+    signature_help_popup: atto_ui::reactive::Binding<Option<SignatureHelpPopupModel>>,
     code_action_popup: atto_ui::reactive::Binding<Option<CodeActionPopupModel>>,
     rename_popup: atto_ui::reactive::Binding<Option<RenamePopupModel>>,
     diagnostics_summary: atto_ui::reactive::Binding<DiagnosticsSummary>,
@@ -225,6 +231,7 @@ impl EditorView {
         let hover_popup = atto_ui::reactive::Binding::new(None);
         let hover_popup_dismissed = atto_ui::reactive::Binding::new(None);
         let completion_popup = atto_ui::reactive::Binding::new(None);
+        let signature_help_popup = atto_ui::reactive::Binding::new(None);
         let code_action_popup = atto_ui::reactive::Binding::new(None);
         let rename_popup = atto_ui::reactive::Binding::new(None);
         let diagnostics_summary = atto_ui::reactive::Binding::new(DiagnosticsSummary::default());
@@ -234,6 +241,7 @@ impl EditorView {
             hover_popup: hover_popup.clone(),
             hover_popup_dismissed: hover_popup_dismissed.clone(),
             completion_popup: completion_popup.clone(),
+            signature_help_popup: signature_help_popup.clone(),
             code_action_popup: code_action_popup.clone(),
             rename_popup: rename_popup.clone(),
             diagnostics_summary: diagnostics_summary.clone(),
@@ -251,6 +259,7 @@ impl EditorView {
             hover_popup,
             hover_popup_dismissed,
             completion_popup,
+            signature_help_popup,
             code_action_popup,
             rename_popup,
             diagnostics_summary,

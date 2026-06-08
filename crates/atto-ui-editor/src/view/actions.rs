@@ -372,6 +372,14 @@ impl EditorView {
                     self.completion_popup.set(None);
                     return true;
                 }
+                if self.signature_help_popup.get().is_some()
+                    || self.lsp.pending_signature_help.is_some()
+                {
+                    self.signature_help_popup.set(None);
+                    self.lsp.pending_signature_help = None;
+                    self.lsp.signature_help_requested_position = None;
+                    return true;
+                }
                 if let Some(model) = self.hover_popup.get() {
                     // Treat Esc dismissal as an explicit close: don't re-show at the same hover
                     // position unless the mouse moves.
@@ -411,6 +419,10 @@ impl EditorView {
             }
             EditorAction::LspRequestCompletion => {
                 self.request_completion_now();
+                true
+            }
+            EditorAction::LspSignatureHelp => {
+                self.request_signature_help_now();
                 true
             }
             EditorAction::LspCodeAction => {

@@ -2,6 +2,7 @@ use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
 use editor_core::Position;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
@@ -58,6 +59,15 @@ pub struct CompletionPopupModel {
     /// When set (typically by mouse click), the editor should accept the completion and then
     /// clear this field.
     pub accept: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatureHelpPopupModel {
+    /// Desired popup rect in screen coordinates.
+    pub rect: Rect,
+    pub signatures: Vec<editor_core_lsp::LspSignatureInformation>,
+    pub active_signature: Option<usize>,
+    pub active_parameter: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -338,6 +348,69 @@ impl ::atto_ui::composable::EventHandling for CompletionPopupView {
 }
 
 #[derive(Clone, Debug)]
+struct SignatureHelpPopupView {
+    model: Binding<Option<SignatureHelpPopupModel>>,
+    theme: Binding<EditorThemeSet>,
+    language_id: Binding<String>,
+}
+
+impl SignatureHelpPopupView {
+    fn new(
+        model: Binding<Option<SignatureHelpPopupModel>>,
+        theme: Binding<EditorThemeSet>,
+        language_id: Binding<String>,
+    ) -> Self {
+        Self {
+            model,
+            theme,
+            language_id,
+        }
+    }
+
+    fn editor_theme(&self) -> EditorTheme {
+        let theme_set = self.theme.get();
+        let language_id = self.language_id.get();
+        theme_set.for_language(language_id.as_str()).clone()
+    }
+}
+
+impl ::atto_ui::composable::Component for SignatureHelpPopupView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        let Some(model) = self.model.get() else {
+            return;
+        };
+        let theme = self.editor_theme();
+        let active_idx = model.active_signature.unwrap_or(0);
+        let Some(signature) = model.signatures.get(active_idx) else {
+            return;
+        };
+        let active_style = theme
+            .popup_selected
+            .add_modifier(ratatui::style::Modifier::UNDERLINED);
+        let line =
+            signature_help_line(signature, model.active_parameter, theme.popup, active_style);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(Paragraph::new(vec![line]).block(block), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for SignatureHelpPopupView {}
+
+impl ::atto_ui::composable::Layout for SignatureHelpPopupView {}
+
+impl ::atto_ui::composable::Scrollable for SignatureHelpPopupView {}
+
+impl ::atto_ui::composable::FocusNav for SignatureHelpPopupView {}
+
+impl ::atto_ui::composable::DynamicTree for SignatureHelpPopupView {}
+
+impl ::atto_ui::composable::EventHandling for SignatureHelpPopupView {}
+
+#[derive(Clone, Debug)]
 struct CodeActionPopupView {
     model: Binding<Option<CodeActionPopupModel>>,
     theme: Binding<EditorThemeSet>,
@@ -588,6 +661,66 @@ pub(crate) fn code_action_line(item: &CodeActionItemView, max_width: usize) -> S
     }
 }
 
+pub(crate) fn signature_help_line(
+    signature: &editor_core_lsp::LspSignatureInformation,
+    active_parameter: Option<usize>,
+    base_style: Style,
+    active_style: Style,
+) -> Line<'static> {
+    let Some(active_parameter) = active_parameter else {
+        return Line::from(Span::styled(signature.label.clone(), base_style));
+    };
+    let Some(parameter) = signature.parameters.get(active_parameter) else {
+        return Line::from(Span::styled(signature.label.clone(), base_style));
+    };
+    let Some((start, end)) = parameter_label_range(&signature.label, parameter) else {
+        return Line::from(Span::styled(signature.label.clone(), base_style));
+    };
+    if start >= end || end > signature.label.len() {
+        return Line::from(Span::styled(signature.label.clone(), base_style));
+    }
+
+    let before = signature.label[..start].to_string();
+    let active = signature.label[start..end].to_string();
+    let after = signature.label[end..].to_string();
+    Line::from(vec![
+        Span::styled(before, base_style),
+        Span::styled(active, active_style),
+        Span::styled(after, base_style),
+    ])
+}
+
+fn parameter_label_range(
+    signature_label: &str,
+    parameter: &editor_core_lsp::LspParameterInformation,
+) -> Option<(usize, usize)> {
+    match parameter.label.as_ref()? {
+        editor_core_lsp::LspParameterLabel::String(label) => {
+            let start = signature_label.find(label)?;
+            Some((start, start.saturating_add(label.len())))
+        }
+        editor_core_lsp::LspParameterLabel::Offsets(start, end) => {
+            let start = byte_index_for_utf16_offset(signature_label, *start);
+            let end = byte_index_for_utf16_offset(signature_label, *end);
+            Some((start.min(end), start.max(end)))
+        }
+    }
+}
+
+fn byte_index_for_utf16_offset(text: &str, target: u32) -> usize {
+    let mut offset = 0u32;
+    for (byte_idx, ch) in text.char_indices() {
+        if offset >= target {
+            return byte_idx;
+        }
+        offset = offset.saturating_add(ch.len_utf16() as u32);
+        if offset > target {
+            return byte_idx;
+        }
+    }
+    text.len()
+}
+
 fn popup_decorations() -> WindowDecorations {
     WindowDecorations {
         border: atto_ui::wm::WindowBorderStyle::Borderless,
@@ -608,11 +741,13 @@ fn popup_decorations() -> WindowDecorations {
 pub struct EditorPopupWindows {
     hover_id: Option<WindowId>,
     completion_id: Option<WindowId>,
+    signature_help_id: Option<WindowId>,
     code_action_id: Option<WindowId>,
     rename_id: Option<WindowId>,
     hover: Binding<Option<HoverPopupModel>>,
     hover_dismissed: Binding<Option<Position>>,
     completion: Binding<Option<CompletionPopupModel>>,
+    signature_help: Binding<Option<SignatureHelpPopupModel>>,
     code_action: Binding<Option<CodeActionPopupModel>>,
     rename: Binding<Option<RenamePopupModel>>,
     theme: Binding<EditorThemeSet>,
@@ -652,11 +787,13 @@ impl EditorPopupWindows {
         Self {
             hover_id: None,
             completion_id: None,
+            signature_help_id: None,
             code_action_id: None,
             rename_id: None,
             hover: handle.hover_popup.clone(),
             hover_dismissed: handle.hover_popup_dismissed.clone(),
             completion: handle.completion_popup.clone(),
+            signature_help: handle.signature_help_popup.clone(),
             code_action: handle.code_action_popup.clone(),
             rename: handle.rename_popup.clone(),
             theme: handle.theme.clone(),
@@ -666,6 +803,7 @@ impl EditorPopupWindows {
 
     pub fn sync(&mut self, wm: &mut WindowManager, bounds: Rect) {
         self.sync_hover(wm, bounds);
+        self.sync_signature_help(wm, bounds);
         self.sync_completion(wm, bounds);
         self.sync_code_action(wm, bounds);
         self.sync_rename(wm, bounds);
@@ -726,6 +864,39 @@ impl EditorPopupWindows {
                 .with_decorations(popup_decorations());
                 let id = wm.add_window(window, bounds);
                 self.completion_id = Some(id);
+            }
+            (Some(model), Some(id)) => {
+                if let Some(w) = wm.window_mut(id) {
+                    w.rect.set(model.rect);
+                    w.decorations.set(popup_decorations());
+                }
+                wm.bring_to_front(id);
+            }
+            (None, None) => {}
+        }
+    }
+
+    fn sync_signature_help(&mut self, wm: &mut WindowManager, bounds: Rect) {
+        let model = self.signature_help.get();
+        match (model, self.signature_help_id) {
+            (None, Some(id)) => {
+                wm.close(id);
+                self.signature_help_id = None;
+            }
+            (Some(model), None) => {
+                let window = Window::new(
+                    WindowKind::Tooltip,
+                    "signature help",
+                    model.rect,
+                    Box::new(SignatureHelpPopupView::new(
+                        self.signature_help.clone(),
+                        self.theme.clone(),
+                        self.language_id.clone(),
+                    )),
+                )
+                .with_decorations(popup_decorations());
+                let id = wm.add_window(window, bounds);
+                self.signature_help_id = Some(id);
             }
             (Some(model), Some(id)) => {
                 if let Some(w) = wm.window_mut(id) {
@@ -809,6 +980,9 @@ impl EditorPopupWindows {
             wm.close(id);
         }
         if let Some(id) = self.completion_id.take() {
+            wm.close(id);
+        }
+        if let Some(id) = self.signature_help_id.take() {
             wm.close(id);
         }
         if let Some(id) = self.code_action_id.take() {

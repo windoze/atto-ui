@@ -156,6 +156,27 @@ impl EditorView {
             }
         }
 
+        if let Some(pending_id) = self.lsp.pending_signature_help
+            && pending_id == id
+            && method.as_str() == "textDocument/signatureHelp"
+        {
+            self.lsp.pending_signature_help = None;
+            let requested_position = self.lsp.signature_help_requested_position.take();
+            if error.is_some() {
+                self.signature_help_popup.set(None);
+                return;
+            }
+            if requested_position.is_some_and(|pos| pos != self.active_cursor_position()) {
+                self.signature_help_popup.set(None);
+                return;
+            }
+            if let Some(result) = result.as_ref() {
+                self.handle_lsp_signature_help_response(result);
+            } else {
+                self.signature_help_popup.set(None);
+            }
+        }
+
         if let Some(pending_id) = self.lsp.pending_code_action
             && pending_id == id
             && method.as_str() == "textDocument/codeAction"
@@ -485,6 +506,7 @@ impl EditorView {
             return;
         }
         self.hide_hover_popup_only();
+        self.clear_signature_help_popup();
         if self
             .lsp
             .completion_requested_position
@@ -546,6 +568,48 @@ impl EditorView {
         }));
     }
 
+    fn handle_lsp_signature_help_response(&mut self, value: &serde_json::Value) {
+        if self.completion_popup.get().is_some()
+            || self.code_action_popup.get().is_some()
+            || self.rename_popup.get().is_some()
+        {
+            self.signature_help_popup.set(None);
+            return;
+        }
+        self.hide_hover_popup_only();
+
+        let Some(help) = editor_core_lsp::signature_help_from_value(value) else {
+            self.signature_help_popup.set(None);
+            return;
+        };
+        if help.signatures.is_empty() {
+            self.signature_help_popup.set(None);
+            return;
+        }
+
+        let active_signature = active_signature_index(help.active_signature, help.signatures.len());
+        let active_parameter = active_parameter_index(
+            help.active_parameter,
+            help.signatures
+                .get(active_signature)
+                .map(|signature| signature.parameters.len())
+                .unwrap_or_default(),
+        );
+        let Some(rect) =
+            self.signature_help_popup_rect_for_cursor(&help.signatures[active_signature])
+        else {
+            self.signature_help_popup.set(None);
+            return;
+        };
+
+        self.signature_help_popup.set(Some(SignatureHelpPopupModel {
+            rect,
+            signatures: help.signatures,
+            active_signature: Some(active_signature),
+            active_parameter,
+        }));
+    }
+
     fn handle_lsp_code_action_response(&mut self, value: &serde_json::Value) {
         if self.rename_popup.get().is_some() {
             self.lsp.code_action_items.clear();
@@ -554,6 +618,7 @@ impl EditorView {
         }
         self.hide_hover_popup_only();
         self.completion_popup.set(None);
+        self.clear_signature_help_popup();
 
         let mut items = editor_core_lsp::code_action_items_from_value(value);
         items.sort_by_key(|item| !code_action_item_is_preferred(item));
@@ -589,6 +654,14 @@ impl EditorView {
         self.lsp.hover_pending_request = None;
         self.lsp.hover_target = None;
         self.lsp.hover_requested = None;
+    }
+
+    pub(super) fn clear_signature_help_popup(&mut self) {
+        if self.signature_help_popup.get().is_some() {
+            self.signature_help_popup.set(None);
+        }
+        self.lsp.pending_signature_help = None;
+        self.lsp.signature_help_requested_position = None;
     }
 
     pub(super) fn consume_hover_popup_dismissed(&mut self) {
@@ -668,6 +741,7 @@ impl EditorView {
         if !self.config.completion.enabled.get() {
             return;
         }
+        self.clear_signature_help_popup();
         self.code_action_popup.set(None);
         self.lsp.pending_code_action = None;
         self.lsp.code_action_items.clear();
@@ -689,12 +763,41 @@ impl EditorView {
         }
     }
 
+    pub(super) fn request_signature_help_now(&mut self) {
+        self.hide_hover_popup_only();
+        if self.completion_popup.get().is_some()
+            || self.code_action_popup.get().is_some()
+            || self.rename_popup.get().is_some()
+        {
+            self.clear_signature_help_popup();
+            return;
+        }
+
+        let pos = self.active_cursor_position();
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            self.clear_signature_help_popup();
+            return;
+        };
+        match lsp.request_signature_help(
+            self.state_manager.editor().line_index(),
+            pos.line,
+            pos.column,
+        ) {
+            Ok(id) => {
+                self.lsp.pending_signature_help = Some(id);
+                self.lsp.signature_help_requested_position = Some(pos);
+            }
+            Err(_) => self.clear_signature_help_popup(),
+        }
+    }
+
     pub(super) fn request_code_action_now(&mut self) {
         let (start, end) = self.code_action_request_offsets();
         self.hide_hover_popup_only();
         self.completion_popup.set(None);
         self.lsp.completion_pending_request = None;
         self.lsp.completion_requested_position = None;
+        self.clear_signature_help_popup();
         self.code_action_popup.set(None);
         self.lsp.code_action_items.clear();
         self.rename_popup.set(None);
@@ -722,6 +825,7 @@ impl EditorView {
         self.completion_popup.set(None);
         self.lsp.completion_pending_request = None;
         self.lsp.completion_requested_position = None;
+        self.clear_signature_help_popup();
         self.code_action_popup.set(None);
         self.lsp.pending_code_action = None;
         self.lsp.code_action_items.clear();
@@ -949,7 +1053,17 @@ impl EditorView {
             self.lsp.hover_target = None;
             return;
         }
+        if self.lsp.pending_signature_help.is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
         if self.completion_popup.get().is_some() {
+            self.lsp.hover_due = None;
+            self.lsp.hover_target = None;
+            return;
+        }
+        if self.signature_help_popup.get().is_some() {
             self.lsp.hover_due = None;
             self.lsp.hover_target = None;
             return;
@@ -1007,12 +1121,18 @@ impl EditorView {
         if self.lsp.completion_pending_request.is_some() {
             return;
         }
+        if self.lsp.pending_signature_help.is_some() {
+            return;
+        }
         if self.hover_popup.get().is_some() {
             self.lsp.hover_due = None;
             self.lsp.hover_target = None;
             return;
         }
         if self.completion_popup.get().is_some() {
+            return;
+        }
+        if self.signature_help_popup.get().is_some() {
             return;
         }
         if self.code_action_popup.get().is_some() {
@@ -1236,6 +1356,33 @@ impl EditorView {
         })
     }
 
+    fn signature_help_popup_rect_for_cursor(
+        &self,
+        signature: &editor_core_lsp::LspSignatureInformation,
+    ) -> Option<Rect> {
+        let (cursor_x, cursor_y) = self.cursor_screen_position()??;
+        let width = (signature.label.chars().count() + 2).clamp(16, 80) as u16;
+        let desired = Rect {
+            x: cursor_x.saturating_add(1),
+            y: cursor_y.saturating_add(1),
+            width,
+            height: 3,
+        };
+        let bounds = self.inline_popup_bounds()?;
+        Some(clamp_rect_to_bounds(desired, bounds))
+    }
+
+    fn inline_popup_bounds(&self) -> Option<Rect> {
+        let area = self.last_area?;
+        let bar_height = self.search_bar_height().min(area.height);
+        Some(Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height.saturating_sub(bar_height),
+        })
+    }
+
     fn code_action_popup_rect_for_cursor(&self, items: &[CodeActionItemView]) -> Option<Rect> {
         let (cursor_x, cursor_y) = self.cursor_screen_position()??;
         let height = (items.len().min(8) + 2).max(3) as u16;
@@ -1438,6 +1585,42 @@ fn hover_contents_to_plain_text(contents: &serde_json::Value) -> Option<Vec<Stri
     }
 
     None
+}
+
+fn active_signature_index(active_signature: Option<u32>, len: usize) -> usize {
+    let idx = active_signature
+        .and_then(|idx| usize::try_from(idx).ok())
+        .unwrap_or(0);
+    idx.min(len.saturating_sub(1))
+}
+
+fn active_parameter_index(active_parameter: Option<u32>, len: usize) -> Option<usize> {
+    let idx = active_parameter.and_then(|idx| usize::try_from(idx).ok())?;
+    (idx < len).then_some(idx)
+}
+
+fn clamp_rect_to_bounds(mut rect: Rect, bounds: Rect) -> Rect {
+    if bounds.width == 0 || bounds.height == 0 {
+        return Rect {
+            x: bounds.x,
+            y: bounds.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    rect.width = rect.width.min(bounds.width);
+    rect.height = rect.height.min(bounds.height);
+
+    let max_x = bounds
+        .x
+        .saturating_add(bounds.width.saturating_sub(rect.width));
+    let max_y = bounds
+        .y
+        .saturating_add(bounds.height.saturating_sub(rect.height));
+    rect.x = rect.x.clamp(bounds.x, max_x);
+    rect.y = rect.y.clamp(bounds.y, max_y);
+    rect
 }
 
 fn code_action_item_is_preferred(item: &LspCodeActionItem) -> bool {

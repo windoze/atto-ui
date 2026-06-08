@@ -209,6 +209,7 @@ impl ::atto_ui::composable::EventHandling for EditorView {
                     return EventResult::ignored();
                 }
                 self.insert_text(text);
+                self.clear_signature_help_popup();
                 self.adjust_scroll();
                 EventResult::consumed()
             }

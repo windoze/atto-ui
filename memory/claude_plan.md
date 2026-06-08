@@ -1,62 +1,58 @@
 # Execution Plan
 
-- Read TODO.md to identify the first task whose heading is not prefixed with [DONE].
-- Check recent commit context only if it explicitly references unfinished work directly relevant to that task.
-- Inspect the code and tests needed for that task, without broad unrelated triage.
-- Implement the task as specified, avoiding workaround behavior and preserving existing conventions.
-- Run formatting, clippy with warnings denied, and the relevant/full test suite required by the task.
-- Update TODO.md completion status and record validation results; update PLAN.md only if phase-level sequencing changed.
-- Commit all changes for this single completed task, then stop.
+I will not record private chain-of-thought here. This file tracks the actionable plan and progress for the current invocation.
 
-## Current task
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Check the latest commit message for an unfinished issue only if it is directly relevant to that task.
+3. Inspect the task's referenced files and current implementation.
+4. Implement the task as written, without narrowing scope or using workarounds.
+5. Run required formatting, linting, and tests according to the task and repository policy.
+6. Update `TODO.md` completion state and completion record for exactly this task.
+7. Commit all task-related changes with a descriptive message and stop.
 
-First incomplete task: `R18 — 审阅 T18`.
+## Progress
 
-Task scope:
-- Review the completed T18 rename UI and workspace edit implementation.
-- Confirm prepare-rename error/null feedback, skipped unopened URI behavior, multi-buffer dirty tab updates, and popup exclusivity.
-- Add focused fixes or regression coverage if the review finds an uncovered issue.
+- Created initial execution plan.
 
-## Implementation approach
+## Update
 
-- Inspect T18 implementation and existing tests against the R18 checklist.
-- Strengthen rename popup exclusivity if any stale popup path can conflict.
-- Add review tests for prepare-rename null/error feedback and popup clearing.
-- Run formatting, clippy, focused rename/workspace-edit tests, and the full workspace test suite.
+- Identified `T19` as the first incomplete task from `TODO.md`.
+- Next: read `TODO-2.md` details for T19 and inspect the latest commit for directly relevant unfinished notes.
 
-## Completion
+## Update
 
-- Completed R18 review of T18 rename UI and workspace edit behavior.
-- Added rename popup exclusivity guards plus regression tests for prepare-rename null/error and completion/code-action popup clearing.
-- Updated `TODO.md` and `TODO-2.md` to mark R18 `[DONE]` with a completion record.
-- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, focused rename/workspace-edit tests, and `cargo test --workspace --all-targets`.
+- Latest commit completed R18 and does not add a directly relevant unfinished blocker for T19.
+- Current task: T19 — L4 Signature Help.
+- Next: inspect editor keymap/input/LSP/UI paths and existing popup patterns before editing.
 
-## Progress update
+## Update
 
-- Resuming with the required plan file already present; next step is selecting the first incomplete TODO task.
+- Found existing patterns for hover/completion/code-action/rename popups and external `editor-core-lsp` signature-help parsing/request helpers.
+- Implementation will add a signature popup binding/model, pending request tracking, key/action dispatch, trigger characters, response handling, rendering/window sync, mock LSP response, and targeted tests.
 
-## Progress update
+## Update
 
-- Selected first incomplete task: R18 review of T18 rename workspace edits.
-- Reviewing TODO-2 task requirements and the latest T18 implementation commit before making any changes.
+- Added signature-help action/key binding, editor binding/state, popup model/window/render path, LSP request/response handling, trigger-character input, mock LSP support, and targeted tests.
+- Next: format, lint, run targeted tests, then full validation if targeted checks pass.
 
-## Progress update
+## Update
 
-- Added rename popup exclusivity guards and tests for prepare-rename null/error feedback plus popup clearing.
-- Starting validation with cargo fmt.
+- `cargo fmt` completed.
+- `cargo clippy --workspace --all-targets -- -D warnings` completed successfully.
+- Targeted signature-help integration tests passed.
+- Next: run the full `lsp_editor` test file, then workspace tests.
 
-## Progress update
+## Update
 
-- cargo fmt and workspace clippy passed; running focused rename review tests.
+- Full workspace Rust test suite completed successfully.
+- Next: mark T19 `[DONE]` in `TODO-2.md` and the `TODO.md` index, then commit the task changes.
 
-## Progress update
+## Update
 
-- Focused rename and app workspace-edit tests passed; running full workspace test suite.
+- Marked T19 `[DONE]` in `TODO-2.md` and updated `TODO.md` index.
+- Next: review git diff/status and commit all task-related changes.
 
-## Progress update
+## Update
 
-- Full workspace test suite passed; updating TODO records for R18 only.
-
-## Progress update
-
-- R18 is marked [DONE] in TODO.md and TODO-2.md with validation notes; reviewing final diff before commit.
+- Commit attempt including `memory/claude_plan.md` was rejected because `memory/` is gitignored.
+- Next: commit the tracked project/task changes and leave the plan file updated in the ignored working tree.

@@ -5,7 +5,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 
 use atto_ui::composable::{
     Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
@@ -13,8 +13,8 @@ use atto_ui::composable::{
 use atto_ui::wm::WindowId;
 use atto_ui_editor::{
     CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
-    DiagnosticsSummary, EditorConfig, EditorEvent, EditorLspConfig, EditorLspMode,
-    EditorSyntaxConfig, EditorViewHandle, LspCompletionItemEdit,
+    DiagnosticsSummary, EditorAction, EditorConfig, EditorEvent, EditorLspConfig, EditorLspMode,
+    EditorSyntaxConfig, EditorViewHandle, LspCompletionItemEdit, SignatureHelpPopupModel,
 };
 use atto_ui_editor::{EditorThemeSet, EditorView};
 
@@ -303,6 +303,202 @@ fn lsp_publish_diagnostics_updates_summary() {
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn lsp_signature_help_popup_triggers_after_open_paren_and_esc_closes() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "mock_fn".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///signature.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)),
+        ctx,
+    );
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('('), KeyModifiers::NONE)),
+        ctx,
+    );
+    assert_eq!(text.get(), "mock_fn(");
+
+    let popup = wait_for_signature_help_popup(&mut terminal, &mut view, &handle, area, ctx);
+    assert_eq!(popup.signatures[0].label, "mock_fn(arg: i32, next: i32)");
+    assert_eq!(popup.active_signature, Some(0));
+    assert_eq!(popup.active_parameter, Some(0));
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("draw signature help");
+    let buf = terminal.backend().buffer();
+    let active_cell = buf
+        .cell((popup.rect.x + 1 + 8, popup.rect.y + 1))
+        .expect("active parameter cell");
+    assert_eq!(active_cell.symbol(), "a");
+    assert!(
+        active_cell
+            .style()
+            .add_modifier
+            .contains(Modifier::UNDERLINED)
+    );
+
+    view.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        ctx,
+    );
+    assert!(handle.signature_help_popup.get().is_none());
+}
+
+#[test]
+fn lsp_signature_help_manual_action_clears_empty_result() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "mock_fn(".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///signature_empty.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    handle
+        .signature_help_popup
+        .set(Some(SignatureHelpPopupModel {
+            rect: Rect::new(2, 2, 20, 3),
+            signatures: vec![editor_core_lsp::LspSignatureInformation {
+                label: "stale(arg)".to_string(),
+                documentation: None,
+                parameters: Vec::new(),
+            }],
+            active_signature: Some(0),
+            active_parameter: None,
+        }));
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspSignatureHelp));
+    wait_for_signature_help_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
+}
+
+#[test]
+fn lsp_signature_help_response_does_not_override_completion_popup() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "mock_fn".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///signature.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspSignatureHelp));
+    handle.completion_popup.set(Some(CompletionPopupModel {
+        rect: Rect::new(2, 2, 20, 3),
+        items: vec![CompletionItem {
+            label: "mock_fn".to_string(),
+            detail: None,
+            edit: LspCompletionItemEdit::Raw(serde_json::json!({ "label": "mock_fn" })),
+        }],
+        selected: 0,
+        scroll: 0,
+        accept: None,
+    }));
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        assert!(
+            handle.signature_help_popup.get().is_none(),
+            "signature popup should not appear over completion"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(handle.completion_popup.get().is_some());
 }
 
 #[test]
@@ -689,6 +885,46 @@ fn assert_rename_prepare_message(document_uri: &str, expected: &str) {
         "expected rename prepare message containing {expected:?}, got {message:?}"
     );
     assert!(handle.rename_popup.get().is_none());
+}
+
+fn wait_for_signature_help_popup(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) -> SignatureHelpPopupModel {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if let Some(popup) = handle.signature_help_popup.get() {
+            return popup;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for signature help popup");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_signature_help_popup_to_clear(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if handle.signature_help_popup.get().is_none() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for signature help popup to clear");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn wait_for_code_action_popup(

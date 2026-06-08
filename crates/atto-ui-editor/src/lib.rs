@@ -5,7 +5,7 @@
 //! This module provides a `Component` implementation (`EditorView`) that integrates:
 //! - syntax highlighting (Tree-sitter, Sublime `.sublime-syntax`, or simple regex fallback)
 //! - code folding (Tree-sitter / Sublime / LSP folding ranges)
-//! - LSP (semantic tokens, folding ranges, hover, completion, goto*)
+//! - LSP (semantic tokens, folding ranges, hover, completion, signature help, goto*)
 //!
 //! The editor maintains its own theming system (per-language) and does not depend on
 //! `atto_ui::theme::Theme` for text styling.
@@ -32,6 +32,7 @@ pub use keymap::{EditorAction, EditorKeymap, KeyChord};
 pub use popup::{
     CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
     EditorPopupWindows, HoverPopupModel, LspCompletionItemEdit, LspHoverContents, RenamePopupModel,
+    SignatureHelpPopupModel,
 };
 pub use theme::{
     EditorTheme, EditorThemeSet, LSP_DIAGNOSTIC_ERROR_STYLE_ID, LSP_DIAGNOSTIC_HINT_STYLE_ID,

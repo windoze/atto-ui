@@ -53,6 +53,7 @@ impl EditorView {
         self.last_insert_time = Some(Instant::now());
         self.maybe_apply_syntax_highlighting();
         self.hide_hover_popup_only();
+        self.clear_signature_help_popup();
 
         if let Some(change) = lsp_change {
             self.lsp_did_change(change);

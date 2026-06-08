@@ -54,8 +54,48 @@ impl EditorView {
         // Interactive popups are mutually exclusive in normal flow; draw them above hover if a
         // stale binding briefly overlaps during event processing.
         self.render_inline_hover_popup(frame, bounds, theme);
+        self.render_inline_signature_help_popup(frame, bounds, theme);
         self.render_inline_completion_popup(frame, bounds, theme);
         self.render_inline_code_action_popup(frame, bounds, theme);
+    }
+
+    fn render_inline_signature_help_popup(
+        &mut self,
+        frame: &mut Frame<'_>,
+        bounds: Rect,
+        theme: &EditorTheme,
+    ) {
+        let Some(model) = self.signature_help_popup.get() else {
+            return;
+        };
+
+        let rect = intersect_rect(model.rect, bounds);
+        if rect.width == 0 || rect.height == 0 {
+            return;
+        }
+
+        let active_idx = model.active_signature.unwrap_or(0);
+        let Some(signature) = model.signatures.get(active_idx) else {
+            return;
+        };
+        let active_style = theme.popup_selected.add_modifier(Modifier::UNDERLINED);
+        let line = crate::popup::signature_help_line(
+            signature,
+            model.active_parameter,
+            theme.popup,
+            active_style,
+        );
+
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(theme.popup_border)
+            .style(theme.popup);
+
+        frame.render_widget(ratatui::widgets::Clear, rect);
+        frame.render_widget(
+            Paragraph::new(vec![line]).style(theme.popup).block(block),
+            rect,
+        );
     }
 
     fn render_inline_code_action_popup(

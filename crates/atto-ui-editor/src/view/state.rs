@@ -45,6 +45,9 @@ impl EditorView {
         if self.completion_popup.get().is_some() {
             self.completion_popup.set(None);
         }
+        if self.signature_help_popup.get().is_some() {
+            self.signature_help_popup.set(None);
+        }
         if self.code_action_popup.get().is_some() {
             self.code_action_popup.set(None);
         }
@@ -60,6 +63,8 @@ impl EditorView {
         self.hover_popup_dismissed.set(None);
         self.lsp.completion_pending_request = None;
         self.lsp.completion_requested_position = None;
+        self.lsp.pending_signature_help = None;
+        self.lsp.signature_help_requested_position = None;
         self.lsp.pending_goto = None;
         self.lsp.pending_code_action = None;
         self.lsp.code_action_items.clear();

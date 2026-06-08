@@ -1296,7 +1296,7 @@
 - 新增回归测试覆盖 prepare-rename null/error 提示、rename 请求清理 completion/code action popup；扩展 mock LSP 支持 prepare-rename error 响应。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_rename`；`cargo test -p atto-editor-app rename_workspace_edit`；`cargo test -p atto-editor-app workspace_edit_marks_open_tab_dirty`；`cargo test --workspace --all-targets`。
 
-### [TODO] T19 — L4 Signature Help
+### [DONE] T19 — L4 Signature Help
 
 **依赖**：T7 的 LSP response 分发。
 
@@ -1333,6 +1333,13 @@
 **验收**：
 - completion popup 打开时 signature popup 不抢焦点。
 - 无 signature result 时 popup 清空。
+
+**完成记录（2026-06-09）**：
+- `EditorAction::LspSignatureHelp` 已接入默认 `Ctrl+Shift+Space`；普通输入 `(` / `,` 会在文本插入后的 cursor position 触发 `request_signature_help_now()`。
+- `EditorLspController` 已增加 signature help pending/requested position 状态；response 通过 `signature_help_from_value` 解析，并在 cursor stale、completion/code action/rename popup 活跃、error/null/empty result 时清空 popup。
+- 新增 `SignatureHelpPopupModel`、inline/window popup 渲染与 editor handle binding；active signature label 使用 popup 样式显示，active parameter 使用 selected + underline 样式，popup rect clamp 在 editor content bounds 内。
+- Mock LSP 扩展 `signatureHelpProvider` 与 `textDocument/signatureHelp` 响应；新增测试覆盖 `(` 触发 popup、Esc 关闭、空 result 清空、completion popup 优先级，以及默认 keymap 绑定。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_signature_help -- --nocapture`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R19 — 审阅 T19
 

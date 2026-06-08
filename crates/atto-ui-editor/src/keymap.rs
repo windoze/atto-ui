@@ -120,6 +120,7 @@ pub enum EditorAction {
     // --- LSP
     LspRequestHover,
     LspRequestCompletion,
+    LspSignatureHelp,
     LspGotoDefinition,
     LspGotoDeclaration,
     LspGotoTypeDefinition,
@@ -361,6 +362,13 @@ impl EditorKeymap {
             A::LspRequestCompletion,
         );
         map.insert(
+            KeyChord::new(
+                KeyCode::Char(' '),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            A::LspSignatureHelp,
+        );
+        map.insert(
             KeyChord::new(KeyCode::F(12), KeyModifiers::NONE),
             A::LspGotoDefinition,
         );
@@ -434,5 +442,17 @@ mod tests {
 
         assert_eq!(framework.label(), "Shift+F8");
         assert_eq!(KeyChord::from_framework(framework), editor);
+    }
+
+    #[test]
+    fn default_keymap_binds_signature_help() {
+        let keymap = EditorKeymap::default_bindings();
+        assert_eq!(
+            keymap.get(KeyChord::new(
+                KeyCode::Char(' '),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+            Some(EditorAction::LspSignatureHelp)
+        );
     }
 }

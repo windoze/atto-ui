@@ -164,6 +164,11 @@ impl EditorView {
                 }
                 self.insert_text(&c.to_string());
                 self.adjust_scroll();
+                if matches!(c, '(' | ',') {
+                    self.request_signature_help_now();
+                } else {
+                    self.clear_signature_help_popup();
+                }
                 return EventResult::consumed();
             }
             _ => {}

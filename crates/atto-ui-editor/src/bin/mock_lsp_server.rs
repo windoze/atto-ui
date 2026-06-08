@@ -103,6 +103,9 @@ fn main() -> io::Result<()> {
                     "serverInfo": { "name": "atto-ui-mock-lsp", "version": "0.1.0" },
                     "capabilities": {
                         "hoverProvider": true,
+                        "signatureHelpProvider": {
+                            "triggerCharacters": ["(", ","]
+                        },
                         "semanticTokensProvider": {
                             "legend": {
                                 "tokenTypes": [
@@ -155,6 +158,32 @@ fn main() -> io::Result<()> {
                     "contents": { "kind": "plaintext", "value": "HOVER" }
                 });
                 respond(&mut stdout, id, result)?;
+            }
+            ("textDocument/signatureHelp", Some(id)) => {
+                let uri = msg
+                    .get("params")
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if uri.ends_with("/signature_empty.rs") || uri == "file:///signature_empty.rs" {
+                    respond(&mut stdout, id, Value::Null)?;
+                } else {
+                    let result = json!({
+                        "signatures": [
+                            {
+                                "label": "mock_fn(arg: i32, next: i32)",
+                                "parameters": [
+                                    { "label": [8, 16] },
+                                    { "label": "next: i32" }
+                                ]
+                            }
+                        ],
+                        "activeSignature": 0,
+                        "activeParameter": 0
+                    });
+                    respond(&mut stdout, id, result)?;
+                }
             }
             ("textDocument/codeAction", Some(id)) => {
                 let uri = msg
