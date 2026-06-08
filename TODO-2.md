@@ -1000,13 +1000,22 @@
 - 新增 picker 单元测试覆盖 query 过滤、tie order、`fuzzy_match` 搜索、selected clamp、Enter accept；新增 app 单元测试覆盖 `Ctrl+Shift+P` 分发、registry item 生成、关闭后恢复焦点；新增 PTY 测试覆盖 `Ctrl+Shift+P` 打开 Command Palette、输入 `save` 并执行 Save 写入文件。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R14 — 审阅 T14
+### [DONE] R14 — 审阅 T14
 
 审阅 T14 改动：
 - 确认 picker 没有每帧重建大列表导致明显卡顿；query 变化时过滤即可。
 - 确认 fuzzy positions 如用于高亮时 byte offset 处理 Unicode 安全。
 - 确认 modal/floating window close hook 清理 AppState。
 - 确认 command palette 不绕过 disabled command 规则。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T14 的 `PickerView` / `PickerItem` / `PickerEvent`、command palette 打开/关闭路径、`AppCommandAction` 分发、registry item 生成和 PTY 覆盖。
+- 确认 `PickerView` 预计算 `search_texts`，`draw`/event 中的 `refresh_filter` 会用 `last_filter_query` 跳过未变化 query，避免每帧重建大列表；`max_results` 也限制了保留结果数。
+- 确认当前 picker 未使用 fuzzy `positions` 做高亮；共享 `atto_ui::fuzzy` 返回的是 UTF-8 byte offset，后续若用于高亮需按 grapheme/char 边界转换，当前实现不存在 Unicode 高亮切片风险。
+- 确认 Command Palette modal 的 close hook 与 `PickerEvent::Closed` 会清理 `command_palette_window` / `command_palette_restore_focus` 并恢复打开前焦点；accept 路径先恢复焦点再通过统一 `execute_command_action` 执行命令。
+- 确认 command palette items 来自 `commands.rs` registry，选中后复用与 command keymap 相同的 `execute_command_action` / `handle_action` 路径，不绕过 active editor fallback、active modal gate 或无 active editor 时的 no-op 规则。
+- 未发现需要修改 T14 功能代码的问题。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T15 — File picker 与 Buffer/tab picker
 
