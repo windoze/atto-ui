@@ -306,6 +306,84 @@ fn lsp_publish_diagnostics_updates_summary() {
 }
 
 #[test]
+fn lsp_inlay_hints_render_as_virtual_text_and_toggle_off() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let original = "let value = 1;\n";
+    let text: atto_ui::reactive::Binding<String> = original.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.inlay_hints.enabled.set(true);
+    cfg.inlay_hints.refresh_delay.set(Duration::from_millis(0));
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///inlay.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        let buf = terminal.backend().buffer();
+        let text_start = 6u16;
+        if buf.cell((text_start + 9, 0)).expect("inlay colon").symbol() == ":"
+            && buf.cell((text_start + 11, 0)).expect("inlay type").symbol() == "i"
+        {
+            assert_eq!(text.get(), original);
+            break;
+        }
+
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for inlay hint render");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(view.handle_editor_action(EditorAction::LspToggleInlayHints));
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("draw after inlay toggle off");
+    let buf = terminal.backend().buffer();
+    let text_start = 6u16;
+    assert_eq!(
+        buf.cell((text_start + 9, 0))
+            .expect("original space after toggle")
+            .symbol(),
+        " "
+    );
+    assert_eq!(
+        buf.cell((text_start + 10, 0))
+            .expect("original equals after toggle")
+            .symbol(),
+        "="
+    );
+    assert_eq!(text.get(), original);
+}
+
+#[test]
 fn lsp_signature_help_popup_triggers_after_open_paren_and_esc_closes() {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 

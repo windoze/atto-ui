@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_test_host::PtyTestHost;
+use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use unicode_width::UnicodeWidthStr;
 
 const PTY_WAIT: Duration = Duration::from_secs(5);
@@ -95,6 +95,27 @@ fn pty_editor_diagnostics_gutter_and_f8_jump() {
     host.send_str("\u{1b}[19~").expect("F8 next diagnostic");
     host.wait_for_text("let bad = 1;", PTY_WAIT)
         .expect("F8 jumped back to diagnostic line");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_editor_inlay_hints_render_and_toggle_off() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_editor_app");
+    let _mock_lsp = env!("CARGO_BIN_EXE_mock_lsp_server");
+    let mut host =
+        PtyTestHost::spawn(bin, &["--inlay-hints"], 80, 24).expect("spawn PTY editor app");
+
+    host.wait_for_text("let value: i32 = 1;", PTY_WAIT)
+        .expect("inlay hint virtual text rendered");
+
+    host.key_with_mods(KeyCode::F(7), KeyModifiers::NONE)
+        .expect("F7 toggles inlay hints");
+    host.wait_for_text("let value = 1;", PTY_WAIT)
+        .expect("backing text rendered after toggle off");
+    assert_text_absent_for(&host, "let value: i32 = 1;", Duration::from_millis(200));
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

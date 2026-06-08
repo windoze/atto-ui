@@ -133,6 +133,21 @@ impl Default for EditorCompletionConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct EditorInlayHintsConfig {
+    pub enabled: Binding<bool>,
+    pub refresh_delay: Binding<Duration>,
+}
+
+impl Default for EditorInlayHintsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false.into(),
+            refresh_delay: Duration::from_millis(150).into(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditorLspGotoKind {
     Definition,
@@ -236,6 +251,7 @@ pub struct EditorConfig {
 
     pub hover: EditorHoverConfig,
     pub completion: EditorCompletionConfig,
+    pub inlay_hints: EditorInlayHintsConfig,
     pub format_on_save: Binding<bool>,
     pub formatting_timeout: Binding<Duration>,
 
@@ -258,6 +274,7 @@ impl EditorConfig {
             keymap: EditorKeymap::default().into(),
             hover: EditorHoverConfig::default(),
             completion: EditorCompletionConfig::default(),
+            inlay_hints: EditorInlayHintsConfig::default(),
             format_on_save: false.into(),
             formatting_timeout: Duration::from_secs(10).into(),
             lsp: EditorLspMode::Disabled.into(),

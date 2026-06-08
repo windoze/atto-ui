@@ -1415,7 +1415,7 @@
 - Mock LSP 增加 formatting request 后 clean exit fixture；新增回归测试 `lsp_format_document_transport_exit_times_out_and_finishes`。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_format_document_transport_exit_times_out_and_finishes`；`cargo test --workspace --all-targets`。
 
-### [TODO] T21 — L6 Inlay Hints 与 composed grid 渲染
+### [DONE] T21 — L6 Inlay Hints 与 composed grid 渲染
 
 **依赖**：T7；建议 T20 后做。
 
@@ -1455,6 +1455,14 @@
 **验收**：
 - Inlay hints 不修改 backing text。
 - Virtual text 与 selection/cursor 渲染不互相错位。
+
+**完成记录（2026-06-09）**：
+- 新增 `EditorInlayHintsConfig { enabled, refresh_delay }` 并接入 `EditorConfig`、public re-export、动态组件 schema / property，以及 `EditorAction::LspToggleInlayHints`（默认 F7）和 atto-editor-app command registry。
+- `EditorLspController` 增加 inlay hints pending/request tracking；draw 时在 focused、enabled、viewport/text fingerprint 变化且无 pending 时请求当前可见 range，response 通过 `lsp_inlay_hints_to_processing_edit` 应用到 `INLAY_HINTS` decoration layer，并丢弃 stale response。
+- `render_text` 在 inlay hints enabled 时切换到 `get_viewport_content_composed`，将 document/virtual composed cells 转成 spans；selection 只作用于 document cells，cursor 在 composed 模式下按 virtual text 后的 cell x 坐标定位。
+- `EditorTheme` 增加 `inlay_hint` / `code_lens` 样式并映射 `INLAY_HINT_STYLE_ID` / `CODE_LENS_STYLE_ID`；mock LSP 增加 `inlayHintProvider` 与 deterministic `textDocument/inlayHint` response；snapshot editor 增加 `--inlay-hints` fixture mode。
+- 新增 direct renderer/LSP 测试覆盖 virtual text 显示、toggle off 清理与 backing text 不变；新增 PTY 测试覆盖端到端 inlay hints 显示和 F7 toggle off。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor lsp_inlay_hints_render_as_virtual_text_and_toggle_off -- --nocapture`；`cargo test -p atto-ui-editor --test pty_editor pty_editor_inlay_hints_render_and_toggle_off -- --nocapture`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R21 — 审阅 T21
 

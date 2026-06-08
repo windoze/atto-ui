@@ -434,6 +434,10 @@ impl EditorView {
                 true
             }
             EditorAction::LspFormatDocument => self.request_format_document_now(false),
+            EditorAction::LspToggleInlayHints => {
+                self.toggle_lsp_inlay_hints();
+                true
+            }
             EditorAction::LspGotoDefinition => {
                 self.request_goto(EditorLspGotoKind::Definition);
                 true

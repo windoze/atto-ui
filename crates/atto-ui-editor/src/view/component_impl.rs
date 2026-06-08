@@ -13,6 +13,7 @@ impl ::atto_ui::composable::Component for EditorView {
             "tab_width",
             "insert_spaces",
             "format_on_save",
+            "inlay_hints_enabled",
         ]
     }
 
@@ -30,6 +31,9 @@ impl ::atto_ui::composable::Component for EditorView {
             )),
             "insert_spaces" => Some(ComponentValue::Bool(self.config.indent.insert_spaces.get())),
             "format_on_save" => Some(ComponentValue::Bool(self.config.format_on_save.get())),
+            "inlay_hints_enabled" => {
+                Some(ComponentValue::Bool(self.config.inlay_hints.enabled.get()))
+            }
             _ => None,
         }
     }
@@ -74,6 +78,15 @@ impl ::atto_ui::composable::Component for EditorView {
             "format_on_save" => {
                 let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.config.format_on_save.set(v);
+                Ok(())
+            }
+            "inlay_hints_enabled" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.inlay_hints.enabled.set(v);
+                if !v {
+                    self.reset_inlay_hint_tracking();
+                    self.clear_lsp_inlay_hints();
+                }
                 Ok(())
             }
             _ => Err(ComponentError::unsupported_property(name)),

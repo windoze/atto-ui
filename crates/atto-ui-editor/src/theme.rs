@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use editor_core::{
-    DIFF_ADD_LINE_STYLE_ID, DIFF_REMOVE_LINE_STYLE_ID, DIFF_SPACER_STYLE_ID,
-    FOLD_PLACEHOLDER_STYLE_ID,
+    CODE_LENS_STYLE_ID, DIFF_ADD_LINE_STYLE_ID, DIFF_REMOVE_LINE_STYLE_ID, DIFF_SPACER_STYLE_ID,
+    FOLD_PLACEHOLDER_STYLE_ID, INLAY_HINT_STYLE_ID,
 };
 use editor_core_highlight_simple::{
     SIMPLE_STYLE_BOOLEAN, SIMPLE_STYLE_COMMENT, SIMPLE_STYLE_KEY, SIMPLE_STYLE_NULL,
@@ -134,6 +134,10 @@ pub struct EditorTheme {
     pub diagnostic_warning: Style,
     pub diagnostic_info: Style,
     pub diagnostic_hint: Style,
+    /// Virtual text style for LSP inlay hints.
+    pub inlay_hint: Style,
+    /// Virtual text style for LSP code lens rows.
+    pub code_lens: Style,
 
     /// Popup background/foreground.
     pub popup: Style,
@@ -170,6 +174,10 @@ impl EditorTheme {
         let diagnostic_hint = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::UNDERLINED);
+        let inlay_hint = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC);
+        let code_lens = Style::default().fg(Color::Blue);
 
         let mut style_ids = HashMap::<u32, Style>::new();
         style_ids.insert(SIMPLE_STYLE_STRING, Style::default().fg(Color::Green));
@@ -246,6 +254,8 @@ impl EditorTheme {
         style_ids.insert(LSP_DIAGNOSTIC_WARNING_STYLE_ID, diagnostic_warning);
         style_ids.insert(LSP_DIAGNOSTIC_INFO_STYLE_ID, diagnostic_info);
         style_ids.insert(LSP_DIAGNOSTIC_HINT_STYLE_ID, diagnostic_hint);
+        style_ids.insert(INLAY_HINT_STYLE_ID, inlay_hint);
+        style_ids.insert(CODE_LENS_STYLE_ID, code_lens);
 
         // A small out-of-the-box Sublime scope theme. This intentionally uses broad prefix keys
         // (e.g. "comment", "string") because `EditorView` applies hierarchical fallback
@@ -286,6 +296,8 @@ impl EditorTheme {
             diagnostic_warning,
             diagnostic_info,
             diagnostic_hint,
+            inlay_hint,
+            code_lens,
             popup: Style::default().bg(Color::Black).fg(Color::White),
             popup_border: Style::default().fg(Color::DarkGray),
             popup_selected: Style::default().bg(Color::Blue).fg(Color::White),

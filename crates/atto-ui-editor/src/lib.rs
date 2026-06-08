@@ -22,9 +22,9 @@ mod view;
 
 pub use artifact::RichArtifactViewer;
 pub use config::{
-    EditorCompletionConfig, EditorConfig, EditorHoverConfig, EditorIndentConfig, EditorLspConfig,
-    EditorLspGotoKind, EditorLspMode, EditorScrollConfig, EditorSyntaxConfig,
-    EditorTreeSitterConfig,
+    EditorCompletionConfig, EditorConfig, EditorHoverConfig, EditorIndentConfig,
+    EditorInlayHintsConfig, EditorLspConfig, EditorLspGotoKind, EditorLspMode, EditorScrollConfig,
+    EditorSyntaxConfig, EditorTreeSitterConfig,
 };
 pub use diff::{DiffView, DiffViewConfig, DiffViewHandle, DiffViewMode};
 pub use dynamic::{editor_schema, register_editor, register_runtime_components};

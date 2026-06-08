@@ -121,6 +121,7 @@ fn main() -> io::Result<()> {
                         },
                         "foldingRangeProvider": true,
                         "codeActionProvider": true,
+                        "inlayHintProvider": true,
                         "documentFormattingProvider": true,
                         "renameProvider": {
                             "prepareProvider": true
@@ -145,6 +146,28 @@ fn main() -> io::Result<()> {
                     "data": [1, 13, 5, 0, 0],
                 });
                 respond(&mut stdout, id, result)?;
+            }
+            ("textDocument/inlayHint", Some(id)) => {
+                let uri = msg
+                    .get("params")
+                    .and_then(|params| params.get("textDocument"))
+                    .and_then(|text_document| text_document.get("uri"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if uri.ends_with("/inlay_empty.rs") || uri == "file:///inlay_empty.rs" {
+                    respond(&mut stdout, id, json!([]))?;
+                } else {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "position": { "line": 0, "character": 9 },
+                                "label": ": i32"
+                            }
+                        ]),
+                    )?;
+                }
             }
             ("textDocument/foldingRange", Some(id)) => {
                 // Fold the function body: lines 0..=2.

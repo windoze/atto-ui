@@ -131,6 +131,7 @@ pub enum EditorAction {
     LspCodeAction,
     LspRename,
     LspFormatDocument,
+    LspToggleInlayHints,
 
     // --- UI toggles
     ToggleLineNumbers,
@@ -405,6 +406,10 @@ impl EditorKeymap {
             KeyChord::new(KeyCode::F(2), KeyModifiers::NONE),
             A::LspRename,
         );
+        map.insert(
+            KeyChord::new(KeyCode::F(7), KeyModifiers::NONE),
+            A::LspToggleInlayHints,
+        );
 
         Self { bindings: map }
     }
@@ -454,6 +459,15 @@ mod tests {
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT,
             )),
             Some(EditorAction::LspSignatureHelp)
+        );
+    }
+
+    #[test]
+    fn default_keymap_binds_inlay_hint_toggle() {
+        let keymap = EditorKeymap::default_bindings();
+        assert_eq!(
+            keymap.get(KeyChord::new(KeyCode::F(7), KeyModifiers::NONE)),
+            Some(EditorAction::LspToggleInlayHints)
         );
     }
 }

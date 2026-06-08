@@ -216,6 +216,13 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
         )
         .with_default_sequence(KeySequence::new(vec![ctrl('k'), ctrl('f')])),
         command(
+            "lsp.toggleInlayHints",
+            "Toggle Inlay Hints",
+            "LSP",
+            AppCommandAction::Editor(atto_ui_editor::EditorAction::LspToggleInlayHints),
+        )
+        .with_default_sequence(prefixed('i')),
+        command(
             "picker.commandPalette",
             "Command Palette",
             "Picker",
@@ -299,6 +306,7 @@ mod tests {
         assert!(registry.get("editor.toggleComment").is_some());
         assert!(registry.get("lsp.codeAction").is_some());
         assert!(registry.get("lsp.formatDocument").is_some());
+        assert!(registry.get("lsp.toggleInlayHints").is_some());
         assert!(registry.get("picker.file").is_some());
         assert!(registry.get("picker.commandPalette").is_some());
         assert!(registry.get("picker.buffer").is_some());

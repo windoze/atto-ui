@@ -97,7 +97,7 @@
 | R19 | DONE | [DONE] 审阅 T19 | TODO-2.md · 阶段三 |
 | T20 | DONE | [DONE] L5 Formatting 手动格式化与保存前格式化接口 | TODO-2.md · 阶段三 |
 | R20 | DONE | [DONE] 审阅 T20 | TODO-2.md · 阶段三 |
-| T21 | TODO | L6 Inlay Hints 与 composed grid 渲染 | TODO-2.md · 阶段三 |
+| T21 | DONE | [DONE] L6 Inlay Hints 与 composed grid 渲染 | TODO-2.md · 阶段三 |
 | R21 | TODO | 审阅 T21 | TODO-2.md · 阶段三 |
 | T22 | TODO | F-FT FileTree 节点模型、git status 样式与多选 | TODO-2.md · 阶段四 |
 | R22 | TODO | 审阅 T22 | TODO-2.md · 阶段四 |

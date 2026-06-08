@@ -1,6 +1,8 @@
 // LSP integration + hover/completion popup plumbing.
 
 use super::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 impl EditorView {
     pub(super) fn start_lsp_if_enabled(&mut self) {
@@ -20,6 +22,7 @@ impl EditorView {
 
         if result.is_err() {
             self.lsp.session = None;
+            self.reset_inlay_hint_tracking();
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
             self.clear_lsp_diagnostics();
             self.maybe_apply_syntax_highlighting();
@@ -39,6 +42,7 @@ impl EditorView {
                 "Formatting failed: LSP session error: {err}"
             ));
             self.lsp.session = None;
+            self.reset_inlay_hint_tracking();
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
             self.clear_lsp_diagnostics();
             self.maybe_apply_syntax_highlighting();
@@ -186,6 +190,29 @@ impl EditorView {
             } else {
                 self.signature_help_popup.set(None);
             }
+        }
+
+        if let Some(pending_id) = self.lsp.pending_inlay_hints
+            && pending_id == id
+            && method.as_str() == "textDocument/inlayHint"
+        {
+            self.lsp.pending_inlay_hints = None;
+            let pending_key = self.lsp.pending_inlay_key.take();
+            let current_key = self.current_inlay_request_key();
+
+            if pending_key != current_key {
+                return;
+            }
+
+            if let Some(err) = error.as_ref() {
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Inlay hints failed: {}", err.message),
+                });
+                return;
+            }
+
+            let result = result.as_ref().unwrap_or(&serde_json::Value::Null);
+            self.apply_lsp_inlay_hints_response(result);
         }
 
         if let Some(pending_id) = self.lsp.pending_code_action
@@ -365,6 +392,7 @@ impl EditorView {
         match self.config.lsp.get() {
             EditorLspMode::Disabled => {
                 self.lsp.session = None;
+                self.reset_inlay_hint_tracking();
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
                 self.clear_lsp_diagnostics();
                 self.maybe_apply_syntax_highlighting();
@@ -373,6 +401,7 @@ impl EditorView {
             EditorLspMode::Enabled(cfg) => {
                 // Best-effort restart on changes.
                 self.lsp.session = None;
+                self.reset_inlay_hint_tracking();
                 editor_core_lsp::clear_lsp_state(&mut self.state_manager);
                 self.clear_lsp_diagnostics();
                 self.hide_popups();
@@ -473,6 +502,7 @@ impl EditorView {
                     "references": { "dynamicRegistration": false },
                     "documentSymbol": { "dynamicRegistration": false },
                     "codeAction": { "dynamicRegistration": false },
+                    "inlayHint": { "dynamicRegistration": false, "resolveSupport": { "properties": ["tooltip", "textEdits"] } },
                 },
             },
             "clientInfo": { "name": "atto-ui editor" },
@@ -1072,6 +1102,130 @@ impl EditorView {
         }
     }
 
+    pub(super) fn maybe_request_inlay_hints(&mut self, focused: bool) {
+        if !focused || !self.config.inlay_hints.enabled.get() {
+            return;
+        }
+        if self.lsp.pending_inlay_hints.is_some() {
+            return;
+        }
+
+        let Some(key) = self.current_inlay_request_key() else {
+            return;
+        };
+        if self.lsp.last_inlay_range == Some(key.range)
+            && self.lsp.last_inlay_text_revision == Some(key.text_revision)
+        {
+            return;
+        }
+
+        let delay = self.config.inlay_hints.refresh_delay.get();
+        if let Some(last) = self.lsp.last_inlay_request_at
+            && last.elapsed() < delay
+        {
+            return;
+        }
+
+        let Some(lsp) = self.lsp.session.as_mut() else {
+            return;
+        };
+        let line_index = self.state_manager.editor().line_index();
+        let requested_at = Instant::now();
+        match lsp.request_inlay_hints(line_index, key.range.start, key.range.end) {
+            Ok(id) => {
+                self.lsp.pending_inlay_hints = Some(id);
+                self.lsp.pending_inlay_key = Some(key);
+                self.lsp.last_inlay_range = Some(key.range);
+                self.lsp.last_inlay_text_revision = Some(key.text_revision);
+                self.lsp.last_inlay_request_at = Some(requested_at);
+            }
+            Err(err) => {
+                self.lsp.last_inlay_range = Some(key.range);
+                self.lsp.last_inlay_text_revision = Some(key.text_revision);
+                self.lsp.last_inlay_request_at = Some(requested_at);
+                self.events.push(EditorEvent::LspMessage {
+                    message: format!("Inlay hints request failed: {err}"),
+                });
+            }
+        }
+    }
+
+    pub(super) fn toggle_lsp_inlay_hints(&mut self) {
+        let enabled = self.config.inlay_hints.enabled.get();
+        self.config.inlay_hints.enabled.set(!enabled);
+        self.reset_inlay_hint_tracking();
+        if enabled {
+            self.clear_lsp_inlay_hints();
+        }
+    }
+
+    pub(super) fn reset_inlay_hint_tracking(&mut self) {
+        self.lsp.pending_inlay_hints = None;
+        self.lsp.pending_inlay_key = None;
+        self.lsp.last_inlay_range = None;
+        self.lsp.last_inlay_text_revision = None;
+        self.lsp.last_inlay_request_at = None;
+    }
+
+    pub(super) fn clear_lsp_inlay_hints(&mut self) {
+        let line_index = self.state_manager.editor().line_index().clone();
+        let edit = editor_core_lsp::lsp_inlay_hints_to_processing_edit(
+            &line_index,
+            &serde_json::Value::Null,
+        );
+        self.state_manager.apply_processing_edits([edit]);
+    }
+
+    fn apply_lsp_inlay_hints_response(&mut self, value: &serde_json::Value) {
+        let line_index = self.state_manager.editor().line_index().clone();
+        let edit = editor_core_lsp::lsp_inlay_hints_to_processing_edit(&line_index, value);
+        self.state_manager.apply_processing_edits([edit]);
+    }
+
+    fn current_inlay_request_key(&self) -> Option<InlayHintRequestKey> {
+        Some(InlayHintRequestKey {
+            range: self.current_inlay_range()?,
+            text_revision: self.current_inlay_text_revision(),
+        })
+    }
+
+    fn current_inlay_range(&self) -> Option<InlayHintRange> {
+        let editor = self.state_manager.editor();
+        let total_visual = editor.visual_line_count();
+        let viewport_height = self.viewport_size.1 as usize;
+        if total_visual == 0 || viewport_height == 0 {
+            return None;
+        }
+
+        let scroll_top = self.state_manager.get_viewport_state().scroll_top;
+        let first_visual = scroll_top.min(total_visual.saturating_sub(1));
+        let last_visual = scroll_top
+            .saturating_add(viewport_height.saturating_sub(1))
+            .min(total_visual.saturating_sub(1));
+
+        let (first_line, _first_visual_in_line) = editor.visual_to_logical_line(first_visual);
+        let (last_line, _last_visual_in_line) = editor.visual_to_logical_line(last_visual);
+        let line_index = editor.line_index();
+        let start = line_index.position_to_char_offset(first_line, 0);
+        let last_line_text = line_index.get_line_text(last_line).unwrap_or_default();
+        let end = line_index.position_to_char_offset(last_line, last_line_text.chars().count());
+
+        Some(InlayHintRange {
+            start: start.min(end),
+            end: end.max(start),
+        })
+    }
+
+    fn current_inlay_text_revision(&self) -> InlayTextRevision {
+        let text = self.state_manager.editor().get_text();
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        InlayTextRevision {
+            len: text.len(),
+            hash: hasher.finish(),
+        }
+    }
+
     fn formatting_options(&self) -> serde_json::Value {
         let tab_width = self.config.indent.tab_width.get().max(1);
         let insert_spaces = self.config.indent.insert_spaces.get();
@@ -1656,6 +1810,12 @@ impl EditorView {
             return Some(None);
         }
 
+        if self.config.inlay_hints.enabled.get()
+            && let Some((cursor_x, cursor_y)) = self.cursor_screen_position_from_composed(text_area)
+        {
+            return Some(Some((cursor_x, cursor_y)));
+        }
+
         let editor = self.state_manager.editor();
         let pos = self.active_cursor_position();
         let Some((cursor_visual_row, cursor_x_in_row)) =
@@ -1676,6 +1836,50 @@ impl EditorView {
             text_area.x.saturating_add(x),
             text_area.y.saturating_add(y as u16),
         )))
+    }
+
+    fn cursor_screen_position_from_composed(&self, text_area: Rect) -> Option<(u16, u16)> {
+        let editor = self.state_manager.editor();
+        let pos = self.active_cursor_position();
+        let cursor_offset = editor
+            .line_index()
+            .position_to_char_offset(pos.line, pos.column);
+        let scroll_top = self.state_manager.get_viewport_state().scroll_top;
+        let grid = self
+            .state_manager
+            .get_viewport_content_composed(scroll_top, text_area.height as usize);
+
+        for (row, line) in grid.lines.iter().enumerate() {
+            let ComposedLineKind::Document { logical_line, .. } = line.kind else {
+                continue;
+            };
+            if logical_line != pos.line {
+                continue;
+            }
+
+            let mut x = 0usize;
+            for cell in &line.cells {
+                match cell.source {
+                    ComposedCellSource::Document { offset } if offset >= cursor_offset => {
+                        return Some(clamped_text_point(text_area, x, row));
+                    }
+                    ComposedCellSource::Virtual { anchor_offset }
+                        if !cell.styles.is_empty() && anchor_offset >= cursor_offset =>
+                    {
+                        return Some(clamped_text_point(text_area, x, row));
+                    }
+                    _ => {
+                        x = x.saturating_add(cell.width);
+                    }
+                }
+            }
+
+            if cursor_offset >= line.char_offset_start && cursor_offset <= line.char_offset_end {
+                return Some(clamped_text_point(text_area, x, row));
+            }
+        }
+
+        None
     }
 
     pub(super) fn layout_rects(&self, area: Rect) -> (Rect, Rect) {
@@ -1782,6 +1986,12 @@ fn clamp_rect_to_bounds(mut rect: Rect, bounds: Rect) -> Rect {
     rect.x = rect.x.clamp(bounds.x, max_x);
     rect.y = rect.y.clamp(bounds.y, max_y);
     rect
+}
+
+fn clamped_text_point(text_area: Rect, x: usize, row: usize) -> (u16, u16) {
+    let x = x.min(text_area.width.saturating_sub(1) as usize) as u16;
+    let y = row.min(text_area.height.saturating_sub(1) as usize) as u16;
+    (text_area.x.saturating_add(x), text_area.y.saturating_add(y))
 }
 
 fn code_action_item_is_preferred(item: &LspCodeActionItem) -> bool {

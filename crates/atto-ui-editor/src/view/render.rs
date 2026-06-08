@@ -26,6 +26,7 @@ impl EditorView {
         let (gutter_area, text_area) = self.layout_rects(content_area);
         if text_area.width > 0 && text_area.height > 0 && area.height > 0 && area.width > 0 {
             self.ensure_viewport(text_area);
+            self.maybe_request_inlay_hints(ctx.is_focused && !self.search_is_active());
 
             // Render gutter (line numbers + folding markers).
             if gutter_area.width > 0 {
@@ -481,17 +482,78 @@ impl EditorView {
         let cursor_state = self.state_manager.get_cursor_state();
         let selections = cursor_state.selections;
 
-        let grid = self
-            .state_manager
-            .get_viewport_content_styled(scroll_top, area.height as usize);
+        let use_composed = self.config.inlay_hints.enabled.get();
+        let styled_grid = (!use_composed).then(|| {
+            self.state_manager
+                .get_viewport_content_styled(scroll_top, area.height as usize)
+        });
+        let composed_grid = use_composed.then(|| {
+            self.state_manager
+                .get_viewport_content_composed(scroll_top, area.height as usize)
+        });
 
         let mut display_lines = Vec::<Line<'static>>::with_capacity(area.height as usize);
+        let selection_offset_ranges = if use_composed {
+            let line_index = editor.line_index();
+            selections
+                .iter()
+                .filter(|selection| selection.start != selection.end)
+                .map(|selection| {
+                    let start = line_index
+                        .position_to_char_offset(selection.start.line, selection.start.column);
+                    let end = line_index
+                        .position_to_char_offset(selection.end.line, selection.end.column);
+                    (start.min(end), start.max(end))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         for i in 0..(area.height as usize) {
             if area.width == 0 {
                 display_lines.push(Line::from(""));
                 continue;
             }
+
+            if let Some(grid) = composed_grid.as_ref() {
+                let Some(composed_line) = grid.lines.get(i) else {
+                    display_lines.push(Line::from(""));
+                    continue;
+                };
+                if composed_line.cells.is_empty() {
+                    display_lines.push(Line::from(""));
+                    continue;
+                }
+
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                let mut current_style: Option<Style> = None;
+                let mut buffer = String::new();
+
+                for cell in &composed_line.cells {
+                    let mut style = self.style_for_style_ids(&cell.styles);
+                    if let ComposedCellSource::Document { offset } = cell.source
+                        && selection_offset_ranges
+                            .iter()
+                            .any(|(start, end)| offset >= *start && offset < *end)
+                    {
+                        style = theme.selection;
+                    }
+                    push_rendered_cell(
+                        &mut spans,
+                        &mut current_style,
+                        &mut buffer,
+                        cell.ch,
+                        style,
+                        theme,
+                    );
+                }
+
+                flush_rendered_cells(&mut spans, &mut current_style, &mut buffer, theme);
+                display_lines.push(Line::from(spans));
+                continue;
+            }
+
             let visual_row = scroll_top + i;
             if visual_row >= total_visual {
                 display_lines.push(Line::from(""));
@@ -552,7 +614,8 @@ impl EditorView {
                 }
             }
 
-            let Some(headless_line) = grid.lines.get(i) else {
+            let Some(headless_line) = styled_grid.as_ref().and_then(|grid| grid.lines.get(i))
+            else {
                 display_lines.push(Line::from(""));
                 continue;
             };
@@ -575,22 +638,17 @@ impl EditorView {
                     style = theme.selection;
                 }
 
-                if current_style.is_none() {
-                    current_style = Some(style);
-                }
-                if current_style != Some(style) {
-                    spans.push(Span::styled(
-                        std::mem::take(&mut buffer),
-                        current_style.unwrap_or(theme.text),
-                    ));
-                    current_style = Some(style);
-                }
-                buffer.push(cell.ch);
+                push_rendered_cell(
+                    &mut spans,
+                    &mut current_style,
+                    &mut buffer,
+                    cell.ch,
+                    style,
+                    theme,
+                );
             }
 
-            if !buffer.is_empty() {
-                spans.push(Span::styled(buffer, current_style.unwrap_or(theme.text)));
-            }
+            flush_rendered_cells(&mut spans, &mut current_style, &mut buffer, theme);
             display_lines.push(Line::from(spans));
         }
 
@@ -599,6 +657,43 @@ impl EditorView {
         if focused && let Some(Some((cursor_x, cursor_y))) = self.cursor_screen_position() {
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+    }
+}
+
+fn push_rendered_cell(
+    spans: &mut Vec<Span<'static>>,
+    current_style: &mut Option<Style>,
+    buffer: &mut String,
+    ch: char,
+    style: Style,
+    theme: &EditorTheme,
+) {
+    if current_style.is_none() {
+        *current_style = Some(style);
+    }
+    if *current_style != Some(style) {
+        if !buffer.is_empty() {
+            spans.push(Span::styled(
+                std::mem::take(buffer),
+                (*current_style).unwrap_or(theme.text),
+            ));
+        }
+        *current_style = Some(style);
+    }
+    buffer.push(ch);
+}
+
+fn flush_rendered_cells(
+    spans: &mut Vec<Span<'static>>,
+    current_style: &mut Option<Style>,
+    buffer: &mut String,
+    theme: &EditorTheme,
+) {
+    if !buffer.is_empty() {
+        spans.push(Span::styled(
+            std::mem::take(buffer),
+            (*current_style).unwrap_or(theme.text),
+        ));
     }
 }
 

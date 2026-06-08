@@ -15,9 +15,13 @@ use editor_core::CommentConfig;
 
 fn main() -> Result<()> {
     // A deterministic app used by PTY tests to validate editor behavior.
-    let diagnostics_mode = std::env::args().any(|arg| arg == "--diagnostics");
+    let args = std::env::args().collect::<Vec<_>>();
+    let diagnostics_mode = args.iter().any(|arg| arg == "--diagnostics");
+    let inlay_hints_mode = args.iter().any(|arg| arg == "--inlay-hints");
     let mut lines: Vec<String> = if diagnostics_mode {
         vec!["let bad = 1;".to_string(), String::new()]
+    } else if inlay_hints_mode {
+        vec!["let value = 1;".to_string(), String::new()]
     } else {
         vec![
             "tab:ab".to_string(),
@@ -57,6 +61,26 @@ fn main() -> Result<()> {
             .set(EditorLspMode::Enabled(EditorLspConfig {
                 command: vec![sibling_binary("mock_lsp_server")],
                 document_uri: "file:///diagnostics.rs".to_string(),
+                language_id: "rust".to_string(),
+                root_uri: None,
+                workspace_folders: Vec::new(),
+                initialize_timeout: Duration::from_secs(1),
+                semantic_tokens: false,
+                folding_ranges: false,
+            }));
+    } else if inlay_hints_mode {
+        editor_config.syntax.set(EditorSyntaxConfig::None);
+        editor_config.hover.enabled.set(false);
+        editor_config.inlay_hints.enabled.set(true);
+        editor_config
+            .inlay_hints
+            .refresh_delay
+            .set(Duration::from_millis(0));
+        editor_config
+            .lsp
+            .set(EditorLspMode::Enabled(EditorLspConfig {
+                command: vec![sibling_binary("mock_lsp_server")],
+                document_uri: "file:///inlay.rs".to_string(),
                 language_id: "rust".to_string(),
                 root_uri: None,
                 workspace_folders: Vec::new(),

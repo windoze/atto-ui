@@ -10,9 +10,10 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use editor_core::{
-    Command, CursorCommand, DiagnosticSeverity, DocumentOutline, EditCommand, EditorStateManager,
-    Position, SearchOptions, Selection, SelectionDirection, StyleCommand, TabKeyBehavior,
-    TextEditSpec, ViewCommand, WorkspaceSymbol, char_width,
+    Command, ComposedCellSource, ComposedLineKind, CursorCommand, DiagnosticSeverity,
+    DocumentOutline, EditCommand, EditorStateManager, Position, SearchOptions, Selection,
+    SelectionDirection, StyleCommand, TabKeyBehavior, TextEditSpec, ViewCommand, WorkspaceSymbol,
+    char_width,
 };
 use editor_core_lsp::{
     LspCodeActionItem, LspContentChange, LspDiagnostic, LspDiagnosticSeverity, LspSession,
@@ -146,6 +147,24 @@ struct PendingFormatting {
     deadline: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InlayHintRange {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InlayTextRevision {
+    len: usize,
+    hash: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InlayHintRequestKey {
+    range: InlayHintRange,
+    text_revision: InlayTextRevision,
+}
+
 #[derive(Default)]
 struct EditorLspController {
     session: Option<LspSession>,
@@ -182,6 +201,13 @@ struct EditorLspController {
 
     // Formatting request state.
     pending_formatting: Option<PendingFormatting>,
+
+    // Inlay hint request/render state.
+    pending_inlay_hints: Option<u64>,
+    pending_inlay_key: Option<InlayHintRequestKey>,
+    last_inlay_range: Option<InlayHintRange>,
+    last_inlay_text_revision: Option<InlayTextRevision>,
+    last_inlay_request_at: Option<Instant>,
 
     // Diagnostics state.
     diagnostics: Vec<LspDiagnostic>,

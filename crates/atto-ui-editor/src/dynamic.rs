@@ -20,6 +20,7 @@ impl ComponentPropertySchema for EditorView {
             PropertyMeta::new("read_only", ValueType::Bool),
             PropertyMeta::new("tab_width", ValueType::U64),
             PropertyMeta::new("insert_spaces", ValueType::Bool),
+            PropertyMeta::new("inlay_hints_enabled", ValueType::Bool),
         ]
     }
 }
@@ -58,6 +59,9 @@ pub fn register_editor(
         }
         if let Some(insert_spaces) = prop_bool(spec, "insert_spaces")? {
             config.indent.insert_spaces.set(insert_spaces);
+        }
+        if let Some(enabled) = prop_bool(spec, "inlay_hints_enabled")? {
+            config.inlay_hints.enabled.set(enabled);
         }
 
         let (view, _handle) = EditorView::new(config, theme);
