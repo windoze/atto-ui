@@ -1341,12 +1341,18 @@
 - Mock LSP 扩展 `signatureHelpProvider` 与 `textDocument/signatureHelp` 响应；新增测试覆盖 `(` 触发 popup、Esc 关闭、空 result 清空、completion popup 优先级，以及默认 keymap 绑定。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_signature_help -- --nocapture`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo test --workspace --all-targets`。
 
-### [TODO] R19 — 审阅 T19
+### [DONE] R19 — 审阅 T19
 
 审阅 T19 改动：
 - 确认触发字符插入后 cursor position 用 post-edit 位置请求。
 - 确认 stale response 不显示到新 cursor 位置。
 - 确认 popup rect clamp 在 editor content bounds 内。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T19 signature help 路径，确认 `(` / `,` 触发在文本插入后的 cursor position 发起请求，signature help response 会按 requested cursor position 丢弃 stale 结果，popup rect 会 clamp 到 editor content bounds 内。
+- 发现并修复 completion response 相关竞态：旧 completion 请求的 response 到达时不再先清空新的 signature help popup，而是先比较 completion requested cursor position，stale response 直接丢弃。
+- 补充回归测试 `stale_completion_response_does_not_clear_signature_help_popup`，覆盖旧 completion response 不会清除当前 signature help popup。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor stale_completion_response_does_not_clear_signature_help_popup`；`cargo test -p atto-ui-editor --test lsp_editor lsp_signature_help`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T20 — L5 Formatting 手动格式化与保存前格式化接口
 

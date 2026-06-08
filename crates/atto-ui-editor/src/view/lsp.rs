@@ -148,7 +148,14 @@ impl EditorView {
             && method.as_str() == "textDocument/completion"
         {
             self.lsp.completion_pending_request = None;
-            self.lsp.completion_requested_position = None;
+            let requested_position = self.lsp.completion_requested_position.take();
+            if requested_position.is_some_and(|pos| pos != self.active_cursor_position()) {
+                return;
+            }
+            if error.is_some() {
+                self.completion_popup.set(None);
+                return;
+            }
             if let Some(result) = result.as_ref() {
                 self.handle_lsp_completion_response(result);
             } else {
@@ -507,13 +514,6 @@ impl EditorView {
         }
         self.hide_hover_popup_only();
         self.clear_signature_help_popup();
-        if self
-            .lsp
-            .completion_requested_position
-            .is_some_and(|p| p != self.active_cursor_position())
-        {
-            return;
-        }
 
         // Completion: CompletionList { items } | CompletionItem[].
         let items_value = if let Some(items) = value.get("items") {

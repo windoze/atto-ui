@@ -1,58 +1,20 @@
 # Execution Plan
 
-I will not record private chain-of-thought here. This file tracks the actionable plan and progress for the current invocation.
+I will use TODO.md as the authoritative task list, identify the first task whose heading is not prefixed with [DONE], complete exactly that task, validate it according to its requirements, update TODO.md with a completion record and [DONE] prefix, commit the resulting changes, and stop.
 
-1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message for an unfinished issue only if it is directly relevant to that task.
-3. Inspect the task's referenced files and current implementation.
-4. Implement the task as written, without narrowing scope or using workarounds.
-5. Run required formatting, linting, and tests according to the task and repository policy.
-6. Update `TODO.md` completion state and completion record for exactly this task.
-7. Commit all task-related changes with a descriptive message and stop.
+Steps:
+1. Read TODO.md first to find the first incomplete task and its validation requirements.
+2. Check the latest commit only for unfinished work directly relevant to that selected task.
+3. Inspect the minimal code and documentation needed for the selected task.
+4. Implement the task without narrowing scope or using workarounds.
+5. Run formatting, clippy with warnings denied, and the required tests in the requested order.
+6. If an unscheduled blocking failure appears, fix it or add the minimum prerequisite task in TODO.md and stop after committing.
+7. Mark the completed task title with [DONE], update its completion record, commit all task-related changes, and stop before starting any next task.
 
-## Progress
-
-- Created initial execution plan.
-
-## Update
-
-- Identified `T19` as the first incomplete task from `TODO.md`.
-- Next: read `TODO-2.md` details for T19 and inspect the latest commit for directly relevant unfinished notes.
-
-## Update
-
-- Latest commit completed R18 and does not add a directly relevant unfinished blocker for T19.
-- Current task: T19 — L4 Signature Help.
-- Next: inspect editor keymap/input/LSP/UI paths and existing popup patterns before editing.
-
-## Update
-
-- Found existing patterns for hover/completion/code-action/rename popups and external `editor-core-lsp` signature-help parsing/request helpers.
-- Implementation will add a signature popup binding/model, pending request tracking, key/action dispatch, trigger characters, response handling, rendering/window sync, mock LSP response, and targeted tests.
-
-## Update
-
-- Added signature-help action/key binding, editor binding/state, popup model/window/render path, LSP request/response handling, trigger-character input, mock LSP support, and targeted tests.
-- Next: format, lint, run targeted tests, then full validation if targeted checks pass.
-
-## Update
-
-- `cargo fmt` completed.
-- `cargo clippy --workspace --all-targets -- -D warnings` completed successfully.
-- Targeted signature-help integration tests passed.
-- Next: run the full `lsp_editor` test file, then workspace tests.
-
-## Update
-
-- Full workspace Rust test suite completed successfully.
-- Next: mark T19 `[DONE]` in `TODO-2.md` and the `TODO.md` index, then commit the task changes.
-
-## Update
-
-- Marked T19 `[DONE]` in `TODO-2.md` and updated `TODO.md` index.
-- Next: review git diff/status and commit all task-related changes.
-
-## Update
-
-- Commit attempt including `memory/claude_plan.md` was rejected because `memory/` is gitignored.
-- Next: commit the tracked project/task changes and leave the plan file updated in the ignored working tree.
+Progress:
+- Selected first incomplete task: R19 — review T19 Signature Help.
+- Review found a task-relevant race: stale completion responses can clear a newer signature help popup because completion_requested_position is cleared before the response handler's stale-position guard runs.
+- Implemented fix: completion responses now take and compare their requested cursor position before mutating completion/signature popup state; stale responses return without clearing an active signature help popup.
+- Added regression test `stale_completion_response_does_not_clear_signature_help_popup`.
+- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted stale completion/signature help tests, and `cargo test --workspace --all-targets`.
+- R19 marked done in TODO.md and TODO-2.md. Next step: commit the task changes and stop.

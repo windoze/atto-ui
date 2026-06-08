@@ -398,6 +398,45 @@ fn editor_lsp_document_symbols_response_emits_utf16_converted_outline() {
 }
 
 #[test]
+fn stale_completion_response_does_not_clear_signature_help_popup() {
+    let text: atto_ui::reactive::Binding<String> = "mock_fn(".to_string().into();
+    let cfg = EditorConfig::new(text);
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+
+    view.lsp.completion_pending_request = Some(42);
+    view.lsp.completion_requested_position = Some(Position::new(0, 0));
+    let _ = view.execute(Command::Cursor(CursorCommand::MoveTo {
+        line: 0,
+        column: 8,
+    }));
+    handle
+        .signature_help_popup
+        .set(Some(SignatureHelpPopupModel {
+            rect: Rect::new(2, 2, 32, 3),
+            signatures: vec![editor_core_lsp::LspSignatureInformation {
+                label: "mock_fn(arg: i32)".to_string(),
+                documentation: None,
+                parameters: Vec::new(),
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(0),
+        }));
+
+    view.handle_lsp_response(editor_core_lsp::LspResponse {
+        id: 42,
+        method: "textDocument/completion".to_string(),
+        result: Some(serde_json::json!([{ "label": "stale_completion" }])),
+        error: None,
+    });
+
+    assert!(handle.completion_popup.get().is_none());
+    assert!(handle.signature_help_popup.get().is_some());
+    assert!(view.lsp.completion_pending_request.is_none());
+    assert!(view.lsp.completion_requested_position.is_none());
+}
+
+#[test]
 fn editor_jump_to_utf16_position_converts_to_char_column() {
     let text: atto_ui::reactive::Binding<String> = "fn 👋target() {}\n".to_string().into();
     let cfg = EditorConfig::new(text);
