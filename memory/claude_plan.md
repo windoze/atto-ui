@@ -15,4 +15,5 @@
 - 已实现框架层 command registry、which-key model、Desktop overlay、主题 token、`atto-editor-app` command registry、未消费按键驱动的 prefix keymap，以及 editor/LSP action 的命令队列转发。
 - 已通过验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 - 已更新 `TODO.md` 与 `TODO-2.md`，将 T13 标记为 `[DONE]` 并写入完成记录。
-- 下一步：暂存本任务相关文件并提交。
+- 已提交 T13 实现：`4184c5a [T13] Implement command registry and which-key popup`。
+- 当前仅剩与本任务无关的未跟踪脚本未处理；本次任务到此停止。
