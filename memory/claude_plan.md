@@ -28,3 +28,5 @@
 - 已复核 NT1 关键文件：Node crate、`napi-build`、package 脚本、`version()` 冒烟测试与根 workspace member 均存在。
 - 已更新 `TODO.md` 的 `NT1` 标题前缀，并在 `TODO-1.md` 的 NT1 完成记录中追加本轮索引同步说明。
 - 已检查差异范围：本轮只修改 `TODO.md`、`TODO-1.md` 和 `memory/claude_plan.md`；因未改动编译代码，代码格式化、lint、测试套件复用既有绿色记录并跳过重跑。
+- 已提交 `NT1` 索引同步改动：`af2b3e6 [NT1] Sync task completion index`。
+- 本轮任务完成后停止，不进入下一个未完成条目。
