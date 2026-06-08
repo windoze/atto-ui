@@ -248,7 +248,13 @@ fn main() -> io::Result<()> {
                     .and_then(|text_document| text_document.get("uri"))
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if uri.ends_with("/formatting_error.rs") || uri == "file:///formatting_error.rs" {
+                if uri.ends_with("/formatting_disconnect.rs")
+                    || uri == "file:///formatting_disconnect.rs"
+                {
+                    return Ok(());
+                } else if uri.ends_with("/formatting_error.rs")
+                    || uri == "file:///formatting_error.rs"
+                {
                     respond_error(&mut stdout, id, -32000, "mock formatting error")?;
                 } else if uri.ends_with("/formatting_empty.rs")
                     || uri == "file:///formatting_empty.rs"

@@ -1402,12 +1402,18 @@
 - Mock LSP 增加 `documentFormattingProvider` 与 formatting response；新增测试覆盖 edits 改变文本、`Ctrl+K Ctrl+F`、单步 undo、当前 indentation options、空 edits 不改文本、error message、无 LSP ignored。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_format_document -- --nocapture`；`cargo test -p atto-editor-app app_command_registry_binds_format_document_sequence`；`cargo test --workspace --all-targets`。
 
-### [TODO] R20 — 审阅 T20
+### [DONE] R20 — 审阅 T20
 
 审阅 T20 改动：
 - 确认 formatting 使用当前 tab_width/insert_spaces。
 - 确认空 edits response 不改变 dirty 状态。
 - 确认 format-on-save 失败路径不静默吞错误。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T20 formatting 路径，确认手动 formatting 使用当前 `tab_width` / `insert_spaces` 构造 LSP options，空 edits response 只发出 `FormatFinished { success: true, changed: false }`，不会改文本或生成 undo step。
+- 发现并修复保存前格式化失败路径缺口：LSP poll error 或 clean EOF/no-response 期间若存在 pending formatting，现在会发出可见 `LspMessage` 与 `FormatFinished { success: false, changed: false }`，从而让 format-on-save 清理 pending save 并跳过保存；新增 `formatting_timeout` 默认 10s 防止静默挂起。
+- Mock LSP 增加 formatting request 后 clean exit fixture；新增回归测试 `lsp_format_document_transport_exit_times_out_and_finishes`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-editor --test lsp_editor lsp_format_document_transport_exit_times_out_and_finishes`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T21 — L6 Inlay Hints 与 composed grid 渲染
 

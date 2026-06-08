@@ -34,7 +34,10 @@ impl EditorView {
             self.state_manager.apply_processor(lsp)
         };
 
-        if poll_result.is_err() {
+        if let Err(err) = poll_result {
+            self.finish_pending_formatting_failure(format!(
+                "Formatting failed: LSP session error: {err}"
+            ));
             self.lsp.session = None;
             editor_core_lsp::clear_lsp_state(&mut self.state_manager);
             self.clear_lsp_diagnostics();
@@ -59,6 +62,7 @@ impl EditorView {
                 editor_core_lsp::LspEvent::Response(resp) => self.handle_lsp_response(resp),
             }
         }
+        self.maybe_timeout_pending_formatting();
     }
 
     pub(super) fn handle_lsp_response(&mut self, resp: editor_core_lsp::LspResponse) {
@@ -203,8 +207,8 @@ impl EditorView {
             }
         }
 
-        if let Some(pending_id) = self.lsp.pending_formatting
-            && pending_id == id
+        if let Some(pending) = self.lsp.pending_formatting
+            && pending.id == id
             && method.as_str() == "textDocument/formatting"
         {
             self.lsp.pending_formatting = None;
@@ -865,7 +869,11 @@ impl EditorView {
 
         match lsp.request_formatting(options) {
             Ok(id) => {
-                self.lsp.pending_formatting = Some(id);
+                let timeout = self.config.formatting_timeout.get();
+                self.lsp.pending_formatting = Some(PendingFormatting {
+                    id,
+                    deadline: Instant::now() + timeout,
+                });
                 true
             }
             Err(err) => {
@@ -1068,6 +1076,28 @@ impl EditorView {
         let tab_width = self.config.indent.tab_width.get().max(1);
         let insert_spaces = self.config.indent.insert_spaces.get();
         editor_core_lsp::lsp_formatting_options(tab_width, insert_spaces)
+    }
+
+    fn finish_pending_formatting_failure(&mut self, message: String) {
+        if self.lsp.pending_formatting.take().is_none() {
+            return;
+        }
+
+        self.events.push(EditorEvent::LspMessage { message });
+        self.events.push(EditorEvent::FormatFinished {
+            success: false,
+            changed: false,
+        });
+    }
+
+    fn maybe_timeout_pending_formatting(&mut self) {
+        let timed_out = self
+            .lsp
+            .pending_formatting
+            .is_some_and(|pending| Instant::now() >= pending.deadline);
+        if timed_out {
+            self.finish_pending_formatting_failure("Formatting timed out".to_string());
+        }
     }
 
     fn handle_lsp_formatting_response(&mut self, value: &serde_json::Value) {

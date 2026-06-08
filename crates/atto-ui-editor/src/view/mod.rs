@@ -140,6 +140,12 @@ struct RenameTarget {
     position: Position,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PendingFormatting {
+    id: u64,
+    deadline: Instant,
+}
+
 #[derive(Default)]
 struct EditorLspController {
     session: Option<LspSession>,
@@ -175,7 +181,7 @@ struct EditorLspController {
     rename_target: Option<RenameTarget>,
 
     // Formatting request state.
-    pending_formatting: Option<u64>,
+    pending_formatting: Option<PendingFormatting>,
 
     // Diagnostics state.
     diagnostics: Vec<LspDiagnostic>,

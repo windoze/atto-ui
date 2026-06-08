@@ -237,6 +237,7 @@ pub struct EditorConfig {
     pub hover: EditorHoverConfig,
     pub completion: EditorCompletionConfig,
     pub format_on_save: Binding<bool>,
+    pub formatting_timeout: Binding<Duration>,
 
     pub lsp: Binding<EditorLspMode>,
 }
@@ -258,6 +259,7 @@ impl EditorConfig {
             hover: EditorHoverConfig::default(),
             completion: EditorCompletionConfig::default(),
             format_on_save: false.into(),
+            formatting_timeout: Duration::from_secs(10).into(),
             lsp: EditorLspMode::Disabled.into(),
         }
     }

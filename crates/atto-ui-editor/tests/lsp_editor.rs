@@ -961,6 +961,62 @@ fn lsp_format_document_error_reports_message() {
 }
 
 #[test]
+fn lsp_format_document_transport_exit_times_out_and_finishes() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "bad\n".to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.formatting_timeout.set(Duration::from_millis(50));
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///formatting_disconnect.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = ComponentContext {
+        theme: &app_theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspFormatDocument));
+    let (message, success, changed) = wait_for_lsp_message_and_format_finished(
+        &mut terminal,
+        &mut view,
+        &handle,
+        area,
+        ctx,
+        "Formatting timed out",
+    );
+
+    assert!(message.contains("Formatting timed out"));
+    assert!(!success);
+    assert!(!changed);
+    assert_eq!(text.get(), "bad\n");
+}
+
+#[test]
 fn lsp_format_document_without_lsp_is_ignored() {
     let text: atto_ui::reactive::Binding<String> = "plain\n".to_string().into();
     let cfg = EditorConfig::new(text.clone());
@@ -1324,6 +1380,44 @@ fn wait_for_lsp_message(
         }
         if Instant::now() >= deadline {
             panic!("timed out waiting for LSP message {expected:?}; saw {seen:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_lsp_message_and_format_finished(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+    expected: &str,
+) -> (String, bool, bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    let mut message = None;
+    let mut finished = None;
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::LspMessage { message: msg } if msg.contains(expected) => {
+                    message = Some(msg);
+                }
+                EditorEvent::FormatFinished { success, changed } => {
+                    finished = Some((success, changed));
+                }
+                other => seen.push(other),
+            }
+        }
+
+        if let (Some(message), Some((success, changed))) = (message.clone(), finished) {
+            return (message, success, changed);
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for LSP message {expected:?} and format completion; saw {seen:?}"
+            );
         }
         thread::sleep(Duration::from_millis(10));
     }
