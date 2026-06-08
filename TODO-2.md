@@ -745,7 +745,7 @@
 - 确认 `menu-mnemonic`、`menu-item-shortcut`、`menu-border` 注册为 named styles，且可经 JSON/YAML overlay 覆盖；新增主题 overlay 回归测试。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T11 — C4 分段式 StatusBar 与 editor diagnostics 接入
+### [DONE] T11 — C4 分段式 StatusBar 与 editor diagnostics 接入
 
 **依赖**：T8 可提供 editor diagnostics summary；没有 T8 时先做 StatusBar API。
 
@@ -798,6 +798,15 @@
 **验收**：
 - `set_left/set_right` 旧调用仍能工作。
 - statusbar 背景样式铺满整行。
+
+**完成记录（2026-06-09）**：
+- 新增 `StatusSegmentAlign` / `StatusSegment` API，`StatusBar` 支持 `set_segments`、`push_segment`、`clear_segments` 和 `handle_mouse`，同时保留 `set_left` / `set_right` / `set_custom` 的旧分支。
+- 分段绘制支持 left/right 对齐、segment separator glyph、按 `priority` 隐藏低优先级段、按 grapheme 边界截断，并通过手写宽字符单元格渲染保持状态栏背景样式覆盖普通间隙和 segment 区域。
+- `Desktop` 已将 status bar 区域鼠标 click 路由到 `StatusBar::handle_mouse`，仍保持 status bar click 不穿透到窗口 view。
+- `Theme` 注册 `status-bar`、`status-bar-key`、`status-segment`、`status-segment-warning`、`status-segment-error` named styles，并新增 `status-separator` glyph fallback。
+- `atto-editor-app` 增加 active editor status binding，在 tick 中以分段状态栏显示 app 名称、活动文件名、dirty marker、diagnostics `E:n W:n` 和 language；Explorer focused 时继续使用 last focused editor 状态。
+- 新增/更新测试覆盖 ASCII/CJK/emoji 分段对齐、priority 隐藏、grapheme 截断、click hit-test、Desktop status click 路由、Explorer focused 状态栏 fallback，以及 editor app PTY diagnostics/language 显示。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R11 — 审阅 T11
 

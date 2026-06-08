@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, DesktopMode, MenuBar, MenuItem, MenuSpec,
-    run_crossterm_desktop,
+    StatusSegment, StatusSegmentAlign, run_crossterm_desktop,
 };
 use atto_ui::composable::{Component, HStack, LayoutParams, Size, TextFn, VStack};
 use atto_ui::dialogs::FileDialog;
@@ -21,7 +21,7 @@ use atto_ui::wm::{DockAutoHide, DockSide, Window, WindowDock, WindowId, WindowKi
 
 use crate::actions::{AppAction, OpenTarget};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
-use crate::window::{EditorWindowCommand, EditorWindowView};
+use crate::window::{EditorStatus, EditorWindowCommand, EditorWindowView};
 
 #[derive(Clone, Debug)]
 pub struct AttoEditorConfig {
@@ -41,6 +41,7 @@ const MIN_EXPLORER_DOCK_SIZE: u16 = 20;
 struct AppState {
     editor_windows: HashMap<WindowId, EventQueue<EditorWindowCommand>>,
     editor_diagnostics: HashMap<WindowId, Binding<atto_ui_editor::DiagnosticsSummary>>,
+    editor_statuses: HashMap<WindowId, Binding<EditorStatus>>,
     last_focused_editor: Option<WindowId>,
     next_window_offset: u16,
 
@@ -59,6 +60,7 @@ impl Default for AppState {
         Self {
             editor_windows: HashMap::new(),
             editor_diagnostics: HashMap::new(),
+            editor_statuses: HashMap::new(),
             last_focused_editor: None,
             next_window_offset: 0,
             explorer_window: None,
@@ -165,12 +167,14 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let commands = EventQueue::<EditorWindowCommand>::new();
                 let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
                     atto_ui_editor::DiagnosticsSummary::default().into();
-                let view = EditorWindowView::new(
+                let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
+                let view = EditorWindowView::new_with_status(
                     actions.clone(),
                     commands.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
                     diagnostics_summary.clone(),
+                    editor_status.clone(),
                 );
 
                 let id = desktop.add_window(
@@ -182,6 +186,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     let mut s = state.lock();
                     s.editor_windows.insert(id, commands.clone());
                     s.editor_diagnostics.insert(id, diagnostics_summary);
+                    s.editor_statuses.insert(id, editor_status);
                     s.last_focused_editor = Some(id);
                 }
 
@@ -742,10 +747,10 @@ fn active_editor_commands(
 
 fn update_diagnostics_statusbar(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
     let summary = active_editor_diagnostics_summary(desktop, state).unwrap_or_default();
-    desktop.status.set_custom(
-        status_left_for_mode(desktop.mode),
-        format_diagnostics_summary(summary),
-    );
+    let editor_status = active_editor_status(desktop, state).unwrap_or_default();
+    desktop
+        .status
+        .set_segments(status_segments_for(desktop.mode, editor_status, summary));
 }
 
 fn status_left_for_mode(mode: DesktopMode) -> &'static str {
@@ -759,10 +764,76 @@ fn status_left_for_mode(mode: DesktopMode) -> &'static str {
 }
 
 fn format_diagnostics_summary(summary: atto_ui_editor::DiagnosticsSummary) -> String {
-    format!(
-        "E:{} W:{} I:{} H:{}",
-        summary.errors, summary.warnings, summary.infos, summary.hints
-    )
+    format!("E:{} W:{}", summary.errors, summary.warnings)
+}
+
+fn status_segments_for(
+    mode: DesktopMode,
+    editor_status: EditorStatus,
+    summary: atto_ui_editor::DiagnosticsSummary,
+) -> Vec<StatusSegment> {
+    let mut segments = vec![
+        StatusSegment::new("app", "Atto Editor")
+            .style("status-bar-key")
+            .priority(100)
+            .min_width(11),
+        StatusSegment::new("path", status_path_text(editor_status.path.as_ref()))
+            .priority(80)
+            .min_width(8),
+    ];
+
+    if editor_status.dirty {
+        segments.push(
+            StatusSegment::new("dirty", "*")
+                .style("status-segment-warning")
+                .priority(90),
+        );
+    }
+
+    segments.push(
+        StatusSegment::new("mode", status_left_for_mode(mode))
+            .priority(10)
+            .min_width(8),
+    );
+
+    let diagnostics_style = if summary.errors > 0 {
+        "status-segment-error"
+    } else if summary.warnings > 0 {
+        "status-segment-warning"
+    } else {
+        "status-segment"
+    };
+    segments.push(
+        StatusSegment::new("diagnostics", format_diagnostics_summary(summary))
+            .style(diagnostics_style)
+            .align(StatusSegmentAlign::Right)
+            .priority(90)
+            .min_width(7),
+    );
+
+    let language = if editor_status.language.is_empty() {
+        "plaintext".to_string()
+    } else {
+        editor_status.language
+    };
+    segments.push(
+        StatusSegment::new("language", language)
+            .align(StatusSegmentAlign::Right)
+            .priority(70)
+            .min_width(4),
+    );
+
+    segments
+}
+
+fn status_path_text(path: Option<&PathBuf>) -> String {
+    path.map(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path.to_string_lossy().to_string())
+    })
+    .unwrap_or_else(|| "[No file]".to_string())
 }
 
 fn active_editor_diagnostics_summary(
@@ -798,6 +869,36 @@ fn active_editor_diagnostics_summary(
     None
 }
 
+fn active_editor_status(desktop: &Desktop, state: &Arc<Mutex<AppState>>) -> Option<EditorStatus> {
+    let focused = desktop.wm.focused();
+
+    {
+        let guard = state.lock();
+        if let Some(id) = focused
+            && desktop.wm.window(id).is_some()
+            && let Some(status) = guard.editor_statuses.get(&id)
+        {
+            return Some(status.get());
+        }
+
+        if let Some(id) = guard.last_focused_editor
+            && desktop.wm.window(id).is_some()
+            && let Some(status) = guard.editor_statuses.get(&id)
+        {
+            return Some(status.get());
+        }
+    }
+
+    let guard = state.lock();
+    for w in desktop.wm.windows().iter().rev() {
+        if let Some(status) = guard.editor_statuses.get(&w.id()) {
+            return Some(status.get());
+        }
+    }
+
+    None
+}
+
 fn add_editor_window(
     desktop: &mut Desktop,
     screen: Rect,
@@ -815,12 +916,14 @@ fn add_editor_window(
     let commands = EventQueue::<EditorWindowCommand>::new();
     let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
         atto_ui_editor::DiagnosticsSummary::default().into();
-    let view = EditorWindowView::new(
+    let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
+    let view = EditorWindowView::new_with_status(
         actions,
         commands.clone(),
         editor_theme,
         clipboard,
         diagnostics_summary.clone(),
+        editor_status.clone(),
     );
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
@@ -831,6 +934,7 @@ fn add_editor_window(
         let mut s = state.lock();
         s.editor_windows.insert(id, commands.clone());
         s.editor_diagnostics.insert(id, diagnostics_summary);
+        s.editor_statuses.insert(id, editor_status);
         s.last_focused_editor = Some(id);
     }
 
@@ -1347,12 +1451,19 @@ mod tests {
                 hints: 4,
             }
             .into();
-        let editor = EditorWindowView::new(
+        let editor_status: atto_ui::reactive::Binding<EditorStatus> = EditorStatus {
+            path: Some(PathBuf::from("src/main.rs")),
+            language: "rust".to_string(),
+            dirty: false,
+        }
+        .into();
+        let editor = EditorWindowView::new_with_status(
             actions,
             editor_commands.clone(),
             editor_theme,
             clipboard,
             diagnostics_summary.clone(),
+            editor_status.clone(),
         );
         let editor_id = desktop.add_window(
             Window::new(
@@ -1368,6 +1479,7 @@ mod tests {
             s.explorer_window = Some(explorer_id);
             s.editor_windows.insert(editor_id, editor_commands);
             s.editor_diagnostics.insert(editor_id, diagnostics_summary);
+            s.editor_statuses.insert(editor_id, editor_status);
             s.last_focused_editor = Some(editor_id);
         }
 
@@ -1390,8 +1502,12 @@ mod tests {
             row.push_str(buf[(x, 0)].symbol());
         }
         assert!(
-            row.contains("E:1 W:2 I:3 H:4"),
+            row.contains("E:1 W:2"),
             "expected diagnostics summary in statusbar, got {row:?}"
+        );
+        assert!(
+            row.contains("rust"),
+            "expected language in statusbar, got {row:?}"
         );
     }
 

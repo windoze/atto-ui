@@ -367,6 +367,21 @@ impl Theme {
             .insert("status-bar".into(), self.status_bar);
         self.named_styles
             .insert("status-bar-key".into(), self.status_bar_key);
+        self.named_styles
+            .insert("status-segment".into(), self.status_bar);
+        self.named_styles.insert(
+            "status-segment-warning".into(),
+            self.status_bar.patch(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        );
+        self.named_styles.insert(
+            "status-segment-error".into(),
+            self.status_bar
+                .patch(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        );
 
         self.named_styles
             .insert("widget-normal".into(), self.widget.normal);
@@ -636,6 +651,9 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("tab-separator".into(), "|".into());
     g.insert("tab-active-left".into(), ">".into());
     g.insert("tab-active-right".into(), "<".into());
+
+    // Status bar.
+    g.insert("status-separator".into(), " ".into());
 
     g
 }

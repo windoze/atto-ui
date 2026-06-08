@@ -1,31 +1,41 @@
 # 执行计划
 
-## 当前约束
+说明：本文件记录可审查的执行计划与进度，不包含隐藏推理过程。
 
-- `TODO.md` 是任务顺序和完成状态的唯一依据。
-- 只完成第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
-- 在确认当前任务前不做开放式历史问题清扫。
-- 若遇到阻塞当前任务的缺陷、缺失能力或未排期失败测试，需要先修复，或在 `TODO.md` 中插入最小必要前置任务并提交后停止。
-- 变更 `PLAN.md` 仅限阶段级计划、依赖或完成标准发生变化。
-- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行相关/完整测试；完整测试使用足够超时。
+1. 读取 `TODO.md`，按标题是否带 `[DONE]` 判断第一个未完成任务。
+2. 检查该任务的要求、依赖、验证方式和完成记录格式。
+3. 如当前任务被具体前置问题阻塞，按要求更新 `TODO.md` 并提交后停止。
+4. 否则实现该任务的最小正确改动。
+5. 按项目要求运行格式化、lint 和相关测试；若发现未排期的失败，修复或把最小前置任务写入 `TODO.md`。
+6. 更新 `TODO.md`，在完成任务标题前加 `[DONE]` 并填写完成记录。
+7. 更新本文件记录关键进展。
+8. 检查 git 状态和 diff，提交本次任务涉及的全部变更。
+9. 完成一个任务后停止，不继续下一个任务。
 
-## 步骤计划
+## 当前任务
 
-1. 读取 `TODO.md`，定位第一个标题未以 `[DONE]` 标记的任务，并记录任务要求、依赖、验证要求和完成记录格式。
-2. 查看最近提交信息，判断是否存在明确提到且直接影响该任务的未完成问题。
-3. 针对当前任务读取最小必要的相关源码、测试和文档，避免无关范围扩张。
-4. 如果任务可直接实现，按仓库既有结构做最小正确修改，并同步添加或更新相关测试。
-5. 如果发现当前任务被具体未排期前置问题阻塞，更新 `TODO.md` 插入最小前置任务，必要时更新当前任务依赖说明，然后提交并停止。
-6. 执行格式化、lint 和任务要求的测试；如发现未排期失败测试，修复或在 `TODO.md` 中排期后再决定是否完成当前任务。
-7. 验证通过后，将当前任务标题标记为 `[DONE]`，填写完成记录；仅在阶段级计划变化时更新 `PLAN.md`。
-8. 检查 `git status`、`git diff`、最近提交，确认只提交本轮相关变更；创建清晰提交信息的 Git 提交。
-9. 停止，不继续处理下一个任务。
+- 首个未完成任务：`T11 — C4 分段式 StatusBar 与 editor diagnostics 接入`。
+- 直接相关最近提交：`[R10] Review menu mnemonics and accelerators`，未发现与 T11 直接相关的未完成问题。
 
-## 进度记录
+## T11 具体执行步骤
 
-- 已创建本执行计划，下一步读取 `TODO.md` 定位第一个未完成任务。
-- 已读取 `TODO.md`。第一个未完成任务是 `R10`：`审阅 T10`，来源为 `TODO-2.md · 阶段二`。下一步读取 `TODO-2.md` 中的 T10/R10 详情，并查看最近提交是否说明与 R10 直接相关的未完成问题。
-- 已读取 `TODO-2.md` 的 T10/R10 条目。R10 要求审阅 shortcut 兼容、Unicode mnemonic 绘制列宽、dropdown 宽度计算、主题 named styles overlay 覆盖。最近提交 `a4d66af [T10] Implement menu mnemonics and accelerators` 未提到未完成问题。下一步检查相关实现和测试。
-- 审阅发现一个与 R10 直接相关的兼容缺口：静态 `.shortcut("q")` 已设置 mnemonic，但旧公开 `shortcut` binding / `.shortcut_binding(...)` 的单字符动态路径不再参与 `handle_shortcut_char`，会改变旧调用方行为。计划修复为：explicit mnemonic/label marker 优先，其次单字符 `shortcut` fallback，最后 label 首字符 fallback；同时补充 dropdown arrow 宽度、Unicode 绘制列宽和 menu named style overlay 测试。
-- 已修复动态单字符 `shortcut` 兼容 fallback，并补充 R10 覆盖测试：`shortcut_binding` legacy mnemonic、dropdown submenu arrow 宽度、Unicode mnemonic 绘制列宽、JSON/YAML menu named style overlay。下一步按要求运行 `cargo fmt`、clippy 和完整测试。
-- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。下一步把 `R10` 标记为 `[DONE]`，填写完成记录，然后检查 diff 并提交。
+1. 阅读 `src/app/status.rs`、`src/app/desktop.rs`、`src/theme/mod.rs` 以及 `atto-editor-app` 的状态更新路径。
+2. 为 `StatusBar` 增加 segment 数据结构、兼容旧 `left/right` API 的绘制分支、分段绘制、优先级隐藏、grapheme 截断和 click hit-test。
+3. 在 `Desktop` 鼠标分发中把 status bar 区域 click 路由给 `StatusBar::handle_mouse`。
+4. 注册状态栏相关 named styles 和 separator glyph fallback。
+5. 在 `atto-editor-app` tick/update 路径中根据当前/最近 editor 状态更新分段状态栏，至少显示 diagnostics summary、language/path 等可用信息。
+6. 添加/更新单元测试和 PTY 测试覆盖指定验收点。
+7. 依次运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`。
+8. 将 `TODO-2.md` 和索引 `TODO.md` 标记为 `[DONE]` 并填写完成记录。
+9. 检查 diff 后以 `[T11] ...` 提交并停止。
+
+## 进展记录
+
+- 已实现 `StatusSegmentAlign` / `StatusSegment`、分段绘制、优先级隐藏、grapheme 截断、click hit-test 与 Desktop status bar click 路由。
+- 已注册 `status-segment`、`status-segment-warning`、`status-segment-error` named styles 和 `status-separator` glyph。
+- 已为 `atto-editor-app` 增加活动 editor status binding，并在 status bar 分段显示 app/path/dirty、diagnostics 和 language。
+- 已添加 StatusBar 单元测试、Desktop click 路由测试和 editor app PTY smoke 测试。
+- 首次完整测试发现新增 PTY 用例中 `language` 段会被超长完整路径按优先级挤掉；已将状态栏路径显示压缩为文件名，保留 diagnostics/language 可见性。
+- 第二次完整测试发现宽字符片段写入后 trailing cell 样式会被重置；已改为手写 grapheme/宽字符单元格渲染，确保背景样式铺满。
+- 验证已通过：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`。
+- 已在 `TODO-2.md` 将 T11 标记为 `[DONE]` 并填写完成记录；已同步 `TODO.md` 索引状态。

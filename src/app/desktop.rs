@@ -363,6 +363,7 @@ impl Desktop {
         // accidentally fall through to the focused view.
         if let Event::Mouse(m) = event {
             if layout.status_bar.height > 0 && m.row == layout.status_bar.y {
+                let _ = self.status.handle_mouse(m, layout.status_bar);
                 return DesktopEventResult::consumed();
             }
             if layout.menu_bar.height > 0 && m.row == layout.menu_bar.y {
@@ -634,6 +635,7 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::StatusSegment;
     use crate::composable::{
         Component, ComponentContext, DragAndDrop, DragOperation, DragPayload, DragSource,
         EventHandling, EventResult,
@@ -1085,6 +1087,39 @@ mod tests {
         assert!(up_result.is_consumed());
         assert!(!desktop.wm.has_global_drag());
         assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn status_bar_mouse_click_routes_to_status_segments() {
+        let screen = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        };
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let clicks = Arc::new(AtomicUsize::new(0));
+        desktop
+            .status
+            .set_segments(vec![StatusSegment::new("click", "Click").on_click({
+                let clicks = Arc::clone(&clicks);
+                move || {
+                    clicks.fetch_add(1, Ordering::SeqCst);
+                }
+            })]);
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: screen.height.saturating_sub(1),
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(clicks.load(Ordering::SeqCst), 1);
     }
 
     #[test]

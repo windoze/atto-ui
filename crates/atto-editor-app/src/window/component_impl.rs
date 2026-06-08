@@ -17,6 +17,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
     fn handle_titlebar_event(&mut self, event: &Event, ctx: TitleBarContext<'_>) -> EventResult {
         let result = self.tab_window.handle_titlebar_event(event, ctx);
         self.sync_active_diagnostics_summary();
+        self.sync_active_status();
         result
     }
 
@@ -24,6 +25,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
         self.handle_commands();
         self.update_tab_titles();
         self.sync_active_diagnostics_summary();
+        self.sync_active_status();
 
         let child_ctx = ComponentContext {
             theme: ctx.theme,
@@ -40,6 +42,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
         };
         self.tab_window.draw(frame, area, child_ctx);
         self.sync_active_diagnostics_summary();
+        self.sync_active_status();
     }
 }
 
@@ -126,6 +129,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
         };
         let result = self.tab_window.handle_event(event, child_ctx);
         self.sync_active_diagnostics_summary();
+        self.sync_active_status();
         result
     }
 }

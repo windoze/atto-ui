@@ -8,11 +8,12 @@ use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
 use crate::language::{guess_language_id, lsp_mode_for_file, syntax_config_for_file};
 
 use super::document_tab::{DocumentTabView, TabCommand};
-use super::{EditorWindowCommand, EditorWindowView};
+use super::{EditorStatus, EditorWindowCommand, EditorWindowView};
 
 pub(super) struct TabState {
     path: Option<PathBuf>,
     title_base: String,
+    language_id: String,
     text: Binding<String>,
     last_saved_text: String,
     text_observer: DirtyObserver,
@@ -58,7 +59,7 @@ impl EditorWindowView {
             self.editor_theme.clone(),
             self.clipboard.clone(),
             text.clone(),
-            language_id,
+            language_id.clone(),
             syntax,
             lsp,
         );
@@ -74,6 +75,7 @@ impl EditorWindowView {
         self.tabs.push(TabState {
             path: Some(path.clone()),
             title_base,
+            language_id,
             text: text.clone(),
             last_saved_text: initial_text,
             text_observer,
@@ -162,6 +164,18 @@ impl EditorWindowView {
             .active_tab()
             .and_then(|idx| self.tabs.get(idx))
             .map(|tab| tab.diagnostics_summary.get())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn active_status(&self) -> EditorStatus {
+        self.tab_window
+            .active_tab()
+            .and_then(|idx| self.tabs.get(idx))
+            .map(|tab| EditorStatus {
+                path: tab.path.clone(),
+                language: tab.language_id.clone(),
+                dirty: tab.is_dirty,
+            })
             .unwrap_or_default()
     }
 
