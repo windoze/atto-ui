@@ -2953,6 +2953,83 @@ mod tests {
     }
 
     #[test]
+    fn workspace_edit_marks_open_tab_dirty() -> anyhow::Result<()> {
+        let root = unique_temp_dir("workspace_edit_dirty");
+        fs::create_dir_all(&root)?;
+        let file = root.join("main.rs");
+        fs::write(&file, "hello world\n")?;
+        let file = canonicalize_best_effort(&file);
+
+        let screen = Rect::new(0, 0, 90, 28);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(Vec::new()));
+        let editor_theme: Binding<atto_ui_editor::EditorThemeSet> =
+            atto_ui_editor::EditorThemeSet::default().into();
+        let clipboard: Binding<String> = String::new().into();
+        let commands = EventQueue::<EditorWindowCommand>::new();
+        let editor_events = EventQueue::<atto_ui_editor::EditorEvent>::new();
+        let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
+            atto_ui_editor::DiagnosticsSummary::default().into();
+        let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
+        let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
+        let workspace_state = WorkspaceState::shared();
+        workspace_state
+            .lock()
+            .set_workspace_roots(vec![canonicalize_best_effort(&root)]);
+        let editor = EditorWindowView::new_with_workspace_bindings(
+            actions,
+            commands.clone(),
+            editor_events,
+            editor_theme,
+            clipboard,
+            workspace_state.clone(),
+            EditorWindowBindings::new(diagnostics_summary, editor_status, tab_summaries.clone()),
+        );
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Atto Editor",
+                default_editor_rect(Desktop::layout(screen).work_area, 0),
+                Box::new(editor),
+            ),
+            screen,
+        );
+
+        commands.push(EditorWindowCommand::OpenFile(file.clone()));
+        let backend = TestBackend::new(screen.width, screen.height);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| desktop.draw(f))?;
+        assert_eq!(tab_summaries.get().len(), 1);
+        assert!(!tab_summaries.get()[0].dirty);
+
+        let mut changes = serde_json::Map::new();
+        changes.insert(
+            editor_core_lsp::path_to_file_uri(&file),
+            serde_json::json!([
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 6 },
+                        "end": { "line": 0, "character": 11 }
+                    },
+                    "newText": "atto"
+                }
+            ]),
+        );
+        workspace_state
+            .lock()
+            .apply_workspace_edit(&serde_json::json!({ "changes": changes }))
+            .map_err(anyhow::Error::msg)?;
+
+        terminal.draw(|f| desktop.draw(f))?;
+        let summaries = tab_summaries.get();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].dirty);
+        assert!(workspace_state.lock().take_last_error().is_none());
+
+        Ok(())
+    }
+
+    #[test]
     fn explorer_window_uses_wm_dock_and_editor_clamps_to_reserved_area() {
         let screen = Rect::new(0, 0, 90, 28);
         let work = Desktop::layout(screen).work_area;

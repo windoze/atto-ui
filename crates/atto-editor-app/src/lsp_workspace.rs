@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use editor_core::{BufferId, Workspace, WorkspaceSymbol};
+use editor_core::{BufferId, LineIndex, Workspace, WorkspaceSymbol};
 use editor_core_lsp::{ApplyWorkspaceEditResult, LspEvent, LspNotification, LspWorkspaceSync};
 use serde_json::{Value, json};
 
@@ -191,6 +191,7 @@ impl LspWorkspaceBridge {
 
     pub fn poll(&mut self, workspace: &mut Workspace) -> Vec<LspWorkspaceEvent> {
         let mut events = Vec::new();
+        let active_key = self.active_poll_key(workspace);
         let keys = self
             .lsp_by_root_language
             .keys()
@@ -200,14 +201,29 @@ impl LspWorkspaceBridge {
             let Some(sync) = self.lsp_by_root_language.get_mut(&key) else {
                 continue;
             };
-            if let Err(err) = sync.poll_workspace(workspace) {
-                events.push(LspWorkspaceEvent::Message(format!(
-                    "Workspace LSP poll failed: {err}"
-                )));
-                continue;
-            }
+            let drained = if active_key.as_ref() == Some(&key) {
+                if let Err(err) = sync.poll_workspace(workspace) {
+                    events.push(LspWorkspaceEvent::Message(format!(
+                        "Workspace LSP poll failed: {err}"
+                    )));
+                    continue;
+                }
+                sync.drain_events()
+            } else {
+                let dummy = LineIndex::from_text("");
+                if let Err(err) = sync
+                    .session_mut()
+                    .poll_edits_with_line_index_and_handler(&dummy, |_| {})
+                {
+                    events.push(LspWorkspaceEvent::Message(format!(
+                        "Workspace LSP poll failed: {err}"
+                    )));
+                    continue;
+                }
+                sync.session_mut().drain_events()
+            };
 
-            for event in sync.drain_events() {
+            for event in drained {
                 match event {
                     LspEvent::Response(response) => {
                         if response.method == "workspace/symbol"
@@ -268,6 +284,12 @@ impl LspWorkspaceBridge {
             }
         }
         events
+    }
+
+    fn active_poll_key(&self, workspace: &Workspace) -> Option<LspKey> {
+        workspace
+            .active_buffer_id()
+            .and_then(|buffer_id| self.document_keys.get(&buffer_id).cloned())
     }
 }
 
@@ -402,5 +424,35 @@ mod tests {
         let path = PathBuf::from("/tmp/ws/crate/src/lib.rs");
 
         assert_eq!(workspace_root_for_path(&roots, &path), roots[1]);
+    }
+
+    #[test]
+    fn active_poll_key_uses_key_for_workspace_active_buffer() {
+        let mut workspace = Workspace::new();
+        let first = workspace
+            .open_buffer(None, "one\n", 80)
+            .expect("open first");
+        let second = workspace
+            .open_buffer(None, "two\n", 80)
+            .expect("open second");
+        workspace
+            .set_active_view(second.view_id)
+            .expect("activate second");
+
+        let first_key = LspKey {
+            workspace_root: PathBuf::from("/tmp/one"),
+            language_id: "rust".to_string(),
+        };
+        let second_key = LspKey {
+            workspace_root: PathBuf::from("/tmp/two"),
+            language_id: "python".to_string(),
+        };
+        let mut bridge = LspWorkspaceBridge::default();
+        bridge.document_keys.insert(first.buffer_id, first_key);
+        bridge
+            .document_keys
+            .insert(second.buffer_id, second_key.clone());
+
+        assert_eq!(bridge.active_poll_key(&workspace), Some(second_key));
     }
 }

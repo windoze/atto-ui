@@ -1215,13 +1215,20 @@
 - 已新增 workspace state 单测覆盖重复打开复用同一 buffer、workspace edit 回写多个 tab binding、active tab 切换更新 active workspace buffer。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R17 — 审阅 T17
+### [DONE] R17 — 审阅 T17
 
 审阅 T17 改动：
 - 确认 bridge 同步不会形成 binding dirty 循环。
 - 确认 `path_to_file_uri` / `file_uri_to_path` 使用 `editor-core-lsp` helper，避免手写 URI。
 - 确认 close tab 后 buffer/LSP document 生命周期合理；若暂不 close，需注释说明。
 - 确认 workspace edit 后 dirty 状态正确更新。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T17 workspace bridge：workspace edit 回写 tab binding 后，`update_tab_titles` 再同步到 workspace 时会先比较 workspace 当前文本，避免把同一 workspace edit 重新发送为 LSP didChange；新增 UI 层测试覆盖 workspace edit 后 tab dirty 状态变为 true 且无 bridge 错误。
+- 确认文件 URI 转换统一使用 `editor-core-lsp::path_to_file_uri` / `editor_core_lsp::file_uri_to_path`，未发现手写 `file://` 拼接或自定义 URI 解析。
+- 确认 tab/window 生命周期合理：关闭非最后一个 tab 只关闭 workspace view，关闭最后一个 tab 时关闭 LSP document、移除 path/buffer 映射并关闭 workspace buffer；关闭 editor window 会 unregister 该窗口所有 tabs。
+- 审阅中发现并修复：多 `(workspace_root, language_id)` LSP sync 轮询时，inactive sync 原先会被传入全局 active buffer，可能因该 buffer 不属于该 sync 而反复 poll 失败。现在只有 owning active sync 使用 `poll_workspace`，inactive sync 通过 raw session poll drain workspace symbol / applyEdit / message events，避免丢事件且不把派生编辑应用到错误 buffer；新增 active poll key 单测。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T18 — L3 Rename UI 与跨已打开文件 WorkspaceEdit 应用
 

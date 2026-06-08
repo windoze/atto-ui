@@ -1,31 +1,26 @@
-# Claude Execution Plan
+# Execution Plan
 
-## Objective
-Complete exactly the first incomplete task listed in TODO.md, then stop after marking it done and committing the result.
+I will follow `TODO.md` as the source of truth and complete exactly the first task whose heading is not prefixed with `[DONE]`.
 
-## Plan
-1. Read TODO.md to identify the first task whose heading is not prefixed with [DONE].
-2. Review the selected task requirements, dependencies, validation instructions, and completion-record format.
-3. Inspect only the relevant project files for that task and check the latest commit for any directly relevant unfinished note.
-4. Implement the task without workarounds or scope narrowing; if a concrete blocker appears, add the minimum prerequisite task to TODO.md instead.
-5. Run formatting, linting, and the relevant tests required by TODO.md; address any unscheduled failures before marking the task done.
-6. Update TODO.md by prefixing the completed task title with [DONE] and filling its completion record. Update PLAN.md only if phase-level sequencing changes.
-7. Commit all task-related changes with a clear message and the required co-author trailer.
+## Steps
+1. Read `TODO.md` and identify the first incomplete task, treating only `[DONE]`-prefixed task headings as complete.
+2. Check the latest commit message for any explicitly unfinished issue that is directly relevant to that task.
+3. Inspect only the files and task context needed to implement that task.
+4. Implement the task without changing unrelated behavior or using workarounds.
+5. Run formatting, linting, and the relevant tests required by the task; address any unscheduled failures as required by the task policy.
+6. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling in its completion record. Update `PLAN.md` only if the phase-level plan changes.
+7. Update this plan file at key milestones.
+8. Commit all task-related changes with a descriptive message and the required co-author trailer.
+9. Stop after this one task.
 
-## Progress
-- Initial plan recorded before task execution.
-- Selected first incomplete task: `T17 — Workspace / LSP Bridge 状态层` from `TODO-2.md`.
-- Added shared workspace-state and workspace-LSP bridge modules.
-- Wired editor-window tab open/save/close/active-tab paths to the shared workspace.
-- Routed workspace-symbol requests through the workspace LSP bridge and added workspace LSP polling to the app tick loop.
-- Validation completed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Marked T17 `[DONE]` in `TODO.md` and `TODO-2.md`.
+## Milestone: Task Identified
 
-## T17 Execution Steps
-1. Inspect the existing editor app tab/window/open/save flow and current LSP integration points.
-2. Inspect available `editor-core` workspace and `editor-core-lsp` workspace sync APIs to use their URI helpers and avoid duplicating protocol logic.
-3. Add workspace state and LSP workspace bridge modules for buffer identity, path-to-buffer reuse, tab binding synchronization, workspace edit application, and active-document tracking.
-4. Wire the bridge into file open, tab switching, save/edit synchronization, tick polling, and any existing workspace-symbol path that needs shared LSP state.
-5. Add focused tests for duplicate open buffer reuse, multi-tab workspace edit propagation, active tab LSP tracking, and preservation of dirty/open behavior.
-6. Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-7. Mark T17 `[DONE]` in `TODO-2.md` and update `TODO.md`, then commit all task-related files.
+The first incomplete task is `R17` in `TODO-2.md`: review of `T17` (`Workspace / LSP Bridge 状态层`). I will review the completed T17 implementation against its TODO/PLAN acceptance criteria, fix any review-blocking defects found, update the task record, validate, commit, and stop.
+
+## Milestone: Review Finding
+
+Review found a T17 bridge bug beyond the checklist: `LspWorkspaceBridge::poll` iterates every `(workspace_root, language_id)` sync but each `LspWorkspaceSync::poll_workspace` uses the single global active workspace buffer. When multiple LSP syncs exist, inactive-language/root sessions can be polled against a buffer they do not track. I will patch polling so each sync is only polled when the active workspace buffer belongs to that sync, and add a focused test.
+
+## Milestone: Validation Complete
+
+R17 review fixes are implemented. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed. `TODO.md` and `TODO-2.md` now mark R17 as `[DONE]`.
