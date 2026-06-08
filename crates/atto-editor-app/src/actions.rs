@@ -15,6 +15,8 @@ pub enum AppAction {
     Save,
     SaveAsDialog,
     OpenCommandPalette,
+    OpenFilePicker,
+    OpenBufferPicker,
 
     CloseTab,
     SplitVertical,
@@ -34,5 +36,9 @@ pub enum AppAction {
     OpenPath {
         path: PathBuf,
         target: OpenTarget,
+    },
+    SelectEditorTab {
+        window: atto_ui::wm::WindowId,
+        tab_id: u64,
     },
 }

@@ -37,6 +37,13 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
         )
         .with_default_sequence(prefixed('d')),
         command(
+            "picker.file",
+            "File Picker",
+            "Picker",
+            AppCommandAction::App(AppAction::OpenFilePicker),
+        )
+        .with_default_sequence(ctrl('p')),
+        command(
             "file.save",
             "Save",
             "File",
@@ -202,6 +209,12 @@ pub fn app_command_registry() -> CommandRegistry<AppCommandAction> {
             AppCommandAction::OpenCommandPalette,
         )
         .with_default_sequence(ctrl_shift('p')),
+        command(
+            "picker.buffer",
+            "Buffer Picker",
+            "Picker",
+            AppCommandAction::App(AppAction::OpenBufferPicker),
+        ),
     ])
     .expect("app command ids must be unique")
 }
@@ -227,6 +240,10 @@ fn ctrl_alt(ch: char) -> KeyChord {
     KeyChord::new(KeyCode::Char(ch), KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
+fn ctrl(ch: char) -> KeyChord {
+    KeyChord::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
+}
+
 fn ctrl_shift(ch: char) -> KeyChord {
     KeyChord::new(
         KeyCode::Char(ch),
@@ -247,6 +264,8 @@ mod tests {
         assert!(registry.get("split.vertical").is_some());
         assert!(registry.get("editor.toggleComment").is_some());
         assert!(registry.get("lsp.codeAction").is_some());
+        assert!(registry.get("picker.file").is_some());
         assert!(registry.get("picker.commandPalette").is_some());
+        assert!(registry.get("picker.buffer").is_some());
     }
 }

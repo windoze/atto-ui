@@ -11,13 +11,14 @@ use super::document_tab::{DocumentTabView, TabCommand};
 use super::{EditorStatus, EditorWindowCommand, EditorWindowView};
 
 pub(super) struct TabState {
-    path: Option<PathBuf>,
-    title_base: String,
+    pub(super) tab_id: u64,
+    pub(super) path: Option<PathBuf>,
+    pub(super) title_base: String,
     language_id: String,
     text: Binding<String>,
     last_saved_text: String,
     text_observer: DirtyObserver,
-    is_dirty: bool,
+    pub(super) is_dirty: bool,
     diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary>,
     commands: EventQueue<TabCommand>,
 }
@@ -72,7 +73,10 @@ impl EditorWindowView {
         let mut text_observer = text.dirty_observer();
         text.check_dirty(&mut text_observer);
 
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
         self.tabs.push(TabState {
+            tab_id,
             path: Some(path.clone()),
             title_base,
             language_id,
@@ -83,6 +87,12 @@ impl EditorWindowView {
             diagnostics_summary: tab_handle.diagnostics_summary.clone(),
             commands: tab_commands.clone(),
         });
+    }
+
+    fn select_tab_by_id(&mut self, tab_id: u64) {
+        if let Some(index) = self.tabs.iter().position(|tab| tab.tab_id == tab_id) {
+            let _ = self.tab_window.select_tab(index);
+        }
     }
 
     fn close_active_tab(&mut self) {
@@ -183,6 +193,7 @@ impl EditorWindowView {
         for cmd in self.commands.drain() {
             match cmd {
                 EditorWindowCommand::OpenFile(path) => self.open_file_in_tab(path),
+                EditorWindowCommand::SelectTabById(tab_id) => self.select_tab_by_id(tab_id),
                 EditorWindowCommand::SaveActive => {
                     let _ = self.save_active();
                 }

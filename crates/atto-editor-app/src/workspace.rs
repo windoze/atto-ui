@@ -14,6 +14,18 @@ pub struct WorkspaceTree {
     pub id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceFileEntry {
+    pub path: PathBuf,
+    pub display_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceFileIndex {
+    pub roots: Vec<PathBuf>,
+    pub entries: Vec<WorkspaceFileEntry>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceTreeOptions {
     pub max_depth: usize,
@@ -54,6 +66,70 @@ pub fn build_workspace_tree(roots: &[PathBuf], options: WorkspaceTreeOptions) ->
         id_to_path,
         id_to_kind,
     }
+}
+
+pub fn build_workspace_file_index(roots: &[PathBuf], max_entries: usize) -> WorkspaceFileIndex {
+    let max_entries = max_entries.max(1);
+    let roots = roots
+        .iter()
+        .filter_map(|p| canonicalize_best_effort(p))
+        .collect::<Vec<_>>();
+    let tree = build_workspace_tree(
+        &roots,
+        WorkspaceTreeOptions {
+            max_entries_per_dir: max_entries,
+            ..WorkspaceTreeOptions::default()
+        },
+    );
+
+    let mut entries = Vec::new();
+    for root in &tree.roots {
+        collect_file_entries(root, &tree.id_to_path, &roots, &mut entries, max_entries);
+        if entries.len() >= max_entries {
+            break;
+        }
+    }
+
+    WorkspaceFileIndex { roots, entries }
+}
+
+fn collect_file_entries(
+    node: &FileTreeNode,
+    id_to_path: &HashMap<FileTreeNodeId, PathBuf>,
+    roots: &[PathBuf],
+    entries: &mut Vec<WorkspaceFileEntry>,
+    max_entries: usize,
+) {
+    if entries.len() >= max_entries {
+        return;
+    }
+
+    if node.kind == FileTreeNodeKind::File {
+        if let Some(path) = id_to_path.get(&node.id) {
+            entries.push(WorkspaceFileEntry {
+                path: path.clone(),
+                display_path: display_path_for_file(path, roots),
+            });
+        }
+        return;
+    }
+
+    for child in &node.children {
+        collect_file_entries(child, id_to_path, roots, entries, max_entries);
+        if entries.len() >= max_entries {
+            break;
+        }
+    }
+}
+
+fn display_path_for_file(path: &Path, roots: &[PathBuf]) -> String {
+    roots
+        .iter()
+        .filter_map(|root| path.strip_prefix(root).ok())
+        .min_by_key(|relative| relative.components().count())
+        .map(|relative| relative.to_string_lossy().to_string())
+        .filter(|relative| !relative.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
 fn canonicalize_best_effort(path: &Path) -> Option<PathBuf> {
@@ -266,5 +342,39 @@ mod tests {
         let tree = build_workspace_tree(std::slice::from_ref(&root.path), options);
         assert_eq!(tree.roots.len(), 1);
         assert!(tree.roots[0].children.is_empty());
+    }
+
+    #[test]
+    fn build_workspace_file_index_flattens_visible_files_only() {
+        let root = TempDir::new("file_index");
+        fs::create_dir_all(root.path.join("src")).unwrap();
+        fs::create_dir_all(root.path.join(".git")).unwrap();
+        fs::write(root.path.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.path.join("README.md"), "# readme\n").unwrap();
+        fs::write(root.path.join(".hidden"), "secret\n").unwrap();
+        fs::write(root.path.join(".git").join("config"), "ignore\n").unwrap();
+
+        let index = build_workspace_file_index(std::slice::from_ref(&root.path), 100);
+        let display_paths = index
+            .entries
+            .iter()
+            .map(|entry| entry.display_path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(display_paths.contains(&"src/main.rs"));
+        assert!(display_paths.contains(&"README.md"));
+        assert!(!display_paths.iter().any(|path| path.contains(".git")));
+        assert!(!display_paths.iter().any(|path| path.contains(".hidden")));
+    }
+
+    #[test]
+    fn build_workspace_file_index_respects_global_entry_limit() {
+        let root = TempDir::new("file_index_limit");
+        fs::write(root.path.join("a.txt"), "a\n").unwrap();
+        fs::write(root.path.join("b.txt"), "b\n").unwrap();
+
+        let index = build_workspace_file_index(std::slice::from_ref(&root.path), 1);
+
+        assert_eq!(index.entries.len(), 1);
     }
 }

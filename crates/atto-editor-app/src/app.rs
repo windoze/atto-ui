@@ -25,7 +25,8 @@ use crate::actions::{AppAction, OpenTarget};
 use crate::commands::{self, AppCommandAction};
 use crate::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use crate::picker::{PickerEvent, PickerItem, PickerView};
-use crate::window::{EditorStatus, EditorWindowCommand, EditorWindowView};
+use crate::window::{EditorStatus, EditorTabSummary, EditorWindowCommand, EditorWindowView};
+use crate::workspace::{WorkspaceFileIndex, build_workspace_file_index};
 
 #[derive(Clone, Debug)]
 pub struct AttoEditorConfig {
@@ -41,11 +42,13 @@ impl AttoEditorConfig {
 
 const DEFAULT_EXPLORER_DOCK_SIZE: u16 = 34;
 const MIN_EXPLORER_DOCK_SIZE: u16 = 20;
+const MAX_FILE_PICKER_ENTRIES: usize = 20_000;
 
 struct AppState {
     editor_windows: HashMap<WindowId, EventQueue<EditorWindowCommand>>,
     editor_diagnostics: HashMap<WindowId, Binding<atto_ui_editor::DiagnosticsSummary>>,
     editor_statuses: HashMap<WindowId, Binding<EditorStatus>>,
+    editor_tab_summaries: HashMap<WindowId, Binding<Vec<EditorTabSummary>>>,
     last_focused_editor: Option<WindowId>,
     next_window_offset: u16,
 
@@ -60,6 +63,13 @@ struct AppState {
     command_palette_window: Option<WindowId>,
     command_palette_restore_focus: Option<WindowId>,
     command_palette_events: EventQueue<PickerEvent<AppCommandAction>>,
+    file_picker_window: Option<WindowId>,
+    file_picker_restore_focus: Option<WindowId>,
+    file_picker_events: EventQueue<PickerEvent<AppAction>>,
+    file_picker_cache: Option<WorkspaceFileIndex>,
+    buffer_picker_window: Option<WindowId>,
+    buffer_picker_restore_focus: Option<WindowId>,
+    buffer_picker_events: EventQueue<PickerEvent<AppAction>>,
 }
 
 impl Default for AppState {
@@ -68,6 +78,7 @@ impl Default for AppState {
             editor_windows: HashMap::new(),
             editor_diagnostics: HashMap::new(),
             editor_statuses: HashMap::new(),
+            editor_tab_summaries: HashMap::new(),
             last_focused_editor: None,
             next_window_offset: 0,
             explorer_window: None,
@@ -80,6 +91,13 @@ impl Default for AppState {
             command_palette_window: None,
             command_palette_restore_focus: None,
             command_palette_events: EventQueue::new(),
+            file_picker_window: None,
+            file_picker_restore_focus: None,
+            file_picker_events: EventQueue::new(),
+            file_picker_cache: None,
+            buffer_picker_window: None,
+            buffer_picker_restore_focus: None,
+            buffer_picker_events: EventQueue::new(),
         }
     }
 }
@@ -128,7 +146,10 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
 
                 {
                     let mut s = state.lock();
-                    s.workspace_roots = workspace_roots.clone();
+                    if s.workspace_roots != workspace_roots {
+                        s.workspace_roots = workspace_roots.clone();
+                        s.file_picker_cache = None;
+                    }
                 }
 
                 // Explorer window (file tree).
@@ -180,18 +201,27 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
                     atto_ui_editor::DiagnosticsSummary::default().into();
                 let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
-                let view = EditorWindowView::new_with_status(
+                let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
+                let view = EditorWindowView::new_with_status_and_tabs(
                     actions.clone(),
                     commands.clone(),
                     editor_theme.clone(),
                     clipboard.clone(),
                     diagnostics_summary.clone(),
                     editor_status.clone(),
+                    tab_summaries.clone(),
                 );
 
                 let id = desktop.add_window(
                     Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
-                        .with_tag("atto-editor-app"),
+                        .with_tag("atto-editor-app")
+                        .with_close_hook({
+                            let state = state.clone();
+                            move |id| {
+                                remove_editor_window_state(&state, id);
+                                true
+                            }
+                        }),
                     screen,
                 );
                 {
@@ -199,6 +229,7 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                     s.editor_windows.insert(id, commands.clone());
                     s.editor_diagnostics.insert(id, diagnostics_summary);
                     s.editor_statuses.insert(id, editor_status);
+                    s.editor_tab_summaries.insert(id, tab_summaries);
                     s.last_focused_editor = Some(id);
                 }
 
@@ -236,6 +267,8 @@ pub fn run(config: AttoEditorConfig) -> Result<()> {
                 update_diagnostics_statusbar(desktop, &state);
 
                 process_command_palette_events(desktop, &state, &actions);
+                process_file_picker_events(desktop, &state, &actions);
+                process_buffer_picker_events(desktop, &state, &actions);
 
                 // Handle queued UI actions (menus / dialogs / child windows).
                 for action in actions.drain() {
@@ -325,6 +358,11 @@ fn build_menu(actions: EventQueue<AppAction>) -> MenuBar {
                     let actions = actions.clone();
                     move || actions.push(AppAction::OpenFolderDialog)
                 }),
+                MenuItem::action("Quick Open…", {
+                    let actions = actions.clone();
+                    move || actions.push(AppAction::OpenFilePicker)
+                })
+                .accelerator("Ctrl+P"),
                 MenuItem::action("Save", {
                     let actions = actions.clone();
                     move || actions.push(AppAction::Save)
@@ -439,6 +477,12 @@ fn handle_action(
         AppAction::OpenCommandPalette => {
             open_command_palette(desktop, screen, state);
         }
+        AppAction::OpenFilePicker => {
+            open_file_picker(desktop, screen, state);
+        }
+        AppAction::OpenBufferPicker => {
+            open_buffer_picker(desktop, screen, state);
+        }
 
         AppAction::CloseTab => {
             if let Some(cmds) = active_editor_commands(desktop, state) {
@@ -521,6 +565,14 @@ fn handle_action(
                 target,
                 path,
             );
+        }
+        AppAction::SelectEditorTab { window, tab_id } => {
+            if let Some(cmds) = state.lock().editor_windows.get(&window).cloned()
+                && desktop.wm.window(window).is_some()
+            {
+                desktop.focus_window(window);
+                cmds.push(EditorWindowCommand::SelectTabById(tab_id));
+            }
         }
     }
 
@@ -699,6 +751,248 @@ fn command_palette_items() -> Vec<PickerItem<AppCommandAction>> {
         .collect()
 }
 
+fn process_file_picker_events(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().file_picker_events.clone();
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_file_picker_focus(desktop, state);
+                actions.push(action);
+            }
+            PickerEvent::Closed => restore_file_picker_focus(desktop, state),
+        }
+    }
+}
+
+fn restore_file_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.file_picker_window = None;
+        s.file_picker_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn open_file_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+    if let Some(id) = state.lock().file_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().file_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.file_picker_events.clone();
+        let _ = events.drain();
+        s.file_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new("File Picker", file_picker_items(state), events.clone())
+        .placeholder("Type a file path")
+        .max_results(300);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 82, 20);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "File Picker", rect, Box::new(view))
+            .with_tag("atto-editor-app-file-picker")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.file_picker_window == Some(id) {
+                        s.file_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().file_picker_window = Some(id);
+}
+
+fn file_picker_items(state: &Arc<Mutex<AppState>>) -> Vec<PickerItem<AppAction>> {
+    let roots = {
+        let s = state.lock();
+        let roots = canonical_workspace_roots(&s.workspace_roots);
+        if let Some(cache) = &s.file_picker_cache
+            && cache.roots == roots
+        {
+            return file_picker_items_from_index(cache);
+        }
+        roots
+    };
+
+    let index = build_workspace_file_index(&roots, MAX_FILE_PICKER_ENTRIES);
+    let items = file_picker_items_from_index(&index);
+    {
+        let mut s = state.lock();
+        if canonical_workspace_roots(&s.workspace_roots) == index.roots {
+            s.file_picker_cache = Some(index);
+        } else {
+            s.file_picker_cache = None;
+        }
+    }
+    items
+}
+
+fn canonical_workspace_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .map(|root| canonicalize_best_effort(root))
+        .collect()
+}
+
+fn file_picker_items_from_index(index: &WorkspaceFileIndex) -> Vec<PickerItem<AppAction>> {
+    index
+        .entries
+        .iter()
+        .map(|entry| {
+            PickerItem::new(
+                entry.display_path.clone(),
+                AppAction::OpenPath {
+                    path: entry.path.clone(),
+                    target: OpenTarget::NewTab,
+                },
+            )
+            .subtitle(entry.path.to_string_lossy())
+        })
+        .collect()
+}
+
+fn process_buffer_picker_events(
+    desktop: &mut Desktop,
+    state: &Arc<Mutex<AppState>>,
+    actions: &EventQueue<AppAction>,
+) {
+    let events = state.lock().buffer_picker_events.clone();
+    for event in events.drain() {
+        match event {
+            PickerEvent::Accepted(action) => {
+                restore_buffer_picker_focus(desktop, state);
+                actions.push(action);
+            }
+            PickerEvent::Closed => restore_buffer_picker_focus(desktop, state),
+        }
+    }
+}
+
+fn restore_buffer_picker_focus(desktop: &mut Desktop, state: &Arc<Mutex<AppState>>) {
+    let restore = {
+        let mut s = state.lock();
+        s.buffer_picker_window = None;
+        s.buffer_picker_restore_focus.take()
+    };
+
+    if let Some(id) = restore
+        && desktop.wm.window(id).is_some()
+    {
+        desktop.focus_window(id);
+    }
+}
+
+fn open_buffer_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppState>>) {
+    if let Some(id) = state.lock().buffer_picker_window {
+        if desktop.wm.window(id).is_some() {
+            return;
+        }
+        state.lock().buffer_picker_window = None;
+    }
+    if desktop.wm.has_active_modal() {
+        return;
+    }
+
+    let events = {
+        let mut s = state.lock();
+        let events = s.buffer_picker_events.clone();
+        let _ = events.drain();
+        s.buffer_picker_restore_focus = desktop.wm.focused();
+        events
+    };
+    let view = PickerView::new(
+        "Buffer Picker",
+        buffer_picker_items(desktop, state),
+        events.clone(),
+    )
+    .placeholder("Type a buffer name")
+    .max_results(200);
+    let work = Desktop::layout(screen).work_area;
+    let rect = centered_rect(work, 82, 18);
+    let id = desktop.add_window(
+        Window::new(WindowKind::Modal, "Buffer Picker", rect, Box::new(view))
+            .with_tag("atto-editor-app-buffer-picker")
+            .with_close_hook({
+                let state = state.clone();
+                let events = events.clone();
+                move |id| {
+                    let mut s = state.lock();
+                    if s.buffer_picker_window == Some(id) {
+                        s.buffer_picker_window = None;
+                    }
+                    events.push(PickerEvent::Closed);
+                    true
+                }
+            }),
+        screen,
+    );
+    state.lock().buffer_picker_window = Some(id);
+}
+
+fn buffer_picker_items(
+    desktop: &Desktop,
+    state: &Arc<Mutex<AppState>>,
+) -> Vec<PickerItem<AppAction>> {
+    let summaries = state.lock().editor_tab_summaries.clone();
+    let mut items = Vec::new();
+    for window in desktop.wm.windows() {
+        let window_id = window.id();
+        let Some(tab_summaries) = summaries.get(&window_id) else {
+            continue;
+        };
+        for summary in tab_summaries.get() {
+            items.push(buffer_picker_item(window_id, summary));
+        }
+    }
+    items
+}
+
+fn buffer_picker_item(window: WindowId, summary: EditorTabSummary) -> PickerItem<AppAction> {
+    let title = if summary.dirty {
+        format!("{}*", summary.title)
+    } else {
+        summary.title
+    };
+    let path = summary
+        .path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "[Untitled]".to_string());
+    let active = if summary.active { "Active" } else { "Open" };
+
+    PickerItem::new(
+        title,
+        AppAction::SelectEditorTab {
+            window,
+            tab_id: summary.tab_id,
+        },
+    )
+    .subtitle(format!("{active} · Window {} · {path}", window.raw()))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn open_path(
     desktop: &mut Desktop,
@@ -773,10 +1067,22 @@ fn add_workspace_root(state: &Arc<Mutex<AppState>>, root: PathBuf) {
             return;
         }
         s.workspace_roots.push(root);
+        s.file_picker_cache = None;
         (s.workspace_roots.clone(), s.explorer_commands.clone())
     };
 
     explorer_cmds.push(ExplorerWindowCommand::SetWorkspaceRoots(roots));
+}
+
+fn remove_editor_window_state(state: &Arc<Mutex<AppState>>, id: WindowId) {
+    let mut s = state.lock();
+    s.editor_windows.remove(&id);
+    s.editor_diagnostics.remove(&id);
+    s.editor_statuses.remove(&id);
+    s.editor_tab_summaries.remove(&id);
+    if s.last_focused_editor == Some(id) {
+        s.last_focused_editor = None;
+    }
 }
 
 fn sync_explorer_dock_state(desktop: &Desktop, state: &Arc<Mutex<AppState>>) {
@@ -1121,17 +1427,26 @@ fn add_editor_window(
     let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
         atto_ui_editor::DiagnosticsSummary::default().into();
     let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
-    let view = EditorWindowView::new_with_status(
+    let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
+    let view = EditorWindowView::new_with_status_and_tabs(
         actions,
         commands.clone(),
         editor_theme,
         clipboard,
         diagnostics_summary.clone(),
         editor_status.clone(),
+        tab_summaries.clone(),
     );
     let id = desktop.add_window(
         Window::new(WindowKind::Normal, "Atto Editor", rect, Box::new(view))
-            .with_tag("atto-editor-app"),
+            .with_tag("atto-editor-app")
+            .with_close_hook({
+                let state = state.clone();
+                move |id| {
+                    remove_editor_window_state(&state, id);
+                    true
+                }
+            }),
         screen,
     );
     {
@@ -1139,6 +1454,7 @@ fn add_editor_window(
         s.editor_windows.insert(id, commands.clone());
         s.editor_diagnostics.insert(id, diagnostics_summary);
         s.editor_statuses.insert(id, editor_status);
+        s.editor_tab_summaries.insert(id, tab_summaries);
         s.last_focused_editor = Some(id);
     }
 
@@ -1296,6 +1612,10 @@ mod tests {
         ))
     }
 
+    fn ctrl_key(ch: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL))
+    }
+
     #[test]
     fn command_prefix_shows_which_key_and_exact_dispatches_action() {
         let screen = Rect::new(0, 0, 80, 24);
@@ -1391,6 +1711,29 @@ mod tests {
     }
 
     #[test]
+    fn file_picker_shortcut_dispatches_open_action() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), build_menu(actions.clone()));
+        let mut keymap =
+            commands::app_command_registry().key_sequence_engine(DEFAULT_KEY_SEQUENCE_TIMEOUT);
+
+        handle_command_key_event(
+            &mut desktop,
+            &ctrl_key('p'),
+            screen,
+            &DesktopEventResult::ignored(),
+            &mut keymap,
+            &state,
+            &actions,
+        )
+        .expect("file picker shortcut handled");
+
+        assert_eq!(actions.drain(), vec![AppAction::OpenFilePicker]);
+    }
+
+    #[test]
     fn command_palette_items_come_from_command_registry() {
         let items = command_palette_items();
 
@@ -1400,7 +1743,9 @@ mod tests {
             .expect("save command item");
         assert_eq!(save.subtitle, "File");
         assert_eq!(save.shortcut.as_deref(), Some("Ctrl+Alt+K Ctrl+Alt+A"));
+        assert!(items.iter().any(|item| item.title == "File Picker"));
         assert!(items.iter().any(|item| item.title == "Command Palette"));
+        assert!(items.iter().any(|item| item.title == "Buffer Picker"));
     }
 
     #[test]
@@ -1532,6 +1877,144 @@ mod tests {
         let s = state.lock();
         assert_eq!(s.workspace_roots.len(), 1);
         assert!(s.explorer_commands.is_empty());
+    }
+
+    #[test]
+    fn file_picker_items_rebuild_when_workspace_roots_change() {
+        let root_a = unique_temp_dir("file_picker_root_a");
+        let root_b = unique_temp_dir("file_picker_root_b");
+        fs::create_dir_all(root_a.join("src")).expect("create root a");
+        fs::create_dir_all(root_b.join("src")).expect("create root b");
+        fs::write(root_a.join("src").join("main.rs"), "fn main() {}\n").expect("write main");
+        fs::write(root_b.join("src").join("lib.rs"), "pub fn lib() {}\n").expect("write lib");
+
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        state.lock().workspace_roots = vec![root_a.clone()];
+
+        let first = file_picker_items(&state);
+        assert!(first.iter().any(|item| item.title == "src/main.rs"));
+        assert!(!first.iter().any(|item| item.title == "src/lib.rs"));
+
+        state.lock().workspace_roots = vec![root_b.clone()];
+        let second = file_picker_items(&state);
+
+        assert!(second.iter().any(|item| item.title == "src/lib.rs"));
+        assert!(!second.iter().any(|item| item.title == "src/main.rs"));
+        assert_eq!(
+            state
+                .lock()
+                .file_picker_cache
+                .as_ref()
+                .map(|cache| cache.roots.clone()),
+            Some(vec![canonicalize_best_effort(&root_b)])
+        );
+    }
+
+    #[test]
+    fn buffer_picker_selects_tab_by_stable_id_after_close() -> anyhow::Result<()> {
+        let root = unique_temp_dir("buffer_picker_tabs");
+        fs::create_dir_all(&root)?;
+        let first = root.join("one.rs");
+        let second = root.join("two.rs");
+        let third = root.join("three.rs");
+        fs::write(&first, "// one\n")?;
+        fs::write(&second, "// two\n")?;
+        fs::write(&third, "// three\n")?;
+
+        let screen = Rect::new(0, 0, 90, 28);
+        let actions: EventQueue<AppAction> = EventQueue::new();
+        let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::default()));
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(Vec::new()));
+        let editor_theme: atto_ui::reactive::Binding<atto_ui_editor::EditorThemeSet> =
+            atto_ui_editor::EditorThemeSet::default().into();
+        let clipboard: atto_ui::reactive::Binding<String> = String::new().into();
+        let commands = EventQueue::<EditorWindowCommand>::new();
+        let diagnostics_summary: Binding<atto_ui_editor::DiagnosticsSummary> =
+            atto_ui_editor::DiagnosticsSummary::default().into();
+        let editor_status: Binding<EditorStatus> = EditorStatus::default().into();
+        let tab_summaries: Binding<Vec<EditorTabSummary>> = Vec::new().into();
+        let editor = EditorWindowView::new_with_status_and_tabs(
+            actions.clone(),
+            commands.clone(),
+            editor_theme.clone(),
+            clipboard.clone(),
+            diagnostics_summary.clone(),
+            editor_status.clone(),
+            tab_summaries.clone(),
+        );
+        let editor_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Atto Editor",
+                default_editor_rect(Desktop::layout(screen).work_area, 0),
+                Box::new(editor),
+            ),
+            screen,
+        );
+        {
+            let mut s = state.lock();
+            s.editor_windows.insert(editor_id, commands.clone());
+            s.editor_diagnostics.insert(editor_id, diagnostics_summary);
+            s.editor_statuses.insert(editor_id, editor_status);
+            s.editor_tab_summaries
+                .insert(editor_id, tab_summaries.clone());
+            s.last_focused_editor = Some(editor_id);
+        }
+
+        commands.push(EditorWindowCommand::OpenFile(first.clone()));
+        commands.push(EditorWindowCommand::OpenFile(second));
+        commands.push(EditorWindowCommand::OpenFile(third));
+        let backend = TestBackend::new(screen.width, screen.height);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| desktop.draw(f))?;
+
+        let summaries = tab_summaries.get();
+        assert_eq!(summaries.len(), 3);
+        let first_tab_id = summaries[0].tab_id;
+        let second_tab_id = summaries[1].tab_id;
+
+        commands.push(EditorWindowCommand::CloseActiveTab);
+        terminal.draw(|f| desktop.draw(f))?;
+        let summaries_after_close = tab_summaries.get();
+        assert_eq!(summaries_after_close.len(), 2);
+        assert_eq!(summaries_after_close[0].tab_id, first_tab_id);
+        assert_eq!(summaries_after_close[1].tab_id, second_tab_id);
+
+        let item = buffer_picker_items(&desktop, &state)
+            .into_iter()
+            .find(|item| item.title == "one.rs")
+            .expect("first tab picker item");
+        assert_eq!(
+            item.action,
+            AppAction::SelectEditorTab {
+                window: editor_id,
+                tab_id: first_tab_id,
+            }
+        );
+
+        handle_action(
+            &mut desktop,
+            screen,
+            &state,
+            &actions,
+            item.action,
+            &Property::new(None),
+            &Property::new(None),
+            &Property::new(String::new()),
+            editor_theme,
+            clipboard,
+        )?;
+        terminal.draw(|f| desktop.draw(f))?;
+
+        let active = tab_summaries
+            .get()
+            .into_iter()
+            .find(|summary| summary.active)
+            .expect("active tab summary");
+        assert_eq!(active.tab_id, first_tab_id);
+        assert_eq!(active.path, Some(canonicalize_best_effort(&first)));
+
+        Ok(())
     }
 
     #[test]

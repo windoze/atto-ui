@@ -18,6 +18,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
         let result = self.tab_window.handle_titlebar_event(event, ctx);
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
+        self.sync_tab_summaries();
         result
     }
 
@@ -26,6 +27,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
         self.update_tab_titles();
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
+        self.sync_tab_summaries();
 
         let child_ctx = ComponentContext {
             theme: ctx.theme,
@@ -43,6 +45,7 @@ impl ::atto_ui::composable::Component for EditorWindowView {
         self.tab_window.draw(frame, area, child_ctx);
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
+        self.sync_tab_summaries();
     }
 }
 
@@ -130,6 +133,7 @@ impl ::atto_ui::composable::EventHandling for EditorWindowView {
         let result = self.tab_window.handle_event(event, child_ctx);
         self.sync_active_diagnostics_summary();
         self.sync_active_status();
+        self.sync_tab_summaries();
         result
     }
 }

@@ -1,21 +1,26 @@
 # 执行计划
 
-## 初始计划
-
-1. 读取 `TODO.md`，按文件顺序找到第一个标题未以 `[DONE]` 标记的任务。
-2. 只围绕该任务读取必要上下文，包括任务说明、相关源码、测试和最近提交信息；不做开放式历史问题扫查。
-3. 如发现当前任务被具体缺陷或缺失能力阻塞，优先修复阻塞项；若无法在本次直接修复，则在 `TODO.md` 中加入最小必要前置任务并停止。
-4. 实现当前任务要求，保持修改尽量小且符合现有代码结构。
-5. 按要求运行格式化、lint 和相关测试；若代码变更影响全局行为，再运行完整测试套件。
-6. 更新 `TODO.md`，为完成的任务标题加 `[DONE]` 并填写完成记录；仅当阶段计划实际变化时更新 `PLAN.md`。
-7. 检查 git 状态和差异，提交本次任务相关全部变更，然后停止，不进入下一项任务。
-
 ## 当前状态
 
-- 已读取 `TODO.md`，首个未完成任务为 `R14 审阅 T14`（来源 `TODO-2.md` 阶段二）。
-- 已读取 `TODO-2.md` 中 T14/R14 详细要求；最新提交为 `[T14] Implement command palette picker`，未发现提交信息中有额外未完成项。
-- 审阅重点：picker 过滤是否只在 query 变化时发生、fuzzy 高亮位置是否 Unicode 安全、modal close hook 是否清理 `AppState` 并恢复焦点、command palette 是否不绕过 disabled command 规则。
-- 已审阅 T14 涉及文件和测试，未发现需要修改功能代码的问题。
-- 验证已通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
-- 已将 `TODO.md` 与 `TODO-2.md` 中 R14 标记为 `[DONE]` 并补充完成记录。
-- 下一步检查 git diff/status，只提交本次 R14 相关文档与计划记录变更，然后停止。
+- 已读取 `TODO.md` 和 `TODO-2.md`，第一个未完成任务为 `T15 — File picker 与 Buffer/tab picker`。
+- `PLAN.md` 在仓库根目录不存在；相关阶段计划位于 `PLAN-2.md`，已查看 file picker / buffer picker 章节。
+- 最新提交为 `[R14] Review command palette picker`，未发现直接提示 T15 的未完成阻塞事项。
+- 已完成核心实现草稿：新增 workspace file index、`OpenFilePicker` / `OpenBufferPicker` / `SelectEditorTab` actions、file/buffer picker modal 事件流、tab stable id 和选择命令。
+- 已增加单元与 PTY 测试草稿，覆盖 file picker cache invalidation、`Ctrl+P` 打开 workspace 文件、buffer picker stable tab id selection。
+- 已运行 `cargo fmt`。
+- 已运行 `cargo clippy --workspace --all-targets -- -D warnings`，通过。
+- 已运行 `cargo test --workspace --all-targets`，通过。
+- 已将 T15 在 `TODO.md` / `TODO-2.md` 标记为 `[DONE]` 并填写完成记录。
+- 下一步检查 git 状态与差异，然后提交本任务变更。
+- 本文件用于记录可审阅的执行计划、关键决策、进度和验证结果。
+
+## 步骤
+
+1. 阅读 T15 相关文件：`actions.rs`、`app.rs`、`workspace.rs`、`window.rs`、`window/tabs.rs`、`picker.rs`，确认现有 command palette、open path、workspace tree、tab 状态和测试模式。
+2. 设计并实现 `AppAction::OpenFilePicker`、`OpenBufferPicker`、`SelectEditorTab { window, tab_id }`，复用现有 action 分发路径。
+3. 实现 file picker：基于 workspace roots / `build_workspace_tree` flatten file nodes，排除目录和隐藏 `.git` 内容，加入缓存和 roots invalidation，accept 时调用 `OpenPath { target: NewTab }`。
+4. 实现 buffer/tab picker：为 `TabState` 增加 stable `tab_id`，暴露 tab summaries，增加 `EditorWindowCommand::SelectTabById(u64)`，accept 后按窗口和 tab id 切换。
+5. 接入快捷键与命令：`Ctrl+P` 打开 file picker；buffer picker 通过 command palette 命令暴露。
+6. 增加或更新单元/PTY 测试，覆盖 file picker fuzzy 打开 `src/main.rs`、buffer picker 在两个 tabs 间按 stable id 切换。
+7. 运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+8. 更新 `TODO.md` / `TODO-2.md` 完成记录并提交本任务变更后停止。

@@ -1017,7 +1017,7 @@
 - 未发现需要修改 T14 功能代码的问题。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T15 — File picker 与 Buffer/tab picker
+### [DONE] T15 — File picker 与 Buffer/tab picker
 
 **依赖**：T14。
 
@@ -1057,6 +1057,13 @@
 **验收**：
 - tab id 不因 close/reorder 改变而误选。
 - 大 workspace 初期可同步构建，但要有 max entries 或缓存，避免每帧扫描。
+
+**完成记录（2026-06-09）**：
+- `AppAction` 新增 `OpenFilePicker`、`OpenBufferPicker`、`SelectEditorTab { window, tab_id }`，并接入 `handle_action`；`Ctrl+P` 打开 File Picker，Command Palette 中新增 File Picker 与 Buffer Picker 命令。
+- File Picker 复用 workspace tree 构建文件索引，只 flatten file nodes；沿用默认 hidden / `.git` 过滤，增加 `MAX_FILE_PICKER_ENTRIES` 与 `WorkspaceFileIndex` cache，workspace roots 变化时自动重建/失效；accept 后走既有 `OpenPath { target: NewTab }` 路径。
+- `TabState` 增加 stable `tab_id: u64`，`EditorWindowView` 同步 `EditorTabSummary` binding；Buffer Picker 从打开的 editor windows 收集 tab summaries，accept 后发送 `EditorWindowCommand::SelectTabById(u64)`，不依赖过期 tab index。
+- 新增/更新测试：workspace file index files-only/hidden filtering/entry limit；app 单元覆盖 `Ctrl+P` dispatch、file picker cache invalidation、buffer picker 在关闭 tab 后仍按 stable id 选择；PTY 覆盖 `Ctrl+P` fuzzy 找到并打开 `src/main.rs`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R15 — 审阅 T15
 
