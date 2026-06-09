@@ -1,4 +1,4 @@
-use super::WindowManager;
+use super::{DragKind, WindowManager};
 use crate::composable::{
     Component, ComponentContext, DragAndDrop, DragOffer, DragOperation, DragPayload, DragSource,
     DropEffect, DropFeedback, DynamicTree, EventHandling, EventResult, FocusNav, Label, Layout,
@@ -596,6 +596,107 @@ fn normal_window_maximize_and_restore_preserves_rect() {
     let window = wm.window(id).expect("window");
     assert_eq!(window.state.get(), WindowState::Normal);
     assert_eq!(window.rect.get(), original);
+}
+
+#[test]
+fn relocated_titlebar_buttons_handle_mouse_at_drawn_positions() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let original = Rect::new(10, 3, 24, 8);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(WindowKind::Normal, "Main", original, Box::new(DummyView)),
+        bounds,
+    );
+
+    let close = wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 12, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert_eq!(close.close, Some(id));
+    assert!(
+        wm.drag.is_none(),
+        "clicking the left close button must not start a move drag"
+    );
+
+    let maximize = wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 31, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert_eq!(maximize.close, None);
+    assert_eq!(
+        wm.window(id).expect("window").state.get(),
+        WindowState::Maximized
+    );
+    assert_eq!(wm.window(id).expect("window").rect.get(), bounds);
+
+    let restore = wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 77, 0),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    assert_eq!(restore.close, None);
+    assert_eq!(
+        wm.window(id).expect("window").state.get(),
+        WindowState::Normal
+    );
+    assert_eq!(wm.window(id).expect("window").rect.get(), original);
+}
+
+#[test]
+fn titlebar_drag_still_starts_outside_relocated_buttons() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let theme = Theme::dark();
+    let original = Rect::new(10, 3, 24, 8);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(WindowKind::Normal, "Main", original, Box::new(DummyView)),
+        bounds,
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Down(MouseButton::Left), 15, 3),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    assert!(
+        matches!(
+            wm.drag,
+            Some(super::DragState {
+                window_id,
+                kind: DragKind::Move {
+                    offset_x: 5,
+                    offset_y: 0
+                },
+            }) if window_id == id
+        ),
+        "clicking the titlebar text area after the left close button should start a move drag"
+    );
+
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Drag(MouseButton::Left), 18, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+    wm.handle_event(
+        &left_mouse_event(MouseEventKind::Up(MouseButton::Left), 18, 5),
+        bounds,
+        super::WindowManagerInputMode::Normal,
+        &theme,
+    );
+
+    assert_eq!(
+        wm.window(id).expect("window").rect.get(),
+        Rect::new(13, 5, 24, 8)
+    );
 }
 
 #[test]

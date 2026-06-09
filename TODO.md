@@ -9,7 +9,8 @@
   - 完成记录（2026-06-09）：`draw_titlebar_text` 改为在标题可绘制区域内居中绘制，并在标题前后各写入 1 个空格；保留 grapheme/Unicode 宽度裁剪。新增 `pty_window_title_is_centered_with_padding` PTY 回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui --test pty_desktop --test pty_apphost_api`、`cargo test --all --all-targets` 均通过。
 - [x] **[DONE] #2 关闭/缩放钮归位** — 关闭钮 `[■]` 移左上角，缩放钮 `[↑]`/`[↕]` 右上角，统一 `[ ]` 包裹。glyph 改 `src/theme/mod.rs`。
   - 完成记录（2026-06-09）：`src/wm/manager/chrome.rs` 将关闭钮绘制到左侧并以 `[■]` 包裹，将缩放/还原钮绘制到右侧并以 `[↑]`/`[↕]` 包裹；标题区域同步避让左右按钮。`src/theme/mod.rs` 默认 glyph 改为 `close-button = "■"`、`maximize-button = "↑"`，并新增 `restore-button = "↕"`。为保持新按钮可点击，命中测试改为复用标题栏按钮布局；同步更新受影响 PTY 坐标/夹具与回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
-- [ ] **#2b 同步命中测试** — 更新 `src/wm/manager/` 鼠标处理：点击关闭/缩放区域坐标随按钮位置调整，回归拖动/调整大小。
+- [x] **[DONE] #2b 同步命中测试** — 更新 `src/wm/manager/` 鼠标处理：点击关闭/缩放区域坐标随按钮位置调整，回归拖动/调整大小。
+  - 完成记录（2026-06-09）：确认 `src/wm/manager/chrome.rs` 的标题栏按钮命中测试复用与绘制一致的 `titlebar_layout`，关闭钮命中区域随左上角 `[■]` 迁移，缩放/还原钮命中区域随右上角 `[↑]`/`[↕]` 迁移。新增 `relocated_titlebar_buttons_handle_mouse_at_drawn_positions` 与 `titlebar_drag_still_starts_outside_relocated_buttons` 回归测试，覆盖左侧关闭命中不触发拖动、右侧缩放/还原命中以及避开按钮后的标题栏拖动；既有 `mouse_drag_resize_handles_work_on_all_corners` 继续覆盖调整大小回归。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 - [ ] **#3 按钮重绘** — `src/widgets/button.rs`：单行色块 + 阴影 + 默认按钮强调，去边框。
 - [ ] **#3b 按钮尺寸回归** — 按钮高度 3→1，检查依赖按钮尺寸的布局与现有测试。
 - [ ] **#4 桌面背景纹理** — `src/app/desktop.rs:580`：`Fill` 改用 `░` 纹理。
