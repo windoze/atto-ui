@@ -291,6 +291,7 @@ fn draw_mnemonic_text(
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Style};
 
     use super::super::model::MenuSpec;
     use super::*;
@@ -366,5 +367,33 @@ mod tests {
         let style = buf[(31, 0)].style();
         assert_eq!(style.fg, theme.menu_bar.fg);
         assert_eq!(style.bg, theme.menu_bar.bg);
+    }
+
+    #[test]
+    fn draw_active_top_level_title_uses_active_style_without_title_shadow() {
+        let mut theme = Theme::dark();
+        theme.window_shadow = Style::default().bg(Color::Magenta);
+        let mut menu = MenuBar::new(vec![
+            MenuSpec::new("&File", Vec::new()),
+            MenuSpec::new("&Edit", Vec::new()),
+        ]);
+        menu.state.active = true;
+        menu.state.menu_index = 0;
+        menu.state.stack.clear();
+
+        let mut terminal = Terminal::new(TestBackend::new(24, 3)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 24, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(0, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(2, 0)].symbol(), "i");
+        assert_eq!(buf[(2, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(5, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(6, 0)].style().bg, theme.menu_bar.bg);
+        for x in 1..6 {
+            assert_ne!(buf[(x, 1)].style().bg, theme.window_shadow.bg);
+        }
     }
 }
