@@ -13,6 +13,12 @@ use crate::actions::JumpTarget;
 
 use super::util::{contains, mouse_coords_local_to_area};
 
+#[derive(Clone)]
+pub(super) struct SaveSettingsBindings {
+    pub(super) format_on_save: Binding<bool>,
+    pub(super) trim_trailing_whitespace_on_save: Binding<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TabCommand {
     SplitVertical,
@@ -30,7 +36,7 @@ pub(super) struct DocumentTabView {
     editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
     clipboard: Binding<String>,
     text: Binding<String>,
-    format_on_save: Binding<bool>,
+    save_settings: SaveSettingsBindings,
     language_id: String,
     syntax: atto_ui_editor::EditorSyntaxConfig,
 
@@ -65,14 +71,14 @@ impl DocumentTabView {
         editor_theme: Binding<atto_ui_editor::EditorThemeSet>,
         clipboard: Binding<String>,
         text: Binding<String>,
-        format_on_save: Binding<bool>,
+        save_settings: SaveSettingsBindings,
         language_id: String,
         syntax: atto_ui_editor::EditorSyntaxConfig,
         lsp: atto_ui_editor::EditorLspMode,
     ) -> (Self, atto_ui_editor::EditorViewHandle) {
         let (primary, primary_handle) = build_editor_view(
             text.clone(),
-            format_on_save.clone(),
+            save_settings.clone(),
             clipboard.clone(),
             editor_theme.clone(),
             language_id.clone(),
@@ -85,7 +91,7 @@ impl DocumentTabView {
             editor_theme,
             clipboard,
             text,
-            format_on_save,
+            save_settings,
             language_id,
             syntax,
             focused: SplitFocus::Primary,
@@ -175,7 +181,7 @@ impl DocumentTabView {
         // servers for the same document.
         let (secondary, _secondary_handle) = build_editor_view(
             self.text.clone(),
-            self.format_on_save.clone(),
+            self.save_settings.clone(),
             self.clipboard.clone(),
             self.editor_theme.clone(),
             self.language_id.clone(),
@@ -788,7 +794,7 @@ impl ::atto_ui::composable::EventHandling for DocumentTabView {
 
 fn build_editor_view(
     text: Binding<String>,
-    format_on_save: Binding<bool>,
+    save_settings: SaveSettingsBindings,
     clipboard: Binding<String>,
     theme: Binding<atto_ui_editor::EditorThemeSet>,
     language_id: String,
@@ -797,7 +803,8 @@ fn build_editor_view(
 ) -> (atto_ui_editor::EditorView, atto_ui_editor::EditorViewHandle) {
     let mut cfg = atto_ui_editor::EditorConfig::new(text);
     cfg.clipboard = clipboard;
-    cfg.format_on_save = format_on_save;
+    cfg.format_on_save = save_settings.format_on_save;
+    cfg.trim_trailing_whitespace_on_save = save_settings.trim_trailing_whitespace_on_save;
     cfg.comment
         .set(crate::language::comment_config_for_language(&language_id));
     cfg.indent

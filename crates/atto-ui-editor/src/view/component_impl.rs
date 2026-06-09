@@ -13,6 +13,7 @@ impl ::atto_ui::composable::Component for EditorView {
             "tab_width",
             "insert_spaces",
             "format_on_save",
+            "trim_trailing_whitespace_on_save",
             "inlay_hints_enabled",
         ]
     }
@@ -31,6 +32,9 @@ impl ::atto_ui::composable::Component for EditorView {
             )),
             "insert_spaces" => Some(ComponentValue::Bool(self.config.indent.insert_spaces.get())),
             "format_on_save" => Some(ComponentValue::Bool(self.config.format_on_save.get())),
+            "trim_trailing_whitespace_on_save" => Some(ComponentValue::Bool(
+                self.config.trim_trailing_whitespace_on_save.get(),
+            )),
             "inlay_hints_enabled" => {
                 Some(ComponentValue::Bool(self.config.inlay_hints.enabled.get()))
             }
@@ -78,6 +82,11 @@ impl ::atto_ui::composable::Component for EditorView {
             "format_on_save" => {
                 let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.config.format_on_save.set(v);
+                Ok(())
+            }
+            "trim_trailing_whitespace_on_save" => {
+                let v = <bool as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.trim_trailing_whitespace_on_save.set(v);
                 Ok(())
             }
             "inlay_hints_enabled" => {

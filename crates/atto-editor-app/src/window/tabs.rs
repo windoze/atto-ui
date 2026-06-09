@@ -4,13 +4,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use atto_ui::reactive::{Binding, DirtyObserver, EventQueue};
-use editor_core::BufferId;
+use editor_core::{BufferId, TextEditSpec};
 
 use crate::language::{guess_language_id, lsp_mode_for_file, syntax_config_for_file};
 use crate::workspace_state::TabRef;
 
-use super::document_tab::{DocumentTabView, TabCommand};
+use super::document_tab::{DocumentTabView, SaveSettingsBindings, TabCommand};
 use super::{EditorStatus, EditorWindowCommand, EditorWindowView};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ByteEdit {
+    start: usize,
+    end: usize,
+}
 
 pub(super) struct TabState {
     pub(super) tab_id: u64,
@@ -19,6 +25,7 @@ pub(super) struct TabState {
     language_id: String,
     text: Binding<String>,
     pub(super) format_on_save: Binding<bool>,
+    pub(super) trim_trailing_whitespace_on_save: Binding<bool>,
     last_saved_text: String,
     text_observer: DirtyObserver,
     pub(super) is_dirty: bool,
@@ -80,6 +87,7 @@ impl EditorWindowView {
 
         let text: Binding<String> = initial_text.clone().into();
         let format_on_save: Binding<bool> = false.into();
+        let trim_trailing_whitespace_on_save: Binding<bool> = false.into();
         let tab_commands: EventQueue<TabCommand> = EventQueue::new();
 
         let (tab_view, tab_handle) = DocumentTabView::new(
@@ -87,7 +95,10 @@ impl EditorWindowView {
             self.editor_theme.clone(),
             self.clipboard.clone(),
             text.clone(),
-            format_on_save.clone(),
+            SaveSettingsBindings {
+                format_on_save: format_on_save.clone(),
+                trim_trailing_whitespace_on_save: trim_trailing_whitespace_on_save.clone(),
+            },
             language_id.clone(),
             syntax,
             lsp,
@@ -110,6 +121,7 @@ impl EditorWindowView {
             language_id,
             text: text.clone(),
             format_on_save,
+            trim_trailing_whitespace_on_save,
             last_saved_text: initial_text,
             text_observer,
             is_dirty: false,
@@ -171,6 +183,16 @@ impl EditorWindowView {
     }
 
     pub(super) fn save_tab_at(&mut self, active: usize) -> Result<()> {
+        if self
+            .tabs
+            .get(active)
+            .and_then(|tab| tab.path.as_ref())
+            .is_none()
+        {
+            return Ok(());
+        }
+        self.apply_save_transforms(active)?;
+
         let Some(tab) = self.tabs.get_mut(active) else {
             return Ok(());
         };
@@ -240,23 +262,32 @@ impl EditorWindowView {
         let Some(active) = self.tab_window.active_tab() else {
             return Ok(());
         };
+
+        let path = Self::canonicalize_best_effort(&path);
+        {
+            let Some(tab) = self.tabs.get_mut(active) else {
+                return Ok(());
+            };
+
+            if let Some(buffer_id) = tab.workspace_buffer_id {
+                let mut workspace = self.workspace_state.lock();
+                if let Some(tab_ref) = tab.workspace_tab
+                    && let Err(err) = workspace.sync_tab_to_buffer(tab_ref)
+                {
+                    return Err(anyhow!(err));
+                }
+                let lsp = lsp_mode_for_file(&path, &tab.language_id);
+                workspace
+                    .set_buffer_path(buffer_id, &path, &tab.language_id, &lsp)
+                    .map_err(|err| anyhow!(err))?;
+            }
+        }
+
+        self.apply_save_transforms(active)?;
+
         let Some(tab) = self.tabs.get_mut(active) else {
             return Ok(());
         };
-
-        let path = Self::canonicalize_best_effort(&path);
-        if let Some(buffer_id) = tab.workspace_buffer_id {
-            let mut workspace = self.workspace_state.lock();
-            if let Some(tab_ref) = tab.workspace_tab
-                && let Err(err) = workspace.sync_tab_to_buffer(tab_ref)
-            {
-                return Err(anyhow!(err));
-            }
-            let lsp = lsp_mode_for_file(&path, &tab.language_id);
-            workspace
-                .set_buffer_path(buffer_id, &path, &tab.language_id, &lsp)
-                .map_err(|err| anyhow!(err))?;
-        }
         let save_text = if let Some(buffer_id) = tab.workspace_buffer_id {
             let workspace = self.workspace_state.lock();
             workspace
@@ -285,6 +316,14 @@ impl EditorWindowView {
         self.tab_window
             .set_tab_title(active, tab.title_base.clone());
         Ok(())
+    }
+
+    fn apply_save_transforms(&mut self, active: usize) -> Result<()> {
+        let workspace_state = self.workspace_state.clone();
+        let Some(tab) = self.tabs.get_mut(active) else {
+            return Ok(());
+        };
+        trim_tab_trailing_whitespace(tab, &workspace_state)
     }
 
     pub(super) fn update_tab_titles(&mut self) {
@@ -373,5 +412,246 @@ impl EditorWindowView {
                 }
             }
         }
+    }
+}
+
+fn trim_tab_trailing_whitespace(
+    tab: &mut TabState,
+    workspace_state: &crate::workspace_state::SharedWorkspaceState,
+) -> Result<()> {
+    if !tab.trim_trailing_whitespace_on_save.get() {
+        return Ok(());
+    }
+
+    if let Some(buffer_id) = tab.workspace_buffer_id {
+        let mut workspace = workspace_state.lock();
+        if let Some(tab_ref) = tab.workspace_tab
+            && let Err(err) = workspace.sync_tab_to_buffer(tab_ref)
+        {
+            return Err(anyhow!(err));
+        }
+
+        let text = workspace
+            .buffer_text(buffer_id)
+            .map_err(anyhow::Error::msg)?;
+        let edits = trailing_whitespace_text_edits(&text);
+        workspace
+            .apply_text_edits_to_buffer(buffer_id, edits)
+            .map_err(anyhow::Error::msg)?;
+        return Ok(());
+    }
+
+    let text = tab.text.get();
+    let trimmed = apply_byte_edits(&text, &trailing_whitespace_byte_edits(&text));
+    if trimmed != text {
+        tab.text.set(trimmed);
+    }
+    Ok(())
+}
+
+fn trailing_whitespace_text_edits(text: &str) -> Vec<TextEditSpec> {
+    trailing_whitespace_byte_edits(text)
+        .into_iter()
+        .map(|edit| TextEditSpec {
+            start: char_offset_at(text, edit.start),
+            end: char_offset_at(text, edit.end),
+            text: String::new(),
+        })
+        .collect()
+}
+
+fn trailing_whitespace_byte_edits(text: &str) -> Vec<ByteEdit> {
+    let bytes = text.as_bytes();
+    let mut edits = Vec::new();
+    let mut line_start = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' => {
+                push_trailing_whitespace_edit(bytes, line_start, i, &mut edits);
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                line_start = i;
+            }
+            b'\n' => {
+                push_trailing_whitespace_edit(bytes, line_start, i, &mut edits);
+                i += 1;
+                line_start = i;
+            }
+            _ => i += 1,
+        }
+    }
+
+    push_trailing_whitespace_edit(bytes, line_start, bytes.len(), &mut edits);
+    edits
+}
+
+fn push_trailing_whitespace_edit(
+    bytes: &[u8],
+    line_start: usize,
+    line_end: usize,
+    edits: &mut Vec<ByteEdit>,
+) {
+    let mut trim_start = line_end;
+    while trim_start > line_start && matches!(bytes[trim_start - 1], b' ' | b'\t') {
+        trim_start -= 1;
+    }
+    if trim_start < line_end {
+        edits.push(ByteEdit {
+            start: trim_start,
+            end: line_end,
+        });
+    }
+}
+
+fn char_offset_at(text: &str, byte_index: usize) -> usize {
+    text[..byte_index].chars().count()
+}
+
+fn apply_byte_edits(text: &str, edits: &[ByteEdit]) -> String {
+    if edits.is_empty() {
+        return text.to_string();
+    }
+
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for edit in edits {
+        output.push_str(&text[cursor..edit.start]);
+        cursor = edit.end;
+    }
+    output.push_str(&text[cursor..]);
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use atto_ui::wm::WindowId;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("atto_editor_tabs_{prefix}_{nanos}"))
+    }
+
+    fn test_window() -> EditorWindowView {
+        let mut window = EditorWindowView::new(
+            EventQueue::<crate::actions::AppAction>::new(),
+            EventQueue::<EditorWindowCommand>::new(),
+            atto_ui_editor::EditorThemeSet::default().into(),
+            String::new().into(),
+            atto_ui_editor::DiagnosticsSummary::default().into(),
+        );
+        window.set_window_id(WindowId::from_raw(1));
+        window
+    }
+
+    fn open_test_file(prefix: &str, text: &str) -> (PathBuf, EditorWindowView) {
+        let root = unique_temp_dir(prefix);
+        fs::create_dir_all(&root).expect("create temp root");
+        let path = root.join("main.rs");
+        fs::write(&path, text).expect("write file");
+
+        let mut window = test_window();
+        window.open_file_in_tab(path.clone());
+        assert_eq!(window.tabs.len(), 1);
+        (path, window)
+    }
+
+    #[test]
+    fn trailing_whitespace_edits_preserve_content_and_final_newline_state() {
+        let text = "alpha beta  \n\tindented value\t \nno-newline  ";
+        let trimmed = apply_byte_edits(text, &trailing_whitespace_byte_edits(text));
+        assert_eq!(trimmed, "alpha beta\n\tindented value\nno-newline");
+    }
+
+    #[test]
+    fn save_keeps_trailing_whitespace_by_default() {
+        let (path, mut window) = open_test_file("trim_default", "fn main() {}\n");
+        window.tabs[0]
+            .text
+            .set("let value = alpha + beta;   \n".to_string());
+        window.update_tab_titles();
+
+        window.save_tab_at(0).expect("save tab");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read saved file"),
+            "let value = alpha + beta;   \n"
+        );
+        assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn save_trims_trailing_whitespace_when_enabled_and_clears_dirty() {
+        let (path, mut window) = open_test_file("trim_enabled", "fn main() {}\n");
+        window.tabs[0].trim_trailing_whitespace_on_save.set(true);
+        window.tabs[0]
+            .text
+            .set("let value = alpha + beta;   \nlast\t".to_string());
+        window.update_tab_titles();
+        assert!(window.tabs[0].is_dirty);
+
+        window.save_tab_at(0).expect("save tab");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read saved file"),
+            "let value = alpha + beta;\nlast"
+        );
+        assert_eq!(window.tabs[0].text.get(), "let value = alpha + beta;\nlast");
+        assert_eq!(
+            window.tabs[0].last_saved_text,
+            "let value = alpha + beta;\nlast"
+        );
+        assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn format_on_save_completion_trims_before_writing() {
+        let (path, mut window) = open_test_file("trim_after_format", "fn main() {}\n");
+        window.tabs[0].trim_trailing_whitespace_on_save.set(true);
+        window.tabs[0].text.set("formatted line   \n".to_string());
+        window.update_tab_titles();
+        window.tabs[0].pending_save_after_format = true;
+        window.tabs[0]
+            .events
+            .push(atto_ui_editor::EditorEvent::FormatFinished {
+                success: true,
+                changed: true,
+            });
+
+        window.sync_editor_events();
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read saved file"),
+            "formatted line\n"
+        );
+        assert!(!window.tabs[0].pending_save_after_format);
+        assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn save_trims_crlf_file_without_changing_line_endings_or_final_newline() {
+        let (path, mut window) = open_test_file("trim_crlf", "alpha  \r\nbeta\t\r\ngamma  ");
+        window.tabs[0].trim_trailing_whitespace_on_save.set(true);
+
+        window.save_tab_at(0).expect("save tab");
+
+        assert_eq!(
+            fs::read(path).expect("read saved file"),
+            b"alpha\r\nbeta\r\ngamma"
+        );
+        assert_eq!(window.tabs[0].text.get(), "alpha\nbeta\ngamma");
+        assert!(!window.tabs[0].is_dirty);
     }
 }

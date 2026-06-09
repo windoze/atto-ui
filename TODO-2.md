@@ -1733,7 +1733,7 @@
 - 确认 auto-pairs config 从 `language.rs` 进入 primary/secondary editor view 构建流程，`plaintext` 可使用 disabled config，且语言默认配置测试覆盖关闭行为。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
-### [TODO] T26 — Trim trailing whitespace 与 save 流程整理
+### [DONE] T26 — Trim trailing whitespace 与 save 流程整理
 
 **依赖**：T20 可共享 save/format 流程；无 T20 也可做。
 
@@ -1763,6 +1763,14 @@
 **验收**：
 - trim 操作可 undo（如果发生在 editor buffer 中）。
 - 保存后 dirty marker 清除。
+
+**完成记录（2026-06-09）**：
+- `EditorConfig` 新增 `trim_trailing_whitespace_on_save: Binding<bool>`（默认 false），并通过动态组件属性暴露；`atto-editor-app` tab/save settings 将该 binding 传入 primary/secondary editor view。
+- `SaveActive` / `SaveAs` 共用 save transform 路径：format-on-save 成功后进入原 `save_tab_at`，随后 trim trailing whitespace，再写文件并更新 `last_saved_text` / dirty marker。
+- trim 会生成 pre-edit character offset `TextEditSpec`，对 workspace buffer 通过 `WorkspaceState::apply_text_edits_to_buffer` 应用并同步 tab binding；无 workspace tab 退回到 binding 文本更新。
+- trim 仅删除行尾 ASCII 空格/制表符，不删除行内空格，不改变最终 newline 语义；workspace 保存仍通过 `buffer_text_for_saving` 保持原 CRLF/LF line ending。
+- 新增 `crates/atto-editor-app/src/window/tabs.rs` 单元测试覆盖：默认不 trim、启用 trim 后写盘与 dirty 清除、format-on-save 完成后先 trim 再写盘、CRLF 保存保持 CRLF 且不强制添加 final newline、helper 不删除行内空格。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [TODO] R26 — 审阅 T26
 

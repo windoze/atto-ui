@@ -257,6 +257,7 @@ pub struct EditorConfig {
     pub completion: EditorCompletionConfig,
     pub inlay_hints: EditorInlayHintsConfig,
     pub format_on_save: Binding<bool>,
+    pub trim_trailing_whitespace_on_save: Binding<bool>,
     pub formatting_timeout: Binding<Duration>,
 
     pub lsp: Binding<EditorLspMode>,
@@ -282,6 +283,7 @@ impl EditorConfig {
             completion: EditorCompletionConfig::default(),
             inlay_hints: EditorInlayHintsConfig::default(),
             format_on_save: false.into(),
+            trim_trailing_whitespace_on_save: false.into(),
             formatting_timeout: Duration::from_secs(10).into(),
             lsp: EditorLspMode::Disabled.into(),
         }

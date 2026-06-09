@@ -1,16 +1,55 @@
-# Execution Plan
+# Claude Execution Plan
 
-I will first inspect TODO.md to identify the first task whose heading is not prefixed with [DONE]. Then I will inspect only the files needed for that task, implement the requested change without broad unrelated triage, run formatting, clippy, and the relevant/full test commands required by the task, update TODO.md with a [DONE] prefix and completion record if the task is completed, keep PLAN.md unchanged unless phase-level sequencing changes, update this file at key milestones, and commit the finished task changes with the required co-author trailer. If a concrete blocker prevents correct completion, I will add the minimum prerequisite task to TODO.md, document the blocker here, commit that bookkeeping, and stop.
+## Current objective
+- Create this progress file before implementation work.
+- Read TODO.md and identify the first task whose title is not prefixed with [DONE].
+- Review only the files and context needed for that task.
+- Implement the task exactly as specified, or add the minimum prerequisite task if a concrete blocker prevents correct implementation.
+- Run formatting, linting, and relevant tests as required by TODO.md and repository policy.
+- Update TODO.md completion status and record validation results.
+- Commit all task-related changes and stop without starting the next task.
 
 ## Progress
-- Identified first incomplete task from TODO.md: T25 in TODO-2.md (Auto-pairs / auto-indent use editor-core primitives). Next step: read task details and relevant implementation/tests, then update this plan with the concrete implementation steps.
-- Concrete implementation plan: add auto-pairs and auto-indent bindings to EditorConfig; configure editor-core indentation and auto-pairs commands when EditorView is created; route normal typed chars through EditCommand::TypeChar and Enter through EditCommand::InsertNewline with the configured auto_indent flag; add language helpers in atto-editor-app; add unit tests for auto-pair insertion, selection wrapping, auto-indent, Unicode typing, paste behavior, read-only key input, and language config disablement; then run cargo fmt, clippy, and tests.
-- Implemented config/input/language/test changes and ran cargo fmt successfully. Next: run clippy with warnings denied, then the full workspace test suite.
-- Fixed clippy initialization findings in language helpers and tests. Rerunning cargo fmt and clippy.
-- Clippy passed with warnings denied. Running full workspace tests next.
-- Full workspace tests passed. Marked T25 complete in TODO.md and TODO-2.md. Reviewing final diff and fixture-suite availability before committing.
-- No fixture runner was present. Completion record updated accordingly; no code changed after the successful full test run.
-- Corrected TODO completion note placement so only T25 changed. Preparing final whitespace check, staging task files, and committing.
-- Current invocation: identified first incomplete task from TODO.md as R25 in TODO-2.md (review T25).
-- R25 review plan: inspect the T25 commit and relevant implementation/tests for TypeChar cursor/selection behavior, read-only gating of TypeChar and InsertNewline, and language-specific auto-pairs disablement; fix any directly discovered defects; run cargo fmt, clippy with warnings denied, and the full workspace tests; update TODO.md and TODO-2.md with the R25 completion record; commit only this review task's changes.
-- R25 review found no code defects. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed; no `tools/run_fixtures.py` fixture runner is present. Marked R25 complete in TODO.md and TODO-2.md with the review completion record. Preparing final diff and commit.
+- Plan file initialized.
+
+## Selected task
+- First incomplete task: T26 — Trim trailing whitespace 与 save 流程整理 (TODO-2.md · 阶段五).
+- Latest commit is an R25 note and does not introduce an unfinished issue directly relevant to T26.
+- Next step: read T26 details and inspect the editor save/formatting code paths.
+
+## T26 requirements
+- Implement trim-trailing-whitespace in editor save flow.
+- Ensure save/format-on-save/save-as ordering is explicit and consistent.
+- Add/update tests for trim behavior, dirty state, and save-after-format behavior.
+- Preserve spec-correct behavior; do not silently work around missing editor/workspace features.
+
+## Implementation plan update
+- Add a shared trim-trailing-whitespace binding beside format_on_save and pass it into primary/secondary EditorView configs.
+- Generate pre-edit character-offset TextEditSpec deletions for ASCII spaces/tabs at line ends, preserving line terminators and final-newline state.
+- Apply trim edits to workspace buffers before writing so the operation is undoable and tab bindings update; fallback to binding text for no-workspace tabs.
+- Reuse save_tab_at for save-after-format so the order remains format -> trim -> write -> clean marker.
+
+## Implementation progress
+- Added trim_trailing_whitespace_on_save to EditorConfig and dynamic component properties.
+- Wired the binding through editor tabs and split editor views.
+- Save and Save As now run save transforms before writing; format-on-save still completes before calling the shared save path.
+- Trim edits are generated as character-offset deletions and applied through workspace apply_text_edits when a workspace buffer exists.
+- Added unit coverage for default no-trim saves, enabled trim saves, dirty clearing, line-internal spaces, CRLF preservation, and final-newline preservation.
+
+## Validation progress
+- cargo fmt passed.
+- cargo clippy --workspace --all-targets -- -D warnings passed.
+- Running cargo test --workspace --all-targets next.
+
+## Validation result
+- cargo test --workspace --all-targets passed.
+- No code changes have been made after validation yet; upcoming TODO/memory updates are documentation/progress records only.
+
+## Completion record
+- T26 marked [DONE] in TODO.md and TODO-2.md with implementation and validation notes.
+- PLAN.md unchanged because phase-level sequencing did not change.
+
+## Revalidation update
+- Added a focused unit test for the save-after-format event path trimming before write.
+- Re-running cargo fmt, clippy, and cargo test because code changed after the prior validation.
+- Revalidation passed: cargo fmt; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace --all-targets.

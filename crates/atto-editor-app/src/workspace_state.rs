@@ -256,6 +256,30 @@ impl WorkspaceState {
             .map_err(|err| format!("Workspace buffer_text_for_saving failed: {err:?}"))
     }
 
+    pub fn buffer_text(&self, buffer_id: BufferId) -> Result<String, String> {
+        self.workspace
+            .buffer_text(buffer_id)
+            .map_err(|err| format!("Workspace buffer_text failed: {err:?}"))
+    }
+
+    pub fn apply_text_edits_to_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        edits: Vec<TextEditSpec>,
+    ) -> Result<bool, String> {
+        if edits.is_empty() {
+            return Ok(false);
+        }
+
+        self.workspace
+            .apply_text_edits(vec![(buffer_id, edits)])
+            .map_err(|err| format!("Workspace apply_text_edits failed: {err:?}"))?;
+        self.lsp
+            .did_change_from_text_delta(&mut self.workspace, buffer_id)?;
+        self.sync_buffer_to_tabs(buffer_id)?;
+        Ok(true)
+    }
+
     pub fn mark_buffer_saved(&mut self, buffer_id: BufferId) -> Result<(), String> {
         self.workspace
             .mark_saved_for_buffer(buffer_id)
