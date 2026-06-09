@@ -193,8 +193,13 @@ impl EditorView {
                 true
             }
             EditorAction::InsertNewline => {
-                self.insert_text("\n");
-                true
+                self.configure_typing_behavior();
+                self.execute_full_document_edit_and_sync(
+                    EditCommand::InsertNewline {
+                        auto_indent: self.config.auto_indent.get(),
+                    },
+                    true,
+                )
             }
             EditorAction::InsertTab => {
                 self.indent_or_tab();

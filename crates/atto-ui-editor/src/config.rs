@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use atto_ui::composable::ScrollConfig;
 use atto_ui::reactive::Binding;
-use editor_core::{CommentConfig, StyleId, StyleLayerId};
+use editor_core::{AutoPairsConfig, CommentConfig, IndentationConfig, StyleId, StyleLayerId};
 use tree_sitter::Language;
 
 use super::keymap::EditorKeymap;
@@ -79,6 +79,7 @@ pub enum EditorSyntaxConfig {
 pub struct EditorIndentConfig {
     pub tab_width: Binding<usize>,
     pub insert_spaces: Binding<bool>,
+    pub language: Binding<IndentationConfig>,
 }
 
 impl Default for EditorIndentConfig {
@@ -86,6 +87,7 @@ impl Default for EditorIndentConfig {
         Self {
             tab_width: 4usize.into(),
             insert_spaces: true.into(),
+            language: IndentationConfig::default().into(),
         }
     }
 }
@@ -239,6 +241,8 @@ pub struct EditorConfig {
     pub syntax: Binding<EditorSyntaxConfig>,
 
     pub indent: EditorIndentConfig,
+    pub auto_pairs: Binding<AutoPairsConfig>,
+    pub auto_indent: Binding<bool>,
 
     pub show_line_numbers: Binding<bool>,
     pub show_folding_markers: Binding<bool>,
@@ -267,6 +271,8 @@ impl EditorConfig {
             comment: None.into(),
             syntax: EditorSyntaxConfig::None.into(),
             indent: EditorIndentConfig::default(),
+            auto_pairs: AutoPairsConfig::default().into(),
+            auto_indent: true.into(),
             show_line_numbers: true.into(),
             show_folding_markers: true.into(),
             read_only: false.into(),

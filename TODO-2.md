@@ -1670,7 +1670,7 @@
 
 ## 阶段五：编辑体验收尾
 
-### [TODO] T25 — Auto-pairs / auto-indent 改用 editor-core 原语
+### [DONE] T25 — Auto-pairs / auto-indent 改用 editor-core 原语
 
 **依赖**：T6 可共享 action/text sync helper。
 
@@ -1711,6 +1711,13 @@
 **验收**：
 - Unicode 输入不被 auto-pairs 破坏。
 - IME/paste 不被误判为普通 TypeChar。
+
+**完成记录（2026-06-09）**：
+- `EditorConfig` 新增 `auto_pairs` / `auto_indent` 配置，并在 `EditorIndentConfig` 中携带 editor-core `IndentationConfig`；`EditorView` 初始化和编辑前会把 tab、indentation、auto-pairs 配置同步到 editor-core view command。
+- 普通字符输入改走 `EditCommand::TypeChar { ch }`；Enter 改走 `EditCommand::InsertNewline { auto_indent }`；Paste/LSP completion 仍走 raw `InsertText` 路径，不触发 auto-pairs。
+- `atto-editor-app` 新增按语言生成 indentation / auto-pairs 配置，并在 primary/secondary split editor view 构建时接入；plaintext 可关闭 auto-pairs。
+- 新增测试覆盖 `(` 自动补 `)`、选区输入 `"` 包裹选区、Enter 保持缩进、Unicode 字符输入、Paste 不触发 auto-pairs、read-only 阻止 TypeChar/InsertNewline，以及语言默认配置。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [TODO] R25 — 审阅 T25
 

@@ -319,6 +319,7 @@ impl EditorView {
             focused_last_frame: false,
         };
 
+        view.configure_typing_behavior();
         view.configure_syntax_processor();
         view.start_lsp_if_enabled();
         (view, handle)

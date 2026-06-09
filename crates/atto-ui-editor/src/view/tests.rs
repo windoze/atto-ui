@@ -182,6 +182,147 @@ fn test_view_with_text(text: &str) -> (EditorView, atto_ui::reactive::Binding<St
     (view, text)
 }
 
+fn test_view_with_config(cfg: EditorConfig) -> (EditorView, atto_ui::reactive::Binding<String>) {
+    let text = cfg.text.clone();
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (view, _handle) = EditorView::new(cfg, theme);
+    (view, text)
+}
+
+fn enable_auto_pairs(cfg: &EditorConfig) {
+    let auto_pairs = editor_core::AutoPairsConfig {
+        enabled: true,
+        ..editor_core::AutoPairsConfig::default()
+    };
+    cfg.auto_pairs.set(auto_pairs);
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn test_ctx<'a>(theme: &'a atto_ui::theme::Theme) -> atto_ui::composable::ComponentContext<'a> {
+    atto_ui::composable::ComponentContext {
+        theme,
+        window_id: atto_ui::wm::WindowId::default(),
+        is_focused: true,
+        scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+        tab_mode: atto_ui::composable::TabMode::Cycle,
+        mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
+    }
+}
+
+#[test]
+fn editor_typed_char_uses_editor_core_auto_pairs() {
+    let text: atto_ui::reactive::Binding<String> = String::new().into();
+    let cfg = EditorConfig::new(text);
+    enable_auto_pairs(&cfg);
+    let (mut view, text) = test_view_with_config(cfg);
+
+    assert_eq!(
+        view.handle_key_event(key(KeyCode::Char('('))),
+        EventResult::consumed()
+    );
+
+    assert_eq!(text.get(), "()");
+    assert_eq!(view.active_cursor_position(), Position::new(0, 1));
+}
+
+#[test]
+fn editor_typed_pair_wraps_selection() {
+    let text: atto_ui::reactive::Binding<String> = "abc".to_string().into();
+    let cfg = EditorConfig::new(text);
+    enable_auto_pairs(&cfg);
+    let (mut view, text) = test_view_with_config(cfg);
+
+    assert!(view.execute(Command::Cursor(CursorCommand::SetSelections {
+        selections: vec![Selection {
+            start: Position::new(0, 0),
+            end: Position::new(0, 3),
+            direction: SelectionDirection::Forward,
+        }],
+        primary_index: 0,
+    })));
+    assert_eq!(
+        view.handle_key_event(key(KeyCode::Char('"'))),
+        EventResult::consumed()
+    );
+
+    assert_eq!(text.get(), "\"abc\"");
+    let selection = view
+        .state_manager
+        .editor()
+        .selection()
+        .cloned()
+        .expect("wrapped selection");
+    assert_eq!(selection.start, Position::new(0, 1));
+    assert_eq!(selection.end, Position::new(0, 4));
+}
+
+#[test]
+fn editor_insert_newline_uses_auto_indent_config() {
+    let (mut view, text) = test_view_with_text("    let x = 1;");
+    assert!(view.execute(Command::Cursor(CursorCommand::MoveToLineEnd)));
+
+    assert!(view.handle_action(EditorAction::InsertNewline));
+
+    assert_eq!(text.get(), "    let x = 1;\n    ");
+    assert_eq!(view.active_cursor_position(), Position::new(1, 4));
+}
+
+#[test]
+fn editor_unicode_type_char_is_not_changed_by_auto_pairs() {
+    let text: atto_ui::reactive::Binding<String> = String::new().into();
+    let cfg = EditorConfig::new(text);
+    enable_auto_pairs(&cfg);
+    let (mut view, text) = test_view_with_config(cfg);
+
+    assert_eq!(
+        view.handle_key_event(key(KeyCode::Char('界'))),
+        EventResult::consumed()
+    );
+
+    assert_eq!(text.get(), "界");
+    assert_eq!(view.active_cursor_position(), Position::new(0, 1));
+}
+
+#[test]
+fn editor_paste_does_not_apply_auto_pairs() {
+    let text: atto_ui::reactive::Binding<String> = String::new().into();
+    let cfg = EditorConfig::new(text);
+    enable_auto_pairs(&cfg);
+    let (mut view, text) = test_view_with_config(cfg);
+    let theme = atto_ui::theme::Theme::dark();
+
+    assert_eq!(
+        view.handle_event(&Event::Paste("(".to_string()), test_ctx(&theme)),
+        EventResult::consumed()
+    );
+
+    assert_eq!(text.get(), "(");
+    assert_eq!(view.active_cursor_position(), Position::new(0, 1));
+}
+
+#[test]
+fn editor_read_only_blocks_type_char_and_insert_newline() {
+    let text: atto_ui::reactive::Binding<String> = String::new().into();
+    let cfg = EditorConfig::new(text);
+    enable_auto_pairs(&cfg);
+    cfg.read_only.set(true);
+    let (mut view, text) = test_view_with_config(cfg);
+
+    assert_eq!(
+        view.handle_key_event(key(KeyCode::Char('('))),
+        EventResult::ignored()
+    );
+    assert_eq!(
+        view.handle_key_event(key(KeyCode::Enter)),
+        EventResult::ignored()
+    );
+    assert_eq!(text.get(), "");
+}
+
 #[test]
 fn editor_view_applies_diagnostics_to_summary_and_core_state() {
     let (mut view, _text) = test_view_with_text("let bad = 1;\n");

@@ -105,7 +105,7 @@
 | R23 | DONE | [DONE] 审阅 T23 | TODO-2.md · 阶段四 |
 | T24 | DONE | [DONE] F-FT Drag move、剪贴板与 Git status 刷新 | TODO-2.md · 阶段四 |
 | R24 | DONE | [DONE] 审阅 T24 | TODO-2.md · 阶段四 |
-| T25 | TODO | Auto-pairs / auto-indent 改用 editor-core 原语 | TODO-2.md · 阶段五 |
+| T25 | DONE | [DONE] Auto-pairs / auto-indent 改用 editor-core 原语 | TODO-2.md · 阶段五 |
 | R25 | TODO | 审阅 T25 | TODO-2.md · 阶段五 |
 | T26 | TODO | Trim trailing whitespace 与 save 流程整理 | TODO-2.md · 阶段五 |
 | R26 | TODO | 审阅 T26 | TODO-2.md · 阶段五 |

@@ -180,14 +180,20 @@ impl EditorView {
                 if self.config.read_only.get() {
                     return EventResult::ignored();
                 }
-                self.insert_text(&c.to_string());
+                self.configure_typing_behavior();
+                let changed =
+                    self.execute_full_document_edit_and_sync(EditCommand::TypeChar { ch: c }, true);
                 self.adjust_scroll();
                 if matches!(c, '(' | ',') {
                     self.request_signature_help_now();
                 } else {
                     self.clear_signature_help_popup();
                 }
-                return EventResult::consumed();
+                return if changed {
+                    EventResult::consumed()
+                } else {
+                    EventResult::ignored()
+                };
             }
             _ => {}
         }

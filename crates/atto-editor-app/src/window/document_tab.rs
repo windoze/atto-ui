@@ -800,6 +800,15 @@ fn build_editor_view(
     cfg.format_on_save = format_on_save;
     cfg.comment
         .set(crate::language::comment_config_for_language(&language_id));
+    cfg.indent
+        .language
+        .set(crate::language::indentation_config_for_language(
+            &language_id,
+        ));
+    cfg.auto_pairs
+        .set(crate::language::auto_pairs_config_for_language(
+            &language_id,
+        ));
     cfg.language_id.set(language_id);
     cfg.syntax.set(syntax);
     cfg.lsp.set(lsp);

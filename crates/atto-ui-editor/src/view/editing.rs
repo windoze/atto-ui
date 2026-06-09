@@ -296,6 +296,16 @@ impl EditorView {
         }));
     }
 
+    pub(super) fn configure_typing_behavior(&mut self) {
+        self.configure_tab_key_behavior();
+        let _ = self.execute(Command::View(ViewCommand::SetIndentationConfig {
+            config: self.config.indent.language.get(),
+        }));
+        let _ = self.execute(Command::View(ViewCommand::SetAutoPairsConfig {
+            config: self.config.auto_pairs.get(),
+        }));
+    }
+
     pub(super) fn execute_full_document_edit_and_sync(
         &mut self,
         command: EditCommand,

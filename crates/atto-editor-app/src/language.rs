@@ -9,7 +9,7 @@ use atto_ui_editor::{
     TS_STYLE_CONSTANT, TS_STYLE_FUNCTION, TS_STYLE_KEYWORD, TS_STYLE_NUMBER, TS_STYLE_STRING,
     TS_STYLE_TYPE, TS_STYLE_VARIABLE,
 };
-use editor_core::{CommentConfig, StyleId};
+use editor_core::{AutoPairsConfig, CommentConfig, IndentStyle, IndentationConfig, StyleId};
 
 pub fn guess_language_id(path: &Path) -> String {
     let ext = path
@@ -69,6 +69,29 @@ pub fn comment_config_for_language(language_id: &str) -> Option<CommentConfig> {
         "markdown" => Some(CommentConfig::block("<!--", "-->")),
         "json" | "plaintext" => None,
         _ => None,
+    }
+}
+
+pub fn indentation_config_for_language(language_id: &str) -> IndentationConfig {
+    let mut config = IndentationConfig {
+        style: match language_id {
+            "javascript" | "javascriptreact" | "typescript" | "typescriptreact" | "json"
+            | "yaml" => IndentStyle::Spaces(2),
+            _ => IndentStyle::Spaces(4),
+        },
+        ..IndentationConfig::default()
+    };
+    if matches!(language_id, "plaintext" | "markdown" | "toml") {
+        config.indent_triggers.clear();
+        config.outdent_triggers.clear();
+    }
+    config
+}
+
+pub fn auto_pairs_config_for_language(language_id: &str) -> AutoPairsConfig {
+    AutoPairsConfig {
+        enabled: !matches!(language_id, "plaintext"),
+        ..AutoPairsConfig::default()
     }
 }
 
@@ -302,5 +325,28 @@ mod tests {
         let markdown = comment_config_for_language("markdown").expect("markdown comments");
         assert_eq!(markdown.block_start.as_deref(), Some("<!--"));
         assert_eq!(markdown.block_end.as_deref(), Some("-->"));
+    }
+
+    #[test]
+    fn indentation_config_matches_language_defaults() {
+        let rust = indentation_config_for_language("rust");
+        assert_eq!(rust.style, IndentStyle::Spaces(4));
+        assert!(rust.indent_triggers.contains(&'{'));
+
+        let json = indentation_config_for_language("json");
+        assert_eq!(json.style, IndentStyle::Spaces(2));
+        assert!(json.indent_triggers.contains(&'{'));
+
+        let plaintext = indentation_config_for_language("plaintext");
+        assert_eq!(plaintext.style, IndentStyle::Spaces(4));
+        assert!(plaintext.indent_triggers.is_empty());
+        assert!(plaintext.outdent_triggers.is_empty());
+    }
+
+    #[test]
+    fn auto_pairs_config_can_disable_plaintext() {
+        assert!(auto_pairs_config_for_language("rust").enabled);
+        assert!(auto_pairs_config_for_language("markdown").enabled);
+        assert!(!auto_pairs_config_for_language("plaintext").enabled);
     }
 }

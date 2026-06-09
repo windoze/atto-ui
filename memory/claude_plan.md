@@ -1,27 +1,13 @@
 # Execution Plan
 
-## Current understanding
-- `TODO.md` is the authoritative task list and completion source.
-- I must complete exactly the first task whose heading/title is not prefixed with `[DONE]`, then stop.
-- I will not perform broad issue triage before selecting that task.
-- I will not expose private chain-of-thought; this file records the actionable reasoning summary, decisions, and execution steps.
+I will first inspect TODO.md to identify the first task whose heading is not prefixed with [DONE]. Then I will inspect only the files needed for that task, implement the requested change without broad unrelated triage, run formatting, clippy, and the relevant/full test commands required by the task, update TODO.md with a [DONE] prefix and completion record if the task is completed, keep PLAN.md unchanged unless phase-level sequencing changes, update this file at key milestones, and commit the finished task changes with the required co-author trailer. If a concrete blocker prevents correct completion, I will add the minimum prerequisite task to TODO.md, document the blocker here, commit that bookkeeping, and stop.
 
-## Step-by-step plan
-1. Read `TODO.md` and identify the first incomplete task by heading/title prefix.
-2. Check recent git state only as needed to understand whether there is unfinished work directly relevant to that selected task.
-3. Read the code, tests, and documentation needed for that task only.
-4. Implement the task completely, avoiding workarounds or scope narrowing.
-5. Update or add focused tests for the implemented behavior.
-6. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite required by the task.
-7. If a blocking prerequisite or unscheduled failing test is discovered, update `TODO.md` with the minimum prerequisite/follow-up task, commit that bookkeeping, and stop.
-8. If implementation validates successfully, mark the task title in `TODO.md` with `[DONE]`, update its completion record, commit all task-related changes, and stop.
-
-## Progress log
-- Created this plan before inspecting project task details.
-- Identified first incomplete task as `TODO-2.md` R24, the review of T24 explorer drag/cut/copy/git-status work.
-- Focused review found two R24-relevant issues to fix before marking R24 complete:
-  1. multi-item cut/move could partially move earlier sources if a later rename failed, leaving stale clipboard state;
-  2. text porcelain git rename parsing was ambiguous for renamed paths containing ` -> `.
-- Implemented rollback-aware multi-item move handling with explicit partial-failure clipboard clearing, and switched git status collection/parsing to NUL-delimited porcelain v1 output with rename-path coverage.
-- Validation completed successfully with `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
-- Marked R24 `[DONE]` in `TODO.md` and `TODO-2.md` with a completion record.
+## Progress
+- Identified first incomplete task from TODO.md: T25 in TODO-2.md (Auto-pairs / auto-indent use editor-core primitives). Next step: read task details and relevant implementation/tests, then update this plan with the concrete implementation steps.
+- Concrete implementation plan: add auto-pairs and auto-indent bindings to EditorConfig; configure editor-core indentation and auto-pairs commands when EditorView is created; route normal typed chars through EditCommand::TypeChar and Enter through EditCommand::InsertNewline with the configured auto_indent flag; add language helpers in atto-editor-app; add unit tests for auto-pair insertion, selection wrapping, auto-indent, Unicode typing, paste behavior, read-only key input, and language config disablement; then run cargo fmt, clippy, and tests.
+- Implemented config/input/language/test changes and ran cargo fmt successfully. Next: run clippy with warnings denied, then the full workspace test suite.
+- Fixed clippy initialization findings in language helpers and tests. Rerunning cargo fmt and clippy.
+- Clippy passed with warnings denied. Running full workspace tests next.
+- Full workspace tests passed. Marked T25 complete in TODO.md and TODO-2.md. Reviewing final diff and fixture-suite availability before committing.
+- No fixture runner was present. Completion record updated accordingly; no code changed after the successful full test run.
+- Corrected TODO completion note placement so only T25 changed. Preparing final whitespace check, staging task files, and committing.
