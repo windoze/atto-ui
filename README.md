@@ -44,7 +44,7 @@ cargo run --bin snapshot_app
 
 ## Editor App Quick Start
 
-Launch the editor app with optional files and folders. Folders become workspace roots; files open as tabs and add their parent folders as workspace roots.
+Launch the editor app with optional files and folders. Folders become workspace roots; files open as tabs. If no folder is supplied, the first file's parent folder becomes the workspace root.
 
 ```sh
 cargo run -p atto-editor-app -- .

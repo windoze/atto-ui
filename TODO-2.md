@@ -1925,9 +1925,16 @@
 - 未更新 `crates/atto-editor-app/examples/basic.rs`：示例仍正确展示库调用 `atto_editor_app::run(AttoEditorConfig)`，无需为本次公开行为文档维护改动。
 - 验证通过：`cargo fmt`；`git --no-pager diff --check`。未运行 clippy/test，因为本任务仅修改 Markdown 与 Rust doc comments，不改变编译输出；沿用 R28 记录的 `cargo clippy --all-targets -- -D warnings` 与 `cargo test --all --all-targets` 绿色结果。
 
-### [TODO] R29 — 审阅 T29
+### [DONE] R29 — 审阅 T29
 
 审阅 T29 改动：
 - 确认完成记录不是泛泛描述，能追踪文件和测试。
 - 确认文档没有过期路径/函数名。
 - 确认 README 只记录用户可见行为，不泄露内部实现细节。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T29 的 `PLAN-2.md` 阶段状态、根 `README.md`、`crates/atto-editor-app/README.md`、`crates/atto-editor-app/src/lib.rs` crate docs、`crates/atto-editor-app/examples/basic.rs` 示例说明与完成记录；确认 T29 完成记录列明了文件、变更范围、示例是否需要更新和验证命令。
+- 对照 `crates/atto-editor-app/src/app.rs::split_initial_paths` 修正 startup path 文档：文件会打开为 tab；只有未提供 folder root 时，首个文件的 parent 才成为 workspace root，避免 README 声称每个文件 parent 都会加入 workspace roots。
+- 对照 command registry、editor keymap 与 `language.rs` 环境变量解析确认公开快捷键和 `ATTO_EDITOR_LSP_CMD_<LANGID>` / `ATTO_EDITOR_LSP_CMD` / Sublime fallback 变量名称仍有效。
+- 清理 README 中面向用户的 tab 功能描述，不再暴露 `atto_ui::composable::TabWindow` 内部类型；crate docs 同步为行为描述。
+- 验证通过：`cargo fmt`；`git --no-pager diff --check`。未运行 clippy/test，因为本次仅修改 Markdown 与 Rust doc comments，不改变编译输出；沿用 R28/T29 已记录的完整 clippy/test 绿色结果。

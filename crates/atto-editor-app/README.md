@@ -25,7 +25,7 @@ Open one or more files and/or folders at startup:
 # Open a folder as a workspace root
 cargo run -p atto-editor-app -- path/to/project
 
-# Open a file in a tab (and auto-add its parent folder as a workspace root)
+# Open a file in a tab; if no folder was supplied, its parent becomes the workspace root
 cargo run -p atto-editor-app -- path/to/file.rs
 
 # Mix folders + files
@@ -40,7 +40,7 @@ cargo run -p atto-editor-app -- path/to/project path/to/other/file.py
   - Open files from the explorer into tabs
   - `Ctrl+Enter` opens a file in a new window
   - Git status badges, multi-select, context menu actions, inline new/rename, cut/copy/paste, and drag move
-- Multi-file editing via window tabs (`atto_ui::composable::TabWindow`)
+- Multi-file editing with window tabs
   - Dirty tabs show a `*` suffix (`file.rs*`)
 - Split view for the same file (two views backed by the same document text)
   - Vertical split

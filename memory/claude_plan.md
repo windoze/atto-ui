@@ -16,9 +16,12 @@ Complete exactly the first incomplete task listed in `TODO.md`, then stop after 
 
 ## Current Status
 
-Completed `T29 — 文档与实施顺序维护`.
+Selected first incomplete task: `R29 — 审阅 T29`.
 
-- Updated root/editor README content, editor app crate docs, and `PLAN-2.md` status notes.
-- Marked `T29` `[DONE]` in `TODO.md` and `TODO-2.md` with a completion record.
-- Ran `cargo fmt` and `git --no-pager diff --check`; skipped clippy/test because only Markdown and Rust doc comments changed.
-- Next step is to commit the task-related changes and stop.
+- `TODO.md` index shows all earlier tasks complete and `R29` as the first `TODO` entry.
+- `TODO-2.md` review requirements: confirm T29 completion records are concrete and traceable, documentation paths/functions are current, and README content stays user-facing without leaking internal implementation detail.
+- Reviewed the T29 docs against startup path handling and command/keymap code.
+- Fixed two documentation issues: startup files do not each add parent workspace roots, and README no longer exposes the internal `TabWindow` type for user-facing tab behavior.
+- Marked `R29` `[DONE]` in `TODO-2.md` and updated the root `TODO.md` index.
+- Final validation passed with `cargo fmt` and `git --no-pager diff --check`.
+- This invocation will commit the R29 changes and stop.

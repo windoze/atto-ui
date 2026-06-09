@@ -114,4 +114,4 @@
 | T28 | DONE | [DONE] 更新测试 fixture 与 mock LSP 覆盖矩阵 | TODO-2.md · 全局验证与维护 |
 | R28 | DONE | [DONE] 审阅 T28 | TODO-2.md · 全局验证与维护 |
 | T29 | DONE | [DONE] 文档与实施顺序维护 | TODO-2.md · 全局验证与维护 |
-| R29 | TODO | 审阅 T29 | TODO-2.md · 全局验证与维护 |
+| R29 | DONE | [DONE] 审阅 T29 | TODO-2.md · 全局验证与维护 |

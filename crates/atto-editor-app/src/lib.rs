@@ -3,9 +3,9 @@
 //! `atto-editor-app` — a terminal editor app built on `atto-ui` + `editor-core`.
 //!
 //! This crate provides an interactive editor application with:
-//! - workspace roots (folders + individual files)
+//! - workspace roots from folders, plus startup files opened as tabs
 //! - a standalone file explorer window (toggle + dock left/right)
-//! - multi-file editing with window tabs (via `atto_ui::composable::TabWindow`)
+//! - multi-file editing with window tabs
 //! - split views for the same document (vertical/horizontal)
 //! - syntax highlighting + folding via Tree-sitter (`editor-core-treesitter` through `atto-ui-editor`)
 //! - LSP-powered diagnostics, code actions, rename, signature help, formatting, inlay hints,
