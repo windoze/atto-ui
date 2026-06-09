@@ -20,4 +20,5 @@ I will complete exactly the first incomplete task from `TODO.md` and then stop. 
 - Added unit coverage for icon rendering, shifted Unicode/mnemonic layout, mouse title hit testing, and the default theme glyph.
 - Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p atto-ui system_menu --lib`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
 - Marked `#13` as `[DONE]` in `TODO.md` with its completion record.
-- Next step: commit task-related changes and stop.
+- Committed task-related changes as `b1cfdc7` (`[#13] Add system menu icon`).
+- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
