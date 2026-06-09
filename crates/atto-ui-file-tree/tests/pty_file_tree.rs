@@ -2,6 +2,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::{KeyModifiers, PtyTestHost};
+use unicode_width::UnicodeWidthStr;
 
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
@@ -20,7 +21,8 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
         .lines()
         .enumerate()
         .find_map(|(y, line)| {
-            line.find(needle).map(|x| {
+            line.find(needle).map(|byte_idx| {
+                let x = UnicodeWidthStr::width(&line[..byte_idx]);
                 (
                     x.min(u16::MAX as usize) as u16,
                     y.min(u16::MAX as usize) as u16,

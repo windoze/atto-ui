@@ -3,6 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::PtyTestHost;
+use unicode_width::UnicodeWidthStr;
 
 const PTY_WAIT: Duration = Duration::from_secs(5);
 
@@ -28,7 +29,7 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 fn find_text_position(screen: &str, needle: &str) -> Option<(u16, u16)> {
     for (row, line) in screen.lines().enumerate() {
         if let Some(byte_idx) = line.find(needle) {
-            let col = line[..byte_idx].chars().count();
+            let col = UnicodeWidthStr::width(&line[..byte_idx]);
             return Some((col as u16, row as u16));
         }
     }

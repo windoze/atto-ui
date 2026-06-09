@@ -15,7 +15,8 @@
   - 完成记录（2026-06-09）：`Button` 改为直接绘制无边框单行色块，支持右侧与下方阴影，并以 focused/default 状态使用强调样式；新增 `default_button` 构建器与动态运行时 `default` 属性。`Theme` 注册 `button`/`button-focused`/`button-default`/`button-disabled`/`button-shadow` 命名样式，便于主题覆盖。新增按钮渲染单元测试与 `pty_core_widgets_t19` PTY 回归断言，验证按钮不再出现边框且 focused 按钮渲染为彩色单行块。按钮布局高度暂保持 3，尺寸收敛留给后续 `#3b`。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui --lib widgets::button`、`cargo test -p atto-ui --test pty_core_widgets_t19`、`cargo test --all --all-targets` 均通过。
 - [x] **[DONE] #3b 按钮尺寸回归** — 按钮高度 3→1，检查依赖按钮尺寸的布局与现有测试。
   - 完成记录（2026-06-09）：`Button` 的 `min_height`/`desired_height` 从 3 行收敛为 1 行，并新增单行布局单元测试；按钮绘制与鼠标命中测试改为使用 1 行区域。`snapshot_app` 的 T19 核心控件夹具同步改为 1 行按钮区域并压缩后续控件坐标，`pty_core_widgets_t19` 点击坐标随之更新。示例与 demo 中按钮工具栏不再硬编码 3 行高度，改用内容高度。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui widgets::button --lib`、`cargo test -p atto-ui --test pty_core_widgets_t19`、`cargo test --all --all-targets` 均通过。
-- [ ] **#4 桌面背景纹理** — `src/app/desktop.rs:580`：`Fill` 改用 `░` 纹理。
+- [x] **[DONE] #4 桌面背景纹理** — `src/app/desktop.rs:580`：`Fill` 改用 `░` 纹理。
+  - 完成记录（2026-06-09）：`Desktop::draw` 的全屏背景填充从空格改为 `░`，并新增 `pty_desktop_background_uses_texture` PTY 回归测试覆盖未被窗口/菜单/状态栏覆盖的桌面工作区单元格。纹理背景暴露出部分 PTY 测试辅助函数将 UTF-8 byte offset 当作终端列的问题；同步修正受影响的点击/取色坐标 helper 改用显示宽度计算，避免多字节桌面纹理、边框或宽字符导致坐标偏移。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、相关 PTY 聚焦测试、`cargo test --all --all-targets` 均通过。
 
 ## 阶段 2 — 菜单条（中优先级）
 

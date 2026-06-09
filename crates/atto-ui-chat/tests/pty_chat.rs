@@ -25,7 +25,8 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
-        line.find(needle).map(|x| {
+        line.find(needle).map(|byte_idx| {
+            let x = UnicodeWidthStr::width(&line[..byte_idx]);
             (
                 x.min(u16::MAX as usize) as u16,
                 y.min(u16::MAX as usize) as u16,

@@ -14,3 +14,4 @@ vt100 = "0.16.2"
 
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }
+unicode-width = "0.2.2"

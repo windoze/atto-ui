@@ -69,6 +69,25 @@ fn pty_bracketed_paste_inserts_unicode() {
 }
 
 #[test]
+fn pty_desktop_background_uses_texture() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Widgets", Duration::from_secs(2))
+        .expect("initial render");
+
+    let screen = host.screen_contents().expect("screen");
+    assert_eq!(
+        host.cell_contents(0, 1).expect("desktop background cell"),
+        "░",
+        "expected textured desktop background\n--- screen ---\n{screen}"
+    );
+
+    host.send_ctrl('q').expect("send quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_window_title_is_centered_with_padding() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");

@@ -236,6 +236,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "ratatui",
+ "unicode-width",
  "vt100",
 ]
 

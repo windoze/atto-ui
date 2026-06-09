@@ -1,10 +1,12 @@
 use std::time::Duration;
 
 use atto_ui_test_host::PtyTestHost;
+use unicode_width::UnicodeWidthStr;
 
 fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {
     for (row, line) in screen.lines().enumerate() {
-        if let Some(col) = line.find(needle) {
+        if let Some(byte_idx) = line.find(needle) {
+            let col = UnicodeWidthStr::width(&line[..byte_idx]);
             return Some((row, col));
         }
     }

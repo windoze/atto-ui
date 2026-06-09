@@ -2,6 +2,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use atto_ui_test_host::PtyTestHost;
+use unicode_width::UnicodeWidthStr;
 
 static RICH_ARTIFACT_PTY_LOCK: Mutex<()> = Mutex::new(());
 
@@ -14,7 +15,8 @@ fn rich_artifact_pty_lock() -> MutexGuard<'static, ()> {
 fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
-        line.find(needle).map(|x| {
+        line.find(needle).map(|byte_idx| {
+            let x = UnicodeWidthStr::width(&line[..byte_idx]);
             (
                 x.min(u16::MAX as usize) as u16,
                 y.min(u16::MAX as usize) as u16,
@@ -39,9 +41,10 @@ fn rich_artifact_code_link_opens_syntax_highlighted_editor_view() -> anyhow::Res
     let (fn_x, fn_y) = find_text_position(&host, "fn main").expect("fn main in code viewer");
     let fn_color = host.cell_fgcolor(fn_x, fn_y)?;
     let main_color = host.cell_fgcolor(fn_x + 3, fn_y)?;
+    let screen = host.screen_contents()?;
     assert_ne!(
         fn_color, main_color,
-        "rich code viewer should apply syntax colors"
+        "rich code viewer should apply syntax colors at ({fn_x}, {fn_y})\n--- screen ---\n{screen}"
     );
 
     host.send_ctrl('q')?;

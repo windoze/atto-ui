@@ -1,13 +1,17 @@
 use std::time::Duration;
 
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
+use unicode_width::UnicodeWidthStr;
 
 fn click_visible_text(host: &mut PtyTestHost, needle: &str) {
     let screen = host.screen_contents().expect("read screen contents");
     let (row, col) = screen
         .lines()
         .enumerate()
-        .find_map(|(row, line)| line.find(needle).map(|col| (row as u16, col as u16)))
+        .find_map(|(row, line)| {
+            line.find(needle)
+                .map(|byte_idx| (row as u16, UnicodeWidthStr::width(&line[..byte_idx]) as u16))
+        })
         .unwrap_or_else(|| panic!("{needle:?} not found in screen:\n{screen}"));
 
     host.click(col.saturating_add(1), row)

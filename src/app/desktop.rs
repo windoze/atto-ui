@@ -580,7 +580,7 @@ impl Desktop {
         frame.render_widget(
             Fill {
                 style: self.theme.desktop,
-                ch: ' ',
+                ch: '░',
             },
             area,
         );
