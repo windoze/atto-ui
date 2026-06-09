@@ -1,0 +1,25 @@
+{
+  "name": "@atto-ui/example-react-tsx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build:react": "npm run build --prefix ../../packages/react",
+    "hello": "tsx src/01-hello.tsx",
+    "counter": "tsx src/02-counter.tsx",
+    "todo": "tsx src/03-todo-list.tsx",
+    "desktop": "tsx src/04-multi-window.tsx",
+    "markdown": "tsx src/05-markdown-stream.tsx",
+    "smoke": "ATTO_UI_EXAMPLE_HEADLESS=1 tsx src/smoke.ts"
+  },
+  "dependencies": {
+    "@atto-ui/react": "file:../../packages/react",
+    "react": "file:../../packages/react/node_modules/react"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.2.79",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

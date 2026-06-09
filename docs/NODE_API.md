@@ -2,6 +2,10 @@
 
 This document covers the JavaScript-facing API provided by `@atto-ui/node`, `@atto-ui/core`, and `@atto-ui/react`.
 
+> New to the React layer? Start with the [Getting Started tutorial](./REACT_GETTING_STARTED.md)
+> and the runnable [TSX demos](../examples/react-tsx). Per-package READMEs:
+> [`@atto-ui/core`](../packages/core/README.md), [`@atto-ui/react`](../packages/react/README.md).
+
 ## Package Layout
 
 | Package | Runtime role |
