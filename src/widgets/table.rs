@@ -23,8 +23,8 @@ use crate::text::styled_text::spans_from_inline;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::util::{
-    NamedStyleCache, SelectionScroll, contains, mouse_coords_local_to_area, visible_row_range,
-    widget_style,
+    NamedStyleCache, SelectionScroll, border_scrollbar_axis_span, contains,
+    mouse_coords_local_to_area, visible_row_range, widget_style,
 };
 
 #[derive(Clone, Debug, ComponentProperties)]
@@ -367,15 +367,16 @@ impl TableView {
             width: body_area.width,
             height: body_area.height,
         };
+        let (vbar_y, vbar_height) = if header_height == 0 {
+            (0, area.height)
+        } else {
+            border_scrollbar_axis_span(area.height, body_local.y, body_local.height, cfg.arrows)
+        };
         let vbar = show_v.then_some(Rect {
             x: area.width.saturating_sub(1),
-            y: if header_height == 0 { 0 } else { body_local.y },
+            y: vbar_y,
             width: 1,
-            height: if header_height == 0 {
-                area.height
-            } else {
-                body_local.height
-            },
+            height: vbar_height,
         });
         let hbar = show_h.then_some(Rect {
             x: body_local.x,
@@ -649,6 +650,10 @@ mod tests {
         out
     }
 
+    fn cell_symbol(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> String {
+        terminal.backend().buffer()[(x, y)].symbol().to_string()
+    }
+
     #[test]
     fn draw_slices_visible_rows_after_vertical_scroll() {
         let rows: Vec<Vec<String>> = (0..12)
@@ -678,6 +683,31 @@ mod tests {
         assert!(screen.contains("row-03"), "screen was:\n{screen}");
         assert!(screen.contains("row-06"), "screen was:\n{screen}");
         assert!(!screen.contains("row-07"), "screen was:\n{screen}");
+    }
+
+    #[test]
+    fn short_table_scrollbar_keeps_arrows_and_track_visible() {
+        let rows: Vec<Vec<String>> = (0..12)
+            .map(|idx| vec![format!("row-{idx:02}"), format!("value-{idx:02}")])
+            .collect();
+        let mut table = TableView::new(
+            "Rows",
+            Binding::new(vec!["name".to_string(), "value".to_string()]),
+            Binding::new(rows),
+            Binding::new(0usize),
+        )
+        .height(4u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(20, 4)).expect("terminal");
+        let area = Rect::new(0, 0, 20, 4);
+
+        terminal
+            .draw(|f| table.draw(f, area, component_context(&theme)))
+            .expect("draw");
+
+        assert_eq!(cell_symbol(&terminal, 19, 0), "▲");
+        assert_eq!(cell_symbol(&terminal, 19, 2), "░");
+        assert_eq!(cell_symbol(&terminal, 19, 3), "▼");
     }
 
     #[test]

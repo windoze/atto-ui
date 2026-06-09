@@ -1,33 +1,20 @@
 # Execution Plan
 
-I will follow TODO.md as the authoritative task list and complete only the first task whose heading is not prefixed with `[DONE]`.
+I will follow TODO.md as the authoritative task list and complete exactly the first task whose heading is not prefixed with `[DONE]`. I will not perform broad triage before selecting that task.
 
 ## Steps
-1. Read TODO.md and identify the first incomplete task without doing broad unrelated triage.
-2. Check the latest commit only for unfinished work directly relevant to that task.
-3. Inspect the code and tests needed for that task.
-4. Implement the task completely, or if a concrete blocker prevents correct implementation, add the minimum prerequisite task to TODO.md and stop.
-5. Run formatting, linting, and relevant/full validation according to the task requirements.
-6. Update TODO.md by prefixing the completed task heading with `[DONE]` and filling its completion record, or document any blocker/prerequisite while leaving the task incomplete.
-7. Update this file at key milestones if the plan changes or a key step completes.
-8. Commit all task-related changes with a clear message and stop without starting the next task.
+1. Read TODO.md to identify the first incomplete task and its requirements, dependencies, validation instructions, and completion record expectations.
+2. Check the latest commit message only for unfinished work directly relevant to that selected task.
+3. Inspect the minimum relevant project files needed to implement the selected task correctly.
+4. Implement the task as written, avoiding workarounds or scope narrowing.
+5. Run formatting, clippy with warnings denied, and the relevant/full tests required by the task and repository policy.
+6. If an unscheduled blocking issue or failing test is found, either fix it immediately or add the minimum prerequisite task to TODO.md before the blocked task, commit that bookkeeping, and stop.
+7. When the task is complete, update TODO.md by prefixing the task heading with `[DONE]` and filling the completion record with implementation and validation notes.
+8. Commit all task-related changes with a clear task-specific message and the required co-author trailer.
+9. Stop after this single task.
 
-## Current Task
-
-First incomplete task: `#9 状态栏 item 可点击`.
-
-Implementation approach:
-1. Preserve `desktop.status` for user custom text/segments.
-2. Add a separate internally managed default status bar made from `StatusSegment`s.
-3. Wire each default shortcut segment to an internal desktop status command queue.
-4. Route status-bar clicks through the custom status bar when present, otherwise through the generated default status bar.
-5. Add regression tests for default status rendering and clickable normal-mode shortcuts.
-
-## Progress
-
-- Implemented the default status bar as internal `StatusSegment`s.
-- Preserved custom status text/segments by drawing them instead of the generated default status when present.
-- Added default status command callbacks for `F10 Menu`, `Ctrl+W Window`, and `F6 Next`.
-- Added unit tests and PTY coverage for the new clickable default status behavior.
-- Validation completed: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets`.
-- Updated `TODO.md` to mark `#9` as `[DONE]`.
+## Progress Log
+- Plan created before selecting or executing the current TODO task.
+- Selected first incomplete task: `#8 滚动条箭头/轨道` in TODO.md. Scope is composable scroll rendering so vertical scrollbar arrow end caps and `░` track render even when the content area is short.
+- Implemented the shared scrollbar layout change so a one-cell track remains visible instead of being fully covered by a thumb, and short ListBox/TableView border scrollbars expand to enough edge cells for arrow caps plus track. Added focused unit regressions for shared layout, short list rendering, and short table rendering.
+- Validation completed with formatting, focused scrollbar unit tests, clippy with warnings denied, and the full Rust test suite. No separate fixture runner was present. Updated TODO.md to mark `#8` as `[DONE]`.

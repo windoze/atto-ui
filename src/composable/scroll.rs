@@ -673,24 +673,22 @@ pub(crate) fn scrollbar_thumb(
         return ScrollbarThumb::default();
     }
     if content_len == 0 {
-        return ScrollbarThumb {
-            start: 0,
-            len: track_len,
-        };
+        return ScrollbarThumb::default();
     }
     if content_len <= viewport_len {
-        return ScrollbarThumb {
-            start: 0,
-            len: track_len,
-        };
+        return ScrollbarThumb::default();
+    }
+    if track_len == 1 {
+        return ScrollbarThumb::default();
     }
 
     let track_len_u32 = track_len as u32;
     let viewport_len_u32 = cmp::max(1, viewport_len) as u32;
     let content_len_u32 = content_len as u32;
+    let max_thumb_len = track_len.saturating_sub(1) as u32;
 
     let mut thumb_len = ((track_len_u32 * viewport_len_u32) / content_len_u32)
-        .min(track_len_u32)
+        .min(max_thumb_len)
         .max(1) as u16;
     if thumb_len > track_len {
         thumb_len = track_len;
@@ -824,6 +822,9 @@ pub fn scroll_offset_from_thumb_start(
     }
 
     let thumb = scrollbar_thumb(track_len, viewport_len, content_len, 0);
+    if thumb.len == 0 {
+        return 0;
+    }
     let max_offset = content_len.saturating_sub(viewport_len) as u32;
     let max_thumb_start = track_len.saturating_sub(thumb.len) as u32;
     if max_offset == 0 || max_thumb_start == 0 {
@@ -1002,10 +1003,10 @@ mod tests {
         assert_eq!(thumb_bottom.start, 9);
         assert_eq!(thumb_bottom.len, 1);
 
-        // Content fits -> thumb spans full track.
+        // Content fits -> there is no scrollable range, so the track remains visible.
         let thumb_full = scrollbar_thumb(10, 10, 10, 0);
         assert_eq!(thumb_full.start, 0);
-        assert_eq!(thumb_full.len, 10);
+        assert_eq!(thumb_full.len, 0);
     }
 
     #[test]
@@ -1038,6 +1039,18 @@ mod tests {
         assert!(!layout_no_arrows.has_arrows);
         assert_eq!(layout_no_arrows.track_start, 0);
         assert_eq!(layout_no_arrows.track_len, 10);
+    }
+
+    #[test]
+    fn scrollbar_layout_keeps_track_visible_for_short_bars() {
+        let layout = scrollbar_layout_1d(3, 1, 20, 0, true);
+        assert!(layout.has_arrows);
+        assert_eq!(layout.track_start, 1);
+        assert_eq!(layout.track_len, 1);
+        assert_eq!(layout.thumb_len, 0);
+        assert_eq!(scrollbar_hit_test(layout, 0), ScrollbarHit::ArrowDec);
+        assert_eq!(scrollbar_hit_test(layout, 1), ScrollbarHit::TrackInc);
+        assert_eq!(scrollbar_hit_test(layout, 2), ScrollbarHit::ArrowInc);
     }
 
     #[test]

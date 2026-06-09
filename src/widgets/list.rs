@@ -22,7 +22,8 @@ use crate::runtime::CallbackHandle;
 use atto_ui_macros::{ComponentProperties, component_properties};
 
 use super::util::{
-    NamedStyleCache, SelectionScroll, mouse_coords_local_to_area, visible_row_range, widget_style,
+    NamedStyleCache, SelectionScroll, border_scrollbar_axis_span, mouse_coords_local_to_area,
+    visible_row_range, widget_style,
 };
 
 #[derive(Clone, Debug, ComponentProperties)]
@@ -283,11 +284,17 @@ impl ListBox {
             return None;
         }
 
+        let (vbar_y, vbar_height) = border_scrollbar_axis_span(
+            area.height,
+            content_local.y,
+            content_local.height,
+            cfg.arrows,
+        );
         let vbar = show_v.then_some(Rect {
             x: area.width.saturating_sub(1),
-            y: content_local.y,
+            y: vbar_y,
             width: 1,
-            height: content_local.height,
+            height: vbar_height,
         });
         let hbar = show_h.then_some(Rect {
             x: content_local.x,
@@ -538,6 +545,10 @@ mod tests {
         out
     }
 
+    fn cell_symbol(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> String {
+        terminal.backend().buffer()[(x, y)].symbol().to_string()
+    }
+
     #[test]
     fn draw_slices_visible_rows_after_vertical_scroll() {
         let items: Vec<String> = (0..20).map(|idx| format!("row-{idx:02}")).collect();
@@ -559,6 +570,23 @@ mod tests {
         assert!(screen.contains("row-05"), "screen was:\n{screen}");
         assert!(screen.contains("row-09"), "screen was:\n{screen}");
         assert!(!screen.contains("row-10"), "screen was:\n{screen}");
+    }
+
+    #[test]
+    fn short_list_scrollbar_keeps_arrows_and_track_visible() {
+        let items: Vec<String> = (0..20).map(|idx| format!("row-{idx:02}")).collect();
+        let mut list = ListBox::new("Rows", Binding::new(items), Binding::new(0usize)).height(3u16);
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(12, 3)).expect("terminal");
+        let area = Rect::new(0, 0, 12, 3);
+
+        terminal
+            .draw(|f| list.draw(f, area, component_context(&theme)))
+            .expect("draw");
+
+        assert_eq!(cell_symbol(&terminal, 11, 0), "▲");
+        assert_eq!(cell_symbol(&terminal, 11, 1), "░");
+        assert_eq!(cell_symbol(&terminal, 11, 2), "▼");
     }
 
     #[test]

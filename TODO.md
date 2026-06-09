@@ -31,7 +31,8 @@
 
 - [x] **[DONE] #9 状态栏 item 可点击** — `src/app/desktop.rs:602` 默认状态栏改用 `StatusSegment` 渲染并接命令回调。
   - 完成记录（2026-06-09）：默认桌面状态栏改为由内部 `StatusSegment` 渲染，正常模式下 `F10 Menu`、`Ctrl+W Window`、`F6 Next` 分别接入菜单激活、窗口管理模式切换和窗口焦点切换命令；自定义 `StatusBar` 文本/segments 继续优先于默认状态栏。新增默认状态栏渲染与点击命令单元测试，并补充 PTY 回归测试覆盖点击 `F10 Menu` hotspot 打开菜单。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
-- [ ] **#8 滚动条箭头/轨道** — composable/scroll：`▲`/`▼` 端帽与 `░` 轨道在矮内容区也渲染。
+- [x] **[DONE] #8 滚动条箭头/轨道** — composable/scroll：`▲`/`▼` 端帽与 `░` 轨道在矮内容区也渲染。
+  - 完成记录（2026-06-09）：`src/composable/scroll.rs` 调整共享滚动条 thumb/layout 逻辑：内容无需滚动或轨道只有 1 格时不再用 `█` 覆盖整段轨道，保留可见 `░`；短滚动条仍保留 `▲`/`▼` 端帽命中。`ListBox`/`TableView` 的边框挂载垂直滚动条在内容区过矮时扩展到外边缘，确保至少有端帽与轨道可绘制。新增共享 layout、短 ListBox、短 TableView 回归测试。验证：`cargo fmt`、`cargo test -p atto-ui scrollbar --lib`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过；未发现独立 fixture runner。
 
 ## 阶段 4 — TV 配色主题（中优先级）
 

@@ -62,6 +62,22 @@ pub(crate) fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
+/// Expands a border-mounted scrollbar across the outer edge when the inner span is too short to
+/// show arrow caps and at least one track cell.
+pub(crate) fn border_scrollbar_axis_span(
+    outer_len: u16,
+    inner_start: u16,
+    inner_len: u16,
+    arrows: bool,
+) -> (u16, u16) {
+    let min_len = if arrows { 3 } else { 1 };
+    if inner_len < min_len && outer_len >= min_len {
+        (0, outer_len)
+    } else {
+        (inner_start, inner_len)
+    }
+}
+
 /// Converts mouse coordinates from an explicit coordinate space to coordinates local to `area`.
 pub(crate) fn mouse_coords_local_to_area(
     area: Rect,
