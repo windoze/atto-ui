@@ -1,17 +1,20 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui::composable::{
-    ComponentContext, EventResult, MouseCoordinateSpace, ScrollConfig, ScrollbarHost,
+    ComponentContext, DragOffer, DragOperation, DragPayload, DropEffect, DropFeedback, EventResult,
+    MouseCoordinateSpace, ScrollConfig, ScrollbarHost,
 };
 use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui_file_tree::{
-    FileTree, FileTreeGlyphs, FileTreeInlineEditCommit, FileTreeInlineEditKind, FileTreeNode,
-    FileTreeNodeId, FileTreeNodeKind,
+    FILE_TREE_NODE_IDS_DRAG_TYPE, FileTree, FileTreeGlyphs, FileTreeInlineEditCommit,
+    FileTreeInlineEditKind, FileTreeNode, FileTreeNodeId, FileTreeNodeKind,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -22,7 +25,12 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
 
 use crate::actions::{AppAction, OpenTarget};
-use crate::workspace::{WorkspaceTreeOptions, build_workspace_tree};
+use crate::workspace::{
+    WorkspaceGitStatuses, WorkspaceTreeOptions, build_workspace_tree_with_git_statuses,
+    git_statuses_for_root,
+};
+
+const GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub enum ExplorerWindowCommand {
@@ -51,9 +59,26 @@ pub struct ExplorerWindowView {
     tree_path_to_id: HashMap<PathBuf, FileTreeNodeId>,
     file_tree: FileTree,
 
+    clipboard: Option<FileClipboard>,
+    git_statuses: WorkspaceGitStatuses,
+    git_status_rx: Option<Receiver<WorkspaceGitStatuses>>,
+    last_git_status_started: Option<Instant>,
+
     last_click: Option<(Instant, FileTreeNodeId)>,
     last_area: Option<Rect>,
     context_menu: Option<ExplorerContextMenu>,
+}
+
+#[derive(Clone, Debug)]
+struct FileClipboard {
+    mode: FileClipboardMode,
+    paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileClipboardMode {
+    Cut,
+    Copy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +165,7 @@ impl ExplorerWindowView {
         let mut view = Self {
             actions,
             commands,
-            workspace_roots,
+            workspace_roots: Vec::new(),
             tree_nodes,
             tree_selection,
             tree_selections,
@@ -149,12 +174,16 @@ impl ExplorerWindowView {
             tree_id_to_parent: HashMap::new(),
             tree_path_to_id: HashMap::new(),
             file_tree,
+            clipboard: None,
+            git_statuses: WorkspaceGitStatuses::default(),
+            git_status_rx: None,
+            last_git_status_started: None,
             last_click: None,
             last_area: None,
             context_menu: None,
         };
 
-        view.refresh_workspace_tree();
+        view.set_workspace_roots(workspace_roots);
         view
     }
 
@@ -167,7 +196,16 @@ impl ExplorerWindowView {
     }
 
     fn refresh_workspace_tree(&mut self) {
-        let tree = build_workspace_tree(&self.workspace_roots, WorkspaceTreeOptions::default());
+        self.rebuild_workspace_tree();
+        self.maybe_start_git_status_refresh(false);
+    }
+
+    fn rebuild_workspace_tree(&mut self) {
+        let tree = build_workspace_tree_with_git_statuses(
+            &self.workspace_roots,
+            WorkspaceTreeOptions::default(),
+            &self.git_statuses,
+        );
         self.tree_id_to_parent = parent_map_for_roots(&tree.roots);
         self.tree_path_to_id = tree
             .id_to_path
@@ -186,6 +224,55 @@ impl ExplorerWindowView {
         self.tree_nodes.set(tree.roots);
     }
 
+    fn clear_git_status_cache(&mut self) {
+        self.git_statuses = WorkspaceGitStatuses::default();
+        self.git_status_rx = None;
+        self.last_git_status_started = None;
+    }
+
+    fn maybe_start_git_status_refresh(&mut self, force: bool) {
+        if self.workspace_roots.is_empty() || self.git_status_rx.is_some() {
+            return;
+        }
+        if !force
+            && self
+                .last_git_status_started
+                .is_some_and(|started| started.elapsed() < GIT_STATUS_REFRESH_INTERVAL)
+        {
+            return;
+        }
+
+        let roots = self.workspace_roots.clone();
+        let (tx, rx) = mpsc::channel();
+        self.last_git_status_started = Some(Instant::now());
+        self.git_status_rx = Some(rx);
+
+        thread::spawn(move || {
+            let mut statuses = WorkspaceGitStatuses::default();
+            for root in roots {
+                if let Ok(root_statuses) = git_statuses_for_root(&root) {
+                    statuses.extend(root_statuses);
+                }
+            }
+            let _ = tx.send(statuses);
+        });
+    }
+
+    fn poll_git_status_refresh(&mut self) {
+        let poll = self.git_status_rx.as_ref().map(|rx| rx.try_recv());
+        match poll {
+            Some(Ok(statuses)) => {
+                self.git_status_rx = None;
+                self.git_statuses = statuses;
+                self.rebuild_workspace_tree();
+            }
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.git_status_rx = None;
+            }
+            Some(Err(mpsc::TryRecvError::Empty)) | None => {}
+        }
+    }
+
     fn canonicalize_best_effort(path: &Path) -> PathBuf {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
@@ -200,6 +287,7 @@ impl ExplorerWindowView {
             next.push(root);
         }
         self.workspace_roots = next;
+        self.clear_git_status_cache();
         self.refresh_workspace_tree();
     }
 
@@ -209,6 +297,7 @@ impl ExplorerWindowView {
             return;
         }
         self.workspace_roots.push(root);
+        self.clear_git_status_cache();
         self.refresh_workspace_tree();
     }
 
@@ -227,8 +316,81 @@ impl ExplorerWindowView {
             .push(AppAction::ShowStatusMessage(message.into()));
     }
 
+    fn child_context<'a>(&self, ctx: ComponentContext<'a>) -> ComponentContext<'a> {
+        ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused,
+            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
+                ScrollbarHost::Window
+            } else {
+                ctx.scrollbar_host.for_child()
+            },
+            tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: ctx.drag,
+        }
+    }
+
     fn context_action_target(&self, target: Option<FileTreeNodeId>) -> Option<FileTreeNodeId> {
         target.or_else(|| self.tree_selection.get())
+    }
+
+    fn node_ids_for_action_target(
+        &self,
+        target: Option<FileTreeNodeId>,
+    ) -> BTreeSet<FileTreeNodeId> {
+        if let Some(id) = target {
+            let selected = self.tree_selections.get();
+            if selected.contains(&id) {
+                return selected;
+            }
+            return BTreeSet::from([id]);
+        }
+
+        let selected = self.tree_selections.get();
+        if !selected.is_empty() {
+            return selected;
+        }
+        self.tree_selection.get().into_iter().collect()
+    }
+
+    fn paths_for_node_ids(
+        &self,
+        ids: impl IntoIterator<Item = FileTreeNodeId>,
+    ) -> Result<Vec<PathBuf>, String> {
+        let mut paths = Vec::new();
+        for id in ids {
+            let path =
+                self.tree_id_to_path.get(&id).cloned().ok_or_else(|| {
+                    format!("file tree item {} is no longer available", id.value())
+                })?;
+            self.ensure_path_in_workspace(&path)?;
+            paths.push(path);
+        }
+        if paths.is_empty() {
+            return Err("no file tree item selected".to_string());
+        }
+        Ok(paths)
+    }
+
+    fn ensure_path_in_workspace(&self, path: &Path) -> Result<PathBuf, String> {
+        let path = Self::canonicalize_best_effort(path);
+        if self.workspace_roots.iter().any(|root| {
+            let root = Self::canonicalize_best_effort(root);
+            path == root || path.starts_with(&root)
+        }) {
+            Ok(path)
+        } else {
+            Err(format!("path is outside the workspace: {}", path.display()))
+        }
+    }
+
+    fn is_workspace_root(&self, path: &Path) -> bool {
+        let path = Self::canonicalize_best_effort(path);
+        self.workspace_roots
+            .iter()
+            .any(|root| Self::canonicalize_best_effort(root) == path)
     }
 
     fn begin_context_new(
@@ -297,6 +459,269 @@ impl ExplorerWindowView {
         Some((id, root))
     }
 
+    fn directory_target_path(&self, target: Option<FileTreeNodeId>) -> Result<PathBuf, String> {
+        if let Some(id) = self.context_action_target(target) {
+            let kind = self
+                .tree_id_to_kind
+                .get(&id)
+                .copied()
+                .ok_or_else(|| "target item is no longer available".to_string())?;
+            if kind != FileTreeNodeKind::Directory {
+                return Err("target must be a directory".to_string());
+            }
+            let path = self
+                .tree_id_to_path
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| "target path is no longer available".to_string())?;
+            self.ensure_path_in_workspace(&path)
+        } else {
+            self.workspace_roots
+                .first()
+                .cloned()
+                .ok_or_else(|| "no workspace root is available".to_string())
+        }
+    }
+
+    fn drop_target_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        ctx: ComponentContext<'_>,
+    ) -> Option<(PathBuf, Rect)> {
+        let area = self.last_area?;
+        let right = area.x.saturating_add(area.width);
+        let bottom = area.y.saturating_add(area.height);
+        if area.width <= 2
+            || area.height <= 2
+            || screen_x <= area.x
+            || screen_x >= right.saturating_sub(1)
+            || screen_y <= area.y
+            || screen_y >= bottom.saturating_sub(1)
+        {
+            return None;
+        }
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: screen_x,
+            row: screen_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        if let Some(id) = self
+            .file_tree
+            .node_id_at_mouse_event(mouse, self.child_context(ctx))
+        {
+            if self.tree_id_to_kind.get(&id).copied() != Some(FileTreeNodeKind::Directory) {
+                return None;
+            }
+            let path = self.tree_id_to_path.get(&id).cloned()?;
+            let rect = Rect {
+                x: area.x.saturating_add(1),
+                y: screen_y,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            };
+            return Some((path, rect));
+        }
+
+        let root = self.workspace_roots.first()?.clone();
+        Some((
+            root,
+            Rect {
+                x: area.x.saturating_add(1),
+                y: area.y.saturating_add(1),
+                width: area.width.saturating_sub(2),
+                height: area.height.saturating_sub(2),
+            },
+        ))
+    }
+
+    fn node_ids_from_payload(payload: &DragPayload) -> Result<Vec<FileTreeNodeId>, String> {
+        let DragPayload::Custom { ty, data } = payload else {
+            return Err("unsupported drag payload".to_string());
+        };
+        if *ty != FILE_TREE_NODE_IDS_DRAG_TYPE {
+            return Err("unsupported file tree drag payload".to_string());
+        }
+
+        let raw = std::str::from_utf8(data).map_err(|_| "drag payload is not UTF-8".to_string())?;
+        let mut ids = Vec::new();
+        for part in raw.split(',').filter(|part| !part.is_empty()) {
+            let id = part
+                .parse::<u64>()
+                .map_err(|_| format!("invalid file tree node id: {part}"))?;
+            ids.push(FileTreeNodeId::new(id));
+        }
+        if ids.is_empty() {
+            return Err("drag payload does not contain node ids".to_string());
+        }
+        Ok(ids)
+    }
+
+    fn prepare_destinations(
+        &self,
+        sources: &[PathBuf],
+        target_dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        let target_dir = self.ensure_path_in_workspace(target_dir)?;
+        let target_meta = fs::metadata(&target_dir)
+            .map_err(|err| format!("target directory is not accessible: {err}"))?;
+        if !target_meta.is_dir() {
+            return Err("target must be a directory".to_string());
+        }
+
+        let mut destinations = Vec::new();
+        let mut seen = HashSet::new();
+        for source in sources {
+            let source = self.ensure_path_in_workspace(source)?;
+            if self.is_workspace_root(&source) {
+                return Err("workspace roots cannot be moved or copied".to_string());
+            }
+            let source_meta = fs::symlink_metadata(&source)
+                .map_err(|err| format!("source is not accessible: {}: {err}", source.display()))?;
+            if source_meta.is_dir() && target_dir.starts_with(&source) {
+                return Err(format!(
+                    "cannot move or copy a directory into itself: {}",
+                    source.display()
+                ));
+            }
+
+            let file_name = source
+                .file_name()
+                .ok_or_else(|| format!("source has no file name: {}", source.display()))?;
+            let destination = target_dir.join(file_name);
+            if !seen.insert(destination.clone()) {
+                return Err(format!(
+                    "multiple sources would create {}",
+                    destination.display()
+                ));
+            }
+            ensure_target_available(&destination)?;
+            destinations.push(destination);
+        }
+
+        Ok(destinations)
+    }
+
+    fn move_paths_to_directory(
+        &self,
+        sources: &[PathBuf],
+        target_dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        let destinations = self.prepare_destinations(sources, target_dir)?;
+        for (source, destination) in sources.iter().zip(destinations.iter()) {
+            fs::rename(source, destination).map_err(|err| {
+                format!(
+                    "move failed: {} -> {}: {err}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+        }
+        Ok(destinations)
+    }
+
+    fn copy_paths_to_directory(
+        &self,
+        sources: &[PathBuf],
+        target_dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
+        let destinations = self.prepare_destinations(sources, target_dir)?;
+        for (source, destination) in sources.iter().zip(destinations.iter()) {
+            let meta = fs::symlink_metadata(source)
+                .map_err(|err| format!("source is not accessible: {}: {err}", source.display()))?;
+            if meta.is_dir() {
+                copy_dir_recursive(source, destination)?;
+            } else {
+                fs::copy(source, destination).map_err(|err| {
+                    format!(
+                        "copy failed: {} -> {}: {err}",
+                        source.display(),
+                        destination.display()
+                    )
+                })?;
+            }
+        }
+        Ok(destinations)
+    }
+
+    fn refresh_after_file_operation(&mut self) {
+        self.commands.push(ExplorerWindowCommand::Refresh);
+        self.handle_commands();
+    }
+
+    fn select_first_path(&mut self, paths: &[PathBuf]) {
+        if let Some(path) = paths.first() {
+            self.select_path(path);
+        }
+    }
+
+    fn set_file_clipboard(
+        &mut self,
+        mode: FileClipboardMode,
+        target: Option<FileTreeNodeId>,
+    ) -> EventResult {
+        match self.paths_for_node_ids(self.node_ids_for_action_target(target)) {
+            Ok(paths) => {
+                let label = if paths.len() == 1 {
+                    paths[0]
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| paths[0].display().to_string())
+                } else {
+                    format!("{} items", paths.len())
+                };
+                self.clipboard = Some(FileClipboard { mode, paths });
+                let action = match mode {
+                    FileClipboardMode::Cut => "cut",
+                    FileClipboardMode::Copy => "copied",
+                };
+                self.show_status(format!("Explorer: {action} {label}"));
+                EventResult::consumed()
+            }
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                EventResult::consumed()
+            }
+        }
+    }
+
+    fn paste_file_clipboard(&mut self, target: Option<FileTreeNodeId>) -> EventResult {
+        let Some(clipboard) = self.clipboard.clone() else {
+            self.show_status("Explorer: clipboard is empty");
+            return EventResult::consumed();
+        };
+        let target_dir = match self.directory_target_path(target) {
+            Ok(path) => path,
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                return EventResult::consumed();
+            }
+        };
+
+        let result = match clipboard.mode {
+            FileClipboardMode::Cut => self.move_paths_to_directory(&clipboard.paths, &target_dir),
+            FileClipboardMode::Copy => self.copy_paths_to_directory(&clipboard.paths, &target_dir),
+        };
+
+        match result {
+            Ok(destinations) => {
+                if clipboard.mode == FileClipboardMode::Cut {
+                    self.clipboard = None;
+                }
+                self.refresh_after_file_operation();
+                self.select_first_path(&destinations);
+                self.show_status(format!("Explorer: pasted {} item(s)", destinations.len()));
+                EventResult::changed()
+            }
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                EventResult::consumed()
+            }
+        }
+    }
+
     fn execute_context_action(
         &mut self,
         action: ExplorerContextAction,
@@ -325,12 +750,9 @@ impl ExplorerWindowView {
                 self.show_status("Explorer: delete requires confirmation and is not enabled yet");
                 EventResult::consumed()
             }
-            ExplorerContextAction::Cut
-            | ExplorerContextAction::Copy
-            | ExplorerContextAction::Paste => {
-                self.show_status("Explorer: clipboard actions are scheduled for T24");
-                EventResult::consumed()
-            }
+            ExplorerContextAction::Cut => self.set_file_clipboard(FileClipboardMode::Cut, target),
+            ExplorerContextAction::Copy => self.set_file_clipboard(FileClipboardMode::Copy, target),
+            ExplorerContextAction::Paste => self.paste_file_clipboard(target),
             ExplorerContextAction::Reveal => {
                 self.show_status("Explorer: reveal is not available in this terminal session");
                 EventResult::consumed()
@@ -566,6 +988,7 @@ impl ExplorerWindowView {
     }
 
     fn handle_commands(&mut self) {
+        self.poll_git_status_refresh();
         for cmd in self.commands.drain() {
             match cmd {
                 ExplorerWindowCommand::SetWorkspaceRoots(roots) => self.set_workspace_roots(roots),
@@ -619,24 +1042,50 @@ fn ensure_target_available(path: &Path) -> Result<(), String> {
     }
 }
 
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir(destination).map_err(|err| {
+        format!(
+            "copy failed: {} -> {}: {err}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+
+    for entry in fs::read_dir(source)
+        .map_err(|err| format!("copy failed: cannot read {}: {err}", source.display()))?
+    {
+        let entry =
+            entry.map_err(|err| format!("copy failed: cannot read {}: {err}", source.display()))?;
+        let child_source = entry.path();
+        let child_destination = destination.join(entry.file_name());
+        let meta = fs::symlink_metadata(&child_source).map_err(|err| {
+            format!(
+                "copy failed: cannot inspect {}: {err}",
+                child_source.display()
+            )
+        })?;
+        if meta.is_dir() {
+            copy_dir_recursive(&child_source, &child_destination)?;
+        } else {
+            fs::copy(&child_source, &child_destination).map_err(|err| {
+                format!(
+                    "copy failed: {} -> {}: {err}",
+                    child_source.display(),
+                    child_destination.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 impl ::atto_ui::composable::Component for ExplorerWindowView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.handle_commands();
         self.last_area = Some(area);
 
-        let child_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused,
-            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host.for_child()
-            },
-            tab_mode: ctx.tab_mode.for_child(),
-            mouse_coordinate_space: ctx.mouse_coordinate_space,
-            drag: None,
-        };
+        let child_ctx = self.child_context(ctx);
         self.file_tree.draw(frame, area, child_ctx);
         if let Some(menu) = self.context_menu {
             self.draw_context_menu(frame, ctx, menu);
@@ -644,7 +1093,94 @@ impl ::atto_ui::composable::Component for ExplorerWindowView {
     }
 }
 
-impl ::atto_ui::composable::DragAndDrop for ExplorerWindowView {}
+impl ::atto_ui::composable::DragAndDrop for ExplorerWindowView {
+    fn drag_source_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        ctx: ComponentContext<'_>,
+    ) -> Option<atto_ui::composable::DragSource> {
+        atto_ui::composable::DragAndDrop::drag_source_at(
+            &self.file_tree,
+            screen_x,
+            screen_y,
+            self.child_context(ctx),
+        )
+    }
+
+    fn drag_over(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> DropFeedback {
+        if offer.operation != DragOperation::Move
+            || !ctx
+                .drag
+                .is_some_and(|drag| drag.source_window == ctx.window_id)
+        {
+            return DropFeedback::default();
+        }
+
+        let Ok(ids) = Self::node_ids_from_payload(offer.payload) else {
+            return DropFeedback::default();
+        };
+        let Ok(paths) = self.paths_for_node_ids(ids) else {
+            return DropFeedback::default();
+        };
+        let Some((target_dir, rect)) = self.drop_target_at(offer.screen_x, offer.screen_y, ctx)
+        else {
+            return DropFeedback::default();
+        };
+        if self.prepare_destinations(&paths, &target_dir).is_err() {
+            return DropFeedback::default();
+        }
+
+        DropFeedback {
+            effect: DropEffect::Move,
+            rect: Some(rect),
+            label: Some(format!("Move to {}", target_dir.display())),
+        }
+    }
+
+    fn drop(&mut self, offer: DragOffer<'_>, ctx: ComponentContext<'_>) -> EventResult {
+        if offer.operation != DragOperation::Move
+            || !ctx
+                .drag
+                .is_some_and(|drag| drag.source_window == ctx.window_id)
+        {
+            return EventResult::ignored();
+        }
+
+        let ids = match Self::node_ids_from_payload(offer.payload) {
+            Ok(ids) => ids,
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                return EventResult::consumed();
+            }
+        };
+        let paths = match self.paths_for_node_ids(ids) {
+            Ok(paths) => paths,
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                return EventResult::consumed();
+            }
+        };
+        let Some((target_dir, _rect)) = self.drop_target_at(offer.screen_x, offer.screen_y, ctx)
+        else {
+            self.show_status("Explorer: drop target must be a directory");
+            return EventResult::consumed();
+        };
+
+        match self.move_paths_to_directory(&paths, &target_dir) {
+            Ok(destinations) => {
+                self.refresh_after_file_operation();
+                self.select_first_path(&destinations);
+                self.show_status(format!("Explorer: moved {} item(s)", destinations.len()));
+                EventResult::changed()
+            }
+            Err(message) => {
+                self.show_status(format!("Explorer: {message}"));
+                EventResult::consumed()
+            }
+        }
+    }
+}
 
 impl ::atto_ui::composable::Layout for ExplorerWindowView {}
 
@@ -700,23 +1236,26 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
                     self.actions.push(AppAction::ToggleExplorer);
                     return EventResult::consumed();
                 }
+                (KeyCode::Char('x'), true) | (KeyCode::Char('X'), true)
+                    if self.file_tree.inline_edit().is_none() =>
+                {
+                    return self.set_file_clipboard(FileClipboardMode::Cut, None);
+                }
+                (KeyCode::Char('c'), true) | (KeyCode::Char('C'), true)
+                    if self.file_tree.inline_edit().is_none() =>
+                {
+                    return self.set_file_clipboard(FileClipboardMode::Copy, None);
+                }
+                (KeyCode::Char('v'), true) | (KeyCode::Char('V'), true)
+                    if self.file_tree.inline_edit().is_none() =>
+                {
+                    return self.paste_file_clipboard(None);
+                }
                 _ => {}
             }
         }
 
-        let child_ctx = ComponentContext {
-            theme: ctx.theme,
-            window_id: ctx.window_id,
-            is_focused: ctx.is_focused,
-            scrollbar_host: if matches!(ctx.scrollbar_host, ScrollbarHost::Window) {
-                ScrollbarHost::Window
-            } else {
-                ctx.scrollbar_host.for_child()
-            },
-            tab_mode: ctx.tab_mode.for_child(),
-            mouse_coordinate_space: ctx.mouse_coordinate_space,
-            drag: None,
-        };
+        let child_ctx = self.child_context(ctx);
 
         if let Some(result) = self.handle_context_menu_event(event) {
             return result;

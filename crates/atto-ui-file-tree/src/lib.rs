@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    Component, ComponentContext, EdgeInsets, EventResult, MouseCoordinateSpace, ScrollConfig,
-    ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset,
-    Scrollable, ScrollbarDrag, ScrollbarHost, Scrollbars, draw_scrollbars,
-    handle_scrollbar_mouse_event, should_show_scrollbar,
+    Component, ComponentContext, DragOperation, DragPayload, DragPayloadType, DragSource,
+    EdgeInsets, EventResult, MouseCoordinateSpace, ScrollConfig, ScrollContainer,
+    ScrollContainerHost, ScrollContent, ScrollContentContext, ScrollOffset, Scrollable,
+    ScrollbarDrag, ScrollbarHost, Scrollbars, draw_scrollbars, handle_scrollbar_mouse_event,
+    should_show_scrollbar,
 };
 use atto_ui::reactive::Binding;
 use atto_ui::runtime::{
@@ -31,6 +32,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+pub const FILE_TREE_NODE_IDS_DRAG_TYPE: DragPayloadType =
+    DragPayloadType("atto-ui-file-tree/node-ids");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileTreeNodeId(u64);
@@ -617,7 +621,7 @@ impl ::atto_ui::composable::Component for FileTree {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
-            drag: None,
+            drag: ctx.drag,
             ..ctx
         };
         self.scroll.draw(frame, area, body_ctx);
@@ -630,7 +634,71 @@ impl ::atto_ui::composable::Component for FileTree {
     }
 }
 
-impl ::atto_ui::composable::DragAndDrop for FileTree {}
+impl ::atto_ui::composable::DragAndDrop for FileTree {
+    fn drag_source_at(
+        &self,
+        screen_x: u16,
+        screen_y: u16,
+        _ctx: ComponentContext<'_>,
+    ) -> Option<DragSource> {
+        if self.inline_edit().is_some() {
+            return None;
+        }
+        let area = self.last_area?;
+        if !contains(area, screen_x, screen_y) {
+            return None;
+        }
+
+        let row = screen_y.checked_sub(area.y)?.checked_sub(1)? as usize;
+        let bindings = self.bindings.read();
+        if !bindings.enabled.get() {
+            return None;
+        }
+        let roots = bindings.roots.get();
+        let filter = bindings.filter.clone();
+        let glyphs = bindings.glyphs.clone();
+        let selected_ids = bindings.selections.get();
+        drop(bindings);
+
+        let content = FileTreeContent::new(self.bindings.clone());
+        let entries = content.build_visible_entries(&roots, filter.as_deref(), glyphs.as_ref());
+        let idx = self.scroll.scroll_offset().1 as usize + row;
+        let entry = entries
+            .get(idx)
+            .filter(|entry| entry.inline_placeholder.is_none())?;
+
+        let mut ids = if selected_ids.contains(&entry.id) {
+            selected_ids
+        } else {
+            BTreeSet::from([entry.id])
+        };
+        ids.remove(&INLINE_PLACEHOLDER_ID);
+        if ids.is_empty() {
+            return None;
+        }
+
+        let data = ids
+            .iter()
+            .map(|id| id.value().to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let ghost = if ids.len() == 1 {
+            entry.name.clone()
+        } else {
+            format!("{} items", ids.len())
+        };
+
+        Some(DragSource {
+            payload: DragPayload::Custom {
+                ty: FILE_TREE_NODE_IDS_DRAG_TYPE,
+                data: data.into_bytes(),
+            },
+            operation: DragOperation::Move,
+            threshold: 2,
+            ghost: Some(ghost),
+        })
+    }
+}
 
 impl ::atto_ui::composable::Layout for FileTree {
     fn min_width(&self) -> u16 {
@@ -709,7 +777,7 @@ impl ::atto_ui::composable::EventHandling for FileTree {
 
         let body_ctx = ComponentContext {
             scrollbar_host: ScrollbarHost::Window,
-            drag: None,
+            drag: ctx.drag,
             ..ctx
         };
         self.scroll.handle_event(event, body_ctx)
@@ -2593,6 +2661,45 @@ mod tests {
 
         assert_eq!(tree.selected(), None);
         assert!(tree.selected_ids().is_empty());
+    }
+
+    #[test]
+    fn drag_source_at_emits_selected_node_ids_payload() {
+        let theme = atto_ui::theme::Theme::dark();
+        let selection = Binding::new(Some(FileTreeNodeId::new(2)));
+        let selections = Binding::new(BTreeSet::from([
+            FileTreeNodeId::new(2),
+            FileTreeNodeId::new(3),
+        ]));
+        let mut tree =
+            FileTree::new_with_selections("Files", sample_tree(true), selection, selections);
+        tree.last_area = Some(Rect::new(0, 0, 40, 12));
+
+        let source = atto_ui::composable::DragAndDrop::drag_source_at(
+            &tree,
+            2,
+            2,
+            ComponentContext {
+                theme: &theme,
+                window_id: atto_ui::wm::WindowId::from_raw(1),
+                is_focused: true,
+                scrollbar_host: ScrollbarHost::Component,
+                tab_mode: atto_ui::composable::TabMode::Cycle,
+                mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                drag: None,
+            },
+        )
+        .expect("drag source");
+
+        assert_eq!(source.operation, DragOperation::Move);
+        assert_eq!(source.ghost.as_deref(), Some("2 items"));
+        assert_eq!(
+            source.payload,
+            DragPayload::Custom {
+                ty: FILE_TREE_NODE_IDS_DRAG_TYPE,
+                data: b"2,3".to_vec()
+            }
+        );
     }
 
     #[test]

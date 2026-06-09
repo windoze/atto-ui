@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use atto_ui_file_tree::{FileTreeGitStatus, FileTreeNode, FileTreeNodeId, FileTreeNodeKind};
 
@@ -28,6 +29,11 @@ impl WorkspaceGitStatuses {
     pub fn insert_path(&mut self, path: PathBuf, status: FileTreeGitStatus) {
         let path = canonicalize_best_effort(&path).unwrap_or(path);
         self.by_path.insert(path, status);
+    }
+
+    pub fn extend(&mut self, other: WorkspaceGitStatuses) {
+        self.by_id.extend(other.by_id);
+        self.by_path.extend(other.by_path);
     }
 
     fn status_for(&self, id: FileTreeNodeId, path: &Path) -> Option<FileTreeGitStatus> {
@@ -133,6 +139,43 @@ pub fn build_workspace_file_index(roots: &[PathBuf], max_entries: usize) -> Work
     WorkspaceFileIndex { roots, entries }
 }
 
+pub fn git_statuses_for_root(root: &Path) -> Result<WorkspaceGitStatuses, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("--ignored=matching")
+        .output()
+        .map_err(|err| format!("git status failed for {}: {err}", root.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git status failed for {}: {}",
+            root.display(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_git_status_porcelain_v1(root, &stdout))
+}
+
+pub fn parse_git_status_porcelain_v1(root: &Path, output: &str) -> WorkspaceGitStatuses {
+    let root = canonicalize_best_effort(root).unwrap_or_else(|| root.to_path_buf());
+    let mut statuses = WorkspaceGitStatuses::default();
+
+    for line in output.lines() {
+        let Some((status, path)) = parse_git_status_line(line) else {
+            continue;
+        };
+        statuses.insert_path(root.join(path), status);
+    }
+
+    statuses
+}
+
 fn collect_file_entries(
     node: &FileTreeNode,
     id_to_path: &HashMap<FileTreeNodeId, PathBuf>,
@@ -170,6 +213,72 @@ fn display_path_for_file(path: &Path, roots: &[PathBuf]) -> String {
         .map(|relative| relative.to_string_lossy().to_string())
         .filter(|relative| !relative.is_empty())
         .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn parse_git_status_line(line: &str) -> Option<(FileTreeGitStatus, PathBuf)> {
+    let bytes = line.as_bytes();
+    if bytes.len() < 4 {
+        return None;
+    }
+
+    let x = bytes[0] as char;
+    let y = bytes[1] as char;
+    let status = git_status_from_porcelain_xy(x, y)?;
+    let raw_path = line.get(3..)?.trim_end();
+    let path = raw_path
+        .rsplit_once(" -> ")
+        .map(|(_, new_path)| new_path)
+        .unwrap_or(raw_path);
+    Some((status, PathBuf::from(unquote_porcelain_path(path))))
+}
+
+fn git_status_from_porcelain_xy(x: char, y: char) -> Option<FileTreeGitStatus> {
+    if x == '!' && y == '!' {
+        return Some(FileTreeGitStatus::Ignored);
+    }
+    if x == '?' && y == '?' {
+        return Some(FileTreeGitStatus::Untracked);
+    }
+    if x == 'R' || y == 'R' {
+        return Some(FileTreeGitStatus::Renamed);
+    }
+    if x == 'A' || y == 'A' {
+        return Some(FileTreeGitStatus::Added);
+    }
+    if x == 'D' || y == 'D' {
+        return Some(FileTreeGitStatus::Deleted);
+    }
+    if matches!(x, 'M' | 'T') || matches!(y, 'M' | 'T') {
+        return Some(FileTreeGitStatus::Modified);
+    }
+    None
+}
+
+fn unquote_porcelain_path(path: &str) -> String {
+    let Some(inner) = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+        return path.to_string();
+    };
+
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn canonicalize_best_effort(path: &Path) -> Option<PathBuf> {
@@ -425,6 +534,45 @@ mod tests {
 
         assert_eq!(modified_node.git_status, Some(FileTreeGitStatus::Modified));
         assert_eq!(added_node.git_status, Some(FileTreeGitStatus::Added));
+    }
+
+    #[test]
+    fn parse_git_status_porcelain_v1_maps_common_statuses() {
+        let root = TempDir::new("git_status_parse");
+        fs::write(root.path.join("modified.rs"), "modified\n").unwrap();
+        fs::write(root.path.join("added.rs"), "added\n").unwrap();
+        fs::write(root.path.join("untracked file.rs"), "untracked\n").unwrap();
+        fs::write(root.path.join("ignored.log"), "ignored\n").unwrap();
+
+        let statuses = parse_git_status_porcelain_v1(
+            &root.path,
+            " M modified.rs\nA  added.rs\n?? untracked file.rs\n!! ignored.log\n",
+        );
+        let tree = build_workspace_tree_with_git_statuses(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions {
+                show_hidden: true,
+                ..WorkspaceTreeOptions::default()
+            },
+            &statuses,
+        );
+        let root_node = tree.roots.first().expect("root node");
+
+        let status_for = |name: &str| {
+            root_node
+                .children
+                .iter()
+                .find(|node| node.name == name)
+                .and_then(|node| node.git_status)
+        };
+
+        assert_eq!(status_for("modified.rs"), Some(FileTreeGitStatus::Modified));
+        assert_eq!(status_for("added.rs"), Some(FileTreeGitStatus::Added));
+        assert_eq!(
+            status_for("untracked file.rs"),
+            Some(FileTreeGitStatus::Untracked)
+        );
+        assert_eq!(status_for("ignored.log"), Some(FileTreeGitStatus::Ignored));
     }
 
     #[test]

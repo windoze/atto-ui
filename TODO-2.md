@@ -1602,7 +1602,7 @@
 - 新增回归测试覆盖 dangling symlink rename 目标不被覆盖、rename/new commit 后刷新 id/path maps 并可打开新路径、右键菜单不会触发左键 selection/open。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
-### [TODO] T24 — F-FT Drag move、剪贴板与 Git status 刷新
+### [DONE] T24 — F-FT Drag move、剪贴板与 Git status 刷新
 
 **依赖**：T2, T22；clipboard 可不依赖 drag。
 
@@ -1642,6 +1642,14 @@
 **验收**：
 - 文件移动失败不丢源文件。
 - Git command 不在 draw/event hot path 同步运行。
+
+**完成记录（2026-06-09）**：
+- `FileTree::drag_source_at` 现在发出 `atto-ui-file-tree/node-ids` 自定义 payload，包含当前多选或指针所在节点 id，并保留 drag context 传递。
+- `ExplorerWindowView` 实现同窗口 file-tree drag/drop：解析 payload id 到当前 workspace path，只接受 directory/root 目标，移动前校验 workspace 边界、目标冲突和目录 self/descendant，成功后通过 `ExplorerWindowCommand::Refresh` 刷新。
+- Explorer 右键菜单和 Ctrl+X/C/V 支持 Cut/Copy/Paste；Paste 对文件用 `fs::copy`、对目录递归复制、Cut 用 `fs::rename`，冲突不覆盖，Cut 失败后保留 clipboard。
+- Workspace tree refresh 接入后台 throttled git status worker，运行 `git -C <root> status --porcelain=v1 --ignored=matching`，解析 modified/added/deleted/renamed/untracked/ignored 并通过 cache 重建 tree；draw/event 路径不同步执行 git command，workspace roots 改变会清 cache。
+- 新增测试覆盖 file-tree drag payload、Explorer drag move temp file 到 folder、Cut/Copy/Paste 不覆盖已有文件、git status parser modified/added/untracked/ignored。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R24 — 审阅 T24
 

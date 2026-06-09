@@ -65,18 +65,42 @@ fn dispatch_mouse(
     x: u16,
     y: u16,
 ) {
+    dispatch_mouse_kind(wm, bounds, theme, MouseEventKind::Down(button), x, y, true);
+}
+
+fn dispatch_mouse_kind(
+    wm: &mut WindowManager,
+    bounds: Rect,
+    theme: &Theme,
+    kind: MouseEventKind,
+    x: u16,
+    y: u16,
+    dispatch_to_view: bool,
+) {
     let event = Event::Mouse(MouseEvent {
-        kind: MouseEventKind::Down(button),
+        kind,
         column: x,
         row: y,
         modifiers: KeyModifiers::NONE,
     });
-    let _ = wm.handle_event(&event, bounds, WindowManagerInputMode::Normal, theme);
-    let _ = wm.dispatch_to_focused_view(&event, bounds, theme);
+    let action = wm.handle_event(&event, bounds, WindowManagerInputMode::Normal, theme);
+    if dispatch_to_view && !action.consumed {
+        let _ = wm.dispatch_to_focused_view(&event, bounds, theme);
+    }
 }
 
 fn dispatch_key(wm: &mut WindowManager, bounds: Rect, theme: &Theme, code: KeyCode) {
-    let event = Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    dispatch_key_mods(wm, bounds, theme, code, KeyModifiers::NONE);
+}
+
+fn dispatch_key_mods(
+    wm: &mut WindowManager,
+    bounds: Rect,
+    theme: &Theme,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) {
+    let event = Event::Key(KeyEvent::new(code, modifiers));
     let _ = wm.dispatch_to_focused_view(&event, bounds, theme);
 }
 
@@ -145,6 +169,114 @@ fn explorer_inline_rename_cancel_leaves_filesystem_unchanged() {
     assert!(
         !new_path.exists(),
         "cancelled rename must not create target"
+    );
+}
+
+#[test]
+fn explorer_drag_move_moves_file_into_directory() {
+    let root = unique_temp_dir("explorer_drag_move");
+    fs::create_dir_all(root.join("dest")).expect("create destination dir");
+    let source = root.join("move.txt");
+    let moved = root.join("dest").join("move.txt");
+    fs::write(&source, "move me").expect("write source file");
+
+    let (mut wm, _actions, bounds, theme) = explorer_fixture(root);
+    let (x, dest_y) = file_row(&wm, 2);
+    let (_, source_y) = file_row(&wm, 3);
+
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, source_y);
+    dispatch_mouse_kind(
+        &mut wm,
+        bounds,
+        &theme,
+        MouseEventKind::Drag(MouseButton::Left),
+        x + 3,
+        dest_y,
+        false,
+    );
+    dispatch_mouse_kind(
+        &mut wm,
+        bounds,
+        &theme,
+        MouseEventKind::Up(MouseButton::Left),
+        x + 3,
+        dest_y,
+        false,
+    );
+
+    assert!(!source.exists(), "source should be moved away");
+    assert_eq!(fs::read_to_string(&moved).expect("moved file"), "move me");
+}
+
+#[test]
+fn explorer_clipboard_paste_rejects_existing_targets_without_overwrite() {
+    let root = unique_temp_dir("explorer_clipboard_no_overwrite");
+    let dest_dir = root.join("dest");
+    fs::create_dir_all(&dest_dir).expect("create destination dir");
+    let source = root.join("a.txt");
+    let existing = dest_dir.join("a.txt");
+    fs::write(&source, "source").expect("write source");
+    fs::write(&existing, "existing").expect("write existing");
+
+    let (mut wm, actions, bounds, theme) = explorer_fixture(root);
+    let (x, dest_y) = file_row(&wm, 2);
+    let (_, source_y) = file_row(&wm, 3);
+
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, source_y);
+    dispatch_key_mods(
+        &mut wm,
+        bounds,
+        &theme,
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    );
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, dest_y);
+    dispatch_key_mods(
+        &mut wm,
+        bounds,
+        &theme,
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL,
+    );
+
+    assert_eq!(fs::read_to_string(&source).expect("source file"), "source");
+    assert_eq!(
+        fs::read_to_string(&existing).expect("existing file"),
+        "existing"
+    );
+
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, source_y);
+    dispatch_key_mods(
+        &mut wm,
+        bounds,
+        &theme,
+        KeyCode::Char('x'),
+        KeyModifiers::CONTROL,
+    );
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, dest_y);
+    dispatch_key_mods(
+        &mut wm,
+        bounds,
+        &theme,
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL,
+    );
+
+    assert_eq!(
+        fs::read_to_string(&source).expect("cut source should remain"),
+        "source"
+    );
+    assert_eq!(
+        fs::read_to_string(&existing).expect("existing file"),
+        "existing"
+    );
+    let messages = actions.drain();
+    assert!(
+        messages.iter().any(|action| matches!(
+            action,
+            AppAction::ShowStatusMessage(message) if message.contains("target already exists")
+        )),
+        "expected no-overwrite status message, got {messages:?}"
     );
 }
 
