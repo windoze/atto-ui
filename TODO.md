@@ -99,7 +99,7 @@
 | R20 | DONE | [DONE] 审阅 T20 | TODO-2.md · 阶段三 |
 | T21 | DONE | [DONE] L6 Inlay Hints 与 composed grid 渲染 | TODO-2.md · 阶段三 |
 | R21 | DONE | [DONE] 审阅 T21 | TODO-2.md · 阶段三 |
-| T22 | TODO | F-FT FileTree 节点模型、git status 样式与多选 | TODO-2.md · 阶段四 |
+| T22 | DONE | [DONE] F-FT FileTree 节点模型、git status 样式与多选 | TODO-2.md · 阶段四 |
 | R22 | TODO | 审阅 T22 | TODO-2.md · 阶段四 |
 | T23 | TODO | F-FT Context menu 与 inline new/rename | TODO-2.md · 阶段四 |
 | R23 | TODO | 审阅 T23 | TODO-2.md · 阶段四 |

@@ -17,7 +17,9 @@ use atto_ui::composable::Component;
 use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
-use atto_ui_file_tree::{FileTree, FileTreeGlyphs, FileTreeNode, FileTreeNodeId};
+use atto_ui_file_tree::{
+    FileTree, FileTreeGitStatus, FileTreeGlyphs, FileTreeNode, FileTreeNodeId,
+};
 
 fn build_file_tree_view() -> Box<dyn Component> {
     let roots = vec![
@@ -32,7 +34,7 @@ fn build_file_tree_view() -> Box<dyn Component> {
         .with_expanded(true),
         FileTreeNode::dir(4, "assets", vec![FileTreeNode::file(5, "logo.png")])
             .with_expanded(false),
-        FileTreeNode::file(6, "README.md"),
+        FileTreeNode::file(6, "README.md").with_git_status(FileTreeGitStatus::Modified),
         FileTreeNode::file(7, "Cargo.toml"),
     ];
 

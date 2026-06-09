@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use atto_ui::composable::{
@@ -26,6 +26,7 @@ use crossterm::event::{
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
 use unicode_segmentation::UnicodeSegmentation;
@@ -69,6 +70,17 @@ pub enum FileTreeNodeKind {
     Directory,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FileTreeGitStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Ignored,
+    Clean,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTreeNode {
     pub id: FileTreeNodeId,
@@ -76,6 +88,7 @@ pub struct FileTreeNode {
     pub kind: FileTreeNodeKind,
     pub children: Vec<FileTreeNode>,
     pub is_expanded: bool,
+    pub git_status: Option<FileTreeGitStatus>,
 }
 
 impl FileTreeNode {
@@ -86,6 +99,7 @@ impl FileTreeNode {
             kind: FileTreeNodeKind::File,
             children: Vec::new(),
             is_expanded: false,
+            git_status: None,
         }
     }
 
@@ -100,11 +114,17 @@ impl FileTreeNode {
             kind: FileTreeNodeKind::Directory,
             children,
             is_expanded: false,
+            git_status: None,
         }
     }
 
     pub fn with_expanded(mut self, expanded: bool) -> Self {
         self.is_expanded = expanded;
+        self
+    }
+
+    pub fn with_git_status(mut self, status: FileTreeGitStatus) -> Self {
+        self.git_status = Some(status);
         self
     }
 
@@ -198,6 +218,8 @@ struct FileTreeBindings {
     title: Binding<String>,
     roots: Binding<Vec<FileTreeNode>>,
     selection: Binding<Option<FileTreeNodeId>>,
+    selections: Binding<BTreeSet<FileTreeNodeId>>,
+    selection_anchor: Option<FileTreeNodeId>,
     enabled: Binding<bool>,
     height: Binding<u16>,
     filter: Option<Arc<dyn FileTreeFilter>>,
@@ -213,6 +235,15 @@ impl FileTree {
         roots: impl Into<Binding<Vec<FileTreeNode>>>,
         selection: Binding<Option<FileTreeNodeId>>,
     ) -> Self {
+        Self::new_with_selections(title, roots, selection, Binding::new(BTreeSet::new()))
+    }
+
+    pub fn new_with_selections(
+        title: impl Into<Binding<String>>,
+        roots: impl Into<Binding<Vec<FileTreeNode>>>,
+        selection: Binding<Option<FileTreeNodeId>>,
+        selections: Binding<BTreeSet<FileTreeNodeId>>,
+    ) -> Self {
         let roots = roots.into();
         if selection.get().is_none() {
             let nodes = roots.get();
@@ -220,10 +251,18 @@ impl FileTree {
                 selection.set(Some(first.id));
             }
         }
+        let selection_anchor = selection.get();
+        let mut selected_ids = selections.get();
+        if let Some(id) = selection_anchor {
+            selected_ids.insert(id);
+        }
+        selections.set(selected_ids);
         let bindings = Arc::new(RwLock::new(FileTreeBindings {
             title: title.into(),
             roots,
             selection,
+            selections,
+            selection_anchor,
             enabled: true.into(),
             height: 10.into(),
             filter: None,
@@ -298,6 +337,14 @@ impl FileTree {
 
     pub fn selected(&self) -> Option<FileTreeNodeId> {
         self.bindings.read().selection.get()
+    }
+
+    pub fn selected_ids(&self) -> BTreeSet<FileTreeNodeId> {
+        self.bindings.read().selections.get()
+    }
+
+    pub fn selections_binding(&self) -> Binding<BTreeSet<FileTreeNodeId>> {
+        self.bindings.read().selections.clone()
     }
 
     pub fn with_min_height(mut self, height: u16) -> Self {
@@ -680,6 +727,7 @@ struct VisibleEntry {
     depth: usize,
     kind: FileTreeNodeKind,
     is_expanded: bool,
+    git_status: Option<FileTreeGitStatus>,
     name: String,
     prefix: String,
 }
@@ -688,6 +736,18 @@ impl VisibleEntry {
     fn is_dir(&self) -> bool {
         matches!(self.kind, FileTreeNodeKind::Directory)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileTreeLineStyle {
+    Normal,
+    GitStatus(FileTreeGitStatus),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileTreeLineSegment {
+    text: String,
+    style: FileTreeLineStyle,
 }
 
 impl FileTreeContent {
@@ -704,6 +764,18 @@ impl FileTreeContent {
         self.bindings.read().selection.clone()
     }
 
+    fn selections_binding(&self) -> Binding<BTreeSet<FileTreeNodeId>> {
+        self.bindings.read().selections.clone()
+    }
+
+    fn selection_anchor(&self) -> Option<FileTreeNodeId> {
+        self.bindings.read().selection_anchor
+    }
+
+    fn set_selection_anchor(&mut self, anchor: Option<FileTreeNodeId>) {
+        self.bindings.write().selection_anchor = anchor;
+    }
+
     fn roots_binding(&self) -> Binding<Vec<FileTreeNode>> {
         self.bindings.read().roots.clone()
     }
@@ -713,6 +785,7 @@ impl FileTreeContent {
         FileTreeBindingsSnapshot {
             title: bindings.title.get(),
             roots: bindings.roots.get(),
+            selections: bindings.selections.get(),
             enabled: bindings.enabled.get(),
             filter: bindings.filter.clone(),
             glyphs: bindings.glyphs.clone(),
@@ -724,25 +797,57 @@ impl FileTreeContent {
 
     fn normalize_selection(&mut self, visible: &[VisibleEntry]) -> Option<usize> {
         let selection_binding = self.selection_binding();
-        let selection = selection_binding.get();
+        let selections_binding = self.selections_binding();
+        let mut selection = selection_binding.get();
         if visible.is_empty() {
-            if selection.is_some() {
+            if selection.take().is_some() {
                 selection_binding.set(None);
             }
+            if !selections_binding.get().is_empty() {
+                selections_binding.set(BTreeSet::new());
+            }
+            self.set_selection_anchor(None);
             self.rename = None;
             self.last_selection = None;
             return None;
         }
 
-        if let Some(id) = selection
-            && let Some(idx) = visible.iter().position(|entry| entry.id == id)
-        {
-            return Some(idx);
+        let visible_ids = visible
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<BTreeSet<_>>();
+        let mut selection_idx = selection.and_then(|id| {
+            visible
+                .iter()
+                .position(|entry| entry.id == id)
+                .map(|idx| (idx, id))
+        });
+
+        if selection_idx.is_none() {
+            let next_id = visible[0].id;
+            selection_binding.set(Some(next_id));
+            selection = Some(next_id);
+            selection_idx = Some((0, next_id));
         }
 
-        let next_id = visible[0].id;
-        selection_binding.set(Some(next_id));
-        Some(0)
+        let selected_id = selection_idx.map(|(_, id)| id).or(selection);
+        let mut selections = selections_binding.get();
+        let before = selections.clone();
+        selections.retain(|id| visible_ids.contains(id));
+        if let Some(id) = selected_id {
+            selections.insert(id);
+        }
+        if selections != before {
+            selections_binding.set(selections);
+        }
+
+        if let Some(anchor) = self.selection_anchor()
+            && !visible_ids.contains(&anchor)
+        {
+            self.set_selection_anchor(selected_id);
+        }
+
+        selection_idx.map(|(idx, _)| idx)
     }
 
     fn ensure_selection_visible(&mut self, selection: usize, host: &mut ScrollContainerHost) {
@@ -793,20 +898,95 @@ impl FileTreeContent {
 
     fn line_text(&self, entry: &VisibleEntry) -> String {
         let mut line = String::new();
-        line.push_str(&entry.prefix);
+        for segment in self.line_segments(entry) {
+            line.push_str(&segment.text);
+        }
+        line
+    }
+
+    fn line_segments(&self, entry: &VisibleEntry) -> Vec<FileTreeLineSegment> {
+        let mut segments = vec![FileTreeLineSegment {
+            text: entry.prefix.clone(),
+            style: FileTreeLineStyle::Normal,
+        }];
+        if let Some(status) = entry.git_status
+            && let Some(badge) = git_status_badge(status)
+        {
+            segments.push(FileTreeLineSegment {
+                text: format!("{badge} "),
+                style: FileTreeLineStyle::GitStatus(status),
+            });
+        }
+
+        let mut name = String::new();
         if let Some(rename) = &self.rename
             && rename.id == entry.id
         {
             let text = rename.buffer.text();
             let cursor = rename.buffer.cursor_byte_index().min(text.len());
             let (left, right) = text.split_at(cursor);
-            line.push_str(left);
-            line.push('|');
-            line.push_str(right);
-            return line;
+            name.push_str(left);
+            name.push('|');
+            name.push_str(right);
+        } else {
+            name.push_str(&entry.name);
         }
-        line.push_str(&entry.name);
-        line
+        segments.push(FileTreeLineSegment {
+            text: name,
+            style: FileTreeLineStyle::Normal,
+        });
+        segments
+    }
+
+    fn selected_range_ids(
+        &self,
+        anchor: FileTreeNodeId,
+        idx: usize,
+        visible: &[VisibleEntry],
+    ) -> BTreeSet<FileTreeNodeId> {
+        visible_range_selection(anchor, idx, visible)
+    }
+
+    fn emit_select_if_needed(
+        &self,
+        old_selection: Option<FileTreeNodeId>,
+        new_selection: Option<FileTreeNodeId>,
+        cb: Option<&CallbackHandle>,
+    ) {
+        if old_selection != new_selection
+            && let Some(cb) = cb
+        {
+            cb.emit_with(new_selection.map(|id| ComponentValue::U64(id.value())));
+        }
+    }
+
+    fn apply_selection_state(
+        &mut self,
+        primary: Option<FileTreeNodeId>,
+        selected_ids: BTreeSet<FileTreeNodeId>,
+        anchor: Option<FileTreeNodeId>,
+        idx: Option<usize>,
+        host: &mut ScrollContainerHost,
+        cb: Option<&CallbackHandle>,
+    ) -> EventResult {
+        let selection_binding = self.selection_binding();
+        let selections_binding = self.selections_binding();
+        let old_selection = selection_binding.get();
+        let old_selected_ids = selections_binding.get();
+        selection_binding.set(primary);
+        selections_binding.set(selected_ids);
+        self.set_selection_anchor(anchor);
+        if let Some(idx) = idx {
+            self.ensure_selection_visible(idx, host);
+        }
+        self.last_selection = primary;
+        self.maybe_reset_rename(primary);
+        self.emit_select_if_needed(old_selection, primary, cb);
+        if old_selection == primary && old_selected_ids == self.selections_binding().get() {
+            EventResult::consumed()
+        } else {
+            EventResult::changed()
+        }
     }
 
     fn select_index(
@@ -817,22 +997,86 @@ impl FileTreeContent {
         cb: Option<&CallbackHandle>,
     ) -> EventResult {
         if let Some(entry) = visible.get(idx) {
-            let selection_binding = self.selection_binding();
-            selection_binding.set(Some(entry.id));
-            self.ensure_selection_visible(idx, host);
-            self.last_selection = Some(entry.id);
-            self.maybe_reset_rename(Some(entry.id));
-            if let Some(cb) = cb {
-                cb.emit_with(Some(ComponentValue::U64(entry.id.value())));
-            }
-            return EventResult::changed();
+            return self.apply_selection_state(
+                Some(entry.id),
+                BTreeSet::from([entry.id]),
+                Some(entry.id),
+                Some(idx),
+                host,
+                cb,
+            );
         }
         EventResult::ignored()
+    }
+
+    fn range_select_index(
+        &mut self,
+        idx: usize,
+        visible: &[VisibleEntry],
+        host: &mut ScrollContainerHost,
+        cb: Option<&CallbackHandle>,
+    ) -> EventResult {
+        let Some(entry) = visible.get(idx) else {
+            return EventResult::ignored();
+        };
+        let anchor = self
+            .selection_anchor()
+            .or_else(|| self.selection_binding().get())
+            .unwrap_or(entry.id);
+        let selected_ids = self.selected_range_ids(anchor, idx, visible);
+        self.apply_selection_state(
+            Some(entry.id),
+            selected_ids,
+            Some(anchor),
+            Some(idx),
+            host,
+            cb,
+        )
+    }
+
+    fn toggle_selection_index(
+        &mut self,
+        idx: usize,
+        visible: &[VisibleEntry],
+        host: &mut ScrollContainerHost,
+        cb: Option<&CallbackHandle>,
+    ) -> EventResult {
+        let Some(entry) = visible.get(idx) else {
+            return EventResult::ignored();
+        };
+        let selection_binding = self.selection_binding();
+        let mut selected_ids = self.selections_binding().get();
+        let old_primary = selection_binding.get();
+        let mut primary = old_primary;
+
+        if selected_ids.contains(&entry.id) {
+            if selected_ids.len() > 1 {
+                selected_ids.remove(&entry.id);
+                if old_primary == Some(entry.id) {
+                    primary = visible
+                        .iter()
+                        .find(|candidate| selected_ids.contains(&candidate.id))
+                        .map(|candidate| candidate.id);
+                }
+            } else {
+                primary = Some(entry.id);
+            }
+        } else {
+            selected_ids.insert(entry.id);
+            primary = Some(entry.id);
+        }
+
+        if let Some(id) = primary {
+            selected_ids.insert(id);
+        }
+
+        self.apply_selection_state(primary, selected_ids, Some(entry.id), Some(idx), host, cb)
     }
 
     fn move_selection(
         &mut self,
         delta: i32,
+        extend: bool,
         visible: &[VisibleEntry],
         host: &mut ScrollContainerHost,
         cb: Option<&CallbackHandle>,
@@ -851,7 +1095,11 @@ impl FileTreeContent {
                 .saturating_add(delta as usize)
                 .min(visible.len().saturating_sub(1))
         };
-        self.select_index(next_idx, visible, host, cb)
+        if extend {
+            self.range_select_index(next_idx, visible, host, cb)
+        } else {
+            self.select_index(next_idx, visible, host, cb)
+        }
     }
 
     fn toggle_directory(&mut self, id: FileTreeNodeId) -> bool {
@@ -951,6 +1199,7 @@ struct FileTreeBindingsSnapshot {
     #[allow(dead_code)]
     title: String,
     roots: Vec<FileTreeNode>,
+    selections: BTreeSet<FileTreeNodeId>,
     enabled: bool,
     filter: Option<Arc<dyn FileTreeFilter>>,
     glyphs: Arc<dyn FileTreeGlyphProvider>,
@@ -1115,31 +1364,53 @@ impl ScrollContent for FileTreeContent {
                 let row = m.row as usize;
                 let idx = host.scroll_offset().y as usize + row;
                 if let Some(entry) = entries.get(idx) {
-                    let res = self.select_index(idx, &entries, host, snapshot.on_select.as_ref());
-                    if entry.is_dir() && self.toggle_directory(entry.id) {
+                    let res = if m.modifiers.contains(KeyModifiers::SHIFT) {
+                        self.range_select_index(idx, &entries, host, snapshot.on_select.as_ref())
+                    } else if m.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.toggle_selection_index(
+                            idx,
+                            &entries,
+                            host,
+                            snapshot.on_select.as_ref(),
+                        )
+                    } else {
+                        self.select_index(idx, &entries, host, snapshot.on_select.as_ref())
+                    };
+                    if !m
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL)
+                        && entry.is_dir()
+                        && self.toggle_directory(entry.id)
+                    {
                         return EventResult::changed();
                     }
                     return res;
                 }
                 EventResult::ignored()
             }
-            Event::Key(KeyEvent { code, kind, .. }) => {
+            Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                ..
+            }) => {
                 if matches!(kind, KeyEventKind::Release) {
                     return EventResult::ignored();
                 }
+                let extend = modifiers.contains(KeyModifiers::SHIFT);
 
                 match code {
                     KeyCode::Up => {
                         if entries.is_empty() {
                             return EventResult::ignored();
                         }
-                        self.move_selection(-1, &entries, host, snapshot.on_select.as_ref())
+                        self.move_selection(-1, extend, &entries, host, snapshot.on_select.as_ref())
                     }
                     KeyCode::Down => {
                         if entries.is_empty() {
                             return EventResult::ignored();
                         }
-                        self.move_selection(1, &entries, host, snapshot.on_select.as_ref())
+                        self.move_selection(1, extend, &entries, host, snapshot.on_select.as_ref())
                     }
                     KeyCode::Left => {
                         let Some(idx) = selection_idx else {
@@ -1244,6 +1515,9 @@ impl ScrollContent for FileTreeContent {
                                 parent
                             };
                             self.selection_binding().set(next_id);
+                            let next_ids = next_id.into_iter().collect::<BTreeSet<_>>();
+                            self.selections_binding().set(next_ids);
+                            self.set_selection_anchor(next_id);
                             self.last_selection = next_id;
                             return EventResult::changed();
                         }
@@ -1284,6 +1558,7 @@ impl ScrollContent for FileTreeContent {
         let filter = snapshot.filter.as_deref();
         let entries = self.build_visible_entries(&snapshot.roots, filter, snapshot.glyphs.as_ref());
         let selection = self.normalize_selection(&entries);
+        let selections = snapshot.selections;
 
         let scroll = ctx.info.scroll_offset;
         let viewport_w = area.width;
@@ -1291,10 +1566,27 @@ impl ScrollContent for FileTreeContent {
             .iter()
             .enumerate()
             .map(|(idx, entry)| {
-                let full_line = self.line_text(entry);
-                let visible = slice_by_display_width(&full_line, scroll.x, viewport_w);
-                let item = ListItem::new(Line::from(Span::styled(visible, style)));
-                if selection.is_some_and(|sel| sel == idx) {
+                let segments = self.line_segments(entry);
+                let visible_segments =
+                    slice_segments_by_display_width(&segments, scroll.x, viewport_w);
+                let spans = if visible_segments.is_empty() {
+                    vec![Span::styled(String::new(), style)]
+                } else {
+                    visible_segments
+                        .into_iter()
+                        .map(|segment| {
+                            let segment_style = match segment.style {
+                                FileTreeLineStyle::Normal => style,
+                                FileTreeLineStyle::GitStatus(status) => {
+                                    git_status_style(ctx.component.theme, status)
+                                }
+                            };
+                            Span::styled(segment.text, segment_style)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let item = ListItem::new(Line::from(spans));
+                if selection.is_some_and(|sel| sel == idx) || selections.contains(&entry.id) {
                     item.style(highlight_style)
                 } else {
                     item
@@ -1340,6 +1632,7 @@ fn collect_visible_entries(
             depth,
             kind: node.kind,
             is_expanded: node.is_expanded,
+            git_status: node.git_status,
             name: node.name.clone(),
             prefix,
         });
@@ -1406,29 +1699,100 @@ fn filter_allows(node: &FileTreeNode, filter: Option<&dyn FileTreeFilter>) -> bo
     }
 }
 
-fn slice_by_display_width(text: &str, start: u16, width: u16) -> String {
+fn slice_segments_by_display_width(
+    segments: &[FileTreeLineSegment],
+    start: u16,
+    width: u16,
+) -> Vec<FileTreeLineSegment> {
     if width == 0 {
-        return String::new();
+        return Vec::new();
     }
     let end = start.saturating_add(width);
     let mut col: u16 = 0;
-    let mut out = String::new();
-    for g in text.graphemes(true) {
-        let w = UnicodeWidthStr::width(g).min(u16::MAX as usize) as u16;
-        if col.saturating_add(w) <= start {
+    let mut out = Vec::new();
+    for segment in segments {
+        let mut text = String::new();
+        for g in segment.text.graphemes(true) {
+            let w = UnicodeWidthStr::width(g).min(u16::MAX as usize) as u16;
+            if col.saturating_add(w) <= start {
+                col = col.saturating_add(w);
+                continue;
+            }
+            if col >= end {
+                break;
+            }
+            text.push_str(g);
             col = col.saturating_add(w);
-            continue;
+            if col >= end {
+                break;
+            }
         }
-        if col >= end {
-            break;
+        if !text.is_empty() {
+            out.push(FileTreeLineSegment {
+                text,
+                style: segment.style,
+            });
         }
-        out.push_str(g);
-        col = col.saturating_add(w);
         if col >= end {
             break;
         }
     }
     out
+}
+
+fn visible_range_selection(
+    anchor: FileTreeNodeId,
+    idx: usize,
+    visible: &[VisibleEntry],
+) -> BTreeSet<FileTreeNodeId> {
+    let Some(anchor_idx) = visible.iter().position(|entry| entry.id == anchor) else {
+        return visible
+            .get(idx)
+            .map(|entry| BTreeSet::from([entry.id]))
+            .unwrap_or_default();
+    };
+    let (start, end) = if anchor_idx <= idx {
+        (anchor_idx, idx)
+    } else {
+        (idx, anchor_idx)
+    };
+    visible[start..=end].iter().map(|entry| entry.id).collect()
+}
+
+fn git_status_badge(status: FileTreeGitStatus) -> Option<&'static str> {
+    match status {
+        FileTreeGitStatus::Modified => Some("M"),
+        FileTreeGitStatus::Added => Some("A"),
+        FileTreeGitStatus::Deleted => Some("D"),
+        FileTreeGitStatus::Renamed => Some("R"),
+        FileTreeGitStatus::Untracked => Some("?"),
+        FileTreeGitStatus::Ignored => Some("I"),
+        FileTreeGitStatus::Clean => None,
+    }
+}
+
+fn git_status_style(theme: &atto_ui::theme::Theme, status: FileTreeGitStatus) -> Style {
+    let named = match status {
+        FileTreeGitStatus::Modified => "file-tree-git-modified",
+        FileTreeGitStatus::Added => "file-tree-git-added",
+        FileTreeGitStatus::Deleted => "file-tree-git-deleted",
+        FileTreeGitStatus::Renamed => "file-tree-git-renamed",
+        FileTreeGitStatus::Untracked => "file-tree-git-untracked",
+        FileTreeGitStatus::Ignored => "file-tree-git-ignored",
+        FileTreeGitStatus::Clean => "file-tree-git-clean",
+    };
+    theme
+        .named_style(named)
+        .unwrap_or_else(|| match status {
+            FileTreeGitStatus::Modified => Style::default().fg(Color::Yellow),
+            FileTreeGitStatus::Added => Style::default().fg(Color::Green),
+            FileTreeGitStatus::Deleted => Style::default().fg(Color::Red),
+            FileTreeGitStatus::Renamed => Style::default().fg(Color::LightBlue),
+            FileTreeGitStatus::Untracked => Style::default().fg(Color::Magenta),
+            FileTreeGitStatus::Ignored => Style::default().fg(Color::DarkGray),
+            FileTreeGitStatus::Clean => theme.widget.accent,
+        })
+        .add_modifier(Modifier::BOLD)
 }
 
 fn find_node_mut(nodes: &mut [FileTreeNode], id: FileTreeNodeId) -> Option<&mut FileTreeNode> {
@@ -1504,6 +1868,32 @@ fn kind_label(kind: FileTreeNodeKind) -> String {
     }
 }
 
+fn git_status_label(status: FileTreeGitStatus) -> String {
+    match status {
+        FileTreeGitStatus::Modified => "modified",
+        FileTreeGitStatus::Added => "added",
+        FileTreeGitStatus::Deleted => "deleted",
+        FileTreeGitStatus::Renamed => "renamed",
+        FileTreeGitStatus::Untracked => "untracked",
+        FileTreeGitStatus::Ignored => "ignored",
+        FileTreeGitStatus::Clean => "clean",
+    }
+    .to_string()
+}
+
+fn parse_git_status(value: &str) -> Option<FileTreeGitStatus> {
+    match value.to_ascii_lowercase().as_str() {
+        "modified" | "m" => Some(FileTreeGitStatus::Modified),
+        "added" | "a" => Some(FileTreeGitStatus::Added),
+        "deleted" | "d" => Some(FileTreeGitStatus::Deleted),
+        "renamed" | "r" => Some(FileTreeGitStatus::Renamed),
+        "untracked" | "?" => Some(FileTreeGitStatus::Untracked),
+        "ignored" | "i" => Some(FileTreeGitStatus::Ignored),
+        "clean" => Some(FileTreeGitStatus::Clean),
+        _ => None,
+    }
+}
+
 fn nodes_to_component_value(nodes: &[FileTreeNode]) -> ComponentValue {
     let items = nodes.iter().map(node_to_component_value).collect();
     ComponentValue::List(items)
@@ -1524,6 +1914,12 @@ fn node_to_component_value(node: &FileTreeNode) -> ComponentValue {
         "expanded".to_string(),
         ComponentValue::Bool(node.is_expanded),
     );
+    if let Some(status) = node.git_status {
+        map.insert(
+            "git_status".to_string(),
+            ComponentValue::String(git_status_label(status)),
+        );
+    }
     map.insert(
         "children".to_string(),
         nodes_to_component_value(&node.children),
@@ -1581,12 +1977,24 @@ fn parse_node_value(value: &ComponentValue) -> Result<FileTreeNode, String> {
         }
     };
 
+    let git_status = match map
+        .get("git_status")
+        .or_else(|| map.get("gitStatus"))
+        .and_then(ComponentValue::as_str)
+    {
+        Some(value) => {
+            Some(parse_git_status(value).ok_or_else(|| format!("unknown git status {value}"))?)
+        }
+        None => None,
+    };
+
     Ok(FileTreeNode {
         id: FileTreeNodeId::new(id),
         name,
         kind,
         children,
         is_expanded,
+        git_status,
     })
 }
 
@@ -1694,6 +2102,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: None,
@@ -1710,6 +2120,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: None,
@@ -1734,6 +2146,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: Some(filter.clone()),
@@ -1757,6 +2171,72 @@ mod tests {
     }
 
     #[test]
+    fn visible_range_selection_uses_only_visible_rows() {
+        let glyphs = FileTreeGlyphs::default();
+        let roots = sample_tree(false);
+        let content = FileTreeContent::new(Arc::new(RwLock::new(FileTreeBindings {
+            title: "".into(),
+            roots: roots.clone().into(),
+            selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
+            enabled: true.into(),
+            height: 10.into(),
+            filter: None,
+            glyphs: Arc::new(glyphs.clone()),
+            on_select: None,
+            on_rename: None,
+            on_delete: None,
+        })));
+        let entries = content.build_visible_entries(&roots, None, &glyphs);
+        let readme_idx = entries
+            .iter()
+            .position(|entry| entry.id == FileTreeNodeId::new(6))
+            .expect("README visible");
+
+        let selected = visible_range_selection(FileTreeNodeId::new(1), readme_idx, &entries);
+
+        assert_eq!(
+            selected,
+            BTreeSet::from([
+                FileTreeNodeId::new(1),
+                FileTreeNodeId::new(4),
+                FileTreeNodeId::new(6),
+            ])
+        );
+        assert!(!selected.contains(&FileTreeNodeId::new(2)));
+        assert!(!selected.contains(&FileTreeNodeId::new(5)));
+    }
+
+    #[test]
+    fn git_status_badges_skip_clean_nodes() {
+        let glyphs = FileTreeGlyphs::default();
+        let roots = vec![
+            FileTreeNode::file(1, "changed.rs").with_git_status(FileTreeGitStatus::Modified),
+            FileTreeNode::file(2, "clean.rs").with_git_status(FileTreeGitStatus::Clean),
+        ];
+        let content = FileTreeContent::new(Arc::new(RwLock::new(FileTreeBindings {
+            title: "".into(),
+            roots: roots.clone().into(),
+            selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
+            enabled: true.into(),
+            height: 10.into(),
+            filter: None,
+            glyphs: Arc::new(glyphs.clone()),
+            on_select: None,
+            on_rename: None,
+            on_delete: None,
+        })));
+        let entries = content.build_visible_entries(&roots, None, &glyphs);
+
+        assert!(content.line_text(&entries[0]).contains("M changed.rs"));
+        assert!(content.line_text(&entries[1]).contains("clean.rs"));
+        assert!(!content.line_text(&entries[1]).contains("C clean.rs"));
+    }
+
+    #[test]
     fn remove_node_by_id_removes_deep_child() {
         let mut roots = sample_tree(true);
         let removed = remove_node_by_id(&mut roots, FileTreeNodeId::new(3));
@@ -1774,6 +2254,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: None,
@@ -1796,6 +2278,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: None,
@@ -1818,6 +2302,8 @@ mod tests {
             title: "".into(),
             roots: roots.clone().into(),
             selection: None.into(),
+            selections: BTreeSet::new().into(),
+            selection_anchor: None,
             enabled: true.into(),
             height: 10.into(),
             filter: None,

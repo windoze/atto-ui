@@ -1,27 +1,19 @@
-# Claude Execution Plan
+# Execution Plan
 
-## Objective
-Complete exactly the first incomplete task listed in `TODO.md`, using `TODO.md` as the authoritative ordering and completion source, then commit and stop.
+I cannot record private chain-of-thought, but I will keep this file updated with the concrete execution plan and progress.
 
-## Current Task
-- Selected first incomplete task: `R21 — 审阅 T21` from `TODO-2.md`.
-- Latest commit (`[T21] Add LSP inlay hints rendering`) is directly relevant and is the implementation under review.
-- Note: private chain-of-thought is intentionally not recorded here; this file contains the actionable rationale and execution plan.
-
-## Plan
-1. Inspect the T21 diff and affected files for inlay hints, composed grid rendering, theme/style mapping, config/action wiring, and tests.
-2. Verify the R21 review checklist:
-   - Composed grid rendering preserves existing syntax and semantic token styles.
-   - Virtual text does not participate in copy/save/backing text.
-   - Viewport range calculation handles soft wrap and folding without panic.
-3. Fix any directly related review issues found, preferring class-wide fixes over fixture-only patches.
-4. Add or adjust focused regression tests for any reviewed behavior that lacks coverage or for any bug fixed during review.
-5. Run validation in order: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, then relevant/full tests.
-6. Update `TODO-2.md` and `TODO.md` to mark R21 `[DONE]` with a completion record.
-7. Commit all R21 changes with a descriptive message and the required co-authored trailer, then stop.
-
-## Progress
-- Plan updated for R21 before implementation changes.
-- Added a focused R21 regression test covering composed inlay rendering with semantic token styling, folding markers, and copy from backing text.
-- Validation passed: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, focused R21 test, and `cargo test --workspace --all-targets`.
-- Marked R21 as `[DONE]` in `TODO.md` and `TODO-2.md` with completion notes.
+1. Read TODO.md to identify the first task whose heading is not prefixed with [DONE]. Completed: first incomplete task is T22.
+2. Check the latest commit message only for unfinished work directly relevant to that task. Completed: latest commit is R21 review, with no direct unfinished issue for T22.
+3. Read T22 details in TODO-2.md and the corresponding PLAN-2.md FileTree section. Completed.
+4. Inspect the existing atto-ui-file-tree crate, atto-editor-app Explorer wrapper, workspace tree builder, and file-tree PTY fixtures. Completed.
+5. Implement T22. Completed:
+   - Add FileTreeGitStatus and FileTreeNode.git_status with builder support.
+   - Extend FileTreeBindings with multi-selection state and selection anchor.
+   - Render git status badges/styles without changing glyph providers.
+   - Add keyboard and mouse multi-select behavior while preserving single-select callbacks.
+   - Teach workspace tree construction to accept an optional id/path -> git status map.
+   - Add/adjust tests for git status rendering, keyboard range selection, and Ctrl-click toggling.
+6. Run cargo fmt, cargo clippy --workspace --all-targets -- -D warnings, then cargo test. Completed: all required validation passed.
+7. Mark T22 [DONE] in TODO.md and TODO-2.md with completion notes and validation results. Completed.
+8. Commit all task-related changes with a clear message and the required co-author trailer. Ready: final status and diff checks passed; committing next.
+9. Stop without starting R22.

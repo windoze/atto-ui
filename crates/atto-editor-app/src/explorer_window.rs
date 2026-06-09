@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,7 @@ pub struct ExplorerWindowView {
 
     tree_nodes: Binding<Vec<FileTreeNode>>,
     tree_selection: Binding<Option<FileTreeNodeId>>,
+    tree_selections: Binding<BTreeSet<FileTreeNodeId>>,
     tree_id_to_path: HashMap<FileTreeNodeId, PathBuf>,
     tree_id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
     file_tree: FileTree,
@@ -49,6 +50,7 @@ impl ExplorerWindowView {
     ) -> Self {
         let tree_nodes: Binding<Vec<FileTreeNode>> = Binding::new(Vec::new());
         let tree_selection: Binding<Option<FileTreeNodeId>> = Binding::new(None);
+        let tree_selections: Binding<BTreeSet<FileTreeNodeId>> = Binding::new(BTreeSet::new());
 
         let glyphs = FileTreeGlyphs::default()
             .with_extension("rs", "rs")
@@ -61,10 +63,15 @@ impl ExplorerWindowView {
             .with_extension("js", "js")
             .with_extension("ts", "ts");
 
-        let file_tree = FileTree::new("Workspace", tree_nodes.clone(), tree_selection.clone())
-            .glyphs(glyphs)
-            .with_min_width(12)
-            .with_min_height(6);
+        let file_tree = FileTree::new_with_selections(
+            "Workspace",
+            tree_nodes.clone(),
+            tree_selection.clone(),
+            tree_selections.clone(),
+        )
+        .glyphs(glyphs)
+        .with_min_width(12)
+        .with_min_height(6);
 
         let mut view = Self {
             actions,
@@ -72,6 +79,7 @@ impl ExplorerWindowView {
             workspace_roots,
             tree_nodes,
             tree_selection,
+            tree_selections,
             tree_id_to_path: HashMap::new(),
             tree_id_to_kind: HashMap::new(),
             file_tree,
@@ -86,10 +94,21 @@ impl ExplorerWindowView {
         ExplorerWindowHandle { commands }
     }
 
+    pub fn selected_node_ids(&self) -> BTreeSet<FileTreeNodeId> {
+        self.tree_selections.get()
+    }
+
     fn refresh_workspace_tree(&mut self) {
         let tree = build_workspace_tree(&self.workspace_roots, WorkspaceTreeOptions::default());
         self.tree_id_to_path = tree.id_to_path;
         self.tree_id_to_kind = tree.id_to_kind;
+        self.tree_selections
+            .update(|ids| ids.retain(|id| self.tree_id_to_path.contains_key(id)));
+        if let Some(id) = self.tree_selection.get()
+            && !self.tree_id_to_path.contains_key(&id)
+        {
+            self.tree_selection.set(None);
+        }
         self.tree_nodes.set(tree.roots);
     }
 

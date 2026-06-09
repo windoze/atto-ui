@@ -1482,7 +1482,7 @@
 
 ## 阶段四：File tree 与文件面板
 
-### [TODO] T22 — F-FT FileTree 节点模型、git status 样式与多选
+### [DONE] T22 — F-FT FileTree 节点模型、git status 样式与多选
 
 **依赖**：无。
 
@@ -1522,6 +1522,14 @@
 **验收**：
 - 单选旧行为不回归。
 - 多选后 Enter 打开文件只打开 primary selection。
+
+**完成记录（2026-06-09）**：
+- `atto-ui-file-tree` 新增 `FileTreeGitStatus`、`FileTreeNode.git_status` 与 `with_git_status(...)`，runtime node map 支持可选 `git_status`/`gitStatus` 字符串，Clean/None 不渲染状态噪声。
+- `FileTree` 保持 `selection` 作为 primary selection，并新增 selection set / anchor：普通 click 单选，Ctrl+click toggle，Shift+click 与 Shift+Up/Down 按 visible row range 多选；绘制对所有 selected rows 使用 selection style。
+- Git status badge 使用 `file-tree-git-*` named style（缺省回退到主题颜色/accent）渲染；snapshot fixture 覆盖 modified badge。
+- `atto-editor-app` workspace tree builder 新增 `WorkspaceGitStatuses` 与 `build_workspace_tree_with_git_statuses(...)`，支持按 node id 或 path 注入状态；Explorer 传入并暴露多选 binding，为后续 context menu / drag 准备。
+- 新增/更新测试覆盖 visible-row range selection、Clean 状态静默、workspace git status 注入、PTY git badge、Shift range 多选与 Ctrl toggle 多选。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R22 — 审阅 T22
 

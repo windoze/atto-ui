@@ -5,13 +5,38 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use atto_ui_file_tree::{FileTreeNode, FileTreeNodeId, FileTreeNodeKind};
+use atto_ui_file_tree::{FileTreeGitStatus, FileTreeNode, FileTreeNodeId, FileTreeNodeKind};
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceTree {
     pub roots: Vec<FileTreeNode>,
     pub id_to_path: HashMap<FileTreeNodeId, PathBuf>,
     pub id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceGitStatuses {
+    by_id: HashMap<FileTreeNodeId, FileTreeGitStatus>,
+    by_path: HashMap<PathBuf, FileTreeGitStatus>,
+}
+
+impl WorkspaceGitStatuses {
+    pub fn insert_id(&mut self, id: FileTreeNodeId, status: FileTreeGitStatus) {
+        self.by_id.insert(id, status);
+    }
+
+    pub fn insert_path(&mut self, path: PathBuf, status: FileTreeGitStatus) {
+        let path = canonicalize_best_effort(&path).unwrap_or(path);
+        self.by_path.insert(path, status);
+    }
+
+    fn status_for(&self, id: FileTreeNodeId, path: &Path) -> Option<FileTreeGitStatus> {
+        self.by_id.get(&id).copied().or_else(|| {
+            self.by_path.get(path).copied().or_else(|| {
+                canonicalize_best_effort(path).and_then(|p| self.by_path.get(&p).copied())
+            })
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +71,14 @@ impl Default for WorkspaceTreeOptions {
 }
 
 pub fn build_workspace_tree(roots: &[PathBuf], options: WorkspaceTreeOptions) -> WorkspaceTree {
+    build_workspace_tree_with_git_statuses(roots, options, &WorkspaceGitStatuses::default())
+}
+
+pub fn build_workspace_tree_with_git_statuses(
+    roots: &[PathBuf],
+    options: WorkspaceTreeOptions,
+    git_statuses: &WorkspaceGitStatuses,
+) -> WorkspaceTree {
     let mut id_to_path: HashMap<FileTreeNodeId, PathBuf> = HashMap::new();
     let mut id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind> = HashMap::new();
 
@@ -56,7 +89,14 @@ pub fn build_workspace_tree(roots: &[PathBuf], options: WorkspaceTreeOptions) ->
 
     let mut out_roots = Vec::new();
     for root in roots {
-        if let Some(node) = build_node(&root, 0, &options, &mut id_to_path, &mut id_to_kind) {
+        if let Some(node) = build_node(
+            &root,
+            0,
+            &options,
+            git_statuses,
+            &mut id_to_path,
+            &mut id_to_kind,
+        ) {
             out_roots.push(node.with_expanded(true));
         }
     }
@@ -145,6 +185,7 @@ fn build_node(
     path: &Path,
     depth: usize,
     options: &WorkspaceTreeOptions,
+    git_statuses: &WorkspaceGitStatuses,
     id_to_path: &mut HashMap<FileTreeNodeId, PathBuf>,
     id_to_kind: &mut HashMap<FileTreeNodeId, FileTreeNodeKind>,
 ) -> Option<FileTreeNode> {
@@ -160,18 +201,31 @@ fn build_node(
 
     id_to_path.insert(id, path.to_path_buf());
     id_to_kind.insert(id, kind);
+    let git_status = git_statuses.status_for(id, path);
 
     if kind == FileTreeNodeKind::File {
-        return Some(FileTreeNode::file(id, name));
+        return Some(apply_git_status(FileTreeNode::file(id, name), git_status));
     }
 
     if depth >= options.max_depth {
-        return Some(FileTreeNode::dir(id, name, Vec::new()));
+        return Some(apply_git_status(
+            FileTreeNode::dir(id, name, Vec::new()),
+            git_status,
+        ));
     }
 
     let mut children = read_dir_sorted(path, options)
         .into_iter()
-        .filter_map(|child| build_node(&child, depth + 1, options, id_to_path, id_to_kind))
+        .filter_map(|child| {
+            build_node(
+                &child,
+                depth + 1,
+                options,
+                git_statuses,
+                id_to_path,
+                id_to_kind,
+            )
+        })
         .take(options.max_entries_per_dir)
         .collect::<Vec<_>>();
 
@@ -185,7 +239,17 @@ fn build_node(
             .cmp(&b.name.to_ascii_lowercase()),
     });
 
-    Some(FileTreeNode::dir(id, name, children))
+    Some(apply_git_status(
+        FileTreeNode::dir(id, name, children),
+        git_status,
+    ))
+}
+
+fn apply_git_status(node: FileTreeNode, status: Option<FileTreeGitStatus>) -> FileTreeNode {
+    match status {
+        Some(status) => node.with_git_status(status),
+        None => node,
+    }
 }
 
 fn read_dir_sorted(dir: &Path, options: &WorkspaceTreeOptions) -> Vec<PathBuf> {
@@ -327,6 +391,40 @@ mod tests {
                 "b_file.txt".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn build_workspace_tree_applies_git_statuses_by_path_and_id() {
+        let root = TempDir::new("git_status");
+        let modified = root.path.join("modified.rs");
+        let added = root.path.join("added.rs");
+        fs::write(&modified, "modified\n").unwrap();
+        fs::write(&added, "added\n").unwrap();
+
+        let mut statuses = WorkspaceGitStatuses::default();
+        statuses.insert_path(modified.clone(), FileTreeGitStatus::Modified);
+        let added_id = node_id_for_path(&fs::canonicalize(&added).unwrap_or(added.clone()));
+        statuses.insert_id(added_id, FileTreeGitStatus::Added);
+
+        let tree = build_workspace_tree_with_git_statuses(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+            &statuses,
+        );
+        let root_node = tree.roots.first().expect("root node");
+        let modified_node = root_node
+            .children
+            .iter()
+            .find(|node| node.name == "modified.rs")
+            .expect("modified node");
+        let added_node = root_node
+            .children
+            .iter()
+            .find(|node| node.name == "added.rs")
+            .expect("added node");
+
+        assert_eq!(modified_node.git_status, Some(FileTreeGitStatus::Modified));
+        assert_eq!(added_node.git_status, Some(FileTreeGitStatus::Added));
     }
 
     #[test]
