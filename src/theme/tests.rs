@@ -128,6 +128,17 @@ fn theme_named_style_can_be_set_programmatically() {
 }
 
 #[test]
+fn theme_default_menu_mnemonic_uses_classic_red_accent() {
+    for theme in [Theme::dark(), Theme::light()] {
+        let mnemonic = theme
+            .named_style("menu-mnemonic")
+            .expect("menu mnemonic token");
+        assert_eq!(mnemonic.fg, Some(Color::Red));
+        assert!(mnemonic.has_modifier(Modifier::UNDERLINED));
+    }
+}
+
+#[test]
 fn theme_config_overlays_menu_named_styles() {
     let json = r##"
     {

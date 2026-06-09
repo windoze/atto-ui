@@ -355,7 +355,9 @@ impl Theme {
             .insert("menu-item-selected".into(), self.menu_item_selected);
         self.named_styles.insert(
             "menu-mnemonic".into(),
-            self.widget.accent.add_modifier(Modifier::UNDERLINED),
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::UNDERLINED),
         );
         self.named_styles
             .insert("menu-item-shortcut".into(), self.widget.dim);

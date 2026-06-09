@@ -291,7 +291,7 @@ fn draw_mnemonic_text(
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::style::{Color, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     use super::super::model::MenuSpec;
     use super::*;
@@ -350,6 +350,42 @@ mod tests {
         assert_eq!(buf[(1, 2)].symbol(), "打");
         assert_eq!(buf[(3, 2)].symbol(), "开");
         assert_eq!(buf[(7, 2)].symbol(), "C");
+    }
+
+    #[test]
+    fn draw_mnemonic_letters_use_menu_mnemonic_accent() {
+        let theme = Theme::dark();
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&File",
+            vec![MenuItem::action("&Open", || {})],
+        )]);
+        menu.activate();
+
+        let mut terminal = Terminal::new(TestBackend::new(24, 5)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 24, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        let title_mnemonic = buf[(1, 0)].style();
+        assert_eq!(title_mnemonic.fg, Some(Color::Red));
+        assert_eq!(title_mnemonic.bg, theme.menu_bar_active.bg);
+        assert!(title_mnemonic.has_modifier(Modifier::UNDERLINED));
+
+        let title_rest = buf[(2, 0)].style();
+        assert_eq!(title_rest.fg, theme.menu_bar_active.fg);
+        assert_eq!(title_rest.bg, theme.menu_bar_active.bg);
+        assert!(!title_rest.has_modifier(Modifier::UNDERLINED));
+
+        let item_mnemonic = buf[(1, 2)].style();
+        assert_eq!(item_mnemonic.fg, Some(Color::Red));
+        assert_eq!(item_mnemonic.bg, theme.menu_item_selected.bg);
+        assert!(item_mnemonic.has_modifier(Modifier::UNDERLINED));
+
+        let item_rest = buf[(2, 2)].style();
+        assert_eq!(item_rest.fg, theme.menu_item_selected.fg);
+        assert_eq!(item_rest.bg, theme.menu_item_selected.bg);
+        assert!(!item_rest.has_modifier(Modifier::UNDERLINED));
     }
 
     #[test]

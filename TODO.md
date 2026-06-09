@@ -24,7 +24,8 @@
   - 完成记录（2026-06-09）：`MenuBar::draw` 现在会先用 `theme.menu_bar` 填满菜单栏整行，再绘制各顶层菜单项，避免未被菜单标题覆盖的右侧区域透出桌面背景或旧缓冲区内容。新增 `draw_fills_entire_menu_bar_row_before_titles` 单元回归测试，验证菜单栏尾部空白单元格使用菜单栏前景/背景样式。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui draw_fills_entire_menu_bar_row_before_titles`、`cargo test --all --all-targets` 均通过。
 - [x] **[DONE] #6 点击只高亮、无下沉阴影** — 顶层菜单项激活仅切 `menu_bar_active`，不调用 `draw_shadow`。
   - 完成记录（2026-06-09）：确认 `MenuBar::draw` 中顶层菜单项激活态只切换为 `theme.menu_bar_active`，`draw_shadow` 仍仅用于下拉菜单面板。新增 `draw_active_top_level_title_uses_active_style_without_title_shadow` 单元回归测试，隔离激活的顶层菜单标题，验证标题单元格使用 `menu_bar_active`、标题后的间隔保持 `menu_bar`，且标题下方不会绘制 `window_shadow`。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
-- [ ] **#7 热键字母配色** — `mnemonic_style` / 主题键 `menu-mnemonic` 用 accent（经典红）。
+- [x] **[DONE] #7 热键字母配色** — `mnemonic_style` / 主题键 `menu-mnemonic` 用 accent（经典红）。
+  - 完成记录（2026-06-09）：`menu-mnemonic` 默认命名样式改为经典红色 accent 并保留下划线强调；菜单绘制继续通过 `mnemonic_style` 将该 token patch 到顶层菜单项和下拉菜单项，使热键字母保持当前背景/选中态但使用红色前景。新增主题 token 默认值回归测试与菜单绘制回归测试，覆盖顶层菜单和下拉菜单 mnemonic 字母配色。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 
 ## 阶段 3 — 状态栏与滚动条（中优先级）
 
