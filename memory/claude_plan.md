@@ -21,4 +21,5 @@ I will complete exactly the first incomplete task from `TODO.md` and then stop. 
 - Added/updated unit tests for compact rendered spacing, title positions, active-title boundary styling, and mouse hit testing.
 - Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
 - Marked `#14` as `[DONE]` in `TODO.md` with its completion record.
-- Next steps: commit relevant tracked changes and stop.
+- Committed task-related changes as `8082655` (`[#14] Tighten top-level menu spacing`).
+- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
