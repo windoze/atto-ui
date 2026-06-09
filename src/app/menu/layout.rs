@@ -6,6 +6,7 @@ use super::model::{MenuItem, MenuSpec};
 
 pub(super) const SYSTEM_MENU_ICON_FALLBACK: &str = "≡";
 const SYSTEM_MENU_ICON_WIDTH: u16 = 1;
+const TOP_LEVEL_MENU_GAP_WIDTH: u16 = 0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DisplayLabel {
@@ -89,14 +90,24 @@ pub(super) fn menu_titles_start_x(menu_bar_area: Rect) -> u16 {
         .saturating_add(menu_bar_area.width.min(SYSTEM_MENU_ICON_WIDTH))
 }
 
+pub(super) fn menu_title_width(title: &str) -> u16 {
+    display_label_width(title)
+        .saturating_add(2)
+        .min(u16::MAX as usize) as u16
+}
+
+pub(super) fn next_menu_title_x(x: u16, title: &str) -> u16 {
+    x.saturating_add(menu_title_width(title))
+        .saturating_add(TOP_LEVEL_MENU_GAP_WIDTH)
+}
+
 pub(super) fn menu_title_x(menus: &[MenuSpec], start_x: u16, menu_index: usize) -> u16 {
     let mut x = start_x;
     for (idx, menu) in menus.iter().enumerate() {
         if idx == menu_index {
             return x;
         }
-        let label = format!(" {} ", display_label(&menu.title.get()).text);
-        x = x.saturating_add(UnicodeWidthStr::width(label.as_str()) as u16 + 1);
+        x = next_menu_title_x(x, &menu.title.get());
     }
     x
 }
@@ -141,5 +152,18 @@ mod tests {
 
         assert_eq!(height, 3);
         assert_eq!(width, 16);
+    }
+
+    #[test]
+    fn menu_title_positions_use_compact_top_level_spacing() {
+        let menus = vec![
+            MenuSpec::new("&File", Vec::new()),
+            MenuSpec::new("&Edit", Vec::new()),
+            MenuSpec::new("&View", Vec::new()),
+        ];
+
+        assert_eq!(menu_title_x(&menus, 1, 0), 1);
+        assert_eq!(menu_title_x(&menus, 1, 1), 7);
+        assert_eq!(menu_title_x(&menus, 1, 2), 13);
     }
 }

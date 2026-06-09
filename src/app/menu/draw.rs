@@ -11,8 +11,8 @@ use crate::theme::Theme;
 
 use super::super::status::Fill;
 use super::layout::{
-    SYSTEM_MENU_ICON_FALLBACK, display_label, display_label_width, dropdown_size, menu_title_x,
-    menu_titles_start_x,
+    SYSTEM_MENU_ICON_FALLBACK, display_label, dropdown_size, menu_title_width, menu_title_x,
+    menu_titles_start_x, next_menu_title_x,
 };
 use super::model::{MenuBar, MenuItem};
 
@@ -44,19 +44,18 @@ impl MenuBar {
                 theme.menu_bar
             };
             let title = menu.title.get();
-            let title_width = display_label_width(&title) as u16;
-            let w = title_width.saturating_add(2);
+            let w = menu_title_width(&title);
             fill_line(frame.buffer_mut(), x, area.y, w, style);
             draw_mnemonic_text(
                 frame.buffer_mut(),
                 x.saturating_add(1),
                 area.y,
                 &title,
-                title_width,
+                w.saturating_sub(2),
                 style,
                 mnemonic_style(style, theme),
             );
-            x = x.saturating_add(w).saturating_add(1);
+            x = next_menu_title_x(x, &title);
         }
 
         if self.state.active {
@@ -338,6 +337,27 @@ mod tests {
     }
 
     #[test]
+    fn draw_uses_compact_top_level_menu_spacing() {
+        let theme = Theme::dark();
+        let menu = MenuBar::new(vec![
+            MenuSpec::new("&File", Vec::new()),
+            MenuSpec::new("&Edit", Vec::new()),
+        ]);
+
+        let mut terminal = Terminal::new(TestBackend::new(24, 3)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 24, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        let prefix = (0..13).fold(String::new(), |mut out, x| {
+            out.push_str(buf[(x, 0)].symbol());
+            out
+        });
+        assert_eq!(prefix, "≡ File  Edit ");
+    }
+
+    #[test]
     fn draw_strips_mnemonic_markers_and_shows_accelerator() {
         let theme = Theme::dark();
         let mut menu = MenuBar::new(vec![MenuSpec::new(
@@ -458,7 +478,9 @@ mod tests {
         assert_eq!(buf[(3, 0)].symbol(), "i");
         assert_eq!(buf[(3, 0)].style().bg, theme.menu_bar_active.bg);
         assert_eq!(buf[(6, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(7, 0)].symbol(), " ");
         assert_eq!(buf[(7, 0)].style().bg, theme.menu_bar.bg);
+        assert_eq!(buf[(8, 0)].symbol(), "E");
         for x in 1..7 {
             assert_ne!(buf[(x, 1)].style().bg, theme.window_shadow.bg);
         }

@@ -13,12 +13,12 @@ I will complete exactly the first incomplete task from `TODO.md` and then stop. 
 
 ## Progress
 
-- Initial execution plan confirmed.
-- First incomplete task selected: `#13 系统菜单图标` — add a `≡` system-menu icon on the left side of the menu bar.
-- Latest commit references completed `#12` work and does not introduce unfinished work directly relevant to `#13`.
-- Implemented the menu-bar icon as a themed `system-menu-icon` glyph with a one-column shared title inset across drawing, dropdown anchoring, and mouse hit testing.
-- Added unit coverage for icon rendering, shifted Unicode/mnemonic layout, mouse title hit testing, and the default theme glyph.
-- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p atto-ui system_menu --lib`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
-- Marked `#13` as `[DONE]` in `TODO.md` with its completion record.
-- Committed task-related changes as `b1cfdc7` (`[#13] Add system menu icon`).
-- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
+- Initial execution plan confirmed for this invocation.
+- First incomplete task selected: `#14 顶层菜单项间距` — adjust spacing between top-level menu items based on the current visual/theme direction.
+- Latest commit does not introduce unfinished work directly relevant to `#14`.
+- Implemented compact top-level menu spacing by removing the extra neutral gap between padded menu titles through shared layout helpers.
+- Updated drawing, dropdown anchoring, and mouse hit testing to use the same title-width/next-title helpers so visual positions and interactions remain aligned.
+- Added/updated unit tests for compact rendered spacing, title positions, active-title boundary styling, and mouse hit testing.
+- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
+- Marked `#14` as `[DONE]` in `TODO.md` with its completion record.
+- Next steps: commit relevant tracked changes and stop.

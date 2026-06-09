@@ -2,14 +2,13 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::Rect;
-use unicode_width::UnicodeWidthStr;
 
 use crate::wm::WindowId;
 
 use super::MenuCallback;
 use super::layout::{
     contains, display_label, dropdown_size, explicit_mnemonic, label_mnemonic_or_first,
-    menu_title_x, menu_titles_start_x,
+    menu_title_width, menu_title_x, menu_titles_start_x, next_menu_title_x,
 };
 use super::minimized::minimized_window_id;
 use super::model::{MenuAction, MenuBar, MenuItem};
@@ -467,14 +466,14 @@ impl MenuBar {
     fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {
         let mut cur_x = menu_titles_start_x(menu_bar_area);
         for (idx, menu) in self.menus.iter().enumerate() {
-            let label = format!(" {} ", display_label(&menu.title.get()).text);
-            let w = UnicodeWidthStr::width(label.as_str()) as u16;
+            let title = menu.title.get();
+            let w = menu_title_width(&title);
             let start = cur_x;
             let end = cur_x.saturating_add(w);
             if x >= start && x < end {
                 return Some(idx);
             }
-            cur_x = cur_x.saturating_add(w).saturating_add(1);
+            cur_x = next_menu_title_x(cur_x, &title);
         }
         None
     }
@@ -579,7 +578,7 @@ mod tests {
         assert!(menu.state.active);
         assert_eq!(menu.state.menu_index, 0);
 
-        assert_eq!(menu.handle_mouse(&click(9), area), MenuAction::None);
+        assert_eq!(menu.handle_mouse(&click(7), area), MenuAction::None);
         assert!(menu.state.active);
         assert_eq!(menu.state.menu_index, 1);
     }

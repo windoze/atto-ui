@@ -47,7 +47,8 @@
   - 完成记录（2026-06-09）：默认 `radio-selected` glyph 从 `(*)` 改为 `(•)`，并同步 `RadioGroup` 组件缺省 fallback，确保自定义主题缺少该 glyph 时仍使用新字形。新增主题单元回归测试覆盖 dark/light/turbo 默认值，并新增 RadioGroup 渲染测试验证选中项实际绘制圆点字形。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui selected_option_uses_turbo_vision_dot_glyph`、`cargo test -p atto-ui theme_default_radio_selected_glyph_uses_dot`、`cargo test --all --all-targets` 均通过；未发现 `tools/run_fixtures.py` fixture runner。
 - [x] **[DONE] #13 系统菜单图标**（可选）— 菜单栏左侧加 `≡`。
   - 完成记录（2026-06-10）：菜单栏左侧新增系统菜单图标，默认通过 `system-menu-icon` 主题 glyph 渲染为 `≡`；顶层菜单标题统一从图标后一列开始绘制，且下拉菜单锚点与鼠标命中测试复用同一偏移，避免点击/展开位置与渲染错位。新增图标渲染、Unicode/mnemonic 偏移、鼠标命中与主题默认 glyph 回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui system_menu --lib`、`cargo test --all --all-targets` 均通过；未发现 `tools/run_fixtures.py` fixture runner。
-- [ ] **#14 顶层菜单项间距** — 间距微调，视配色而定。
+- [x] **[DONE] #14 顶层菜单项间距** — 间距微调，视配色而定。
+  - 完成记录（2026-06-10）：顶层菜单项去掉额外的中性间隔，保留每个标题自身左右 padding，使相邻标题之间从 3 空格收敛为更紧凑统一的 2 空格；绘制、下拉菜单锚点和鼠标命中测试统一复用共享标题宽度/下一标题位置 helper，避免视觉与交互坐标漂移。新增/更新紧凑间距渲染、标题位置、激活态边界样式和鼠标命中回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过；未发现 `tools/run_fixtures.py` fixture runner。
 
 ## 收尾
 
