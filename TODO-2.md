@@ -1785,7 +1785,7 @@
 - 新增回归测试覆盖 Save As 等待 format-on-save 完成后再 trim/write，以及最终 `std::fs::write` 失败时 dirty marker 与 `last_saved_text` 不被错误清除。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
-### [TODO] T27 — Jumplist / registers 设计占位与 WorkspaceEditorView 决策
+### [DONE] T27 — Jumplist / registers 设计占位与 WorkspaceEditorView 决策
 
 **依赖**：T17。
 
@@ -1814,6 +1814,14 @@
 **验收**：
 - 后续 Rename/workspace symbol/search result jump 有明确状态归属。
 - 不再新增跨文件功能到无法同步的 per-view 孤立状态。
+
+**完成记录（2026-06-09）**：
+- 在 `PLAN-2.md` 的 Jumplist/registers 小节补充架构决策：当前生产路径继续保持 `EditorView + Binding<String>` bridge，由 `WorkspaceState` 统一管理 `editor_core::Workspace`、`BufferId` / `ViewId`、tab binding、workspace LSP 与跨文件 edit 同步。
+- 明确切换触发条件：一旦实现 jumplist、registers、workspace cursor history、跨 buffer selection 等 workspace 原生状态，必须先新增 workspace-backed `WorkspaceEditorView`，不能继续把跨文件状态堆到 per-view `EditorStateManager`。
+- 明确未来类型与文件：在 `crates/atto-ui-editor/src/view/workspace_view.rs` 定义并从 `view/mod.rs` re-export `WorkspaceEditorView { workspace: Arc<Mutex<editor_core::Workspace>>, view_id: editor_core::ViewId, config: WorkspaceEditorConfig, ... }`；app 侧由 `WorkspaceState` 传入共享 workspace handle + `ViewId`。
+- 列出 `WorkspaceEditorView` 迁移面：render、input、scroll、LSP popup/event bridge、search、selection、syntax/theme 与 dynamic property surface；第一步仅做只读 prototype + render/input smoke test，不替换生产路径。
+- 在 `crates/atto-editor-app/src/workspace_state.rs` 模块注释记录 bridge 边界，明确 jumplist/registers 不应复制到现有 `EditorView` 路径。
+- 验证通过：`cargo fmt`。未运行 full clippy/test，因为本任务仅修改文档与 Rust 注释，未改变编译输出；复用 R26 记录的 `cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo test --workspace --all-targets` 绿色结果。
 
 ### [TODO] R27 — 审阅 T27
 

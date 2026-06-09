@@ -1368,7 +1368,15 @@ pub trim_trailing_whitespace_on_save: Binding<bool>
 
 ### 2.10.3 Jumplist / registers
 
-低优先级。`editor-core::Workspace` 已有 jump list 相关 API（`apply_jump_target` 等），等 workspace 迁移后接。
+低优先级。`editor-core::Workspace` 已有 jump list 相关 API（`apply_jump_target` 等），但这些状态必须归属于 workspace/view，而不是当前 `EditorView` 内部孤立的 `EditorStateManager`。
+
+架构决策：
+
+1. **Bridge 阶段继续保留现状**：生产路径仍使用 `crates/atto-ui-editor/src/view/mod.rs` 的 `EditorView { config: EditorConfig, state_manager: EditorStateManager, ... }`，由 `crates/atto-editor-app/src/workspace_state.rs` 的 `WorkspaceState` 负责 `editor_core::Workspace`、`BufferId`、`ViewId`、tab binding、workspace LSP 和跨文件 edit 同步。这个阶段可以承载 rename、workspace symbol、global search result jump 等 app 层跨文件动作，但不能把 jumplist/registers 这类长期跨 buffer 状态继续新增到 `EditorView`。
+2. **切换触发条件**：当下一项功能需要 workspace 原生的 cursor history、jump target、register 或跨 buffer selection state 时，先新增 workspace-backed editor view，再接该功能；不要先在 per-view `EditorStateManager` 中做临时副本。
+3. **目标类型与文件**：新增 `crates/atto-ui-editor/src/view/workspace_view.rs`（并从 `view/mod.rs` re-export）定义 `WorkspaceEditorView { workspace: Arc<Mutex<editor_core::Workspace>>, view_id: editor_core::ViewId, config: WorkspaceEditorConfig, ... }`。app 侧继续由 `WorkspaceState` 管理共享 workspace，并在 tab 创建时传入共享 workspace handle + `ViewId`。
+4. **迁移范围**：`WorkspaceEditorView` 需要迁移/复用现有 `EditorView` 的 render、input、scroll、LSP popup/event bridge、search、selection、syntax/theme 与 dynamic property surface。第一步只做只读 prototype + render/input smoke test，不替换生产路径；生产替换必须保持打开/保存/dirty title、split view、diagnostics/statusbar、format-on-save、trim-on-save、rename/workspace symbol 行为不回退。
+5. **jumplist/registers 接入位置**：实现时优先通过 `editor_core::Workspace` / workspace view API 读写 jump list 和 registers；`EditorView` 只允许保留单文档即时 UI 状态（popup、hover、local search bar 等），不再承载新的跨文件状态。
 
 ## F-FT — File tree 功能补齐
 
@@ -1570,4 +1578,3 @@ PTY 测试原则：
 | Inlay hints 需要 composed grid | L6 明确切换 `render_text` 数据源；不要把 virtual text 伪装成普通 text edit |
 | File tree 文件操作误覆盖 | MVP 禁止覆盖并提示；后续加确认 dialog |
 | Shell git status 阻塞 UI | 后台/节流刷新；draw 只读缓存 |
-

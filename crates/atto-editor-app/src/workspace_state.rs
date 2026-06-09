@@ -1,4 +1,11 @@
 //! Shared editor workspace state used to bridge existing tab bindings to `editor-core`.
+//!
+//! This is the bridge-stage owner for workspace-global editor state. Existing tabs still render
+//! with `atto_ui_editor::EditorView`, whose `EditorStateManager` is local to that view, while this
+//! type owns `editor_core::Workspace`, `BufferId`/`ViewId` mappings, tab bindings, workspace LSP,
+//! and cross-file edit synchronization. New cross-buffer state such as jumplists or registers
+//! should be added after a workspace-backed `WorkspaceEditorView` exists, not duplicated inside the
+//! per-view `EditorView` path.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

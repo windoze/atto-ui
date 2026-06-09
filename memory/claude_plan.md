@@ -1,15 +1,26 @@
 # Claude Execution Plan
 
 ## Current objective
-- Create this progress file before implementation work.
-- Read TODO.md and identify the first task whose title is not prefixed with [DONE].
-- Review only the files and context needed for that task.
-- Implement the task exactly as specified, or add the minimum prerequisite task if a concrete blocker prevents correct implementation.
-- Run formatting, linting, and relevant tests as required by TODO.md and repository policy.
-- Update TODO.md completion status and record validation results.
-- Commit all task-related changes and stop without starting the next task.
+- Complete the first incomplete task in `TODO.md`: T27 — Jumplist / registers 设计占位与 WorkspaceEditorView 决策.
+- Use `TODO-2.md` as the task detail source and stop after T27 is complete.
+- Avoid adding unused prototype code unless the task requires it.
 
-## Progress
+## T27 execution plan
+- Read T27 requirements and the existing workspace bridge design.
+- Compare the bridge route (`EditorView + Binding<String>` with app-level `WorkspaceState`) against a future `WorkspaceEditorView`.
+- Record a concrete decision in `PLAN-2.md`, naming the future type/file and the trigger for switching.
+- Add a code-level comment at the current bridge boundary in `workspace_state.rs`.
+- Run formatting. Skip full clippy/test because the changes are documentation/comment-only and the previous full validation is already recorded green.
+- Mark T27 `[DONE]` in `TODO.md` and `TODO-2.md`, update the completion record, commit, and stop.
+
+## T27 progress
+- First incomplete task identified: T27 in `TODO-2.md`.
+- Latest commit is `[R26] Review trim trailing whitespace save flow`; it does not mention an unfinished issue relevant to T27.
+- Decision implemented as documentation/comment-only: keep production in bridge mode, require a workspace-backed `WorkspaceEditorView` before jumplist/registers, and avoid unused prototype code.
+- `cargo fmt` passed.
+- T27 marked `[DONE]` in `TODO.md` and `TODO-2.md`; completion record documents the decision and validation scope.
+
+## Previous invocation notes
 - Plan file initialized.
 
 ## Selected task
