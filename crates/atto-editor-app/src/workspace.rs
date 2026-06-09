@@ -145,6 +145,7 @@ pub fn git_statuses_for_root(root: &Path) -> Result<WorkspaceGitStatuses, String
         .arg(root)
         .arg("status")
         .arg("--porcelain=v1")
+        .arg("-z")
         .arg("--ignored=matching")
         .output()
         .map_err(|err| format!("git status failed for {}: {err}", root.display()))?;
@@ -166,11 +167,17 @@ pub fn parse_git_status_porcelain_v1(root: &Path, output: &str) -> WorkspaceGitS
     let root = canonicalize_best_effort(root).unwrap_or_else(|| root.to_path_buf());
     let mut statuses = WorkspaceGitStatuses::default();
 
-    for line in output.lines() {
-        let Some((status, path)) = parse_git_status_line(line) else {
-            continue;
-        };
-        statuses.insert_path(root.join(path), status);
+    if output.as_bytes().contains(&0) {
+        for (status, path) in parse_git_status_z_records(output.as_bytes()) {
+            statuses.insert_path(root.join(path), status);
+        }
+    } else {
+        for line in output.lines() {
+            let Some((status, path)) = parse_git_status_line(line) else {
+                continue;
+            };
+            statuses.insert_path(root.join(path), status);
+        }
     }
 
     statuses
@@ -230,6 +237,32 @@ fn parse_git_status_line(line: &str) -> Option<(FileTreeGitStatus, PathBuf)> {
         .map(|(_, new_path)| new_path)
         .unwrap_or(raw_path);
     Some((status, PathBuf::from(unquote_porcelain_path(path))))
+}
+
+fn parse_git_status_z_records(output: &[u8]) -> Vec<(FileTreeGitStatus, PathBuf)> {
+    let records = output.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let mut parsed = Vec::new();
+    let mut index = 0;
+
+    while let Some(record) = records.get(index).copied() {
+        index += 1;
+        if record.is_empty() || record.len() < 4 {
+            continue;
+        }
+
+        let x = record[0] as char;
+        let y = record[1] as char;
+        let Some(status) = git_status_from_porcelain_xy(x, y) else {
+            continue;
+        };
+        let path = String::from_utf8_lossy(&record[3..]).into_owned();
+        parsed.push((status, PathBuf::from(path)));
+        if status == FileTreeGitStatus::Renamed {
+            index += 1;
+        }
+    }
+
+    parsed
 }
 
 fn git_status_from_porcelain_xy(x: char, y: char) -> Option<FileTreeGitStatus> {
@@ -573,6 +606,31 @@ mod tests {
             Some(FileTreeGitStatus::Untracked)
         );
         assert_eq!(status_for("ignored.log"), Some(FileTreeGitStatus::Ignored));
+    }
+
+    #[test]
+    fn parse_git_status_porcelain_v1_z_maps_renamed_paths_verbatim() {
+        let root = TempDir::new("git_status_parse_renamed");
+        let renamed = "renamed -> file with spaces.rs";
+        fs::write(root.path.join(renamed), "renamed\n").unwrap();
+
+        let statuses = parse_git_status_porcelain_v1(
+            &root.path,
+            "R  renamed -> file with spaces.rs\0old name.rs\0",
+        );
+        let tree = build_workspace_tree_with_git_statuses(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+            &statuses,
+        );
+        let root_node = tree.roots.first().expect("root node");
+        let renamed_node = root_node
+            .children
+            .iter()
+            .find(|node| node.name == renamed)
+            .expect("renamed node");
+
+        assert_eq!(renamed_node.git_status, Some(FileTreeGitStatus::Renamed));
     }
 
     #[test]

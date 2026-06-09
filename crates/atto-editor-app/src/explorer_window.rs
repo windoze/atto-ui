@@ -81,6 +81,34 @@ enum FileClipboardMode {
     Copy,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct FileMoveError {
+    message: String,
+    partial: bool,
+}
+
+impl FileMoveError {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            partial: false,
+        }
+    }
+
+    fn partial(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            partial: true,
+        }
+    }
+}
+
+impl From<String> for FileMoveError {
+    fn from(message: String) -> Self {
+        Self::failed(message)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExplorerContextAction {
     NewFile,
@@ -608,17 +636,14 @@ impl ExplorerWindowView {
         &self,
         sources: &[PathBuf],
         target_dir: &Path,
-    ) -> Result<Vec<PathBuf>, String> {
+    ) -> Result<Vec<PathBuf>, FileMoveError> {
         let destinations = self.prepare_destinations(sources, target_dir)?;
-        for (source, destination) in sources.iter().zip(destinations.iter()) {
-            fs::rename(source, destination).map_err(|err| {
-                format!(
-                    "move failed: {} -> {}: {err}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-        }
+        let pairs = sources
+            .iter()
+            .cloned()
+            .zip(destinations.iter().cloned())
+            .collect::<Vec<_>>();
+        rename_paths_with_rollback(&pairs)?;
         Ok(destinations)
     }
 
@@ -700,9 +725,17 @@ impl ExplorerWindowView {
             }
         };
 
-        let result = match clipboard.mode {
-            FileClipboardMode::Cut => self.move_paths_to_directory(&clipboard.paths, &target_dir),
-            FileClipboardMode::Copy => self.copy_paths_to_directory(&clipboard.paths, &target_dir),
+        let (result, partial_cut) = match clipboard.mode {
+            FileClipboardMode::Cut => {
+                match self.move_paths_to_directory(&clipboard.paths, &target_dir) {
+                    Ok(destinations) => (Ok(destinations), false),
+                    Err(error) => (Err(error.message), error.partial),
+                }
+            }
+            FileClipboardMode::Copy => (
+                self.copy_paths_to_directory(&clipboard.paths, &target_dir),
+                false,
+            ),
         };
 
         match result {
@@ -716,8 +749,15 @@ impl ExplorerWindowView {
                 EventResult::changed()
             }
             Err(message) => {
-                self.show_status(format!("Explorer: {message}"));
-                EventResult::consumed()
+                if partial_cut {
+                    self.clipboard = None;
+                    self.refresh_after_file_operation();
+                    self.show_status(format!("Explorer: {message}; clipboard cleared"));
+                    EventResult::changed()
+                } else {
+                    self.show_status(format!("Explorer: {message}"));
+                    EventResult::consumed()
+                }
             }
         }
     }
@@ -1042,6 +1082,55 @@ fn ensure_target_available(path: &Path) -> Result<(), String> {
     }
 }
 
+fn rename_paths_with_rollback(pairs: &[(PathBuf, PathBuf)]) -> Result<(), FileMoveError> {
+    rename_paths_with_rollback_using(pairs, |source, destination| {
+        fs::rename(source, destination)
+            .map_err(|err| format!("{} -> {}: {err}", source.display(), destination.display()))
+    })
+}
+
+fn rename_paths_with_rollback_using<F>(
+    pairs: &[(PathBuf, PathBuf)],
+    mut rename: F,
+) -> Result<(), FileMoveError>
+where
+    F: FnMut(&Path, &Path) -> Result<(), String>,
+{
+    let mut moved = Vec::<(PathBuf, PathBuf)>::new();
+    for (source, destination) in pairs {
+        if let Err(err) = rename(source, destination) {
+            let rollback_errors = rollback_moved_paths(&moved, &mut rename);
+            let message = format!("move failed: {err}");
+            if rollback_errors.is_empty() {
+                return Err(FileMoveError::failed(message));
+            }
+            return Err(FileMoveError::partial(format!(
+                "{message}; rollback failed: {}",
+                rollback_errors.join("; ")
+            )));
+        }
+        moved.push((source.clone(), destination.clone()));
+    }
+    Ok(())
+}
+
+fn rollback_moved_paths<F>(moved: &[(PathBuf, PathBuf)], rename: &mut F) -> Vec<String>
+where
+    F: FnMut(&Path, &Path) -> Result<(), String>,
+{
+    let mut errors = Vec::new();
+    for (source, destination) in moved.iter().rev() {
+        if let Err(err) = rename(destination, source) {
+            errors.push(format!(
+                "{} -> {}: {err}",
+                destination.display(),
+                source.display()
+            ));
+        }
+    }
+    errors
+}
+
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir(destination).map_err(|err| {
         format!(
@@ -1174,9 +1263,15 @@ impl ::atto_ui::composable::DragAndDrop for ExplorerWindowView {
                 self.show_status(format!("Explorer: moved {} item(s)", destinations.len()));
                 EventResult::changed()
             }
-            Err(message) => {
-                self.show_status(format!("Explorer: {message}"));
-                EventResult::consumed()
+            Err(error) => {
+                if error.partial {
+                    self.refresh_after_file_operation();
+                    self.show_status(format!("Explorer: {}", error.message));
+                    EventResult::changed()
+                } else {
+                    self.show_status(format!("Explorer: {}", error.message));
+                    EventResult::consumed()
+                }
             }
         }
     }
@@ -1322,5 +1417,76 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
         } else {
             res
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::cell::RefCell;
+
+    fn path(value: &str) -> PathBuf {
+        PathBuf::from(value)
+    }
+
+    #[test]
+    fn rename_paths_with_rollback_reverts_prior_moves_after_failure() {
+        let pairs = vec![
+            (path("a.txt"), path("dest/a.txt")),
+            (path("b.txt"), path("dest/b.txt")),
+        ];
+        let calls = RefCell::new(Vec::new());
+
+        let result = rename_paths_with_rollback_using(&pairs, |source, destination| {
+            calls
+                .borrow_mut()
+                .push((source.to_path_buf(), destination.to_path_buf()));
+            if source == Path::new("b.txt") {
+                Err("second rename failed".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(
+            result,
+            Err(FileMoveError::failed("move failed: second rename failed"))
+        );
+        assert_eq!(
+            calls.into_inner(),
+            vec![
+                (path("a.txt"), path("dest/a.txt")),
+                (path("b.txt"), path("dest/b.txt")),
+                (path("dest/a.txt"), path("a.txt")),
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_paths_with_rollback_reports_partial_state_when_rollback_fails() {
+        let pairs = vec![
+            (path("a.txt"), path("dest/a.txt")),
+            (path("b.txt"), path("dest/b.txt")),
+        ];
+
+        let result = rename_paths_with_rollback_using(&pairs, |source, _destination| {
+            if source == Path::new("b.txt") {
+                Err("second rename failed".to_string())
+            } else if source == Path::new("dest/a.txt") {
+                Err("rollback rename failed".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        let error = result.expect_err("rollback failure should report partial state");
+        assert!(error.partial);
+        assert!(error.message.contains("move failed: second rename failed"));
+        assert!(
+            error
+                .message
+                .contains("dest/a.txt -> a.txt: rollback rename failed")
+        );
     }
 }
