@@ -24,4 +24,5 @@ I will follow TODO.md as the authoritative task list and complete exactly the fi
 - No fixture runner was found at `tools/run_fixtures.py` or another path within depth 3.
 - `cargo test --all --all-targets` completed successfully.
 - `TODO.md` was updated to mark the selected wrap-up validation task `[DONE]` with a completion record.
-- Next step: commit the task-related changes and stop.
+- Committed validation/task-record changes as `aef0be5` (`[Wrap-up] Validate full Rust suite`).
+- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
