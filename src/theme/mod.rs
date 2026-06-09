@@ -742,7 +742,7 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("checkbox-unchecked".into(), "[ ]".into());
     g.insert("checkbox-checked".into(), "[X]".into());
     g.insert("radio-unselected".into(), "( )".into());
-    g.insert("radio-selected".into(), "(*)".into());
+    g.insert("radio-selected".into(), "(•)".into());
     g.insert("disclosure-collapsed".into(), ">".into());
     g.insert("disclosure-expanded".into(), "v".into());
     g.insert("disclosure-idle-indicator".into(), "[ ]".into());

@@ -134,7 +134,7 @@ impl Component for RadioGroup {
             }
             let is_sel = idx == selected;
             let mark = if is_sel {
-                ctx.theme.glyph("radio-selected").unwrap_or("(*)")
+                ctx.theme.glyph("radio-selected").unwrap_or("(•)")
             } else {
                 ctx.theme.glyph("radio-unselected").unwrap_or("( )")
             };
@@ -365,5 +365,26 @@ mod tests {
             EventResult::changed()
         );
         assert_eq!(selected.get(), 1);
+    }
+
+    #[test]
+    fn selected_option_uses_turbo_vision_dot_glyph() {
+        let selected = Binding::new(1usize);
+        let mut radio = RadioGroup::new(
+            "Mode",
+            vec!["Normal".into(), "Insert".into(), "Visual".into()],
+            selected,
+        );
+        let theme = Theme::dark();
+        let mut terminal = Terminal::new(TestBackend::new(24, 8)).expect("terminal");
+
+        terminal
+            .draw(|f| radio.draw(f, Rect::new(0, 0, 16, 4), context(&theme)))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(0, 2)].symbol(), "(");
+        assert_eq!(buf[(1, 2)].symbol(), "•");
+        assert_eq!(buf[(2, 2)].symbol(), ")");
     }
 }
