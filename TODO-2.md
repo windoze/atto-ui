@@ -1823,12 +1823,19 @@
 - 在 `crates/atto-editor-app/src/workspace_state.rs` 模块注释记录 bridge 边界，明确 jumplist/registers 不应复制到现有 `EditorView` 路径。
 - 验证通过：`cargo fmt`。未运行 full clippy/test，因为本任务仅修改文档与 Rust 注释，未改变编译输出；复用 R26 记录的 `cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo test --workspace --all-targets` 绿色结果。
 
-### [TODO] R27 — 审阅 T27
+### [DONE] R27 — 审阅 T27
 
 审阅 T27 改动：
 - 确认决策记录具体到类型和文件，不是泛泛说明。
 - 确认没有引入未使用的大量 dead code。
 - 确认未来任务能据此判断应改 `EditorView` 还是 `WorkspaceEditorView`。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T27 的 `PLAN-2.md` 架构决策、`workspace_state.rs` bridge 边界注释、`TODO.md` / `TODO-2.md` 状态与完成记录。
+- 确认决策具体命名未来类型与文件：`crates/atto-ui-editor/src/view/workspace_view.rs` 中的 `WorkspaceEditorView`，并要求从 `view/mod.rs` re-export，app 侧由 `WorkspaceState` 传入共享 workspace handle 与 `ViewId`。
+- 确认 T27 未引入未使用 prototype 或大量 dead code；变更仅为设计文档、任务记录和 Rust 模块注释。
+- 确认未来任务判定规则明确：单文档即时 UI 状态继续留在 `EditorView`，但 jumplist/registers/cursor history/cross-buffer selection 等 workspace 原生跨 buffer 状态必须先走 workspace-backed `WorkspaceEditorView`。
+- 验证范围：使用 code-review agent 复核 HEAD vs HEAD^ 无阻塞问题；本次 R27 仅修改 `TODO.md` / `TODO-2.md` / `memory/claude_plan.md` 文档记录，未改变编译输出，因此未重新运行 clippy/test，沿用 T27/R26 记录的绿色验证结果。
 
 ---
 
