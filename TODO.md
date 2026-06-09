@@ -54,4 +54,5 @@
 
 - [x] **[DONE] 全量 `cargo test` + `cargo clippy` 通过。**
   - 完成记录（2026-06-10）：按收尾验证顺序运行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo test --all --all-targets`，全部通过。仓库中未发现独立 fixture runner。
-- [ ] 用 `snapshot_app` 抓屏与参考截图人工比对。
+- [x] **[DONE] 用 `snapshot_app` 抓屏与参考截图人工比对。**
+  - 完成记录（2026-06-10）：通过临时 PTY 抓屏夹具运行 `snapshot_app` 的 80x24 默认画面与 File 菜单展开画面，并按 `UI_GAPS.md` 中的 Turbo Vision 参考项逐项人工比对。抓屏确认窗口标题居中且带空格、左侧 `[■]` 与右侧 `[−]`/`[↑]` 按钮归位、桌面 `░` 纹理铺满、菜单栏左侧 `≡` 与紧凑顶层菜单间距生效、mnemonic 字母使用 accent 色、菜单展开只高亮顶层标题且无标题下沉阴影、下拉菜单覆盖窗口、状态栏热点文本保留、复选框 `[X]`、单选 `(•)`、List/Table 短滚动条 `▲`/`░`/`▼` 均可见。默认 `snapshot_app` 仍使用 `Theme::dark()`，因此蓝桌面/灰青菜单/绿色高亮的精确 TV 调色板不在默认抓屏中强制匹配；该差异符合 #10 “新增 turbo 主题、默认主题不变”的计划约束。验证：临时 `cargo test --test __manual_snapshot_capture -- --nocapture` 抓屏通过；未保留临时测试文件。由于最终变更仅更新任务文档，复用上一条收尾任务记录的 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo test --all --all-targets` 绿色结果。

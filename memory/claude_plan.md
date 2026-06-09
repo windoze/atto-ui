@@ -1,28 +1,21 @@
 # Execution Plan
 
-I will follow TODO.md as the authoritative task list and complete exactly the first task whose heading is not prefixed with `[DONE]`.
+I will avoid recording private chain-of-thought, but will keep this file updated with a concise plan, decisions, and progress.
 
-## Steps
-1. Read `TODO.md` first to identify the first incomplete task and its requirements.
+1. Read TODO.md first and identify the first task whose title is not prefixed with `[DONE]`.
 2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect only the files needed for that task and avoid broad unrelated triage.
-4. Implement the task as specified, without workarounds or scope narrowing.
-5. Run formatting, linting, and the relevant/full test commands required by the task and repository policy.
-6. If a blocking issue prevents correct implementation, add the minimum prerequisite task to `TODO.md`, commit that bookkeeping, and stop.
-7. If implementation succeeds, mark the task title in `TODO.md` with `[DONE]`, update its completion record, and update this plan file with key progress.
-8. Commit all task-related changes with a clear message including the required co-author trailer.
-9. Stop after this one task.
+3. Inspect the selected task's requirements, dependencies, validation instructions, and relevant code.
+4. Implement the task completely without changing unrelated behavior or working around spec gaps.
+5. Run formatting, clippy with warnings denied, and relevant/full tests as required by the task.
+6. If validation reveals unscheduled failures, fix them or add the minimum prerequisite task in TODO.md before the current task.
+7. Mark the completed task title with `[DONE]`, update its completion record, and update PLAN.md only if phase-level sequencing changed.
+8. Commit all changes for this task with a clear message and stop without starting the next task.
 
-## Current Status
-- Plan file created.
-- `TODO.md` reviewed.
-- First incomplete task selected: the wrap-up item requiring full `cargo clippy` and `cargo test` to pass.
-- Latest commit checked; it only records prior execution progress and does not add a directly relevant unfinished blocker.
-- Working tree checked; unrelated untracked files are present and will be left untouched.
-- `cargo fmt --all` completed.
-- `cargo clippy --workspace --all-targets -- -D warnings` completed successfully.
-- No fixture runner was found at `tools/run_fixtures.py` or another path within depth 3.
-- `cargo test --all --all-targets` completed successfully.
-- `TODO.md` was updated to mark the selected wrap-up validation task `[DONE]` with a completion record.
-- Committed validation/task-record changes as `aef0be5` (`[Wrap-up] Validate full Rust suite`).
-- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
+Progress:
+- Plan initialized.
+- Selected first incomplete task from TODO.md: "用 `snapshot_app` 抓屏与参考截图人工比对。"
+- Next: inspect the task context, available reference assets, and latest commit for any directly relevant unfinished work.
+- Confirmed no reference image assets are checked into the repository; used `UI_GAPS.md` as the written comparison criteria.
+- Captured the default `snapshot_app` 80x24 screen and File-menu-open screen with a temporary PTY test harness, then removed the temporary test file.
+- Updated `TODO.md` to mark the task `[DONE]` with the comparison findings. Final repository changes are documentation/progress only, so the previous full green validation is reused.
+- Confirmed `TODO.md` has no remaining `- [ ]` tasks. Preparing the final project completion commit and `v0.1.0` tag.
