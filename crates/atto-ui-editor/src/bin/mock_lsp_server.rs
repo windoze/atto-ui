@@ -58,6 +58,25 @@ fn publish_mock_diagnostics<W: io::Write>(
     )
 }
 
+fn publish_empty_diagnostics<W: io::Write>(
+    writer: &mut W,
+    uri: &str,
+    version: Option<i64>,
+) -> io::Result<()> {
+    editor_core_lsp::write_lsp_message(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": uri,
+                "version": version,
+                "diagnostics": []
+            }
+        }),
+    )
+}
+
 fn publish_command_executed_diagnostic<W: io::Write>(writer: &mut W, uri: &str) -> io::Result<()> {
     editor_core_lsp::write_lsp_message(
         writer,
@@ -80,6 +99,21 @@ fn publish_command_executed_diagnostic<W: io::Write>(writer: &mut W, uri: &str) 
             }
         }),
     )
+}
+
+fn text_document_uri(msg: &Value) -> &str {
+    msg.get("params")
+        .and_then(|params| params.get("textDocument"))
+        .and_then(|text_document| text_document.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn workspace_symbol_query(msg: &Value) -> &str {
+    msg.get("params")
+        .and_then(|params| params.get("query"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 fn main() -> io::Result<()> {
@@ -120,6 +154,8 @@ fn main() -> io::Result<()> {
                             "full": true
                         },
                         "foldingRangeProvider": true,
+                        "documentSymbolProvider": true,
+                        "workspaceSymbolProvider": true,
                         "codeActionProvider": true,
                         "inlayHintProvider": true,
                         "documentFormattingProvider": true,
@@ -148,13 +184,10 @@ fn main() -> io::Result<()> {
                 respond(&mut stdout, id, result)?;
             }
             ("textDocument/inlayHint", Some(id)) => {
-                let uri = msg
-                    .get("params")
-                    .and_then(|params| params.get("textDocument"))
-                    .and_then(|text_document| text_document.get("uri"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if uri.ends_with("/inlay_empty.rs") || uri == "file:///inlay_empty.rs" {
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/inlay_error.rs") || uri == "file:///inlay_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock inlay hints error")?;
+                } else if uri.ends_with("/inlay_empty.rs") || uri == "file:///inlay_empty.rs" {
                     respond(&mut stdout, id, json!([]))?;
                 } else {
                     respond(
@@ -183,14 +216,87 @@ fn main() -> io::Result<()> {
                 });
                 respond(&mut stdout, id, result)?;
             }
+            ("textDocument/documentSymbol", Some(id)) => {
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/document_symbols_error.rs")
+                    || uri == "file:///document_symbols_error.rs"
+                {
+                    respond_error(&mut stdout, id, -32000, "mock document symbols error")?;
+                } else if uri.ends_with("/document_symbols_empty.rs")
+                    || uri == "file:///document_symbols_empty.rs"
+                {
+                    respond(&mut stdout, id, json!([]))?;
+                } else {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "name": "mock_symbol",
+                                "detail": "fn()",
+                                "kind": 12,
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": { "line": 0, "character": 18 }
+                                },
+                                "selectionRange": {
+                                    "start": { "line": 0, "character": 3 },
+                                    "end": { "line": 0, "character": 14 }
+                                },
+                                "children": [
+                                    {
+                                        "name": "inner_symbol",
+                                        "kind": 13,
+                                        "range": {
+                                            "start": { "line": 1, "character": 4 },
+                                            "end": { "line": 1, "character": 12 }
+                                        },
+                                        "selectionRange": {
+                                            "start": { "line": 1, "character": 4 },
+                                            "end": { "line": 1, "character": 9 }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]),
+                    )?;
+                }
+            }
+            ("workspace/symbol", Some(id)) => {
+                let query = workspace_symbol_query(&msg);
+                if query == "error" {
+                    respond_error(&mut stdout, id, -32000, "mock workspace symbol error")?;
+                } else if query == "empty" {
+                    respond(&mut stdout, id, json!([]))?;
+                } else {
+                    respond(
+                        &mut stdout,
+                        id,
+                        json!([
+                            {
+                                "name": "mock_symbol",
+                                "detail": "fn()",
+                                "kind": 12,
+                                "location": {
+                                    "uri": "file:///workspace_symbol.rs",
+                                    "range": {
+                                        "start": { "line": 2, "character": 4 },
+                                        "end": { "line": 2, "character": 15 }
+                                    }
+                                },
+                                "containerName": "mock_crate"
+                            }
+                        ]),
+                    )?;
+                }
+            }
             ("textDocument/signatureHelp", Some(id)) => {
-                let uri = msg
-                    .get("params")
-                    .and_then(|params| params.get("textDocument"))
-                    .and_then(|text_document| text_document.get("uri"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if uri.ends_with("/signature_empty.rs") || uri == "file:///signature_empty.rs" {
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/signature_error.rs") || uri == "file:///signature_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock signature help error")?;
+                } else if uri.ends_with("/signature_empty.rs")
+                    || uri == "file:///signature_empty.rs"
+                {
                     respond(&mut stdout, id, Value::Null)?;
                 } else {
                     let result = json!({
@@ -210,13 +316,17 @@ fn main() -> io::Result<()> {
                 }
             }
             ("textDocument/codeAction", Some(id)) => {
-                let uri = msg
-                    .get("params")
-                    .and_then(|params| params.get("textDocument"))
-                    .and_then(|text_document| text_document.get("uri"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let result = if uri.ends_with("/code_action_command.rs")
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/code_action_error.rs") || uri == "file:///code_action_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock code action error")?;
+                    continue;
+                }
+
+                let result = if uri.ends_with("/code_action_empty.rs")
+                    || uri == "file:///code_action_empty.rs"
+                {
+                    json!([])
+                } else if uri.ends_with("/code_action_command.rs")
                     || uri == "file:///code_action_command.rs"
                 {
                     json!([
@@ -348,12 +458,7 @@ fn main() -> io::Result<()> {
                 }
             }
             ("textDocument/prepareRename", Some(id)) => {
-                let uri = msg
-                    .get("params")
-                    .and_then(|params| params.get("textDocument"))
-                    .and_then(|text_document| text_document.get("uri"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let uri = text_document_uri(&msg);
                 if uri.ends_with("/rename_error.rs") || uri == "file:///rename_error.rs" {
                     respond_error(&mut stdout, id, -32000, "mock prepare rename error")?;
                 } else if uri.ends_with("/rename_unavailable.rs")
@@ -376,15 +481,20 @@ fn main() -> io::Result<()> {
             }
             ("textDocument/rename", Some(id)) => {
                 let params = msg.get("params");
-                let uri = params
-                    .and_then(|params| params.get("textDocument"))
-                    .and_then(|text_document| text_document.get("uri"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let uri = text_document_uri(&msg);
                 let new_name = params
                     .and_then(|params| params.get("newName"))
                     .and_then(Value::as_str)
                     .unwrap_or("renamed");
+
+                if uri.ends_with("/rename_apply_error.rs") || uri == "file:///rename_apply_error.rs"
+                {
+                    respond_error(&mut stdout, id, -32000, "mock rename error")?;
+                    continue;
+                } else if uri.ends_with("/rename_null.rs") || uri == "file:///rename_null.rs" {
+                    respond(&mut stdout, id, Value::Null)?;
+                    continue;
+                }
 
                 let mut changes = Map::new();
                 changes.insert(
@@ -455,8 +565,10 @@ fn main() -> io::Result<()> {
                 let Some(uri) = text_document.get("uri").and_then(Value::as_str) else {
                     continue;
                 };
-                if uri.ends_with("/diagnostics.rs") || uri == "file:///diagnostics.rs" {
-                    let version = text_document.get("version").and_then(Value::as_i64);
+                let version = text_document.get("version").and_then(Value::as_i64);
+                if uri.ends_with("/diagnostics_empty.rs") || uri == "file:///diagnostics_empty.rs" {
+                    publish_empty_diagnostics(&mut stdout, uri, version)?;
+                } else if uri.ends_with("/diagnostics.rs") || uri == "file:///diagnostics.rs" {
                     publish_mock_diagnostics(&mut stdout, uri, version)?;
                 }
             }

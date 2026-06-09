@@ -306,6 +306,33 @@ fn lsp_publish_diagnostics_updates_summary() {
 }
 
 #[test]
+fn lsp_publish_empty_diagnostics_clears_summary() {
+    let (_text, mut view, handle) =
+        mock_lsp_editor("file:///diagnostics_empty.rs", "let ok = 1;\n");
+    handle.diagnostics_summary.set(DiagnosticsSummary {
+        errors: 1,
+        warnings: 1,
+        infos: 1,
+        hints: 1,
+    });
+
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    let summary = wait_for_diagnostics_summary(
+        &mut terminal,
+        &mut view,
+        &handle,
+        area,
+        ctx,
+        DiagnosticsSummary::default(),
+    );
+    assert_eq!(summary, DiagnosticsSummary::default());
+}
+
+#[test]
 fn lsp_inlay_hints_render_as_virtual_text_and_toggle_off() {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 
@@ -459,6 +486,46 @@ fn lsp_inlay_hints_preserve_semantic_styles_and_copy_backing_text() {
 }
 
 #[test]
+fn lsp_inlay_hints_error_reports_message() {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "let value = 1;\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.inlay_hints.enabled.set(true);
+    cfg.inlay_hints.refresh_delay.set(Duration::from_millis(0));
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: "file:///inlay_error.rs".to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    let message = wait_for_lsp_message(
+        &mut terminal,
+        &mut view,
+        &handle,
+        area,
+        ctx,
+        "Inlay hints failed: mock inlay hints error",
+    );
+    assert!(message.contains("Inlay hints failed: mock inlay hints error"));
+}
+
+#[test]
 fn lsp_signature_help_popup_triggers_after_open_paren_and_esc_closes() {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 
@@ -587,6 +654,34 @@ fn lsp_signature_help_manual_action_clears_empty_result() {
         .draw(|f| view.draw(f, area, ctx))
         .expect("initial draw");
     assert!(view.handle_editor_action(EditorAction::LspSignatureHelp));
+    wait_for_signature_help_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
+}
+
+#[test]
+fn lsp_signature_help_error_clears_stale_popup() {
+    let (_text, mut view, handle) = mock_lsp_editor("file:///signature_error.rs", "mock_fn(");
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspSignatureHelp));
+    handle
+        .signature_help_popup
+        .set(Some(SignatureHelpPopupModel {
+            rect: Rect::new(2, 2, 20, 3),
+            signatures: vec![editor_core_lsp::LspSignatureInformation {
+                label: "stale(arg)".to_string(),
+                documentation: None,
+                parameters: Vec::new(),
+            }],
+            active_signature: Some(0),
+            active_parameter: None,
+        }));
+
     wait_for_signature_help_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
 }
 
@@ -836,6 +931,12 @@ fn lsp_code_action_command_without_edit_executes() {
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn lsp_code_action_empty_and_error_clear_stale_popup() {
+    assert_code_action_response_clears_stale_popup("file:///code_action_empty.rs");
+    assert_code_action_response_clears_stale_popup("file:///code_action_error.rs");
 }
 
 #[test]
@@ -1247,6 +1348,22 @@ fn lsp_rename_popup_submits_workspace_edit_event() {
 }
 
 #[test]
+fn lsp_rename_null_response_reports_no_workspace_edit() {
+    assert_rename_submit_message(
+        "file:///rename_null.rs",
+        "Rename produced no workspace edit",
+    );
+}
+
+#[test]
+fn lsp_rename_error_response_reports_message() {
+    assert_rename_submit_message(
+        "file:///rename_apply_error.rs",
+        "Rename failed: mock rename error",
+    );
+}
+
+#[test]
 fn lsp_rename_prepare_null_reports_message_without_popup() {
     assert_rename_prepare_message(
         "file:///rename_unavailable.rs",
@@ -1334,6 +1451,100 @@ fn lsp_rename_request_clears_completion_and_code_action_popups() {
     assert!(handle.code_action_popup.get().is_none());
 }
 
+#[test]
+fn lsp_document_symbols_request_emits_mock_outline() {
+    let (_text, mut view, handle) = mock_lsp_editor(
+        "file:///document_symbols.rs",
+        "fn mock_symbol() {\n    inner();\n}\n",
+    );
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.request_document_symbols());
+
+    let outline = wait_for_document_symbols(&mut terminal, &mut view, &handle, area, ctx);
+    let symbols = outline.flatten_preorder();
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0].name, "mock_symbol");
+    assert_eq!(symbols[0].detail.as_deref(), Some("fn()"));
+    assert_eq!(symbols[0].selection_range.start, 3);
+    assert_eq!(symbols[1].name, "inner_symbol");
+}
+
+#[test]
+fn lsp_document_symbols_empty_and_error_emit_empty_outline() {
+    for uri in [
+        "file:///document_symbols_empty.rs",
+        "file:///document_symbols_error.rs",
+    ] {
+        let (_text, mut view, handle) = mock_lsp_editor(uri, "fn mock_symbol() {}\n");
+        let mut terminal = test_terminal();
+        let app_theme = atto_ui::theme::Theme::dark();
+        let ctx = test_component_context(&app_theme);
+        let area = Rect::new(0, 0, 80, 10);
+
+        terminal
+            .draw(|f| view.draw(f, area, ctx))
+            .expect("initial draw");
+        assert!(view.request_document_symbols());
+
+        let outline = wait_for_document_symbols(&mut terminal, &mut view, &handle, area, ctx);
+        assert!(outline.flatten_preorder().is_empty());
+    }
+}
+
+#[test]
+fn lsp_workspace_symbols_request_emits_mock_results() {
+    let (_text, mut view, handle) =
+        mock_lsp_editor("file:///workspace_symbols.rs", "fn main() {}\n");
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.request_workspace_symbols("mock"));
+
+    let (query, symbols) = wait_for_workspace_symbols(&mut terminal, &mut view, &handle, area, ctx);
+    assert_eq!(query, "mock");
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "mock_symbol");
+    assert_eq!(symbols[0].detail.as_deref(), Some("fn()"));
+    assert_eq!(symbols[0].container_name.as_deref(), Some("mock_crate"));
+    assert_eq!(symbols[0].location.uri, "file:///workspace_symbol.rs");
+    assert_eq!(symbols[0].location.range.start.line, 2);
+    assert_eq!(symbols[0].location.range.start.character, 4);
+}
+
+#[test]
+fn lsp_workspace_symbols_empty_and_error_emit_empty_results() {
+    for query in ["empty", "error"] {
+        let (_text, mut view, handle) =
+            mock_lsp_editor("file:///workspace_symbols.rs", "fn main() {}\n");
+        let mut terminal = test_terminal();
+        let app_theme = atto_ui::theme::Theme::dark();
+        let ctx = test_component_context(&app_theme);
+        let area = Rect::new(0, 0, 80, 10);
+
+        terminal
+            .draw(|f| view.draw(f, area, ctx))
+            .expect("initial draw");
+        assert!(view.request_workspace_symbols(query));
+
+        let (actual_query, symbols) =
+            wait_for_workspace_symbols(&mut terminal, &mut view, &handle, area, ctx);
+        assert_eq!(actual_query, query);
+        assert!(symbols.is_empty());
+    }
+}
+
 fn assert_rename_prepare_message(document_uri: &str, expected: &str) {
     let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
 
@@ -1381,6 +1592,207 @@ fn assert_rename_prepare_message(document_uri: &str, expected: &str) {
         "expected rename prepare message containing {expected:?}, got {message:?}"
     );
     assert!(handle.rename_popup.get().is_none());
+}
+
+fn assert_rename_submit_message(document_uri: &str, expected: &str) {
+    let (_text, mut view, handle) = mock_lsp_editor(document_uri, "let bad = 1;\n");
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let rename = Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+    view.handle_event(&rename, ctx);
+
+    wait_for_rename_popup(&mut terminal, &mut view, &handle, area, ctx);
+    for ch in "good".chars() {
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+            ctx,
+        );
+    }
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    view.handle_event(&enter, ctx);
+
+    let message = wait_for_lsp_message(&mut terminal, &mut view, &handle, area, ctx, expected);
+    assert!(
+        message.contains(expected),
+        "expected rename message containing {expected:?}, got {message:?}"
+    );
+    assert!(handle.rename_popup.get().is_none());
+}
+
+fn assert_code_action_response_clears_stale_popup(document_uri: &str) {
+    let (_text, mut view, handle) = mock_lsp_editor(document_uri, "let bad = 1;\n");
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    let code_action = Event::Key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::CONTROL));
+    view.handle_event(&code_action, ctx);
+    handle
+        .code_action_popup
+        .set(Some(stale_code_action_popup()));
+
+    wait_for_code_action_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
+}
+
+fn mock_lsp_editor(
+    document_uri: &str,
+    text: &str,
+) -> (
+    atto_ui::reactive::Binding<String>,
+    EditorView,
+    EditorViewHandle,
+) {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+    let text: atto_ui::reactive::Binding<String> = text.to_string().into();
+    let cfg = EditorConfig::new(text.clone());
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(false);
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: document_uri.to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (view, handle) = EditorView::new(cfg, theme);
+    (text, view, handle)
+}
+
+fn test_terminal() -> ratatui::Terminal<ratatui::backend::TestBackend> {
+    let backend = ratatui::backend::TestBackend::new(80, 10);
+    ratatui::Terminal::new(backend).expect("terminal")
+}
+
+fn test_component_context(theme: &atto_ui::theme::Theme) -> ComponentContext<'_> {
+    ComponentContext {
+        theme,
+        window_id: WindowId::default(),
+        is_focused: true,
+        scrollbar_host: ScrollbarHost::Component,
+        tab_mode: TabMode::Cycle,
+        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+        drag: None,
+    }
+}
+
+fn stale_code_action_popup() -> CodeActionPopupModel {
+    CodeActionPopupModel {
+        rect: Rect::new(2, 5, 24, 3),
+        items: vec![CodeActionItemView {
+            title: "stale action".to_string(),
+            kind: Some("quickfix".to_string()),
+            is_preferred: false,
+        }],
+        selected: 0,
+        scroll: 0,
+        accept: None,
+    }
+}
+
+fn wait_for_code_action_popup_to_clear(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if handle.code_action_popup.get().is_none() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for code action popup to clear");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_document_symbols(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) -> editor_core::DocumentOutline {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::DocumentSymbols { outline } => return outline,
+                other => seen.push(other),
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for document symbols; saw {seen:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_workspace_symbols(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) -> (String, Vec<editor_core::WorkspaceSymbol>) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = Vec::new();
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        for event in handle.events.drain() {
+            match event {
+                EditorEvent::WorkspaceSymbols { query, symbols } => return (query, symbols),
+                other => seen.push(other),
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for workspace symbols; saw {seen:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_diagnostics_summary(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+    expected: DiagnosticsSummary,
+) -> DiagnosticsSummary {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        let summary = handle.diagnostics_summary.get();
+        if summary == expected {
+            return summary;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for diagnostics summary {expected:?}; got {summary:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn wait_for_signature_help_popup(

@@ -1841,7 +1841,7 @@
 
 ## 全局验证与维护任务
 
-### [TODO] T28 — 更新测试 fixture 与 mock LSP 覆盖矩阵
+### [DONE] T28 — 更新测试 fixture 与 mock LSP 覆盖矩阵
 
 **依赖**：贯穿 L1-L6，可在每个 LSP 任务后增量维护。
 
@@ -1872,6 +1872,11 @@
 **验收**：
 - LSP UI 功能均能在无外部 LSP server 情况下测试。
 - mock server 输出不污染 test stdout，失败时有足够日志。
+
+**完成记录（2026-06-09）**：
+- 扩展 `crates/atto-ui-editor/src/bin/mock_lsp_server.rs`：补齐 `textDocument/documentSymbol` / `workspace/symbol` deterministic responses 与 capabilities，并增加 diagnostics empty、codeAction empty/error、signatureHelp error、inlayHint error、rename null/error fixture 分支；保持 JSON-RPC 通过 `editor_core_lsp::write_lsp_message` 输出到 stdout，不写测试 stdout 日志。
+- 扩展 `crates/atto-ui-editor/tests/lsp_editor.rs`：新增 mock-backed 覆盖 diagnostics empty 清理、document symbols 成功/empty/error、workspace symbols 成功/empty/error、code action empty/error 清理、signatureHelp error 清理、inlayHint error message、rename null/error message；新增共享 helper 使用固定 `TestBackend` 尺寸和轮询等待，不引入时序 sleep 作为断言条件。
+- 验证：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] R28 — 审阅 T28
 

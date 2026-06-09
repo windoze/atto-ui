@@ -1,28 +1,25 @@
-# Claude Execution Plan
+# Execution Plan
 
-## Current objective
-- Complete the first incomplete task in `TODO.md`: R27 — 审阅 T27.
-- Treat `TODO.md` and `TODO-2.md` as the authoritative ordering and completion sources.
-- Review only the T27 decision/documentation change set, because the latest commit is `[T27] Document workspace editor view decision`.
+I will follow `TODO.md` as the authoritative task source and complete exactly the first incomplete task.
 
-## Step-by-step plan
-1. Read `TODO.md` and identify the first heading not prefixed with `[DONE]`.
-2. Check the latest commit message for unfinished work directly relevant to that task.
-3. Inspect only the task-related source files, tests, and documentation needed to implement the selected task correctly.
-4. Implement the task as specified, or add the minimum prerequisite task to `TODO.md` if a concrete blocker prevents spec-correct completion.
-5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite required by the task.
-6. Update `TODO.md` with the `[DONE]` prefix and completion record when the task is complete; update `PLAN.md` only if phase-level sequencing changes.
-7. Commit all task-related changes with a clear message and stop without starting the next task.
+1. Read `TODO.md` to identify the first heading that is not prefixed with `[DONE]`.
+2. Review only the files and context needed for that task, including `PLAN.md` only if the task affects phase-level planning.
+3. Check the latest commit message for any explicitly unfinished issue that is directly relevant to the selected task.
+4. Implement the selected task without narrowing scope or using workaround behavior.
+5. Run formatting, linting, and relevant tests in the required order; address any unscheduled failures by fixing them or adding prerequisite tasks to `TODO.md`.
+6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and adding a completion record. Update `PLAN.md` only if phase-level sequencing or criteria changed.
+7. Commit all changes for this task with a clear message and the required co-author trailer, then stop.
 
-## R27 review plan
-1. Verify T27 recorded a concrete architecture decision with the future type and file path.
-2. Verify T27 did not introduce unused prototype/dead code.
-3. Verify the decision gives future tasks a clear rule for staying on `EditorView` versus introducing `WorkspaceEditorView`.
-4. If no blocking issue is found, mark R27 `[DONE]` in `TODO.md` and `TODO-2.md`, record validation scope, commit, and stop.
+## Current Task
 
-## R27 progress
-- First incomplete task identified: R27 in `TODO-2.md`.
-- Latest commit `[T27] Document workspace editor view decision` is directly relevant.
-- T27 changed `PLAN-2.md`, `TODO-2.md`, `TODO.md`, `workspace_state.rs` module documentation, and `memory/claude_plan.md`; no production code or prototype implementation was added.
-- Focused code-review pass found no blocking issues against the R27 criteria.
-- R27 marked `[DONE]` in `TODO.md` and `TODO-2.md`; completion record documents the concrete decision, lack of dead code, future routing rule, and validation scope.
+Selected first incomplete task: `T28 — 更新测试 fixture 与 mock LSP 覆盖矩阵` from `TODO-2.md`.
+
+Implementation focus:
+- Add deterministic mock LSP responses for missing symbol methods (`textDocument/documentSymbol`, `workspace/symbol`) and their empty/error variants.
+- Strengthen direct editor LSP tests so fixture coverage includes success and empty/error paths for symbol requests, plus missing empty/error paths for existing mock-backed LSP methods where practical.
+- Keep PTY behavior deterministic and avoid timing sleeps beyond existing polling helpers.
+
+Progress:
+- Implemented mock LSP fixture extensions and direct editor LSP coverage.
+- Ran `cargo fmt`, `cargo test -p atto-ui-editor --test lsp_editor`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets` successfully.
+- Marked T28 as `[DONE]` in `TODO.md` and `TODO-2.md` with a completion record.
