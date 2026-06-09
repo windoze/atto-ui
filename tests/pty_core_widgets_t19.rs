@@ -4,6 +4,15 @@ use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 
 const WAIT: Duration = Duration::from_secs(5);
 
+fn find_text_pos(screen: &str, needle: &str) -> Option<(u16, u16)> {
+    for (row, line) in screen.lines().enumerate() {
+        if let Some(col) = line.find(needle) {
+            return Some((col as u16, row as u16));
+        }
+    }
+    None
+}
+
 #[test]
 fn pty_core_widgets_cover_t19_state_and_hit_paths() -> anyhow::Result<()> {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
@@ -15,6 +24,25 @@ fn pty_core_widgets_cover_t19_state_and_hit_paths() -> anyhow::Result<()> {
     host.wait_for_text("Progress", WAIT)?;
     host.wait_for_text("Loading", WAIT)?;
     host.wait_for_text("Grid-00", WAIT)?;
+
+    let screen = host.screen_contents()?;
+    let (fire_x, fire_y) = find_text_pos(&screen, "Fire")
+        .ok_or_else(|| anyhow::anyhow!("Fire button not found\n--- screen ---\n{screen}"))?;
+    assert_ne!(
+        host.cell_contents(fire_x, fire_y.saturating_sub(1))?,
+        "─",
+        "button should no longer render a top border\n--- screen ---\n{screen}"
+    );
+    assert_ne!(
+        host.cell_contents(fire_x.saturating_sub(1), fire_y)?,
+        "│",
+        "button should no longer render a side border\n--- screen ---\n{screen}"
+    );
+    assert_ne!(
+        host.cell_bgcolor(fire_x, fire_y)?,
+        host.cell_bgcolor(fire_x, fire_y.saturating_sub(1))?,
+        "focused button should render as a colored single-line block\n--- screen ---\n{screen}"
+    );
 
     host.click(4, 6)?;
     host.wait_for_text("T19 status button=1 radio=0 list=0 table=0 slider=0", WAIT)?;

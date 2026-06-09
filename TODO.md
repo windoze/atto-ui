@@ -11,7 +11,8 @@
   - 完成记录（2026-06-09）：`src/wm/manager/chrome.rs` 将关闭钮绘制到左侧并以 `[■]` 包裹，将缩放/还原钮绘制到右侧并以 `[↑]`/`[↕]` 包裹；标题区域同步避让左右按钮。`src/theme/mod.rs` 默认 glyph 改为 `close-button = "■"`、`maximize-button = "↑"`，并新增 `restore-button = "↕"`。为保持新按钮可点击，命中测试改为复用标题栏按钮布局；同步更新受影响 PTY 坐标/夹具与回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 - [x] **[DONE] #2b 同步命中测试** — 更新 `src/wm/manager/` 鼠标处理：点击关闭/缩放区域坐标随按钮位置调整，回归拖动/调整大小。
   - 完成记录（2026-06-09）：确认 `src/wm/manager/chrome.rs` 的标题栏按钮命中测试复用与绘制一致的 `titlebar_layout`，关闭钮命中区域随左上角 `[■]` 迁移，缩放/还原钮命中区域随右上角 `[↑]`/`[↕]` 迁移。新增 `relocated_titlebar_buttons_handle_mouse_at_drawn_positions` 与 `titlebar_drag_still_starts_outside_relocated_buttons` 回归测试，覆盖左侧关闭命中不触发拖动、右侧缩放/还原命中以及避开按钮后的标题栏拖动；既有 `mouse_drag_resize_handles_work_on_all_corners` 继续覆盖调整大小回归。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
-- [ ] **#3 按钮重绘** — `src/widgets/button.rs`：单行色块 + 阴影 + 默认按钮强调，去边框。
+- [x] **[DONE] #3 按钮重绘** — `src/widgets/button.rs`：单行色块 + 阴影 + 默认按钮强调，去边框。
+  - 完成记录（2026-06-09）：`Button` 改为直接绘制无边框单行色块，支持右侧与下方阴影，并以 focused/default 状态使用强调样式；新增 `default_button` 构建器与动态运行时 `default` 属性。`Theme` 注册 `button`/`button-focused`/`button-default`/`button-disabled`/`button-shadow` 命名样式，便于主题覆盖。新增按钮渲染单元测试与 `pty_core_widgets_t19` PTY 回归断言，验证按钮不再出现边框且 focused 按钮渲染为彩色单行块。按钮布局高度暂保持 3，尺寸收敛留给后续 `#3b`。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui --lib widgets::button`、`cargo test -p atto-ui --test pty_core_widgets_t19`、`cargo test --all --all-targets` 均通过。
 - [ ] **#3b 按钮尺寸回归** — 按钮高度 3→1，检查依赖按钮尺寸的布局与现有测试。
 - [ ] **#4 桌面背景纹理** — `src/app/desktop.rs:580`：`Fill` 改用 `░` 纹理。
 

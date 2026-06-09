@@ -77,7 +77,10 @@ fn register_button(
     registry.register(schema, move |spec, _registry| {
         let label = prop_string(spec, "label")?.unwrap_or_else(|| "Button".to_string());
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
-        let mut button = Button::new(label).enabled(enabled);
+        let default_button = prop_bool(spec, "default")?.unwrap_or(false);
+        let mut button = Button::new(label)
+            .enabled(enabled)
+            .default_button(default_button);
         if let Some(cb) = event_handle(spec, "click", callbacks.clone()) {
             button = button.on_click_callback(cb);
         }

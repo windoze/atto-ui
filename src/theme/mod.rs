@@ -403,6 +403,18 @@ impl Theme {
             .insert("widget-disabled".into(), self.widget.disabled);
         self.named_styles
             .insert("widget-accent".into(), self.widget.accent);
+        self.named_styles
+            .insert("button".into(), self.menu_bar.patch(self.widget.normal));
+        self.named_styles
+            .insert("button-focused".into(), self.selection);
+        self.named_styles
+            .insert("button-default".into(), self.selection);
+        self.named_styles.insert(
+            "button-disabled".into(),
+            self.menu_bar.patch(self.widget.disabled),
+        );
+        self.named_styles
+            .insert("button-shadow".into(), self.window_shadow);
 
         self.named_styles
             .insert("tab-active".into(), self.widget.focused);
