@@ -737,11 +737,10 @@ fn default_glyphs() -> HashMap<String, String> {
 
     // Controls.
     //
-    // Defaults match current UI output (ASCII bracket/paren style) so existing snapshots and PTY
-    // tests remain stable. Themes may override these with single-glyph variants like "☐"/"☑" or
-    // "◯"/"◉".
+    // Defaults match Turbo Vision-style ASCII bracket/paren controls. Themes may override these
+    // with single-glyph variants like "☐"/"☑" or "◯"/"◉".
     g.insert("checkbox-unchecked".into(), "[ ]".into());
-    g.insert("checkbox-checked".into(), "[x]".into());
+    g.insert("checkbox-checked".into(), "[X]".into());
     g.insert("radio-unselected".into(), "( )".into());
     g.insert("radio-selected".into(), "(*)".into());
     g.insert("disclosure-collapsed".into(), ">".into());

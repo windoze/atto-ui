@@ -155,7 +155,7 @@ fn pty_mouse_click_submenu_item_triggers_command() {
 fn pty_mouse_click_checkbox_toggles() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
-    host.wait_for_text("[x] Enable feature", Duration::from_secs(2))
+    host.wait_for_text("[X] Enable feature", Duration::from_secs(2))
         .expect("checkbox visible");
 
     let screen = host.screen_contents().expect("screen");
@@ -166,7 +166,7 @@ fn pty_mouse_click_checkbox_toggles() {
 
     host.click(col as u16, row as u16)
         .expect("click checkbox again");
-    host.wait_for_text("[x] Enable feature", Duration::from_secs(2))
+    host.wait_for_text("[X] Enable feature", Duration::from_secs(2))
         .expect("checkbox checked");
 
     host.send_ctrl('q').expect("quit");

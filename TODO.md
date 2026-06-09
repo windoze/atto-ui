@@ -41,7 +41,8 @@
 
 ## 阶段 5 — 细节字形（低优先级）
 
-- [ ] **#11 复选框字形** — `[x]` → `[X]`（`src/theme/mod.rs`）。
+- [x] **[DONE] #11 复选框字形** — `[x]` → `[X]`（`src/theme/mod.rs`）。
+  - 完成记录（2026-06-09）：默认 `checkbox-checked` glyph 从 `[x]` 改为 `[X]`，并同步 `Checkbox` 组件缺省 fallback，确保自定义主题缺少该 glyph 时仍使用新字形。更新相关 PTY 断言并新增主题单元回归测试覆盖 dark/light/turbo 默认值。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 - [ ] **#12 单选按钮字形** — `(*)` → `(•)`（`src/widgets/radio.rs`）。
 - [ ] **#13 系统菜单图标**（可选）— 菜单栏左侧加 `≡`。
 - [ ] **#14 顶层菜单项间距** — 间距微调，视配色而定。

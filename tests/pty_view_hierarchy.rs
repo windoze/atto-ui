@@ -25,7 +25,7 @@ fn pty_nested_container_click_toggles_checkbox() {
     let (row, col) = find_text_pos(&screen, "Nested checkbox").expect("find nested checkbox");
     host.click(col as u16, row as u16)
         .expect("click nested checkbox");
-    host.wait_for_text("[x] Nested checkbox", Duration::from_secs(2))
+    host.wait_for_text("[X] Nested checkbox", Duration::from_secs(2))
         .expect("nested checkbox toggled on");
 
     host.click(col as u16, row as u16)

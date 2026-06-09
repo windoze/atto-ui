@@ -63,7 +63,7 @@ impl Component for Checkbox {
         let enabled = self.enabled.get();
         let style = widget_style(ctx.theme, enabled, ctx.is_focused);
         let mark = if self.binding.get() {
-            ctx.theme.glyph("checkbox-checked").unwrap_or("[x]")
+            ctx.theme.glyph("checkbox-checked").unwrap_or("[X]")
         } else {
             ctx.theme.glyph("checkbox-unchecked").unwrap_or("[ ]")
         };

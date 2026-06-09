@@ -73,6 +73,13 @@ fn theme_named_resolves_turbo_aliases() {
 }
 
 #[test]
+fn theme_default_checkbox_checked_glyph_uses_uppercase_x() {
+    for theme in [Theme::dark(), Theme::light(), Theme::turbo()] {
+        assert_eq!(theme.glyph("checkbox-checked"), Some("[X]"));
+    }
+}
+
+#[test]
 fn theme_file_can_select_turbo_base_and_overlay_it() {
     let file = TempThemeFile::new(
         "yaml",

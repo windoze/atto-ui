@@ -22,3 +22,7 @@ I will follow TODO.md as the authoritative task list and complete exactly the fi
 - Fixed a clippy build failure by restoring the Python binding's shared `normalize_name` helper for non-theme parsing, then reran `cargo clippy --workspace --all-targets -- -D warnings`; clippy passed.
 - Full validation completed: `cargo test --all --all-targets`, `npm run typecheck --prefix packages/core`, `npm test --prefix packages/core`, `maturin develop` for the Python binding, and `python3 crates/atto-ui-python/tests/test_e2e.py` all passed. `pytest` was not installed, so the Python unittest suite was run directly as documented by the package README.
 - Updated `TODO.md` to mark `#10` as `[DONE]` and added the completion record. Also updated the Python README to document `turbo`; this was documentation-only after validation.
+- Selected first incomplete task for this invocation: `#11 复选框字形`, changing the checkbox checked glyph from `[x]` to `[X]` in the theme defaults.
+- Implemented the glyph update in `Theme::default_glyphs`, updated the checkbox widget fallback glyph, adjusted PTY expectations that asserted visible checked checkbox text, and added a theme unit regression covering dark/light/turbo defaults.
+- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets`.
+- Marked `#11` as `[DONE]` in `TODO.md` with the completion record. Next step is committing the task-related changes only.
