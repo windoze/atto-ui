@@ -52,5 +52,6 @@
 
 ## 收尾
 
-- [ ] 全量 `cargo test` + `cargo clippy` 通过。
+- [x] **[DONE] 全量 `cargo test` + `cargo clippy` 通过。**
+  - 完成记录（2026-06-10）：按收尾验证顺序运行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo test --all --all-targets`，全部通过。仓库中未发现独立 fixture runner。
 - [ ] 用 `snapshot_app` 抓屏与参考截图人工比对。

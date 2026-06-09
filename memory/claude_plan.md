@@ -1,25 +1,27 @@
 # Execution Plan
 
-I will complete exactly the first incomplete task from `TODO.md` and then stop. I will not perform broad triage before selecting that task.
+I will follow TODO.md as the authoritative task list and complete exactly the first task whose heading is not prefixed with `[DONE]`.
 
-1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that task.
-3. Inspect the task requirements, dependencies, and validation instructions.
-4. Implement the task as written, adding only concrete prerequisite tasks to `TODO.md` if the task is blocked by an unscheduled implementation or test issue.
-5. Run formatting, linting, and relevant tests in the required order, escalating to the full suite when required by the task or code changes.
-6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling in its completion record. Update `PLAN.md` only if phase-level sequencing changes.
-7. Commit all task-related changes with a descriptive message and the required co-author trailer.
-8. Stop without starting the next task.
+## Steps
+1. Read `TODO.md` first to identify the first incomplete task and its requirements.
+2. Check the latest commit message only for unfinished work directly relevant to that selected task.
+3. Inspect only the files needed for that task and avoid broad unrelated triage.
+4. Implement the task as specified, without workarounds or scope narrowing.
+5. Run formatting, linting, and the relevant/full test commands required by the task and repository policy.
+6. If a blocking issue prevents correct implementation, add the minimum prerequisite task to `TODO.md`, commit that bookkeeping, and stop.
+7. If implementation succeeds, mark the task title in `TODO.md` with `[DONE]`, update its completion record, and update this plan file with key progress.
+8. Commit all task-related changes with a clear message including the required co-author trailer.
+9. Stop after this one task.
 
-## Progress
-
-- Initial execution plan confirmed for this invocation.
-- First incomplete task selected: `#14 顶层菜单项间距` — adjust spacing between top-level menu items based on the current visual/theme direction.
-- Latest commit does not introduce unfinished work directly relevant to `#14`.
-- Implemented compact top-level menu spacing by removing the extra neutral gap between padded menu titles through shared layout helpers.
-- Updated drawing, dropdown anchoring, and mouse hit testing to use the same title-width/next-title helpers so visual positions and interactions remain aligned.
-- Added/updated unit tests for compact rendered spacing, title positions, active-title boundary styling, and mouse hit testing.
-- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
-- Marked `#14` as `[DONE]` in `TODO.md` with its completion record.
-- Committed task-related changes as `8082655` (`[#14] Tighten top-level menu spacing`).
-- Stop after this task; the next invocation should start from the next incomplete `TODO.md` item.
+## Current Status
+- Plan file created.
+- `TODO.md` reviewed.
+- First incomplete task selected: the wrap-up item requiring full `cargo clippy` and `cargo test` to pass.
+- Latest commit checked; it only records prior execution progress and does not add a directly relevant unfinished blocker.
+- Working tree checked; unrelated untracked files are present and will be left untouched.
+- `cargo fmt --all` completed.
+- `cargo clippy --workspace --all-targets -- -D warnings` completed successfully.
+- No fixture runner was found at `tools/run_fixtures.py` or another path within depth 3.
+- `cargo test --all --all-targets` completed successfully.
+- `TODO.md` was updated to mark the selected wrap-up validation task `[DONE]` with a completion record.
+- Next step: commit the task-related changes and stop.
