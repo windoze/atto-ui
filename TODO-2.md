@@ -1731,7 +1731,7 @@
 - 确认普通字符输入通过 `EditCommand::TypeChar { ch }` 走 editor-core 光标/selection 规则；selection wrap、Unicode 字符输入、paste/raw `InsertText` 路径均有回归测试覆盖。
 - 确认 `insert_newline` 和普通字符输入在执行 `TypeChar` / `InsertNewline` 前均经过 `editable()` gate，read-only 测试覆盖两条路径不会修改文本。
 - 确认 auto-pairs config 从 `language.rs` 进入 primary/secondary editor view 构建流程，`plaintext` 可使用 disabled config，且语言默认配置测试覆盖关闭行为。
-- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [TODO] T26 — Trim trailing whitespace 与 save 流程整理
 
