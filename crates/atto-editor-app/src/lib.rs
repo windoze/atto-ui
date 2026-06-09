@@ -8,11 +8,12 @@
 //! - multi-file editing with window tabs (via `atto_ui::composable::TabWindow`)
 //! - split views for the same document (vertical/horizontal)
 //! - syntax highlighting + folding via Tree-sitter (`editor-core-treesitter` through `atto-ui-editor`)
-//! - LSP-powered completion/hover/goto via `editor-core-lsp` (through `atto-ui-editor`)
+//! - LSP-powered diagnostics, code actions, rename, signature help, formatting, inlay hints,
+//!   symbols, completion, hover, and goto via `editor-core-lsp`
 //!
-//! The implementation is intentionally structured as a small set of modules (`app`, `window`,
-//! `workspace`, `language`) so consumers can reuse pieces or swap behaviors (e.g. language / LSP
-//! configuration) without forking the entire UI.
+//! The implementation is intentionally structured as focused modules (`app`, `window`,
+//! `workspace`, `workspace_state`, `lsp_workspace`, `picker`, `search`, `language`) so consumers can
+//! reuse pieces or swap behaviors (e.g. language / LSP configuration) without forking the entire UI.
 
 pub mod actions;
 pub mod app;

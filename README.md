@@ -11,6 +11,7 @@
 | `packages/core` / `@atto-ui/core` | Typed CommonJS facade, native loader, low-level spec builders, and runtime types. |
 | `packages/react` / `@atto-ui/react` | React reconciler, JSX host components, event bridge, and `render()` loop. |
 | `crates/atto-ui-node/npm/*` | Platform binary npm packages used by optional dependencies. |
+| `crates/atto-editor-app` | Multi-window terminal editor app with Explorer, tabs, split views, command palette, file/symbol/search pickers, and LSP-backed editor features. |
 
 ## Requirements
 
@@ -40,6 +41,34 @@ The deterministic test target used by PTY tests is available with:
 ```sh
 cargo run --bin snapshot_app
 ```
+
+## Editor App Quick Start
+
+Launch the editor app with optional files and folders. Folders become workspace roots; files open as tabs and add their parent folders as workspace roots.
+
+```sh
+cargo run -p atto-editor-app -- .
+cargo run -p atto-editor-app -- path/to/file.rs path/to/project
+```
+
+Key entry points:
+
+| Shortcut | Action |
+|---|---|
+| `F10` | Open the menu bar. |
+| `Ctrl+Q` | Quit the terminal app. |
+| `Ctrl+Shift+P` | Open the command palette. |
+| `Ctrl+P` | Open the file picker. |
+| `Ctrl+Shift+F` | Open global workspace search. |
+| `Ctrl+Alt+K` | Start the app command prefix and show which-key choices. |
+| `F8` / `Shift+F8` | Jump to next / previous diagnostic. |
+| `Ctrl+.` | Request LSP code actions. |
+| `F2` | Rename symbol. |
+| `Ctrl+Shift+Space` | Request signature help. |
+| `Ctrl+K Ctrl+F` | Format the active document. |
+| `F7` | Toggle inlay hints. |
+
+LSP support is opt-in. Set `ATTO_EDITOR_LSP_CMD_<LANGID>` (for example `ATTO_EDITOR_LSP_CMD_RUST="rust-analyzer"`) or the fallback `ATTO_EDITOR_LSP_CMD`; commands are split on whitespace.
 
 ## JavaScript Quick Start
 

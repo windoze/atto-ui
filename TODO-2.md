@@ -1894,7 +1894,7 @@
 - 覆盖矩阵现包含 diagnostics、code action、rename、signature help、formatting、inlay hints、document symbols、workspace symbols、hover、semantic tokens、folding ranges 的 success 与 empty/error 路径。
 - 验证通过：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] T29 — 文档与实施顺序维护
+### [DONE] T29 — 文档与实施顺序维护
 
 **依赖**：每个阶段完成后执行。
 
@@ -1917,6 +1917,13 @@
 **验收**：
 - 新 agent 接手时可以从 `TODO-2.md` 当前状态继续，不需要读聊天上下文。
 - 已完成任务都有完成记录和验证命令。
+
+**完成记录（2026-06-09）**：
+- 更新 `PLAN-2.md` 的阶段级现状：补充 2026-06-09 实施状态快照，并把 LSP、workspace bridge、app/window/workspace/language 文件职责和规划期 “当前” 描述同步为已落地状态。
+- 更新根 `README.md`：新增 `crates/atto-editor-app` 包说明、editor app quick start、用户可见快捷键入口与 LSP 环境变量配置说明。
+- 更新 `crates/atto-editor-app/README.md` 与 `crates/atto-editor-app/src/lib.rs` crate docs：补齐 Explorer、picker、command palette、global search、LSP diagnostics/code action/rename/signature/format/inlay/symbols、编辑动作与实际命令前缀/快捷键说明。
+- 未更新 `crates/atto-editor-app/examples/basic.rs`：示例仍正确展示库调用 `atto_editor_app::run(AttoEditorConfig)`，无需为本次公开行为文档维护改动。
+- 验证通过：`cargo fmt`；`git --no-pager diff --check`。未运行 clippy/test，因为本任务仅修改 Markdown 与 Rust doc comments，不改变编译输出；沿用 R28 记录的 `cargo clippy --all-targets -- -D warnings` 与 `cargo test --all --all-targets` 绿色结果。
 
 ### [TODO] R29 — 审阅 T29
 

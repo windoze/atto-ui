@@ -8,8 +8,8 @@
 
 - **交互模型保持 CUA 非模态**：不引入 Normal/Insert/Select 模态状态机；高级功能通过菜单、命令面板、多键序列暴露。
 - **通用能力下沉到 `atto-ui`**：拖拽、docking、多键序列、menu/statusbar 外观都属于框架能力，不写成 editor 专用逻辑。
-- **editor 侧先接 LSP / 智能能力**：`editor-core-lsp` 已有完整请求和解析工具，`atto-ui-editor` 目前只接 hover / completion / goto 子集。
-- **L1/L2 可先保持单文档 LSP**：诊断、code action 可以先在当前 `EditorView` 内部 `LspSession` 上完成。Rename / workspace symbol / workspace edit 跨文件前，先引入 app 层共享 workspace / LSP 管理。
+- **editor 侧已扩展 LSP / 智能能力**：`atto-ui-editor` 已从 hover / completion / goto 扩展到 diagnostics、code action、rename、signature help、formatting、inlay hints、document/workspace symbols 等路径；mock LSP 覆盖矩阵见 `TODO-2.md` T28/R28 完成记录。
+- **workspace LSP 已进入 bridge 阶段**：`atto-editor-app` 已引入 app 层 `WorkspaceState` 与 `LspWorkspaceSync` 管理，支持已打开文件的 workspace edit 同步；jumplist/registers 等 workspace 原生状态仍按 2.10.3 决策先走未来 `WorkspaceEditorView`。
 
 ### 0.2 atto-ui 关键文件
 
@@ -31,14 +31,14 @@
 
 | 文件 | 当前职责 | 设计落点 |
 |---|---|---|
-| `crates/atto-editor-app/src/app.rs` | `run`, `AppState`, menu 构建、动作分发、Explorer 手算 dock rect、打开/保存文件 | 改为消费 C2 dock；接命令面板和 pickers；后续引入 workspace state |
+| `crates/atto-editor-app/src/app.rs` | `run`, `AppState`, menu 构建、动作分发、WM docked Explorer、打开/保存文件、command palette 与 picker 窗口编排 | 继续作为 app shell；复杂状态归入 `WorkspaceState` / `LspWorkspaceSync` |
 | `crates/atto-editor-app/src/actions.rs` | `AppAction`, `OpenTarget` | 扩展命令面板、picker、LSP workspace 动作 |
 | `crates/atto-editor-app/src/window.rs` | `EditorWindowCommand`, `EditorWindowView` | 扩展 editor 命令，传递 app/workspace action |
-| `crates/atto-editor-app/src/window/tabs.rs` | 文件 tab 状态、open/save/close、dirty title | 后续迁移到 `editor_core::Workspace` 或保留 Binding bridge |
+| `crates/atto-editor-app/src/window/tabs.rs` | 文件 tab 状态、open/save/close、dirty title、format-on-save、trim-on-save，与 workspace binding bridge 同步 | 后续 workspace 原生状态迁移到 `WorkspaceEditorView` |
 | `crates/atto-editor-app/src/window/document_tab.rs` | split-capable tab，内部持有 primary/secondary `EditorView` | LSP 跨文件前要避免每个 split 启动重复 LSP |
 | `crates/atto-editor-app/src/explorer_window.rs` | `ExplorerWindowView`, `ExplorerWindowCommand`, FileTree 封装 | F-FT 消费 C1 drag/drop、context menu、inline rename |
-| `crates/atto-editor-app/src/workspace.rs` | `WorkspaceTree`, `build_workspace_tree` | F-FT 文件树数据源；后续补 FS 监听 / git status |
-| `crates/atto-editor-app/src/language.rs` | `guess_language_id`, `syntax_config_for_file`, `lsp_mode_for_file` | LSP config / workspace folders / formatting options |
+| `crates/atto-editor-app/src/workspace.rs` | `WorkspaceTree`, `build_workspace_tree`, file index 与 git status 注入 helpers | F-FT 文件树数据源；FS 监听仍可选 |
+| `crates/atto-editor-app/src/language.rs` | `guess_language_id`, `syntax_config_for_file`, `lsp_mode_for_file`, comment / indentation / auto-pairs config | 语言识别、Tree-sitter/Sublime fallback、LSP command env 与编辑配置 |
 
 ### 0.4 atto-ui-editor 关键文件
 
@@ -69,6 +69,16 @@
 | LSP parsing / application | `crates/editor-core-lsp/src/lib.rs` | `locations_from_value`, `signature_help_from_value`, `code_action_items_from_value`, `apply_plan_for_code_action_item`, `apply_text_edits`, `text_edits_from_value`, `lsp_diagnostics_to_processing_edits`, `lsp_inlay_hints_to_decorations`, `lsp_code_lens_to_decorations`, `lsp_document_symbols_to_outline`, `lsp_workspace_symbols_to_results` |
 | Workspace LSP | `crates/editor-core-lsp/src/workspace_sync.rs` | `LspWorkspaceSync::{start, open_workspace_document, close_workspace_document, set_active_workspace_document, poll_workspace, did_change_from_text_delta, apply_workspace_edit}`, `apply_workspace_edit_to_workspace` |
 | App helpers | `crates/editor-core-app/src/*` | `CommandPalette`, `FuzzyMatcher`, `WorkspaceFileIndex`, `find_in_files`, `WorkspaceIo`, `status_bar_info`, `FileExplorer` |
+
+### 0.6 2026-06-09 实施状态快照
+
+`TODO-2.md` 是逐任务完成记录的权威来源；本节只记录阶段级状态，避免设计文档继续把已落地功能描述成待办。
+
+- **框架能力 C1-C4 已完成**：通用 drag/drop hooks 与 WM 全局拖拽、dock window reserve/resize/auto-hide、Explorer 消费 WM docking、Turbo Vision 风格 menu/statusbar、框架级 key sequence engine、which-key popup 与 command registry 均已落地。
+- **editor LSP L1-L6 已完成**：diagnostics gutter/statusbar/F8、code action popup 与单文档 apply、workspace-backed rename、signature help、manual formatting 与 format-on-save、inlay hints composed-grid 渲染均已接入 mock LSP 测试。
+- **导航与 picker 已完成**：command palette、file picker、buffer/tab picker、document symbols、workspace symbols 与 global search 已接入 `atto-editor-app`。
+- **File tree 阶段已完成**：git status badge、多选、context menu、inline new/rename、drag move、剪贴板与 refresh 已落地。
+- **编辑体验阶段已完成到 bridge 边界**：editor-core auto-pairs/auto-indent、首批编辑动作、trim trailing whitespace on save 已接入；jumplist/registers 暂不进入 `EditorView`，后续必须先新增 workspace-backed `WorkspaceEditorView`。
 
 ## 1. Part 1 — atto-ui 框架级能力
 
@@ -737,7 +747,7 @@ EditorAction::AddAllOccurrences => self.execute(Command::Cursor(CursorCommand::A
 EditorAction::ExpandSelection => self.execute(Command::Cursor(CursorCommand::ExpandSelection))
 ```
 
-`ToggleComment` 需要语言注释配置。`editor-core-lang` 已有 `CommentConfig`，但 `atto-editor-app/src/language.rs` 当前只返回 language id / syntax / lsp。新增：
+`ToggleComment` 需要语言注释配置。规划时 `atto-editor-app/src/language.rs` 只返回 language id / syntax / lsp；T6 已补齐 comment / indentation / auto-pairs 配置：
 
 ```rust
 pub fn comment_config_for_language(language_id: &str) -> Option<editor_core_lang::CommentConfig>
@@ -1413,7 +1423,7 @@ pub fn with_git_status(mut self, status: FileTreeGitStatus) -> Self;
 
 ### 2.11.2 多选
 
-`FileTreeBindings` 当前只有：
+规划时 `FileTreeBindings` 只有：
 
 ```rust
 selection: Binding<Option<FileTreeNodeId>>

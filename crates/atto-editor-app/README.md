@@ -5,7 +5,7 @@
 - `atto-ui` (window manager + widgets + desktop chrome)
 - `atto-ui-editor` (an `editor-core`-powered editor widget)
 - `editor-core-treesitter` (syntax highlighting + code folding)
-- `editor-core-lsp` (completion/hover/goto via language servers)
+- `editor-core-lsp` (diagnostics, code actions, rename, signature help, formatting, inlay hints, symbols, completion, hover, and goto via language servers)
 - `editor-core-sublime` (optional fallback highlighting via `.sublime-syntax`)
 
 This crate is designed as an application crate (`cargo run -p atto-editor-app`) but is also usable as a
@@ -35,10 +35,11 @@ cargo run -p atto-editor-app -- path/to/project path/to/other/file.py
 ## Features
 
 - Workspace roots (multiple folders) + file explorer window
-  - Toggle Explorer visibility (`Ctrl+E` / View menu)
+  - Toggle Explorer visibility (View menu or command palette)
   - Dock Explorer left or right (View menu)
   - Open files from the explorer into tabs
   - `Ctrl+Enter` opens a file in a new window
+  - Git status badges, multi-select, context menu actions, inline new/rename, cut/copy/paste, and drag move
 - Multi-file editing via window tabs (`atto_ui::composable::TabWindow`)
   - Dirty tabs show a `*` suffix (`file.rs*`)
 - Split view for the same file (two views backed by the same document text)
@@ -48,21 +49,37 @@ cargo run -p atto-editor-app -- path/to/project path/to/other/file.py
   - Undo/redo, copy/cut/paste, multi-cursor, rectangle selection
   - Find/replace UI with match highlighting
   - Tree-sitter syntax highlighting + code folding
-  - LSP completion/hover/goto-* when a language server is configured
+  - Auto-pairs, auto-indent, line movement/duplication, toggle comment, trim trailing whitespace on save
+  - LSP diagnostics, code actions, rename, signature help, formatting, inlay hints, document/workspace symbols, completion, hover, and goto when a language server is configured
 
 ## Keybindings
 
 ### App / Window
 
-- `Ctrl+O` — Open File… (opens in a new tab in the focused editor window)
-- `Ctrl+S` — Save active tab
-- `Ctrl+W` — Close active tab
-- `Ctrl+E` — Toggle Explorer window
+- `F10` — Open the menu bar
+- `Ctrl+Q` — Quit
+- `Ctrl+W` — Enter framework window-management mode
+- `F6` — Focus next window
+- `Ctrl+Shift+P` — Command Palette
+- `Ctrl+P` — File Picker
+- `Ctrl+Shift+F` — Global Search
+- `Ctrl+Alt+K` — App command prefix / which-key popup
+
+Common command-prefix sequences:
+
+- `Ctrl+Alt+K Ctrl+Alt+A` — Save
+- `Ctrl+Alt+K Ctrl+Alt+O` — Open File
+- `Ctrl+Alt+K Ctrl+Alt+D` — Open Folder
+- `Ctrl+Alt+K Ctrl+Alt+E` — Toggle Explorer
+- `Ctrl+Alt+K Ctrl+Alt+L` / `Ctrl+Alt+K Ctrl+Alt+R` — Dock Explorer left / right
+- `Ctrl+Alt+K Ctrl+Alt+B` / `Ctrl+Alt+K Ctrl+Alt+H` — Split vertical / horizontal
+- `Ctrl+K Ctrl+F` — Format active document
 
 ### Explorer Window
 
 - `Enter` — Open the selected file in a new tab
 - `Ctrl+Enter` — Open the selected file in a new window
+- `Ctrl+Click` / `Shift+Click` — Toggle or extend multi-selection
 - Mouse double-click — Open the selected file in a new tab
 
 ### Editor (atto-ui-editor)
@@ -73,12 +90,23 @@ cargo run -p atto-editor-app -- path/to/project path/to/other/file.py
 - `Ctrl+F` — Find
 - `Ctrl+H` — Replace
 - `F3` / `Shift+F3` — Find next / previous
+- `Ctrl+/` — Toggle comment
+- `Alt+Up` / `Alt+Down` — Move line up / down
+- `Shift+Alt+Down` — Duplicate line
+- `Ctrl+Alt+Up` / `Ctrl+Alt+Down` — Add cursor above / below
+- `Ctrl+D` / `Ctrl+Shift+L` — Add next / all occurrences
 - `Ctrl+Space` — Request completion (when LSP is enabled)
+- `Ctrl+Shift+Space` — Signature help
+- `F8` / `Shift+F8` — Next / previous diagnostic
+- `Ctrl+.` — Code action
+- `F2` — Rename symbol
+- `F7` — Toggle inlay hints
 - `F12` — Go to definition
+- `Shift+F12` — Go to references
 - `Ctrl+L` — Toggle fold at cursor (Tree-sitter)
 - `Ctrl+U` — Unfold all
 
-Tip: open the top menu bar with the mouse to discover split commands and additional actions.
+Tip: use `Ctrl+Shift+P` or the `Ctrl+Alt+K` command prefix to discover commands and their current shortcut labels.
 
 ## Language Support
 
@@ -96,7 +124,7 @@ Built-in Tree-sitter grammars are included for:
 
 Other file types fall back to no syntax highlighting by default.
 
-### LSP (completion/hover/goto)
+### LSP
 
 LSP is opt-in via environment variables.
 
