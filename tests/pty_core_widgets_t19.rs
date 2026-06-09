@@ -44,26 +44,26 @@ fn pty_core_widgets_cover_t19_state_and_hit_paths() -> anyhow::Result<()> {
         "focused button should render as a colored single-line block\n--- screen ---\n{screen}"
     );
 
-    host.click(4, 6)?;
+    host.click(4, 5)?;
     host.wait_for_text("T19 status button=1 radio=0 list=0 table=0 slider=0", WAIT)?;
 
-    host.click(4, 12)?;
+    host.click(4, 10)?;
     host.wait_for_text("T19 status button=1 radio=2 list=0 table=0 slider=0", WAIT)?;
     host.key_with_mods(KeyCode::Up, KeyModifiers::NONE)?;
     host.wait_for_text("T19 status button=1 radio=1 list=0 table=0 slider=0", WAIT)?;
 
-    host.click(36, 9)?;
+    host.click(36, 7)?;
     host.wait_for_text("T19 status button=1 radio=1 list=0 table=0 slider=5", WAIT)?;
     host.key_with_mods(KeyCode::Right, KeyModifiers::NONE)?;
     host.wait_for_text("T19 status button=1 radio=1 list=0 table=0 slider=6", WAIT)?;
 
-    host.click(4, 18)?;
+    host.click(4, 16)?;
     host.wait_for_text("T19 status button=1 radio=1 list=3 table=0 slider=6", WAIT)?;
 
-    host.click(30, 18)?;
+    host.click(30, 16)?;
     host.wait_for_text("T19 status button=1 radio=1 list=3 table=2 slider=6", WAIT)?;
 
-    host.wheel_down(4, 24)?;
+    host.wheel_down(4, 22)?;
     host.wait_for_text("Grid-10", WAIT)?;
 
     host.send_ctrl('q')?;

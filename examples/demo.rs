@@ -452,7 +452,7 @@ impl WidgetsView {
             .child_with_layout(
                 buttons,
                 LayoutParams {
-                    height: Size::Fixed(3),
+                    height: Size::Content,
                     ..LayoutParams::default()
                 },
             )
@@ -1202,7 +1202,7 @@ fn build_layout_demo_view() -> Box<dyn Component> {
         .child_with_layout(
             toolbar,
             LayoutParams {
-                height: Size::Fixed(3),
+                height: Size::Content,
                 ..LayoutParams::default()
             },
         )

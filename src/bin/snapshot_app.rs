@@ -745,15 +745,15 @@ impl T19WidgetsView {
     fn compute_layout(area: Rect) -> T19Layout {
         T19Layout {
             status: Rect::new(area.x, area.y, area.width, 1),
-            button: Rect::new(area.x, area.y + 2, 14, 3),
-            disabled_button: Rect::new(area.x + 16, area.y + 2, 18, 3),
-            radio: Rect::new(area.x, area.y + 6, 20, 4),
-            slider: Rect::new(area.x + 24, area.y + 6, 20, 1),
-            progress: Rect::new(area.x + 24, area.y + 8, 20, 1),
-            spinner: Rect::new(area.x + 24, area.y + 10, 24, 1),
-            list: Rect::new(area.x, area.y + 11, 24, 7),
-            table: Rect::new(area.x + 26, area.y + 11, 42, 8),
-            grid: Rect::new(area.x, area.y + 20, 42, 6),
+            button: Rect::new(area.x, area.y + 2, 14, 1),
+            disabled_button: Rect::new(area.x + 16, area.y + 2, 18, 1),
+            radio: Rect::new(area.x, area.y + 4, 20, 4),
+            slider: Rect::new(area.x + 24, area.y + 4, 20, 1),
+            progress: Rect::new(area.x + 24, area.y + 6, 20, 1),
+            spinner: Rect::new(area.x + 24, area.y + 8, 24, 1),
+            list: Rect::new(area.x, area.y + 9, 24, 7),
+            table: Rect::new(area.x + 26, area.y + 9, 42, 8),
+            grid: Rect::new(area.x, area.y + 18, 42, 6),
         }
     }
 
@@ -895,7 +895,7 @@ impl Layout for T19WidgetsView {
     }
 
     fn min_height(&self) -> u16 {
-        26
+        24
     }
 }
 

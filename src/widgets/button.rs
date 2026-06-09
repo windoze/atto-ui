@@ -113,11 +113,11 @@ impl Layout for Button {
     }
 
     fn min_height(&self) -> u16 {
-        3
+        1
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(3)
+        Some(1)
     }
 }
 
@@ -365,7 +365,7 @@ mod tests {
         let theme = Theme::dark();
         let mut terminal = Terminal::new(TestBackend::new(10, 5)).expect("terminal");
         terminal
-            .draw(|f| button.draw(f, Rect::new(1, 1, 6, 3), context_with_focus(&theme, false)))
+            .draw(|f| button.draw(f, Rect::new(1, 1, 6, 1), context_with_focus(&theme, false)))
             .expect("draw");
 
         let buf = terminal.backend().buffer();
@@ -376,23 +376,31 @@ mod tests {
                 .expect("button shadow style"),
         );
 
-        assert_eq!(buf[(3, 2)].symbol(), "O");
-        assert_eq!(buf[(4, 2)].symbol(), "K");
+        assert_eq!(buf[(3, 1)].symbol(), "O");
+        assert_eq!(buf[(4, 1)].symbol(), "K");
         for x in 1..7 {
-            assert_visible_style(buf[(x, 2)].style(), button_style);
+            assert_visible_style(buf[(x, 1)].style(), button_style);
         }
-        assert_visible_style(buf[(7, 2)].style(), shadow_style);
+        assert_visible_style(buf[(7, 1)].style(), shadow_style);
         for x in 2..8 {
-            assert_visible_style(buf[(x, 3)].style(), shadow_style);
+            assert_visible_style(buf[(x, 2)].style(), shadow_style);
         }
 
-        let drawn = region_symbols(&terminal, Rect::new(1, 1, 7, 3));
+        let drawn = region_symbols(&terminal, Rect::new(1, 1, 7, 2));
         for border in ['┌', '─', '┐', '│', '└', '┘'] {
             assert!(
                 !drawn.contains(border),
                 "button should be borderless, got {drawn:?}"
             );
         }
+    }
+
+    #[test]
+    fn layout_reports_single_row_height() {
+        let button = Button::new("OK");
+
+        assert_eq!(button.min_height(), 1);
+        assert_eq!(button.desired_height(), Some(1));
     }
 
     #[test]
@@ -424,7 +432,7 @@ mod tests {
         let theme = Theme::dark();
         let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
         terminal
-            .draw(|f| button.draw(f, Rect::new(10, 5, 6, 3), context(&theme)))
+            .draw(|f| button.draw(f, Rect::new(10, 5, 6, 1), context(&theme)))
             .expect("draw");
 
         let outside = Event::Mouse(MouseEvent {
@@ -442,7 +450,7 @@ mod tests {
         let inside = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 11,
-            row: 6,
+            row: 5,
             modifiers: KeyModifiers::empty(),
         });
         assert_eq!(
@@ -462,7 +470,7 @@ mod tests {
         let theme = Theme::dark();
         let mut terminal = Terminal::new(TestBackend::new(20, 10)).expect("terminal");
         terminal
-            .draw(|f| button.draw(f, Rect::new(2, 2, 6, 3), context(&theme)))
+            .draw(|f| button.draw(f, Rect::new(2, 2, 6, 1), context(&theme)))
             .expect("draw");
 
         let key = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -474,7 +482,7 @@ mod tests {
         let mouse = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 3,
-            row: 3,
+            row: 2,
             modifiers: KeyModifiers::empty(),
         });
         assert_eq!(

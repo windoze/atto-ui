@@ -128,7 +128,7 @@ fn build_hstack_demo_view() -> Box<dyn Component> {
         .child_with_layout(
             row3,
             LayoutParams {
-                height: Size::Fixed(3),
+                height: Size::Content,
                 ..LayoutParams::default()
             },
         );
@@ -372,7 +372,7 @@ fn build_size_demo_view() -> Box<dyn Component> {
                     },
                 ),
             LayoutParams {
-                height: Size::Fixed(3),
+                height: Size::Content,
                 ..LayoutParams::default()
             },
         )

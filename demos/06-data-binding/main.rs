@@ -170,7 +170,7 @@ fn build_editor_view(model: AppModel) -> Box<dyn Component> {
         .child_with_layout(
             buttons,
             LayoutParams {
-                height: Size::Fixed(3),
+                height: Size::Content,
                 ..LayoutParams::default()
             },
         )
