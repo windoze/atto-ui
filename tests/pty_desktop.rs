@@ -67,6 +67,42 @@ fn pty_bracketed_paste_inserts_unicode() {
 }
 
 #[test]
+fn pty_window_title_is_centered_with_padding() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("Widgets", Duration::from_secs(2))
+        .expect("initial render");
+
+    let screen = host.screen_contents().expect("screen");
+    let title_y = 2;
+    let title_start = 16;
+    assert_eq!(
+        host.cell_contents(title_start - 1, title_y)
+            .expect("leading title padding"),
+        " ",
+        "expected leading title padding\n--- screen ---\n{screen}"
+    );
+    for (offset, ch) in "Widgets".chars().enumerate() {
+        assert_eq!(
+            host.cell_contents(title_start + offset as u16, title_y)
+                .expect("title cell"),
+            ch.to_string(),
+            "expected centered Widgets title\n--- screen ---\n{screen}"
+        );
+    }
+    assert_eq!(
+        host.cell_contents(title_start + "Widgets".len() as u16, title_y)
+            .expect("trailing title padding"),
+        " ",
+        "expected trailing title padding\n--- screen ---\n{screen}"
+    );
+
+    host.send_ctrl('q').expect("send quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_window_management_moves_window_title() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");

@@ -153,35 +153,71 @@ pub(super) fn draw_titlebar_text(
     title: &str,
     style: Style,
 ) {
-    if layout.text_area.width == 0 {
+    if layout.text_area.width < 3 || title.is_empty() {
         return;
     }
-    let mut cursor = layout.text_area.x;
-    let right = layout
+
+    let max_title_width = layout.text_area.width.saturating_sub(2);
+    let title_width = fitted_text_width(title, max_title_width);
+    if title_width == 0 {
+        return;
+    }
+
+    let padded_width = title_width.saturating_add(2);
+    let start = layout
         .text_area
         .x
-        .saturating_add(layout.text_area.width)
-        .saturating_sub(1);
+        .saturating_add(layout.text_area.width.saturating_sub(padded_width) / 2);
+    let y = layout.text_area.y;
+    let trailing_space = start.saturating_add(title_width).saturating_add(1);
+
+    set_titlebar_cell(buf, start, y, " ", style);
+    let mut cursor = start.saturating_add(1);
+    let right = start.saturating_add(title_width);
 
     for g in title.graphemes(true) {
-        let w = (UnicodeWidthStr::width(g) as u16).max(1);
+        let w = grapheme_width(g);
         let end = cursor.saturating_add(w).saturating_sub(1);
         if cursor > right || end > right {
             break;
         }
-        let Some(cell) = buf.cell_mut((cursor, layout.text_area.y)) else {
+        let Some(cell) = buf.cell_mut((cursor, y)) else {
             break;
         };
         cell.set_style(style);
         cell.set_symbol(g);
 
         for dx in 1..w {
-            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), layout.text_area.y)) {
+            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), y)) {
                 trailing.reset();
             }
         }
 
         cursor = cursor.saturating_add(w);
+    }
+    set_titlebar_cell(buf, trailing_space, y, " ", style);
+}
+
+fn fitted_text_width(text: &str, max_width: u16) -> u16 {
+    let mut width = 0u16;
+    for g in text.graphemes(true) {
+        let w = grapheme_width(g);
+        if width.saturating_add(w) > max_width {
+            break;
+        }
+        width = width.saturating_add(w);
+    }
+    width
+}
+
+fn grapheme_width(grapheme: &str) -> u16 {
+    (UnicodeWidthStr::width(grapheme) as u16).max(1)
+}
+
+fn set_titlebar_cell(buf: &mut Buffer, x: u16, y: u16, symbol: &str, style: Style) {
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        cell.set_style(style);
+        cell.set_symbol(symbol);
     }
 }
 
@@ -204,7 +240,7 @@ pub(super) fn draw_titlebar_spans(
     for span in &content.spans {
         let style = span.style.unwrap_or(fallback_style);
         for g in span.text.graphemes(true) {
-            let w = (UnicodeWidthStr::width(g) as u16).max(1);
+            let w = grapheme_width(g);
             let end = cursor.saturating_add(w).saturating_sub(1);
             if cursor > right || end > right {
                 return;

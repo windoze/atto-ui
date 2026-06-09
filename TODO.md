@@ -5,7 +5,8 @@
 
 ## 阶段 1 — 窗口装饰与按钮（高优先级）
 
-- [ ] **#1 窗口标题居中** — `src/wm/manager/chrome.rs`：标题在顶边居中，前后各留 1 空格。补快照测试。
+- [x] **[DONE] #1 窗口标题居中** — `src/wm/manager/chrome.rs`：标题在顶边居中，前后各留 1 空格。补快照测试。
+  - 完成记录（2026-06-09）：`draw_titlebar_text` 改为在标题可绘制区域内居中绘制，并在标题前后各写入 1 个空格；保留 grapheme/Unicode 宽度裁剪。新增 `pty_window_title_is_centered_with_padding` PTY 回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui --test pty_desktop --test pty_apphost_api`、`cargo test --all --all-targets` 均通过。
 - [ ] **#2 关闭/缩放钮归位** — 关闭钮 `[■]` 移左上角，缩放钮 `[↑]`/`[↕]` 右上角，统一 `[ ]` 包裹。glyph 改 `src/theme/mod.rs`。
 - [ ] **#2b 同步命中测试** — 更新 `src/wm/manager/` 鼠标处理：点击关闭/缩放区域坐标随按钮位置调整，回归拖动/调整大小。
 - [ ] **#3 按钮重绘** — `src/widgets/button.rs`：单行色块 + 阴影 + 默认按钮强调，去边框。
