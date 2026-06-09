@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 
@@ -57,6 +57,17 @@ fn next_theme_revision() -> u64 {
 }
 
 impl Theme {
+    pub fn named(name: &str) -> Result<Self> {
+        match normalize_theme_name(name).as_str() {
+            "dark" => Ok(Self::dark()),
+            "light" => Ok(Self::light()),
+            "turbo" | "turbovision" => Ok(Self::turbo()),
+            _ => Err(anyhow!(
+                "unknown theme {name:?}; expected 'dark', 'light', or 'turbo'"
+            )),
+        }
+    }
+
     pub fn dark() -> Self {
         let mut theme = Self {
             desktop: Style::default().bg(Color::Black).fg(Color::Gray),
@@ -193,6 +204,71 @@ impl Theme {
         theme
     }
 
+    pub fn turbo() -> Self {
+        let mut theme = Self {
+            desktop: Style::default().bg(Color::Blue).fg(Color::LightCyan),
+            desktop_dim: Style::default().bg(Color::Blue).fg(Color::Cyan),
+
+            window_border: Style::default().fg(Color::Black),
+            window_border_focused: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            window_title: Style::default().fg(Color::Black),
+            window_title_focused: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            window_bg: Style::default().bg(Color::Gray).fg(Color::Black),
+            window_shadow: Style::default().bg(Color::DarkGray),
+
+            scrollbar_track: Style::default().fg(Color::DarkGray).bg(Color::Gray),
+            scrollbar_thumb: Style::default()
+                .fg(Color::Green)
+                .bg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
+            scrollbar_arrow: Style::default()
+                .fg(Color::Black)
+                .bg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
+
+            menu_bar: Style::default().bg(Color::Cyan).fg(Color::Black),
+            menu_bar_active: Style::default()
+                .bg(Color::Gray)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+            menu_item: Style::default().bg(Color::Gray).fg(Color::Black),
+            menu_item_selected: Style::default()
+                .bg(Color::Green)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+            selection: Style::default()
+                .bg(Color::Green)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+
+            status_bar: Style::default().bg(Color::Cyan).fg(Color::Black),
+            status_bar_key: Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+
+            widget: WidgetTheme {
+                normal: Style::default().fg(Color::Black).bg(Color::Gray),
+                focused: Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Gray)
+                    .add_modifier(Modifier::BOLD),
+                dim: Style::default().fg(Color::DarkGray).bg(Color::Gray),
+                disabled: Style::default().fg(Color::DarkGray).bg(Color::Gray),
+                accent: Style::default().fg(Color::Green).bg(Color::Gray),
+            },
+            glyphs: default_glyphs(),
+            named_styles: HashMap::new(),
+            named_styles_revision: next_theme_revision(),
+        };
+        theme.populate_named_styles();
+        theme
+    }
+
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self> {
         Self::load_from_path_with_base(path, Theme::dark())
     }
@@ -203,7 +279,11 @@ impl Theme {
             std::fs::read(path).with_context(|| format!("read theme file {}", path.display()))?;
         let config = ThemeConfig::from_bytes_infer(&bytes, Some(path))?;
 
-        let mut theme = base;
+        let mut theme = match config.base.as_deref() {
+            Some(name) => Self::named(name)
+                .with_context(|| format!("invalid theme base in {}", path.display()))?,
+            None => base,
+        };
         theme.apply_config_overlay(&config)?;
         Ok(theme)
     }
@@ -616,6 +696,13 @@ impl Theme {
             self.widget.accent = *v;
         }
     }
+}
+
+fn normalize_theme_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(*c, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn default_glyphs() -> HashMap<String, String> {

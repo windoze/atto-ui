@@ -234,7 +234,7 @@ export interface MenuItemSpec {
   readonly items?: readonly MenuItemSpec[]
 }
 
-export type ThemeName = 'dark' | 'light'
+export type ThemeName = 'dark' | 'light' | 'turbo'
 
 export type KnownKeyName =
   | 'backspace'

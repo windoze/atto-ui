@@ -42,6 +42,17 @@ The deterministic test target used by PTY tests is available with:
 cargo run --bin snapshot_app
 ```
 
+### Themes
+
+The built-in theme presets are `dark`, `light`, and `turbo`. `turbo` provides the classic Turbo Vision palette with a blue desktop, gray dialog surfaces, cyan menu/status bars, and green selection highlights. Theme JSON/YAML files can opt into a preset before applying overlays:
+
+```yaml
+base: turbo
+colors:
+  widget-accent:
+    fg: yellow
+```
+
 ## Editor App Quick Start
 
 Launch the editor app with optional files and folders. Folders become workspace roots; files open as tabs. If no folder is supplied, the first file's parent folder becomes the workspace root.

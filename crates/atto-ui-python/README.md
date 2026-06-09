@@ -123,7 +123,7 @@ window.key("enter")
 - 高层 `App` 会自动为 callable 回调分配 callback id；底层 `AppHost` 仍可直接使用显式 id。
 - `App.schemas()` / `AppHost.schemas()` 返回所有内置和已注册上层组件的动态 schema（Python list/dict 结构）。
 - `ComponentRef.set_prop()`、`App.set_property()` 和高层 tree-op `set_prop` 会按 schema 校验属性是否存在、是否可写以及值类型是否匹配。
-- `App.set_theme("dark" | "light")` 可切换内置主题；`App.load_theme(path, base="dark")` 可加载 JSON/YAML 主题覆盖文件。
+- `App.set_theme("dark" | "light" | "turbo")` 可切换内置主题；`App.load_theme(path, base="dark")` 可加载 JSON/YAML 主题覆盖文件，主题文件也可声明 `base: turbo`。
 - 包内附带 `atto_ui/__init__.pyi`、`atto_ui/_native.pyi` 和 `py.typed`，供 IDE 补全和类型检查工具使用。
 - `send_event()` 的鼠标坐标与 Rust `AppHost::send_event` 一致，使用目标窗口内的 0-based 相对坐标。
 - `snapshot()`、`list_windows()`、窗口 focus/move/resize/close/set_title 和 `set_property()` 均不依赖真实 PTY。

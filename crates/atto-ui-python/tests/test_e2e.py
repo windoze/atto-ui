@@ -435,11 +435,13 @@ class PythonHostE2ETest(unittest.TestCase):
     def test_theme_switching_and_theme_file_loading(self) -> None:
         app = atto_ui.App(headless=True)
         app.set_theme("light")
+        app.set_theme("turbo")
         app.set_theme("dark")
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
             json.dump(
                 {
+                    "base": "turbo",
                     "glyphs": {"checkbox-checked": "YES"},
                     "colors": {"widget-accent": {"fg": "cyan"}},
                     "styles": {"widget-accent": ["bold"]},
@@ -449,7 +451,7 @@ class PythonHostE2ETest(unittest.TestCase):
             theme_path = Path(handle.name)
 
         try:
-            app.load_theme(theme_path)
+            app.load_theme(theme_path, base="light")
             app.add_dynamic_window("Theme", atto_ui.Checkbox(label="Themed", checked=True, cid="check"))
             app.step()
             self.assertEqual(find_node(app.snapshot()["tree"], "check")["properties"]["checked"], True)

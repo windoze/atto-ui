@@ -1503,6 +1503,7 @@ enum DemoTheme {
     DarkAscii,
     DarkHighContrast,
     Light,
+    Turbo,
 }
 
 impl DemoTheme {
@@ -1513,6 +1514,7 @@ impl DemoTheme {
             DemoTheme::DarkAscii => "Dark + ASCII",
             DemoTheme::DarkHighContrast => "Dark + High Contrast",
             DemoTheme::Light => "Light",
+            DemoTheme::Turbo => "Turbo",
         }
     }
 
@@ -1522,7 +1524,8 @@ impl DemoTheme {
             DemoTheme::DarkUnicode => DemoTheme::DarkAscii,
             DemoTheme::DarkAscii => DemoTheme::DarkHighContrast,
             DemoTheme::DarkHighContrast => DemoTheme::Light,
-            DemoTheme::Light => DemoTheme::Dark,
+            DemoTheme::Light => DemoTheme::Turbo,
+            DemoTheme::Turbo => DemoTheme::Dark,
         }
     }
 }
@@ -1551,6 +1554,7 @@ fn apply_demo_theme(desktop: &mut Desktop, theme: DemoTheme) -> Result<()> {
     let (base, overlay) = match theme {
         DemoTheme::Dark => (Theme::dark(), None),
         DemoTheme::Light => (Theme::light(), None),
+        DemoTheme::Turbo => (Theme::turbo(), None),
         DemoTheme::DarkUnicode => (Theme::dark(), Some(THEME_OVERLAY_UNICODE)),
         DemoTheme::DarkAscii => (Theme::dark(), Some(THEME_OVERLAY_ASCII)),
         DemoTheme::DarkHighContrast => (Theme::dark(), Some(THEME_OVERLAY_HIGH_CONTRAST)),
@@ -1783,6 +1787,10 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                         MenuItem::action("Light", {
                             let actions = actions.clone();
                             move || actions.push(DemoAction::SetTheme(DemoTheme::Light))
+                        }),
+                        MenuItem::action("Turbo", {
+                            let actions = actions.clone();
+                            move || actions.push(DemoAction::SetTheme(DemoTheme::Turbo))
                         }),
                     ],
                 ),

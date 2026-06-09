@@ -6,6 +6,10 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ThemeConfig {
+    /// Optional preset used as the base before applying this file's overlays.
+    #[serde(default, alias = "preset")]
+    pub base: Option<String>,
+
     #[serde(default)]
     pub glyphs: HashMap<String, String>,
 

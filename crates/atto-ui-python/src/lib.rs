@@ -223,13 +223,7 @@ fn build_empty_desktop(_screen: Rect) -> anyhow::Result<Desktop> {
 }
 
 fn theme_by_name(name: &str) -> PyResult<Theme> {
-    match normalize_name(name).as_str() {
-        "dark" => Ok(Theme::dark()),
-        "light" => Ok(Theme::light()),
-        _ => Err(to_py_err(format!(
-            "unknown theme {name:?}; expected 'dark' or 'light'"
-        ))),
-    }
+    Theme::named(name).map_err(to_py_err)
 }
 
 fn normalize_name(name: &str) -> String {

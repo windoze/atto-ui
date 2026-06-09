@@ -42,9 +42,9 @@ export declare class AppHost {
   getProperty(id: string, name: string): any
   /** Export a deterministic snapshot of the desktop tree. */
   snapshot(): any
-  /** Set the active theme to `dark` or `light`. */
+  /** Set the active theme to `dark`, `light`, or `turbo`. */
   setTheme(name: string): void
-  /** Load a theme from disk, using `base` (`dark` or `light`) as fallback. */
+  /** Load a theme from disk, using `base` (`dark`, `light`, or `turbo`) as fallback. */
   loadTheme(path: string, base?: string | undefined | null): void
   /** Return registered runtime component schemas. */
   schemas(): any

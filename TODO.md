@@ -36,7 +36,8 @@
 
 ## 阶段 4 — TV 配色主题（中优先级）
 
-- [ ] **#10 新增 `Theme::turbo()`** — `src/theme/mod.rs`：蓝桌面/灰青菜单状态栏/灰底对话框/绿色选中高亮；支持主题文件加载；默认主题不变。
+- [x] **[DONE] #10 新增 `Theme::turbo()`** — `src/theme/mod.rs`：蓝桌面/灰青菜单状态栏/灰底对话框/绿色选中高亮；支持主题文件加载；默认主题不变。
+  - 完成记录（2026-06-09）：新增 `Theme::turbo()` 与 `Theme::named()`，提供蓝色桌面、青色菜单/状态栏、灰色窗口/对话框背景、绿色选中高亮的 Turbo Vision 风格预设；`ThemeConfig` 新增 `base`/`preset` 字段，主题 JSON/YAML 可声明 `base: turbo` 后再叠加 glyph/color/style 覆盖，未声明 base 的 `Theme::load_from_path` 仍默认使用 dark。Node/Python 绑定、TypeScript `ThemeName`、demo 主题菜单、根 README 与 Python README 同步支持 `turbo`。验证：`cargo fmt`、`cargo test -p atto-ui theme --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/core`、`npm test --prefix packages/core`、`maturin develop`、`python3 crates/atto-ui-python/tests/test_e2e.py` 均通过。
 
 ## 阶段 5 — 细节字形（低优先级）
 

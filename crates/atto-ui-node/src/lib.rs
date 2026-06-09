@@ -354,14 +354,14 @@ impl AppHost {
         desktop_snapshot_to_json(&snapshot, &mut self.window_handles)
     }
 
-    /// Set the active theme to `dark` or `light`.
+    /// Set the active theme to `dark`, `light`, or `turbo`.
     #[napi]
     pub fn set_theme(&mut self, name: String) -> napi::Result<()> {
         self.host.desktop().theme = theme_by_name(&name)?;
         Ok(())
     }
 
-    /// Load a theme from disk, using `base` (`dark` or `light`) as fallback.
+    /// Load a theme from disk, using `base` (`dark`, `light`, or `turbo`) as fallback.
     #[napi]
     pub fn load_theme(&mut self, path: String, base: Option<String>) -> napi::Result<()> {
         let base = theme_by_name(base.as_deref().unwrap_or("dark"))?;
@@ -747,20 +747,7 @@ fn node_kind_to_string(kind: NodeKind) -> &'static str {
 }
 
 fn theme_by_name(name: &str) -> napi::Result<Theme> {
-    match normalize_name(name).as_str() {
-        "dark" => Ok(Theme::dark()),
-        "light" => Ok(Theme::light()),
-        _ => Err(error::invalid_arg(format!(
-            "unknown theme {name:?}; expected 'dark' or 'light'"
-        ))),
-    }
-}
-
-fn normalize_name(name: &str) -> String {
-    name.chars()
-        .filter(|c| !matches!(*c, '_' | '-' | ' '))
-        .flat_map(char::to_lowercase)
-        .collect()
+    Theme::named(name).map_err(|err| error::invalid_arg(err.to_string()))
 }
 
 impl AppHost {
