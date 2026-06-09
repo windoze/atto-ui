@@ -1052,10 +1052,8 @@ impl FileTreeContent {
             .map(|entry| entry.id)
             .collect::<BTreeSet<_>>();
         let mut selection_idx = selection.and_then(|id| {
-            visible
-                .iter()
-                .position(|entry| entry.id == id)
-                .map(|idx| (idx, id))
+            let idx = visible.iter().position(|entry| entry.id == id)?;
+            Some((idx, id))
         });
 
         if selection_idx.is_none() {
