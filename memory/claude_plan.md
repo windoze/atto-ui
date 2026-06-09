@@ -29,3 +29,18 @@ I will not record private chain-of-thought here. This file tracks the actionable
 3. Run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and the relevant/full test commands.
 4. Mark `#4` as `[DONE]` in `TODO.md` with validation notes.
 5. Commit the task changes and stop.
+
+## New Invocation Plan
+I will follow TODO.md as the source of truth, identify the first task whose heading is not prefixed with [DONE], implement exactly that task, run the required validation, update TODO.md with the completion record and [DONE] prefix, commit the resulting changes, and stop without advancing to the next task.
+
+## Selected Task
+- First incomplete TODO task: #5 菜单条整体化.
+- Target: src/app/menu/draw.rs MenuBar::draw should fill the full menu row with the menu_bar style before drawing individual menu items.
+- Validation plan: run cargo fmt, cargo clippy --all-targets -- -D warnings, relevant menu/desktop tests, then cargo test --all --all-targets.
+
+## Progress
+- Implemented MenuBar::draw full-row fill with theme.menu_bar before rendering top-level menu titles.
+- Added a unit regression test asserting the trailing menu row cell is styled as menu_bar.
+- Adjusted regression assertion to compare menu_bar foreground/background because TestBackend normalizes underline color in cell styles.
+- Ran `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, the focused menu regression, and `cargo test --all --all-targets` successfully.
+- Marked `#5` as `[DONE]` in `TODO.md` with completion notes.

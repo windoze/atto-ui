@@ -19,6 +19,14 @@ impl MenuBar {
             return;
         }
 
+        fill_line(
+            frame.buffer_mut(),
+            area.x,
+            area.y,
+            area.width,
+            theme.menu_bar,
+        );
+
         let mut x = area.x;
         for (idx, menu) in self.menus.iter().enumerate() {
             let is_active = self.state.active && idx == self.state.menu_index;
@@ -341,5 +349,22 @@ mod tests {
         assert_eq!(buf[(1, 2)].symbol(), "打");
         assert_eq!(buf[(3, 2)].symbol(), "开");
         assert_eq!(buf[(7, 2)].symbol(), "C");
+    }
+
+    #[test]
+    fn draw_fills_entire_menu_bar_row_before_titles() {
+        let theme = Theme::dark();
+        let menu = MenuBar::new(vec![MenuSpec::new("&File", Vec::new())]);
+
+        let mut terminal = Terminal::new(TestBackend::new(32, 3)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 32, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(31, 0)].symbol(), " ");
+        let style = buf[(31, 0)].style();
+        assert_eq!(style.fg, theme.menu_bar.fg);
+        assert_eq!(style.bg, theme.menu_bar.bg);
     }
 }
