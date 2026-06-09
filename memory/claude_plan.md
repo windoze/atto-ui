@@ -16,9 +16,11 @@ I will follow `TODO.md` as the source of truth and complete exactly the first ta
 
 ## Progress
 
-- Created initial execution plan.
-- Identified first incomplete task: `R22` / `审阅 T22` in `TODO-2.md`; the latest commit is `[T22] Add file tree git status and multi-select`, which is directly relevant to the review.
-- Reviewed the T22 implementation against the R22 checks and found/fixed a runtime compatibility regression where setting the legacy `selection` property could leave stale multi-selected ids.
-- Added regression coverage for the legacy FileTree runtime schema property list and for `selection` resetting the multi-select set.
-- Validation completed successfully with `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Marked `R22` as `[DONE]` in `TODO.md` and `TODO-2.md` with the review completion record.
+- Selected first incomplete task: `T23` / `F-FT Context menu 与 inline new/rename` in `TODO-2.md`.
+- Latest commit is `[R22] Review file tree git status and multi-select`; it completes the dependency review and does not add unfinished work that changes the `T23` scope.
+- Planned implementation focus: add file tree inline edit state and rendering; wire Explorer context actions for New File/New Folder/Rename; commit/cancel with filesystem operations and visible error status; add coverage for commit/cancel, creation, no-overwrite, and selection/scroll safety.
+- Implemented shared FileTree inline edit state with deferred commits, placeholder rendering for new file/folder, and Explorer-owned filesystem operations for Rename/New File/New Folder.
+- Added Explorer context menu actions with active New File/New Folder/Rename handling and explicit status messages for unavailable/delete/clipboard/reveal actions.
+- Added integration coverage for inline rename commit/cancel, context-menu new file/folder creation, and no-overwrite error reporting; targeted Explorer tests pass.
+- Validation completed successfully with `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`; no separate `tools/run_fixtures.py` fixture runner exists in this repository.
+- Marked `T23` as `[DONE]` in `TODO.md` and `TODO-2.md` with the completion record.

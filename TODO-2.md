@@ -1546,7 +1546,7 @@
 - 确认 git status `None` 和 `Clean` 都不会产生 badge 文本或调用 Clean 样式渲染路径；既有测试覆盖 Clean 节点不显示 `C` 噪声。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] T23 — F-FT Context menu 与 inline new/rename
+### [DONE] T23 — F-FT Context menu 与 inline new/rename
 
 **依赖**：T22。
 
@@ -1581,6 +1581,13 @@
 **验收**：
 - 所有 FS 操作错误都通过状态/提示显示，不 silent return。
 - inline edit 不影响滚动条/selection。
+
+**完成记录（2026-06-09）**：
+- `FileTree` 新增共享 inline edit state，支持 Rename/NewFile/NewFolder、输入样式渲染、新建占位行、Esc 取消，以及 deferred commit 模式；standalone FileTree 仍保留本地 rename 行为。
+- `ExplorerWindowView` 新增右键 context menu，包含 New File/New Folder/Rename/Delete/Cut/Copy/Paste/Copy Path/Reveal；当前任务范围内 New/Rename 执行真实文件系统操作，Delete/clipboard/Reveal 明确通过状态栏提示未启用/后续任务处理。
+- Rename/New File/New Folder commit 由 Explorer 执行 `std::fs::rename`、`OpenOptions::create_new(true)`、`fs::create_dir`，并在成功后刷新 tree id/path maps、选择新路径；空文件名、路径分隔符、非单段名称、目标已存在等错误均显示 `ShowStatusMessage` 且不覆盖目标。
+- 新增 `crates/atto-editor-app/tests/explorer_inline_edit.rs` 覆盖 inline rename commit/cancel、右键菜单新建文件/文件夹、目标已存在不覆盖、空名称与路径分隔符安全拒绝。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] R23 — 审阅 T23
 

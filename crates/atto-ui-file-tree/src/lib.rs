@@ -141,6 +141,50 @@ impl FileTreeNode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileTreeInlineEditKind {
+    Rename,
+    NewFile,
+    NewFolder,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileTreeInlineEditState {
+    pub node_id: Option<FileTreeNodeId>,
+    pub parent_id: Option<FileTreeNodeId>,
+    pub text: TextBuffer,
+    pub kind: FileTreeInlineEditKind,
+    replace_on_input: bool,
+}
+
+impl FileTreeInlineEditState {
+    fn new(
+        node_id: Option<FileTreeNodeId>,
+        parent_id: Option<FileTreeNodeId>,
+        text: impl Into<String>,
+        kind: FileTreeInlineEditKind,
+        replace_on_input: bool,
+    ) -> Self {
+        Self {
+            node_id,
+            parent_id,
+            text: TextBuffer::with_text(text),
+            kind,
+            replace_on_input,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FileTreeInlineEditCommit {
+    pub node_id: Option<FileTreeNodeId>,
+    pub parent_id: Option<FileTreeNodeId>,
+    pub kind: FileTreeInlineEditKind,
+    pub text: String,
+    pub old_name: Option<String>,
+    pub node_kind: Option<FileTreeNodeKind>,
+}
+
 pub trait FileTreeFilter: Send + Sync {
     fn include(&self, node: &FileTreeNode) -> bool;
 }
@@ -227,6 +271,9 @@ struct FileTreeBindings {
     on_select: Option<CallbackHandle>,
     on_rename: Option<CallbackHandle>,
     on_delete: Option<CallbackHandle>,
+    inline_edit: Option<FileTreeInlineEditState>,
+    pending_inline_commit: Option<FileTreeInlineEditCommit>,
+    defer_inline_commits: bool,
 }
 
 impl FileTree {
@@ -270,6 +317,9 @@ impl FileTree {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         }));
         Self {
             scroll: build_scroll_container(bindings.clone()),
@@ -335,12 +385,102 @@ impl FileTree {
         self
     }
 
+    pub fn defer_inline_commits(self, defer: bool) -> Self {
+        self.bindings.write().defer_inline_commits = defer;
+        self
+    }
+
     pub fn selected(&self) -> Option<FileTreeNodeId> {
         self.bindings.read().selection.get()
     }
 
     pub fn selected_ids(&self) -> BTreeSet<FileTreeNodeId> {
         self.bindings.read().selections.get()
+    }
+
+    pub fn inline_edit(&self) -> Option<FileTreeInlineEditState> {
+        self.bindings.read().inline_edit.clone()
+    }
+
+    pub fn begin_inline_rename(
+        &mut self,
+        id: FileTreeNodeId,
+        parent_id: Option<FileTreeNodeId>,
+        name: impl Into<String>,
+    ) {
+        self.bindings.write().inline_edit = Some(FileTreeInlineEditState::new(
+            Some(id),
+            parent_id,
+            name,
+            FileTreeInlineEditKind::Rename,
+            true,
+        ));
+    }
+
+    pub fn begin_inline_new_file(&mut self, parent_id: Option<FileTreeNodeId>) {
+        self.begin_inline_new(parent_id, FileTreeInlineEditKind::NewFile);
+    }
+
+    pub fn begin_inline_new_folder(&mut self, parent_id: Option<FileTreeNodeId>) {
+        self.begin_inline_new(parent_id, FileTreeInlineEditKind::NewFolder);
+    }
+
+    fn begin_inline_new(
+        &mut self,
+        parent_id: Option<FileTreeNodeId>,
+        kind: FileTreeInlineEditKind,
+    ) {
+        if let Some(parent_id) = parent_id {
+            let roots = self.bindings.read().roots.clone();
+            roots.update(|nodes| {
+                if let Some(node) = find_node_mut(nodes, parent_id)
+                    && node.is_dir()
+                {
+                    node.is_expanded = true;
+                }
+            });
+        }
+        self.bindings.write().inline_edit = Some(FileTreeInlineEditState::new(
+            None, parent_id, "", kind, false,
+        ));
+    }
+
+    pub fn cancel_inline_edit(&mut self) {
+        let mut bindings = self.bindings.write();
+        bindings.inline_edit = None;
+        bindings.pending_inline_commit = None;
+    }
+
+    pub fn finish_inline_edit(&mut self) {
+        self.cancel_inline_edit();
+    }
+
+    pub fn take_inline_edit_commit(&mut self) -> Option<FileTreeInlineEditCommit> {
+        self.bindings.write().pending_inline_commit.take()
+    }
+
+    pub fn node_id_at_mouse_event(
+        &self,
+        mouse: MouseEvent,
+        ctx: ComponentContext<'_>,
+    ) -> Option<FileTreeNodeId> {
+        let area = self.last_area?;
+        let (_local_x, local_y) =
+            mouse_coords_local_to_area(area, mouse, ctx.mouse_coordinate_space)?;
+        let row = local_y.checked_sub(1)? as usize;
+        let bindings = self.bindings.read();
+        let roots = bindings.roots.get();
+        let filter = bindings.filter.clone();
+        let glyphs = bindings.glyphs.clone();
+        drop(bindings);
+
+        let content = FileTreeContent::new(self.bindings.clone());
+        let entries = content.build_visible_entries(&roots, filter.as_deref(), glyphs.as_ref());
+        let idx = self.scroll.scroll_offset().1 as usize + row;
+        entries
+            .get(idx)
+            .filter(|entry| entry.inline_placeholder.is_none())
+            .map(|entry| entry.id)
     }
 
     pub fn selections_binding(&self) -> Binding<BTreeSet<FileTreeNodeId>> {
@@ -716,14 +856,7 @@ fn mouse_coords_local_to_area(
 struct FileTreeContent {
     bindings: Arc<RwLock<FileTreeBindings>>,
     state: ListState,
-    rename: Option<RenameState>,
     last_selection: Option<FileTreeNodeId>,
-}
-
-struct RenameState {
-    id: FileTreeNodeId,
-    buffer: TextBuffer,
-    replace_on_input: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -736,6 +869,7 @@ struct VisibleEntry {
     git_status: Option<FileTreeGitStatus>,
     name: String,
     prefix: String,
+    inline_placeholder: Option<FileTreeInlineEditKind>,
 }
 
 impl VisibleEntry {
@@ -748,6 +882,7 @@ impl VisibleEntry {
 enum FileTreeLineStyle {
     Normal,
     GitStatus(FileTreeGitStatus),
+    InlineEdit,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -756,12 +891,13 @@ struct FileTreeLineSegment {
     style: FileTreeLineStyle,
 }
 
+const INLINE_PLACEHOLDER_ID: FileTreeNodeId = FileTreeNodeId::new(u64::MAX);
+
 impl FileTreeContent {
     fn new(bindings: Arc<RwLock<FileTreeBindings>>) -> Self {
         Self {
             bindings,
             state: ListState::default(),
-            rename: None,
             last_selection: None,
         }
     }
@@ -784,6 +920,31 @@ impl FileTreeContent {
 
     fn roots_binding(&self) -> Binding<Vec<FileTreeNode>> {
         self.bindings.read().roots.clone()
+    }
+
+    fn inline_edit(&self) -> Option<FileTreeInlineEditState> {
+        self.bindings.read().inline_edit.clone()
+    }
+
+    fn update_inline_edit(&mut self, update: impl FnOnce(&mut FileTreeInlineEditState)) {
+        let mut bindings = self.bindings.write();
+        if let Some(edit) = &mut bindings.inline_edit {
+            update(edit);
+        }
+    }
+
+    fn clear_inline_edit(&mut self) {
+        let mut bindings = self.bindings.write();
+        bindings.inline_edit = None;
+        bindings.pending_inline_commit = None;
+    }
+
+    fn defer_inline_commits(&self) -> bool {
+        self.bindings.read().defer_inline_commits
+    }
+
+    fn set_pending_inline_commit(&mut self, commit: FileTreeInlineEditCommit) {
+        self.bindings.write().pending_inline_commit = Some(commit);
     }
 
     fn bindings_snapshot(&self) -> FileTreeBindingsSnapshot {
@@ -813,7 +974,7 @@ impl FileTreeContent {
                 selections_binding.set(BTreeSet::new());
             }
             self.set_selection_anchor(None);
-            self.rename = None;
+            self.clear_inline_edit();
             self.last_selection = None;
             return None;
         }
@@ -874,11 +1035,12 @@ impl FileTreeContent {
         }
     }
 
-    fn maybe_reset_rename(&mut self, selection: Option<FileTreeNodeId>) {
-        if let Some(rename) = &self.rename
-            && selection != Some(rename.id)
+    fn maybe_reset_inline_edit(&mut self, selection: Option<FileTreeNodeId>) {
+        if let Some(edit) = self.inline_edit()
+            && edit.kind == FileTreeInlineEditKind::Rename
+            && selection != edit.node_id
         {
-            self.rename = None;
+            self.clear_inline_edit();
         }
     }
 
@@ -899,6 +1061,14 @@ impl FileTreeContent {
             glyphs,
             &mut out,
         );
+        if let Some(edit) = self.inline_edit()
+            && matches!(
+                edit.kind,
+                FileTreeInlineEditKind::NewFile | FileTreeInlineEditKind::NewFolder
+            )
+        {
+            insert_inline_placeholder(&mut out, &edit, glyphs);
+        }
         out
     }
 
@@ -925,21 +1095,27 @@ impl FileTreeContent {
         }
 
         let mut name = String::new();
-        if let Some(rename) = &self.rename
-            && rename.id == entry.id
+        let editing = if let Some(edit) = self.inline_edit()
+            && inline_edit_applies_to_entry(&edit, entry)
         {
-            let text = rename.buffer.text();
-            let cursor = rename.buffer.cursor_byte_index().min(text.len());
+            let text = edit.text.text();
+            let cursor = edit.text.cursor_byte_index().min(text.len());
             let (left, right) = text.split_at(cursor);
             name.push_str(left);
             name.push('|');
             name.push_str(right);
+            true
         } else {
             name.push_str(&entry.name);
-        }
+            false
+        };
         segments.push(FileTreeLineSegment {
             text: name,
-            style: FileTreeLineStyle::Normal,
+            style: if editing {
+                FileTreeLineStyle::InlineEdit
+            } else {
+                FileTreeLineStyle::Normal
+            },
         });
         segments
     }
@@ -986,7 +1162,7 @@ impl FileTreeContent {
             self.ensure_selection_visible(idx, host);
         }
         self.last_selection = primary;
-        self.maybe_reset_rename(primary);
+        self.maybe_reset_inline_edit(primary);
         self.emit_select_if_needed(old_selection, primary, cb);
         if old_selection == primary && old_selected_ids == self.selections_binding().get() {
             EventResult::consumed()
@@ -1152,38 +1328,64 @@ impl FileTreeContent {
         changed
     }
 
-    fn start_rename(&mut self, id: FileTreeNodeId, name: &str) {
-        self.rename = Some(RenameState {
-            id,
-            buffer: TextBuffer::with_text(name),
-            replace_on_input: true,
-        });
+    fn start_rename(&mut self, id: FileTreeNodeId, parent_id: Option<FileTreeNodeId>, name: &str) {
+        self.bindings.write().inline_edit = Some(FileTreeInlineEditState::new(
+            Some(id),
+            parent_id,
+            name,
+            FileTreeInlineEditKind::Rename,
+            true,
+        ));
     }
 
-    fn commit_rename(&mut self, id: FileTreeNodeId) -> Option<(String, String, FileTreeNodeKind)> {
-        let Some(rename) = &self.rename else {
-            return None;
-        };
-        if rename.id != id {
-            return None;
-        }
-        let new_name = rename.buffer.text().to_string();
-        if new_name.trim().is_empty() {
-            self.rename = None;
+    fn commit_inline_edit(&mut self) -> Option<FileTreeInlineEditCommit> {
+        let edit = self.inline_edit()?;
+        let new_name = edit.text.text().to_string();
+        let deferred = self.defer_inline_commits();
+        if new_name.trim().is_empty() && !deferred {
+            self.clear_inline_edit();
             return None;
         }
-        let roots = self.roots_binding();
+
         let mut old_name = None;
-        let mut kind = None;
-        roots.update(|nodes| {
-            if let Some(node) = find_node_mut(nodes, id) {
-                old_name = Some(node.name.clone());
-                kind = Some(node.kind);
-                node.name = new_name.clone();
+        let mut node_kind = None;
+        if let Some(id) = edit.node_id {
+            let roots = self.roots_binding();
+            if deferred {
+                let nodes = roots.get();
+                if let Some(node) = find_node(&nodes, id) {
+                    old_name = Some(node.name.clone());
+                    node_kind = Some(node.kind);
+                }
+            } else {
+                roots.update(|nodes| {
+                    if let Some(node) = find_node_mut(nodes, id) {
+                        old_name = Some(node.name.clone());
+                        node_kind = Some(node.kind);
+                        if edit.kind == FileTreeInlineEditKind::Rename
+                            && !new_name.trim().is_empty()
+                        {
+                            node.name = new_name.clone();
+                        }
+                    }
+                });
             }
-        });
-        self.rename = None;
-        old_name.map(|old| (old, new_name, kind.unwrap_or(FileTreeNodeKind::File)))
+        }
+
+        let commit = FileTreeInlineEditCommit {
+            node_id: edit.node_id,
+            parent_id: edit.parent_id,
+            kind: edit.kind,
+            text: new_name,
+            old_name,
+            node_kind,
+        };
+        if deferred {
+            self.set_pending_inline_commit(commit.clone());
+        } else {
+            self.clear_inline_edit();
+        }
+        Some(commit)
     }
 
     fn delete_selected(
@@ -1247,7 +1449,7 @@ impl ScrollContent for FileTreeContent {
         let entries = self.build_visible_entries(&snapshot.roots, filter, snapshot.glyphs.as_ref());
         let selection = self.normalize_selection(&entries);
         let selection_now = self.selection_binding().get();
-        self.maybe_reset_rename(selection_now);
+        self.maybe_reset_inline_edit(selection_now);
         if let Some(idx) = selection {
             let selected_id = entries[idx].id;
             if self.last_selection != Some(selected_id) {
@@ -1271,9 +1473,9 @@ impl ScrollContent for FileTreeContent {
         let entries = self.build_visible_entries(&snapshot.roots, filter, snapshot.glyphs.as_ref());
         let selection_idx = self.normalize_selection(&entries);
         let selection_now = self.selection_binding().get();
-        self.maybe_reset_rename(selection_now);
+        self.maybe_reset_inline_edit(selection_now);
 
-        if self.rename.is_some() {
+        if self.inline_edit().is_some() {
             if let Event::Key(KeyEvent {
                 code,
                 modifiers,
@@ -1286,74 +1488,85 @@ impl ScrollContent for FileTreeContent {
                 }
                 match code {
                     KeyCode::Esc => {
-                        self.rename = None;
+                        self.clear_inline_edit();
                         return EventResult::consumed();
                     }
                     KeyCode::Enter => {
-                        let rename_id = self.rename.as_ref().map(|r| r.id);
-                        if let Some(rename_id) = rename_id
-                            && let Some((old_name, new_name, kind)) = self.commit_rename(rename_id)
-                            && old_name != new_name
-                        {
-                            if let Some(cb) = &snapshot.on_rename {
+                        let deferred = self.defer_inline_commits();
+                        if let Some(commit) = self.commit_inline_edit() {
+                            if deferred {
+                                return EventResult::consumed();
+                            }
+                            if commit.kind == FileTreeInlineEditKind::Rename
+                                && commit.old_name.as_deref() != Some(commit.text.as_str())
+                                && let (Some(rename_id), Some(kind), Some(old_name)) =
+                                    (commit.node_id, commit.node_kind, commit.old_name.as_deref())
+                                && let Some(cb) = &snapshot.on_rename
+                            {
                                 cb.emit_with(Some(rename_payload(
-                                    rename_id, kind, &old_name, &new_name,
+                                    rename_id,
+                                    kind,
+                                    old_name,
+                                    &commit.text,
                                 )));
                             }
                             return EventResult::changed();
                         }
+                        if deferred {
+                            return EventResult::consumed();
+                        }
                         return EventResult::consumed();
                     }
                     KeyCode::Backspace => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.backspace();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.backspace();
+                        });
                         return EventResult::changed();
                     }
                     KeyCode::Delete => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.delete();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.delete();
+                        });
                         return EventResult::changed();
                     }
                     KeyCode::Left => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.move_left();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.move_left();
+                        });
                         return EventResult::consumed();
                     }
                     KeyCode::Right => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.move_right();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.move_right();
+                        });
                         return EventResult::consumed();
                     }
                     KeyCode::Home => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.move_home();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.move_home();
+                        });
                         return EventResult::consumed();
                     }
                     KeyCode::End => {
-                        if let Some(rename) = &mut self.rename {
-                            rename.replace_on_input = false;
-                            rename.buffer.move_end();
-                        }
+                        self.update_inline_edit(|edit| {
+                            edit.replace_on_input = false;
+                            edit.text.move_end();
+                        });
                         return EventResult::consumed();
                     }
                     KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                        if let Some(rename) = &mut self.rename {
-                            if rename.replace_on_input {
-                                rename.buffer.set_text("");
-                                rename.replace_on_input = false;
+                        self.update_inline_edit(|edit| {
+                            if edit.replace_on_input {
+                                edit.text.set_text("");
+                                edit.replace_on_input = false;
                             }
-                            rename.buffer.insert_char(*ch);
-                        }
+                            edit.text.insert_char(*ch);
+                        });
                         return EventResult::changed();
                     }
                     _ => {}
@@ -1370,6 +1583,9 @@ impl ScrollContent for FileTreeContent {
                 let row = m.row as usize;
                 let idx = host.scroll_offset().y as usize + row;
                 if let Some(entry) = entries.get(idx) {
+                    if entry.inline_placeholder.is_some() {
+                        return EventResult::consumed();
+                    }
                     let res = if m.modifiers.contains(KeyModifiers::SHIFT) {
                         self.range_select_index(idx, &entries, host, snapshot.on_select.as_ref())
                     } else if m.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1492,7 +1708,7 @@ impl ScrollContent for FileTreeContent {
                             return EventResult::ignored();
                         };
                         let entry = &entries[idx];
-                        self.start_rename(entry.id, &entry.name);
+                        self.start_rename(entry.id, entry.parent_id, &entry.name);
                         EventResult::consumed()
                     }
                     KeyCode::Delete | KeyCode::Backspace | KeyCode::Char('d') => {
@@ -1586,6 +1802,7 @@ impl ScrollContent for FileTreeContent {
                                 FileTreeLineStyle::GitStatus(status) => {
                                     git_status_style(ctx.component.theme, status)
                                 }
+                                FileTreeLineStyle::InlineEdit => ctx.component.theme.widget.focused,
                             };
                             Span::styled(segment.text, segment_style)
                         })
@@ -1641,6 +1858,7 @@ fn collect_visible_entries(
             git_status: node.git_status,
             name: node.name.clone(),
             prefix,
+            inline_placeholder: None,
         });
 
         if node.is_dir() && node.is_expanded && !node.children.is_empty() {
@@ -1655,6 +1873,74 @@ fn collect_visible_entries(
                 out,
             );
             ancestors_last.pop();
+        }
+    }
+}
+
+fn insert_inline_placeholder(
+    entries: &mut Vec<VisibleEntry>,
+    edit: &FileTreeInlineEditState,
+    glyphs: &dyn FileTreeGlyphProvider,
+) {
+    let kind = match edit.kind {
+        FileTreeInlineEditKind::NewFile => FileTreeNodeKind::File,
+        FileTreeInlineEditKind::NewFolder => FileTreeNodeKind::Directory,
+        FileTreeInlineEditKind::Rename => return,
+    };
+    let node = match kind {
+        FileTreeNodeKind::File => FileTreeNode::file(INLINE_PLACEHOLDER_ID, ""),
+        FileTreeNodeKind::Directory => FileTreeNode::dir(INLINE_PLACEHOLDER_ID, "", Vec::new()),
+    };
+
+    let (insert_at, depth) = if let Some(parent_id) = edit.parent_id {
+        let Some(parent_idx) = entries.iter().position(|entry| entry.id == parent_id) else {
+            return;
+        };
+        let parent_depth = entries[parent_idx].depth;
+        let mut insert_at = parent_idx + 1;
+        while insert_at < entries.len() && entries[insert_at].depth > parent_depth {
+            insert_at += 1;
+        }
+        (insert_at, parent_depth + 1)
+    } else {
+        (entries.len(), 0)
+    };
+
+    let mut prefix = String::new();
+    if depth > 0 {
+        for _ in 1..depth {
+            prefix.push_str("  ");
+        }
+        prefix.push_str("`- ");
+    }
+    prefix.push_str("  ");
+    let glyph = glyphs.glyph_for(&node, false);
+    if !glyph.is_empty() {
+        prefix.push_str(&glyph);
+        prefix.push(' ');
+    }
+
+    entries.insert(
+        insert_at,
+        VisibleEntry {
+            id: INLINE_PLACEHOLDER_ID,
+            parent_id: edit.parent_id,
+            depth,
+            kind,
+            is_expanded: false,
+            git_status: None,
+            name: String::new(),
+            prefix,
+            inline_placeholder: Some(edit.kind),
+        },
+    );
+}
+
+fn inline_edit_applies_to_entry(edit: &FileTreeInlineEditState, entry: &VisibleEntry) -> bool {
+    match edit.kind {
+        FileTreeInlineEditKind::Rename => edit.node_id == Some(entry.id),
+        FileTreeInlineEditKind::NewFile | FileTreeInlineEditKind::NewFolder => {
+            entry.inline_placeholder == Some(edit.kind)
         }
     }
 }
@@ -1807,6 +2093,18 @@ fn find_node_mut(nodes: &mut [FileTreeNode], id: FileTreeNodeId) -> Option<&mut 
             return Some(node);
         }
         if let Some(found) = find_node_mut(&mut node.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_node(nodes: &[FileTreeNode], id: FileTreeNodeId) -> Option<&FileTreeNode> {
+    for node in nodes {
+        if node.id == id {
+            return Some(node);
+        }
+        if let Some(found) = find_node(&node.children, id) {
             return Some(found);
         }
     }
@@ -2117,6 +2415,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         })))
         .build_visible_entries(&roots, None, &glyphs);
         assert!(entries.iter().all(|e| e.name != "main.rs"));
@@ -2135,6 +2436,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         })))
         .build_visible_entries(&roots, None, &glyphs);
         assert!(entries.iter().any(|e| e.name == "main.rs"));
@@ -2161,6 +2465,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         })))
         .build_visible_entries(&roots, Some(filter.as_ref()), &glyphs);
         assert!(entries.iter().all(|e| !e.name.contains(".git")));
@@ -2193,6 +2500,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         })));
         let entries = content.build_visible_entries(&roots, None, &glyphs);
         let readme_idx = entries
@@ -2234,6 +2544,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         })));
         let entries = content.build_visible_entries(&roots, None, &glyphs);
 
@@ -2309,6 +2622,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         }));
         let mut content = FileTreeContent::new(bindings.clone());
         let changed = content.toggle_directory(FileTreeNodeId::new(1));
@@ -2333,6 +2649,9 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         }));
         let mut content = FileTreeContent::new(bindings.clone());
         let removed = content.delete_selected(FileTreeNodeId::new(6));
@@ -2357,13 +2676,19 @@ mod tests {
             on_select: None,
             on_rename: None,
             on_delete: None,
+            inline_edit: None,
+            pending_inline_commit: None,
+            defer_inline_commits: false,
         }));
         let mut content = FileTreeContent::new(bindings.clone());
-        content.start_rename(FileTreeNodeId::new(6), "README.md");
-        if let Some(rename) = &mut content.rename {
-            rename.buffer.set_text("README_NEW.md");
+        content.start_rename(FileTreeNodeId::new(6), None, "README.md");
+        {
+            let mut guard = bindings.write();
+            if let Some(edit) = &mut guard.inline_edit {
+                edit.text.set_text("README_NEW.md");
+            }
         }
-        let result = content.commit_rename(FileTreeNodeId::new(6));
+        let result = content.commit_inline_edit();
         assert!(result.is_some());
         let updated = bindings.read().roots.get();
         let readme = updated
