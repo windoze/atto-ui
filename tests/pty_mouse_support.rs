@@ -102,6 +102,23 @@ fn pty_mouse_click_status_bar_does_not_change_focus() {
 }
 
 #[test]
+fn pty_mouse_click_default_status_f10_opens_menu() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    host.wait_for_text("F10 Menu", Duration::from_secs(2))
+        .expect("default status visible");
+
+    host.click(1, 23).expect("click F10 status item");
+    host.wait_for_text("Menu:", Duration::from_secs(2))
+        .expect("menu mode visible");
+
+    host.send(b"\x1b").expect("close menu");
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_mouse_click_submenu_item_triggers_command() {
     let bin = env!("CARGO_BIN_EXE_snapshot_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");

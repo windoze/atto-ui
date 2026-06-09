@@ -29,7 +29,8 @@
 
 ## 阶段 3 — 状态栏与滚动条（中优先级）
 
-- [ ] **#9 状态栏 item 可点击** — `src/app/desktop.rs:602` 默认状态栏改用 `StatusSegment` 渲染并接命令回调。
+- [x] **[DONE] #9 状态栏 item 可点击** — `src/app/desktop.rs:602` 默认状态栏改用 `StatusSegment` 渲染并接命令回调。
+  - 完成记录（2026-06-09）：默认桌面状态栏改为由内部 `StatusSegment` 渲染，正常模式下 `F10 Menu`、`Ctrl+W Window`、`F6 Next` 分别接入菜单激活、窗口管理模式切换和窗口焦点切换命令；自定义 `StatusBar` 文本/segments 继续优先于默认状态栏。新增默认状态栏渲染与点击命令单元测试，并补充 PTY 回归测试覆盖点击 `F10 Menu` hotspot 打开菜单。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 - [ ] **#8 滚动条箭头/轨道** — composable/scroll：`▲`/`▼` 端帽与 `░` 轨道在矮内容区也渲染。
 
 ## 阶段 4 — TV 配色主题（中优先级）

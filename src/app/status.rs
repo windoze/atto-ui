@@ -140,6 +140,10 @@ impl StatusBar {
         self.custom.is_some()
     }
 
+    pub fn has_segments(&self) -> bool {
+        !self.segments.is_empty()
+    }
+
     pub fn set_segments(&mut self, segments: Vec<StatusSegment>) {
         self.segments = segments;
         self.custom = None;

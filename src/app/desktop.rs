@@ -8,12 +8,13 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
 use crate::composable::{ComponentAction, EventOutcome};
+use crate::reactive::EventQueue;
 use crate::theme::Theme;
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode, WindowState};
 use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 
 use super::menu::{MenuAction, MenuBar};
-use super::status::StatusBar;
+use super::status::{StatusBar, StatusSegment, StatusSegmentAlign};
 use super::toast::{Toast, ToastQueue};
 use super::{WhichKeyChoice, WhichKeyModel};
 
@@ -28,6 +29,16 @@ pub enum DesktopMode {
 pub enum DesktopAction {
     None,
     CloseWindow(WindowId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DefaultStatusCommand {
+    ActivateMenu,
+    ToggleWindowManagement,
+    FocusNext,
+    MenuKey(KeyCode, KeyModifiers),
+    WindowManagementKey(KeyCode, KeyModifiers),
+    ExitChromeMode,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +100,8 @@ pub struct Desktop {
     pub toasts: ToastQueue,
     pub which_key: Option<WhichKeyModel>,
     pub mode: DesktopMode,
+    default_status: StatusBar,
+    status_commands: EventQueue<DefaultStatusCommand>,
 }
 
 impl Desktop {
@@ -101,6 +114,8 @@ impl Desktop {
             toasts: ToastQueue::default(),
             which_key: None,
             mode: DesktopMode::Normal,
+            default_status: StatusBar::default(),
+            status_commands: EventQueue::new(),
         }
     }
 
@@ -174,6 +189,20 @@ impl Desktop {
             work_area,
             status_bar,
         }
+    }
+
+    fn has_custom_status_content(&self) -> bool {
+        self.status.has_custom() || self.status.has_segments()
+    }
+
+    fn update_default_status(&mut self) {
+        let focused = self
+            .wm
+            .focused()
+            .map(|id| format!("Focus: {:?}", id.0))
+            .unwrap_or_else(|| "Focus: none".to_string());
+        let segments = default_status_segments(self.mode, focused, &self.status_commands);
+        self.default_status.set_segments(segments);
     }
 
     pub fn add_window(&mut self, window: Window, screen: Rect) -> WindowId {
@@ -350,6 +379,120 @@ impl Desktop {
         }))
     }
 
+    fn handle_status_mouse(
+        &mut self,
+        event: &MouseEvent,
+        layout: DesktopLayout,
+    ) -> DesktopEventResult {
+        if self.has_custom_status_content() {
+            let _ = self.status.handle_mouse(event, layout.status_bar);
+        } else {
+            self.update_default_status();
+            let _ = self.default_status.handle_mouse(event, layout.status_bar);
+        }
+
+        let mut action = DesktopAction::None;
+        for command in self.status_commands.drain() {
+            if let DesktopAction::CloseWindow(id) =
+                self.execute_default_status_command(command, layout)
+            {
+                action = DesktopAction::CloseWindow(id);
+            }
+        }
+
+        DesktopEventResult {
+            outcome: EventOutcome::Consumed,
+            action,
+        }
+    }
+
+    fn execute_default_status_command(
+        &mut self,
+        command: DefaultStatusCommand,
+        layout: DesktopLayout,
+    ) -> DesktopAction {
+        if self.wm.has_active_modal() {
+            self.clear_which_key();
+            return DesktopAction::None;
+        }
+
+        match command {
+            DefaultStatusCommand::ActivateMenu => {
+                self.clear_which_key();
+                self.mode = DesktopMode::Menu;
+                self.menu.activate();
+                DesktopAction::None
+            }
+            DefaultStatusCommand::ToggleWindowManagement => {
+                self.clear_which_key();
+                self.menu.deactivate();
+                self.mode = if self.mode == DesktopMode::WindowManagement {
+                    DesktopMode::Normal
+                } else {
+                    DesktopMode::WindowManagement
+                };
+                DesktopAction::None
+            }
+            DefaultStatusCommand::FocusNext => {
+                self.clear_which_key();
+                self.wm.focus_next();
+                DesktopAction::None
+            }
+            DefaultStatusCommand::MenuKey(code, modifiers) => {
+                self.clear_which_key();
+                if self.mode != DesktopMode::Menu {
+                    self.mode = DesktopMode::Menu;
+                    self.menu.activate();
+                }
+                let action = self
+                    .menu
+                    .handle_event(&Event::Key(key_press(code, modifiers)));
+                self.apply_menu_action(action)
+            }
+            DefaultStatusCommand::WindowManagementKey(code, modifiers) => {
+                self.clear_which_key();
+                if self.mode != DesktopMode::WindowManagement {
+                    return DesktopAction::None;
+                }
+                let wm_action = self.wm.handle_event(
+                    &Event::Key(key_press(code, modifiers)),
+                    layout.work_area,
+                    WindowManagerInputMode::WindowManagement,
+                    &self.theme,
+                );
+                if let Some(id) = wm_action.close
+                    && self.wm.request_close(id)
+                {
+                    return DesktopAction::CloseWindow(id);
+                }
+                DesktopAction::None
+            }
+            DefaultStatusCommand::ExitChromeMode => {
+                self.clear_which_key();
+                self.mode = DesktopMode::Normal;
+                self.menu.deactivate();
+                DesktopAction::None
+            }
+        }
+    }
+
+    fn apply_menu_action(&mut self, action: MenuAction) -> DesktopAction {
+        match action {
+            MenuAction::None => DesktopAction::None,
+            MenuAction::Closed => {
+                self.mode = DesktopMode::Normal;
+                self.menu.deactivate();
+                DesktopAction::None
+            }
+            MenuAction::RestoreWindow(id) => {
+                self.wm.restore_window(id);
+                self.mode = DesktopMode::Normal;
+                self.menu.deactivate();
+                DesktopAction::None
+            }
+        }
+    }
+
     pub fn handle_event(&mut self, event: &Event, screen: Rect) -> DesktopEventResult {
         let layout = Self::layout(screen);
         self.menu.refresh_minimized_windows(&self.wm);
@@ -388,8 +531,7 @@ impl Desktop {
         // accidentally fall through to the focused view.
         if let Event::Mouse(m) = event {
             if layout.status_bar.height > 0 && m.row == layout.status_bar.y {
-                let _ = self.status.handle_mouse(m, layout.status_bar);
-                return DesktopEventResult::consumed();
+                return self.handle_status_mouse(m, layout);
             }
             if layout.menu_bar.height > 0 && m.row == layout.menu_bar.y {
                 match self.menu.handle_mouse(m, layout.menu_bar) {
@@ -599,23 +741,13 @@ impl Desktop {
 
         self.menu.draw(frame, layout.menu_bar, &self.theme);
 
-        if !self.status.has_custom() {
-            let status_left = match self.mode {
-                DesktopMode::Normal => "F10 Menu  Ctrl+W Window  F6 Next",
-                DesktopMode::Menu => "Menu: ←/→/↑/↓ Enter  Esc Close",
-                DesktopMode::WindowManagement => {
-                    "Window: arrows move  Shift+arrows resize  c close  x max  m min  Esc exit"
-                }
-            };
-            self.status.set_left(status_left);
-            let focused = self
-                .wm
-                .focused()
-                .map(|id| format!("Focus: {:?}", id.0))
-                .unwrap_or_else(|| "Focus: none".to_string());
-            self.status.set_right(focused);
+        if self.has_custom_status_content() {
+            self.status.draw(frame, layout.status_bar, &self.theme);
+        } else {
+            self.update_default_status();
+            self.default_status
+                .draw(frame, layout.status_bar, &self.theme);
         }
-        self.status.draw(frame, layout.status_bar, &self.theme);
         self.toasts.draw(frame, layout.work_area, &self.theme);
 
         // ratatui's buffer diff assumes buffers are "well-formed": a multi-width glyph is
@@ -625,6 +757,109 @@ impl Desktop {
         // ensure wide glyphs never straddle non-blank cells.
         sanitize_wide_glyph_overlaps(frame.buffer_mut());
     }
+}
+
+fn default_status_segments(
+    mode: DesktopMode,
+    focused: String,
+    commands: &EventQueue<DefaultStatusCommand>,
+) -> Vec<StatusSegment> {
+    let focus_segment = || {
+        StatusSegment::new("focus", focused.clone())
+            .align(StatusSegmentAlign::Right)
+            .priority(80)
+            .min_width(8)
+    };
+
+    match mode {
+        DesktopMode::Normal => vec![
+            status_command_segment(
+                "desktop-menu",
+                "F10 Menu ",
+                DefaultStatusCommand::ActivateMenu,
+                commands,
+            ),
+            status_command_segment(
+                "desktop-window-mode",
+                "Ctrl+W Window ",
+                DefaultStatusCommand::ToggleWindowManagement,
+                commands,
+            ),
+            status_command_segment(
+                "desktop-next-window",
+                "F6 Next",
+                DefaultStatusCommand::FocusNext,
+                commands,
+            ),
+            focus_segment(),
+        ],
+        DesktopMode::Menu => vec![
+            StatusSegment::new("menu-prefix", "Menu:").priority(100),
+            StatusSegment::new("menu-arrows", "←/→/↑/↓").priority(100),
+            status_command_segment(
+                "menu-enter",
+                "Enter ",
+                DefaultStatusCommand::MenuKey(KeyCode::Enter, KeyModifiers::NONE),
+                commands,
+            ),
+            status_command_segment(
+                "menu-close",
+                "Esc Close",
+                DefaultStatusCommand::MenuKey(KeyCode::Esc, KeyModifiers::NONE),
+                commands,
+            ),
+            focus_segment(),
+        ],
+        DesktopMode::WindowManagement => vec![
+            StatusSegment::new("window-prefix", "Window:").priority(100),
+            StatusSegment::new("window-arrows", "arrows move ").priority(90),
+            StatusSegment::new("window-shift-arrows", "Shift+arrows resize ").priority(90),
+            status_command_segment(
+                "window-close",
+                "c close ",
+                DefaultStatusCommand::WindowManagementKey(KeyCode::Char('c'), KeyModifiers::NONE),
+                commands,
+            ),
+            status_command_segment(
+                "window-maximize",
+                "x max ",
+                DefaultStatusCommand::WindowManagementKey(KeyCode::Char('x'), KeyModifiers::NONE),
+                commands,
+            ),
+            status_command_segment(
+                "window-minimize",
+                "m min ",
+                DefaultStatusCommand::WindowManagementKey(KeyCode::Char('m'), KeyModifiers::NONE),
+                commands,
+            ),
+            status_command_segment(
+                "window-exit",
+                "Esc exit",
+                DefaultStatusCommand::ExitChromeMode,
+                commands,
+            ),
+            focus_segment(),
+        ],
+    }
+}
+
+fn status_command_segment(
+    id: &'static str,
+    text: &'static str,
+    command: DefaultStatusCommand,
+    commands: &EventQueue<DefaultStatusCommand>,
+) -> StatusSegment {
+    let commands = commands.clone();
+    StatusSegment::new(id, text)
+        .style("status-bar-key")
+        .priority(100)
+        .on_click(move || {
+            commands.push(command.clone());
+        })
+}
+
+fn key_press(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, modifiers)
 }
 
 fn draw_which_key_popup(
@@ -755,7 +990,7 @@ fn sanitize_wide_glyph_overlaps(buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::StatusSegment;
+    use crate::app::{MenuItem, MenuSpec, StatusSegment};
     use crate::composable::{
         Component, ComponentContext, DragAndDrop, DragOperation, DragPayload, DragSource,
         EventHandling, EventResult,
@@ -1318,6 +1553,101 @@ mod tests {
 
         assert!(result.is_consumed());
         assert_eq!(clicks.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn default_status_bar_draws_shortcut_segments() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let mut terminal =
+            Terminal::new(TestBackend::new(screen.width, screen.height)).expect("terminal");
+
+        terminal.draw(|frame| desktop.draw(frame)).expect("draw");
+
+        let screen_text = screen_contents(&terminal, screen.width, screen.height);
+        assert!(screen_text.contains("F10 Menu  Ctrl+W Window  F6 Next"));
+        assert!(screen_text.contains("Focus: none"));
+    }
+
+    #[test]
+    fn default_status_bar_f10_hotspot_activates_menu() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row: screen.height.saturating_sub(1),
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Menu);
+        assert!(desktop.menu.is_active());
+    }
+
+    #[test]
+    fn default_status_bar_ctrl_w_hotspot_enters_window_management() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 12,
+                row: screen.height.saturating_sub(1),
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::WindowManagement);
+    }
+
+    #[test]
+    fn default_status_bar_f6_hotspot_focuses_next_window() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id1 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect::new(2, 2, 20, 6),
+                Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
+            ),
+            screen,
+        );
+        let id2 = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Two",
+                Rect::new(25, 2, 20, 6),
+                Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
+            ),
+            screen,
+        );
+        assert_eq!(desktop.wm.focused(), Some(id2));
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 26,
+                row: screen.height.saturating_sub(1),
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.wm.focused(), Some(id1));
     }
 
     #[test]
