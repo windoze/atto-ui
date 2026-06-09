@@ -625,8 +625,9 @@ fn default_glyphs() -> HashMap<String, String> {
 
     // Window titlebar buttons.
     g.insert("minimize-button".into(), "−".into());
-    g.insert("maximize-button".into(), "□".into());
-    g.insert("close-button".into(), "×".into());
+    g.insert("maximize-button".into(), "↑".into());
+    g.insert("restore-button".into(), "↕".into());
+    g.insert("close-button".into(), "■".into());
 
     // Tab window titlebar glyphs.
     g.insert("tab-separator".into(), "|".into());

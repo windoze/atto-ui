@@ -96,6 +96,9 @@ pub(super) struct TitleBarLayout {
     pub(super) button_cols: Vec<(HitRegion, u16)>,
 }
 
+const TITLEBAR_BUTTON_WIDTH: u16 = 3;
+const TITLEBAR_BUTTON_GAP: u16 = 1;
+
 pub(super) fn titlebar_layout(rect: Rect, buttons: &WindowButtons) -> TitleBarLayout {
     if rect.width < 3 {
         return TitleBarLayout {
@@ -113,38 +116,77 @@ pub(super) fn titlebar_layout(rect: Rect, buttons: &WindowButtons) -> TitleBarLa
     let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
 
     let mut button_cols = Vec::new();
-    if buttons.minimize {
-        button_cols.push((HitRegion::MinimizeButton, inner_right.saturating_sub(4)));
-    }
-    if buttons.maximize {
-        button_cols.push((HitRegion::MaximizeButton, inner_right.saturating_sub(2)));
-    }
-    if buttons.close {
-        button_cols.push((HitRegion::CloseButton, inner_right));
+    if buttons.close && button_fits(inner_left, inner_left, inner_right) {
+        button_cols.push((HitRegion::CloseButton, inner_left));
     }
 
-    let reserved_right = button_cols
+    let mut text_left = inner_left;
+    if button_cols
         .iter()
-        .map(|(_, col)| *col)
-        .min()
-        .unwrap_or(inner_right)
-        .saturating_sub(2);
+        .any(|(region, _)| *region == HitRegion::CloseButton)
+    {
+        text_left = inner_left
+            .saturating_add(TITLEBAR_BUTTON_WIDTH)
+            .saturating_add(TITLEBAR_BUTTON_GAP);
+    }
 
-    let width = if reserved_right >= inner_left {
-        reserved_right.saturating_sub(inner_left).saturating_add(1)
+    let mut text_right_exclusive = inner_right.saturating_add(1);
+    if buttons.maximize {
+        reserve_right_button(
+            &mut button_cols,
+            &mut text_right_exclusive,
+            text_left,
+            HitRegion::MaximizeButton,
+        );
+    }
+    if buttons.minimize {
+        reserve_right_button(
+            &mut button_cols,
+            &mut text_right_exclusive,
+            text_left,
+            HitRegion::MinimizeButton,
+        );
+    }
+
+    let width = if text_right_exclusive > text_left {
+        text_right_exclusive.saturating_sub(text_left)
     } else {
         0
     };
 
     TitleBarLayout {
         text_area: Rect {
-            x: inner_left,
+            x: text_left,
             y: rect.y,
             width,
             height: 1,
         },
         button_cols,
     }
+}
+
+fn button_fits(start: u16, min_col: u16, max_col: u16) -> bool {
+    start >= min_col && start.saturating_add(TITLEBAR_BUTTON_WIDTH.saturating_sub(1)) <= max_col
+}
+
+fn reserve_right_button(
+    button_cols: &mut Vec<(HitRegion, u16)>,
+    text_right_exclusive: &mut u16,
+    min_col: u16,
+    region: HitRegion,
+) {
+    if *text_right_exclusive < min_col.saturating_add(TITLEBAR_BUTTON_WIDTH) {
+        return;
+    }
+
+    let start = text_right_exclusive.saturating_sub(TITLEBAR_BUTTON_WIDTH);
+    let max_col = text_right_exclusive.saturating_sub(1);
+    if !button_fits(start, min_col, max_col) {
+        return;
+    }
+
+    button_cols.push((region, start));
+    *text_right_exclusive = start.saturating_sub(TITLEBAR_BUTTON_GAP);
 }
 
 pub(super) fn draw_titlebar_text(
@@ -267,18 +309,66 @@ pub(super) fn draw_titlebar_buttons(
     layout: &TitleBarLayout,
     style: Style,
     theme: &Theme,
+    state: WindowState,
 ) {
     for (region, col) in &layout.button_cols {
-        let symbol = match region {
+        let glyph = match region {
             HitRegion::MinimizeButton => theme.glyph("minimize-button").unwrap_or("−"),
-            HitRegion::MaximizeButton => theme.glyph("maximize-button").unwrap_or("□"),
-            HitRegion::CloseButton => theme.glyph("close-button").unwrap_or("×"),
+            HitRegion::MaximizeButton if state == WindowState::Maximized => {
+                theme.glyph("restore-button").unwrap_or("↕")
+            }
+            HitRegion::MaximizeButton => theme.glyph("maximize-button").unwrap_or("↑"),
+            HitRegion::CloseButton => theme.glyph("close-button").unwrap_or("■"),
             _ => "?",
         };
-        if let Some(cell) = buf.cell_mut((*col, layout.text_area.y)) {
-            cell.set_style(style);
-            cell.set_symbol(symbol);
+        draw_titlebar_button(buf, *col, layout.text_area.y, glyph, style);
+    }
+}
+
+fn draw_titlebar_button(buf: &mut Buffer, x: u16, y: u16, glyph: &str, style: Style) {
+    set_titlebar_cell(buf, x, y, "[", style);
+    set_titlebar_cell(buf, x.saturating_add(1), y, " ", style);
+    draw_text_clipped(
+        buf,
+        x.saturating_add(1),
+        y,
+        glyph,
+        TITLEBAR_BUTTON_WIDTH.saturating_sub(2),
+        style,
+    );
+    set_titlebar_cell(
+        buf,
+        x.saturating_add(TITLEBAR_BUTTON_WIDTH.saturating_sub(1)),
+        y,
+        "]",
+        style,
+    );
+}
+
+fn draw_text_clipped(buf: &mut Buffer, x: u16, y: u16, text: &str, max_width: u16, style: Style) {
+    if max_width == 0 {
+        return;
+    }
+
+    let mut cursor = x;
+    let right = x.saturating_add(max_width).saturating_sub(1);
+    for g in text.graphemes(true) {
+        let w = grapheme_width(g);
+        let end = cursor.saturating_add(w).saturating_sub(1);
+        if cursor > right || end > right {
+            break;
         }
+        let Some(cell) = buf.cell_mut((cursor, y)) else {
+            break;
+        };
+        cell.set_style(style);
+        cell.set_symbol(g);
+        for dx in 1..w {
+            if let Some(trailing) = buf.cell_mut((cursor.saturating_add(dx), y)) {
+                trailing.reset();
+            }
+        }
+        cursor = cursor.saturating_add(w);
     }
 }
 
@@ -289,15 +379,12 @@ pub(super) fn hit_test_buttons(w: &Window, x: u16, y: u16) -> Option<HitRegion> 
     if y != rect.y || rect.width < 3 {
         return None;
     }
-    let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
-    if buttons.close && x == inner_right {
-        return Some(HitRegion::CloseButton);
-    }
-    if buttons.maximize && x == inner_right.saturating_sub(2) {
-        return Some(HitRegion::MaximizeButton);
-    }
-    if buttons.minimize && x == inner_right.saturating_sub(4) {
-        return Some(HitRegion::MinimizeButton);
+
+    let layout = titlebar_layout(rect, &buttons);
+    for (region, start) in layout.button_cols {
+        if x >= start && x < start.saturating_add(TITLEBAR_BUTTON_WIDTH) {
+            return Some(region);
+        }
     }
     None
 }

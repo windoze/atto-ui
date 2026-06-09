@@ -124,7 +124,13 @@ impl WindowManager {
                             title_style,
                         );
                     }
-                    chrome::draw_titlebar_buttons(frame.buffer_mut(), &layout, title_style, theme);
+                    chrome::draw_titlebar_buttons(
+                        frame.buffer_mut(),
+                        &layout,
+                        title_style,
+                        theme,
+                        state,
+                    );
                 }
 
                 let inner = window.inner_rect();

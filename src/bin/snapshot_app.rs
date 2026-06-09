@@ -1244,7 +1244,7 @@ fn run_apphost_api_fixture() -> Result<()> {
         Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
     )?;
     host.move_window(window_id, 4, 4)?;
-    host.resize_window(window_id, 34, 8)?;
+    host.resize_window(window_id, 38, 8)?;
     host.set_title(
         window_id,
         format!("AppHost API calls: {}", calls.load(Ordering::SeqCst)),

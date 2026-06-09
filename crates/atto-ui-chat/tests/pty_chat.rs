@@ -37,15 +37,13 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
 fn find_close_button_on_title_row(host: &PtyTestHost, title: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
-        let title_idx = line.find(title)?;
-        line.char_indices()
-            .rfind(|(idx, ch)| *idx > title_idx && *ch == '×')
-            .map(|(idx, _)| {
-                (
-                    line[..idx].width().min(u16::MAX as usize) as u16,
-                    y.min(u16::MAX as usize) as u16,
-                )
-            })
+        line.find(title)?;
+        let close_idx = line.find("[■]")?;
+        let glyph_idx = close_idx.saturating_add("[".len());
+        Some((
+            line[..glyph_idx].width().min(u16::MAX as usize) as u16,
+            y.min(u16::MAX as usize) as u16,
+        ))
     })
 }
 

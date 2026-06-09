@@ -75,7 +75,7 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let screen = host.screen_contents().unwrap_or_default();
     let (_, tools_rect) = rects_from_screen(&screen).expect("read rects");
     let tools_rect = tools_rect.expect("tools rect");
-    let drag_from_x = tools_rect.x.saturating_add(2);
+    let drag_from_x = tools_rect.x.saturating_add(5);
     let drag_from_y = tools_rect.y;
     let drag_to_x = drag_from_x.saturating_add(4);
     let drag_to_y = drag_from_y.saturating_add(2);
@@ -135,9 +135,7 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     let screen = host.screen_contents().unwrap_or_default();
     let (term_rect, _) = rects_from_screen(&screen).expect("read rects");
     let term_rect = term_rect.expect("term rect");
-    let close_x = term_rect
-        .x
-        .saturating_add(term_rect.width.saturating_sub(2));
+    let close_x = term_rect.x.saturating_add(2);
     let close_y = term_rect.y;
     host.click(close_x, close_y).expect("click close button");
     wait_for_text(&host, "TERM=CLOSED");

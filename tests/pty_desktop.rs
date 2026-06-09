@@ -1,10 +1,12 @@
 use std::time::Duration;
 
 use atto_ui_test_host::PtyTestHost;
+use unicode_width::UnicodeWidthStr;
 
 fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {
     for (row, line) in screen.lines().enumerate() {
-        if let Some(col) = line.find(needle) {
+        if let Some(byte_col) = line.find(needle) {
+            let col = line[..byte_col].width();
             return Some((row, col));
         }
     }
@@ -74,24 +76,23 @@ fn pty_window_title_is_centered_with_padding() {
         .expect("initial render");
 
     let screen = host.screen_contents().expect("screen");
-    let title_y = 2;
-    let title_start = 16;
+    let (title_y, title_start) = find_text_pos(&screen, "Widgets").expect("Widgets title");
     assert_eq!(
-        host.cell_contents(title_start - 1, title_y)
+        host.cell_contents((title_start - 1) as u16, title_y as u16)
             .expect("leading title padding"),
         " ",
         "expected leading title padding\n--- screen ---\n{screen}"
     );
     for (offset, ch) in "Widgets".chars().enumerate() {
         assert_eq!(
-            host.cell_contents(title_start + offset as u16, title_y)
+            host.cell_contents((title_start + offset) as u16, title_y as u16)
                 .expect("title cell"),
             ch.to_string(),
             "expected centered Widgets title\n--- screen ---\n{screen}"
         );
     }
     assert_eq!(
-        host.cell_contents(title_start + "Widgets".len() as u16, title_y)
+        host.cell_contents((title_start + "Widgets".len()) as u16, title_y as u16)
             .expect("trailing title padding"),
         " ",
         "expected trailing title padding\n--- screen ---\n{screen}"
@@ -144,8 +145,8 @@ fn pty_mouse_click_changes_focus_status() {
     host.wait_for_text("Focus: 1", Duration::from_secs(2))
         .expect("widgets focused");
 
-    // Click inside the Log window title bar (window rect x=46,y=4).
-    host.click(47, 4).expect("mouse click");
+    // Click inside the Log window title bar, past the left close control.
+    host.click(53, 4).expect("mouse click");
     host.wait_for_text("Focus: 2", Duration::from_secs(2))
         .expect("log focused");
 

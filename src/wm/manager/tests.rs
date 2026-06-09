@@ -1907,26 +1907,109 @@ fn fixed_size_windows_hide_and_disable_minimize_maximize() {
     terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
 
     let buf = terminal.backend().buffer();
+    let inner_left = rect.x.saturating_add(1);
     let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
 
     assert_eq!(
-        buf.cell((inner_right, rect.y)).expect("close btn").symbol(),
-        "×",
+        buf.cell((inner_left, rect.y)).expect("close left").symbol(),
+        "[",
+        "expected close button to start at the left titlebar edge"
+    );
+    assert_eq!(
+        buf.cell((inner_left.saturating_add(1), rect.y))
+            .expect("close glyph")
+            .symbol(),
+        "■",
         "expected close button to still be visible"
     );
     assert_eq!(
-        buf.cell((inner_right.saturating_sub(2), rect.y))
+        buf.cell((inner_left.saturating_add(2), rect.y))
+            .expect("close right")
+            .symbol(),
+        "]",
+        "expected close button to be bracketed"
+    );
+    assert_eq!(
+        buf.cell((inner_right, rect.y))
             .expect("maximize slot")
             .symbol(),
         "═",
         "expected maximize button to be hidden for fixed-size windows"
     );
     assert_eq!(
-        buf.cell((inner_right.saturating_sub(4), rect.y))
+        buf.cell((inner_right.saturating_sub(2), rect.y))
             .expect("minimize slot")
             .symbol(),
         "═",
         "expected minimize button to be hidden for fixed-size windows"
+    );
+}
+
+#[test]
+fn titlebar_buttons_use_bracketed_left_close_and_right_zoom() {
+    let theme = Theme::dark();
+    let bounds = Rect::new(0, 0, 40, 15);
+    let rect = Rect::new(2, 2, 22, 7);
+
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(WindowKind::Normal, "Controls", rect, Box::new(DummyView)),
+        bounds,
+    );
+
+    let backend = TestBackend::new(bounds.width, bounds.height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+
+    let buf = terminal.backend().buffer();
+    let inner_left = rect.x.saturating_add(1);
+    let inner_right = rect.x.saturating_add(rect.width).saturating_sub(2);
+    let zoom_left = inner_right.saturating_sub(2);
+
+    assert_eq!(
+        buf.cell((inner_left, rect.y)).expect("close [").symbol(),
+        "["
+    );
+    assert_eq!(
+        buf.cell((inner_left.saturating_add(1), rect.y))
+            .expect("close glyph")
+            .symbol(),
+        "■"
+    );
+    assert_eq!(
+        buf.cell((inner_left.saturating_add(2), rect.y))
+            .expect("close ]")
+            .symbol(),
+        "]"
+    );
+    assert_eq!(buf.cell((zoom_left, rect.y)).expect("zoom [").symbol(), "[");
+    assert_eq!(
+        buf.cell((zoom_left.saturating_add(1), rect.y))
+            .expect("zoom glyph")
+            .symbol(),
+        "↑"
+    );
+    assert_eq!(
+        buf.cell((zoom_left.saturating_add(2), rect.y))
+            .expect("zoom ]")
+            .symbol(),
+        "]"
+    );
+
+    wm.toggle_maximize_focused(bounds);
+    terminal.draw(|f| wm.draw(f, bounds, &theme)).expect("draw");
+    let buf = terminal.backend().buffer();
+    let maximized = wm.window_mut(id).expect("window").rect.get();
+    let max_inner_right = maximized
+        .x
+        .saturating_add(maximized.width)
+        .saturating_sub(2);
+    let restore_glyph = max_inner_right.saturating_sub(1);
+    assert_eq!(
+        buf.cell((restore_glyph, maximized.y))
+            .expect("restore glyph")
+            .symbol(),
+        "↕"
     );
 }
 
