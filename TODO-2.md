@@ -159,7 +159,7 @@
 - 确认 `Up`、`Esc`、source/target window close 都会清理 `global_drag`；新增 Desktop 回归测试覆盖 status bar release，新增 WM 单测覆盖关闭 source/target window。
 - 确认 ghost/drop feedback overlay 在所有窗口绘制后叠加，feedback rect 经过 clipping，0 宽/高 rect 不会绘制或 panic。
 - 确认 T2 单测经由 `WindowManager::handle_event`/mouse event 路径，PTY 测试经真实 mouse 序列驱动 snapshot app，而不是直接调用组件方法。
-- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [DONE] T3 — C2 Docking 类型、work area reserve 与基础绘制
 
@@ -1719,12 +1719,19 @@
 - 新增测试覆盖 `(` 自动补 `)`、选区输入 `"` 包裹选区、Enter 保持缩进、Unicode 字符输入、Paste 不触发 auto-pairs、read-only 阻止 TypeChar/InsertNewline，以及语言默认配置。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
-### [TODO] R25 — 审阅 T25
+### [DONE] R25 — 审阅 T25
 
 审阅 T25 改动：
 - 确认 TypeChar 后 cursor/selection 与 editor-core 预期一致。
 - 确认 read-only gate 覆盖 TypeChar/InsertNewline。
 - 确认 auto-pairs config 可按语言关闭。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T25 的 editor-core 输入路径接入、`execute_edit_command` 同步逻辑、read-only gate、language config 接入，以及新增测试覆盖。
+- 确认普通字符输入通过 `EditCommand::TypeChar { ch }` 走 editor-core 光标/selection 规则；selection wrap、Unicode 字符输入、paste/raw `InsertText` 路径均有回归测试覆盖。
+- 确认 `insert_newline` 和普通字符输入在执行 `TypeChar` / `InsertNewline` 前均经过 `editable()` gate，read-only 测试覆盖两条路径不会修改文本。
+- 确认 auto-pairs config 从 `language.rs` 进入 primary/secondary editor view 构建流程，`plaintext` 可使用 disabled config，且语言默认配置测试覆盖关闭行为。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T26 — Trim trailing whitespace 与 save 流程整理
 

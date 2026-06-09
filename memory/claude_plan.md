@@ -11,3 +11,6 @@ I will first inspect TODO.md to identify the first task whose heading is not pre
 - Full workspace tests passed. Marked T25 complete in TODO.md and TODO-2.md. Reviewing final diff and fixture-suite availability before committing.
 - No fixture runner was present. Completion record updated accordingly; no code changed after the successful full test run.
 - Corrected TODO completion note placement so only T25 changed. Preparing final whitespace check, staging task files, and committing.
+- Current invocation: identified first incomplete task from TODO.md as R25 in TODO-2.md (review T25).
+- R25 review plan: inspect the T25 commit and relevant implementation/tests for TypeChar cursor/selection behavior, read-only gating of TypeChar and InsertNewline, and language-specific auto-pairs disablement; fix any directly discovered defects; run cargo fmt, clippy with warnings denied, and the full workspace tests; update TODO.md and TODO-2.md with the R25 completion record; commit only this review task's changes.
+- R25 review found no code defects. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed; no `tools/run_fixtures.py` fixture runner is present. Marked R25 complete in TODO.md and TODO-2.md with the review completion record. Preparing final diff and commit.
