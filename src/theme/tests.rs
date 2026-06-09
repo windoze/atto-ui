@@ -87,6 +87,13 @@ fn theme_default_radio_selected_glyph_uses_dot() {
 }
 
 #[test]
+fn theme_default_system_menu_icon_glyph_uses_hamburger() {
+    for theme in [Theme::dark(), Theme::light(), Theme::turbo()] {
+        assert_eq!(theme.glyph("system-menu-icon"), Some("≡"));
+    }
+}
+
+#[test]
 fn theme_file_can_select_turbo_base_and_overlay_it() {
     let file = TempThemeFile::new(
         "yaml",

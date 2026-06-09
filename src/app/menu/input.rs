@@ -9,7 +9,7 @@ use crate::wm::WindowId;
 use super::MenuCallback;
 use super::layout::{
     contains, display_label, dropdown_size, explicit_mnemonic, label_mnemonic_or_first,
-    menu_title_x,
+    menu_title_x, menu_titles_start_x,
 };
 use super::minimized::minimized_window_id;
 use super::model::{MenuAction, MenuBar, MenuItem};
@@ -433,7 +433,11 @@ impl MenuBar {
         };
 
         let dropdown_y = menu_bar_area.y.saturating_add(1);
-        let mut origin_x = menu_title_x(&self.menus, menu_bar_area.x, self.state.menu_index);
+        let mut origin_x = menu_title_x(
+            &self.menus,
+            menu_titles_start_x(menu_bar_area),
+            self.state.menu_index,
+        );
         let mut origin_y = dropdown_y;
         let mut items: &[MenuItem] = &menu.items;
 
@@ -461,7 +465,7 @@ impl MenuBar {
     }
 
     fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {
-        let mut cur_x = menu_bar_area.x;
+        let mut cur_x = menu_titles_start_x(menu_bar_area);
         for (idx, menu) in self.menus.iter().enumerate() {
             let label = format!(" {} ", display_label(&menu.title.get()).text);
             let w = UnicodeWidthStr::width(label.as_str()) as u16;
@@ -552,5 +556,31 @@ mod tests {
 
         assert_eq!(menu.handle_shortcut_char('x'), MenuAction::Closed);
         assert!(activated.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn mouse_title_hit_testing_accounts_for_system_menu_icon() {
+        let mut menu = MenuBar::new(vec![
+            MenuSpec::new("&File", Vec::new()),
+            MenuSpec::new("&Edit", Vec::new()),
+        ]);
+        let area = Rect::new(0, 0, 32, 1);
+        let click = |column| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        };
+
+        assert_eq!(menu.handle_mouse(&click(0), area), MenuAction::None);
+        assert!(!menu.state.active);
+
+        assert_eq!(menu.handle_mouse(&click(2), area), MenuAction::None);
+        assert!(menu.state.active);
+        assert_eq!(menu.state.menu_index, 0);
+
+        assert_eq!(menu.handle_mouse(&click(9), area), MenuAction::None);
+        assert!(menu.state.active);
+        assert_eq!(menu.state.menu_index, 1);
     }
 }

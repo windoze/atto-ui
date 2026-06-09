@@ -4,6 +4,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::model::{MenuItem, MenuSpec};
 
+pub(super) const SYSTEM_MENU_ICON_FALLBACK: &str = "≡";
+const SYSTEM_MENU_ICON_WIDTH: u16 = 1;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DisplayLabel {
     pub(super) text: String,
@@ -78,6 +81,12 @@ pub(super) fn dropdown_size(items: &[MenuItem]) -> (u16, u16) {
     let width = (w + 2).min(u16::MAX as usize) as u16; // + borders
     let height = (items.len() + 2).min(u16::MAX as usize) as u16;
     (width, height)
+}
+
+pub(super) fn menu_titles_start_x(menu_bar_area: Rect) -> u16 {
+    menu_bar_area
+        .x
+        .saturating_add(menu_bar_area.width.min(SYSTEM_MENU_ICON_WIDTH))
 }
 
 pub(super) fn menu_title_x(menus: &[MenuSpec], start_x: u16, menu_index: usize) -> u16 {

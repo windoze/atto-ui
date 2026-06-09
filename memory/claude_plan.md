@@ -13,8 +13,11 @@ I will complete exactly the first incomplete task from `TODO.md` and then stop. 
 
 ## Progress
 
-- Initial execution plan recorded.
-- First incomplete task selected: `#12 单选按钮字形` (`(*)` -> `(•)` in `src/widgets/radio.rs` and related defaults/tests).
-- Implemented the radio selected glyph change in theme defaults and widget fallback, with unit coverage for rendered output and theme defaults.
-- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, focused radio/theme tests, and `cargo test --all --all-targets`. No `tools/run_fixtures.py` fixture runner exists.
-- Marked `#12` as `[DONE]` in `TODO.md` with the completion record. Next step is committing the task-related changes only.
+- Initial execution plan confirmed.
+- First incomplete task selected: `#13 系统菜单图标` — add a `≡` system-menu icon on the left side of the menu bar.
+- Latest commit references completed `#12` work and does not introduce unfinished work directly relevant to `#13`.
+- Implemented the menu-bar icon as a themed `system-menu-icon` glyph with a one-column shared title inset across drawing, dropdown anchoring, and mouse hit testing.
+- Added unit coverage for icon rendering, shifted Unicode/mnemonic layout, mouse title hit testing, and the default theme glyph.
+- Validation completed successfully with `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p atto-ui system_menu --lib`, and `cargo test --all --all-targets`; no `tools/run_fixtures.py` fixture runner exists.
+- Marked `#13` as `[DONE]` in `TODO.md` with its completion record.
+- Next step: commit task-related changes and stop.

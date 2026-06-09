@@ -10,7 +10,10 @@ use crate::drawing::draw_shadow;
 use crate::theme::Theme;
 
 use super::super::status::Fill;
-use super::layout::{display_label, display_label_width, dropdown_size, menu_title_x};
+use super::layout::{
+    SYSTEM_MENU_ICON_FALLBACK, display_label, display_label_width, dropdown_size, menu_title_x,
+    menu_titles_start_x,
+};
 use super::model::{MenuBar, MenuItem};
 
 impl MenuBar {
@@ -27,7 +30,12 @@ impl MenuBar {
             theme.menu_bar,
         );
 
-        let mut x = area.x;
+        let icon = theme
+            .glyph("system-menu-icon")
+            .unwrap_or(SYSTEM_MENU_ICON_FALLBACK);
+        draw_text_clipped(frame.buffer_mut(), area.x, area.y, icon, 1, theme.menu_bar);
+
+        let mut x = menu_titles_start_x(area);
         for (idx, menu) in self.menus.iter().enumerate() {
             let is_active = self.state.active && idx == self.state.menu_index;
             let style = if is_active {
@@ -62,7 +70,11 @@ impl MenuBar {
         };
         let screen = frame.area();
 
-        let menu_x = menu_title_x(&self.menus, menu_bar_area.x, self.state.menu_index);
+        let menu_x = menu_title_x(
+            &self.menus,
+            menu_titles_start_x(menu_bar_area),
+            self.state.menu_index,
+        );
         let dropdown_y = menu_bar_area.y.saturating_add(1);
 
         let mut origin_x = menu_x;
@@ -309,6 +321,23 @@ mod tests {
     }
 
     #[test]
+    fn draw_renders_system_menu_icon_before_titles() {
+        let theme = Theme::dark();
+        let menu = MenuBar::new(vec![MenuSpec::new("&File", Vec::new())]);
+
+        let mut terminal = Terminal::new(TestBackend::new(16, 3)).expect("terminal");
+        terminal
+            .draw(|frame| menu.draw(frame, Rect::new(0, 0, 16, 1), &theme))
+            .expect("draw");
+
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(0, 0)].symbol(), SYSTEM_MENU_ICON_FALLBACK);
+        assert_eq!(buf[(0, 0)].style().fg, theme.menu_bar.fg);
+        assert_eq!(buf[(0, 0)].style().bg, theme.menu_bar.bg);
+        assert_eq!(buf[(2, 0)].symbol(), "F");
+    }
+
+    #[test]
     fn draw_strips_mnemonic_markers_and_shows_accelerator() {
         let theme = Theme::dark();
         let mut menu = MenuBar::new(vec![MenuSpec::new(
@@ -345,11 +374,11 @@ mod tests {
             .expect("draw");
 
         let buf = terminal.backend().buffer();
-        assert_eq!(buf[(1, 0)].symbol(), "文");
-        assert_eq!(buf[(3, 0)].symbol(), "件");
-        assert_eq!(buf[(1, 2)].symbol(), "打");
-        assert_eq!(buf[(3, 2)].symbol(), "开");
-        assert_eq!(buf[(7, 2)].symbol(), "C");
+        assert_eq!(buf[(2, 0)].symbol(), "文");
+        assert_eq!(buf[(4, 0)].symbol(), "件");
+        assert_eq!(buf[(2, 2)].symbol(), "打");
+        assert_eq!(buf[(4, 2)].symbol(), "开");
+        assert_eq!(buf[(8, 2)].symbol(), "C");
     }
 
     #[test]
@@ -367,22 +396,22 @@ mod tests {
             .expect("draw");
 
         let buf = terminal.backend().buffer();
-        let title_mnemonic = buf[(1, 0)].style();
+        let title_mnemonic = buf[(2, 0)].style();
         assert_eq!(title_mnemonic.fg, Some(Color::Red));
         assert_eq!(title_mnemonic.bg, theme.menu_bar_active.bg);
         assert!(title_mnemonic.has_modifier(Modifier::UNDERLINED));
 
-        let title_rest = buf[(2, 0)].style();
+        let title_rest = buf[(3, 0)].style();
         assert_eq!(title_rest.fg, theme.menu_bar_active.fg);
         assert_eq!(title_rest.bg, theme.menu_bar_active.bg);
         assert!(!title_rest.has_modifier(Modifier::UNDERLINED));
 
-        let item_mnemonic = buf[(1, 2)].style();
+        let item_mnemonic = buf[(2, 2)].style();
         assert_eq!(item_mnemonic.fg, Some(Color::Red));
         assert_eq!(item_mnemonic.bg, theme.menu_item_selected.bg);
         assert!(item_mnemonic.has_modifier(Modifier::UNDERLINED));
 
-        let item_rest = buf[(2, 2)].style();
+        let item_rest = buf[(3, 2)].style();
         assert_eq!(item_rest.fg, theme.menu_item_selected.fg);
         assert_eq!(item_rest.bg, theme.menu_item_selected.bg);
         assert!(!item_rest.has_modifier(Modifier::UNDERLINED));
@@ -423,12 +452,14 @@ mod tests {
             .expect("draw");
 
         let buf = terminal.backend().buffer();
-        assert_eq!(buf[(0, 0)].style().bg, theme.menu_bar_active.bg);
-        assert_eq!(buf[(2, 0)].symbol(), "i");
-        assert_eq!(buf[(2, 0)].style().bg, theme.menu_bar_active.bg);
-        assert_eq!(buf[(5, 0)].style().bg, theme.menu_bar_active.bg);
-        assert_eq!(buf[(6, 0)].style().bg, theme.menu_bar.bg);
-        for x in 1..6 {
+        assert_eq!(buf[(0, 0)].symbol(), SYSTEM_MENU_ICON_FALLBACK);
+        assert_eq!(buf[(0, 0)].style().bg, theme.menu_bar.bg);
+        assert_eq!(buf[(1, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(3, 0)].symbol(), "i");
+        assert_eq!(buf[(3, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(6, 0)].style().bg, theme.menu_bar_active.bg);
+        assert_eq!(buf[(7, 0)].style().bg, theme.menu_bar.bg);
+        for x in 1..7 {
             assert_ne!(buf[(x, 1)].style().bg, theme.window_shadow.bg);
         }
     }

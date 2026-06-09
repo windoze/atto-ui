@@ -45,7 +45,8 @@
   - 完成记录（2026-06-09）：默认 `checkbox-checked` glyph 从 `[x]` 改为 `[X]`，并同步 `Checkbox` 组件缺省 fallback，确保自定义主题缺少该 glyph 时仍使用新字形。更新相关 PTY 断言并新增主题单元回归测试覆盖 dark/light/turbo 默认值。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all --all-targets` 均通过。
 - [x] **[DONE] #12 单选按钮字形** — `(*)` → `(•)`（`src/widgets/radio.rs`）。
   - 完成记录（2026-06-09）：默认 `radio-selected` glyph 从 `(*)` 改为 `(•)`，并同步 `RadioGroup` 组件缺省 fallback，确保自定义主题缺少该 glyph 时仍使用新字形。新增主题单元回归测试覆盖 dark/light/turbo 默认值，并新增 RadioGroup 渲染测试验证选中项实际绘制圆点字形。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui selected_option_uses_turbo_vision_dot_glyph`、`cargo test -p atto-ui theme_default_radio_selected_glyph_uses_dot`、`cargo test --all --all-targets` 均通过；未发现 `tools/run_fixtures.py` fixture runner。
-- [ ] **#13 系统菜单图标**（可选）— 菜单栏左侧加 `≡`。
+- [x] **[DONE] #13 系统菜单图标**（可选）— 菜单栏左侧加 `≡`。
+  - 完成记录（2026-06-10）：菜单栏左侧新增系统菜单图标，默认通过 `system-menu-icon` 主题 glyph 渲染为 `≡`；顶层菜单标题统一从图标后一列开始绘制，且下拉菜单锚点与鼠标命中测试复用同一偏移，避免点击/展开位置与渲染错位。新增图标渲染、Unicode/mnemonic 偏移、鼠标命中与主题默认 glyph 回归测试。验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui system_menu --lib`、`cargo test --all --all-targets` 均通过；未发现 `tools/run_fixtures.py` fixture runner。
 - [ ] **#14 顶层菜单项间距** — 间距微调，视配色而定。
 
 ## 收尾
