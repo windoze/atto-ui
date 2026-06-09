@@ -1878,13 +1878,21 @@
 - 扩展 `crates/atto-ui-editor/tests/lsp_editor.rs`：新增 mock-backed 覆盖 diagnostics empty 清理、document symbols 成功/empty/error、workspace symbols 成功/empty/error、code action empty/error 清理、signatureHelp error 清理、inlayHint error message、rename null/error message；新增共享 helper 使用固定 `TestBackend` 尺寸和轮询等待，不引入时序 sleep 作为断言条件。
 - 验证：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
-### [TODO] R28 — 审阅 T28
+### [DONE] R28 — 审阅 T28
 
 审阅 T28 改动：
 - 确认 mock LSP JSON-RPC framing 正确。
 - 确认 tests 不依赖时序 sleep。
 - 确认 temp files/directories 清理。
 - 确认每个 LSP 功能至少有一个成功路径和一个 empty/error 路径测试。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T28 的 mock LSP fixture 与 `lsp_editor` 覆盖矩阵；发现 hover、semantic tokens、folding ranges 仍缺 empty/error fixture 覆盖，已作为 R28 阻塞项直接修复。
+- `mock_lsp_server.rs` 新增 `textDocument/hover`、`textDocument/semanticTokens/full`、`textDocument/foldingRange` 的 deterministic empty/error 分支，继续使用 `editor_core_lsp::write_lsp_message` 输出 JSON-RPC response，不向 stdout 写测试日志。
+- `lsp_editor.rs` 新增 mock server JSON-RPC framing 测试，直接通过 `editor_core_lsp::write_lsp_message` / `read_lsp_message` 校验 hover、semantic tokens、folding ranges empty/error response；新增 hover empty/error 清理 stale popup 的 UI 行为测试。
+- 确认新增测试不依赖断言用时序 sleep；仅沿用既有 deadline polling helper。T28/R28 未新增 temp files/directories，因此无额外清理路径。
+- 覆盖矩阵现包含 diagnostics、code action、rename、signature help、formatting、inlay hints、document symbols、workspace symbols、hover、semantic tokens、folding ranges 的 success 与 empty/error 路径。
+- 验证通过：`cargo fmt`；`cargo test -p atto-ui-editor --test lsp_editor`；`cargo clippy --all-targets -- -D warnings`；`cargo test --all --all-targets`。
 
 ### [TODO] T29 — 文档与实施顺序维护
 

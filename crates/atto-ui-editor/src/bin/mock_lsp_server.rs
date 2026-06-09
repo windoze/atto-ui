@@ -173,15 +173,26 @@ fn main() -> io::Result<()> {
                 respond(&mut stdout, id, Value::Null)?;
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
-                // Return a single `string` token for `hello` in:
-                // `fn main() {\n    let s = "hello";\n}\n`
-                //
-                // Encoding: (deltaLine, deltaStart, length, tokenType, tokenModifiers).
-                // - line 1 (second line), col 13 (0-based), length 5, tokenType 0 ("string").
-                let result = json!({
-                    "data": [1, 13, 5, 0, 0],
-                });
-                respond(&mut stdout, id, result)?;
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/semantic_tokens_error.rs")
+                    || uri == "file:///semantic_tokens_error.rs"
+                {
+                    respond_error(&mut stdout, id, -32000, "mock semantic tokens error")?;
+                } else if uri.ends_with("/semantic_tokens_empty.rs")
+                    || uri == "file:///semantic_tokens_empty.rs"
+                {
+                    respond(&mut stdout, id, json!({ "data": [] }))?;
+                } else {
+                    // Return a single `string` token for `hello` in:
+                    // `fn main() {\n    let s = "hello";\n}\n`
+                    //
+                    // Encoding: (deltaLine, deltaStart, length, tokenType, tokenModifiers).
+                    // - line 1 (second line), col 13 (0-based), length 5, tokenType 0 ("string").
+                    let result = json!({
+                        "data": [1, 13, 5, 0, 0],
+                    });
+                    respond(&mut stdout, id, result)?;
+                }
             }
             ("textDocument/inlayHint", Some(id)) => {
                 let uri = text_document_uri(&msg);
@@ -203,18 +214,32 @@ fn main() -> io::Result<()> {
                 }
             }
             ("textDocument/foldingRange", Some(id)) => {
-                // Fold the function body: lines 0..=2.
-                let result = json!([
-                    { "startLine": 0, "endLine": 2, "kind": "region" }
-                ]);
-                respond(&mut stdout, id, result)?;
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/folding_error.rs") || uri == "file:///folding_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock folding range error")?;
+                } else if uri.ends_with("/folding_empty.rs") || uri == "file:///folding_empty.rs" {
+                    respond(&mut stdout, id, json!([]))?;
+                } else {
+                    // Fold the function body: lines 0..=2.
+                    let result = json!([
+                        { "startLine": 0, "endLine": 2, "kind": "region" }
+                    ]);
+                    respond(&mut stdout, id, result)?;
+                }
             }
             ("textDocument/hover", Some(id)) => {
-                // Deterministic hover response used by PTY tests.
-                let result = json!({
-                    "contents": { "kind": "plaintext", "value": "HOVER" }
-                });
-                respond(&mut stdout, id, result)?;
+                let uri = text_document_uri(&msg);
+                if uri.ends_with("/hover_error.rs") || uri == "file:///hover_error.rs" {
+                    respond_error(&mut stdout, id, -32000, "mock hover error")?;
+                } else if uri.ends_with("/hover_empty.rs") || uri == "file:///hover_empty.rs" {
+                    respond(&mut stdout, id, Value::Null)?;
+                } else {
+                    // Deterministic hover response used by PTY tests.
+                    let result = json!({
+                        "contents": { "kind": "plaintext", "value": "HOVER" }
+                    });
+                    respond(&mut stdout, id, result)?;
+                }
             }
             ("textDocument/documentSymbol", Some(id)) => {
                 let uri = text_document_uri(&msg);

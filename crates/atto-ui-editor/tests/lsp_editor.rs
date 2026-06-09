@@ -1,11 +1,15 @@
+use std::io::{BufReader, Write};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use editor_core::Position;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
+use serde_json::{Value, json};
 
 use atto_ui::composable::{
     Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
@@ -14,7 +18,8 @@ use atto_ui::wm::WindowId;
 use atto_ui_editor::{
     CodeActionItemView, CodeActionPopupModel, CompletionItem, CompletionPopupModel,
     DiagnosticsSummary, EditorAction, EditorConfig, EditorEvent, EditorLspConfig, EditorLspMode,
-    EditorSyntaxConfig, EditorViewHandle, LspCompletionItemEdit, SignatureHelpPopupModel,
+    EditorSyntaxConfig, EditorViewHandle, HoverPopupModel, LspCompletionItemEdit, LspHoverContents,
+    SignatureHelpPopupModel,
 };
 use atto_ui_editor::{EditorThemeSet, EditorView};
 
@@ -112,6 +117,93 @@ fn lsp_semantic_tokens_and_folding_markers_render_and_toggle() {
     let buf = terminal.backend().buffer();
     let unfolded = buf.cell((3, 0)).expect("fold marker after second click");
     assert_eq!(unfolded.symbol(), "▼");
+}
+
+#[test]
+fn mock_lsp_server_empty_and_error_fixtures_are_json_rpc_framed() {
+    let mut server = MockLspProcess::spawn();
+
+    let initialized = server.request("initialize", json!({}));
+    assert_eq!(
+        initialized
+            .pointer("/result/capabilities/hoverProvider")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        initialized
+            .pointer("/result/capabilities/semanticTokensProvider")
+            .is_some()
+    );
+    assert_eq!(
+        initialized
+            .pointer("/result/capabilities/foldingRangeProvider")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let semantic_empty = server.request(
+        "textDocument/semanticTokens/full",
+        text_document_params("file:///semantic_tokens_empty.rs"),
+    );
+    assert_eq!(
+        semantic_empty
+            .pointer("/result/data")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let semantic_error = server.request(
+        "textDocument/semanticTokens/full",
+        text_document_params("file:///semantic_tokens_error.rs"),
+    );
+    assert_eq!(
+        semantic_error
+            .pointer("/error/message")
+            .and_then(Value::as_str),
+        Some("mock semantic tokens error")
+    );
+
+    let folding_empty = server.request(
+        "textDocument/foldingRange",
+        text_document_params("file:///folding_empty.rs"),
+    );
+    assert_eq!(
+        folding_empty
+            .get("result")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let folding_error = server.request(
+        "textDocument/foldingRange",
+        text_document_params("file:///folding_error.rs"),
+    );
+    assert_eq!(
+        folding_error
+            .pointer("/error/message")
+            .and_then(Value::as_str),
+        Some("mock folding range error")
+    );
+
+    let hover_empty = server.request(
+        "textDocument/hover",
+        text_document_params("file:///hover_empty.rs"),
+    );
+    assert_eq!(hover_empty.get("result"), Some(&Value::Null));
+
+    let hover_error = server.request(
+        "textDocument/hover",
+        text_document_params("file:///hover_error.rs"),
+    );
+    assert_eq!(
+        hover_error
+            .pointer("/error/message")
+            .and_then(Value::as_str),
+        Some("mock hover error")
+    );
 }
 
 #[test]
@@ -235,6 +327,13 @@ fn lsp_hover_popup_tracks_mouse_and_suppresses_until_move() {
             panic!("timed out waiting for hover popup after mouse move");
         }
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn lsp_hover_empty_and_error_clear_stale_popup() {
+    for uri in ["file:///hover_empty.rs", "file:///hover_error.rs"] {
+        assert_hover_response_clears_stale_popup(uri);
     }
 }
 
@@ -1644,6 +1743,46 @@ fn assert_code_action_response_clears_stale_popup(document_uri: &str) {
     wait_for_code_action_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
 }
 
+fn assert_hover_response_clears_stale_popup(document_uri: &str) {
+    let server_bin = env!("CARGO_BIN_EXE_mock_lsp_server").to_string();
+
+    let text: atto_ui::reactive::Binding<String> = "hover target\n".to_string().into();
+    let cfg = EditorConfig::new(text);
+    cfg.language_id.set("rust".to_string());
+    cfg.syntax.set(EditorSyntaxConfig::None);
+    cfg.hover.enabled.set(true);
+    cfg.hover.delay.set(Duration::from_millis(0));
+    cfg.lsp.set(EditorLspMode::Enabled(EditorLspConfig {
+        command: vec![server_bin],
+        document_uri: document_uri.to_string(),
+        language_id: "rust".to_string(),
+        root_uri: None,
+        workspace_folders: Vec::new(),
+        initialize_timeout: Duration::from_secs(1),
+        semantic_tokens: false,
+        folding_ranges: false,
+    }));
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, handle) = EditorView::new(cfg, theme);
+    let mut terminal = test_terminal();
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = test_component_context(&app_theme);
+    let area = Rect::new(0, 0, 80, 10);
+
+    terminal
+        .draw(|f| view.draw(f, area, ctx))
+        .expect("initial draw");
+    assert!(view.handle_editor_action(EditorAction::LspRequestHover));
+    handle.hover_popup.set(Some(HoverPopupModel {
+        rect: Rect::new(2, 2, 16, 3),
+        anchor: Position::new(0, 0),
+        contents: LspHoverContents::PlainText(vec!["stale hover".to_string()]),
+    }));
+
+    wait_for_hover_popup_to_clear(&mut terminal, &mut view, &handle, area, ctx);
+}
+
 fn mock_lsp_editor(
     document_uri: &str,
     text: &str,
@@ -1835,6 +1974,26 @@ fn wait_for_signature_help_popup_to_clear(
     }
 }
 
+fn wait_for_hover_popup_to_clear(
+    terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
+    view: &mut EditorView,
+    handle: &EditorViewHandle,
+    area: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        terminal.draw(|f| view.draw(f, area, ctx)).expect("draw");
+        if handle.hover_popup.get().is_none() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for hover popup to clear");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn wait_for_code_action_popup(
     terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>,
     view: &mut EditorView,
@@ -1853,6 +2012,79 @@ fn wait_for_code_action_popup(
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+struct MockLspProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    next_id: u64,
+}
+
+impl MockLspProcess {
+    fn spawn() -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_mock_lsp_server"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn mock LSP server");
+        let stdin = child.stdin.take().expect("mock LSP stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("mock LSP stdout"));
+        Self {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        }
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        editor_core_lsp::write_lsp_message(
+            &mut self.stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params,
+            }),
+        )
+        .expect("write mock LSP request");
+        self.stdin.flush().expect("flush mock LSP request");
+
+        loop {
+            let msg = editor_core_lsp::read_lsp_message(&mut self.stdout)
+                .expect("read mock LSP response")
+                .expect("mock LSP exited before response");
+            if msg.get("id").and_then(Value::as_u64) == Some(id) {
+                return msg;
+            }
+        }
+    }
+}
+
+impl Drop for MockLspProcess {
+    fn drop(&mut self) {
+        let _ = editor_core_lsp::write_lsp_message(
+            &mut self.stdin,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+            }),
+        );
+        let _ = self.stdin.flush();
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+fn text_document_params(uri: &str) -> Value {
+    json!({ "textDocument": { "uri": uri } })
 }
 
 fn wait_for_rename_popup(
