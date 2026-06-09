@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -373,9 +374,7 @@ impl ExplorerWindowView {
                 {
                     return Ok(old_path);
                 }
-                if new_path.exists() {
-                    return Err(format!("target already exists: {}", new_path.display()));
-                }
+                ensure_target_available(&new_path)?;
                 fs::rename(&old_path, &new_path).map_err(|err| format!("rename failed: {err}"))?;
                 Ok(new_path)
             }
@@ -389,9 +388,7 @@ impl ExplorerWindowView {
                     .cloned()
                     .ok_or_else(|| "new item parent is no longer available".to_string())?;
                 let target = parent.join(name);
-                if target.exists() {
-                    return Err(format!("target already exists: {}", target.display()));
-                }
+                ensure_target_available(&target)?;
                 match commit.kind {
                     FileTreeInlineEditKind::NewFile => {
                         OpenOptions::new()
@@ -608,6 +605,17 @@ fn validate_file_name(raw: &str) -> Result<&str, String> {
     match (components.next(), components.next()) {
         (Some(Component::Normal(value)), None) if value == OsStr::new(name) => Ok(name),
         _ => Err("file name must be a single path segment".to_string()),
+    }
+}
+
+fn ensure_target_available(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(format!("target already exists: {}", path.display())),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!(
+            "target is not accessible: {}: {err}",
+            path.display()
+        )),
     }
 }
 

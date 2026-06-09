@@ -102,7 +102,7 @@
 | T22 | DONE | [DONE] F-FT FileTree 节点模型、git status 样式与多选 | TODO-2.md · 阶段四 |
 | R22 | DONE | [DONE] 审阅 T22 | TODO-2.md · 阶段四 |
 | T23 | DONE | [DONE] F-FT Context menu 与 inline new/rename | TODO-2.md · 阶段四 |
-| R23 | TODO | 审阅 T23 | TODO-2.md · 阶段四 |
+| R23 | DONE | [DONE] 审阅 T23 | TODO-2.md · 阶段四 |
 | T24 | TODO | F-FT Drag move、剪贴板与 Git status 刷新 | TODO-2.md · 阶段四 |
 | R24 | TODO | 审阅 T24 | TODO-2.md · 阶段四 |
 | T25 | TODO | Auto-pairs / auto-indent 改用 editor-core 原语 | TODO-2.md · 阶段五 |

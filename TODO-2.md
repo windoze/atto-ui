@@ -1589,12 +1589,18 @@
 - 新增 `crates/atto-editor-app/tests/explorer_inline_edit.rs` 覆盖 inline rename commit/cancel、右键菜单新建文件/文件夹、目标已存在不覆盖、空名称与路径分隔符安全拒绝。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R23 — 审阅 T23
+### [DONE] R23 — 审阅 T23
 
 审阅 T23 改动：
 - 确认文件名为空、含路径分隔符、目标已存在时安全拒绝。
 - 确认 rename/new 后 id/path maps 刷新。
 - 确认右键菜单不会误触发左键 selection/open。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T23 的 inline new/rename 与 Explorer 右键菜单路径，确认空文件名、路径分隔符和普通已存在目标均通过状态消息拒绝，且失败时不覆盖已有文件。
+- 发现并修复现有目标检测缺口：`Path::exists()` 会漏掉 dangling symlink，可能让 rename 覆盖该目录项；现在 rename/new 统一用 `symlink_metadata` 检测目标目录项存在性，dangling symlink 也会安全拒绝。
+- 新增回归测试覆盖 dangling symlink rename 目标不被覆盖、rename/new commit 后刷新 id/path maps 并可打开新路径、右键菜单不会触发左键 selection/open。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [TODO] T24 — F-FT Drag move、剪贴板与 Git status 刷新
 

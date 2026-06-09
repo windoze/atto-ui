@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use atto_editor_app::actions::AppAction;
+use atto_editor_app::actions::{AppAction, OpenTarget};
 use atto_editor_app::explorer_window::{ExplorerWindowCommand, ExplorerWindowView};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
@@ -86,6 +86,22 @@ fn dispatch_text(wm: &mut WindowManager, bounds: Rect, theme: &Theme, text: &str
     }
 }
 
+fn assert_opened_path(actions: &EventQueue<AppAction>, expected: &Path) {
+    let drained = actions.drain();
+    let expected = fs::canonicalize(expected).unwrap_or_else(|_| expected.to_path_buf());
+    assert!(
+        drained.iter().any(|action| matches!(
+            action,
+            AppAction::OpenPath {
+                path,
+                target: OpenTarget::NewTab
+            } if fs::canonicalize(path).unwrap_or_else(|_| path.clone()) == expected
+        )),
+        "expected OpenPath for {}, got {drained:?}",
+        expected.display()
+    );
+}
+
 #[test]
 fn explorer_inline_rename_commits_to_filesystem() {
     let root = unique_temp_dir("explorer_inline_rename");
@@ -94,7 +110,7 @@ fn explorer_inline_rename_commits_to_filesystem() {
     let new_path = root.join("new.txt");
     fs::write(&old_path, "hello").expect("write file");
 
-    let (mut wm, _actions, bounds, theme) = explorer_fixture(root);
+    let (mut wm, actions, bounds, theme) = explorer_fixture(root);
     let (x, y) = file_row(&wm, 2);
     dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, y);
     dispatch_key(&mut wm, bounds, &theme, KeyCode::F(2));
@@ -102,7 +118,12 @@ fn explorer_inline_rename_commits_to_filesystem() {
     dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
 
     assert!(!old_path.exists(), "old path should be renamed away");
-    assert_eq!(fs::read_to_string(new_path).expect("renamed file"), "hello");
+    assert_eq!(
+        fs::read_to_string(&new_path).expect("renamed file"),
+        "hello"
+    );
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
+    assert_opened_path(&actions, &new_path);
 }
 
 #[test]
@@ -132,7 +153,7 @@ fn explorer_context_menu_creates_new_file_and_folder() {
     let root = unique_temp_dir("explorer_context_new");
     fs::create_dir_all(&root).expect("create temp dir");
 
-    let (mut wm, _actions, bounds, theme) = explorer_fixture(root.clone());
+    let (mut wm, actions, bounds, theme) = explorer_fixture(root.clone());
     let (x, y) = file_row(&wm, 1);
 
     dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Right, x, y);
@@ -140,7 +161,10 @@ fn explorer_context_menu_creates_new_file_and_folder() {
     dispatch_text(&mut wm, bounds, &theme, "created.txt");
     dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
 
-    assert!(root.join("created.txt").is_file());
+    let created_file = root.join("created.txt");
+    assert!(created_file.is_file());
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
+    assert_opened_path(&actions, &created_file);
 
     draw(&mut wm, bounds, &theme);
     dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Right, x, y);
@@ -178,6 +202,71 @@ fn explorer_context_new_file_does_not_overwrite_existing_target() {
         )),
         "expected no-overwrite status message, got {messages:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn explorer_inline_rename_rejects_dangling_symlink_target() {
+    let root = unique_temp_dir("explorer_inline_rename_dangling_symlink");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let old_path = root.join("old.txt");
+    let dangling_target = root.join("missing.txt");
+    let dangling_link = root.join("dangling.txt");
+    fs::write(&old_path, "hello").expect("write file");
+    std::os::unix::fs::symlink(&dangling_target, &dangling_link).expect("create symlink");
+
+    let (mut wm, actions, bounds, theme) = explorer_fixture(root);
+    let (x, y) = file_row(&wm, 2);
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, y);
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::F(2));
+    dispatch_text(&mut wm, bounds, &theme, "dangling.txt");
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
+
+    assert!(old_path.exists(), "rename must leave the source in place");
+    assert!(
+        fs::symlink_metadata(&dangling_link)
+            .expect("dangling symlink should remain")
+            .file_type()
+            .is_symlink(),
+        "rename must not replace the dangling symlink target"
+    );
+    let messages = actions.drain();
+    assert!(
+        messages.iter().any(|action| matches!(
+            action,
+            AppAction::ShowStatusMessage(message) if message.contains("target already exists")
+        )),
+        "expected dangling-symlink no-overwrite status message, got {messages:?}"
+    );
+}
+
+#[test]
+fn explorer_right_click_does_not_select_or_open_target() {
+    let root = unique_temp_dir("explorer_context_right_click_selection");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let first = root.join("a.txt");
+    let second = root.join("b.txt");
+    fs::write(&first, "a").expect("write first file");
+    fs::write(&second, "b").expect("write second file");
+
+    let (mut wm, actions, bounds, theme) = explorer_fixture(root);
+    let (x, first_y) = file_row(&wm, 2);
+    let (_, second_y) = file_row(&wm, 3);
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Left, x, first_y);
+    let _ = actions.drain();
+
+    dispatch_mouse(&mut wm, bounds, &theme, MouseButton::Right, x, second_y);
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::Esc);
+    let right_click_actions = actions.drain();
+    assert!(
+        !right_click_actions
+            .iter()
+            .any(|action| matches!(action, AppAction::OpenPath { .. })),
+        "right-click should not open a file, got {right_click_actions:?}"
+    );
+
+    dispatch_key(&mut wm, bounds, &theme, KeyCode::Enter);
+    assert_opened_path(&actions, &first);
 }
 
 #[test]
