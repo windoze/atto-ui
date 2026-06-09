@@ -27,6 +27,7 @@ function runtimeCommand(name, appPath) {
         '--allow-env',
         '--allow-run',
         '--allow-ffi',
+        '--allow-sys',
         appPath,
       ]
     default:
