@@ -18,6 +18,12 @@ struct ByteEdit {
     end: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PendingSaveAfterFormat {
+    Save,
+    SaveAs(PathBuf),
+}
+
 pub(super) struct TabState {
     pub(super) tab_id: u64,
     pub(super) path: Option<PathBuf>,
@@ -34,7 +40,7 @@ pub(super) struct TabState {
     commands: EventQueue<TabCommand>,
     workspace_buffer_id: Option<BufferId>,
     workspace_tab: Option<TabRef>,
-    pub(super) pending_save_after_format: bool,
+    pub(super) pending_save_after_format: Option<PendingSaveAfterFormat>,
 }
 
 impl EditorWindowView {
@@ -130,7 +136,7 @@ impl EditorWindowView {
             commands: tab_commands.clone(),
             workspace_buffer_id,
             workspace_tab,
-            pending_save_after_format: false,
+            pending_save_after_format: None,
         });
 
         if let (Some(tab_ref), Some(opened)) = (workspace_tab, workspace_open.as_ref()) {
@@ -230,11 +236,19 @@ impl EditorWindowView {
     }
 
     fn format_active(&mut self, save_after: bool) {
+        let pending_save = save_after.then_some(PendingSaveAfterFormat::Save);
+        self.format_active_with_pending_save(pending_save);
+    }
+
+    fn format_active_with_pending_save(&mut self, pending_save: Option<PendingSaveAfterFormat>) {
         let Some(active) = self.tab_window.active_tab() else {
             return;
         };
-        if save_after && let Some(tab) = self.tabs.get_mut(active) {
-            tab.pending_save_after_format = true;
+        let save_after = pending_save.is_some();
+        if let Some(pending_save) = pending_save
+            && let Some(tab) = self.tabs.get_mut(active)
+        {
+            tab.pending_save_after_format = Some(pending_save);
         }
         self.send_tab_command_to_active(TabCommand::FormatDocument { save_after });
     }
@@ -248,7 +262,7 @@ impl EditorWindowView {
             .get(active)
             .is_some_and(|tab| tab.format_on_save.get());
         if format_on_save {
-            self.format_active(true);
+            self.format_active_with_pending_save(Some(PendingSaveAfterFormat::Save));
             return;
         }
         if let Err(err) = self.save_tab_at(active) {
@@ -258,11 +272,27 @@ impl EditorWindowView {
         }
     }
 
-    fn save_as_active(&mut self, path: PathBuf) -> Result<()> {
+    fn save_as_active_with_format_on_save(&mut self, path: PathBuf) {
         let Some(active) = self.tab_window.active_tab() else {
-            return Ok(());
+            return;
         };
+        let path = Self::canonicalize_best_effort(&path);
+        let format_on_save = self
+            .tabs
+            .get(active)
+            .is_some_and(|tab| tab.format_on_save.get());
+        if format_on_save {
+            self.format_active_with_pending_save(Some(PendingSaveAfterFormat::SaveAs(path)));
+            return;
+        }
+        if let Err(err) = self.save_as_tab_at(active, path) {
+            self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                message: format!("Save As failed: {err:#}"),
+            });
+        }
+    }
 
+    pub(super) fn save_as_tab_at(&mut self, active: usize, path: PathBuf) -> Result<()> {
         let path = Self::canonicalize_best_effort(&path);
         {
             let Some(tab) = self.tabs.get_mut(active) else {
@@ -388,11 +418,7 @@ impl EditorWindowView {
                     self.save_active_with_format_on_save();
                 }
                 EditorWindowCommand::SaveAs(path) => {
-                    if let Err(err) = self.save_as_active(path) {
-                        self.events.push(atto_ui_editor::EditorEvent::LspMessage {
-                            message: format!("Save As failed: {err:#}"),
-                        });
-                    }
+                    self.save_as_active_with_format_on_save(path);
                 }
                 EditorWindowCommand::FormatActive => {
                     self.format_active(false);
@@ -622,7 +648,7 @@ mod tests {
         window.tabs[0].trim_trailing_whitespace_on_save.set(true);
         window.tabs[0].text.set("formatted line   \n".to_string());
         window.update_tab_titles();
-        window.tabs[0].pending_save_after_format = true;
+        window.tabs[0].pending_save_after_format = Some(PendingSaveAfterFormat::Save);
         window.tabs[0]
             .events
             .push(atto_ui_editor::EditorEvent::FormatFinished {
@@ -636,8 +662,68 @@ mod tests {
             fs::read_to_string(path).expect("read saved file"),
             "formatted line\n"
         );
-        assert!(!window.tabs[0].pending_save_after_format);
+        assert!(window.tabs[0].pending_save_after_format.is_none());
         assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn save_as_with_format_on_save_waits_for_format_then_trims_to_target() {
+        let (source_path, mut window) = open_test_file("save_as_format", "fn main() {}\n");
+        let target_path = source_path.with_file_name("formatted.rs");
+        let canonical_target = EditorWindowView::canonicalize_best_effort(&target_path);
+        window.tabs[0].format_on_save.set(true);
+        window.tabs[0].trim_trailing_whitespace_on_save.set(true);
+        window.tabs[0].text.set("before format   \n".to_string());
+        window.update_tab_titles();
+
+        window
+            .commands
+            .push(EditorWindowCommand::SaveAs(target_path.clone()));
+        window.handle_commands();
+
+        assert_eq!(
+            window.tabs[0].pending_save_after_format.as_ref(),
+            Some(&PendingSaveAfterFormat::SaveAs(canonical_target.clone()))
+        );
+        assert!(!target_path.exists());
+
+        window.tabs[0].text.set("formatted output   \n".to_string());
+        window.tabs[0]
+            .events
+            .push(atto_ui_editor::EditorEvent::FormatFinished {
+                success: true,
+                changed: true,
+            });
+
+        window.sync_editor_events();
+
+        assert_eq!(
+            fs::read_to_string(&target_path).expect("read save-as target"),
+            "formatted output\n"
+        );
+        assert_eq!(window.tabs[0].path.as_ref(), Some(&canonical_target));
+        assert_eq!(window.tabs[0].last_saved_text, "formatted output\n");
+        assert!(window.tabs[0].pending_save_after_format.is_none());
+        assert!(!window.tabs[0].is_dirty);
+    }
+
+    #[test]
+    fn failed_save_keeps_dirty_marker() {
+        let (path, mut window) = open_test_file("save_failure", "fn main() {}\n");
+        let failure_path = path.with_file_name("write_target_directory");
+        fs::create_dir_all(&failure_path).expect("create directory save target");
+        window.tabs[0].path = Some(failure_path);
+        window.tabs[0].trim_trailing_whitespace_on_save.set(true);
+        window.tabs[0].text.set("changed line   \n".to_string());
+        window.update_tab_titles();
+        assert!(window.tabs[0].is_dirty);
+
+        let result = window.save_tab_at(0);
+
+        assert!(result.is_err());
+        assert_eq!(window.tabs[0].text.get(), "changed line\n");
+        assert_eq!(window.tabs[0].last_saved_text, "fn main() {}\n");
+        assert!(window.tabs[0].is_dirty);
     }
 
     #[test]

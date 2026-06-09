@@ -13,9 +13,9 @@
 - Plan file initialized.
 
 ## Selected task
-- First incomplete task: T26 — Trim trailing whitespace 与 save 流程整理 (TODO-2.md · 阶段五).
-- Latest commit is an R25 note and does not introduce an unfinished issue directly relevant to T26.
-- Next step: read T26 details and inspect the editor save/formatting code paths.
+- First incomplete task for this invocation: R26 — 审阅 T26 (TODO-2.md · 阶段五).
+- Latest commit is `[T26] Add trim trailing whitespace on save`, directly relevant to R26.
+- Review scope: confirm trim does not delete line-internal spaces, final newline state is preserved, and failed saves do not clear dirty markers.
 
 ## T26 requirements
 - Implement trim-trailing-whitespace in editor save flow.
@@ -53,3 +53,12 @@
 - Added a focused unit test for the save-after-format event path trimming before write.
 - Re-running cargo fmt, clippy, and cargo test because code changed after the prior validation.
 - Revalidation passed: cargo fmt; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace --all-targets.
+
+## R26 review progress
+- Reviewed the T26 implementation and found two blocking gaps: Save As skipped format-on-save, and failed write dirty-marker behavior lacked regression coverage.
+- Replaced the boolean save-after-format state with a pending save action that carries either normal Save or a Save As target through formatter completion.
+- Routed Save As through the same format-on-save completion path as Save, preserving the selected target path.
+- Added regression coverage for Save As format-before-trim/write ordering and dirty marker preservation when the final write fails.
+- Validation passed after the fixes: `cargo fmt`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace --all-targets`.
+- No `tools/run_fixtures.py` fixture runner exists in this repository.
+- R26 marked `[DONE]` in `TODO.md` and `TODO-2.md`; `PLAN.md` unchanged because phase-level sequencing did not change.

@@ -13,6 +13,8 @@ mod document_tab;
 mod tabs;
 mod util;
 
+use tabs::PendingSaveAfterFormat;
+
 #[derive(Clone, Debug)]
 pub enum EditorWindowCommand {
     OpenFile(PathBuf),
@@ -250,11 +252,10 @@ impl EditorWindowView {
                     success,
                     changed: _,
                 } = &event
-                    && self.tabs[idx].pending_save_after_format
+                    && let Some(pending_save) = self.tabs[idx].pending_save_after_format.take()
                 {
-                    self.tabs[idx].pending_save_after_format = false;
                     if *success {
-                        save_after_format.push(idx);
+                        save_after_format.push((idx, pending_save));
                     } else {
                         self.events.push(atto_ui_editor::EditorEvent::LspMessage {
                             message: "Format-on-save failed; save skipped".to_string(),
@@ -265,11 +266,22 @@ impl EditorWindowView {
             }
         }
 
-        for idx in save_after_format {
-            if let Err(err) = self.save_tab_at(idx) {
-                self.events.push(atto_ui_editor::EditorEvent::LspMessage {
-                    message: format!("Save failed: {err:#}"),
-                });
+        for (idx, pending_save) in save_after_format {
+            match pending_save {
+                PendingSaveAfterFormat::Save => {
+                    if let Err(err) = self.save_tab_at(idx) {
+                        self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                            message: format!("Save failed: {err:#}"),
+                        });
+                    }
+                }
+                PendingSaveAfterFormat::SaveAs(path) => {
+                    if let Err(err) = self.save_as_tab_at(idx, path) {
+                        self.events.push(atto_ui_editor::EditorEvent::LspMessage {
+                            message: format!("Save As failed: {err:#}"),
+                        });
+                    }
+                }
             }
         }
     }

@@ -1772,12 +1772,18 @@
 - 新增 `crates/atto-editor-app/src/window/tabs.rs` 单元测试覆盖：默认不 trim、启用 trim 后写盘与 dirty 清除、format-on-save 完成后先 trim 再写盘、CRLF 保存保持 CRLF 且不强制添加 final newline、helper 不删除行内空格。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
-### [TODO] R26 — 审阅 T26
+### [DONE] R26 — 审阅 T26
 
 审阅 T26 改动：
 - 确认 trim 不删除行内空格。
 - 确认最后一行无 newline 的文件不会被强制添加 newline，除非已有策略。
 - 确认保存失败时 dirty marker 不被清除。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T26 的 trim helper、workspace edit 应用、Save/Save As 写盘路径与新增测试，确认 trim 仅删除行尾 ASCII 空格/制表符，不删除行内空格，且无 final newline 的文件不会被强制添加 newline。
+- 修复审阅中发现的 Save As format-on-save 顺序缺口：Save As 现在携带目标路径进入与 Save 相同的 format-on-save completion 路径，成功格式化后再执行 trim、写盘与 dirty marker 更新。
+- 新增回归测试覆盖 Save As 等待 format-on-save 完成后再 trim/write，以及最终 `std::fs::write` 失败时 dirty marker 与 `last_saved_text` 不被错误清除。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。仓库中未找到 `tools/run_fixtures.py`，无单独 fixture suite 可运行。
 
 ### [TODO] T27 — Jumplist / registers 设计占位与 WorkspaceEditorView 决策
 
