@@ -409,19 +409,21 @@ impl ::atto_ui::composable::Component for FileTree {
     }
 
     fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
-        let bindings = self.bindings.read();
         match name {
             "title" => {
+                let bindings = self.bindings.read();
                 let v = ComponentValueCodec::from_component_value(value, name)?;
                 bindings.title.set(v);
                 Ok(())
             }
             "enabled" => {
+                let bindings = self.bindings.read();
                 let v = ComponentValueCodec::from_component_value(value, name)?;
                 bindings.enabled.set(v);
                 Ok(())
             }
             "height" => {
+                let bindings = self.bindings.read();
                 let v = ComponentValueCodec::from_component_value(value, name)?;
                 bindings.height.set(v);
                 Ok(())
@@ -436,10 +438,14 @@ impl ::atto_ui::composable::Component for FileTree {
                         }
                     },
                 };
+                let mut bindings = self.bindings.write();
                 bindings.selection.set(next);
+                bindings.selections.set(next.into_iter().collect());
+                bindings.selection_anchor = next;
                 Ok(())
             }
             "nodes" | "roots" => {
+                let bindings = self.bindings.read();
                 let nodes = parse_nodes_value(&value)
                     .map_err(|_| ComponentError::invalid_value(name, "list"))?;
                 bindings.roots.set(nodes);
@@ -2234,6 +2240,46 @@ mod tests {
         assert!(content.line_text(&entries[0]).contains("M changed.rs"));
         assert!(content.line_text(&entries[1]).contains("clean.rs"));
         assert!(!content.line_text(&entries[1]).contains("C clean.rs"));
+    }
+
+    #[test]
+    fn runtime_schema_keeps_legacy_file_tree_properties() {
+        let properties = file_tree_schema()
+            .properties
+            .into_iter()
+            .map(|prop| prop.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            properties,
+            vec!["title", "enabled", "height", "selection", "nodes"]
+        );
+    }
+
+    #[test]
+    fn runtime_selection_property_resets_multiselect_state() {
+        let roots = sample_tree(true);
+        let mut tree = FileTree::new("Files", roots, Binding::new(None));
+
+        assert_eq!(
+            tree.selected_ids(),
+            BTreeSet::from([FileTreeNodeId::new(1)])
+        );
+
+        tree.set_property("selection", ComponentValue::U64(6))
+            .expect("selection property should accept u64");
+
+        assert_eq!(tree.selected(), Some(FileTreeNodeId::new(6)));
+        assert_eq!(
+            tree.selected_ids(),
+            BTreeSet::from([FileTreeNodeId::new(6)])
+        );
+
+        tree.set_property("selection", ComponentValue::Null)
+            .expect("selection property should accept null");
+
+        assert_eq!(tree.selected(), None);
+        assert!(tree.selected_ids().is_empty());
     }
 
     #[test]

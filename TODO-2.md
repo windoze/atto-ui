@@ -1531,12 +1531,20 @@
 - 新增/更新测试覆盖 visible-row range selection、Clean 状态静默、workspace git status 注入、PTY git badge、Shift range 多选与 Ctrl toggle 多选。
 - 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
-### [TODO] R22 — 审阅 T22
+### [DONE] R22 — 审阅 T22
 
 审阅 T22 改动：
 - 确认多选不破坏 runtime property schema 兼容。
 - 确认 range selection 只在 visible rows 上操作，不选中 collapsed children。
 - 确认 git status None/Clean 样式不会制造噪声。
+
+**完成记录（2026-06-09）**：
+- 已审阅 T22 的 `FileTreeGitStatus` / node map 解析、multi-select bindings / anchor、visible row selection、git status badge/style、workspace git status 注入与 Explorer multi-select 暴露路径。
+- 发现并修复 runtime 兼容性回归：通过 legacy `selection` property 设置 primary selection 时，现在会同步重置 `selections` set 与 `selection_anchor`，避免旧 runtime 单选调用残留之前的多选状态。
+- 新增回归测试确认 `FileTree` runtime schema 仍保持 legacy property 列表 `title/enabled/height/selection/nodes`，且 `selection` property 的 u64/null 更新保持单选兼容语义。
+- 确认 range selection 由 `build_visible_entries(...)` 结果和 `visible_range_selection(...)` 计算，collapsed children 不会进入 selection set；既有单元测试覆盖 collapsed `main.rs` / `logo.png` 不被选中。
+- 确认 git status `None` 和 `Clean` 都不会产生 badge 文本或调用 Clean 样式渲染路径；既有测试覆盖 Clean 节点不显示 `C` 噪声。
+- 验证通过：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ### [TODO] T23 — F-FT Context menu 与 inline new/rename
 
