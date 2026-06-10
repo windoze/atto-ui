@@ -1,6 +1,6 @@
 // Focus management helpers for WindowManager.
 
-use super::{WindowId, WindowManager, WindowState, chrome, docking};
+use super::{WindowId, WindowKind, WindowManager, WindowState, chrome, docking};
 
 impl WindowManager {
     pub fn has_active_modal(&self) -> bool {
@@ -58,6 +58,81 @@ impl WindowManager {
         self.focused = Some(next);
         if !is_docked {
             self.bring_to_front(next);
+        }
+    }
+
+    pub fn focus_previous(&mut self) {
+        if self.active_modal_id().is_some() {
+            return;
+        }
+        let ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| w.kind.is_focusable() && w.state.get() != WindowState::Minimized)
+            .map(|w| w.id)
+            .collect();
+        if ids.is_empty() {
+            self.focused = None;
+            return;
+        }
+        let current = self.focused;
+        let prev = match current.and_then(|c| ids.iter().position(|id| *id == c)) {
+            Some(idx) => ids[(idx + ids.len() - 1) % ids.len()],
+            None => ids[ids.len() - 1],
+        };
+        let keep_auto_hide = self
+            .window(prev)
+            .is_some_and(docking::window_is_auto_hide_dock)
+            .then_some(prev);
+        let is_docked = self.window(prev).is_some_and(|w| w.dock.get().is_some());
+        self.hide_auto_hide_docks_except(keep_auto_hide);
+        self.focused = Some(prev);
+        if !is_docked {
+            self.bring_to_front(prev);
+        }
+    }
+
+    /// Minimize every plain window that allows minimizing.
+    pub fn minimize_all(&mut self) {
+        let ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| matches!(w.kind, WindowKind::Normal))
+            .map(|w| w.id)
+            .collect();
+        for id in ids {
+            self.minimize_window(id);
+        }
+    }
+
+    /// Restore every minimized window to its normal state.
+    pub fn restore_all(&mut self) {
+        let ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| w.state.get() == WindowState::Minimized)
+            .map(|w| w.id)
+            .collect();
+        for id in ids {
+            if let Some(w) = self.window_mut(id) {
+                w.state.set(WindowState::Normal);
+            }
+        }
+        if self.focused.is_none() {
+            self.focused = self.topmost_focusable_id();
+        }
+    }
+
+    /// Request close on every plain window (honors per-window close hooks).
+    pub fn close_all(&mut self) {
+        let ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|w| matches!(w.kind, WindowKind::Normal))
+            .map(|w| w.id)
+            .collect();
+        for id in ids {
+            self.request_close(id);
         }
     }
 

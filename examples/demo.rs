@@ -14,7 +14,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec, WindowMenuOp};
 use atto_ui::composable::{
     Align, Anchor, AnchorPlacement, Component, ComponentContext, EdgeInsets, EventOutcome,
     EventResult, Grid, HStack, LayoutParams, ScrollContainer, ScrollContainerHost, ScrollContent,
@@ -1543,9 +1543,6 @@ enum DemoAction {
     OpenWidgetStatesDemo,
     OpenLoadingWidgetsDemo,
     OpenMarkdownDemo,
-    MinimizeFocused,
-    ToggleMaximizeFocused,
-    CloseFocused,
     OpenAboutModal,
     SetTheme(DemoTheme),
 }
@@ -1850,21 +1847,15 @@ fn build_menu(actions: EventQueue<DemoAction>) -> MenuBar {
                     move || actions.push(DemoAction::OpenMarkdownDemo)
                 })
                 .shortcut("r"),
-                MenuItem::action("Minimize", {
-                    let actions = actions.clone();
-                    move || actions.push(DemoAction::MinimizeFocused)
-                })
-                .shortcut("m"),
-                MenuItem::action("Maximize", {
-                    let actions = actions.clone();
-                    move || actions.push(DemoAction::ToggleMaximizeFocused)
-                })
-                .shortcut("x"),
-                MenuItem::action("Close", {
-                    let actions = actions.clone();
-                    move || actions.push(DemoAction::CloseFocused)
-                })
-                .shortcut("c"),
+                // Standard window operations: these carry predefined ids and run
+                // natively (no callback wiring), acting on the focused window.
+                MenuItem::window_op(WindowMenuOp::Cascade, "Cascade"),
+                MenuItem::window_op(WindowMenuOp::Tile, "Tile"),
+                MenuItem::window_op(WindowMenuOp::MinimizeAll, "Minimize all"),
+                MenuItem::window_op(WindowMenuOp::RestoreAll, "Restore all"),
+                MenuItem::window_op(WindowMenuOp::MinimizeFocused, "Minimize").shortcut("m"),
+                MenuItem::window_op(WindowMenuOp::MaximizeFocused, "Maximize").shortcut("x"),
+                MenuItem::window_op(WindowMenuOp::CloseFocused, "Close").shortcut("c"),
             ],
         ),
         MenuSpec::new(
@@ -1968,17 +1959,6 @@ fn run(
                 }
                 DemoAction::OpenMarkdownDemo => {
                     open_markdown_demo(desktop, screen, markdown_demo_window_id)?;
-                }
-                DemoAction::MinimizeFocused => desktop.wm.minimize_focused(),
-                DemoAction::ToggleMaximizeFocused => {
-                    let screen: Rect = terminal.size()?.into();
-                    let work = Desktop::layout(screen).work_area;
-                    desktop.wm.toggle_maximize_focused(work);
-                }
-                DemoAction::CloseFocused => {
-                    if let Some(id) = desktop.wm.focused() {
-                        desktop.wm.request_close(id);
-                    }
                 }
                 DemoAction::OpenAboutModal => open_about_modal(desktop, screen)?,
                 DemoAction::SetTheme(theme) => {

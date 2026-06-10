@@ -31,6 +31,29 @@ export declare class AppHost {
   restoreWindow(windowId: string): boolean
   /** Toggle maximize for a window by handle. Returns true when the state changed. */
   maximizeWindow(windowId: string): boolean
+  /** Cascade all arrangeable windows diagonally across the work area. */
+  cascadeWindows(): void
+  /** Tile all arrangeable windows into a grid filling the work area. */
+  tileWindows(): void
+  /**
+   * Minimize every plain window. Patches the baseline so the change is not
+   * echoed back through `drain_window_events`.
+   */
+  minimizeAllWindows(): void
+  /**
+   * Restore every minimized window. Patches the baseline so the change is not
+   * echoed back through `drain_window_events`.
+   */
+  restoreAllWindows(): void
+  /**
+   * Close every plain window. Closed handles are released lazily via
+   * `drain_window_events`.
+   */
+  closeAllWindows(): void
+  /** Focus the next focusable window in z-order. */
+  focusNextWindow(): void
+  /** Focus the previous focusable window in z-order. */
+  focusPreviousWindow(): void
   /**
    * Drain window lifecycle events (close/minimize/maximize/restore) that
    * originated from user interaction inside the TUI. Returns `[]` when nothing

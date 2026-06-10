@@ -2150,3 +2150,149 @@ fn window_manager_apply_tree_ops_updates_dynamic_root() {
         Some(&ComponentValue::String("bye".into()))
     );
 }
+
+fn normal_window(title: &str, rect: Rect) -> Window {
+    Window::new(WindowKind::Normal, title, rect, Box::new(DummyView))
+}
+
+#[test]
+fn cascade_offsets_windows_and_keeps_them_in_bounds() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let ids: Vec<_> = (0..3)
+        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(40, 10, 10, 5)), bounds))
+        .collect();
+
+    wm.cascade(bounds);
+
+    let rects: Vec<Rect> = ids
+        .iter()
+        .map(|id| wm.window(*id).expect("window").rect.get())
+        .collect();
+    // Each successive window is offset diagonally from the previous.
+    assert_eq!(rects[0].x, bounds.x);
+    assert_eq!(rects[0].y, bounds.y);
+    assert!(rects[1].x > rects[0].x && rects[1].y > rects[0].y);
+    assert!(rects[2].x > rects[1].x && rects[2].y > rects[1].y);
+    // Everything stays inside the work area.
+    for r in &rects {
+        assert!(r.x >= bounds.x && r.y >= bounds.y);
+        assert!(r.x + r.width <= bounds.x + bounds.width);
+        assert!(r.y + r.height <= bounds.y + bounds.height);
+    }
+}
+
+#[test]
+fn cascade_un_maximizes_before_arranging() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(normal_window("Max", Rect::new(5, 5, 20, 8)), bounds);
+    wm.maximize_window(id, bounds);
+    assert_eq!(wm.window(id).expect("window").state.get(), WindowState::Maximized);
+
+    wm.cascade(bounds);
+    assert_eq!(wm.window(id).expect("window").state.get(), WindowState::Normal);
+}
+
+#[test]
+fn tile_partitions_work_area_into_a_grid() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let ids: Vec<_> = (0..4)
+        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(0, 0, 10, 5)), bounds))
+        .collect();
+
+    wm.tile(bounds);
+
+    let rects: Vec<Rect> = ids
+        .iter()
+        .map(|id| wm.window(*id).expect("window").rect.get())
+        .collect();
+    // 4 windows tile into a 2x2 grid: two distinct columns and two distinct rows.
+    let xs: std::collections::BTreeSet<u16> = rects.iter().map(|r| r.x).collect();
+    let ys: std::collections::BTreeSet<u16> = rects.iter().map(|r| r.y).collect();
+    assert_eq!(xs.len(), 2);
+    assert_eq!(ys.len(), 2);
+    for r in &rects {
+        assert!(r.x + r.width <= bounds.x + bounds.width);
+        assert!(r.y + r.height <= bounds.y + bounds.height);
+    }
+}
+
+#[test]
+fn tile_respects_window_minimum_size_after_positioning() {
+    // A single window with a large min size tiled into a small work area must keep
+    // its minimum size (best-effort resize) while staying within bounds.
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Big",
+            Rect::new(2, 2, 10, 5),
+            Box::new(MinSizeView { min: (40, 14) }),
+        ),
+        bounds,
+    );
+
+    wm.tile(bounds);
+
+    let rect = wm.window(id).expect("window").rect.get();
+    // Border chrome adds 1 cell per side on top of the view minimum.
+    assert!(rect.width >= 42, "width {} should not break min size", rect.width);
+    assert!(rect.height >= 16, "height {} should not break min size", rect.height);
+    assert!(rect.x + rect.width <= bounds.x + bounds.width);
+    assert!(rect.y + rect.height <= bounds.y + bounds.height);
+}
+
+#[test]
+fn minimize_all_then_restore_all_round_trips_state() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let ids: Vec<_> = (0..3)
+        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)), bounds))
+        .collect();
+
+    wm.minimize_all();
+    for id in &ids {
+        assert_eq!(wm.window(*id).expect("window").state.get(), WindowState::Minimized);
+    }
+
+    wm.restore_all();
+    for id in &ids {
+        assert_eq!(wm.window(*id).expect("window").state.get(), WindowState::Normal);
+    }
+}
+
+#[test]
+fn close_all_removes_every_plain_window() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    for i in 0..3 {
+        wm.add_window(normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)), bounds);
+    }
+    assert_eq!(wm.windows().len(), 3);
+
+    wm.close_all();
+    assert_eq!(wm.windows().len(), 0);
+}
+
+#[test]
+fn focus_previous_steps_back_and_inverts_focus_next() {
+    let bounds = Rect::new(0, 1, 80, 22);
+    let mut wm = WindowManager::new();
+    let _id0 = wm.add_window(normal_window("W0", Rect::new(2, 2, 20, 6)), bounds);
+    let id1 = wm.add_window(normal_window("W1", Rect::new(24, 2, 20, 6)), bounds);
+    let id2 = wm.add_window(normal_window("W2", Rect::new(46, 2, 20, 6)), bounds);
+
+    // Newest window is focused on add; stepping back selects the one beneath it.
+    assert_eq!(wm.focused(), Some(id2));
+    wm.focus_previous();
+    assert_eq!(wm.focused(), Some(id1));
+
+    // focus_previous undoes a focus_next (the pair round-trips focus).
+    let before_pair = wm.focused();
+    wm.focus_next();
+    wm.focus_previous();
+    assert_eq!(wm.focused(), before_pair);
+}

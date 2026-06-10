@@ -47,12 +47,16 @@ export {
   MINIMIZED_WINDOWS_MENU_ID,
   StatusBar,
   Window,
+  WindowOpMenuItem,
+  WINDOW_OP_MENU_IDS,
   type DesktopProps,
   type MenuBarProps,
   type MenuItemProps,
   type MenuProps,
   type MinimizedWindowsMenuProps,
   type StatusBarProps,
+  type WindowMenuOp,
+  type WindowOpMenuItemProps,
   type WindowProps,
 } from './desktop'
 

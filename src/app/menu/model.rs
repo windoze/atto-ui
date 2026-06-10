@@ -143,11 +143,30 @@ pub(super) struct MenuState {
     pub(super) stack: Vec<usize>,
 }
 
+/// Standard window-management operations bound to predefined menu item ids.
+/// A menu item carrying one of the `atto_ui:window_*` ids triggers the matching
+/// operation natively when activated; user-defined callbacks are not invoked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowMenuOp {
+    Cascade,
+    Tile,
+    MinimizeFocused,
+    MaximizeFocused,
+    RestoreFocused,
+    CloseFocused,
+    FocusNext,
+    FocusPrevious,
+    MinimizeAll,
+    RestoreAll,
+    CloseAll,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     None,
     Closed,
     RestoreWindow(WindowId),
+    WindowOp(WindowMenuOp),
 }
 
 #[derive(Clone, Default)]

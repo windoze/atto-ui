@@ -3,7 +3,8 @@
 use ratatui::layout::Rect;
 
 use super::{
-    ResizeCorner, Window, WindowId, WindowManager, WindowMinSizeMode, WindowState, chrome,
+    ResizeCorner, Window, WindowId, WindowKind, WindowManager, WindowMinSizeMode, WindowState,
+    chrome,
 };
 
 impl WindowManager {
@@ -121,6 +122,107 @@ impl WindowManager {
         let before = self.window(id).map(|w| w.state.get());
         self.toggle_maximize(id, bounds);
         self.window(id).map(|w| w.state.get()) != before
+    }
+
+    /// Ids of windows eligible for cascade/tile arrangement, in back-to-front z-order.
+    /// Only plain, non-docked, non-minimized windows participate.
+    pub(super) fn arrangeable_window_ids(&self) -> Vec<WindowId> {
+        self.windows
+            .iter()
+            .filter(|w| {
+                matches!(w.kind, WindowKind::Normal)
+                    && w.dock.get().is_none()
+                    && w.state.get() != WindowState::Minimized
+            })
+            .map(|w| w.id)
+            .collect()
+    }
+
+    /// Position a window's top-left first, then best-effort apply the desired size
+    /// without ever shrinking below the window's enforced minimum size.
+    fn arrange_window(&mut self, id: WindowId, target: Rect, bounds: Rect) {
+        let Some(w) = self.window_mut(id) else { return };
+        // Drop any maximized/restore state so the explicit rect takes effect.
+        if w.state.get() != WindowState::Normal {
+            w.state.set(WindowState::Normal);
+        }
+        w.restore_rect = None;
+        let min_size = window_enforced_min_size(w);
+        w.rect.set(normalize_rect(target, bounds, min_size));
+    }
+
+    /// Cascade all arrangeable windows diagonally from the work area's top-left.
+    pub fn cascade(&mut self, bounds: Rect) {
+        let bounds = self.effective_work_area(bounds);
+        if bounds.width == 0 || bounds.height == 0 {
+            return;
+        }
+        let ids = self.arrangeable_window_ids();
+        if ids.is_empty() {
+            return;
+        }
+
+        let (dx, dy) = (2u16, 1u16);
+        let target_w = ((bounds.width as u32 * 3 / 4) as u16).max(1);
+        let target_h = ((bounds.height as u32 * 3 / 4) as u16).max(1);
+        let max_step_x = bounds.width.saturating_sub(target_w) / dx;
+        let max_step_y = bounds.height.saturating_sub(target_h) / dy;
+        let max_steps = max_step_x.min(max_step_y).max(1);
+
+        for (i, id) in ids.into_iter().enumerate() {
+            let step = (i as u16) % (max_steps + 1);
+            let target = Rect {
+                x: bounds.x.saturating_add(step * dx),
+                y: bounds.y.saturating_add(step * dy),
+                width: target_w,
+                height: target_h,
+            };
+            self.arrange_window(id, target, bounds);
+        }
+    }
+
+    /// Tile all arrangeable windows into a near-square grid filling the work area.
+    pub fn tile(&mut self, bounds: Rect) {
+        let bounds = self.effective_work_area(bounds);
+        if bounds.width == 0 || bounds.height == 0 {
+            return;
+        }
+        let ids = self.arrangeable_window_ids();
+        let n = ids.len();
+        if n == 0 {
+            return;
+        }
+
+        let cols = (n as f64).sqrt().ceil() as usize;
+        let cols = cols.max(1);
+        let rows = n.div_ceil(cols);
+        let cell_w = bounds.width / cols as u16;
+        let cell_h = bounds.height / rows as u16;
+
+        for (i, id) in ids.into_iter().enumerate() {
+            let col = (i % cols) as u16;
+            let row = (i / cols) as u16;
+            let x = bounds.x.saturating_add(col * cell_w);
+            let y = bounds.y.saturating_add(row * cell_h);
+            // The last column/row absorbs the integer-division remainder.
+            let width = if col as usize == cols - 1 {
+                bounds.width.saturating_sub(col * cell_w)
+            } else {
+                cell_w
+            };
+            let height = if row as usize == rows - 1 {
+                bounds.height.saturating_sub(row * cell_h)
+            } else {
+                cell_h
+            };
+            let target = Rect {
+                x,
+                y,
+                width: width.max(1),
+                height: height.max(1),
+            };
+            self.arrange_window(id, target, bounds);
+        }
     }
 }
 

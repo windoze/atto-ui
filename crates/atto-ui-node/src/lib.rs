@@ -312,6 +312,64 @@ impl AppHost {
         Ok(changed)
     }
 
+    /// Cascade all arrangeable windows diagonally across the work area.
+    #[napi]
+    pub fn cascade_windows(&mut self) -> napi::Result<()> {
+        self.host.cascade_windows().map_err(error::anyhow_error)
+    }
+
+    /// Tile all arrangeable windows into a grid filling the work area.
+    #[napi]
+    pub fn tile_windows(&mut self) -> napi::Result<()> {
+        self.host.tile_windows().map_err(error::anyhow_error)
+    }
+
+    /// Minimize every plain window. Patches the baseline so the change is not
+    /// echoed back through `drain_window_events`.
+    #[napi]
+    pub fn minimize_all_windows(&mut self) {
+        self.host.minimize_all_windows();
+        self.sync_window_baseline();
+    }
+
+    /// Restore every minimized window. Patches the baseline so the change is not
+    /// echoed back through `drain_window_events`.
+    #[napi]
+    pub fn restore_all_windows(&mut self) {
+        self.host.restore_all_windows();
+        self.sync_window_baseline();
+    }
+
+    /// Close every plain window. Closed handles are released lazily via
+    /// `drain_window_events`.
+    #[napi]
+    pub fn close_all_windows(&mut self) {
+        self.host.close_all_windows();
+    }
+
+    /// Focus the next focusable window in z-order.
+    #[napi]
+    pub fn focus_next_window(&mut self) {
+        self.host.focus_next_window();
+    }
+
+    /// Focus the previous focusable window in z-order.
+    #[napi]
+    pub fn focus_previous_window(&mut self) {
+        self.host.focus_previous_window();
+    }
+
+    /// Re-snapshot the window-state baseline from the current window list so that
+    /// JS-initiated batch mutations are not re-emitted by `drain_window_events`.
+    fn sync_window_baseline(&mut self) {
+        self.window_baseline = self
+            .host
+            .list_windows()
+            .iter()
+            .map(|w| (w.id, w.state))
+            .collect();
+    }
+
     /// Drain window lifecycle events (close/minimize/maximize/restore) that
     /// originated from user interaction inside the TUI. Returns `[]` when nothing
     /// changed. Events are derived by diffing the current window list against the

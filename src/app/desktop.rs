@@ -13,7 +13,7 @@ use crate::theme::Theme;
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode, WindowState};
 use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 
-use super::menu::{MenuAction, MenuBar};
+use super::menu::{MenuAction, MenuBar, WindowMenuOp};
 use super::status::{StatusBar, StatusSegment, StatusSegmentAlign};
 use super::toast::{Toast, ToastQueue};
 use super::{WhichKeyChoice, WhichKeyModel};
@@ -295,6 +295,38 @@ impl Desktop {
         self.wm.maximize_window(id, layout.work_area)
     }
 
+    /// Cascade all arrangeable windows diagonally across the work area.
+    pub fn cascade_windows(&mut self, screen: Rect) {
+        let layout = Self::layout(screen);
+        self.wm.cascade(layout.work_area);
+    }
+
+    /// Tile all arrangeable windows into a grid filling the work area.
+    pub fn tile_windows(&mut self, screen: Rect) {
+        let layout = Self::layout(screen);
+        self.wm.tile(layout.work_area);
+    }
+
+    pub fn minimize_all_windows(&mut self) {
+        self.wm.minimize_all();
+    }
+
+    pub fn restore_all_windows(&mut self) {
+        self.wm.restore_all();
+    }
+
+    pub fn close_all_windows(&mut self) {
+        self.wm.close_all();
+    }
+
+    pub fn focus_next_window(&mut self) {
+        self.wm.focus_next();
+    }
+
+    pub fn focus_previous_window(&mut self) {
+        self.wm.focus_previous();
+    }
+
     pub fn focus_window(&mut self, id: WindowId) -> bool {
         if self.wm.has_active_modal() {
             return self.wm.focused() == Some(id);
@@ -460,7 +492,7 @@ impl Desktop {
                 let action = self
                     .menu
                     .handle_event(&Event::Key(key_press(code, modifiers)));
-                self.apply_menu_action(action)
+                self.apply_menu_action(action, layout.work_area)
             }
             DefaultStatusCommand::WindowManagementKey(code, modifiers) => {
                 self.clear_which_key();
@@ -489,20 +521,48 @@ impl Desktop {
         }
     }
 
-    fn apply_menu_action(&mut self, action: MenuAction) -> DesktopAction {
+    fn apply_menu_action(&mut self, action: MenuAction, work_area: Rect) -> DesktopAction {
         match action {
             MenuAction::None => DesktopAction::None,
             MenuAction::Closed => {
-                self.mode = DesktopMode::Normal;
-                self.menu.deactivate();
+                self.exit_menu_mode();
                 DesktopAction::None
             }
             MenuAction::RestoreWindow(id) => {
                 self.wm.restore_window(id);
-                self.mode = DesktopMode::Normal;
-                self.menu.deactivate();
+                self.exit_menu_mode();
                 DesktopAction::None
             }
+            MenuAction::WindowOp(op) => {
+                self.apply_window_menu_op(op, work_area);
+                self.exit_menu_mode();
+                DesktopAction::None
+            }
+        }
+    }
+
+    fn exit_menu_mode(&mut self) {
+        self.mode = DesktopMode::Normal;
+        self.menu.deactivate();
+    }
+
+    fn apply_window_menu_op(&mut self, op: WindowMenuOp, work_area: Rect) {
+        match op {
+            WindowMenuOp::Cascade => self.wm.cascade(work_area),
+            WindowMenuOp::Tile => self.wm.tile(work_area),
+            WindowMenuOp::MinimizeFocused => self.wm.minimize_focused(),
+            WindowMenuOp::MaximizeFocused => self.wm.toggle_maximize_focused(work_area),
+            WindowMenuOp::RestoreFocused => self.wm.restore_focused(),
+            WindowMenuOp::CloseFocused => {
+                if let Some(id) = self.wm.focused() {
+                    self.wm.request_close(id);
+                }
+            }
+            WindowMenuOp::FocusNext => self.wm.focus_next(),
+            WindowMenuOp::FocusPrevious => self.wm.focus_previous(),
+            WindowMenuOp::MinimizeAll => self.wm.minimize_all(),
+            WindowMenuOp::RestoreAll => self.wm.restore_all(),
+            WindowMenuOp::CloseAll => self.wm.close_all(),
         }
     }
 
@@ -564,25 +624,15 @@ impl Desktop {
                 return self.handle_status_mouse(m, layout);
             }
             if layout.menu_bar.height > 0 && m.row == layout.menu_bar.y {
-                match self.menu.handle_mouse(m, layout.menu_bar) {
-                    MenuAction::None => {
-                        if self.menu.is_active() {
-                            self.mode = DesktopMode::Menu;
-                        }
-                        return DesktopEventResult::consumed();
+                let action = self.menu.handle_mouse(m, layout.menu_bar);
+                if action == MenuAction::None {
+                    if self.menu.is_active() {
+                        self.mode = DesktopMode::Menu;
                     }
-                    MenuAction::Closed => {
-                        self.mode = DesktopMode::Normal;
-                        self.menu.deactivate();
-                        return DesktopEventResult::consumed();
-                    }
-                    MenuAction::RestoreWindow(id) => {
-                        self.wm.restore_window(id);
-                        self.mode = DesktopMode::Normal;
-                        self.menu.deactivate();
-                        return DesktopEventResult::consumed();
-                    }
+                } else {
+                    self.apply_menu_action(action, layout.work_area);
                 }
+                return DesktopEventResult::consumed();
             }
         }
 
@@ -596,20 +646,7 @@ impl Desktop {
                 Event::Mouse(m) => self.menu.handle_mouse(m, layout.menu_bar),
                 _ => self.menu.handle_event(event),
             };
-            let action = match action {
-                MenuAction::None => DesktopAction::None,
-                MenuAction::Closed => {
-                    self.mode = DesktopMode::Normal;
-                    self.menu.deactivate();
-                    DesktopAction::None
-                }
-                MenuAction::RestoreWindow(id) => {
-                    self.wm.restore_window(id);
-                    self.mode = DesktopMode::Normal;
-                    self.menu.deactivate();
-                    DesktopAction::None
-                }
-            };
+            let action = self.apply_menu_action(action, layout.work_area);
             return DesktopEventResult {
                 outcome: EventOutcome::Consumed,
                 action,
@@ -1864,6 +1901,59 @@ mod tests {
 
         assert!(desktop.close_window(id2));
         assert!(!desktop.list_windows().iter().any(|w| w.id == id2));
+    }
+
+    #[test]
+    fn window_op_menu_item_minimizes_focused_window() {
+        use crate::app::{WINDOW_CASCADE_ID, WindowMenuOp, window_menu_op_id};
+
+        struct IgnoreAllView;
+        impl Component for IgnoreAllView {
+            fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+        }
+        impl EventHandling for IgnoreAllView {}
+        crate::impl_component_default_traits!(IgnoreAllView => Layout, Scrollable, FocusNav, DynamicTree);
+
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "Window",
+            vec![MenuItem::window_op(WindowMenuOp::MinimizeFocused, "Minimize").shortcut("m")],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "One",
+                Rect::new(2, 2, 20, 6),
+                Box::new(IgnoreAllView),
+            ),
+            screen,
+        );
+        assert_eq!(desktop.wm.focused(), Some(id));
+
+        // Open the Window menu and activate the predefined item via its mnemonic.
+        desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)),
+            screen,
+        );
+        desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT)),
+            screen,
+        );
+        desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        let state = desktop
+            .list_windows()
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.state);
+        assert_eq!(state, Some(WindowState::Minimized));
+        assert_eq!(desktop.mode, DesktopMode::Normal);
+        // Sanity: the predefined id round-trips through the op mapping.
+        assert_eq!(window_menu_op_id(WindowMenuOp::Cascade), WINDOW_CASCADE_ID);
     }
 
     #[test]

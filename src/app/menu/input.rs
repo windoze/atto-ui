@@ -11,7 +11,8 @@ use super::layout::{
     menu_title_width, menu_title_x, menu_titles_start_x, next_menu_title_x,
 };
 use super::minimized::minimized_window_id;
-use super::model::{MenuAction, MenuBar, MenuItem};
+use super::model::{MenuAction, MenuBar, MenuItem, WindowMenuOp};
+use super::window_ops::window_menu_op;
 
 fn char_eq_ignore_case(a: char, b: char) -> bool {
     a == b || a.to_lowercase().to_string() == b.to_lowercase().to_string()
@@ -143,6 +144,7 @@ impl MenuBar {
                 has_submenu: bool,
                 on_activate: Option<MenuCallback>,
                 restore_id: Option<WindowId>,
+                window_op: Option<WindowMenuOp>,
                 enabled: bool,
             },
         }
@@ -179,7 +181,7 @@ impl MenuBar {
                 continue;
             }
 
-            let (has_submenu, enabled, on_activate, restore_id) = {
+            let (has_submenu, enabled, on_activate, restore_id, window_op) = {
                 let item = &items[row];
                 let has_submenu = !item.submenu.is_empty();
                 let enabled = item.enabled.get();
@@ -189,7 +191,8 @@ impl MenuBar {
                     None
                 };
                 let restore_id = minimized_window_id(item);
-                (has_submenu, enabled, on_activate, restore_id)
+                let window_op = window_menu_op(item);
+                (has_submenu, enabled, on_activate, restore_id, window_op)
             };
 
             hit = Some(DropdownHit::Item {
@@ -198,6 +201,7 @@ impl MenuBar {
                 has_submenu,
                 on_activate,
                 restore_id,
+                window_op,
                 enabled,
             });
         }
@@ -210,6 +214,7 @@ impl MenuBar {
                 has_submenu,
                 on_activate,
                 restore_id,
+                window_op,
                 enabled,
             }) => {
                 self.state.stack.truncate(depth.saturating_add(1));
@@ -224,6 +229,10 @@ impl MenuBar {
                 }
 
                 if enabled {
+                    if let Some(op) = window_op {
+                        self.deactivate();
+                        return MenuAction::WindowOp(op);
+                    }
                     if let Some(cb) = on_activate {
                         cb();
                         self.deactivate();
@@ -326,6 +335,10 @@ impl MenuBar {
         if !item.submenu.is_empty() {
             return MenuAction::None;
         }
+        if let Some(op) = window_menu_op(item) {
+            self.deactivate();
+            return MenuAction::WindowOp(op);
+        }
         if let Some(cb) = &item.on_activate {
             cb();
             self.deactivate();
@@ -361,7 +374,7 @@ impl MenuBar {
 
         let depth = self.state.stack.len().saturating_sub(1);
 
-        let (hit_idx, has_submenu, on_activate, enabled, restore_id) = {
+        let (hit_idx, has_submenu, on_activate, enabled, restore_id, window_op) = {
             let Some(items) = self.selected_items() else {
                 return MenuAction::None;
             };
@@ -373,6 +386,7 @@ impl MenuBar {
                 Option<MenuCallback>,
                 bool,
                 Option<WindowId>,
+                Option<WindowMenuOp>,
             )> = None;
             for (idx, item) in items.iter().enumerate() {
                 let enabled = item.enabled.get();
@@ -389,15 +403,16 @@ impl MenuBar {
                         item.on_activate.clone(),
                         enabled,
                         minimized_window_id(item),
+                        window_menu_op(item),
                     ));
                     break;
                 }
             }
 
-            let Some((idx, has_submenu, on_activate, enabled, restore_id)) = hit else {
+            let Some((idx, has_submenu, on_activate, enabled, restore_id, window_op)) = hit else {
                 return MenuAction::None;
             };
-            (idx, has_submenu, on_activate, enabled, restore_id)
+            (idx, has_submenu, on_activate, enabled, restore_id, window_op)
         };
 
         if depth < self.state.stack.len() {
@@ -412,6 +427,10 @@ impl MenuBar {
         }
 
         if enabled {
+            if let Some(op) = window_op {
+                self.deactivate();
+                return MenuAction::WindowOp(op);
+            }
             if let Some(cb) = on_activate {
                 cb();
                 self.deactivate();
@@ -555,6 +574,40 @@ mod tests {
 
         assert_eq!(menu.handle_shortcut_char('x'), MenuAction::Closed);
         assert!(activated.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn window_op_item_activates_to_window_op_action() {
+        use super::super::model::WindowMenuOp;
+
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&Window",
+            vec![MenuItem::window_op(WindowMenuOp::Cascade, "Cascade")],
+        )]);
+        menu.activate();
+
+        // Keyboard Enter on the predefined item yields the native op, not a callback.
+        assert_eq!(
+            menu.handle_event(&Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))),
+            MenuAction::WindowOp(WindowMenuOp::Cascade)
+        );
+        assert!(!menu.state.active);
+    }
+
+    #[test]
+    fn window_op_item_activates_via_mnemonic_shortcut() {
+        use super::super::model::WindowMenuOp;
+
+        let mut menu = MenuBar::new(vec![MenuSpec::new(
+            "&Window",
+            vec![MenuItem::window_op(WindowMenuOp::Tile, "Tile").shortcut("t")],
+        )]);
+        menu.activate();
+
+        assert_eq!(
+            menu.handle_shortcut_char('t'),
+            MenuAction::WindowOp(WindowMenuOp::Tile)
+        );
     }
 
     #[test]

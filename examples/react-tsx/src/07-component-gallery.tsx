@@ -14,6 +14,9 @@
  *     calls handle.restoreWindow(...) to bring minimized windows back.
  *   - "View" → "Minimized windows" is a <MinimizedWindowsMenu>: the native
  *     runtime fills it with the minimized windows and restores the one picked.
+ *   - The "Window" menu uses <WindowOpMenuItem>: predefined-id items
+ *     (cascade/tile/minimize/maximize/…) that the runtime performs natively,
+ *     with no onClick wiring.
  *
  * Run interactively:  npm run gallery   (F10 menus, Ctrl+W window mode, Ctrl+Q quit)
  * Headless smoke:      ATTO_UI_EXAMPLE_HEADLESS=1 npm run gallery
@@ -45,6 +48,7 @@ import {
   TextBox,
   VStack,
   Window,
+  WindowOpMenuItem,
   type RenderHandle,
 } from '@atto-ui/react'
 
@@ -134,6 +138,20 @@ function App(): React.ReactElement {
         <Menu title="View">
           <MenuItem label="Restore all" onClick={restoreAll} />
           <MinimizedWindowsMenu />
+        </Menu>
+        <Menu title="Window">
+          {/*
+           * Standard window operations. These carry predefined ids and run
+           * natively in the runtime — no onClick wiring required. The
+           * minimize/maximize/close ops act on the focused window.
+           */}
+          <WindowOpMenuItem op="cascade" />
+          <WindowOpMenuItem op="tile" />
+          <WindowOpMenuItem op="minimizeAll" />
+          <WindowOpMenuItem op="restoreAll" />
+          <WindowOpMenuItem op="minimize" shortcut="m" />
+          <WindowOpMenuItem op="maximize" shortcut="x" />
+          <WindowOpMenuItem op="close" shortcut="c" />
         </Menu>
       </MenuBar>
 

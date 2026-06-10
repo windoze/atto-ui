@@ -106,6 +106,79 @@ export function MinimizedWindowsMenu({ label = 'Minimized windows' }: MinimizedW
   return createElement('menuItem', { id: MINIMIZED_WINDOWS_MENU_ID, label })
 }
 
+/**
+ * Standard window operations recognized by the native runtime. A `<MenuItem>`
+ * (or `<WindowOpMenuItem>`) carrying the matching id performs the operation
+ * natively when selected — no `onClick` wiring is required, and any callback is
+ * ignored. To customize behavior, use a plain `<MenuItem>` with your own id.
+ */
+export type WindowMenuOp =
+  | 'cascade'
+  | 'tile'
+  | 'minimize'
+  | 'maximize'
+  | 'restore'
+  | 'close'
+  | 'next'
+  | 'previous'
+  | 'minimizeAll'
+  | 'restoreAll'
+  | 'closeAll'
+
+/** Reserved menu item ids, keyed by operation. Mirrors the Rust `atto_ui:window_*` ids. */
+export const WINDOW_OP_MENU_IDS: Record<WindowMenuOp, string> = {
+  cascade: 'atto_ui:window_cascade',
+  tile: 'atto_ui:window_tile',
+  minimize: 'atto_ui:window_minimize',
+  maximize: 'atto_ui:window_maximize',
+  restore: 'atto_ui:window_restore',
+  close: 'atto_ui:window_close',
+  next: 'atto_ui:window_next',
+  previous: 'atto_ui:window_previous',
+  minimizeAll: 'atto_ui:window_minimize_all',
+  restoreAll: 'atto_ui:window_restore_all',
+  closeAll: 'atto_ui:window_close_all',
+}
+
+const WINDOW_OP_DEFAULT_LABELS: Record<WindowMenuOp, string> = {
+  cascade: 'Cascade',
+  tile: 'Tile',
+  minimize: 'Minimize',
+  maximize: 'Maximize',
+  restore: 'Restore',
+  close: 'Close',
+  next: 'Next Window',
+  previous: 'Previous Window',
+  minimizeAll: 'Minimize All',
+  restoreAll: 'Restore All',
+  closeAll: 'Close All',
+}
+
+export interface WindowOpMenuItemProps {
+  /** Which standard window operation this item performs. */
+  readonly op: WindowMenuOp
+  /** Optional label override. Defaults to a sensible name for the operation. */
+  readonly label?: string
+  /** Optional shortcut hint shown in the menu. */
+  readonly shortcut?: string | null
+  /** Whether the item is selectable. Defaults to `true`. */
+  readonly enabled?: boolean
+}
+
+/**
+ * Menu item bound to a standard window operation (cascade, tile, minimize,
+ * maximize, …). The native runtime runs the operation on selection; the
+ * `maximize`/`minimize` ops act on the focused window. Place under a `<Menu>`.
+ */
+export function WindowOpMenuItem({ op, label, shortcut, enabled }: WindowOpMenuItemProps): ReactElement {
+  return createElement('menuItem', {
+    id: WINDOW_OP_MENU_IDS[op],
+    label: label ?? WINDOW_OP_DEFAULT_LABELS[op],
+    shortcut,
+    enabled,
+  })
+}
+
 /** Virtual desktop child that replaces the native status bar text slot. */
 export function StatusBar({ left, right }: StatusBarProps): ReactElement {
   return createElement('statusBar', { left, right })

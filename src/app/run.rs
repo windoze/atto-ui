@@ -367,6 +367,38 @@ impl AppHost {
         Ok(self.desktop.maximize_window(id, screen))
     }
 
+    pub fn cascade_windows(&mut self) -> Result<()> {
+        let screen = self.screen()?;
+        self.desktop.cascade_windows(screen);
+        Ok(())
+    }
+
+    pub fn tile_windows(&mut self) -> Result<()> {
+        let screen = self.screen()?;
+        self.desktop.tile_windows(screen);
+        Ok(())
+    }
+
+    pub fn minimize_all_windows(&mut self) {
+        self.desktop.minimize_all_windows();
+    }
+
+    pub fn restore_all_windows(&mut self) {
+        self.desktop.restore_all_windows();
+    }
+
+    pub fn close_all_windows(&mut self) {
+        self.desktop.close_all_windows();
+    }
+
+    pub fn focus_next_window(&mut self) {
+        self.desktop.focus_next_window();
+    }
+
+    pub fn focus_previous_window(&mut self) {
+        self.desktop.focus_previous_window();
+    }
+
     pub fn list_windows(&self) -> Vec<WindowInfo> {
         self.desktop.list_windows()
     }
