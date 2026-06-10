@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 
+import type { LayoutProps } from './components'
 import type { AttoUiCallbackEvent, AttoUiEventHandler } from './events'
 
 type InlineKind = 'bold' | 'italic' | 'underline' | 'strike' | 'link'
@@ -39,7 +40,7 @@ interface InlineProps {
 
 export type LinkClickHandler = (event: AttoUiCallbackEvent) => void
 
-export interface TextProps {
+export interface TextProps extends LayoutProps {
   readonly children?: ReactNode
   readonly onLink?: AttoUiEventHandler
   readonly onLinkClick?: AttoUiEventHandler
@@ -50,7 +51,7 @@ export interface LinkProps extends InlineProps {
   readonly onClick?: LinkClickHandler
 }
 
-export interface MarkdownProps {
+export interface MarkdownProps extends LayoutProps {
   readonly children?: ReactNode
   readonly markdown?: string
   readonly onLink?: AttoUiEventHandler
@@ -84,6 +85,9 @@ export function Text(props: TextProps): ReactElement {
   if (onLink) {
     richTextProps.onLink = onLink
   }
+  if (props.layout) {
+    richTextProps.layout = props.layout
+  }
 
   return createElement(
     'richText',
@@ -109,6 +113,7 @@ export function Markdown(props: MarkdownProps): ReactElement {
     codeBlockMaxHeight,
     tableMaxHeight,
     onLink,
+    layout,
   } = props
   const viewerProps: Record<string, unknown> = {
     markdown: markdown ?? textContent(children),
@@ -120,6 +125,7 @@ export function Markdown(props: MarkdownProps): ReactElement {
   if (codeBlockMaxHeight !== undefined) viewerProps.code_block_max_height = codeBlockMaxHeight
   if (tableMaxHeight !== undefined) viewerProps.table_max_height = tableMaxHeight
   if (onLink !== undefined) viewerProps.onLink = onLink
+  if (layout !== undefined) viewerProps.layout = layout
 
   return createElement('markdownViewer', viewerProps)
 }

@@ -4,6 +4,7 @@ import type {
   ComponentSpec,
   ComponentSpecChild,
   ComponentValue,
+  LayoutSpec,
   MenuBarSpec,
   MenuItemSpec,
   Rect,
@@ -69,6 +70,8 @@ export interface HostInstance {
   lastTree: ComponentSpec | null
   /** Window lifecycle callbacks (onClose/onMinimize/…). Only set on Window instances. */
   windowLifecycle: WindowLifecycle
+  /** Per-child layout (size/margin/anchor) applied when this node is a stack/grid child. */
+  layout: LayoutSpec | null
 }
 
 export type WindowLifecycleKey = 'close' | 'minimize' | 'maximize' | 'restore'
@@ -190,7 +193,13 @@ export function createHostInstance(
     controlledText: isControlledTextProps(normalizedType, props),
     lastTree: null,
     windowLifecycle: isWindow ? extractWindowLifecycle(props) : {},
+    layout: extractLayout(props),
   }
+}
+
+function extractLayout(props: Readonly<Record<string, unknown>>): LayoutSpec | null {
+  const layout = props.layout
+  return layout !== null && typeof layout === 'object' ? (layout as LayoutSpec) : null
 }
 
 /** Represent raw React text as a TextSpan so RichText can merge adjacent spans in Rust. */
@@ -208,6 +217,7 @@ export function createHostTextInstance(container: HostContainer, text: string): 
     controlledText: false,
     lastTree: null,
     windowLifecycle: {},
+    layout: null,
   }
 }
 
@@ -402,10 +412,16 @@ export function toComponentSpec(instance: HostInstance): ComponentSpec {
     spec.events = events
   }
   if (instance.children.length > 0) {
-    spec.children = instance.children.map(toComponentSpec)
+    spec.children = instance.children.map(childToComponentSpec)
   }
 
   return spec
+}
+
+/** Lower a child to a ComponentSpecChild, wrapping it with its per-child layout when set. */
+function childToComponentSpec(instance: HostInstance): ComponentSpecChild {
+  const node = toComponentSpec(instance)
+  return instance.layout ? { node, layout: instance.layout } : node
 }
 
 /** Flush root replacement or incremental TreeOp mutations into the target atto-ui window. */
@@ -844,7 +860,7 @@ function enqueueChildInsert(
     op: 'insert_before',
     parent_id: parent.id,
     anchor_id: beforeChild?.id ?? null,
-    child: toComponentSpec(child),
+    child: childToComponentSpec(child),
   })
 }
 
@@ -1335,6 +1351,8 @@ function isStatusBarInstance(instance: HostInstance): boolean {
 
 function shouldSkipProp(name: string, value: unknown): boolean {
   if (name === 'children' || name === 'key' || name === 'ref') return true
+  // `layout` is lifted to the ComponentSpecChild wrapper, not a runtime prop.
+  if (name === 'layout') return true
   if (name.startsWith('__atto')) return true
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return true
   return /^on[A-Z]/.test(name)

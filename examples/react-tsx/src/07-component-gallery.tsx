@@ -184,7 +184,7 @@ function App(): React.ReactElement {
               items={['Apple', 'Banana', 'Cherry']}
               selectedIndex={fruit}
               onSelect={setFruit}
-              height={3}
+              layout={{ height: 'fill' }}
             />
             <Table
               headers={['Name', 'Qty']}
@@ -193,7 +193,7 @@ function App(): React.ReactElement {
                 ['Pear', '5'],
                 ['Plum', '2'],
               ]}
-              height={4}
+              layout={{ height: 'fill' }}
             />
           </VStack>
         </Window>
@@ -203,7 +203,7 @@ function App(): React.ReactElement {
         <Window title="Markdown" rect={WINDOWS[3].rect} {...windowChrome('markdown')}>
           <VStack padding={1}>
             <Label text="Markdown docs" />
-            <Markdown>{MARKDOWN}</Markdown>
+            <Markdown layout={{ height: 'fill' }}>{MARKDOWN}</Markdown>
           </VStack>
         </Window>
       )}
@@ -212,7 +212,7 @@ function App(): React.ReactElement {
         <Window title="Editor" rect={WINDOWS[4].rect} {...windowChrome('editor')}>
           <VStack padding={1}>
             <Label text="Rust source" />
-            <Editor value={CODE} languageId="rust" showLineNumbers />
+            <Editor value={CODE} languageId="rust" showLineNumbers layout={{ height: 'fill' }} />
           </VStack>
         </Window>
       )}

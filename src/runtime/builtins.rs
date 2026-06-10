@@ -1,7 +1,7 @@
 use crate::ComponentPropertySchema;
 use crate::composable::{
     Border, CommandPalette, Component, ComponentTag, Disclosure, DisclosureStatus, Divider,
-    DividerOrientation, EdgeInsets, Grid, HStack, Label, LayoutParams, Spacer, Splitter,
+    DividerOrientation, EdgeInsets, Grid, HStack, Label, LayoutParams, Size, Spacer, Splitter,
     SplitterOrientation, TabView, Text, TextArea, TextBox, TypeAhead, VStack, Visibility,
 };
 use crate::reactive::Binding;
@@ -640,12 +640,33 @@ fn register_stack<T: StackBuilder + Component + ComponentPropertySchema + 'stati
                 .layout
                 .as_ref()
                 .map(layout_from_spec)
-                .unwrap_or_default();
+                .unwrap_or_else(|| stack_child_default_layout(axis));
             stack.add_child_with_layout(view, layout);
         }
 
         Ok(wrap_with_id(spec, Box::new(stack)))
     });
+}
+
+/// Default layout for a declarative stack child without an explicit `layout`.
+///
+/// A child packs to its intrinsic size along the main axis (so labels/buttons
+/// take one line instead of an equal share of the stack) and fills the cross
+/// axis. An explicit `layout` (e.g. `fill`/`weight`) overrides this and lets a
+/// child flex to share the remaining space.
+fn stack_child_default_layout(axis: StackAxis) -> LayoutParams {
+    match axis {
+        StackAxis::Vertical => LayoutParams {
+            width: Size::Fill,
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+        StackAxis::Horizontal => LayoutParams {
+            width: Size::Content,
+            height: Size::Fill,
+            ..LayoutParams::default()
+        },
+    }
 }
 
 fn register_grid(registry: &mut ComponentRegistry<Box<dyn Component>>) {

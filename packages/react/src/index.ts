@@ -82,6 +82,7 @@ export {
   type EditorProps,
   type GridProps,
   type LabelProps,
+  type LayoutProps,
   type ListBoxHostProps,
   type ListBoxProps,
   type ProgressBarProps,
