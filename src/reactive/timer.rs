@@ -183,8 +183,17 @@ where
 /// Sets the global tick rate used when registering timers by `Duration`.
 pub fn set_global_tick_rate(tick_rate: Duration) {
     let nanos = tick_rate.as_nanos().min(u64::MAX as u128) as u64;
-    let nanos = nanos.max(1);
+    // A zero tick rate means the host polls without blocking; it does not mean
+    // "advance timers every nanosecond". Fall back to a 16ms granularity so
+    // duration-based timers (e.g. a spinner frame) resolve to a sensible tick
+    // count instead of tens of millions of ticks.
+    let nanos = if nanos == 0 { 16_000_000 } else { nanos };
     GLOBAL_TICK_RATE_NANOS.store(nanos, Ordering::Release);
+}
+
+/// The effective timer granularity in nanoseconds (never zero).
+pub fn global_tick_rate_nanos() -> u64 {
+    GLOBAL_TICK_RATE_NANOS.load(Ordering::Acquire).max(1)
 }
 
 /// Cancel a timer by handle. Returns true if the timer was removed or canceled.

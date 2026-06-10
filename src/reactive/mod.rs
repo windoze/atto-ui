@@ -12,6 +12,6 @@ pub use dirty::{DirtyFlag, DirtyObserver};
 pub use property::{Binding, Property};
 pub use queue::{EventQueue, drain_channel};
 pub use timer::{
-    TimerHandle, TimerWheel, cancel_timer, register_timer, register_timer_with_duration,
-    set_global_tick_rate, tick_global_timers,
+    TimerHandle, TimerWheel, cancel_timer, global_tick_rate_nanos, register_timer,
+    register_timer_with_duration, set_global_tick_rate, tick_global_timers,
 };

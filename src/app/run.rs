@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::cursor;
@@ -20,7 +20,11 @@ use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
 use crate::app::{Toast, ToastLevel};
 use crate::composable::EventOutcome;
 use crate::inspect::{DesktopInspector, DesktopSnapshot};
-use crate::reactive::{set_global_tick_rate, tick_global_timers};
+use crate::reactive::{global_tick_rate_nanos, set_global_tick_rate, tick_global_timers};
+
+/// Cap on how many timer ticks a single `step` may dispatch, so a long pause
+/// (e.g. the process was suspended) doesn't trigger a burst of catch-up ticks.
+const MAX_TIMER_CATCHUP_TICKS: u32 = 8;
 use crate::runtime::{ComponentValue, TreeError};
 use crate::task::TaskRegistry;
 use crate::{ComponentError, WindowId};
@@ -257,6 +261,11 @@ pub struct AppHost {
     task_registry: TaskRegistry,
     on_tick: Option<Box<TickCallBack>>,
     on_event: Option<Box<EventCallBack>>,
+    /// Wall-clock anchor for advancing global timers by elapsed time rather than
+    /// once per `step`. Drivers like the React tick loop call `step` far more
+    /// often than the tick rate, so a fixed one-tick-per-step would run timers
+    /// (e.g. a spinner) at the loop frequency instead of real time.
+    last_timer_instant: Option<Instant>,
 }
 
 impl AppHost {
@@ -275,6 +284,7 @@ impl AppHost {
             task_registry: TaskRegistry::new(),
             on_tick: None,
             on_event: None,
+            last_timer_instant: None,
         })
     }
 
@@ -292,6 +302,7 @@ impl AppHost {
             task_registry: TaskRegistry::new(),
             on_tick: None,
             on_event: None,
+            last_timer_instant: None,
         })
     }
 
@@ -421,10 +432,37 @@ impl AppHost {
         self.on_event = Some(Box::new(handler));
     }
 
+    /// Advance global timers by the real elapsed time since the previous step,
+    /// dispatching one tick per `tick_rate` of wall-clock time (capped). This
+    /// keeps duration-based timers running at real speed regardless of how often
+    /// the host driver calls `step`.
+    fn advance_global_timers(&mut self) {
+        let rate_nanos = if self.config.tick_rate.is_zero() {
+            global_tick_rate_nanos()
+        } else {
+            self.config.tick_rate.as_nanos().min(u64::MAX as u128) as u64
+        };
+        let rate = Duration::from_nanos(rate_nanos.max(1));
+        let now = Instant::now();
+        let prev = *self.last_timer_instant.get_or_insert(now);
+        let mut cursor = prev;
+        let mut ticks = 0u32;
+        while now.saturating_duration_since(cursor) >= rate && ticks < MAX_TIMER_CATCHUP_TICKS {
+            cursor += rate;
+            ticks += 1;
+        }
+        if ticks > 0 {
+            self.last_timer_instant = Some(cursor);
+            for _ in 0..ticks {
+                tick_global_timers();
+            }
+        }
+    }
+
     pub fn step(&mut self) -> Result<AppControl> {
         let screen = self.screen()?;
 
-        tick_global_timers();
+        self.advance_global_timers();
         if let Some(handler) = self.on_tick.as_mut()
             && handler(&mut self.desktop, screen)? == AppControl::Exit
         {
@@ -684,6 +722,44 @@ mod tests {
                 width: 22,
                 height: 4,
             })
+        );
+    }
+
+    #[test]
+    fn step_advances_timers_by_real_elapsed_time() {
+        use crate::reactive::{cancel_timer, register_timer_with_duration};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let fired = Arc::new(AtomicUsize::new(0));
+        let counter = fired.clone();
+        let handle = register_timer_with_duration(Duration::from_millis(20), move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            true
+        });
+
+        let screen = Rect::new(0, 0, 20, 5);
+        let mut host = AppHost::new_headless(screen, |_screen| {
+            Ok(Desktop::new(Theme::dark(), MenuBar::new(vec![])))
+        })
+        .expect("headless host");
+
+        // The first step only anchors the timer clock (no catch-up burst).
+        host.step().expect("step");
+        let baseline = fired.load(Ordering::SeqCst);
+
+        // After real time elapses, a single step dispatches the elapsed ticks, so
+        // the 20ms timer fires regardless of how often step is called. This is what
+        // keeps a spinner animating under the React tick loop (which calls step far
+        // more often than the tick rate).
+        std::thread::sleep(Duration::from_millis(120));
+        host.step().expect("step");
+        let after = fired.load(Ordering::SeqCst);
+
+        cancel_timer(handle);
+        assert!(
+            after > baseline,
+            "timer should fire after elapsed wall-clock time (baseline {baseline}, after {after})"
         );
     }
 
