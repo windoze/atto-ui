@@ -7,16 +7,15 @@
  *   Markdown, and Editor.
  *
  * Window lifecycle (the binding/React feature this demo exercises):
- *   - The "Windows" menu re-creates a window after it was closed.
+ *   - The "Demos" menu re-creates a window after it was closed.
  *   - Closing a window from the TUI titlebar fires <Window onClose>, which
- *     unmounts it; "Windows" → "Show X" mounts a fresh one.
- *   - Minimizing from the TUI fires <Window onMinimize>; "View" → "Restore all"
- *     calls handle.restoreWindow(...) to bring minimized windows back.
- *   - "View" → "Minimized windows" is a <MinimizedWindowsMenu>: the native
- *     runtime fills it with the minimized windows and restores the one picked.
+ *     unmounts it; "Demos" → "Show X" mounts a fresh one.
  *   - The "Window" menu uses <WindowOpMenuItem>: predefined-id items
  *     (cascade/tile/minimize/maximize/…) that the runtime performs natively,
- *     with no onClick wiring.
+ *     with no onClick wiring. Minimizing from the TUI fires <Window onMinimize>;
+ *     "Restore all" brings minimized windows back.
+ *   - "Window" → "Minimized windows" is a <MinimizedWindowsMenu>: the native
+ *     runtime fills it with the minimized windows and restores the one picked.
  *
  * Run interactively:  npm run gallery   (F10 menus, Ctrl+W window mode, Ctrl+Q quit)
  * Headless smoke:      ATTO_UI_EXAMPLE_HEADLESS=1 npm run gallery
@@ -49,7 +48,6 @@ import {
   VStack,
   Window,
   WindowOpMenuItem,
-  type RenderHandle,
 } from '@atto-ui/react'
 
 import { startDemo, waitFor, hasText } from './_runtime'
@@ -80,10 +78,6 @@ const CODE = `fn main() {
     }
 }`
 
-// Bridges the React tree to the AppHost (for restoreWindow). Assigned after
-// startDemo returns; the menu handlers run later, so it is always set by then.
-const handleRef: { current: RenderHandle | null } = { current: null }
-
 function App(): React.ReactElement {
   const [visible, setVisible] = useState<Record<WindowKey, boolean>>({
     controls: true,
@@ -113,14 +107,6 @@ function App(): React.ReactElement {
   const onMinimize = (key: WindowKey) => () => setLog(`minimized ${key}`)
   const onRestore = (key: WindowKey) => () => setLog(`restored ${key}`)
 
-  const restoreAll = () => {
-    const handle = handleRef.current
-    if (handle) {
-      for (const id of handle.windowIds()) handle.restoreWindow(id)
-    }
-    setLog('restored all')
-  }
-
   const windowChrome = (key: WindowKey) => ({
     onClose: onClose(key),
     onMinimize: onMinimize(key),
@@ -130,14 +116,10 @@ function App(): React.ReactElement {
   return (
     <>
       <MenuBar>
-        <Menu title="Windows">
+        <Menu title="Demos">
           {WINDOWS.map((w) => (
             <MenuItem key={w.key} label={`Show ${w.title}`} onClick={() => show(w.key)} />
           ))}
-        </Menu>
-        <Menu title="View">
-          <MenuItem label="Restore all" onClick={restoreAll} />
-          <MinimizedWindowsMenu />
         </Menu>
         <Menu title="Window">
           {/*
@@ -152,6 +134,7 @@ function App(): React.ReactElement {
           <WindowOpMenuItem op="minimize" shortcut="m" />
           <WindowOpMenuItem op="maximize" shortcut="x" />
           <WindowOpMenuItem op="close" shortcut="c" />
+          <MinimizedWindowsMenu />
         </Menu>
       </MenuBar>
 
@@ -244,7 +227,7 @@ function App(): React.ReactElement {
   )
 }
 
-const handle = startDemo(<App />, {
+startDemo(<App />, {
   singleWindow: false,
   idPrefix: 'gallery',
   cols: 80,
@@ -258,5 +241,3 @@ const handle = startDemo(<App />, {
     await waitFor(() => hasText(h, 'Rust source'), 'editor window')
   },
 })
-
-handleRef.current = handle
