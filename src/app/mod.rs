@@ -17,9 +17,9 @@ pub use keymap::{
 pub use keymap_popup::WhichKeyModel;
 pub use menu::{
     MenuAction, MenuBar, MenuItem, MenuSpec, WINDOW_CASCADE_ID, WINDOW_CLOSE_ALL_ID,
-    WINDOW_CLOSE_ID, WINDOW_MAXIMIZE_ID, WINDOW_MINIMIZE_ALL_ID, WINDOW_MINIMIZE_ID, WINDOW_NEXT_ID,
-    WINDOW_PREVIOUS_ID, WINDOW_RESTORE_ALL_ID, WINDOW_RESTORE_ID, WINDOW_TILE_ID, WindowMenuOp,
-    window_menu_op_from_id, window_menu_op_id,
+    WINDOW_CLOSE_ID, WINDOW_MAXIMIZE_ID, WINDOW_MINIMIZE_ALL_ID, WINDOW_MINIMIZE_ID,
+    WINDOW_NEXT_ID, WINDOW_PREVIOUS_ID, WINDOW_RESTORE_ALL_ID, WINDOW_RESTORE_ID, WINDOW_TILE_ID,
+    WindowMenuOp, window_menu_op_from_id, window_menu_op_id,
 };
 pub use run::{
     AppControl, AppHost, CrosstermAppConfig, CursorMode, run_crossterm_desktop,

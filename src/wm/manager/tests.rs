@@ -2160,7 +2160,12 @@ fn cascade_offsets_windows_and_keeps_them_in_bounds() {
     let bounds = Rect::new(0, 1, 80, 22);
     let mut wm = WindowManager::new();
     let ids: Vec<_> = (0..3)
-        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(40, 10, 10, 5)), bounds))
+        .map(|i| {
+            wm.add_window(
+                normal_window(&format!("W{i}"), Rect::new(40, 10, 10, 5)),
+                bounds,
+            )
+        })
         .collect();
 
     wm.cascade(bounds);
@@ -2188,10 +2193,16 @@ fn cascade_un_maximizes_before_arranging() {
     let mut wm = WindowManager::new();
     let id = wm.add_window(normal_window("Max", Rect::new(5, 5, 20, 8)), bounds);
     wm.maximize_window(id, bounds);
-    assert_eq!(wm.window(id).expect("window").state.get(), WindowState::Maximized);
+    assert_eq!(
+        wm.window(id).expect("window").state.get(),
+        WindowState::Maximized
+    );
 
     wm.cascade(bounds);
-    assert_eq!(wm.window(id).expect("window").state.get(), WindowState::Normal);
+    assert_eq!(
+        wm.window(id).expect("window").state.get(),
+        WindowState::Normal
+    );
 }
 
 #[test]
@@ -2199,7 +2210,12 @@ fn tile_partitions_work_area_into_a_grid() {
     let bounds = Rect::new(0, 1, 80, 22);
     let mut wm = WindowManager::new();
     let ids: Vec<_> = (0..4)
-        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(0, 0, 10, 5)), bounds))
+        .map(|i| {
+            wm.add_window(
+                normal_window(&format!("W{i}"), Rect::new(0, 0, 10, 5)),
+                bounds,
+            )
+        })
         .collect();
 
     wm.tile(bounds);
@@ -2239,8 +2255,16 @@ fn tile_respects_window_minimum_size_after_positioning() {
 
     let rect = wm.window(id).expect("window").rect.get();
     // Border chrome adds 1 cell per side on top of the view minimum.
-    assert!(rect.width >= 42, "width {} should not break min size", rect.width);
-    assert!(rect.height >= 16, "height {} should not break min size", rect.height);
+    assert!(
+        rect.width >= 42,
+        "width {} should not break min size",
+        rect.width
+    );
+    assert!(
+        rect.height >= 16,
+        "height {} should not break min size",
+        rect.height
+    );
     assert!(rect.x + rect.width <= bounds.x + bounds.width);
     assert!(rect.y + rect.height <= bounds.y + bounds.height);
 }
@@ -2250,17 +2274,28 @@ fn minimize_all_then_restore_all_round_trips_state() {
     let bounds = Rect::new(0, 1, 80, 22);
     let mut wm = WindowManager::new();
     let ids: Vec<_> = (0..3)
-        .map(|i| wm.add_window(normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)), bounds))
+        .map(|i| {
+            wm.add_window(
+                normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)),
+                bounds,
+            )
+        })
         .collect();
 
     wm.minimize_all();
     for id in &ids {
-        assert_eq!(wm.window(*id).expect("window").state.get(), WindowState::Minimized);
+        assert_eq!(
+            wm.window(*id).expect("window").state.get(),
+            WindowState::Minimized
+        );
     }
 
     wm.restore_all();
     for id in &ids {
-        assert_eq!(wm.window(*id).expect("window").state.get(), WindowState::Normal);
+        assert_eq!(
+            wm.window(*id).expect("window").state.get(),
+            WindowState::Normal
+        );
     }
 }
 
@@ -2269,7 +2304,10 @@ fn close_all_removes_every_plain_window() {
     let bounds = Rect::new(0, 1, 80, 22);
     let mut wm = WindowManager::new();
     for i in 0..3 {
-        wm.add_window(normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)), bounds);
+        wm.add_window(
+            normal_window(&format!("W{i}"), Rect::new(2, 2, 20, 6)),
+            bounds,
+        );
     }
     assert_eq!(wm.windows().len(), 3);
 

@@ -412,7 +412,14 @@ impl MenuBar {
             let Some((idx, has_submenu, on_activate, enabled, restore_id, window_op)) = hit else {
                 return MenuAction::None;
             };
-            (idx, has_submenu, on_activate, enabled, restore_id, window_op)
+            (
+                idx,
+                has_submenu,
+                on_activate,
+                enabled,
+                restore_id,
+                window_op,
+            )
         };
 
         if depth < self.state.stack.len() {
@@ -588,7 +595,10 @@ mod tests {
 
         // Keyboard Enter on the predefined item yields the native op, not a callback.
         assert_eq!(
-            menu.handle_event(&Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))),
+            menu.handle_event(&Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE
+            ))),
             MenuAction::WindowOp(WindowMenuOp::Cascade)
         );
         assert!(!menu.state.active);
