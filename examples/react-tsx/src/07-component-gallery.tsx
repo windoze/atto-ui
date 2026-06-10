@@ -12,6 +12,8 @@
  *     unmounts it; "Windows" → "Show X" mounts a fresh one.
  *   - Minimizing from the TUI fires <Window onMinimize>; "View" → "Restore all"
  *     calls handle.restoreWindow(...) to bring minimized windows back.
+ *   - "View" → "Minimized windows" is a <MinimizedWindowsMenu>: the native
+ *     runtime fills it with the minimized windows and restores the one picked.
  *
  * Run interactively:  npm run gallery   (F10 menus, Ctrl+W window mode, Ctrl+Q quit)
  * Headless smoke:      ATTO_UI_EXAMPLE_HEADLESS=1 npm run gallery
@@ -32,6 +34,7 @@ import {
   Menu,
   MenuBar,
   MenuItem,
+  MinimizedWindowsMenu,
   ProgressBar,
   RadioGroup,
   Slider,
@@ -130,6 +133,7 @@ function App(): React.ReactElement {
         </Menu>
         <Menu title="View">
           <MenuItem label="Restore all" onClick={restoreAll} />
+          <MinimizedWindowsMenu />
         </Menu>
       </MenuBar>
 

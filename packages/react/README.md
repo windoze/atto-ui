@@ -62,6 +62,7 @@ and `stop()`.
 | `Text` + `B`/`I`/`U`/`S`/`Link` | `richText` / `textSpan` | Inline styled text. |
 | `Markdown` | `markdownViewer` | Block markdown rendering. |
 | `MenuBar` / `Menu` / `MenuItem` | menu slots | Desktop menu bar. |
+| `MinimizedWindowsMenu` | menu slot | Runtime-filled list of minimized windows; restores on click. No `onClick`/children. |
 | `StatusBar` | `statusBar` | Desktop status bar (`left` / `right`). |
 
 Lowercase host elements (e.g. `<vstack>`, `<textBox>`) are also available as

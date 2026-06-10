@@ -148,8 +148,33 @@ Common wrappers:
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
 | `Markdown` | `MarkdownViewer`. |
 | `Desktop`, `Window`, `MenuBar`, `Menu`, `MenuItem`, `StatusBar` | Virtual desktop root and chrome mapping. |
+| `MinimizedWindowsMenu` | Runtime-managed list of minimized windows (see below). |
 
 Events are not called directly from Rust. The binding queues callback invocations, the React render loop drains them after each `step()`, and handlers can safely call `setState`.
+
+### Reserved menu ids
+
+The native runtime recognizes one reserved menu item id:
+
+| Id | Behavior |
+|---|---|
+| `atto_ui:minimized_windows` | The desktop refills this item's submenu every frame with the currently minimized windows and restores the chosen window when an entry is selected. |
+
+This is a plain spec-level convention, so it works from any layer:
+
+- **`@atto-ui/react`**: use `<MinimizedWindowsMenu />` (optionally `label="..."`), or a bare `<MenuItem id="atto_ui:minimized_windows" label="..." />`. The exported constant `MINIMIZED_WINDOWS_MENU_ID` holds the id.
+- **Raw `setMenuBar` spec / `@atto-ui/core`**: add a `MenuItemSpec` whose `id` equals `atto_ui:minimized_windows` with an empty `items` array.
+
+```tsx
+import { Menu, MenuItem, MinimizedWindowsMenu } from '@atto-ui/react'
+
+<Menu title="Window">
+  <MenuItem label="New" shortcut="Ctrl+N" onClick={onNew} />
+  <MinimizedWindowsMenu />
+</Menu>
+```
+
+Do not provide your own `items`/children or an `onClick` for this item — the submenu and the restore action are owned by Rust, and any children you set are overwritten each frame.
 
 ## Runtime Compatibility
 

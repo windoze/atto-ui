@@ -56,6 +56,19 @@ export interface MenuItemProps {
   readonly children?: MenuItemChildren
 }
 
+/**
+ * Reserved menu item id recognized by the native runtime. A `<MenuItem>` (or
+ * `<MinimizedWindowsMenu>`) carrying this id is auto-populated each frame with
+ * the currently minimized windows; selecting an entry restores that window.
+ * The submenu is owned by Rust — do not give such an item your own children.
+ */
+export const MINIMIZED_WINDOWS_MENU_ID = 'atto_ui:minimized_windows'
+
+export interface MinimizedWindowsMenuProps {
+  /** Label shown in the parent menu. Defaults to `"Minimized windows"`. */
+  readonly label?: string
+}
+
 /** Optional readability wrapper; the reconciler itself supplies the virtual DesktopContainer. */
 export function Desktop({ children }: DesktopProps): ReactElement {
   return createElement(Fragment, null, children)
@@ -81,6 +94,16 @@ export function Menu({ id, title, children }: MenuProps): ReactElement {
 export function MenuItem(props: MenuItemProps): ReactElement {
   const { id, label, shortcut, enabled, onClick, children } = props
   return createElement('menuItem', { id, label, shortcut, enabled, onClick }, children)
+}
+
+/**
+ * Menu item that the native runtime fills with the list of minimized windows.
+ * Place it under a `<Menu>` (typically a "Window" menu). The runtime refreshes
+ * the submenu every frame and restores the chosen window on click, so there is
+ * no `onClick` to wire up and no children to provide.
+ */
+export function MinimizedWindowsMenu({ label = 'Minimized windows' }: MinimizedWindowsMenuProps): ReactElement {
+  return createElement('menuItem', { id: MINIMIZED_WINDOWS_MENU_ID, label })
 }
 
 /** Virtual desktop child that replaces the native status bar text slot. */
