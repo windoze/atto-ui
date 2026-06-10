@@ -48,7 +48,7 @@ jobs:
           deno-version: v2.x
 
       - name: Install Node test dependencies
-        run: npm install --prefix packages/react --ignore-scripts
+        run: npm install --prefix packages/react --ignore-scripts --no-save @atto-ui/core@file:../core
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
