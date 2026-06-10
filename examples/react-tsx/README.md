@@ -45,6 +45,34 @@ npm run hello      # or: counter | todo | desktop | markdown | theme | gallery
 
 Press `Ctrl+Q` to quit the TUI.
 
+## Run with Bun or Deno
+
+The demos run unchanged under Bun and Deno — both execute `.tsx` directly and
+support the native N-API binding. The setup above (native binding + React build
++ `npm install` for `node_modules`) is still required.
+
+**Bun** (`bun src/...` reads `tsconfig.json` and resolves the `file:` deps):
+
+```sh
+npm run gallery:bun     # or hello:bun | counter:bun | todo:bun | desktop:bun | markdown:bun | theme:bun
+# equivalently: bun src/07-component-gallery.tsx
+```
+
+**Deno** (configured by `deno.json`: `nodeModulesDir: manual`, `sloppy-imports`,
+and the JSX runtime; `deno task` runs with `-A`):
+
+```sh
+npm run gallery:deno    # or hello:deno | counter:deno | …
+# equivalently: deno task gallery
+```
+
+Headless mode works the same way under either runtime, e.g.
+`ATTO_UI_EXAMPLE_HEADLESS=1 npm run gallery:deno`.
+
+> Deno needs `--node-modules-dir=manual` because the example uses `file:`
+> dependencies, and `--sloppy-imports` for extensionless local imports like
+> `./_runtime`. Both are set in `deno.json`, so `deno task <name>` just works.
+
 ## Headless smoke
 
 Every demo has a deterministic headless mode that drives synthetic key events

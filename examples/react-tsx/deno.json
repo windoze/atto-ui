@@ -1,0 +1,17 @@
+{
+  "nodeModulesDir": "manual",
+  "unstable": ["sloppy-imports"],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "tasks": {
+    "hello": "deno run -A src/01-hello.tsx",
+    "counter": "deno run -A src/02-counter.tsx",
+    "todo": "deno run -A src/03-todo-list.tsx",
+    "desktop": "deno run -A src/04-multi-window.tsx",
+    "markdown": "deno run -A src/05-markdown-stream.tsx",
+    "theme": "deno run -A src/06-theme-switch.tsx",
+    "gallery": "deno run -A src/07-component-gallery.tsx"
+  }
+}

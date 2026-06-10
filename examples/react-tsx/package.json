@@ -12,7 +12,21 @@
     "markdown": "tsx src/05-markdown-stream.tsx",
     "theme": "tsx src/06-theme-switch.tsx",
     "gallery": "tsx src/07-component-gallery.tsx",
-    "smoke": "ATTO_UI_EXAMPLE_HEADLESS=1 tsx src/smoke.ts"
+    "smoke": "ATTO_UI_EXAMPLE_HEADLESS=1 tsx src/smoke.ts",
+    "hello:bun": "bun src/01-hello.tsx",
+    "counter:bun": "bun src/02-counter.tsx",
+    "todo:bun": "bun src/03-todo-list.tsx",
+    "desktop:bun": "bun src/04-multi-window.tsx",
+    "markdown:bun": "bun src/05-markdown-stream.tsx",
+    "theme:bun": "bun src/06-theme-switch.tsx",
+    "gallery:bun": "bun src/07-component-gallery.tsx",
+    "hello:deno": "deno task hello",
+    "counter:deno": "deno task counter",
+    "todo:deno": "deno task todo",
+    "desktop:deno": "deno task desktop",
+    "markdown:deno": "deno task markdown",
+    "theme:deno": "deno task theme",
+    "gallery:deno": "deno task gallery"
   },
   "dependencies": {
     "@atto-ui/react": "file:../../packages/react",
