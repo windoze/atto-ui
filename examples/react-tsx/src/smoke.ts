@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
-const demos = ['01-hello.tsx', '02-counter.tsx', '03-todo-list.tsx', '04-multi-window.tsx', '05-markdown-stream.tsx']
+const demos = ['01-hello.tsx', '02-counter.tsx', '03-todo-list.tsx', '04-multi-window.tsx', '05-markdown-stream.tsx', '06-theme-switch.tsx', '07-component-gallery.tsx']
 
 let failures = 0
 for (const demo of demos) {

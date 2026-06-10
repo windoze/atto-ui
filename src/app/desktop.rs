@@ -282,6 +282,19 @@ impl Desktop {
         self.wm.request_close(id)
     }
 
+    pub fn minimize_window(&mut self, id: WindowId) -> bool {
+        self.wm.minimize_window(id)
+    }
+
+    pub fn restore_window(&mut self, id: WindowId) -> bool {
+        self.wm.restore_window(id)
+    }
+
+    pub fn maximize_window(&mut self, id: WindowId, screen: Rect) -> bool {
+        let layout = Self::layout(screen);
+        self.wm.maximize_window(id, layout.work_area)
+    }
+
     pub fn focus_window(&mut self, id: WindowId) -> bool {
         if self.wm.has_active_modal() {
             return self.wm.focused() == Some(id);
@@ -1813,6 +1826,24 @@ mod tests {
         assert_eq!(first.title, "Renamed");
         assert_eq!(first.rect, Rect::new(5, 6, 30, 9));
         assert!(first.is_focused);
+
+        let state_of = |desktop: &Desktop, id: WindowId| {
+            desktop
+                .list_windows()
+                .iter()
+                .find(|w| w.id == id)
+                .map(|w| w.state)
+        };
+
+        assert!(desktop.minimize_window(id1));
+        assert_eq!(state_of(&desktop, id1), Some(WindowState::Minimized));
+        assert!(desktop.restore_window(id1));
+        assert_eq!(state_of(&desktop, id1), Some(WindowState::Normal));
+        assert!(desktop.maximize_window(id1, screen));
+        assert_eq!(state_of(&desktop, id1), Some(WindowState::Maximized));
+        // maximize_window toggles, so a second call returns to Normal.
+        assert!(desktop.maximize_window(id1, screen));
+        assert_eq!(state_of(&desktop, id1), Some(WindowState::Normal));
 
         assert!(desktop.close_window(id2));
         assert!(!desktop.list_windows().iter().any(|w| w.id == id2));

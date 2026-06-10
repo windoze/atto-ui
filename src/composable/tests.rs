@@ -1047,11 +1047,13 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
         },
     );
 
-    // Fill should contribute only min height when asked for desired height.
+    // Fill now contributes its intrinsic (desired) height, matching the compact
+    // stack rule: a Fill child with a known desired height packs to that height
+    // rather than flexing. (Children without a desired height still flex.)
     vstack.add_child_with_layout(
         Box::new(MinHeightView {
             min_h: 2,
-            desired_h: Some(999),
+            desired_h: Some(3),
         }),
         LayoutParams {
             height: Size::Fill,
@@ -1087,9 +1089,9 @@ fn vstack_desired_height_includes_padding_spacing_margins_and_intrinsic_children
     // spacing: 1
     // child2: fixed 4 -> min 6 = 6
     // spacing: 1
-    // child3: margin 2 + min 2 = 4
-    // total = 5 + 4 + 1 + 6 + 1 + 4 = 21
-    assert_eq!(vstack.desired_height(), Some(21));
+    // child3: margin 2 + desired 3 = 5  (Fill uses intrinsic height)
+    // total = 5 + 4 + 1 + 6 + 1 + 5 = 22
+    assert_eq!(vstack.desired_height(), Some(22));
 }
 
 #[test]

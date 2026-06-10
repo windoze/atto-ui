@@ -203,6 +203,12 @@ export interface AppHost {
   focusWindow(windowId: string): boolean
   moveWindow(windowId: string, x: number, y: number): boolean
   resizeWindow(windowId: string, width: number, height: number): boolean
+  minimizeWindow(windowId: string): boolean
+  restoreWindow(windowId: string): boolean
+  /** Toggle maximize for a window. Returns true when the state changed. */
+  maximizeWindow(windowId: string): boolean
+  /** Drain window lifecycle events caused by user interaction inside the TUI. */
+  drainWindowEvents(): WindowEvent[]
   listWindows(): WindowInfo[]
   setTitle(windowId: string, title: string): boolean
   setMenuBar(spec: MenuBarSpec): void
@@ -324,6 +330,13 @@ export interface WindowInfo {
   readonly state: string
   readonly rect: Rect
   readonly isFocused: boolean
+}
+
+/** A window lifecycle change originating from user interaction inside the TUI. */
+export interface WindowEvent {
+  readonly windowId: string
+  readonly type: 'closed' | 'minimized' | 'maximized' | 'restored'
+  readonly state: string | null
 }
 
 export interface DesktopSnapshot {

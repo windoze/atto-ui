@@ -21,7 +21,7 @@
     "build:win32-x64-msvc": "napi build --platform --release --target x86_64-pc-windows-msvc",
     "npm:dirs": "napi create-npm-dirs --npm-dir npm",
     "npm:artifacts": "napi artifacts --npm-dir npm --output-dir .",
-    "test": "node __test__/version.cjs && node __test__/app_host.cjs"
+    "test": "node __test__/version.cjs && node __test__/app_host.cjs && node __test__/window_lifecycle.cjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.1.5"

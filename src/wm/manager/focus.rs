@@ -97,6 +97,24 @@ impl WindowManager {
         restored
     }
 
+    pub fn minimize_window(&mut self, id: WindowId) -> bool {
+        if !self.window(id).is_some_and(chrome::can_minimize) {
+            return false;
+        }
+        let minimized = if let Some(w) = self.window_mut(id)
+            && w.state.get() != WindowState::Minimized
+        {
+            w.state.set(WindowState::Minimized);
+            true
+        } else {
+            false
+        };
+        if minimized && self.focused() == Some(id) {
+            self.focused = self.topmost_focusable_id();
+        }
+        minimized
+    }
+
     pub(super) fn topmost_focusable_id(&self) -> Option<WindowId> {
         self.windows
             .iter()

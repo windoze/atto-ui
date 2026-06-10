@@ -18,7 +18,17 @@ export type RenderHost = Pick<AppHost, 'applyTreeOps' | 'allocCallback'> & {
 
 export type DesktopRenderHost = RenderHost & Pick<
   AppHost,
-  'addDynamicWindow' | 'closeWindow' | 'moveWindow' | 'resizeWindow' | 'setTitle' | 'setMenuBar' | 'setStatusBar'
+  | 'addDynamicWindow'
+  | 'closeWindow'
+  | 'moveWindow'
+  | 'resizeWindow'
+  | 'setTitle'
+  | 'setMenuBar'
+  | 'setStatusBar'
+  | 'minimizeWindow'
+  | 'restoreWindow'
+  | 'maximizeWindow'
+  | 'drainWindowEvents'
 >
 
 type HostContainerMode = 'window' | 'desktop'
@@ -57,6 +67,27 @@ export interface HostInstance {
   needsDesktopSync: boolean
   controlledText: boolean
   lastTree: ComponentSpec | null
+  /** Window lifecycle callbacks (onClose/onMinimize/…). Only set on Window instances. */
+  windowLifecycle: WindowLifecycle
+}
+
+export type WindowLifecycleKey = 'close' | 'minimize' | 'maximize' | 'restore'
+export type WindowLifecycle = Partial<Record<WindowLifecycleKey, unknown>>
+
+/** Maps the `on*` event name (after `eventNameFromProp`) to a lifecycle key. */
+const WINDOW_LIFECYCLE_EVENTS: Readonly<Record<string, WindowLifecycleKey>> = {
+  close: 'close',
+  minimize: 'minimize',
+  maximize: 'maximize',
+  restore: 'restore',
+}
+
+/** Maps a binding window event `type` to the lifecycle callback key. */
+const WINDOW_EVENT_TYPE_TO_KEY: Readonly<Record<string, WindowLifecycleKey>> = {
+  closed: 'close',
+  minimized: 'minimize',
+  maximized: 'maximize',
+  restored: 'restore',
 }
 
 export type HostProps = Readonly<Record<string, ComponentValue>>
@@ -145,11 +176,12 @@ export function createHostInstance(
   props: Readonly<Record<string, unknown>>,
 ): HostInstance {
   const normalizedType = normalizeHostType(type)
+  const isWindow = normalizedType === 'Window'
   return {
     id: `${container.idPrefix}-${++container.nextId}`,
     type: normalizedType,
     props: sanitizeProps(props),
-    events: createEventBindings(container, props),
+    events: createEventBindings(container, props, isWindow),
     children: [],
     windowId: null,
     parent: null,
@@ -157,6 +189,7 @@ export function createHostInstance(
     needsDesktopSync: false,
     controlledText: isControlledTextProps(normalizedType, props),
     lastTree: null,
+    windowLifecycle: isWindow ? extractWindowLifecycle(props) : {},
   }
 }
 
@@ -174,6 +207,7 @@ export function createHostTextInstance(container: HostContainer, text: string): 
     needsDesktopSync: false,
     controlledText: false,
     lastTree: null,
+    windowLifecycle: {},
   }
 }
 
@@ -478,6 +512,37 @@ export function dispatchHostCallbacks(
   return dispatched
 }
 
+export interface WindowLifecycleEvent {
+  readonly windowId: string
+  readonly type: 'closed' | 'minimized' | 'maximized' | 'restored'
+  readonly state: string | null
+}
+
+/** Route window lifecycle events drained from the host to their Window's callbacks. */
+export function dispatchWindowEvents(
+  container: HostContainer,
+  events: readonly WindowLifecycleEvent[],
+): number {
+  let dispatched = 0
+  for (const event of events) {
+    const instance = findWindowInstance(container, event.windowId)
+    if (!instance) continue
+    const handler = instance.windowLifecycle[WINDOW_EVENT_TYPE_TO_KEY[event.type]]
+    if (typeof handler === 'function') {
+      ;(handler as (event: WindowLifecycleEvent) => void)(event)
+      dispatched += 1
+    }
+  }
+  return dispatched
+}
+
+function findWindowInstance(container: HostContainer, windowId: string): HostInstance | null {
+  for (const child of container.rootChildren) {
+    if (isWindowInstance(child) && child.windowId === windowId) return child
+  }
+  return null
+}
+
 export function prepareHostUpdate(
   oldProps: Readonly<Record<string, unknown>>,
   newProps: Readonly<Record<string, unknown>>,
@@ -547,7 +612,7 @@ function resyncControlledTextAfterChange(
     return false
   }
   const instance = findHostInstance(container, invocation.targetId)
-  if (!instance || !instance.controlledText || instance.type !== 'TextBox') return false
+  if (!instance || !instance.controlledText || !isControlledTextType(instance.type)) return false
   const text = instance.props.text
   if (typeof text !== 'string' || invocation.payload === text || text !== previousText) return false
   enqueueTreeOpForMountedInstance(instance, {
@@ -565,7 +630,7 @@ function controlledTextValueForInvocation(
 ): string | null {
   if (invocation.event !== 'change' || invocation.targetId === null) return null
   const instance = findHostInstance(container, invocation.targetId)
-  if (!instance || !instance.controlledText || instance.type !== 'TextBox') return null
+  if (!instance || !instance.controlledText || !isControlledTextType(instance.type)) return null
   const text = instance.props.text
   return typeof text === 'string' ? text : null
 }
@@ -687,12 +752,37 @@ export function normalizeHostType(type: string): string {
 function createEventBindings(
   container: HostContainer,
   props: Readonly<Record<string, unknown>>,
+  isWindow = false,
 ): HostEventBindings {
   const bindings: HostEventBindings = {}
   for (const [event, handler] of eventProps(props)) {
+    // Window lifecycle callbacks are not component events — they have no runtime
+    // component id, so allocating a callback would leak an id that never fires.
+    if (isWindow && event in WINDOW_LIFECYCLE_EVENTS) continue
     bindings[event] = { callbackId: container.eventDispatcher.register(handler), handler }
   }
   return bindings
+}
+
+function extractWindowLifecycle(props: Readonly<Record<string, unknown>>): WindowLifecycle {
+  const lifecycle: WindowLifecycle = {}
+  for (const [event, handler] of eventProps(props)) {
+    const key = WINDOW_LIFECYCLE_EVENTS[event]
+    if (key) lifecycle[key] = handler
+  }
+  return lifecycle
+}
+
+/** Apply a prepared update to a Window instance's lifecycle callbacks (no runtime callbacks). */
+function applyWindowLifecycleUpdates(instance: HostInstance, payload: HostUpdatePayload): void {
+  for (const { event, handler } of [...payload.bindEvents, ...payload.updateEvents]) {
+    const key = WINDOW_LIFECYCLE_EVENTS[event]
+    if (key) instance.windowLifecycle[key] = handler
+  }
+  for (const event of payload.clearEvents) {
+    const key = WINDOW_LIFECYCLE_EVENTS[event]
+    if (key) delete instance.windowLifecycle[key]
+  }
 }
 
 function eventsToSpec(bindings: HostEventBindings): Readonly<Record<string, string>> {
@@ -966,7 +1056,14 @@ function unmountDesktopChild(container: HostContainer, child: HostInstance): voi
   if (isWindowInstance(child)) {
     const windowId = child.windowId
     if (windowId !== null) {
-      host.closeWindow(windowId)
+      // The window may already be gone if the user closed it from the TUI (the
+      // onClose callback then unmounts this <Window>). Its handle is released, so
+      // closeWindow would throw unknown-handle — the close already happened.
+      try {
+        host.closeWindow(windowId)
+      } catch {
+        // Window already closed by the TUI; nothing more to do.
+      }
       container.pendingOps.splice(
         0,
         container.pendingOps.length,
@@ -993,7 +1090,7 @@ function unmountDesktopChild(container: HostContainer, child: HostInstance): voi
 function commitWindowUpdate(instance: HostInstance, payload: HostUpdatePayload): void {
   const oldOptions = instance.windowId === null ? null : windowOptions(instance)
   instance.props = payload.props
-  commitEventUpdates(instance, payload, false)
+  applyWindowLifecycleUpdates(instance, payload)
 
   const windowId = instance.windowId
   if (windowId === null) return
@@ -1243,8 +1340,12 @@ function shouldSkipProp(name: string, value: unknown): boolean {
   return /^on[A-Z]/.test(name)
 }
 
+function isControlledTextType(type: string): boolean {
+  return type === 'TextBox' || type === 'TextArea'
+}
+
 function isControlledTextProps(type: string, props: Readonly<Record<string, unknown>>): boolean {
-  return type === 'TextBox' && props[CONTROLLED_TEXT_PROP] === true
+  return isControlledTextType(type) && props[CONTROLLED_TEXT_PROP] === true
 }
 
 function toComponentValue(value: unknown): ComponentValue | undefined {
@@ -1281,6 +1382,7 @@ const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   commandpalette: 'CommandPalette',
   divider: 'Divider',
   disclosure: 'Disclosure',
+  editor: 'Editor',
   grid: 'Grid',
   hstack: 'HStack',
   label: 'Label',

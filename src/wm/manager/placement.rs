@@ -112,6 +112,16 @@ impl WindowManager {
             WindowState::Minimized => {}
         }
     }
+
+    /// Toggle maximize for a window by id. Returns true when the state changed.
+    pub fn maximize_window(&mut self, id: WindowId, bounds: Rect) -> bool {
+        if !self.window(id).is_some_and(chrome::can_toggle_maximize) {
+            return false;
+        }
+        let before = self.window(id).map(|w| w.state.get());
+        self.toggle_maximize(id, bounds);
+        self.window(id).map(|w| w.state.get()) != before
+    }
 }
 
 pub(super) fn contains(rect: Rect, x: u16, y: u16) -> bool {

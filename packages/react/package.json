@@ -22,7 +22,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node __test__/reconciler.cjs && node __test__/reconciler_matrix.cjs && node __test__/headless.cjs && node __test__/render.cjs && node __test__/render_pty.cjs && node __test__/event_pty.cjs && node __test__/text_pty.cjs && node __test__/components_pty.cjs && node __test__/e2e.cjs"
+    "test": "npm run build && node __test__/reconciler.cjs && node __test__/reconciler_matrix.cjs && node __test__/headless.cjs && node __test__/window_events.cjs && node __test__/render.cjs && node __test__/render_pty.cjs && node __test__/event_pty.cjs && node __test__/text_pty.cjs && node __test__/components_pty.cjs && node __test__/e2e.cjs"
   },
   "dependencies": {
     "@atto-ui/core": "0.1.0",

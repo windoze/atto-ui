@@ -22,6 +22,22 @@ export declare class AppHost {
   sendEvent(windowId: string, event: any): any
   /** Close a window and invalidate its handle when successful. */
   closeWindow(windowId: string): boolean
+  /**
+   * Minimize a window by handle. Patches the baseline so the change is not
+   * echoed back through `drain_window_events`.
+   */
+  minimizeWindow(windowId: string): boolean
+  /** Restore a minimized window by handle. */
+  restoreWindow(windowId: string): boolean
+  /** Toggle maximize for a window by handle. Returns true when the state changed. */
+  maximizeWindow(windowId: string): boolean
+  /**
+   * Drain window lifecycle events (close/minimize/maximize/restore) that
+   * originated from user interaction inside the TUI. Returns `[]` when nothing
+   * changed. Events are derived by diffing the current window list against the
+   * baseline; JS-initiated mutations patch the baseline and so never appear here.
+   */
+  drainWindowEvents(): any
   /** Focus a window by handle. */
   focusWindow(windowId: string): boolean
   /** Move a window to an absolute work-area position. */

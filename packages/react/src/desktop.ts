@@ -1,7 +1,7 @@
 import { Fragment, createElement, type ReactElement, type ReactNode } from 'react'
 import type { RectLike } from '@atto-ui/core'
 
-import type { AttoUiEventHandler } from './events'
+import type { AttoUiEventHandler, AttoUiWindowEventHandler } from './events'
 
 export type OneOrMany<T> = T | readonly T[]
 export type MenuItemElement = ReactElement<MenuItemProps, typeof MenuItem>
@@ -17,6 +17,14 @@ export interface WindowProps {
   readonly title?: string
   readonly rect: RectLike
   readonly children?: ReactNode
+  /** Fired when the user closes the window from the TUI (titlebar button / menu). */
+  readonly onClose?: AttoUiWindowEventHandler
+  /** Fired when the user minimizes the window from the TUI. */
+  readonly onMinimize?: AttoUiWindowEventHandler
+  /** Fired when the user maximizes the window from the TUI. */
+  readonly onMaximize?: AttoUiWindowEventHandler
+  /** Fired when a minimized/maximized window returns to normal from the TUI. */
+  readonly onRestore?: AttoUiWindowEventHandler
 }
 
 export interface DesktopProps {
@@ -54,8 +62,9 @@ export function Desktop({ children }: DesktopProps): ReactElement {
 }
 
 /** Virtual desktop child that owns one native atto-ui window. */
-export function Window({ title, rect, children }: WindowProps): ReactElement {
-  return createElement('window', { title, rect }, children)
+export function Window(props: WindowProps): ReactElement {
+  const { title, rect, children, onClose, onMinimize, onMaximize, onRestore } = props
+  return createElement('window', { title, rect, onClose, onMinimize, onMaximize, onRestore }, children)
 }
 
 /** Virtual desktop child that replaces the native menu bar slot. */

@@ -1,4 +1,4 @@
-import type { CallbackInvocation, ComponentValue } from '@atto-ui/core'
+import type { CallbackInvocation, ComponentValue, WindowEvent } from '@atto-ui/core'
 
 export interface AttoUiCallbackEvent {
   readonly callbackId: string
@@ -9,6 +9,9 @@ export interface AttoUiCallbackEvent {
 }
 
 export type AttoUiEventHandler = (event: AttoUiCallbackEvent) => void
+
+export type AttoUiWindowEvent = WindowEvent
+export type AttoUiWindowEventHandler = (event: AttoUiWindowEvent) => void
 
 export interface CallbackEventDispatcherOptions {
   allocCallback(): string

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import termios
 import time
+import unicodedata
 
 app = sys.argv[1]
 master, slave = pty.openpty()
@@ -29,6 +30,72 @@ proc = subprocess.Popen(['node', app], stdin=slave, stdout=slave, stderr=slave, 
 os.close(slave)
 output = bytearray()
 
+# Rebuild the visible terminal grid so text checks match what is on screen, not
+# the raw byte order. Ratatui's diff can split a label across cursor moves / SGR
+# resets (e.g. "B" + color + "utton: 1") when only some cells change between
+# frames, which would defeat a naive substring search over the raw stream.
+def char_width(ch):
+    return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+
+def render_screen(data):
+    text = data.decode('utf-8', 'replace')
+    cols = 220
+    rows = [[' '] * cols for _ in range(28)]
+    r = c = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '\x1b':
+            if i + 1 < n and text[i + 1] == '[':
+                j = i + 2
+                while j < n and not ('\x40' <= text[j] <= '\x7e'):
+                    j += 1
+                if j >= n:
+                    break
+                final = text[j]
+                params = text[i + 2:j]
+                if final in ('H', 'f'):
+                    parts = params.split(';')
+                    def to_int(p, default):
+                        try:
+                            return int(p) if p else default
+                        except ValueError:
+                            return default
+                    r = max(0, to_int(parts[0] if parts else '', 1) - 1)
+                    c = max(0, to_int(parts[1] if len(parts) > 1 else '', 1) - 1)
+                i = j + 1
+                continue
+            if i + 1 < n and text[i + 1] == ']':
+                j = i + 2
+                while j < n and text[j] != '\x07' and not (
+                    text[j] == '\x1b' and j + 1 < n and text[j + 1] == '\\'
+                ):
+                    j += 1
+                i = j + 1
+                continue
+            i += 2
+            continue
+        if ch == '\n':
+            r += 1
+            i += 1
+            continue
+        if ch == '\r':
+            c = 0
+            i += 1
+            continue
+        if ch >= ' ':
+            if 0 <= r < len(rows) and 0 <= c < cols:
+                rows[r][c] = ch
+            c += char_width(ch)
+            i += 1
+            continue
+        i += 1
+    return '\n'.join(''.join(row).rstrip() for row in rows)
+
+def screen_has(needle):
+    return needle.decode('utf-8') in render_screen(output)
+
 def read_until(needle, timeout):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -38,15 +105,15 @@ def read_until(needle, timeout):
                 data = os.read(master, 4096)
             except OSError as error:
                 if error.errno == errno.EIO:
-                    return needle in output
+                    return screen_has(needle)
                 raise
             if not data:
-                return needle in output
+                return screen_has(needle)
             output.extend(data)
-            if needle in output:
+            if screen_has(needle):
                 return True
         if proc.poll() is not None:
-            return needle in output
+            return screen_has(needle)
     return False
 
 def require_text(needle, label):

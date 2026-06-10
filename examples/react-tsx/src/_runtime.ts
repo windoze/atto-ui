@@ -55,7 +55,7 @@ export interface DemoOptions extends RenderOptions {
  * Render a demo. Interactive mode runs the terminal UI until `Ctrl+Q`. Headless
  * mode drives the optional probe, prints a compact snapshot, then exits.
  */
-export function startDemo(element: ReactNode, options: DemoOptions = {}): void {
+export function startDemo(element: ReactNode, options: DemoOptions = {}): RenderHandle {
   const headless = isHeadless()
   const { headlessProbe, ...renderOptions } = options
   const handle = render(element, {
@@ -65,7 +65,7 @@ export function startDemo(element: ReactNode, options: DemoOptions = {}): void {
     headless,
   })
 
-  if (!headless) return
+  if (!headless) return handle
 
   void (async () => {
     try {
@@ -82,4 +82,6 @@ export function startDemo(element: ReactNode, options: DemoOptions = {}): void {
       handle.stop()
     }
   })()
+
+  return handle
 }

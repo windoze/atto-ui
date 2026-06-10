@@ -1,7 +1,7 @@
 import { createElement, type ReactNode } from 'react'
 import { AppHost, type AppHostConfig, type Rect } from '@atto-ui/core'
 
-import { dispatchHostCallbacks } from './host'
+import { dispatchHostCallbacks, dispatchWindowEvents, type WindowLifecycleEvent } from './host'
 import { Window } from './desktop'
 import { createDesktopRoot, type AttoRoot, type AttoRootOptions } from './reconciler'
 
@@ -17,6 +17,12 @@ export interface RenderHandle {
   readonly root: AttoRoot
   readonly windowId: string | null
   windowIds(): string[]
+  /** Minimize a window by id (e.g. from a menu). */
+  minimizeWindow(windowId: string): boolean
+  /** Restore a minimized window by id. */
+  restoreWindow(windowId: string): boolean
+  /** Toggle maximize for a window by id. */
+  maximizeWindow(windowId: string): boolean
   stop(): void
 }
 
@@ -87,6 +93,7 @@ function startTickLoop(host: AppHost, root: AttoRoot): RenderHandle {
         return
       }
       dispatchHostCallbacks(root.container, host.drainCallbacks())
+      dispatchWindowEvents(root.container, host.drainWindowEvents() as WindowLifecycleEvent[])
     } catch (error) {
       try {
         stop()
@@ -111,6 +118,15 @@ function startTickLoop(host: AppHost, root: AttoRoot): RenderHandle {
     },
     windowIds(): string[] {
       return windowIdsFromRoot(root)
+    },
+    minimizeWindow(windowId: string): boolean {
+      return host.minimizeWindow(windowId)
+    },
+    restoreWindow(windowId: string): boolean {
+      return host.restoreWindow(windowId)
+    },
+    maximizeWindow(windowId: string): boolean {
+      return host.maximizeWindow(windowId)
     },
     stop,
   }

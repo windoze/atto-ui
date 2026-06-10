@@ -211,11 +211,11 @@ impl Theme {
 
             window_border: Style::default().fg(Color::Black),
             window_border_focused: Style::default()
-                .fg(Color::White)
+                .fg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
             window_title: Style::default().fg(Color::Black),
             window_title_focused: Style::default()
-                .fg(Color::White)
+                .fg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
             window_bg: Style::default().bg(Color::Gray).fg(Color::Black),
             window_shadow: Style::default().bg(Color::DarkGray),
@@ -248,13 +248,13 @@ impl Theme {
             status_bar: Style::default().bg(Color::Cyan).fg(Color::Black),
             status_bar_key: Style::default()
                 .bg(Color::Cyan)
-                .fg(Color::White)
+                .fg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
 
             widget: WidgetTheme {
                 normal: Style::default().fg(Color::Black).bg(Color::Gray),
                 focused: Style::default()
-                    .fg(Color::White)
+                    .fg(Color::Blue)
                     .bg(Color::Gray)
                     .add_modifier(Modifier::BOLD),
                 dim: Style::default().fg(Color::DarkGray).bg(Color::Gray),

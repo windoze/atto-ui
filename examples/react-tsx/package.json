@@ -10,6 +10,8 @@
     "todo": "tsx src/03-todo-list.tsx",
     "desktop": "tsx src/04-multi-window.tsx",
     "markdown": "tsx src/05-markdown-stream.tsx",
+    "theme": "tsx src/06-theme-switch.tsx",
+    "gallery": "tsx src/07-component-gallery.tsx",
     "smoke": "ATTO_UI_EXAMPLE_HEADLESS=1 tsx src/smoke.ts"
   },
   "dependencies": {

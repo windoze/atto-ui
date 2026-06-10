@@ -343,6 +343,19 @@ impl AppHost {
         Ok(self.desktop.resize_window(id, width, height, screen))
     }
 
+    pub fn minimize_window(&mut self, id: WindowId) -> bool {
+        self.desktop.minimize_window(id)
+    }
+
+    pub fn restore_window(&mut self, id: WindowId) -> bool {
+        self.desktop.restore_window(id)
+    }
+
+    pub fn maximize_window(&mut self, id: WindowId) -> Result<bool> {
+        let screen = self.screen()?;
+        Ok(self.desktop.maximize_window(id, screen))
+    }
+
     pub fn list_windows(&self) -> Vec<WindowInfo> {
         self.desktop.list_windows()
     }

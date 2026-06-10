@@ -3,6 +3,7 @@
 
 //! Native Node.js binding entry points for atto-ui.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use atto_ui::app::{
@@ -14,7 +15,7 @@ use atto_ui::runtime::{
     CallbackInvocation, CallbackRegistry, Rect as RuntimeRect, global_registry,
 };
 use atto_ui::theme::Theme;
-use atto_ui::{WindowId, WindowKind};
+use atto_ui::{WindowId, WindowKind, WindowState};
 use napi_derive::napi;
 use ratatui::layout::Rect as TuiRect;
 use serde_json::{Map, Number, Value};
@@ -107,6 +108,10 @@ pub struct AppHost {
     callbacks: CallbackRegistry,
     callback_handles: CallbackHandles,
     window_handles: WindowHandles,
+    /// Last-seen window states, used to derive window lifecycle events in
+    /// `drain_window_events`. Methods that mutate window state on behalf of JS
+    /// patch this baseline immediately so they do not echo back as events.
+    window_baseline: HashMap<WindowId, WindowState>,
 }
 
 #[napi]
@@ -145,6 +150,7 @@ impl AppHost {
             callbacks,
             callback_handles: CallbackHandles::new(),
             window_handles: WindowHandles::new(),
+            window_baseline: HashMap::new(),
         })
     }
 
@@ -171,6 +177,7 @@ impl AppHost {
                 screen,
             )
             .map_err(error::tree_error)?;
+        self.window_baseline.insert(id, WindowState::Normal);
         Ok(self.window_handles.handle_for(id))
     }
 
@@ -243,6 +250,7 @@ impl AppHost {
         let json = desktop_event_result_to_json(&result, &mut self.window_handles);
         if let DesktopAction::CloseWindow(id) = result.action {
             self.window_handles.release(id);
+            self.window_baseline.remove(&id);
         }
         Ok(json)
     }
@@ -254,8 +262,104 @@ impl AppHost {
         let closed = self.host.close_window(window_id);
         if closed {
             self.window_handles.release(window_id);
+            self.window_baseline.remove(&window_id);
         }
         Ok(closed)
+    }
+
+    /// Minimize a window by handle. Patches the baseline so the change is not
+    /// echoed back through `drain_window_events`.
+    #[napi]
+    pub fn minimize_window(&mut self, window_id: String) -> napi::Result<bool> {
+        let window_id = self.resolve_window(&window_id)?;
+        let ok = self.host.minimize_window(window_id);
+        if ok {
+            self.window_baseline
+                .insert(window_id, WindowState::Minimized);
+        }
+        Ok(ok)
+    }
+
+    /// Restore a minimized window by handle.
+    #[napi]
+    pub fn restore_window(&mut self, window_id: String) -> napi::Result<bool> {
+        let window_id = self.resolve_window(&window_id)?;
+        let ok = self.host.restore_window(window_id);
+        if ok {
+            self.window_baseline.insert(window_id, WindowState::Normal);
+        }
+        Ok(ok)
+    }
+
+    /// Toggle maximize for a window by handle. Returns true when the state changed.
+    #[napi]
+    pub fn maximize_window(&mut self, window_id: String) -> napi::Result<bool> {
+        let window_id = self.resolve_window(&window_id)?;
+        let changed = self
+            .host
+            .maximize_window(window_id)
+            .map_err(error::anyhow_error)?;
+        if changed
+            && let Some(state) = self
+                .host
+                .list_windows()
+                .iter()
+                .find(|w| w.id == window_id)
+                .map(|w| w.state)
+        {
+            self.window_baseline.insert(window_id, state);
+        }
+        Ok(changed)
+    }
+
+    /// Drain window lifecycle events (close/minimize/maximize/restore) that
+    /// originated from user interaction inside the TUI. Returns `[]` when nothing
+    /// changed. Events are derived by diffing the current window list against the
+    /// baseline; JS-initiated mutations patch the baseline and so never appear here.
+    #[napi]
+    pub fn drain_window_events(&mut self) -> napi::Result<Value> {
+        let current: HashMap<WindowId, WindowState> = self
+            .host
+            .list_windows()
+            .iter()
+            .map(|w| (w.id, w.state))
+            .collect();
+
+        let mut events = Vec::new();
+
+        let closed_ids: Vec<WindowId> = self
+            .window_baseline
+            .keys()
+            .filter(|id| !current.contains_key(id))
+            .copied()
+            .collect();
+        for id in &closed_ids {
+            // Generate the handle string while the mapping is still valid; the
+            // release happens only after every closed event has been emitted.
+            let handle = self.window_handles.handle_for(*id);
+            events.push(window_event_json("closed", handle, None));
+        }
+
+        for (id, state) in &current {
+            if let Some(prev) = self.window_baseline.get(id)
+                && prev != state
+            {
+                let kind = match state {
+                    WindowState::Minimized => "minimized",
+                    WindowState::Maximized => "maximized",
+                    WindowState::Normal => "restored",
+                };
+                let handle = self.window_handles.handle_for(*id);
+                events.push(window_event_json(kind, handle, Some(*state)));
+            }
+        }
+
+        self.window_baseline = current;
+        for id in &closed_ids {
+            self.window_handles.release(*id);
+        }
+
+        Ok(Value::Array(events))
     }
 
     /// Focus a window by handle.
@@ -660,6 +764,19 @@ fn window_info_to_json(window: &WindowInfo, windows: &mut WindowHandles) -> Valu
     );
     object.insert("rect".to_string(), tui_rect_to_json(window.rect));
     object.insert("isFocused".to_string(), Value::Bool(window.is_focused));
+    Value::Object(object)
+}
+
+fn window_event_json(kind: &str, window_id: String, state: Option<WindowState>) -> Value {
+    let mut object = Map::new();
+    object.insert("type".to_string(), Value::String(kind.to_string()));
+    object.insert("windowId".to_string(), Value::String(window_id));
+    object.insert(
+        "state".to_string(),
+        state
+            .map(|s| Value::String(format!("{s:?}")))
+            .unwrap_or(Value::Null),
+    );
     Value::Object(object)
 }
 

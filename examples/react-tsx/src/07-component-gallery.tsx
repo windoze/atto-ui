@@ -1,0 +1,240 @@
+/**
+ * 07 — Component gallery
+ *
+ * One desktop, several windows, each showing a group of components:
+ *   Controls (Button/Checkbox/RadioGroup/Slider/ProgressBar/Spinner/TextBox/TextArea/Label),
+ *   Layout (HStack/Grid/Border/Divider/Disclosure), Data (ListBox/Table),
+ *   Markdown, and Editor.
+ *
+ * Window lifecycle (the binding/React feature this demo exercises):
+ *   - The "Windows" menu re-creates a window after it was closed.
+ *   - Closing a window from the TUI titlebar fires <Window onClose>, which
+ *     unmounts it; "Windows" → "Show X" mounts a fresh one.
+ *   - Minimizing from the TUI fires <Window onMinimize>; "View" → "Restore all"
+ *     calls handle.restoreWindow(...) to bring minimized windows back.
+ *
+ * Run interactively:  npm run gallery   (F10 menus, Ctrl+W window mode, Ctrl+Q quit)
+ * Headless smoke:      ATTO_UI_EXAMPLE_HEADLESS=1 npm run gallery
+ */
+import { useState } from 'react'
+import {
+  Border,
+  Button,
+  Checkbox,
+  Disclosure,
+  Divider,
+  Editor,
+  Grid,
+  HStack,
+  Label,
+  ListBox,
+  Markdown,
+  Menu,
+  MenuBar,
+  MenuItem,
+  ProgressBar,
+  RadioGroup,
+  Slider,
+  Spinner,
+  StatusBar,
+  Table,
+  TextArea,
+  TextBox,
+  VStack,
+  Window,
+  type RenderHandle,
+} from '@atto-ui/react'
+
+import { startDemo, waitFor, hasText } from './_runtime'
+
+type WindowKey = 'controls' | 'layout' | 'data' | 'markdown' | 'editor'
+
+const WINDOWS: ReadonlyArray<{ key: WindowKey; title: string; rect: [number, number, number, number] }> = [
+  { key: 'controls', title: 'Controls', rect: [1, 1, 40, 21] },
+  { key: 'layout', title: 'Layout', rect: [38, 1, 42, 21] },
+  { key: 'data', title: 'Data', rect: [2, 4, 40, 14] },
+  { key: 'markdown', title: 'Markdown', rect: [38, 4, 40, 14] },
+  { key: 'editor', title: 'Editor', rect: [8, 7, 64, 11] },
+]
+
+const MARKDOWN = `# Component Gallery
+
+Rendered by **@atto-ui/react**.
+
+- Live React state
+- Multiple windows
+- \`Markdown\` + \`Editor\`
+`
+
+const CODE = `fn main() {
+    let items = ["button", "slider", "editor"];
+    for (i, name) in items.iter().enumerate() {
+        println!("{i}: {name}");
+    }
+}`
+
+// Bridges the React tree to the AppHost (for restoreWindow). Assigned after
+// startDemo returns; the menu handlers run later, so it is always set by then.
+const handleRef: { current: RenderHandle | null } = { current: null }
+
+function App(): React.ReactElement {
+  const [visible, setVisible] = useState<Record<WindowKey, boolean>>({
+    controls: true,
+    layout: true,
+    data: true,
+    markdown: true,
+    editor: true,
+  })
+  const [log, setLog] = useState('ready')
+
+  // Controls state
+  const [checked, setChecked] = useState(true)
+  const [radio, setRadio] = useState(1)
+  const [slider, setSlider] = useState(40)
+  const [name, setName] = useState('atto')
+  const [notes, setNotes] = useState('multi-line\ntext area')
+  const [fruit, setFruit] = useState(0)
+
+  const show = (key: WindowKey) => {
+    setVisible((v) => ({ ...v, [key]: true }))
+    setLog(`show ${key}`)
+  }
+  const onClose = (key: WindowKey) => () => {
+    setVisible((v) => ({ ...v, [key]: false }))
+    setLog(`closed ${key}`)
+  }
+  const onMinimize = (key: WindowKey) => () => setLog(`minimized ${key}`)
+  const onRestore = (key: WindowKey) => () => setLog(`restored ${key}`)
+
+  const restoreAll = () => {
+    const handle = handleRef.current
+    if (handle) {
+      for (const id of handle.windowIds()) handle.restoreWindow(id)
+    }
+    setLog('restored all')
+  }
+
+  const windowChrome = (key: WindowKey) => ({
+    onClose: onClose(key),
+    onMinimize: onMinimize(key),
+    onRestore: onRestore(key),
+  })
+
+  return (
+    <>
+      <MenuBar>
+        <Menu title="Windows">
+          {WINDOWS.map((w) => (
+            <MenuItem key={w.key} label={`Show ${w.title}`} onClick={() => show(w.key)} />
+          ))}
+        </Menu>
+        <Menu title="View">
+          <MenuItem label="Restore all" onClick={restoreAll} />
+        </Menu>
+      </MenuBar>
+
+      {visible.controls && (
+        <Window title="Controls" rect={WINDOWS[0].rect} {...windowChrome('controls')}>
+          <VStack spacing={1} padding={1} scrollable>
+            <Label text="Buttons & inputs" />
+            <Button onClick={() => setLog('button: Push')}>Push</Button>
+            <Checkbox label="Enable feature" checked={checked} onChange={setChecked} />
+            <RadioGroup options={['Low', 'Medium', 'High']} selectedIndex={radio} onChange={setRadio} />
+            <Slider min={0} max={100} value={slider} onChange={setSlider} />
+            <ProgressBar min={0} max={100} value={slider} showText />
+            <Spinner text="Working" running />
+            <TextBox value={name} onChange={setName} placeholder="Name" />
+            <TextArea value={notes} onChange={setNotes} height={3} />
+          </VStack>
+        </Window>
+      )}
+
+      {visible.layout && (
+        <Window title="Layout" rect={WINDOWS[1].rect} {...windowChrome('layout')}>
+          <VStack spacing={1} padding={1} scrollable>
+            <Label text="HStack" />
+            <HStack spacing={2}>
+              <Label text="A" />
+              <Label text="B" />
+              <Label text="C" />
+            </HStack>
+            <Divider />
+            <Label text="Grid 2x2" />
+            <Grid columns={2} rowGap={1} columnGap={2}>
+              <Label text="r1c1" />
+              <Label text="r1c2" />
+              <Label text="r2c1" />
+              <Label text="r2c2" />
+            </Grid>
+            <Border border>
+              <Label text="inside a Border" />
+            </Border>
+            <Disclosure title="Disclosure" expanded>
+              <Label text="expanded content" />
+            </Disclosure>
+          </VStack>
+        </Window>
+      )}
+
+      {visible.data && (
+        <Window title="Data" rect={WINDOWS[2].rect} {...windowChrome('data')}>
+          <VStack spacing={1} padding={1}>
+            <Label text="Lists & tables" />
+            <ListBox
+              items={['Apple', 'Banana', 'Cherry']}
+              selectedIndex={fruit}
+              onSelect={setFruit}
+              height={3}
+            />
+            <Table
+              headers={['Name', 'Qty']}
+              rows={[
+                ['Apple', '3'],
+                ['Pear', '5'],
+                ['Plum', '2'],
+              ]}
+              height={4}
+            />
+          </VStack>
+        </Window>
+      )}
+
+      {visible.markdown && (
+        <Window title="Markdown" rect={WINDOWS[3].rect} {...windowChrome('markdown')}>
+          <VStack padding={1}>
+            <Label text="Markdown docs" />
+            <Markdown>{MARKDOWN}</Markdown>
+          </VStack>
+        </Window>
+      )}
+
+      {visible.editor && (
+        <Window title="Editor" rect={WINDOWS[4].rect} {...windowChrome('editor')}>
+          <VStack padding={1}>
+            <Label text="Rust source" />
+            <Editor value={CODE} languageId="rust" showLineNumbers />
+          </VStack>
+        </Window>
+      )}
+
+      <StatusBar left="Component Gallery — F10 menus, Ctrl+W window mode" right={log} />
+    </>
+  )
+}
+
+const handle = startDemo(<App />, {
+  singleWindow: false,
+  idPrefix: 'gallery',
+  cols: 80,
+  rows: 24,
+  async headlessProbe(h) {
+    await waitFor(() => h.windowIds().length === 5, 'five windows')
+    await waitFor(() => hasText(h, 'Buttons & inputs'), 'controls window')
+    await waitFor(() => hasText(h, 'Grid 2x2'), 'layout window')
+    await waitFor(() => hasText(h, 'Lists & tables'), 'data window')
+    await waitFor(() => hasText(h, 'Markdown docs'), 'markdown window')
+    await waitFor(() => hasText(h, 'Rust source'), 'editor window')
+  },
+})
+
+handleRef.current = handle

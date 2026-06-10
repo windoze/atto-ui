@@ -161,7 +161,10 @@ impl StackCore {
                     let h = match child.layout.height {
                         Size::Fixed(h) => h,
                         Size::Content => child.view.desired_height().unwrap_or(1),
-                        Size::Fill | Size::Weight(_) => min_h,
+                        // Fill contributes its intrinsic height when it has one
+                        // (matching the allocation rule), else just its minimum.
+                        Size::Fill => child.view.desired_height().unwrap_or(min_h),
+                        Size::Weight(_) => min_h,
                     }
                     .max(min_h);
 
@@ -411,9 +414,19 @@ impl StackCore {
                     weight: w.max(1),
                     min: min_h,
                 },
-                Size::Fill => HeightSpec::Weight {
-                    weight: 1,
-                    min: min_h,
+                // Fill defers to the child's intrinsic height when it has one, so
+                // labels/buttons stay their natural size and stack compactly. Only
+                // children without a desired height (e.g. Spacer) flex to fill the
+                // remaining space. Explicit Weight always flexes.
+                Size::Fill => match child.view.desired_height() {
+                    Some(desired) => HeightSpec::Content {
+                        min: min_h,
+                        desired: desired.max(min_h),
+                    },
+                    None => HeightSpec::Weight {
+                        weight: 1,
+                        min: min_h,
+                    },
                 },
             };
 
@@ -695,9 +708,18 @@ impl StackCore {
                     weight: w.max(1),
                     min: min_w,
                 },
-                Size::Fill => WidthSpec::Weight {
-                    weight: 1,
-                    min: min_w,
+                // See the vertical case: Fill uses the child's intrinsic width when
+                // available so content packs tightly; only widths without an
+                // intrinsic size flex.
+                Size::Fill => match child.view.desired_width() {
+                    Some(desired) => WidthSpec::Content {
+                        min: min_w,
+                        desired: desired.max(min_w),
+                    },
+                    None => WidthSpec::Weight {
+                        weight: 1,
+                        min: min_w,
+                    },
                 },
             };
 

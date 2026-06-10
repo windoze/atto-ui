@@ -11,6 +11,8 @@ build step or `dist/` output.
 | Todo list | `src/03-todo-list.tsx` | Controlled `TextBox`, `ListBox` selection, add/remove. |
 | Desktop | `src/04-multi-window.tsx` | Multiple `Window`s, `MenuBar`/`MenuItem`, `StatusBar`. |
 | Markdown stream | `src/05-markdown-stream.tsx` | `Markdown` driven by a `for await` token stream. |
+| Theme switch | `src/06-theme-switch.tsx` | Runtime theme change via `handle.host.setTheme(...)`. |
+| Component gallery | `src/07-component-gallery.tsx` | All core components across several windows; `<Window>` lifecycle (onClose/onMinimize) + menu to re-create/restore windows. |
 
 ## Setup
 
@@ -38,7 +40,7 @@ npm install --prefix examples/react-tsx --omit=optional
 
 ```sh
 cd examples/react-tsx
-npm run hello      # or: counter | todo | desktop | markdown
+npm run hello      # or: counter | todo | desktop | markdown | theme | gallery
 ```
 
 Press `Ctrl+Q` to quit the TUI.

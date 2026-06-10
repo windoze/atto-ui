@@ -105,7 +105,7 @@ export function TextBox(props: TextBoxProps): ReactElement {
     placeholder,
     enabled,
     clipboard,
-    onChange: onChange === undefined ? undefined : controlledTextChange(onChange),
+    onChange: onChange === undefined ? undefined : controlledTextChange('TextBox', onChange),
     onSubmit,
   })
 }
@@ -164,8 +164,11 @@ function hostElement(type: string, props: Record<string, unknown>, ...children: 
   return createElement(type, props, ...children)
 }
 
-function controlledTextChange(onChange: ValueChangeHandler<string>): AttoUiEventHandler {
-  return (event) => onChange(stringPayload('TextBox', event), event)
+function controlledTextChange(
+  componentName: string,
+  onChange: ValueChangeHandler<string>,
+): AttoUiEventHandler {
+  return (event) => onChange(stringPayload(componentName, event), event)
 }
 
 function selectionHandler(
@@ -193,4 +196,194 @@ function stringPayload(componentName: string, event: AttoUiCallbackEvent): strin
 function numberPayload(componentName: string, event: AttoUiCallbackEvent): number {
   if (typeof event.payload === 'number' && Number.isFinite(event.payload)) return event.payload
   throw new Error(`${componentName} change event expected a numeric payload`)
+}
+
+function boolPayload(componentName: string, event: AttoUiCallbackEvent): boolean {
+  if (typeof event.payload === 'boolean') return event.payload
+  throw new Error(`${componentName} change event expected a boolean payload`)
+}
+
+export interface CheckboxProps {
+  readonly label?: string
+  readonly checked?: boolean
+  readonly enabled?: boolean
+  readonly onChange?: ValueChangeHandler<boolean>
+}
+
+/** Toggle checkbox; `onChange` receives the new checked state. */
+export function Checkbox({ label, checked, enabled, onChange }: CheckboxProps): ReactElement {
+  return hostElement('checkbox', {
+    label,
+    checked,
+    enabled,
+    onChange: onChange === undefined ? undefined : (event: AttoUiCallbackEvent) => onChange(boolPayload('Checkbox', event), event),
+  })
+}
+
+export interface RadioGroupProps {
+  readonly label?: string
+  readonly options: readonly string[]
+  readonly selectedIndex?: number
+  readonly enabled?: boolean
+  readonly height?: number
+  readonly onChange?: ValueChangeHandler<number>
+}
+
+/** Radio button group; `onChange` receives the selected option index. */
+export function RadioGroup(props: RadioGroupProps): ReactElement {
+  const { label, options, selectedIndex, enabled, height, onChange } = props
+  return hostElement('radioGroup', {
+    label,
+    options,
+    selection: selectedIndex ?? 0,
+    enabled,
+    height,
+    onChange: onChange === undefined ? undefined : (event: AttoUiCallbackEvent) => onChange(numberPayload('RadioGroup', event), event),
+  })
+}
+
+export interface SliderProps {
+  readonly min?: number
+  readonly max?: number
+  readonly value: number
+  readonly step?: number
+  readonly enabled?: boolean
+  readonly onChange?: ValueChangeHandler<number>
+}
+
+/** Horizontal slider; `onChange` receives the new numeric value. */
+export function Slider({ min, max, value, step, enabled, onChange }: SliderProps): ReactElement {
+  return hostElement('slider', {
+    min,
+    max,
+    value,
+    step,
+    enabled,
+    onChange: onChange === undefined ? undefined : (event: AttoUiCallbackEvent) => onChange(numberPayload('Slider', event), event),
+  })
+}
+
+export interface ProgressBarProps {
+  readonly min?: number
+  readonly max?: number
+  readonly value: number
+  readonly showText?: boolean
+  readonly text?: string
+  readonly enabled?: boolean
+}
+
+/** Determinate progress bar. */
+export function ProgressBar({ min, max, value, showText, text, enabled }: ProgressBarProps): ReactElement {
+  return hostElement('progressBar', { min, max, value, show_text: showText, text, enabled })
+}
+
+export interface SpinnerProps {
+  readonly text?: string
+  readonly running?: boolean
+  readonly enabled?: boolean
+}
+
+/** Indeterminate spinner with optional label. */
+export function Spinner({ text, running, enabled }: SpinnerProps): ReactElement {
+  return hostElement('spinner', { text, running, enabled })
+}
+
+/** Static text label. */
+export function Label({ text, enabled }: LabelProps): ReactElement {
+  return hostElement('label', { text, enabled })
+}
+
+export interface DividerProps {
+  readonly orientation?: 'horizontal' | 'vertical'
+}
+
+/** Horizontal or vertical separator line. */
+export function Divider({ orientation }: DividerProps = {}): ReactElement {
+  return hostElement('divider', { orientation })
+}
+
+export interface BorderProps {
+  readonly border?: boolean
+  readonly children?: ReactNode
+}
+
+/** Draws a border around a single child. */
+export function Border({ border, children }: BorderProps): ReactElement {
+  return hostElement('border', { border }, children)
+}
+
+export interface DisclosureProps {
+  readonly title: string
+  readonly expanded?: boolean
+  readonly status?: string
+  readonly content?: string
+  readonly enabled?: boolean
+  readonly onToggle?: ValueChangeHandler<boolean>
+  readonly children?: ReactNode
+}
+
+/** Collapsible section; `onToggle` receives the new expanded state. */
+export function Disclosure(props: DisclosureProps): ReactElement {
+  const { title, expanded, status, content, enabled, onToggle, children } = props
+  return hostElement('disclosure', {
+    title,
+    expanded,
+    status,
+    content,
+    enabled,
+    onToggle: onToggle === undefined ? undefined : (event: AttoUiCallbackEvent) => onToggle(boolPayload('Disclosure', event), event),
+  }, children)
+}
+
+export interface TextAreaProps {
+  readonly title?: string
+  readonly value: string
+  readonly placeholder?: string
+  readonly enabled?: boolean
+  readonly clipboard?: string
+  readonly height?: number
+  readonly enterSubmits?: boolean
+  readonly onChange?: ValueChangeHandler<string>
+  readonly onSubmit?: AttoUiEventHandler
+}
+
+/** Controlled multi-line text area; pass `value` and update it from `onChange`. */
+export function TextArea(props: TextAreaProps): ReactElement {
+  const { title, value, placeholder, enabled, clipboard, height, enterSubmits, onChange, onSubmit } = props
+  return hostElement('textArea', {
+    __attoControlledText: true,
+    title,
+    text: value,
+    placeholder,
+    enabled,
+    clipboard,
+    height,
+    enter_submits: enterSubmits,
+    onChange: onChange === undefined ? undefined : controlledTextChange('TextArea', onChange),
+    onSubmit,
+  })
+}
+
+export interface EditorProps {
+  readonly value?: string
+  readonly languageId?: string
+  readonly showLineNumbers?: boolean
+  readonly showFoldingMarkers?: boolean
+  readonly readOnly?: boolean
+  readonly tabWidth?: number
+  readonly insertSpaces?: boolean
+}
+
+/** Code editor view (syntax via `languageId`). */
+export function Editor(props: EditorProps): ReactElement {
+  const { value, languageId, showLineNumbers, showFoldingMarkers, readOnly, tabWidth, insertSpaces } = props
+  return hostElement('editor', {
+    text: value,
+    language_id: languageId,
+    show_line_numbers: showLineNumbers,
+    show_folding_markers: showFoldingMarkers,
+    read_only: readOnly,
+    tab_width: tabWidth,
+    insert_spaces: insertSpaces,
+  })
 }
