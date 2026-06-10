@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/react/package-lock.json
+          cache-dependency-path: packages/react/package.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -48,7 +48,7 @@ jobs:
           deno-version: v2.x
 
       - name: Install Node test dependencies
-        run: npm ci --prefix packages/react --ignore-scripts
+        run: npm install --prefix packages/react --ignore-scripts
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
