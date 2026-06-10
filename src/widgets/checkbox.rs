@@ -5,7 +5,8 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::composable::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
 use crate::runtime::{CallbackHandle, ComponentValue};
@@ -21,6 +22,8 @@ pub struct Checkbox {
     enabled: Binding<bool>,
     on_change_callback: Option<CallbackHandle>,
     last_area: Option<Rect>,
+    /// Mouse press gesture is active (button held since a press started inside).
+    holding: bool,
 }
 
 impl Checkbox {
@@ -31,6 +34,7 @@ impl Checkbox {
             enabled: true.into(),
             on_change_callback: None,
             last_area: None,
+            holding: false,
         }
     }
 
@@ -53,6 +57,16 @@ impl Checkbox {
         if let Some(cb) = &self.on_change_callback {
             cb.emit_with(Some(ComponentValue::Bool(self.binding.get())));
         }
+    }
+
+    fn toggle(&mut self) {
+        self.binding.update(|v| *v = !*v);
+        self.emit_change();
+    }
+
+    fn hit(&self, m: &crossterm::event::MouseEvent, space: MouseCoordinateSpace) -> bool {
+        self.last_area
+            .is_some_and(|area| mouse_coords_local_to_area(area, *m, space).is_some())
     }
 }
 
@@ -102,25 +116,44 @@ impl EventHandling for Checkbox {
                 use crossterm::event::MouseButton;
                 use crossterm::event::MouseEventKind;
 
-                if m.kind == MouseEventKind::Down(MouseButton::Left) {
-                    let Some(area) = self.last_area else {
-                        return EventResult::ignored();
-                    };
-                    if mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space).is_none() {
-                        return EventResult::ignored();
+                match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if self.hit(m, ctx.mouse_coordinate_space) {
+                            self.holding = true;
+                            EventResult::consumed().with_capture(Capture::Request)
+                        } else {
+                            EventResult::ignored()
+                        }
                     }
-                    self.binding.update(|v| *v = !*v);
-                    self.emit_change();
-                    return EventResult::changed();
+                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                        if self.holding {
+                            EventResult::consumed()
+                        } else {
+                            EventResult::ignored()
+                        }
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        if self.holding {
+                            let inside = self.hit(m, ctx.mouse_coordinate_space);
+                            self.holding = false;
+                            if inside {
+                                self.toggle();
+                                EventResult::changed().with_capture(Capture::Release)
+                            } else {
+                                EventResult::consumed().with_capture(Capture::Release)
+                            }
+                        } else {
+                            EventResult::ignored()
+                        }
+                    }
+                    _ => EventResult::ignored(),
                 }
-                EventResult::ignored()
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Char(' ') | KeyCode::Enter,
                 ..
             }) => {
-                self.binding.update(|v| *v = !*v);
-                self.emit_change();
+                self.toggle();
                 EventResult::changed()
             }
             Event::Key(KeyEvent { .. }) => EventResult::ignored(),
@@ -155,8 +188,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn mouse_down_requires_last_area_hit() {
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn drawn_checkbox() -> (Checkbox, Binding<bool>, Theme) {
         let checked = Binding::new(false);
         let mut checkbox = Checkbox::new("Enabled", checked.clone());
         let theme = Theme::dark();
@@ -164,29 +205,66 @@ mod tests {
         terminal
             .draw(|f| checkbox.draw(f, Rect::new(4, 2, 12, 1), context(&theme)))
             .expect("draw");
+        (checkbox, checked, theme)
+    }
 
-        let outside = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 1,
-            row: 2,
-            modifiers: KeyModifiers::NONE,
-        });
+    #[test]
+    fn mouse_down_outside_does_not_press() {
+        let (mut checkbox, checked, theme) = drawn_checkbox();
+        let outside = mouse(MouseEventKind::Down(MouseButton::Left), 1, 2);
         assert_eq!(
             checkbox.handle_event(&outside, context(&theme)),
             EventResult::ignored()
         );
+        assert!(!checkbox.holding);
         assert!(!checked.get());
+    }
 
-        let inside = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 5,
-            row: 2,
-            modifiers: KeyModifiers::NONE,
-        });
+    #[test]
+    fn mouse_down_inside_presses_without_toggling() {
+        let (mut checkbox, checked, theme) = drawn_checkbox();
+        let down = mouse(MouseEventKind::Down(MouseButton::Left), 5, 2);
         assert_eq!(
-            checkbox.handle_event(&inside, context(&theme)),
-            EventResult::changed()
+            checkbox.handle_event(&down, context(&theme)),
+            EventResult::consumed().with_capture(Capture::Request)
         );
+        assert!(checkbox.holding);
+        assert!(!checked.get());
+    }
+
+    #[test]
+    fn release_inside_toggles_once() {
+        let (mut checkbox, checked, theme) = drawn_checkbox();
+        checkbox.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 5, 2),
+            context(&theme),
+        );
+        let up = mouse(MouseEventKind::Up(MouseButton::Left), 6, 2);
+        assert_eq!(
+            checkbox.handle_event(&up, context(&theme)),
+            EventResult::changed().with_capture(Capture::Release)
+        );
+        assert!(!checkbox.holding);
         assert!(checked.get());
+    }
+
+    #[test]
+    fn release_outside_does_not_toggle() {
+        let (mut checkbox, checked, theme) = drawn_checkbox();
+        checkbox.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 5, 2),
+            context(&theme),
+        );
+        checkbox.handle_event(
+            &mouse(MouseEventKind::Drag(MouseButton::Left), 1, 1),
+            context(&theme),
+        );
+        let up = mouse(MouseEventKind::Up(MouseButton::Left), 1, 1);
+        assert_eq!(
+            checkbox.handle_event(&up, context(&theme)),
+            EventResult::consumed().with_capture(Capture::Release)
+        );
+        assert!(!checkbox.holding);
+        assert!(!checked.get());
     }
 }

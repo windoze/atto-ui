@@ -28,7 +28,7 @@ pub use crate::widgets::{
 };
 pub use border::Border;
 pub use component::{
-    Component, ComponentAction, ComponentContext, DragAndDrop, DynamicTree, EventHandling,
+    Capture, Component, ComponentAction, ComponentContext, DragAndDrop, DynamicTree, EventHandling,
     EventOutcome, EventResult, FocusNav, Layout, MouseCoordinateSpace, Scrollable, ScrollbarHost,
     TabMode, TitleBarContent, TitleBarContext, TitleBarSpan,
 };

@@ -1241,6 +1241,15 @@ fn run_apphost_api_fixture() -> Result<()> {
     )?;
     host.send_event(
         window_id,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        }),
+    )?;
+    host.send_event(
+        window_id,
         Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
     )?;
     host.move_window(window_id, 4, 4)?;

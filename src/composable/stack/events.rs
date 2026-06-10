@@ -2,7 +2,9 @@ use crossterm::event::{Event, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use super::super::clipped;
-use super::super::component::{ComponentContext, EventResult, MouseCoordinateSpace, TabMode};
+use super::super::component::{
+    Capture, ComponentContext, EventResult, MouseCoordinateSpace, TabMode,
+};
 use super::super::geom::{
     TabDirection, contains, focusable_children_in_tab_order, mouse_coords_local_to_area,
     tab_direction_for_event,
@@ -258,6 +260,32 @@ impl StackCore {
             return capture;
         }
 
+        if let Event::Mouse(_) = event {
+            // Pointer capture: route the event straight to the captured child,
+            // bypassing scrollbar/hit-test. The event keeps absolute coordinates so
+            // the child can tell whether the pointer is inside its own bounds (a
+            // local-converted coordinate would saturate at 0 once outside).
+            if let Some(cap_id) = self.captured_child {
+                if let Some(idx) = self.children.iter().position(|c| c.id == cap_id) {
+                    let cap_ctx = ComponentContext {
+                        theme: ctx.theme,
+                        window_id: ctx.window_id,
+                        is_focused: ctx.is_focused && self.focused == Some(cap_id),
+                        scrollbar_host: ctx.scrollbar_host.for_child(),
+                        tab_mode: ctx.tab_mode.for_child(),
+                        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                        drag: None,
+                    };
+                    let res = self.children[idx].view.handle_event(event, cap_ctx);
+                    if matches!(res.capture, Capture::Release) {
+                        self.captured_child = None;
+                    }
+                    return res;
+                }
+                self.captured_child = None;
+            }
+        }
+
         if let Event::Mouse(m) = event {
             let Some(area) = self.last_area else {
                 return self.handle_event_bubble_impl(event, ctx.mouse_coordinate_space);
@@ -359,6 +387,14 @@ impl StackCore {
             let res = self.children[child_idx]
                 .view
                 .handle_event(&child_event, child_ctx);
+            // A child that requested capture on this (down) event becomes the
+            // capture target; the request bubbles further up via the returned
+            // result so the window manager can capture at its level too.
+            match res.capture {
+                Capture::Request => self.captured_child = Some(child_id),
+                Capture::Release => self.captured_child = None,
+                Capture::None => {}
+            }
             if res.is_consumed() {
                 return res;
             }

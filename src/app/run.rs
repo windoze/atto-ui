@@ -726,6 +726,75 @@ mod tests {
     }
 
     #[test]
+    fn pointer_capture_routes_release_outside_button_without_click() {
+        use crate::widgets::Button;
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_button = Arc::clone(&calls);
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut window_id = None;
+        let mut host = AppHost::new_headless(screen, |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            let id = desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "Capture",
+                    Rect::new(2, 2, 28, 7),
+                    Box::new(Button::new("Fire").on_click(move || {
+                        calls_for_button.fetch_add(1, Ordering::SeqCst);
+                    })),
+                ),
+                screen,
+            );
+            window_id = Some(id);
+            Ok(desktop)
+        })
+        .expect("headless host");
+        let window_id = window_id.expect("window id");
+
+        // Lay out and draw so the button records its on-screen area.
+        host.step().expect("step");
+
+        let down = |col, row| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let up = |col, row| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: col,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+
+        // Press inside the button (window-relative coords): no click yet, capture armed.
+        let res = host.send_event(window_id, down(2, 2)).expect("down");
+        assert_eq!(res.outcome, EventOutcome::Consumed);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // Release well outside the button's area (below and past the window). This
+        // only reaches the button if pointer capture routes the out-of-bounds event
+        // back to it; releasing outside the button must NOT count as a click.
+        let res = host.send_event(window_id, up(5, 20)).expect("up outside");
+        assert_eq!(res.outcome, EventOutcome::Consumed);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // A clean press+release at the same point is a click, and capture is cleared
+        // afterwards (the next stray move is ignored by the button).
+        host.send_event(window_id, down(2, 2)).expect("down again");
+        host.send_event(window_id, up(2, 2)).expect("up inside");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn step_advances_timers_by_real_elapsed_time() {
         use crate::reactive::{cancel_timer, register_timer_with_duration};
         use std::sync::Arc;

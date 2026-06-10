@@ -8,8 +8,9 @@ use crate::composable::scroll::{
     scrollbar_layout_1d, should_show_scrollbar,
 };
 use crate::composable::{
-    ComponentAction, ComponentContext, ComponentId, DragContext, DragOffer, DragSource, DropEffect,
-    DropFeedback, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode, TitleBarContext,
+    Capture, ComponentAction, ComponentContext, ComponentId, DragContext, DragOffer, DragSource,
+    DropEffect, DropFeedback, EventResult, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    TitleBarContext,
 };
 use crate::theme::Theme;
 
@@ -56,6 +57,10 @@ impl WindowManager {
         let idx = self.window_index_of(id)?;
         let is_focused = self.focused() == Some(id);
         let drag = drag_context_for_window(self.global_drag.as_ref(), id);
+        // While this window holds pointer capture, deliver mouse events to its view
+        // even when the pointer is outside the inner rect (so a pressed button keeps
+        // tracking move/up after the pointer leaves it).
+        let capture_active = self.pointer_capture == Some(id);
         let action = {
             let w = &mut self.windows[idx];
             let state = w.state.get();
@@ -80,7 +85,7 @@ impl WindowManager {
                 // Views render inside the inner rect; clicks on window chrome/borders should not
                 // be delivered to the view layer.
                 let inner = w.inner_rect();
-                if !placement::contains(inner, m.column, m.row) {
+                if !capture_active && !placement::contains(inner, m.column, m.row) {
                     return Some((id, EventResult::ignored()));
                 }
             }
@@ -94,6 +99,13 @@ impl WindowManager {
             );
             w.view.handle_event(event, ctx)
         };
+        // The view (or a descendant) may request/release pointer capture; track it
+        // at the window level so subsequent mouse events route back here.
+        match action.capture {
+            Capture::Request => self.pointer_capture = Some(id),
+            Capture::Release => self.pointer_capture = None,
+            Capture::None => {}
+        }
         Some((id, action))
     }
 

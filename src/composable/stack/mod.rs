@@ -40,6 +40,10 @@ struct StackCore {
     scroll_config: Binding<ScrollConfig>,
     scrollbars: Option<Scrollbars>,
     scrollbar_drag: Option<ScrollbarDrag>,
+    /// Child that has captured the pointer (set when a descendant requests
+    /// capture on mouse down). While set, mouse events are routed straight to it,
+    /// bypassing hit-testing, until it releases on mouse up.
+    captured_child: Option<ComponentId>,
 }
 
 impl Default for StackCore {
@@ -65,6 +69,7 @@ impl StackCore {
             scroll_config: ScrollConfig::default().into(),
             scrollbars: None,
             scrollbar_drag: None,
+            captured_child: None,
         }
     }
 
@@ -133,8 +138,10 @@ impl StackCore {
             self.focused = self.first_focusable_child();
         }
 
-        // Any in-progress scrollbar drag is no longer valid after restructuring children.
+        // Any in-progress scrollbar drag or pointer capture is no longer valid
+        // after restructuring children.
         self.scrollbar_drag = None;
+        self.captured_child = None;
     }
 
     fn desired_height_flow(&self) -> u16 {

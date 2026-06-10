@@ -135,6 +135,21 @@ pub enum ComponentAction {
     Submitted,
 }
 
+/// Pointer-capture request a component can attach to its `EventResult`.
+///
+/// A component that wants to keep receiving mouse move/drag/up after the pointer
+/// leaves its bounds (e.g. a button tracking a press) returns `Request` on mouse
+/// down and `Release` on mouse up. The request bubbles up the container chain and
+/// the window manager routes subsequent mouse events straight back to the
+/// capturing component until it releases.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Capture {
+    #[default]
+    None,
+    Request,
+    Release,
+}
+
 /// Implements default component subtraits for a concrete component type.
 ///
 /// Use this when a component only needs `Component::draw` and core hooks for the listed
@@ -152,6 +167,7 @@ macro_rules! impl_component_default_traits {
 pub struct EventResult {
     pub outcome: EventOutcome,
     pub action: ComponentAction,
+    pub capture: Capture,
 }
 
 impl EventResult {
@@ -159,6 +175,7 @@ impl EventResult {
         Self {
             outcome: EventOutcome::Ignored,
             action: ComponentAction::None,
+            capture: Capture::None,
         }
     }
 
@@ -166,6 +183,7 @@ impl EventResult {
         Self {
             outcome: EventOutcome::Consumed,
             action: ComponentAction::None,
+            capture: Capture::None,
         }
     }
 
@@ -173,6 +191,7 @@ impl EventResult {
         Self {
             outcome: EventOutcome::Consumed,
             action: ComponentAction::CloseWindow,
+            capture: Capture::None,
         }
     }
 
@@ -180,6 +199,7 @@ impl EventResult {
         Self {
             outcome: EventOutcome::Consumed,
             action: ComponentAction::Changed,
+            capture: Capture::None,
         }
     }
 
@@ -187,7 +207,14 @@ impl EventResult {
         Self {
             outcome: EventOutcome::Consumed,
             action: ComponentAction::Submitted,
+            capture: Capture::None,
         }
+    }
+
+    /// Attach a pointer-capture request/release to this result.
+    pub const fn with_capture(mut self, capture: Capture) -> Self {
+        self.capture = capture;
+        self
     }
 
     pub const fn is_consumed(self) -> bool {

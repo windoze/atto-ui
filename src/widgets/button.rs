@@ -9,7 +9,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::composable::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -29,6 +30,10 @@ pub struct Button {
     on_click_callback: Option<CallbackHandle>,
     enabled: Binding<bool>,
     last_area: Option<Rect>,
+    /// Mouse press gesture is active (button held since a press started inside).
+    holding: bool,
+    /// Visual pressed state: held AND the pointer is currently inside.
+    pressed: bool,
 }
 
 impl Button {
@@ -40,6 +45,8 @@ impl Button {
             on_click_callback: None,
             enabled: true.into(),
             last_area: None,
+            holding: false,
+            pressed: false,
         }
     }
 
@@ -79,6 +86,11 @@ impl Button {
             cb.emit();
         }
     }
+
+    fn hit(&self, m: &crossterm::event::MouseEvent, space: MouseCoordinateSpace) -> bool {
+        self.last_area
+            .is_some_and(|area| mouse_coords_local_to_area(area, *m, space).is_some())
+    }
 }
 
 #[component_properties]
@@ -97,13 +109,27 @@ impl Component for Button {
             self.default_button.get(),
         );
         let shadow_style = button_shadow_style(ctx.theme);
-        let button_rect = Rect::new(area.x, button_row(area), area.width, 1);
+        let row = button_row(area);
         let bounds = frame.area();
         let buf = frame.buffer_mut();
 
-        draw_button_shadow(buf, button_rect, bounds, shadow_style);
-        fill_button_row(buf, button_rect, bounds, style);
-        draw_button_label(buf, button_rect, bounds, &self.label.get(), style);
+        if self.pressed {
+            // Pressed: shift the face down-right by one cell onto the shadow position
+            // (no shadow drawn) so the button visibly sinks.
+            let face = Rect::new(
+                area.x.saturating_add(1),
+                row.saturating_add(1),
+                area.width,
+                1,
+            );
+            fill_button_row(buf, face, bounds, style);
+            draw_button_label(buf, face, bounds, &self.label.get(), style);
+        } else {
+            let face = Rect::new(area.x, row, area.width, 1);
+            draw_button_shadow(buf, face, bounds, shadow_style);
+            fill_button_row(buf, face, bounds, style);
+            draw_button_label(buf, face, bounds, &self.label.get(), style);
+        }
     }
 }
 
@@ -137,17 +163,41 @@ impl EventHandling for Button {
                 use crossterm::event::MouseButton;
                 use crossterm::event::MouseEventKind;
 
-                if m.kind == MouseEventKind::Down(MouseButton::Left) {
-                    let Some(area) = self.last_area else {
-                        return EventResult::ignored();
-                    };
-                    if mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space).is_none() {
-                        return EventResult::ignored();
+                match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if self.hit(m, ctx.mouse_coordinate_space) {
+                            self.holding = true;
+                            self.pressed = true;
+                            EventResult::consumed().with_capture(Capture::Request)
+                        } else {
+                            EventResult::ignored()
+                        }
                     }
-                    self.trigger();
-                    return EventResult::submitted();
+                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                        if self.holding {
+                            self.pressed = self.hit(m, ctx.mouse_coordinate_space);
+                            EventResult::consumed()
+                        } else {
+                            EventResult::ignored()
+                        }
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        if self.holding {
+                            let inside = self.hit(m, ctx.mouse_coordinate_space);
+                            self.holding = false;
+                            self.pressed = false;
+                            if inside {
+                                self.trigger();
+                                EventResult::submitted().with_capture(Capture::Release)
+                            } else {
+                                EventResult::consumed().with_capture(Capture::Release)
+                            }
+                        } else {
+                            EventResult::ignored()
+                        }
+                    }
+                    _ => EventResult::ignored(),
                 }
-                EventResult::ignored()
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Enter | KeyCode::Char(' '),
@@ -422,11 +472,19 @@ mod tests {
         assert_visible_style(buf[(3, 0)].style(), emphasized_style);
     }
 
-    #[test]
-    fn mouse_down_outside_last_area_does_not_click() {
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    }
+
+    fn drawn_button(label: &str) -> (Button, Arc<AtomicUsize>, Theme) {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_button = Arc::clone(&calls);
-        let mut button = Button::new("OK").on_click(move || {
+        let mut button = Button::new(label.to_string()).on_click(move || {
             calls_for_button.fetch_add(1, Ordering::SeqCst);
         });
         let theme = Theme::dark();
@@ -434,30 +492,88 @@ mod tests {
         terminal
             .draw(|f| button.draw(f, Rect::new(10, 5, 6, 1), context(&theme)))
             .expect("draw");
+        (button, calls, theme)
+    }
 
-        let outside = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 1,
-            row: 1,
-            modifiers: KeyModifiers::empty(),
-        });
+    #[test]
+    fn mouse_down_outside_last_area_does_not_press() {
+        let (mut button, calls, theme) = drawn_button("OK");
+
+        let outside = mouse(MouseEventKind::Down(MouseButton::Left), 1, 1);
         assert_eq!(
             button.handle_event(&outside, context(&theme)),
             EventResult::ignored()
         );
+        assert!(!button.pressed);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 
-        let inside = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 11,
-            row: 5,
-            modifiers: KeyModifiers::empty(),
-        });
+    #[test]
+    fn mouse_down_inside_presses_without_triggering() {
+        let (mut button, calls, theme) = drawn_button("OK");
+
+        let down = mouse(MouseEventKind::Down(MouseButton::Left), 11, 5);
         assert_eq!(
-            button.handle_event(&inside, context(&theme)),
-            EventResult::submitted()
+            button.handle_event(&down, context(&theme)),
+            EventResult::consumed().with_capture(Capture::Request)
         );
+        assert!(button.pressed);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn drag_out_and_back_toggles_pressed() {
+        let (mut button, _calls, theme) = drawn_button("OK");
+        button.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 11, 5),
+            context(&theme),
+        );
+
+        let out = mouse(MouseEventKind::Drag(MouseButton::Left), 1, 1);
+        assert!(button.handle_event(&out, context(&theme)).is_consumed());
+        assert!(!button.pressed);
+
+        let back = mouse(MouseEventKind::Drag(MouseButton::Left), 12, 5);
+        assert!(button.handle_event(&back, context(&theme)).is_consumed());
+        assert!(button.pressed);
+    }
+
+    #[test]
+    fn release_inside_triggers_click_once() {
+        let (mut button, calls, theme) = drawn_button("OK");
+        button.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 11, 5),
+            context(&theme),
+        );
+
+        let up = mouse(MouseEventKind::Up(MouseButton::Left), 12, 5);
+        assert_eq!(
+            button.handle_event(&up, context(&theme)),
+            EventResult::submitted().with_capture(Capture::Release)
+        );
+        assert!(!button.pressed);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn release_outside_does_not_click() {
+        let (mut button, calls, theme) = drawn_button("OK");
+        button.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 11, 5),
+            context(&theme),
+        );
+        button.handle_event(
+            &mouse(MouseEventKind::Drag(MouseButton::Left), 1, 1),
+            context(&theme),
+        );
+
+        let up = mouse(MouseEventKind::Up(MouseButton::Left), 1, 1);
+        assert_eq!(
+            button.handle_event(&up, context(&theme)),
+            EventResult::consumed().with_capture(Capture::Release)
+        );
+        assert!(!button.pressed);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

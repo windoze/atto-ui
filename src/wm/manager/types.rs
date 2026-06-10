@@ -95,4 +95,8 @@ pub struct WindowManager {
     pub(super) drag: Option<DragState>,
     pub(super) global_drag: Option<GlobalDragState>,
     pub(super) mouse_capture: bool,
+    /// Window whose content has captured the pointer (a component inside it
+    /// requested capture on mouse down). While set, mouse events are routed
+    /// straight to that window's view, bypassing chrome/hit-test, until release.
+    pub(super) pointer_capture: Option<WindowId>,
 }

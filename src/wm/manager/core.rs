@@ -35,6 +35,16 @@ impl WindowManager {
         self.global_drag.is_some()
     }
 
+    /// The window whose content currently holds pointer capture, if any.
+    pub fn pointer_capture(&self) -> Option<WindowId> {
+        self.pointer_capture
+    }
+
+    /// Clear any pointer capture (e.g. on focus change or Esc).
+    pub fn clear_pointer_capture(&mut self) {
+        self.pointer_capture = None;
+    }
+
     pub(crate) fn windows_mut(&mut self) -> &mut [Window] {
         &mut self.windows
     }
@@ -83,6 +93,9 @@ impl WindowManager {
             other => other,
         };
         self.mouse_capture = false;
+        if self.pointer_capture == Some(id) {
+            self.pointer_capture = None;
+        }
         let was_focused = self.focused == Some(id);
         self.windows.retain(|w| w.id != id);
         self.rebuild_window_index();

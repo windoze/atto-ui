@@ -540,6 +540,23 @@ impl Desktop {
             }
         }
 
+        // Pointer capture: while a window's content holds the pointer (e.g. a button
+        // pressed with the mouse), route mouse events straight to it, bypassing chrome
+        // routing and hit-testing, until the capture is released.
+        if let (Some(cap_win), Event::Mouse(_)) = (self.wm.pointer_capture(), event) {
+            if let Some((id, res)) =
+                self.wm
+                    .dispatch_to_window_view(cap_win, event, layout.work_area, &self.theme)
+                && res.action == ComponentAction::CloseWindow
+            {
+                if self.wm.request_close(id) {
+                    return DesktopEventResult::close_window(id);
+                }
+                return DesktopEventResult::consumed();
+            }
+            return DesktopEventResult::consumed();
+        }
+
         // Desktop chrome mouse routing (menu bar / status bar) comes first so clicks don't
         // accidentally fall through to the focused view.
         if let Event::Mouse(m) = event {

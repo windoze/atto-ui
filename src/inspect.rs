@@ -240,6 +240,7 @@ impl<'a> DesktopInspector<'a> {
                 Ok(EventResult {
                     outcome: result.outcome,
                     action: crate::composable::ComponentAction::None,
+                    capture: crate::composable::Capture::None,
                 })
             }
             ComponentCommand::InputText(text) => {
@@ -265,6 +266,7 @@ impl<'a> DesktopInspector<'a> {
                 Ok(EventResult {
                     outcome: result.outcome,
                     action: crate::composable::ComponentAction::None,
+                    capture: crate::composable::Capture::None,
                 })
             }
             ComponentCommand::SelectIndex(_) => {

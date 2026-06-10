@@ -140,6 +140,7 @@ impl EventHandling for RecordingView {
         EventResult {
             outcome: self.outcome,
             action: ComponentAction::None,
+            capture: crate::composable::Capture::None,
         }
     }
 }
