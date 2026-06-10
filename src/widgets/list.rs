@@ -456,13 +456,15 @@ impl ScrollContent for ListBoxContent {
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
         let style = widget_style(ctx.component.theme, enabled, ctx.component.is_focused);
+        let selection_style = ctx
+            .component
+            .theme
+            .named_style("list-selection")
+            .unwrap_or(ctx.component.theme.selection);
         let highlight_style = if enabled {
-            ctx.component.theme.selection
+            selection_style
         } else {
-            ctx.component
-                .theme
-                .selection
-                .patch(ctx.component.theme.widget.disabled)
+            selection_style.patch(ctx.component.theme.widget.disabled)
         };
 
         let items = bindings.items.get();
@@ -479,11 +481,21 @@ impl ScrollContent for ListBoxContent {
             .enumerate()
             .map(|(offset, s)| {
                 let idx = start + offset;
+                let selected = selection.is_some_and(|sel| sel == idx);
+                // The selected row's text uses the highlight style too, so its
+                // foreground contrasts with the highlight background (otherwise the
+                // span's normal fg would sit on the selection bg with low contrast).
+                let row_style = if selected { highlight_style } else { style };
                 let segments = parse_inline(s);
-                let spans =
-                    slice_spans_from_segments(&segments, scroll.x, viewport_w, style, link_overlay);
+                let spans = slice_spans_from_segments(
+                    &segments,
+                    scroll.x,
+                    viewport_w,
+                    row_style,
+                    link_overlay,
+                );
                 let item = ListItem::new(Line::from(spans));
-                if selection.is_some_and(|sel| sel == idx) {
+                if selected {
                     item.style(highlight_style)
                 } else {
                     item

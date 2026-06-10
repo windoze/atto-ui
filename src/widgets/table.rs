@@ -14,8 +14,9 @@ use crate::composable::scroll::{
 };
 use crate::composable::{
     Component, ComponentContext, EdgeInsets, EventHandling, EventResult, FocusNav, Layout,
-    ScrollConfig, ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
-    ScrollOffset, Scrollable, ScrollbarHost, ScrollbarVisibility, should_show_scrollbar,
+    MouseCoordinateSpace, ScrollConfig, ScrollContainer, ScrollContainerHost, ScrollContent,
+    ScrollContentContext, ScrollOffset, Scrollable, ScrollbarHost, ScrollbarVisibility,
+    should_show_scrollbar,
 };
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
@@ -308,6 +309,25 @@ impl EventHandling for TableView {
             if !contains(body_local, local_x, local_y) {
                 return EventResult::ignored();
             }
+
+            // The scroll body is inset by the border and header, so re-express the
+            // click relative to `body_area` and hand it over as Local coordinates.
+            // (ListBox can delegate the raw event because its scroll viewport is the
+            // whole area; the table's viewport is the smaller body, so a raw event
+            // would be offset by the border + header — breaking clicks when the
+            // table is nested and the incoming coordinates are already Local.)
+            let body_event = Event::Mouse(MouseEvent {
+                column: local_x.saturating_sub(body_local.x),
+                row: local_y.saturating_sub(body_local.y),
+                ..*m
+            });
+            let body_ctx = ComponentContext {
+                scrollbar_host: ScrollbarHost::Window,
+                drag: None,
+                mouse_coordinate_space: MouseCoordinateSpace::Local,
+                ..ctx
+            };
+            return self.scroll.handle_event(&body_event, body_ctx);
         }
 
         let body_ctx = ComponentContext {
@@ -528,13 +548,15 @@ impl ScrollContent for TableBodyContent {
         let enabled = bindings.enabled.get();
         let base_style: Style =
             widget_style(ctx.component.theme, enabled, ctx.component.is_focused);
+        let selection_style = ctx
+            .component
+            .theme
+            .named_style("list-selection")
+            .unwrap_or(ctx.component.theme.selection);
         let highlight_style = if enabled {
-            ctx.component.theme.selection
+            selection_style
         } else {
-            ctx.component
-                .theme
-                .selection
-                .patch(ctx.component.theme.widget.disabled)
+            selection_style.patch(ctx.component.theme.widget.disabled)
         };
 
         let headers = bindings.headers.get();
@@ -550,9 +572,17 @@ impl ScrollContent for TableBodyContent {
 
         let data_rows = rows[visible].iter().enumerate().map(|(offset, row)| {
             let idx = start + offset;
-            let cells = row_cells(row, column_count, base_style, link_overlay);
+            let selected = selection.is_some_and(|sel| sel == idx);
+            // Selected row cells use the highlight style so their text contrasts
+            // with the highlight background instead of keeping the normal fg.
+            let cell_style = if selected {
+                highlight_style
+            } else {
+                base_style
+            };
+            let cells = row_cells(row, column_count, cell_style, link_overlay);
             let row = Row::new(cells);
-            if selection.is_some_and(|sel| sel == idx) {
+            if selected {
                 row.style(highlight_style)
             } else {
                 row

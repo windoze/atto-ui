@@ -52,6 +52,29 @@ fn theme_turbo_uses_classic_tv_palette_and_named_styles() {
 }
 
 #[test]
+fn theme_dark_list_selection_uses_high_contrast_text() {
+    let theme = Theme::dark();
+    let style = theme
+        .named_style("list-selection")
+        .expect("list-selection token");
+    // Selected list/table rows must read clearly: white bold text on a deep-blue
+    // bar (a light-blue bar leaves both light and dark text low-contrast).
+    assert_eq!(style.bg, Some(Color::Rgb(28, 78, 140)));
+    assert_eq!(style.fg, Some(Color::White));
+    assert!(style.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn theme_list_selection_defaults_to_selection_for_other_themes() {
+    for theme in [Theme::light(), Theme::turbo()] {
+        assert_eq!(
+            theme.named_style("list-selection").expect("list-selection"),
+            theme.selection
+        );
+    }
+}
+
+#[test]
 fn theme_named_resolves_turbo_aliases() {
     assert_eq!(
         Theme::named("turbo").expect("turbo").desktop.bg,

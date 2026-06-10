@@ -129,6 +129,16 @@ impl Theme {
             named_styles_revision: next_theme_revision(),
         };
         theme.populate_named_styles();
+        // The generic selection is a light-blue bar, which leaves text (light or
+        // dark) low-contrast. For list/table rows use a deep-blue bar with white
+        // bold text so the highlighted row reads clearly.
+        theme.named_styles.insert(
+            "list-selection".into(),
+            Style::default()
+                .bg(Color::Rgb(28, 78, 140))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
         theme
     }
 
@@ -454,6 +464,11 @@ impl Theme {
         self.named_styles
             .insert("which-key-title".into(), self.widget.normal);
         self.named_styles.insert("selection".into(), self.selection);
+        // Selected-row style for list/table. Defaults to the generic selection;
+        // themes may override it (see Theme::dark) so the row text has enough
+        // contrast against the highlight background.
+        self.named_styles
+            .insert("list-selection".into(), self.selection);
 
         self.named_styles
             .insert("status-bar".into(), self.status_bar);
