@@ -110,34 +110,34 @@ pub struct ChatMessage {                     // message.rs:181
 
 ---
 
-## 2. 能力差距矩阵(对照 Claude Code 功能集)
+## 2. 能力覆盖矩阵(对照 Claude Code 功能集)
 
-✅ 已具备 / ⚠️ 部分 / ❌ 缺失。
+✅ 已具备 / ⚠️ 部分 / ❌ 缺失。收尾 2 快照审计后所有原 ❌/⚠️ 项均已转为 ✅。
 
-| 能力 | 现状 | 关键差距 |
+| 能力 | 现状 | 实现/验证要点 |
 |---|---|---|
-| markdown 流式文本 | ✅ | `MarkdownViewer` + `append_delta` |
-| 一回合多 block(thinking+text+多 tool_use 交错) | ❌ | `ChatMessageContent` 四选一;一回合被拆成多条消息 |
-| thinking / reasoning 块(可折叠) | ❌ | 无类型 |
-| 工具**入参** input | ❌ | `ToolCall` 只有 name/status/output |
-| tool_use 与 tool_result 分离 | ❌ | 合并为一个 `output:String` |
-| 工具输出 ANSI / 超长尾部窗口 | ❌ | 纯 String,无 ANSI/截断 |
-| 工具属于 assistant 回合 | ❌ | 被建模成 `sender=Tool(name)` 独立气泡 |
-| 工具三态 + 可折叠 | ✅ | `ChatToolCallStatus` + `Disclosure` |
-| inline 审批(挂在 tool_use,支持 always) | ❌ | 审批是底部独立面板,与调用脱节 |
-| inline diff + Accept/Reject | ❌ | diff 仅在侧栏 viewer,链接式 |
-| Todo/任务进度面板 | ❌ | 无 |
-| Plan 模式(展示+接受) | ❌ | 无 |
-| 子 agent / Task 嵌套 | ❌ | 无层级 |
-| 系统/上下文压缩通知 | ⚠️ | 只有 `ChatSender::System` |
-| 回合元数据(模型/用量/耗时/停止原因) | ❌ | 仅 `Option<timestamp>` |
-| 错误清晰区分(API/工具/限流/拒答) | ⚠️ | 只有 `Failed(String)` + 工具 `Error` |
-| 复制消息/代码、文本选择 | ❌ | body 不可聚焦不可选 |
-| retry / regenerate / 编辑重发 | ❌ | 无逐条操作 |
-| 中断/取消生成(Esc) | ❌ | 只有 spinner |
-| 自动跟随 + 跳到最新 | ⚠️ | 有 follow_tail;有一帧延迟、预载不滚底、prepend 不保锚点、无回底入口 |
-| 响应式换行 / 代码横向滚动 | ❌ | `wrap_width=72` 写死 + 禁水平滚动 |
-| 长会话虚拟化 + 去全量 clone | ❌ | 每行每帧深拷贝整个 Vec,无窗口化 |
+| markdown 流式文本 | ✅ | `MarkdownViewer` + `append_text_delta`;`snapshot_chat_app --streaming-markdown` |
+| 一回合多 block(thinking+text+多 tool_use 交错) | ✅ | `ChatMessage.blocks` + 回合 header/block 行模型;`--block-mapping` |
+| thinking / reasoning 块(可折叠) | ✅ | `ThinkingBlock` + 折叠 `Disclosure`;`--thinking-notice`/`--block-mapping` |
+| 工具**入参** input | ✅ | `ToolInput::Text/Json` 渲染命令和 key/value;`--tool-call`/`--block-mapping` |
+| tool_use 与 tool_result 分离 | ✅ | `ToolUseBlock`/`ToolResultBlock` 按 `call_id` 配对,缺 result 显示等待中;`--block-mapping` |
+| 工具输出 ANSI / 超长尾部窗口 | ✅ | `ToolOutput::Ansi` SGR 解析、尾部窗口和展开全部;`--long-tool-output` |
+| 工具属于 assistant 回合 | ✅ | `ChatRole` 无 Tool 角色,工具以 assistant 回合内 block 呈现;`--block-mapping` |
+| 工具三态 + 可折叠 | ✅ | `ToolStatus` 覆盖 Pending/Running/Done/Error/Canceled,ToolUse/ToolResult 均可折叠;`--tool-call` |
+| inline 审批(挂在 tool_use,支持 always) | ✅ | `ApprovalRequest` 挂在 `ToolUseBlock`,Allow always 后锁定;`--inline-approval` |
+| inline diff + Accept/Reject | ✅ | `DiffBlock`/`ToolOutput::Diff` inline 着色,决策后锁定;`--inline-diff` |
+| Todo/任务进度面板 | ✅ | `TodoBlock` 自绘 `[ ]/[~]/[x]`;`--todo-panel` |
+| Plan 模式(展示+接受) | ✅ | 独立 `PlanBlock` + Accept/Reject + 决策锁定;`--plan-mode` |
+| 子 agent / Task 嵌套 | ✅ | 独立 `TaskBlock` 展示折叠摘要、状态和嵌套 transcript;`--nested-task` |
+| 系统/上下文压缩通知 | ✅ | `NoticeBlock` 按 Info/Warning/Error 着色;`--thinking-notice` |
+| 回合元数据(模型/用量/耗时/停止原因) | ✅ | `ChatMessageMeta` 在回合 header 展示 model/usage/elapsed/stop_reason;`--turn-meta-error` |
+| 错误清晰区分(API/工具/限流/拒答) | ✅ | `ChatTurnStatus::Failed(ChatError)` 展示 kind/message/detail;`--turn-meta-error` |
+| 复制消息/代码、文本选择 | ✅ | `MessageActionKind::Copy/CopyBlock` + 文本/代码/命令 block 真实选区和 OSC52 复制;`--message-actions`/`--text-selection` |
+| retry / regenerate / 编辑重发 | ✅ | `MessageActionKind::{Retry,Regenerate,EditUser}` 回调;`--message-actions` |
+| 中断/取消生成(Esc) | ✅ | streaming 回合 `on_cancel` 回调并置 `Canceled`;`--cancel-action` |
+| 自动跟随 + 跳到最新 | ✅ | 初始滚底、同帧跟随、prepend 保锚点、`scroll_to_bottom()` 入口;PTY 覆盖 auto-follow/load-more |
+| 响应式换行 / 代码横向滚动 | ✅ | 按气泡内容宽度换行,代码/diff/ANSI 支持横向滚动;`--responsive-layout` |
+| 长会话虚拟化 + 去全量 clone | ✅ | 虚拟 `ScrollContent` 仅实现可见行,行通过 store 块/消息版本定点同步;长会话和 nested task PTY 覆盖 |
 
 ---
 
