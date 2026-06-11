@@ -109,7 +109,9 @@
 
 参考 `CHAT_UI.md` §5(8)。
 
-- [ ] **P7.1 长会话虚拟化** — `src/list.rs`:屏外行不构建重型子视图,只构建可见窗口内的行;数百条(含大量工具调用)会话压测流畅。
+- [x] **[DONE] P7.1 长会话虚拟化** — `src/list.rs`:屏外行不构建重型子视图,只构建可见窗口内的行;数百条(含大量工具调用)会话压测流畅。
+  - 完成记录（2026-06-12）：`ChatMessageList` 已从 eager `ForEachIdentifiable` 切换为 `ScrollContainer` + chat 专用虚拟 `ScrollContent`；现在仅为可见窗口附近的行构建/缓存 `ChatMessageRow`，滚动时会裁剪屏外行缓存，并通过轻量行高估算 + 可见行实测高度维持滚动内容尺寸。补充长会话压测单测覆盖 300 个工具调用回合只实现可见行，并补充偏移窗口下虚拟行按钮鼠标分发测试；虚拟行同时保留 captured row，修复按钮 Down/Up 在窗口偏移布局中的事件回传。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
 ## 收尾
 

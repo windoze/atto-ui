@@ -355,3 +355,18 @@
 - 验证已通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib block_copy_target_emits_copy_action_on_shortcut`、`cargo test -p atto-ui-chat --test pty_chat chat_message_action_buttons_emit_turn_and_block_actions -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_input_modes_submit_callbacks -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring -- --exact`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P6.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交 P6.3 相关文件并停止。
+
+## 当前任务：P7.1 长会话虚拟化
+
+- 已在执行项目命令前写入本轮可审计计划；初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次 P7.1 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P7.1 长会话虚拟化`。
+- 已查看最近提交：`2742ade [P6.3] Add chat block copy shortcut`，未声明与 P7.1 直接相关的未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 的长会话虚拟化、直接相关单测和验证；不推进收尾任务。
+- 已确认现状：`ChatMessageList` 仍通过 `ForEachIdentifiable` eager 构建所有 `ChatMessageRow`，每行构造时会立即创建 Markdown/Disclosure/工具输出等重型子视图。
+- 实施方案：将 chat list 改为 `ScrollContainer` + 专用 `ScrollContent`；对所有 row key 只做轻量行高估算，按当前 viewport 只实现可见行，滚动时裁剪屏外 row cache，并对可见行实测高度以维持内容尺寸。
+- 已完成实现：新增虚拟行内容、可见行 cache pruning、pending 滚底/保锚点迁移、局部裁剪绘制、captured row 鼠标事件路由，并保留块级版本同步路径。
+- 首次完整测试发现 inline approval、message action 和 cancel 的按钮点击 PTY 回归；原因是虚拟行在窗口偏移布局下没有按原 Stack 行为处理 Button Down/Up 的 captured row 和绝对坐标。已修复为全可见行使用绝对鼠标坐标，并在虚拟内容中保留 captured row 直到释放。
+- 已补充验证：新增长会话虚拟化单测，覆盖 300 个工具调用回合只实现可见窗口行；新增偏移窗口下虚拟行按钮鼠标分发单测。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P7.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交 P7.1 相关文件并停止。

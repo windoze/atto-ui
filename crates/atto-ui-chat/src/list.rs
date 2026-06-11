@@ -1,11 +1,16 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::sync::Arc;
 
+use ratatui::backend::{Backend, ClearType, WindowSize};
+use ratatui::buffer::{Buffer, Cell as BufferCell};
+
 use atto_ui::composable::{
-    Component, ComponentAction, ComponentContext, ComponentId, EdgeInsets, EventResult, FocusNav,
-    HStack, Identifiable, LayoutParams, MouseCoordinateSpace, ScrollConfig, Scrollable,
-    ScrollbarVisibility, Size, Spacer, Text, VStack,
+    Capture, Component, ComponentAction, ComponentContext, ComponentId, EdgeInsets, EventHandling,
+    EventResult, FocusNav, HStack, Identifiable, Layout, LayoutParams, MouseCoordinateSpace,
+    ScrollConfig, ScrollContainer, ScrollContainerHost, ScrollContent, ScrollContentContext,
+    Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Button, Disclosure, DisclosureStatus};
@@ -15,7 +20,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect, Size as TerminalSize};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -105,7 +110,8 @@ pub struct ChatMessageList {
     store: ChatMessageStore,
     messages: Binding<Vec<ChatMessage>>,
     row_keys: Binding<Vec<ChatRowKey>>,
-    list: atto_ui::composable::ForEachIdentifiable<ChatRowKey, ChatMessageRow>,
+    list: ScrollContainer,
+    virtual_control: VirtualChatRowsControl,
     config: ChatMessageListConfig,
     on_load_more: Option<Arc<dyn Fn() + Send + Sync>>,
     load_more_armed: bool,
@@ -135,13 +141,14 @@ impl ChatMessageList {
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
         let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
-        let list = build_list(row_keys.clone(), store.clone(), &config);
+        let (list, virtual_control) = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
             store,
             messages,
             row_keys,
             list,
+            virtual_control,
             config,
             on_load_more: None,
             load_more_armed: true,
@@ -269,12 +276,20 @@ impl ChatMessageList {
         self.follow_tail
     }
 
+    #[cfg(test)]
+    fn realized_row_count(&self) -> usize {
+        self.virtual_control.realized_row_count.get()
+    }
+
     fn rebuild_list(&mut self) {
         self.row_keys.set(
             self.messages
                 .with(|messages| row_keys_from_messages(messages)),
         );
-        self.list = build_list(self.row_keys.clone(), self.store.clone(), &self.config);
+        let (list, virtual_control) =
+            build_list(self.row_keys.clone(), self.store.clone(), &self.config);
+        self.list = list;
+        self.virtual_control = virtual_control;
     }
 
     fn maybe_trigger_load_more(&mut self) -> bool {
@@ -299,7 +314,7 @@ impl ChatMessageList {
         self.load_more_armed = false;
         self.suppress_auto_scroll_once = true;
         callback();
-        self.list
+        self.virtual_control
             .preserve_scroll_y_after_next_layout(previous_content_h, previous_scroll_y);
         true
     }
@@ -339,7 +354,7 @@ impl ChatMessageList {
         if !self.pending_scroll_to_bottom {
             return;
         }
-        self.list.scroll_to_bottom_on_next_layout();
+        self.virtual_control.scroll_to_bottom_on_next_layout();
         self.follow_tail = true;
         self.pending_scroll_to_bottom = false;
         self.load_more_armed = true;
@@ -534,7 +549,7 @@ fn build_list(
     row_keys: Binding<Vec<ChatRowKey>>,
     store: ChatMessageStore,
     config: &ChatMessageListConfig,
-) -> atto_ui::composable::ForEachIdentifiable<ChatRowKey, ChatMessageRow> {
+) -> (ScrollContainer, VirtualChatRowsControl) {
     let row_config = ChatMessageRowConfig {
         wrap_width: config.wrap_width,
         responsive_wrap_width: config.responsive_wrap_width.clone(),
@@ -546,14 +561,798 @@ fn build_list(
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
     };
-    let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
-        ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
-    })
-    .spacing(config.spacing.clone())
-    .padding_insets(config.padding.clone())
-    .scrollable(true)
-    .scroll_config(config.scroll_config.clone());
-    list.with_id()
+    let control = VirtualChatRowsControl::new();
+    let content = VirtualChatRowsContent::new(
+        row_keys,
+        store,
+        row_config,
+        config.spacing.clone(),
+        control.clone(),
+    );
+    let list = ScrollContainer::new(Box::new(content))
+        .with_padding(config.padding.clone())
+        .with_scroll_config(config.scroll_config.clone());
+    (list, control)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VirtualScrollAdjustment {
+    ToBottom,
+    PreserveYAfterContentHeightChange {
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    },
+}
+
+#[derive(Clone)]
+struct VirtualChatRowsControl {
+    pending_scroll_adjustment: Binding<Option<VirtualScrollAdjustment>>,
+    realized_row_count: Binding<usize>,
+}
+
+impl VirtualChatRowsControl {
+    fn new() -> Self {
+        Self {
+            pending_scroll_adjustment: Binding::new(None),
+            realized_row_count: Binding::new(0),
+        }
+    }
+
+    fn scroll_to_bottom_on_next_layout(&self) {
+        self.pending_scroll_adjustment
+            .set(Some(VirtualScrollAdjustment::ToBottom));
+    }
+
+    fn preserve_scroll_y_after_next_layout(
+        &self,
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    ) {
+        self.pending_scroll_adjustment.set(Some(
+            VirtualScrollAdjustment::PreserveYAfterContentHeightChange {
+                previous_content_height,
+                previous_scroll_y,
+            },
+        ));
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CachedRowHeight {
+    height: u16,
+    version: u64,
+}
+
+#[derive(Clone, Debug)]
+struct VirtualRowLayout {
+    id: ChatRowId,
+    key: ChatRowKey,
+    y: u16,
+    height: u16,
+}
+
+struct CachedVirtualRow {
+    key: ChatRowKey,
+    row: ChatMessageRow,
+    mouse_coordinate_space: MouseCoordinateSpace,
+}
+
+struct VirtualChatRowsContent {
+    row_keys: Binding<Vec<ChatRowKey>>,
+    store: ChatMessageStore,
+    config: ChatMessageRowConfig,
+    spacing: Binding<u16>,
+    control: VirtualChatRowsControl,
+    row_cache: HashMap<ChatRowId, CachedVirtualRow>,
+    height_cache: HashMap<ChatRowId, CachedRowHeight>,
+    last_layout: Vec<VirtualRowLayout>,
+    focused_row: Option<ChatRowId>,
+    captured_row: Option<ChatRowId>,
+    last_area: Option<Rect>,
+}
+
+impl VirtualChatRowsContent {
+    fn new(
+        row_keys: Binding<Vec<ChatRowKey>>,
+        store: ChatMessageStore,
+        config: ChatMessageRowConfig,
+        spacing: Binding<u16>,
+        control: VirtualChatRowsControl,
+    ) -> Self {
+        Self {
+            row_keys,
+            store,
+            config,
+            spacing,
+            control,
+            row_cache: HashMap::new(),
+            height_cache: HashMap::new(),
+            last_layout: Vec::new(),
+            focused_row: None,
+            captured_row: None,
+            last_area: None,
+        }
+    }
+
+    fn sync_responsive_width(&self, viewport_width: u16) {
+        self.config
+            .responsive_wrap_width
+            .set(estimated_bubble_content_width(
+                viewport_width,
+                EdgeInsets::ZERO,
+            ));
+    }
+
+    fn rebuild_layout(&mut self, viewport_width: u16) -> (u16, u16) {
+        self.sync_responsive_width(viewport_width);
+        let keys = self.row_keys.get();
+        let live_ids = keys.iter().map(ChatRowKey::id).collect::<HashSet<_>>();
+        self.row_cache.retain(|id, _| live_ids.contains(id));
+        self.height_cache.retain(|id, _| live_ids.contains(id));
+        if self
+            .focused_row
+            .is_some_and(|focused| !live_ids.contains(&focused))
+        {
+            self.focused_row = None;
+        }
+        if self
+            .captured_row
+            .is_some_and(|captured| !live_ids.contains(&captured))
+        {
+            self.captured_row = None;
+        }
+
+        let spacing = self.spacing.get();
+        let mut y = 0u16;
+        let mut rows = Vec::with_capacity(keys.len());
+        for (idx, key) in keys.into_iter().enumerate() {
+            if idx > 0 {
+                y = y.saturating_add(spacing);
+            }
+            let id = key.id();
+            let height = self.row_height(&key, viewport_width).max(1);
+            rows.push(VirtualRowLayout { id, key, y, height });
+            y = y.saturating_add(height);
+        }
+        self.last_layout = rows;
+        self.control.realized_row_count.set(self.row_cache.len());
+        (viewport_width, y)
+    }
+
+    fn row_version(&self, key: &ChatRowKey) -> u64 {
+        match key.row_ref() {
+            ChatRowRef::Header(message_id) => self.store.message_version(message_id),
+            ChatRowRef::Block(block_id) | ChatRowRef::PendingToolResult(block_id) => {
+                self.store.block_version(block_id)
+            }
+        }
+    }
+
+    fn row_height(&self, key: &ChatRowKey, viewport_width: u16) -> u16 {
+        let version = self.row_version(key);
+        if let Some(cached) = self.height_cache.get(&key.id())
+            && cached.version == version
+        {
+            return cached.height;
+        }
+        estimate_row_height(key, &self.store, &self.config, viewport_width)
+    }
+
+    fn apply_pending_scroll_adjustment(&self, host: &mut ScrollContainerHost) {
+        let Some(adjustment) = self.control.pending_scroll_adjustment.get() else {
+            return;
+        };
+        let scroll = host.scroll_offset();
+        let viewport = host.viewport_size();
+        let content = host.content_size();
+        let target_y = match adjustment {
+            VirtualScrollAdjustment::ToBottom => content.1.saturating_sub(viewport.1),
+            VirtualScrollAdjustment::PreserveYAfterContentHeightChange {
+                previous_content_height,
+                previous_scroll_y,
+            } => {
+                let inserted_height = content.1.saturating_sub(previous_content_height);
+                previous_scroll_y.saturating_add(inserted_height)
+            }
+        };
+        host.set_scroll_offset(scroll.x, target_y);
+        self.control.pending_scroll_adjustment.set(None);
+    }
+
+    fn visible_row_ids(&self, scroll_y: u16, viewport_h: u16) -> HashSet<ChatRowId> {
+        let start = scroll_y.saturating_sub(1);
+        let end = scroll_y.saturating_add(viewport_h).saturating_add(1);
+        self.last_layout
+            .iter()
+            .filter(|row| row_intersects(row.y, row.height, start, end))
+            .map(|row| row.id)
+            .collect()
+    }
+
+    fn realize_visible_rows(&mut self, scroll_y: u16, viewport_h: u16) -> bool {
+        let visible_ids = self.visible_row_ids(scroll_y, viewport_h);
+        if self
+            .focused_row
+            .is_some_and(|focused| !visible_ids.contains(&focused))
+        {
+            self.focused_row = None;
+        }
+        self.row_cache
+            .retain(|id, _| visible_ids.contains(id) || self.captured_row == Some(*id));
+
+        let mut height_changed = false;
+        let visible_layouts = self
+            .last_layout
+            .iter()
+            .filter(|row| visible_ids.contains(&row.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for layout in visible_layouts {
+            self.ensure_row_cached(&layout.key);
+            let version = self.row_version(&layout.key);
+            if let Some(cached) = self.row_cache.get(&layout.id) {
+                let measured = cached.row.desired_height().unwrap_or(1).max(1);
+                let previous = self.height_cache.insert(
+                    layout.id,
+                    CachedRowHeight {
+                        height: measured,
+                        version,
+                    },
+                );
+                height_changed |= previous.is_none_or(|cached| cached.height != measured);
+            }
+        }
+
+        self.control.realized_row_count.set(self.row_cache.len());
+        height_changed
+    }
+
+    fn ensure_row_cached(&mut self, key: &ChatRowKey) {
+        let id = key.id();
+        let needs_rebuild = self
+            .row_cache
+            .get(&id)
+            .is_none_or(|cached| cached.key != *key);
+        if !needs_rebuild {
+            return;
+        }
+        self.row_cache.insert(
+            id,
+            CachedVirtualRow {
+                key: key.clone(),
+                row: ChatMessageRow::new(key.clone(), self.store.clone(), self.config.clone()),
+                mouse_coordinate_space: MouseCoordinateSpace::Local,
+            },
+        );
+    }
+
+    fn focus_visible_row(&mut self, forward: bool, scroll_y: u16, viewport_h: u16) -> bool {
+        let visible_ids = self.visible_row_ids(scroll_y, viewport_h);
+        let mut layouts = self
+            .last_layout
+            .iter()
+            .filter(|row| visible_ids.contains(&row.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !forward {
+            layouts.reverse();
+        }
+        for layout in layouts {
+            self.ensure_row_cached(&layout.key);
+            let Some(cached) = self.row_cache.get_mut(&layout.id) else {
+                continue;
+            };
+            if !cached.row.is_focusable() {
+                continue;
+            }
+            let focused = if forward {
+                cached.row.focus_first()
+            } else {
+                cached.row.focus_last()
+            };
+            if focused {
+                self.focused_row = Some(layout.id);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn row_at_content_y(&self, y: u16) -> Option<VirtualRowLayout> {
+        self.last_layout
+            .iter()
+            .find(|row| y >= row.y && y < row.y.saturating_add(row.height))
+            .cloned()
+    }
+
+    fn row_layout_by_id(&self, id: ChatRowId) -> Option<VirtualRowLayout> {
+        self.last_layout.iter().find(|row| row.id == id).cloned()
+    }
+
+    fn handle_mouse_event(
+        &mut self,
+        event: &MouseEvent,
+        ctx: ScrollContentContext<'_>,
+    ) -> EventResult {
+        let content_y = event.row.saturating_add(ctx.info.scroll_offset.y);
+        let Some(layout) = self
+            .captured_row
+            .and_then(|id| self.row_layout_by_id(id))
+            .or_else(|| self.row_at_content_y(content_y))
+        else {
+            return EventResult::ignored();
+        };
+        self.ensure_row_cached(&layout.key);
+        let Some(cached) = self.row_cache.get_mut(&layout.id) else {
+            return EventResult::ignored();
+        };
+
+        let focus_changed = matches!(event.kind, MouseEventKind::Down(_))
+            && cached.row.is_focusable()
+            && self.focused_row != Some(layout.id);
+        if focus_changed {
+            self.focused_row = Some(layout.id);
+            let _ = cached.row.focus_first();
+        }
+
+        let mouse_space = cached.mouse_coordinate_space;
+        let (column, row) = match mouse_space {
+            MouseCoordinateSpace::Absolute => {
+                self.last_area.map_or((event.column, event.row), |area| {
+                    (
+                        area.x.saturating_add(event.column),
+                        area.y.saturating_add(event.row),
+                    )
+                })
+            }
+            MouseCoordinateSpace::Local => (event.column, content_y.saturating_sub(layout.y)),
+        };
+        let row_event = Event::Mouse(MouseEvent {
+            column,
+            row,
+            ..*event
+        });
+        let row_ctx = virtual_row_ctx(self.focused_row, layout.id, ctx, mouse_space);
+        let res = cached.row.handle_event(&row_event, row_ctx);
+        match res.capture {
+            Capture::Request => self.captured_row = Some(layout.id),
+            Capture::Release => self.captured_row = None,
+            Capture::None => {}
+        }
+        if res.is_consumed() {
+            return res;
+        }
+        if focus_changed {
+            EventResult::consumed()
+        } else {
+            EventResult::ignored()
+        }
+    }
+
+    fn handle_keyboard_event(
+        &mut self,
+        event: &Event,
+        ctx: ScrollContentContext<'_>,
+    ) -> EventResult {
+        let scroll_y = ctx.info.scroll_offset.y;
+        let viewport_h = ctx.info.viewport_size.1;
+        if let Some(forward) = copy_target_tab_direction(event) {
+            if self.focus_visible_row(forward, scroll_y, viewport_h) {
+                return EventResult::consumed();
+            }
+            return EventResult::ignored();
+        }
+
+        if self.focused_row.is_none() {
+            let _ = self.focus_visible_row(true, scroll_y, viewport_h);
+        }
+        let Some(focused) = self.focused_row else {
+            return EventResult::ignored();
+        };
+        let Some(cached) = self.row_cache.get_mut(&focused) else {
+            self.focused_row = None;
+            return EventResult::ignored();
+        };
+        let row_ctx = virtual_row_ctx(
+            self.focused_row,
+            focused,
+            ctx,
+            cached.mouse_coordinate_space,
+        );
+        cached.row.handle_event(event, row_ctx)
+    }
+}
+
+impl ScrollContent for VirtualChatRowsContent {
+    fn is_focusable(&self) -> bool {
+        self.config.on_open_artifact.is_some()
+            || self.config.on_approve.is_some()
+            || self.config.on_edit_decision.is_some()
+            || self.config.on_message_action.is_some()
+            || self.config.on_cancel.is_some()
+    }
+
+    fn content_size(&mut self, viewport: (u16, u16), _ctx: ScrollContentContext<'_>) -> (u16, u16) {
+        self.rebuild_layout(viewport.0)
+    }
+
+    fn on_scrollbars(&mut self, _ctx: ScrollContentContext<'_>, host: &mut ScrollContainerHost) {
+        self.apply_pending_scroll_adjustment(host);
+    }
+
+    fn handle_event(
+        &mut self,
+        event: &Event,
+        ctx: ScrollContentContext<'_>,
+        _host: &mut ScrollContainerHost,
+    ) -> EventResult {
+        self.rebuild_layout(ctx.info.viewport_size.0);
+        let _ = self.realize_visible_rows(ctx.info.scroll_offset.y, ctx.info.viewport_size.1);
+        match event {
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse, ctx),
+            _ => self.handle_keyboard_event(event, ctx),
+        }
+    }
+
+    fn draw(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ctx: ScrollContentContext<'_>,
+        host: &mut ScrollContainerHost,
+    ) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let scroll_y = ctx.info.scroll_offset.y;
+        let height_changed = self.realize_visible_rows(scroll_y, area.height);
+        if height_changed {
+            let content_size = self.rebuild_layout(area.width);
+            host.set_content_size(content_size);
+            let _ = self.realize_visible_rows(scroll_y, area.height);
+        }
+
+        let visible_ids = self.visible_row_ids(scroll_y, area.height);
+        let layouts = self
+            .last_layout
+            .iter()
+            .filter(|row| visible_ids.contains(&row.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for layout in layouts {
+            let mouse_space = if row_fully_visible(&layout, scroll_y, area.height) {
+                MouseCoordinateSpace::Absolute
+            } else {
+                MouseCoordinateSpace::Local
+            };
+            let row_ctx = virtual_row_ctx(self.focused_row, layout.id, ctx, mouse_space);
+            let Some(cached) = self.row_cache.get_mut(&layout.id) else {
+                continue;
+            };
+            cached.mouse_coordinate_space = mouse_space;
+            draw_virtual_row(frame, &mut cached.row, area, &layout, scroll_y, row_ctx);
+        }
+        self.control.realized_row_count.set(self.row_cache.len());
+    }
+}
+
+fn virtual_row_ctx<'a>(
+    focused_row: Option<ChatRowId>,
+    row_id: ChatRowId,
+    ctx: ScrollContentContext<'a>,
+    mouse_coordinate_space: MouseCoordinateSpace,
+) -> ComponentContext<'a> {
+    ComponentContext {
+        theme: ctx.component.theme,
+        window_id: ctx.component.window_id,
+        is_focused: ctx.component.is_focused && focused_row == Some(row_id),
+        scrollbar_host: ctx.component.scrollbar_host.for_child(),
+        tab_mode: ctx.component.tab_mode.for_child(),
+        mouse_coordinate_space,
+        drag: None,
+    }
+}
+
+fn row_fully_visible(row: &VirtualRowLayout, scroll_y: u16, viewport_h: u16) -> bool {
+    row.y >= scroll_y && row.y.saturating_add(row.height) <= scroll_y.saturating_add(viewport_h)
+}
+
+fn row_intersects(row_y: u16, row_h: u16, visible_start: u16, visible_end: u16) -> bool {
+    row_y < visible_end && row_y.saturating_add(row_h) > visible_start
+}
+
+fn estimate_row_height(
+    key: &ChatRowKey,
+    store: &ChatMessageStore,
+    config: &ChatMessageRowConfig,
+    viewport_width: u16,
+) -> u16 {
+    store
+        .with_message(key.message_id(), |message| match key {
+            ChatRowKey::Header { .. } => estimate_header_row_height(message, config),
+            ChatRowKey::Block { block_id, .. } => {
+                let block = find_block(message, *block_id);
+                estimate_block_row_height(block, config, viewport_width)
+            }
+            ChatRowKey::PendingToolResult { .. } => 2,
+        })
+        .unwrap_or_else(|| estimate_placeholder_row_height(key, config, viewport_width))
+}
+
+fn estimate_placeholder_row_height(
+    key: &ChatRowKey,
+    config: &ChatMessageRowConfig,
+    viewport_width: u16,
+) -> u16 {
+    let message = key.placeholder();
+    match key {
+        ChatRowKey::Header { .. } => estimate_header_row_height(&message, config),
+        ChatRowKey::Block { block_id, .. } => {
+            estimate_block_row_height(find_block(&message, *block_id), config, viewport_width)
+        }
+        ChatRowKey::PendingToolResult { .. } => 2,
+    }
+}
+
+fn estimate_header_row_height(message: &ChatMessage, config: &ChatMessageRowConfig) -> u16 {
+    let mut bubble_height = line_count(&turn_header_label(message));
+    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
+    if config.on_message_action.is_some() || show_cancel {
+        bubble_height = bubble_height.saturating_add(2);
+    }
+
+    if config.show_timestamps && message.meta.timestamp.is_some() {
+        bubble_height.saturating_add(2)
+    } else {
+        bubble_height
+    }
+}
+
+fn estimate_block_row_height(
+    block: Option<&ChatBlock>,
+    config: &ChatMessageRowConfig,
+    viewport_width: u16,
+) -> u16 {
+    let bubble_width =
+        estimated_bubble_content_width(viewport_width, EdgeInsets::ZERO).unwrap_or(1);
+    let mut height = match block {
+        Some(ChatBlock::Text(text)) => estimate_markdown_height(
+            &markdown_for_render(&text.markdown, text.streaming, config),
+            bubble_width,
+            0,
+            config.wrap_width,
+        ),
+        Some(ChatBlock::Thinking(thinking)) => estimate_disclosure_height(
+            !thinking.collapsed,
+            estimate_markdown_height(&thinking.markdown, bubble_width, 2, config.wrap_width),
+        ),
+        Some(ChatBlock::Attachment(_))
+        | Some(ChatBlock::Notice(_))
+        | Some(ChatBlock::Artifact(_))
+        | None => 1,
+        Some(ChatBlock::ToolUse(tool)) => estimate_disclosure_height(
+            !tool.collapsed,
+            tool_use_details_desired_height(&ToolUseDetails::from(tool)),
+        ),
+        Some(ChatBlock::ToolResult(result)) => estimate_disclosure_height(
+            !result.collapsed,
+            estimate_tool_output_height(&result.output, config, bubble_width),
+        ),
+        Some(ChatBlock::Diff(diff)) => 1u16
+            .saturating_add(line_count(&diff.diff.unified))
+            .saturating_add(1),
+        Some(ChatBlock::Todo(todo)) => todo.items.len().max(1).min(u16::MAX as usize) as u16,
+    };
+    if block.is_some() && config.on_message_action.is_some() {
+        height = height.saturating_add(2);
+    }
+    height.max(1)
+}
+
+fn estimate_disclosure_height(expanded: bool, child_height: u16) -> u16 {
+    if expanded {
+        1u16.saturating_add(child_height.max(1))
+    } else {
+        1
+    }
+}
+
+fn estimate_tool_output_height(
+    output: &ToolOutput,
+    config: &ChatMessageRowConfig,
+    bubble_width: u16,
+) -> u16 {
+    match output {
+        ToolOutput::Ansi(text) => {
+            let lines = ansi_sgr_lines(text, Style::default()).len();
+            if lines > ANSI_OUTPUT_TAIL_LINES {
+                ANSI_OUTPUT_TAIL_LINES.saturating_add(1) as u16
+            } else {
+                lines.max(1).min(u16::MAX as usize) as u16
+            }
+        }
+        ToolOutput::Markdown(markdown) => {
+            estimate_markdown_height(markdown, bubble_width, 2, config.wrap_width)
+        }
+        ToolOutput::Diff(diff) => line_count(&diff.unified),
+    }
+}
+
+fn estimate_markdown_height(
+    markdown: &str,
+    bubble_width: u16,
+    indent: u16,
+    max_width: Option<u16>,
+) -> u16 {
+    let available = bubble_width.saturating_sub(indent).max(1);
+    let width = apply_markdown_width_cap(available, max_width).max(1) as usize;
+    let mut total = 0usize;
+    for line in markdown.split('\n') {
+        let display_width = UnicodeWidthStr::width(line);
+        total = total.saturating_add(display_width.div_ceil(width).max(1));
+    }
+    total.max(1).min(u16::MAX as usize) as u16
+}
+
+fn draw_virtual_row(
+    frame: &mut Frame<'_>,
+    row: &mut ChatMessageRow,
+    viewport: Rect,
+    layout: &VirtualRowLayout,
+    scroll_y: u16,
+    ctx: ComponentContext<'_>,
+) {
+    let row_bottom = layout.y.saturating_add(layout.height);
+    let viewport_bottom = scroll_y.saturating_add(viewport.height);
+    if row_bottom <= scroll_y || layout.y >= viewport_bottom {
+        return;
+    }
+
+    let source_y = scroll_y.saturating_sub(layout.y);
+    let visible_h = row_bottom
+        .min(viewport_bottom)
+        .saturating_sub(layout.y.max(scroll_y));
+    if visible_h == 0 {
+        return;
+    }
+    let dest_y = viewport.y.saturating_add(layout.y.saturating_sub(scroll_y));
+    let full_area = Rect::new(0, 0, viewport.width, layout.height);
+    let dest = Rect {
+        x: viewport.x,
+        y: dest_y,
+        width: viewport.width,
+        height: visible_h,
+    };
+    if source_y == 0 && visible_h == layout.height {
+        row.draw(frame, dest, ctx);
+    } else {
+        draw_component_region_local(
+            frame,
+            row,
+            full_area,
+            Rect::new(0, source_y, viewport.width, visible_h),
+            dest,
+            ctx,
+        );
+    }
+}
+
+struct VirtualOffscreenBackend {
+    buffer: Buffer,
+    cursor_visible: bool,
+    cursor_pos: Position,
+}
+
+impl VirtualOffscreenBackend {
+    fn new(width: u16, height: u16) -> Self {
+        Self {
+            buffer: Buffer::empty(Rect::new(0, 0, width, height)),
+            cursor_visible: false,
+            cursor_pos: Position::new(0, 0),
+        }
+    }
+}
+
+impl Backend for VirtualOffscreenBackend {
+    type Error = Infallible;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a BufferCell)>,
+    {
+        for (x, y, cell) in content {
+            if x < self.buffer.area.width && y < self.buffer.area.height {
+                self.buffer[(x, y)] = cell.clone();
+            }
+        }
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = false;
+        Ok(())
+    }
+
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = true;
+        Ok(())
+    }
+
+    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
+        Ok(self.cursor_pos)
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        self.cursor_pos = position.into();
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.buffer = Buffer::empty(self.buffer.area);
+        Ok(())
+    }
+
+    fn clear_region(&mut self, _clear_type: ClearType) -> Result<(), Self::Error> {
+        self.clear()
+    }
+
+    fn size(&self) -> Result<TerminalSize, Self::Error> {
+        Ok(self.buffer.area.as_size())
+    }
+
+    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
+        Ok(WindowSize {
+            columns_rows: self.buffer.area.as_size(),
+            pixels: TerminalSize::new(0, 0),
+        })
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+fn draw_component_region_local(
+    frame: &mut Frame<'_>,
+    component: &mut dyn Component,
+    component_area: Rect,
+    source: Rect,
+    dest: Rect,
+    ctx: ComponentContext<'_>,
+) {
+    if component_area.width == 0
+        || component_area.height == 0
+        || source.width == 0
+        || source.height == 0
+        || dest.width == 0
+        || dest.height == 0
+    {
+        return;
+    }
+
+    let backend = VirtualOffscreenBackend::new(component_area.width, component_area.height);
+    let mut terminal = ratatui::Terminal::new(backend).expect("create offscreen terminal");
+    terminal
+        .try_draw(|f| {
+            component.draw(f, component_area, ctx);
+            Ok::<(), Infallible>(())
+        })
+        .expect("draw clipped virtual row");
+    let buffer = &terminal.backend().buffer;
+    let frame_buffer = frame.buffer_mut();
+    for dy in 0..source.height.min(dest.height) {
+        for dx in 0..source.width.min(dest.width) {
+            let src_x = source.x.saturating_add(dx);
+            let src_y = source.y.saturating_add(dy);
+            let dst_x = dest.x.saturating_add(dx);
+            let dst_y = dest.y.saturating_add(dy);
+            if src_x < buffer.area.width && src_y < buffer.area.height {
+                frame_buffer[(dst_x, dst_y)] = buffer[(src_x, src_y)].clone();
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4481,7 +5280,7 @@ mod tests {
             })
             .collect();
         store.prepend_many(older);
-        list.list
+        list.virtual_control
             .preserve_scroll_y_after_next_layout(previous_content_h, previous_scroll_y);
 
         draw_chat_list(&mut list, 40, 6);
@@ -4489,6 +5288,102 @@ mod tests {
         let inserted_height = list.content_size().1.saturating_sub(previous_content_h);
         assert!(inserted_height > 0, "prepended rows should increase height");
         assert_eq!(list.scroll_offset().1, inserted_height);
+    }
+
+    #[test]
+    fn chat_list_virtualizes_long_sessions_to_visible_rows() {
+        let store = ChatMessageStore::new();
+        for idx in 0..300 {
+            store.push(ChatMessage::tool_call(
+                store.next_message_id(),
+                format!("tool-{idx}"),
+                ToolStatus::Done,
+                format!("output-{idx}"),
+            ));
+        }
+        let total_rows = store
+            .binding()
+            .with(|messages| row_keys_from_messages(messages).len());
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+
+        draw_chat_list(&mut list, 80, 10);
+
+        assert!(total_rows >= 900, "fixture should contain many chat rows");
+        assert!(
+            list.realized_row_count() < 80,
+            "only the visible window should be realized, got {} of {total_rows}",
+            list.realized_row_count()
+        );
+
+        list.set_scroll_offset(0, list.content_size().1);
+        draw_chat_list(&mut list, 80, 10);
+
+        assert!(
+            list.realized_row_count() < 80,
+            "scrolling should prune offscreen rows instead of retaining all {total_rows}"
+        );
+    }
+
+    #[test]
+    fn virtual_chat_rows_dispatch_mouse_to_visible_buttons() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "ACTION-USER-MESSAGE",
+        ));
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false)
+            .on_message_action(move |action| {
+                captured.lock().expect("actions lock").push(action);
+            });
+        let theme = Theme::dark();
+        let ctx = component_context(&theme);
+        let area = Rect::new(2, 3, 80, 12);
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).expect("terminal");
+        terminal.draw(|f| list.draw(f, area, ctx)).expect("draw");
+        let buf = terminal.backend().buffer();
+        let mut lines = Vec::new();
+        for y in 0..20u16 {
+            let mut line = String::new();
+            for x in 0..100u16 {
+                line.push_str(buf.cell((x, y)).expect("cell").symbol());
+            }
+            lines.push(line);
+        }
+        let (y, x) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(y, line)| line.find("Edit").map(|x| (y as u16, x as u16)))
+            .expect("edit button should render");
+        let down = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::empty(),
+        });
+        let up = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::empty(),
+        });
+
+        list.handle_event(&down, component_context(&theme));
+        list.handle_event(&up, component_context(&theme));
+
+        assert_eq!(
+            *actions.lock().expect("actions lock"),
+            vec![MessageAction {
+                message_id: ChatMessageId::new(1),
+                kind: MessageActionKind::EditUser,
+            }]
+        );
     }
 
     #[test]
