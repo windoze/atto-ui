@@ -93,6 +93,10 @@ pub struct FileTreeNode {
     pub children: Vec<FileTreeNode>,
     pub is_expanded: bool,
     pub git_status: Option<FileTreeGitStatus>,
+    /// Whether this directory's children have been loaded. When `false`, the node
+    /// is rendered as expandable (showing the `+` indicator) even with no children
+    /// yet, so callers can lazily load them on demand.
+    pub children_loaded: bool,
 }
 
 impl FileTreeNode {
@@ -104,6 +108,7 @@ impl FileTreeNode {
             children: Vec::new(),
             is_expanded: false,
             git_status: None,
+            children_loaded: true,
         }
     }
 
@@ -119,11 +124,17 @@ impl FileTreeNode {
             children,
             is_expanded: false,
             git_status: None,
+            children_loaded: true,
         }
     }
 
     pub fn with_expanded(mut self, expanded: bool) -> Self {
         self.is_expanded = expanded;
+        self
+    }
+
+    pub fn with_children_loaded(mut self, loaded: bool) -> Self {
+        self.children_loaded = loaded;
         self
     }
 
@@ -2034,7 +2045,7 @@ fn build_prefix(
         }
     }
 
-    let indicator = if node.is_dir() && !node.children.is_empty() {
+    let indicator = if node.is_dir() && (!node.children.is_empty() || !node.children_loaded) {
         if node.is_expanded { '-' } else { '+' }
     } else {
         ' '
@@ -2365,6 +2376,7 @@ fn parse_node_value(value: &ComponentValue) -> Result<FileTreeNode, String> {
         children,
         is_expanded,
         git_status,
+        children_loaded: true,
     })
 }
 
@@ -2538,6 +2550,21 @@ mod tests {
         .build_visible_entries(&roots, Some(filter.as_ref()), &glyphs);
         assert!(entries.iter().all(|e| !e.name.contains(".git")));
         assert!(entries.iter().any(|e| e.name == "README.md"));
+    }
+
+    #[test]
+    fn build_prefix_marks_unloaded_directory_as_expandable() {
+        let glyphs = FileTreeGlyphs::default();
+        let loaded_empty = FileTreeNode::dir(1, "empty", Vec::new());
+        let unloaded = FileTreeNode::dir(2, "lazy", Vec::new()).with_children_loaded(false);
+
+        let loaded_prefix = build_prefix(&loaded_empty, 0, &[], true, &glyphs);
+        let unloaded_prefix = build_prefix(&unloaded, 0, &[], true, &glyphs);
+
+        // A loaded but empty directory shows no expand indicator.
+        assert!(!loaded_prefix.contains('+'));
+        // An unloaded directory shows the `+` indicator so it can be expanded.
+        assert!(unloaded_prefix.contains('+'));
     }
 
     #[test]

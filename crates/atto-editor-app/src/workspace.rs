@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsStr;
 use std::fs;
@@ -36,7 +37,7 @@ impl WorkspaceGitStatuses {
         self.by_path.extend(other.by_path);
     }
 
-    fn status_for(&self, id: FileTreeNodeId, path: &Path) -> Option<FileTreeGitStatus> {
+    pub fn status_for(&self, id: FileTreeNodeId, path: &Path) -> Option<FileTreeGitStatus> {
         self.by_id.get(&id).copied().or_else(|| {
             self.by_path.get(path).copied().or_else(|| {
                 canonicalize_best_effort(path).and_then(|p| self.by_path.get(&p).copied())
@@ -109,6 +110,80 @@ pub fn build_workspace_tree_with_git_statuses(
 
     WorkspaceTree {
         roots: out_roots,
+        id_to_path,
+        id_to_kind,
+    }
+}
+
+/// Children of a single directory loaded one level deep, used for on-demand
+/// (lazy) expansion. Sub-directories are left collapsed and unloaded.
+#[derive(Debug, Clone)]
+pub struct DirChildren {
+    pub children: Vec<FileTreeNode>,
+    pub id_to_path: HashMap<FileTreeNodeId, PathBuf>,
+    pub id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
+}
+
+/// Builds a workspace tree lazily: only directories that are roots or whose
+/// canonical path is in `expanded` have their children read from disk. Every
+/// other directory is returned collapsed and unloaded (`children_loaded = false`)
+/// so the caller can load it on demand.
+pub fn build_workspace_tree_lazy(
+    roots: &[PathBuf],
+    options: WorkspaceTreeOptions,
+    git_statuses: &WorkspaceGitStatuses,
+    expanded: &HashSet<PathBuf>,
+) -> WorkspaceTree {
+    let mut id_to_path: HashMap<FileTreeNodeId, PathBuf> = HashMap::new();
+    let mut id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind> = HashMap::new();
+
+    let roots = roots
+        .iter()
+        .filter_map(|p| canonicalize_best_effort(p))
+        .collect::<Vec<_>>();
+
+    let mut out_roots = Vec::new();
+    for root in roots {
+        if let Some(node) = build_node_lazy(
+            &root,
+            0,
+            &options,
+            git_statuses,
+            expanded,
+            &mut id_to_path,
+            &mut id_to_kind,
+        ) {
+            out_roots.push(node);
+        }
+    }
+
+    WorkspaceTree {
+        roots: out_roots,
+        id_to_path,
+        id_to_kind,
+    }
+}
+
+/// Reads a single directory one level deep for lazy expansion. Sub-directories
+/// are marked collapsed and unloaded; files are normal leaves.
+pub fn load_dir_children(
+    dir: &Path,
+    options: WorkspaceTreeOptions,
+    git_statuses: &WorkspaceGitStatuses,
+) -> DirChildren {
+    let mut id_to_path: HashMap<FileTreeNodeId, PathBuf> = HashMap::new();
+    let mut id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind> = HashMap::new();
+
+    let mut children = read_dir_sorted(dir, &options)
+        .into_iter()
+        .filter_map(|child| build_lazy_leaf(&child, git_statuses, &mut id_to_path, &mut id_to_kind))
+        .take(options.max_entries_per_dir)
+        .collect::<Vec<_>>();
+
+    sort_nodes_dirs_first(&mut children);
+
+    DirChildren {
+        children,
         id_to_path,
         id_to_kind,
     }
@@ -372,7 +447,114 @@ fn build_node(
         .collect::<Vec<_>>();
 
     // Show directories first to match typical file explorers.
-    children.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
+    sort_nodes_dirs_first(&mut children);
+
+    Some(apply_git_status(
+        FileTreeNode::dir(id, name, children),
+        git_status,
+    ))
+}
+
+fn build_node_lazy(
+    path: &Path,
+    depth: usize,
+    options: &WorkspaceTreeOptions,
+    git_statuses: &WorkspaceGitStatuses,
+    expanded: &HashSet<PathBuf>,
+    id_to_path: &mut HashMap<FileTreeNodeId, PathBuf>,
+    id_to_kind: &mut HashMap<FileTreeNodeId, FileTreeNodeKind>,
+) -> Option<FileTreeNode> {
+    let meta = fs::metadata(path).ok()?;
+    let name = display_name_for_path(path);
+    let id = node_id_for_path(path);
+
+    let kind = if meta.is_dir() {
+        FileTreeNodeKind::Directory
+    } else {
+        FileTreeNodeKind::File
+    };
+
+    id_to_path.insert(id, path.to_path_buf());
+    id_to_kind.insert(id, kind);
+    let git_status = git_statuses.status_for(id, path);
+
+    if kind == FileTreeNodeKind::File {
+        return Some(apply_git_status(FileTreeNode::file(id, name), git_status));
+    }
+
+    let is_expanded = depth == 0 || expanded.contains(path);
+    let can_descend = depth < options.max_depth;
+    let should_load = is_expanded && can_descend;
+
+    if !should_load {
+        // Collapsed (or depth-capped) directory: leave children unloaded so the
+        // caller can fetch them on demand. At the depth cap we mark it loaded to
+        // avoid advertising an expansion we cannot fulfil.
+        let children_loaded = !can_descend;
+        return Some(apply_git_status(
+            FileTreeNode::dir(id, name, Vec::new())
+                .with_expanded(false)
+                .with_children_loaded(children_loaded),
+            git_status,
+        ));
+    }
+
+    let mut children = read_dir_sorted(path, options)
+        .into_iter()
+        .filter_map(|child| {
+            build_node_lazy(
+                &child,
+                depth + 1,
+                options,
+                git_statuses,
+                expanded,
+                id_to_path,
+                id_to_kind,
+            )
+        })
+        .take(options.max_entries_per_dir)
+        .collect::<Vec<_>>();
+
+    sort_nodes_dirs_first(&mut children);
+
+    Some(apply_git_status(
+        FileTreeNode::dir(id, name, children)
+            .with_expanded(true)
+            .with_children_loaded(true),
+        git_status,
+    ))
+}
+
+fn build_lazy_leaf(
+    path: &Path,
+    git_statuses: &WorkspaceGitStatuses,
+    id_to_path: &mut HashMap<FileTreeNodeId, PathBuf>,
+    id_to_kind: &mut HashMap<FileTreeNodeId, FileTreeNodeKind>,
+) -> Option<FileTreeNode> {
+    let meta = fs::metadata(path).ok()?;
+    let name = display_name_for_path(path);
+    let id = node_id_for_path(path);
+    let kind = if meta.is_dir() {
+        FileTreeNodeKind::Directory
+    } else {
+        FileTreeNodeKind::File
+    };
+
+    id_to_path.insert(id, path.to_path_buf());
+    id_to_kind.insert(id, kind);
+    let git_status = git_statuses.status_for(id, path);
+
+    let node = match kind {
+        FileTreeNodeKind::File => FileTreeNode::file(id, name),
+        FileTreeNodeKind::Directory => FileTreeNode::dir(id, name, Vec::new())
+            .with_expanded(false)
+            .with_children_loaded(false),
+    };
+    Some(apply_git_status(node, git_status))
+}
+
+fn sort_nodes_dirs_first(nodes: &mut [FileTreeNode]) {
+    nodes.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
         _ => a
@@ -380,11 +562,6 @@ fn build_node(
             .to_ascii_lowercase()
             .cmp(&b.name.to_ascii_lowercase()),
     });
-
-    Some(apply_git_status(
-        FileTreeNode::dir(id, name, children),
-        git_status,
-    ))
 }
 
 fn apply_git_status(node: FileTreeNode, status: Option<FileTreeGitStatus>) -> FileTreeNode {
@@ -669,6 +846,91 @@ mod tests {
         assert!(display_paths.contains(&"README.md"));
         assert!(!display_paths.iter().any(|path| path.contains(".git")));
         assert!(!display_paths.iter().any(|path| path.contains(".hidden")));
+    }
+
+    #[test]
+    fn build_workspace_tree_lazy_loads_only_root_children() {
+        let root = TempDir::new("lazy_root");
+        fs::create_dir_all(root.path.join("src").join("deep")).unwrap();
+        fs::write(root.path.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.path.join("README.md"), "# readme\n").unwrap();
+
+        let tree = build_workspace_tree_lazy(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+            &WorkspaceGitStatuses::default(),
+            &HashSet::new(),
+        );
+        let root_node = tree.roots.first().expect("root node");
+        assert!(root_node.is_expanded);
+        assert!(root_node.children_loaded);
+
+        let src = root_node
+            .children
+            .iter()
+            .find(|node| node.name == "src")
+            .expect("src dir");
+        // The sub-directory is present but its children are not yet loaded.
+        assert!(!src.children_loaded);
+        assert!(src.children.is_empty());
+        assert!(!src.is_expanded);
+    }
+
+    #[test]
+    fn build_workspace_tree_lazy_loads_expanded_subdirectory() {
+        let root = TempDir::new("lazy_expanded");
+        let src = root.path.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+
+        let canonical_src = fs::canonicalize(&src).unwrap_or(src);
+        let expanded = HashSet::from([canonical_src]);
+        let tree = build_workspace_tree_lazy(
+            std::slice::from_ref(&root.path),
+            WorkspaceTreeOptions::default(),
+            &WorkspaceGitStatuses::default(),
+            &expanded,
+        );
+        let root_node = tree.roots.first().expect("root node");
+        let src_node = root_node
+            .children
+            .iter()
+            .find(|node| node.name == "src")
+            .expect("src dir");
+
+        assert!(src_node.children_loaded);
+        assert!(src_node.is_expanded);
+        assert!(src_node.children.iter().any(|node| node.name == "main.rs"));
+    }
+
+    #[test]
+    fn load_dir_children_reads_one_level_with_collapsed_subdirs() {
+        let root = TempDir::new("load_children");
+        fs::create_dir_all(root.path.join("nested").join("deep")).unwrap();
+        fs::write(root.path.join("nested").join("file.rs"), "x\n").unwrap();
+
+        let nested = root.path.join("nested");
+        let loaded = load_dir_children(
+            &nested,
+            WorkspaceTreeOptions::default(),
+            &WorkspaceGitStatuses::default(),
+        );
+
+        let names = loaded
+            .children
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"deep".to_string()));
+        assert!(names.contains(&"file.rs".to_string()));
+
+        let deep = loaded
+            .children
+            .iter()
+            .find(|node| node.name == "deep")
+            .expect("deep dir");
+        assert!(!deep.children_loaded);
+        assert!(deep.children.is_empty());
     }
 
     #[test]

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -898,9 +900,16 @@ fn open_file_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppSt
         s.file_picker_restore_focus = desktop.wm.focused();
         events
     };
-    let view = PickerView::new("File Picker", file_picker_items(state), events.clone())
+    let mut view = PickerView::new("File Picker", Vec::new(), events.clone())
         .placeholder("Type a file path")
         .max_results(300);
+    match file_picker_cached_items(state) {
+        // Cache hit: fill synchronously so the list is ready immediately.
+        Some(items) => view.set_items(items),
+        // Cache miss: build the index on a background thread to keep the UI
+        // responsive; items stream in once ready.
+        None => view = view.items_source(spawn_file_picker_index(state)),
+    }
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 82, 20);
     let id = desktop.add_window(
@@ -921,6 +930,29 @@ fn open_file_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppSt
         screen,
     );
     state.lock().file_picker_window = Some(id);
+}
+
+/// Returns picker items from the cache when it matches the current workspace
+/// roots, otherwise `None` (a background build is needed).
+fn file_picker_cached_items(state: &Arc<Mutex<AppState>>) -> Option<Vec<PickerItem<AppAction>>> {
+    let s = state.lock();
+    let roots = canonical_workspace_roots(&s.workspace_roots);
+    s.file_picker_cache
+        .as_ref()
+        .filter(|cache| cache.roots == roots)
+        .map(file_picker_items_from_index)
+}
+
+/// Builds the workspace file index on a background thread and returns a receiver
+/// the picker polls for the resulting items.
+fn spawn_file_picker_index(state: &Arc<Mutex<AppState>>) -> Receiver<Vec<PickerItem<AppAction>>> {
+    let (tx, rx) = mpsc::channel();
+    let state = state.clone();
+    thread::spawn(move || {
+        let items = file_picker_items(&state);
+        let _ = tx.send(items);
+    });
+    rx
 }
 
 fn file_picker_items(state: &Arc<Mutex<AppState>>) -> Vec<PickerItem<AppAction>> {

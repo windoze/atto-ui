@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,11 +26,21 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
 
 use crate::actions::{AppAction, OpenTarget};
 use crate::workspace::{
-    WorkspaceGitStatuses, WorkspaceTreeOptions, build_workspace_tree_with_git_statuses,
-    git_statuses_for_root,
+    WorkspaceGitStatuses, WorkspaceTree, WorkspaceTreeOptions, build_workspace_tree_lazy,
+    git_statuses_for_root, load_dir_children,
 };
 
 const GIT_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// One directory's children, loaded on demand on a background thread when the
+/// user expands it.
+struct TreeLoad {
+    generation: u64,
+    parent_id: FileTreeNodeId,
+    children: Vec<FileTreeNode>,
+    id_to_path: HashMap<FileTreeNodeId, PathBuf>,
+    id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
+}
 
 #[derive(Clone, Debug)]
 pub enum ExplorerWindowCommand {
@@ -63,6 +73,11 @@ pub struct ExplorerWindowView {
     git_statuses: WorkspaceGitStatuses,
     git_status_rx: Option<Receiver<WorkspaceGitStatuses>>,
     last_git_status_started: Option<Instant>,
+
+    generation: u64,
+    tree_load_tx: Sender<TreeLoad>,
+    tree_load_rx: Receiver<TreeLoad>,
+    pending_dir_loads: HashSet<FileTreeNodeId>,
 
     last_click: Option<(Instant, FileTreeNodeId)>,
     last_area: Option<Rect>,
@@ -190,6 +205,7 @@ impl ExplorerWindowView {
         .with_min_width(12)
         .with_min_height(6);
 
+        let (tree_load_tx, tree_load_rx) = mpsc::channel();
         let mut view = Self {
             actions,
             commands,
@@ -206,6 +222,10 @@ impl ExplorerWindowView {
             git_statuses: WorkspaceGitStatuses::default(),
             git_status_rx: None,
             last_git_status_started: None,
+            generation: 0,
+            tree_load_tx,
+            tree_load_rx,
+            pending_dir_loads: HashSet::new(),
             last_click: None,
             last_area: None,
             context_menu: None,
@@ -223,17 +243,54 @@ impl ExplorerWindowView {
         self.tree_selections.get()
     }
 
+    /// Rebuilds the workspace tree lazily (only one level per directory, plus any
+    /// directories the user has already expanded). This reads at most one level
+    /// per expanded directory, so it is cheap enough to run synchronously and
+    /// gives an immediate first paint. Open-ended deeper traversal happens via
+    /// background on-demand expansion ([`spawn_dir_load`]).
     fn refresh_workspace_tree(&mut self) {
-        self.rebuild_workspace_tree();
+        self.generation = self.generation.wrapping_add(1);
+        self.pending_dir_loads.clear();
+        let expanded = self.collect_expanded_paths();
+        let tree = if self.workspace_roots.is_empty() {
+            WorkspaceTree {
+                roots: Vec::new(),
+                id_to_path: HashMap::new(),
+                id_to_kind: HashMap::new(),
+            }
+        } else {
+            build_workspace_tree_lazy(
+                &self.workspace_roots,
+                WorkspaceTreeOptions::default(),
+                &self.git_statuses,
+                &expanded,
+            )
+        };
+        self.apply_root_tree(tree);
         self.maybe_start_git_status_refresh(false);
     }
 
-    fn rebuild_workspace_tree(&mut self) {
-        let tree = build_workspace_tree_with_git_statuses(
-            &self.workspace_roots,
-            WorkspaceTreeOptions::default(),
-            &self.git_statuses,
-        );
+    /// Loads the children of a single directory on a background thread.
+    fn spawn_dir_load(&mut self, id: FileTreeNodeId, path: PathBuf) {
+        if !self.pending_dir_loads.insert(id) {
+            return;
+        }
+        let generation = self.generation;
+        let git_statuses = self.git_statuses.clone();
+        let tx = self.tree_load_tx.clone();
+        thread::spawn(move || {
+            let loaded = load_dir_children(&path, WorkspaceTreeOptions::default(), &git_statuses);
+            let _ = tx.send(TreeLoad {
+                generation,
+                parent_id: id,
+                children: loaded.children,
+                id_to_path: loaded.id_to_path,
+                id_to_kind: loaded.id_to_kind,
+            });
+        });
+    }
+
+    fn apply_root_tree(&mut self, tree: WorkspaceTree) {
         self.tree_id_to_parent = parent_map_for_roots(&tree.roots);
         self.tree_path_to_id = tree
             .id_to_path
@@ -250,6 +307,122 @@ impl ExplorerWindowView {
             self.tree_selection.set(None);
         }
         self.tree_nodes.set(tree.roots);
+        self.sync_pending_dir_loads();
+    }
+
+    fn poll_tree_loads(&mut self) {
+        while let Ok(load) = self.tree_load_rx.try_recv() {
+            if load.generation != self.generation || !self.pending_dir_loads.remove(&load.parent_id)
+            {
+                continue;
+            }
+            self.apply_dir_children(
+                load.parent_id,
+                load.children,
+                load.id_to_path,
+                load.id_to_kind,
+            );
+        }
+    }
+
+    fn apply_dir_children(
+        &mut self,
+        parent_id: FileTreeNodeId,
+        children: Vec<FileTreeNode>,
+        id_to_path: HashMap<FileTreeNodeId, PathBuf>,
+        id_to_kind: HashMap<FileTreeNodeId, FileTreeNodeKind>,
+    ) {
+        let mut applied = false;
+        self.tree_nodes.update(|nodes| {
+            applied = set_node_children(nodes, parent_id, &children);
+        });
+        if !applied {
+            return;
+        }
+        self.tree_id_to_path
+            .extend(id_to_path.iter().map(|(id, p)| (*id, p.clone())));
+        self.tree_id_to_kind.extend(id_to_kind);
+        for (id, path) in &id_to_path {
+            self.tree_path_to_id
+                .insert(Self::canonicalize_best_effort(path), *id);
+        }
+        self.tree_id_to_parent = parent_map_for_roots(&self.tree_nodes.get());
+        self.sync_pending_dir_loads();
+    }
+
+    /// Synchronously reloads one directory's children (a single `read_dir`) and
+    /// merges them into the tree. Used after file operations so the change is
+    /// visible immediately without a full background rebuild.
+    fn reload_dir_now(&mut self, dir_id: FileTreeNodeId) -> bool {
+        let Some(path) = self.tree_id_to_path.get(&dir_id).cloned() else {
+            return false;
+        };
+        let loaded = load_dir_children(&path, WorkspaceTreeOptions::default(), &self.git_statuses);
+        self.pending_dir_loads.remove(&dir_id);
+        self.apply_dir_children(
+            dir_id,
+            loaded.children,
+            loaded.id_to_path,
+            loaded.id_to_kind,
+        );
+        true
+    }
+
+    /// Refreshes the directories containing the given paths after a file
+    /// operation. Falls back to a background rebuild when a parent is not in the
+    /// loaded tree.
+    fn refresh_dirs_for_paths(&mut self, paths: &[PathBuf]) {
+        let mut dirs = HashSet::new();
+        for path in paths {
+            if let Some(parent) = path.parent() {
+                dirs.insert(Self::canonicalize_best_effort(parent));
+            }
+        }
+        let mut fell_back = false;
+        for dir in dirs {
+            let id = self.tree_path_to_id.get(&dir).copied();
+            match id {
+                Some(id) if self.reload_dir_now(id) => {}
+                _ if !fell_back => {
+                    self.refresh_workspace_tree();
+                    fell_back = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Scans the loaded tree for directories the user has expanded whose children
+    /// have not been loaded yet, and kicks off a background load for each.
+    fn sync_pending_dir_loads(&mut self) {
+        let mut to_load = Vec::new();
+        collect_unloaded_expanded(&self.tree_nodes.get(), &mut to_load);
+        for id in to_load {
+            if self.pending_dir_loads.contains(&id) {
+                continue;
+            }
+            if let Some(path) = self.tree_id_to_path.get(&id).cloned() {
+                self.spawn_dir_load(id, path);
+            }
+        }
+    }
+
+    /// Collects canonical paths of all currently expanded directories so a
+    /// background rebuild can restore the user's view.
+    fn collect_expanded_paths(&self) -> HashSet<PathBuf> {
+        let mut ids = Vec::new();
+        collect_expanded_ids(&self.tree_nodes.get(), &mut ids);
+        ids.into_iter()
+            .filter_map(|id| self.tree_id_to_path.get(&id).cloned())
+            .collect()
+    }
+
+    fn apply_git_statuses_to_tree(&mut self) {
+        let git_statuses = self.git_statuses.clone();
+        let id_to_path = self.tree_id_to_path.clone();
+        self.tree_nodes.update(|nodes| {
+            update_git_statuses(nodes, &git_statuses, &id_to_path);
+        });
     }
 
     fn clear_git_status_cache(&mut self) {
@@ -292,7 +465,7 @@ impl ExplorerWindowView {
             Some(Ok(statuses)) => {
                 self.git_status_rx = None;
                 self.git_statuses = statuses;
-                self.rebuild_workspace_tree();
+                self.apply_git_statuses_to_tree();
             }
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.git_status_rx = None;
@@ -671,9 +844,9 @@ impl ExplorerWindowView {
         Ok(destinations)
     }
 
-    fn refresh_after_file_operation(&mut self) {
-        self.commands.push(ExplorerWindowCommand::Refresh);
-        self.handle_commands();
+    fn refresh_after_file_operation(&mut self, affected: &[PathBuf]) {
+        self.refresh_dirs_for_paths(affected);
+        self.maybe_start_git_status_refresh(false);
     }
 
     fn select_first_path(&mut self, paths: &[PathBuf]) {
@@ -743,7 +916,9 @@ impl ExplorerWindowView {
                 if clipboard.mode == FileClipboardMode::Cut {
                     self.clipboard = None;
                 }
-                self.refresh_after_file_operation();
+                let mut affected = destinations.clone();
+                affected.extend(clipboard.paths.iter().cloned());
+                self.refresh_after_file_operation(&affected);
                 self.select_first_path(&destinations);
                 self.show_status(format!("Explorer: pasted {} item(s)", destinations.len()));
                 EventResult::changed()
@@ -751,7 +926,7 @@ impl ExplorerWindowView {
             Err(message) => {
                 if partial_cut {
                     self.clipboard = None;
-                    self.refresh_after_file_operation();
+                    self.refresh_after_file_operation(&clipboard.paths);
                     self.show_status(format!("Explorer: {message}; clipboard cleared"));
                     EventResult::changed()
                 } else {
@@ -807,7 +982,7 @@ impl ExplorerWindowView {
         match self.apply_inline_commit(commit) {
             Ok(path_to_select) => {
                 self.file_tree.finish_inline_edit();
-                self.refresh_workspace_tree();
+                self.refresh_dirs_for_paths(std::slice::from_ref(&path_to_select));
                 self.select_path(&path_to_select);
                 EventResult::changed()
             }
@@ -1029,6 +1204,7 @@ impl ExplorerWindowView {
 
     fn handle_commands(&mut self) {
         self.poll_git_status_refresh();
+        self.poll_tree_loads();
         for cmd in self.commands.drain() {
             match cmd {
                 ExplorerWindowCommand::SetWorkspaceRoots(roots) => self.set_workspace_roots(roots),
@@ -1036,6 +1212,63 @@ impl ExplorerWindowView {
                 ExplorerWindowCommand::Refresh => self.refresh_workspace_tree(),
             }
         }
+    }
+}
+
+/// Writes `children` into the directory node identified by `parent_id`, marking
+/// it loaded. Returns whether the node was found.
+fn set_node_children(
+    nodes: &mut [FileTreeNode],
+    parent_id: FileTreeNodeId,
+    children: &[FileTreeNode],
+) -> bool {
+    for node in nodes {
+        if node.id == parent_id {
+            node.children = children.to_vec();
+            node.children_loaded = true;
+            return true;
+        }
+        if set_node_children(&mut node.children, parent_id, children) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Collects ids of expanded directories whose children have not been loaded yet.
+fn collect_unloaded_expanded(nodes: &[FileTreeNode], out: &mut Vec<FileTreeNodeId>) {
+    for node in nodes {
+        if node.is_dir() {
+            if node.is_expanded && !node.children_loaded {
+                out.push(node.id);
+            }
+            collect_unloaded_expanded(&node.children, out);
+        }
+    }
+}
+
+/// Collects ids of all expanded directories in the loaded tree.
+fn collect_expanded_ids(nodes: &[FileTreeNode], out: &mut Vec<FileTreeNodeId>) {
+    for node in nodes {
+        if node.is_dir() && node.is_expanded {
+            out.push(node.id);
+            collect_expanded_ids(&node.children, out);
+        }
+    }
+}
+
+/// Refreshes each node's git status in place against the latest statuses,
+/// preserving expansion and loaded state.
+fn update_git_statuses(
+    nodes: &mut [FileTreeNode],
+    git_statuses: &WorkspaceGitStatuses,
+    id_to_path: &HashMap<FileTreeNodeId, PathBuf>,
+) {
+    for node in nodes {
+        if let Some(path) = id_to_path.get(&node.id) {
+            node.git_status = git_statuses.status_for(node.id, path);
+        }
+        update_git_statuses(&mut node.children, git_statuses, id_to_path);
     }
 }
 
@@ -1258,14 +1491,16 @@ impl ::atto_ui::composable::DragAndDrop for ExplorerWindowView {
 
         match self.move_paths_to_directory(&paths, &target_dir) {
             Ok(destinations) => {
-                self.refresh_after_file_operation();
+                let mut affected = destinations.clone();
+                affected.extend(paths.iter().cloned());
+                self.refresh_after_file_operation(&affected);
                 self.select_first_path(&destinations);
                 self.show_status(format!("Explorer: moved {} item(s)", destinations.len()));
                 EventResult::changed()
             }
             Err(error) => {
                 if error.partial {
-                    self.refresh_after_file_operation();
+                    self.refresh_after_file_operation(&paths);
                     self.show_status(format!("Explorer: {}", error.message));
                     EventResult::changed()
                 } else {
@@ -1389,6 +1624,7 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
                 // Let the underlying file tree update selection first, then resolve double-click
                 // based on the selected node id.
                 let res = self.file_tree.handle_event(event, child_ctx);
+                self.sync_pending_dir_loads();
 
                 let now = Instant::now();
                 let sel = self.tree_selection.get();
@@ -1411,6 +1647,7 @@ impl ::atto_ui::composable::EventHandling for ExplorerWindowView {
         }
 
         let res = self.file_tree.handle_event(event, child_ctx);
+        self.sync_pending_dir_loads();
         let commit_res = self.process_inline_commit();
         if commit_res.is_consumed() {
             commit_res

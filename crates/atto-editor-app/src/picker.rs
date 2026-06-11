@@ -1,5 +1,7 @@
 //! Reusable fuzzy picker views for editor-app modals.
 
+use std::sync::mpsc::Receiver;
+
 use atto_ui::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable,
 };
@@ -89,6 +91,7 @@ pub struct PickerView<A> {
     last_filter_query: Option<String>,
     last_area: Option<Rect>,
     events: EventQueue<PickerEvent<A>>,
+    items_rx: Option<Receiver<Vec<PickerItem<A>>>>,
 }
 
 impl<A> PickerView<A> {
@@ -117,7 +120,43 @@ impl<A> PickerView<A> {
             last_filter_query: None,
             last_area: None,
             events,
+            items_rx: None,
         }
+    }
+
+    /// Supplies items asynchronously from a background thread. The picker polls
+    /// the receiver each frame and replaces its items once they arrive.
+    pub fn items_source(mut self, rx: Receiver<Vec<PickerItem<A>>>) -> Self {
+        self.items_rx = Some(rx);
+        self
+    }
+
+    /// Replaces the picker's items and re-runs the active filter.
+    pub fn set_items(&mut self, items: Vec<PickerItem<A>>) {
+        self.search_texts = items.iter().map(PickerItem::search_text).collect();
+        self.items = items;
+        self.invalidate_filter();
+        self.refresh_filter();
+    }
+
+    fn poll_items(&mut self) {
+        let Some(rx) = self.items_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(items) => {
+                self.items_rx = None;
+                self.set_items(items);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.items_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    fn is_indexing(&self) -> bool {
+        self.items_rx.is_some()
     }
 
     /// Sets placeholder text for the query input.
@@ -278,6 +317,7 @@ impl<A> PickerView<A> {
 impl<A: Clone + Send + 'static> Component for PickerView<A> {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
+        self.poll_items();
         self.refresh_filter();
         if area.width == 0 || area.height == 0 {
             return;
@@ -319,6 +359,7 @@ impl<A: Clone + Send + 'static> FocusNav for PickerView<A> {
 
 impl<A: Clone + Send + 'static> EventHandling for PickerView<A> {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.poll_items();
         self.refresh_filter();
         match event {
             Event::Key(KeyEvent {
@@ -374,7 +415,12 @@ impl<A> PickerView<A> {
         self.clamp_scroll(area.height as usize);
 
         if self.filtered.is_empty() {
-            let line = Line::from(vec![Span::styled("  No matches", ctx.theme.widget.dim)]);
+            let message = if self.is_indexing() {
+                "  Indexing..."
+            } else {
+                "  No matches"
+            };
+            let line = Line::from(vec![Span::styled(message, ctx.theme.widget.dim)]);
             frame.render_widget(Paragraph::new(line).style(ctx.theme.window_bg), area);
             return;
         }
