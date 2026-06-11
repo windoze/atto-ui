@@ -26,6 +26,7 @@ pub struct TextBox {
     #[component(rename = "text")]
     binding: Binding<String>,
     enabled: Binding<bool>,
+    border: Binding<bool>,
     clipboard: Binding<String>,
     scroll: u16,
     last_area: Option<Rect>,
@@ -46,6 +47,7 @@ impl TextBox {
             buffer: TextBuffer::with_text(initial),
             binding,
             enabled: true.into(),
+            border: true.into(),
             clipboard: String::new().into(),
             scroll: 0,
             last_area: None,
@@ -66,6 +68,23 @@ impl TextBox {
     pub fn enabled(mut self, enabled: impl Into<Binding<bool>>) -> Self {
         self.enabled = enabled.into();
         self
+    }
+
+    /// Controls whether the text box draws its own border. When `false`, the
+    /// input fills the whole area with no border.
+    pub fn border(mut self, border: impl Into<Binding<bool>>) -> Self {
+        self.border = border.into();
+        self
+    }
+
+    fn inner_rect(&self, area: Rect) -> Rect {
+        let inset = u16::from(self.border.get());
+        Rect {
+            x: area.x.saturating_add(inset),
+            y: area.y.saturating_add(inset),
+            width: area.width.saturating_sub(2 * inset),
+            height: area.height.saturating_sub(2 * inset),
+        }
     }
 
     pub fn placeholder(mut self, placeholder: impl Into<Binding<String>>) -> Self {
@@ -128,18 +147,15 @@ impl Component for TextBox {
         let enabled = self.enabled.get();
         let style = widget_style(ctx.theme, enabled, ctx.is_focused);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(self.title.get());
-        frame.render_widget(block.border_style(style), area);
+        if self.border.get() {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(ctx.theme.border_set(false))
+                .title(self.title.get());
+            frame.render_widget(block.border_style(style), area);
+        }
 
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
-        };
+        let inner = self.inner_rect(area);
         if inner.width == 0 || inner.height == 0 {
             return;
         }
@@ -255,11 +271,12 @@ impl EventHandling for TextBox {
                     return EventResult::ignored();
                 };
 
+                let inset = u16::from(self.border.get());
                 let inner = Rect {
-                    x: 1,
-                    y: 1,
-                    width: area.width.saturating_sub(2),
-                    height: area.height.saturating_sub(2),
+                    x: inset,
+                    y: inset,
+                    width: area.width.saturating_sub(2 * inset),
+                    height: area.height.saturating_sub(2 * inset),
                 };
                 if inner.width == 0 || inner.height == 0 {
                     return EventResult::ignored();

@@ -13,8 +13,8 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{Binding, EventQueue};
 use atto_ui_file_tree::{
-    FILE_TREE_NODE_IDS_DRAG_TYPE, FileTree, FileTreeGlyphs, FileTreeInlineEditCommit,
-    FileTreeInlineEditKind, FileTreeNode, FileTreeNodeId, FileTreeNodeKind,
+    FILE_TREE_NODE_IDS_DRAG_TYPE, FileTree, FileTreeInlineEditCommit, FileTreeInlineEditKind,
+    FileTreeNode, FileTreeNodeId, FileTreeNodeKind,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -183,25 +183,17 @@ impl ExplorerWindowView {
         let tree_selection: Binding<Option<FileTreeNodeId>> = Binding::new(None);
         let tree_selections: Binding<BTreeSet<FileTreeNodeId>> = Binding::new(BTreeSet::new());
 
-        let glyphs = FileTreeGlyphs::default()
-            .with_extension("rs", "rs")
-            .with_extension("toml", "tm")
-            .with_extension("json", "js")
-            .with_extension("md", "md")
-            .with_extension("yml", "yml")
-            .with_extension("yaml", "yml")
-            .with_extension("py", "py")
-            .with_extension("js", "js")
-            .with_extension("ts", "ts");
-
+        // No file-type icons by default: keep the explorer free of two-letter
+        // hints and unsupported glyphs. Callers can opt into PowerLine / Nerd Font
+        // icons via `FileTree::glyphs` with colored `FileTreeIcon`s.
         let file_tree = FileTree::new_with_selections(
             "Workspace",
             tree_nodes.clone(),
             tree_selection.clone(),
             tree_selections.clone(),
         )
-        .glyphs(glyphs)
         .defer_inline_commits(true)
+        .border(false)
         .with_min_width(12)
         .with_min_height(6);
 

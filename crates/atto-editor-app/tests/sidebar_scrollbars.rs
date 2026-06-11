@@ -72,16 +72,17 @@ fn explorer_window_scrollbar_is_mounted_on_window_border() {
         "expected the explorer scrollbar to overwrite the window border glyph"
     );
 
-    // The FileTree widget draws its own border inside the window inner rect; that border should
-    // remain intact (the scrollbar should be on the window border, not inside the widget).
-    let tree_right_border_x = inner.x + inner.width - 1;
-    let tree_border_y = inner.y + 1;
-    let tree_border_cell = buf
-        .cell((tree_right_border_x, tree_border_y))
-        .expect("file tree border cell");
-    assert_eq!(
-        tree_border_cell.symbol(),
+    // The explorer file tree is borderless: it fills the window inner area and the
+    // scrollbar is mounted on the window border, so the inner-right column must NOT
+    // contain a widget border glyph (i.e. no double border).
+    let tree_right_x = inner.x + inner.width - 1;
+    let tree_inner_y = inner.y + 1;
+    let tree_inner_cell = buf
+        .cell((tree_right_x, tree_inner_y))
+        .expect("file tree inner cell");
+    assert_ne!(
+        tree_inner_cell.symbol(),
         theme.border_set(false).vertical_right,
-        "expected the file tree border to remain intact (scrollbar should be on the window border)"
+        "expected no inner file tree border (the tree is borderless and fills the window)"
     );
 }

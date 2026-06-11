@@ -92,6 +92,7 @@ pub struct PickerView<A> {
     last_area: Option<Rect>,
     events: EventQueue<PickerEvent<A>>,
     items_rx: Option<Receiver<Vec<PickerItem<A>>>>,
+    border: bool,
 }
 
 impl<A> PickerView<A> {
@@ -121,7 +122,15 @@ impl<A> PickerView<A> {
             last_area: None,
             events,
             items_rx: None,
+            border: true,
         }
+    }
+
+    /// Controls whether the picker draws its own border. When `false`, the query
+    /// input and result list fill the whole area with no border.
+    pub fn border(mut self, border: bool) -> Self {
+        self.border = border;
+        self
     }
 
     /// Supplies items asynchronously from a background thread. The picker polls
@@ -242,7 +251,7 @@ impl<A> PickerView<A> {
 
     fn visible_capacity(&self) -> usize {
         self.last_area
-            .map(|area| picker_list_area(area).height as usize)
+            .map(|area| picker_list_area(area, self.border).height as usize)
             .unwrap_or(8)
     }
 
@@ -324,19 +333,23 @@ impl<A: Clone + Send + 'static> Component for PickerView<A> {
         }
 
         frame.render_widget(Clear, area);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(self.title.as_str())
-            .style(ctx.theme.window_bg);
-        frame.render_widget(block, area);
+        if self.border {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(ctx.theme.border_set(false))
+                .title(self.title.as_str())
+                .style(ctx.theme.window_bg);
+            frame.render_widget(block, area);
+        } else {
+            frame.render_widget(Block::default().style(ctx.theme.window_bg), area);
+        }
 
-        let input_area = picker_input_area(area);
+        let input_area = picker_input_area(area, self.border);
         if input_area.height > 0 && input_area.width > 0 {
             self.input.draw(frame, input_area, Self::child_ctx(ctx));
         }
 
-        let list_area = picker_list_area(area);
+        let list_area = picker_list_area(area, self.border);
         self.draw_list(frame, list_area, ctx);
     }
 }
@@ -455,8 +468,8 @@ impl<A> PickerView<A> {
     }
 }
 
-fn picker_input_area(area: Rect) -> Rect {
-    let inner = inner_rect(area);
+fn picker_input_area(area: Rect, border: bool) -> Rect {
+    let inner = inner_rect(area, border);
     Rect {
         x: inner.x,
         y: inner.y,
@@ -465,8 +478,8 @@ fn picker_input_area(area: Rect) -> Rect {
     }
 }
 
-fn picker_list_area(area: Rect) -> Rect {
-    let inner = inner_rect(area);
+fn picker_list_area(area: Rect, border: bool) -> Rect {
+    let inner = inner_rect(area, border);
     let input_height = inner.height.min(3);
     Rect {
         x: inner.x,
@@ -476,12 +489,13 @@ fn picker_list_area(area: Rect) -> Rect {
     }
 }
 
-fn inner_rect(area: Rect) -> Rect {
+fn inner_rect(area: Rect, border: bool) -> Rect {
+    let inset = u16::from(border);
     Rect {
-        x: area.x.saturating_add(1),
-        y: area.y.saturating_add(1),
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
+        x: area.x.saturating_add(inset),
+        y: area.y.saturating_add(inset),
+        width: area.width.saturating_sub(2 * inset),
+        height: area.height.saturating_sub(2 * inset),
     }
 }
 
@@ -561,6 +575,50 @@ mod tests {
             ],
             EventQueue::new(),
         )
+    }
+
+    #[test]
+    fn picker_border_toggle_controls_border_drawing() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::layout::Rect;
+
+        let theme = Theme::dark();
+        let area = Rect::new(0, 0, 40, 12);
+
+        // The query input keeps its own border, so probe the bottom-left cell:
+        // it is the picker's own bottom-left border corner only when bordered.
+        let render_bottom_left = |border: bool| -> String {
+            let mut picker = PickerView::new(
+                "Commands",
+                vec![PickerItem::new("Save", "save")],
+                EventQueue::<PickerEvent<&'static str>>::new(),
+            )
+            .border(border);
+            let backend = TestBackend::new(area.width, area.height);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            terminal
+                .draw(|f| picker.draw(f, area, context(&theme)))
+                .expect("draw");
+            terminal
+                .backend()
+                .buffer()
+                .cell((0, area.height - 1))
+                .expect("bottom-left cell")
+                .symbol()
+                .to_string()
+        };
+
+        let bordered = render_bottom_left(true);
+        let borderless = render_bottom_left(false);
+        assert_ne!(
+            bordered, " ",
+            "bordered picker draws its bottom-left corner glyph"
+        );
+        assert_eq!(
+            borderless, " ",
+            "borderless picker leaves the bottom-left blank, got {borderless:?}"
+        );
     }
 
     #[test]

@@ -54,7 +54,10 @@ fn draw(wm: &mut WindowManager, bounds: Rect, theme: &Theme) {
 
 fn file_row(wm: &WindowManager, row_offset: u16) -> (u16, u16) {
     let inner = wm.windows()[0].inner_rect();
-    (inner.x + 4, inner.y + row_offset)
+    // The explorer file tree is borderless, so its first content row sits at the
+    // window inner top. `row_offset` is kept 1-based (row 1 = root node) for
+    // readability, hence the `- 1`.
+    (inner.x + 4, inner.y + row_offset.saturating_sub(1))
 }
 
 fn dispatch_mouse(

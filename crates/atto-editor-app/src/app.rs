@@ -811,7 +811,8 @@ fn open_command_palette(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<A
     };
     let view = PickerView::new("Command Palette", command_palette_items(), events.clone())
         .placeholder("Type a command")
-        .max_results(200);
+        .max_results(200)
+        .border(false);
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 76, 18);
     let id = desktop.add_window(
@@ -902,7 +903,8 @@ fn open_file_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<AppSt
     };
     let mut view = PickerView::new("File Picker", Vec::new(), events.clone())
         .placeholder("Type a file path")
-        .max_results(300);
+        .max_results(300)
+        .border(false);
     match file_picker_cached_items(state) {
         // Cache hit: fill synchronously so the list is ready immediately.
         Some(items) => view.set_items(items),
@@ -1060,7 +1062,8 @@ fn open_buffer_picker(desktop: &mut Desktop, screen: Rect, state: &Arc<Mutex<App
         events.clone(),
     )
     .placeholder("Type a buffer name")
-    .max_results(200);
+    .max_results(200)
+    .border(false);
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 82, 18);
     let id = desktop.add_window(
@@ -1194,7 +1197,8 @@ fn open_document_symbol_results_picker(
         events.clone(),
     )
     .placeholder("Type a document symbol")
-    .max_results(MAX_SYMBOL_PICKER_RESULTS);
+    .max_results(MAX_SYMBOL_PICKER_RESULTS)
+    .border(false);
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 82, 20);
     let id = desktop.add_window(
@@ -1398,7 +1402,8 @@ fn open_workspace_symbol_results_picker(
         events.clone(),
     )
     .placeholder("Type to filter workspace symbols")
-    .max_results(MAX_SYMBOL_PICKER_RESULTS);
+    .max_results(MAX_SYMBOL_PICKER_RESULTS)
+    .border(false);
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 88, 20);
     let id = desktop.add_window(
@@ -1613,7 +1618,8 @@ fn open_global_search_results_picker(
         events.clone(),
     )
     .placeholder("Type to filter search results")
-    .max_results(MAX_GLOBAL_SEARCH_RESULTS);
+    .max_results(MAX_GLOBAL_SEARCH_RESULTS)
+    .border(false);
     let work = Desktop::layout(screen).work_area;
     let rect = centered_rect(work, 90, 22);
     let id = desktop.add_window(
@@ -3568,10 +3574,12 @@ mod tests {
             .window(explorer_id)
             .expect("explorer window")
             .inner_rect();
+        // The explorer file tree is borderless, so content starts at the inner top:
+        // row 0 is the workspace root directory, row 1 is the first child file.
         let click = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: inner.x + 4,
-            row: inner.y + 2,
+            row: inner.y + 1,
             modifiers: KeyModifiers::NONE,
         });
 

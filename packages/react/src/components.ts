@@ -37,6 +37,8 @@ export interface TextBoxHostProps {
   readonly text?: string
   readonly placeholder?: string
   readonly enabled?: boolean
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly clipboard?: string
   readonly onChange?: AttoUiEventHandler
   readonly onSubmit?: AttoUiEventHandler
@@ -53,6 +55,8 @@ export interface ListBoxHostProps {
   readonly selection?: number
   readonly height?: number
   readonly enabled?: boolean
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly onChange?: AttoUiEventHandler
 }
 
@@ -70,6 +74,8 @@ export interface TableViewHostProps {
   readonly selection?: number
   readonly height?: number
   readonly enabled?: boolean
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly onChange?: AttoUiEventHandler
 }
 
@@ -108,13 +114,14 @@ export function Button({ label, children, enabled, onClick, layout }: ButtonProp
 
 /** Controlled single-line TextBox wrapper using the runtime `text` property. */
 export function TextBox(props: TextBoxProps): ReactElement {
-  const { title, value, placeholder, enabled, clipboard, onChange, onSubmit, layout } = props
+  const { title, value, placeholder, enabled, border, clipboard, onChange, onSubmit, layout } = props
   return hostElement('textBox', {
     __attoControlledText: true,
     title,
     text: value,
     placeholder,
     enabled,
+    border,
     clipboard,
     onChange: onChange === undefined ? undefined : controlledTextChange('TextBox', onChange),
     onSubmit,
@@ -124,13 +131,14 @@ export function TextBox(props: TextBoxProps): ReactElement {
 
 /** Typed ListBox wrapper; `onSelect` and `onChange` receive the selected index. */
 export function ListBox(props: ListBoxProps): ReactElement {
-  const { title, items, selection, selectedIndex, height, enabled, onChange, onSelect, layout } = props
+  const { title, items, selection, selectedIndex, height, enabled, border, onChange, onSelect, layout } = props
   return hostElement('listBox', {
     title,
     items,
     selection: selectedIndex ?? selection ?? 0,
     height,
     enabled,
+    border,
     onChange: selectionHandler('ListBox', onChange, onSelect),
     layout,
   })
@@ -138,7 +146,7 @@ export function ListBox(props: ListBoxProps): ReactElement {
 
 /** Typed TableView wrapper with the shorter exported name `Table`. */
 export function Table(props: TableProps): ReactElement {
-  const { title, headers, rows, selection, selectedIndex, height, enabled, onChange, onSelect, layout } = props
+  const { title, headers, rows, selection, selectedIndex, height, enabled, border, onChange, onSelect, layout } = props
   return hostElement('tableView', {
     title,
     headers,
@@ -146,6 +154,7 @@ export function Table(props: TableProps): ReactElement {
     selection: selectedIndex ?? selection ?? 0,
     height,
     enabled,
+    border,
     onChange: selectionHandler('Table', onChange, onSelect),
     layout,
   })

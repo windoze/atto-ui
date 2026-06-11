@@ -31,10 +31,11 @@ fn double_click_in_explorer_opens_file_without_hanging() -> anyhow::Result<()> {
     // Wait for the Explorer window to render the file name.
     host.wait_for_text(file_name, PTY_WAIT)?;
 
-    // Default layout places the Explorer window docked left. Click the second row inside the
-    // file tree content (first row is the workspace root dir node).
+    // Default layout places the Explorer window docked left. The file tree is
+    // borderless, so rows are: menu (0), window border (1), root dir (2), first
+    // child file (3).
     let click_x = 6;
-    let click_y = 4;
+    let click_y = 3;
     host.click(click_x, click_y)?;
     std::thread::sleep(Duration::from_millis(60));
     host.click(click_x, click_y)?;

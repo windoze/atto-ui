@@ -10,9 +10,12 @@ const {
   FileTree,
   FileTreeNode,
   Grid,
+  ListBox,
   MarkdownViewer,
   RichText,
+  TableView,
   TabView,
+  TextBox,
   Text,
   TextSpan,
   TerminalEmulator,
@@ -119,6 +122,25 @@ assert.deepStrictEqual(FileTree({ title: 'Files', nodes: fileTreeNodes, selectio
   props: { title: 'Files', nodes: fileTreeNodes, selection: 2 },
   events: { select: 'atto:callback:7' },
 })
+
+// border + file-type icon mapping (string and {glyph,color}) flow into props.
+assert.deepStrictEqual(
+  FileTree({
+    border: false,
+    icons: { rs: { glyph: '', color: '#ff8800' }, md: 'M' },
+  }),
+  {
+    type: 'FileTree',
+    props: {
+      border: false,
+      icons: { rs: { glyph: '', color: '#ff8800' }, md: 'M' },
+    },
+  },
+)
+
+assert.deepStrictEqual(ListBox({ items: ['a'], border: false }).props.border, false)
+assert.deepStrictEqual(TableView({ rows: [['a']], border: false }).props.border, false)
+assert.deepStrictEqual(TextBox({ border: false }).props.border, false)
 
 const chatMessage = ChatTextMessage(1, 'hello', { sender: 'user', timestamp: '2026-06-07T00:00:00Z' })
 assert.deepStrictEqual(chatMessage, {

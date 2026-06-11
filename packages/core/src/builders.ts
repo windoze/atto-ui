@@ -50,6 +50,8 @@ export interface ButtonOptions extends BuilderBaseOptions, EnabledOptions {
 export interface TextBoxOptions extends BuilderBaseOptions, EnabledOptions {
   readonly title?: string
   readonly text?: string
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly placeholder?: string
   readonly clipboard?: string
   readonly onChange?: CallbackHandle
@@ -76,6 +78,8 @@ export interface ChoiceOptions extends BuilderBaseOptions, EnabledOptions {
   readonly items?: readonly string[]
   readonly selection?: number
   readonly height?: number
+  /** Draw the widget's own border (ListBox only). Defaults to `true`. */
+  readonly border?: boolean
   readonly onChange?: CallbackHandle
 }
 
@@ -106,6 +110,8 @@ export interface TableViewOptions extends BuilderBaseOptions, EnabledOptions {
   readonly rows?: readonly (readonly string[])[]
   readonly selection?: number
   readonly height?: number
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly onChange?: CallbackHandle
 }
 
@@ -242,12 +248,24 @@ export interface FileTreeNodeInput extends FileTreeNodeOptions {
   readonly name: string
 }
 
+/**
+ * A file-type icon: a bare glyph string, or `{ glyph, color }` where `color`
+ * is a ratatui color string (a name like `"red"`, a hex `"#ff8800"`, or an
+ * indexed `"42"`). The mapping is empty by default so plain terminals get no
+ * unsupported characters; use it to opt into PowerLine / Nerd Font glyphs.
+ */
+export type FileTreeIconLike = string | { readonly glyph: string; readonly color?: string }
+
 export interface FileTreeOptions extends BuilderBaseOptions, EnabledOptions {
   readonly title?: string
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
   readonly nodes?: readonly FileTreeNodeLike[]
   readonly roots?: readonly FileTreeNodeLike[]
   readonly selection?: number | null
   readonly height?: number
+  /** Map of lowercased file extension → icon (string or `{glyph,color}`). */
+  readonly icons?: Readonly<Record<string, FileTreeIconLike>>
   readonly onSelect?: CallbackHandle
   readonly onRename?: CallbackHandle
   readonly onDelete?: CallbackHandle
@@ -374,6 +392,7 @@ export function TextBox(options: TextBoxOptions = {}): ComponentSpec {
   return makeSpec('TextBox', options.id, {
     title: options.title,
     text: options.text,
+    border: options.border,
     placeholder: options.placeholder,
     clipboard: options.clipboard,
     enabled: enabledValue(options),
@@ -448,6 +467,7 @@ export function ListBox(options: ChoiceOptions = {}): ComponentSpec {
     items: options.items,
     selection: options.selection,
     height: options.height,
+    border: options.border,
     enabled: enabledValue(options),
   }, events(options.events, { change: options.onChange }))
 }
@@ -459,6 +479,7 @@ export function TableView(options: TableViewOptions = {}): ComponentSpec {
     rows: options.rows,
     selection: options.selection,
     height: options.height,
+    border: options.border,
     enabled: enabledValue(options),
   }, events(options.events, { change: options.onChange }))
 }
@@ -607,15 +628,28 @@ export function FileTree(options: FileTreeOptions = {}): ComponentSpec {
   const nodes = options.nodes ?? options.roots
   return makeSpec('FileTree', options.id, {
     title: options.title,
+    border: options.border,
     nodes: nodes?.map(fileTreeNodeValue),
     selection: options.selection,
     height: options.height,
+    icons: fileTreeIconsValue(options.icons),
     enabled: enabledValue(options),
   }, events(options.events, {
     select: options.onSelect,
     rename: options.onRename,
     delete: options.onDelete,
   }))
+}
+
+function fileTreeIconsValue(
+  icons: Readonly<Record<string, FileTreeIconLike>> | undefined,
+): ComponentValueMap | undefined {
+  if (icons === undefined) return undefined
+  const out: Record<string, ComponentValue> = {}
+  for (const [ext, icon] of Object.entries(icons)) {
+    out[ext] = typeof icon === 'string' ? icon : { glyph: icon.glyph, ...(icon.color !== undefined ? { color: icon.color } : {}) }
+  }
+  return out
 }
 
 export function ChatTextMessage(

@@ -55,9 +55,10 @@ fn explorer_double_click_emits_open_action() {
 
     let inner = wm.windows()[0].inner_rect();
 
-    // Click on the file entry (2nd row in the content area: 1st row is the root dir node).
+    // The explorer file tree is borderless, so content starts at the inner top:
+    // row 0 is the root dir node, row 1 is the first child file.
     let click_x = inner.x + 4;
-    let click_y = inner.y + 2;
+    let click_y = inner.y + 1;
     let ev = Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: click_x,

@@ -31,6 +31,7 @@ struct ListBoxBindings {
     title: Binding<String>,
     items: Binding<Vec<String>>,
     enabled: Binding<bool>,
+    border: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
     #[component(skip)]
@@ -88,6 +89,7 @@ impl ListBox {
             title: title.into(),
             items,
             enabled: true.into(),
+            border: true.into(),
             selection,
             height: 7.into(),
             on_change: None,
@@ -121,6 +123,13 @@ impl ListBox {
 
     pub fn enabled(self, enabled: impl Into<Binding<bool>>) -> Self {
         self.bindings.write().enabled = enabled.into();
+        self
+    }
+
+    /// Controls whether the list draws its own border. When `false`, the widget
+    /// renders borderless while keeping its scrollbar correct.
+    pub fn border(self, border: impl Into<Binding<bool>>) -> Self {
+        self.bindings.write().border = border.into();
         self
     }
 
@@ -182,13 +191,18 @@ impl Component for ListBox {
         self.last_area = Some(area);
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
+        let border = bindings.border.get();
         let style = widget_style(ctx.theme, enabled, ctx.is_focused);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(bindings.title.get())
-            .style(style);
-        frame.render_widget(block, area);
+        if border {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(ctx.theme.border_set(false))
+                .title(bindings.title.get())
+                .style(style);
+            frame.render_widget(block, area);
+        } else {
+            frame.render_widget(Block::default().style(style), area);
+        }
         drop(bindings);
 
         let body_ctx = ComponentContext {
@@ -196,9 +210,10 @@ impl Component for ListBox {
             drag: None,
             ..ctx
         };
-        self.scroll.draw(frame, area, body_ctx);
+        let content = self.content_rect(area, border);
+        self.scroll.draw(frame, content, body_ctx);
 
-        self.draw_border_scrollbar(frame, area, ctx);
+        self.draw_border_scrollbar(frame, area, border, ctx);
     }
 }
 
@@ -235,12 +250,13 @@ impl EventHandling for ListBox {
             && let Some((local_x, local_y)) =
                 mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
         {
+            let border = self.bindings.read().border.get();
             let abs_event = MouseEvent {
                 column: area.x.saturating_add(local_x),
                 row: area.y.saturating_add(local_y),
                 ..*m
             };
-            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area, border) {
                 self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
                 return EventResult::consumed();
             }
@@ -258,27 +274,64 @@ impl EventHandling for ListBox {
 crate::impl_component_default_traits!(ListBox => Scrollable, DynamicTree);
 
 impl ListBox {
-    fn border_scrollbars(&self, area: Rect) -> Option<Scrollbars> {
-        if area.width < 3 || area.height < 3 {
+    fn scrollbar_visibility(&self) -> (bool, bool) {
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+        (
+            should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1),
+            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0),
+        )
+    }
+
+    /// Absolute rect the scroll body draws into: area inset by the border (1 cell)
+    /// and, when borderless, with a strip reserved for any visible scrollbar.
+    fn content_rect(&self, area: Rect, border: bool) -> Rect {
+        let inset = u16::from(border);
+        let mut rect = Rect {
+            x: area.x.saturating_add(inset),
+            y: area.y.saturating_add(inset),
+            width: area.width.saturating_sub(2 * inset),
+            height: area.height.saturating_sub(2 * inset),
+        };
+        if !border {
+            let (show_v, show_h) = self.scrollbar_visibility();
+            if show_v {
+                rect.width = rect.width.saturating_sub(1);
+            }
+            if show_h {
+                rect.height = rect.height.saturating_sub(1);
+            }
+        }
+        rect
+    }
+
+    fn border_scrollbars(&self, area: Rect, border: bool) -> Option<Scrollbars> {
+        let inset: u16 = u16::from(border);
+        if area.width <= 2 * inset || area.height <= 2 * inset {
             return None;
         }
 
         let cfg = self.scroll.scroll_config();
-        let content_size = self.scroll.content_size();
-        let viewport_size = self.scroll.viewport_size();
-
-        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
-        let show_h =
-            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
+        let (show_v, show_h) = self.scrollbar_visibility();
         if !show_v && !show_h {
             return None;
         }
 
+        let reserve_v = if !border && show_v { 1 } else { 0 };
+        let reserve_h = if !border && show_h { 1 } else { 0 };
+
         let content_local = Rect {
-            x: 1,
-            y: 1,
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
+            x: inset,
+            y: inset,
+            width: area
+                .width
+                .saturating_sub(2 * inset)
+                .saturating_sub(reserve_v),
+            height: area
+                .height
+                .saturating_sub(2 * inset)
+                .saturating_sub(reserve_h),
         };
         if content_local.width == 0 || content_local.height == 0 {
             return None;
@@ -316,9 +369,10 @@ impl ListBox {
         &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
+        border: bool,
         ctx: ComponentContext<'_>,
     ) {
-        let Some(scrollbars) = self.border_scrollbars(area) else {
+        let Some(scrollbars) = self.border_scrollbars(area, border) else {
             self.scrollbar_drag = None;
             return;
         };
@@ -343,8 +397,13 @@ impl ListBox {
         );
     }
 
-    fn handle_border_scrollbar_event(&mut self, m: MouseEvent, area: Rect) -> Option<ScrollOffset> {
-        let Some(scrollbars) = self.border_scrollbars(area) else {
+    fn handle_border_scrollbar_event(
+        &mut self,
+        m: MouseEvent,
+        area: Rect,
+        border: bool,
+    ) -> Option<ScrollOffset> {
+        let Some(scrollbars) = self.border_scrollbars(area, border) else {
             self.scrollbar_drag = None;
             return None;
         };
@@ -514,8 +573,10 @@ impl ScrollContent for ListBoxContent {
 }
 
 fn build_scroll_container(bindings: Arc<RwLock<ListBoxBindings>>) -> ScrollContainer {
+    // Padding is ZERO: ListBox computes the content rect (border inset plus any
+    // borderless scrollbar reservation) and passes it to the container.
     ScrollContainer::new(Box::new(ListBoxContent::new(bindings)))
-        .with_padding(EdgeInsets::all(1))
+        .with_padding(EdgeInsets::ZERO)
         .with_scroll_config(ScrollConfig::default())
 }
 

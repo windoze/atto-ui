@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use atto_ui::composable::{
@@ -213,53 +214,97 @@ where
     }
 }
 
-pub trait FileTreeGlyphProvider: Send + Sync {
-    fn glyph_for(&self, node: &FileTreeNode, is_expanded: bool) -> String;
+/// A file-type icon: the glyph string shown before the entry name plus an
+/// optional foreground color. A color of `None` follows the row's normal/
+/// highlight style. An empty glyph renders nothing.
+///
+/// Icons let callers opt into PowerLine / Nerd Font glyphs (with distinct
+/// colors) where the terminal supports them. The default mapping is empty so
+/// plain terminals never get unsupported characters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileTreeIcon {
+    pub glyph: String,
+    pub color: Option<Color>,
 }
 
-#[derive(Clone, Debug)]
-pub struct FileTreeGlyphs {
-    pub directory_closed: String,
-    pub directory_open: String,
-    pub file: String,
-    pub by_extension: BTreeMap<String, String>,
-}
-
-impl Default for FileTreeGlyphs {
-    fn default() -> Self {
+impl FileTreeIcon {
+    pub fn new(glyph: impl Into<String>) -> Self {
         Self {
-            directory_closed: "dir".to_string(),
-            directory_open: "dir".to_string(),
-            file: "file".to_string(),
-            by_extension: BTreeMap::new(),
+            glyph: glyph.into(),
+            color: None,
         }
     }
-}
 
-impl FileTreeGlyphs {
-    pub fn with_extension(mut self, ext: impl Into<String>, glyph: impl Into<String>) -> Self {
-        self.set_extension(ext, glyph);
+    pub fn colored(glyph: impl Into<String>, color: Color) -> Self {
+        Self {
+            glyph: glyph.into(),
+            color: Some(color),
+        }
+    }
+
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = Some(color);
         self
     }
 
-    pub fn set_extension(&mut self, ext: impl Into<String>, glyph: impl Into<String>) {
+    pub fn is_empty(&self) -> bool {
+        self.glyph.is_empty()
+    }
+}
+
+impl From<&str> for FileTreeIcon {
+    fn from(glyph: &str) -> Self {
+        Self::new(glyph)
+    }
+}
+
+impl From<String> for FileTreeIcon {
+    fn from(glyph: String) -> Self {
+        Self::new(glyph)
+    }
+}
+
+pub trait FileTreeGlyphProvider: Send + Sync {
+    fn icon_for(&self, node: &FileTreeNode, is_expanded: bool) -> FileTreeIcon;
+}
+
+/// Icons prepended to file-tree entries, keyed by lowercased file extension
+/// (plus directory/default fallbacks). By default the mapping is empty:
+/// directory state is shown by the ▶/▼ indicator and no per-file type hint is
+/// drawn. Add icons via [`FileTreeGlyphs::with_extension`].
+#[derive(Clone, Debug, Default)]
+pub struct FileTreeGlyphs {
+    pub directory_closed: FileTreeIcon,
+    pub directory_open: FileTreeIcon,
+    pub file: FileTreeIcon,
+    pub by_extension: BTreeMap<String, FileTreeIcon>,
+}
+
+impl FileTreeGlyphs {
+    pub fn with_extension(mut self, ext: impl Into<String>, icon: impl Into<FileTreeIcon>) -> Self {
+        self.set_extension(ext, icon);
+        self
+    }
+
+    pub fn set_extension(&mut self, ext: impl Into<String>, icon: impl Into<FileTreeIcon>) {
         let key = ext.into().to_ascii_lowercase();
-        self.by_extension.insert(key, glyph.into());
+        self.by_extension.insert(key, icon.into());
     }
 }
 
 impl FileTreeGlyphProvider for FileTreeGlyphs {
-    fn glyph_for(&self, node: &FileTreeNode, is_expanded: bool) -> String {
+    fn icon_for(&self, node: &FileTreeNode, is_expanded: bool) -> FileTreeIcon {
         if node.is_dir() {
-            if is_expanded {
-                return self.directory_open.clone();
-            }
-            return self.directory_closed.clone();
+            return if is_expanded {
+                self.directory_open.clone()
+            } else {
+                self.directory_closed.clone()
+            };
         }
         if let Some(ext) = node.extension()
-            && let Some(glyph) = self.by_extension.get(&ext.to_ascii_lowercase())
+            && let Some(icon) = self.by_extension.get(&ext.to_ascii_lowercase())
         {
-            return glyph.clone();
+            return icon.clone();
         }
         self.file.clone()
     }
@@ -280,6 +325,7 @@ struct FileTreeBindings {
     selections: Binding<BTreeSet<FileTreeNodeId>>,
     selection_anchor: Option<FileTreeNodeId>,
     enabled: Binding<bool>,
+    border: Binding<bool>,
     height: Binding<u16>,
     filter: Option<Arc<dyn FileTreeFilter>>,
     glyphs: Arc<dyn FileTreeGlyphProvider>,
@@ -326,6 +372,7 @@ impl FileTree {
             selections,
             selection_anchor,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(FileTreeGlyphs::default()),
@@ -357,6 +404,14 @@ impl FileTree {
 
     pub fn enabled(self, enabled: impl Into<Binding<bool>>) -> Self {
         self.bindings.write().enabled = enabled.into();
+        self
+    }
+
+    /// Controls whether the file tree draws its own border. When `false`, the
+    /// widget renders borderless (useful when hosted directly in a window whose
+    /// chrome already provides a border) while keeping scrollbars correct.
+    pub fn border(self, border: impl Into<Binding<bool>>) -> Self {
+        self.bindings.write().border = border.into();
         self
     }
 
@@ -482,8 +537,9 @@ impl FileTree {
         let area = self.last_area?;
         let (_local_x, local_y) =
             mouse_coords_local_to_area(area, mouse, ctx.mouse_coordinate_space)?;
-        let row = local_y.checked_sub(1)? as usize;
         let bindings = self.bindings.read();
+        let inset = u16::from(bindings.border.get());
+        let row = local_y.checked_sub(inset)? as usize;
         let roots = bindings.roots.get();
         let filter = bindings.filter.clone();
         let glyphs = bindings.glyphs.clone();
@@ -523,9 +579,14 @@ impl ComponentPropertySchema for FileTree {
         vec![
             PropertyMeta::new("title", ValueType::String),
             PropertyMeta::new("enabled", ValueType::Bool),
+            PropertyMeta::new("border", ValueType::Bool),
             PropertyMeta::new("height", ValueType::U64),
             PropertyMeta::new("selection", ValueType::U64),
             PropertyMeta::new("nodes", ValueType::List),
+            // Map of file extension -> icon (`"glyph"` string + optional `"color"`).
+            // Write-only over the runtime: it configures the glyph provider but is
+            // not read back via `get_property`.
+            PropertyMeta::new("icons", ValueType::Map),
         ]
     }
 }
@@ -545,7 +606,7 @@ impl Clone for FileTree {
 
 impl ::atto_ui::composable::Component for FileTree {
     fn property_names(&self) -> Vec<&'static str> {
-        vec!["title", "enabled", "height", "selection", "nodes"]
+        vec!["title", "enabled", "border", "height", "selection", "nodes"]
     }
 
     fn get_property(&self, name: &str) -> Option<ComponentValue> {
@@ -553,6 +614,7 @@ impl ::atto_ui::composable::Component for FileTree {
         match name {
             "title" => Some(ComponentValue::String(bindings.title.get())),
             "enabled" => Some(ComponentValue::Bool(bindings.enabled.get())),
+            "border" => Some(ComponentValue::Bool(bindings.border.get())),
             "height" => Some(ComponentValue::U64(bindings.height.get() as u64)),
             "selection" => match bindings.selection.get() {
                 Some(id) => Some(ComponentValue::U64(id.value())),
@@ -575,6 +637,18 @@ impl ::atto_ui::composable::Component for FileTree {
                 let bindings = self.bindings.read();
                 let v = ComponentValueCodec::from_component_value(value, name)?;
                 bindings.enabled.set(v);
+                Ok(())
+            }
+            "border" => {
+                let bindings = self.bindings.read();
+                let v = ComponentValueCodec::from_component_value(value, name)?;
+                bindings.border.set(v);
+                Ok(())
+            }
+            "icons" => {
+                let glyphs = parse_file_tree_glyphs(&value)
+                    .map_err(|_| ComponentError::invalid_value(name, "map of extension to icon"))?;
+                self.bindings.write().glyphs = Arc::new(glyphs);
                 Ok(())
             }
             "height" => {
@@ -615,6 +689,7 @@ impl ::atto_ui::composable::Component for FileTree {
 
         let bindings = self.bindings.read();
         let enabled = bindings.enabled.get();
+        let border = bindings.border.get();
         let style = if !enabled {
             ctx.theme.widget.disabled
         } else if ctx.is_focused {
@@ -622,12 +697,17 @@ impl ::atto_ui::composable::Component for FileTree {
         } else {
             ctx.theme.widget.normal
         };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(bindings.title.get())
-            .style(style);
-        frame.render_widget(block, area);
+        if border {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(ctx.theme.border_set(false))
+                .title(bindings.title.get())
+                .style(style);
+            frame.render_widget(block, area);
+        } else {
+            // No border: still fill the background so content sits on the widget style.
+            frame.render_widget(Block::default().style(style), area);
+        }
         drop(bindings);
 
         let body_ctx = ComponentContext {
@@ -635,10 +715,11 @@ impl ::atto_ui::composable::Component for FileTree {
             drag: ctx.drag,
             ..ctx
         };
-        self.scroll.draw(frame, area, body_ctx);
+        let content = self.content_rect(area, border, ctx.scrollbar_host);
+        self.scroll.draw(frame, content, body_ctx);
 
         if matches!(ctx.scrollbar_host, ScrollbarHost::Component) {
-            self.draw_border_scrollbar(frame, area, ctx);
+            self.draw_border_scrollbar(frame, area, border, ctx);
         } else {
             self.scrollbar_drag = None;
         }
@@ -660,11 +741,12 @@ impl ::atto_ui::composable::DragAndDrop for FileTree {
             return None;
         }
 
-        let row = screen_y.checked_sub(area.y)?.checked_sub(1)? as usize;
         let bindings = self.bindings.read();
         if !bindings.enabled.get() {
             return None;
         }
+        let inset = u16::from(bindings.border.get());
+        let row = screen_y.checked_sub(area.y)?.checked_sub(inset)? as usize;
         let roots = bindings.roots.get();
         let filter = bindings.filter.clone();
         let glyphs = bindings.glyphs.clone();
@@ -775,12 +857,13 @@ impl ::atto_ui::composable::EventHandling for FileTree {
             && let Some((local_x, local_y)) =
                 mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
         {
+            let border = self.bindings.read().border.get();
             let abs_event = MouseEvent {
                 column: area.x.saturating_add(local_x),
                 row: area.y.saturating_add(local_y),
                 ..*m
             };
-            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area) {
+            if let Some(new_scroll) = self.handle_border_scrollbar_event(abs_event, area, border) {
                 self.scroll.set_scroll_offset(new_scroll.x, new_scroll.y);
                 return EventResult::consumed();
             }
@@ -796,27 +879,66 @@ impl ::atto_ui::composable::EventHandling for FileTree {
 }
 
 impl FileTree {
-    fn border_scrollbars(&self, area: Rect) -> Option<Scrollbars> {
-        if area.width < 3 || area.height < 3 {
-            return None;
-        }
-
+    fn scrollbar_visibility(&self) -> (bool, bool) {
         let cfg = self.scroll.scroll_config();
         let content_size = self.scroll.content_size();
         let viewport_size = self.scroll.viewport_size();
+        (
+            should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1),
+            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0),
+        )
+    }
 
-        let show_v = should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1);
-        let show_h =
-            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0);
+    /// Absolute rect the scroll body should be drawn into: the area inset by the
+    /// border (1 cell) and, when borderless and hosting its own scrollbars, with
+    /// a strip reserved for the visible scrollbar(s).
+    fn content_rect(&self, area: Rect, border: bool, host: ScrollbarHost) -> Rect {
+        let inset = if border { 1 } else { 0 };
+        let mut rect = Rect {
+            x: area.x.saturating_add(inset),
+            y: area.y.saturating_add(inset),
+            width: area.width.saturating_sub(2 * inset),
+            height: area.height.saturating_sub(2 * inset),
+        };
+        if !border && matches!(host, ScrollbarHost::Component) {
+            let (show_v, show_h) = self.scrollbar_visibility();
+            if show_v {
+                rect.width = rect.width.saturating_sub(1);
+            }
+            if show_h {
+                rect.height = rect.height.saturating_sub(1);
+            }
+        }
+        rect
+    }
+
+    fn border_scrollbars(&self, area: Rect, border: bool) -> Option<Scrollbars> {
+        let inset: u16 = if border { 1 } else { 0 };
+        if area.width <= 2 * inset || area.height <= 2 * inset {
+            return None;
+        }
+
+        let (show_v, show_h) = self.scrollbar_visibility();
         if !show_v && !show_h {
             return None;
         }
 
+        // With a border the scrollbar sits on the border line (outside content);
+        // borderless, it occupies the last row/column so reserve a strip.
+        let reserve_v = if !border && show_v { 1 } else { 0 };
+        let reserve_h = if !border && show_h { 1 } else { 0 };
+
         let content_local = Rect {
-            x: 1,
-            y: 1,
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
+            x: inset,
+            y: inset,
+            width: area
+                .width
+                .saturating_sub(2 * inset)
+                .saturating_sub(reserve_v),
+            height: area
+                .height
+                .saturating_sub(2 * inset)
+                .saturating_sub(reserve_h),
         };
         if content_local.width == 0 || content_local.height == 0 {
             return None;
@@ -848,9 +970,10 @@ impl FileTree {
         &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
+        border: bool,
         ctx: ComponentContext<'_>,
     ) {
-        let Some(scrollbars) = self.border_scrollbars(area) else {
+        let Some(scrollbars) = self.border_scrollbars(area, border) else {
             self.scrollbar_drag = None;
             return;
         };
@@ -875,8 +998,13 @@ impl FileTree {
         );
     }
 
-    fn handle_border_scrollbar_event(&mut self, m: MouseEvent, area: Rect) -> Option<ScrollOffset> {
-        let Some(scrollbars) = self.border_scrollbars(area) else {
+    fn handle_border_scrollbar_event(
+        &mut self,
+        m: MouseEvent,
+        area: Rect,
+        border: bool,
+    ) -> Option<ScrollOffset> {
+        let Some(scrollbars) = self.border_scrollbars(area, border) else {
             self.scrollbar_drag = None;
             return None;
         };
@@ -948,6 +1076,7 @@ struct VisibleEntry {
     git_status: Option<FileTreeGitStatus>,
     name: String,
     prefix: String,
+    icon: FileTreeIcon,
     inline_placeholder: Option<FileTreeInlineEditKind>,
 }
 
@@ -960,6 +1089,7 @@ impl VisibleEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FileTreeLineStyle {
     Normal,
+    Icon(Option<Color>),
     GitStatus(FileTreeGitStatus),
     InlineEdit,
 }
@@ -1162,6 +1292,12 @@ impl FileTreeContent {
             text: entry.prefix.clone(),
             style: FileTreeLineStyle::Normal,
         }];
+        if !entry.icon.is_empty() {
+            segments.push(FileTreeLineSegment {
+                text: format!("{} ", entry.icon.glyph),
+                style: FileTreeLineStyle::Icon(entry.icon.color),
+            });
+        }
         if let Some(status) = entry.git_status
             && let Some(badge) = git_status_badge(status)
         {
@@ -1845,13 +1981,17 @@ impl ScrollContent for FileTreeContent {
         } else {
             ctx.component.theme.widget.normal
         };
+        // Use the same selection palette as ListBox/TableView so the highlighted
+        // row's foreground stays readable on the selection background.
+        let selection_style = ctx
+            .component
+            .theme
+            .named_style("list-selection")
+            .unwrap_or(ctx.component.theme.selection);
         let highlight_style = if enabled {
-            ctx.component.theme.selection
+            selection_style
         } else {
-            ctx.component
-                .theme
-                .selection
-                .patch(ctx.component.theme.widget.disabled)
+            selection_style.patch(ctx.component.theme.widget.disabled)
         };
 
         let filter = snapshot.filter.as_deref();
@@ -1865,17 +2005,29 @@ impl ScrollContent for FileTreeContent {
             .iter()
             .enumerate()
             .map(|(idx, entry)| {
+                let selected =
+                    selection.is_some_and(|sel| sel == idx) || selections.contains(&entry.id);
+                // On the selected row the regular text adopts the highlight style so
+                // its foreground contrasts with the selection background (otherwise
+                // the dim widget foreground would sit on the highlight, unreadable).
+                let normal_style = if selected { highlight_style } else { style };
                 let segments = self.line_segments(entry);
                 let visible_segments =
                     slice_segments_by_display_width(&segments, scroll.x, viewport_w);
                 let spans = if visible_segments.is_empty() {
-                    vec![Span::styled(String::new(), style)]
+                    vec![Span::styled(String::new(), normal_style)]
                 } else {
                     visible_segments
                         .into_iter()
                         .map(|segment| {
                             let segment_style = match segment.style {
-                                FileTreeLineStyle::Normal => style,
+                                FileTreeLineStyle::Normal => normal_style,
+                                FileTreeLineStyle::Icon(color) => match color {
+                                    // Keep the icon's own color (over the row's
+                                    // background); without a color it follows the row.
+                                    Some(color) => normal_style.fg(color),
+                                    None => normal_style,
+                                },
                                 FileTreeLineStyle::GitStatus(status) => {
                                     git_status_style(ctx.component.theme, status)
                                 }
@@ -1886,7 +2038,7 @@ impl ScrollContent for FileTreeContent {
                         .collect::<Vec<_>>()
                 };
                 let item = ListItem::new(Line::from(spans));
-                if selection.is_some_and(|sel| sel == idx) || selections.contains(&entry.id) {
+                if selected {
                     item.style(highlight_style)
                 } else {
                     item
@@ -1925,7 +2077,8 @@ fn collect_visible_entries(
     for (pos, idx) in visible_indices.into_iter().enumerate() {
         let node = &nodes[idx];
         let is_last = pos + 1 == total;
-        let prefix = build_prefix(node, depth, ancestors_last, is_last, glyphs);
+        let prefix = build_prefix(node, depth, ancestors_last, is_last);
+        let icon = glyphs.icon_for(node, node.is_expanded);
         out.push(VisibleEntry {
             id: node.id,
             parent_id,
@@ -1935,6 +2088,7 @@ fn collect_visible_entries(
             git_status: node.git_status,
             name: node.name.clone(),
             prefix,
+            icon,
             inline_placeholder: None,
         });
 
@@ -1988,14 +2142,10 @@ fn insert_inline_placeholder(
         for _ in 1..depth {
             prefix.push_str("  ");
         }
-        prefix.push_str("`- ");
+        prefix.push_str("└─ ");
     }
     prefix.push_str("  ");
-    let glyph = glyphs.glyph_for(&node, false);
-    if !glyph.is_empty() {
-        prefix.push_str(&glyph);
-        prefix.push(' ');
-    }
+    let icon = glyphs.icon_for(&node, false);
 
     entries.insert(
         insert_at,
@@ -2008,6 +2158,7 @@ fn insert_inline_placeholder(
             git_status: None,
             name: String::new(),
             prefix,
+            icon,
             inline_placeholder: Some(edit.kind),
         },
     );
@@ -2027,37 +2178,30 @@ fn build_prefix(
     depth: usize,
     ancestors_last: &[bool],
     is_last: bool,
-    glyphs: &dyn FileTreeGlyphProvider,
 ) -> String {
     let mut prefix = String::new();
     for last in ancestors_last {
         if *last {
             prefix.push_str("  ");
         } else {
-            prefix.push_str("| ");
+            prefix.push_str("│ ");
         }
     }
     if depth > 0 {
         if is_last {
-            prefix.push_str("`- ");
+            prefix.push_str("└─ ");
         } else {
-            prefix.push_str("|- ");
+            prefix.push_str("├─ ");
         }
     }
 
     let indicator = if node.is_dir() && (!node.children.is_empty() || !node.children_loaded) {
-        if node.is_expanded { '-' } else { '+' }
+        if node.is_expanded { '▼' } else { '▶' }
     } else {
         ' '
     };
     prefix.push(indicator);
     prefix.push(' ');
-
-    let glyph = glyphs.glyph_for(node, node.is_expanded);
-    if !glyph.is_empty() {
-        prefix.push_str(&glyph);
-        prefix.push(' ');
-    }
     prefix
 }
 
@@ -2415,6 +2559,7 @@ pub fn register_file_tree(
     registry.register(schema, move |spec, _registry| {
         let title = prop_string(spec, "title")?.unwrap_or_default();
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let border = prop_bool(spec, "border")?.unwrap_or(true);
         let height = prop_u16(spec, "height")?;
         let roots = prop_nodes(spec, "nodes")?
             .or_else(|| prop_nodes(spec, "roots").ok().flatten())
@@ -2422,8 +2567,14 @@ pub fn register_file_tree(
         let selection = prop_u64(spec, "selection")?;
 
         let selection = selection.map(FileTreeNodeId::new);
-        let mut tree =
-            FileTree::new(title, Binding::new(roots), Binding::new(selection)).enabled(enabled);
+        let mut tree = FileTree::new(title, Binding::new(roots), Binding::new(selection))
+            .enabled(enabled)
+            .border(border);
+        if let Some(value) = spec.props.get("icons") {
+            let glyphs = parse_file_tree_glyphs(value)
+                .map_err(|reason| invalid_prop(spec, "icons", &reason, value))?;
+            tree = tree.glyphs(glyphs);
+        }
         if let Some(height) = height {
             tree = tree.height(height);
         }
@@ -2440,6 +2591,47 @@ pub fn register_file_tree(
     });
 }
 
+/// Parses a single icon value from the runtime/binding: either a bare glyph
+/// string, or a map `{ "glyph": "...", "color": "<name|#rrggbb|index>" }`.
+fn parse_file_tree_icon(value: &ComponentValue) -> Result<FileTreeIcon, String> {
+    match value {
+        ComponentValue::Null => Ok(FileTreeIcon::default()),
+        ComponentValue::String(glyph) => Ok(FileTreeIcon::new(glyph.clone())),
+        ComponentValue::Map(map) => {
+            let glyph = map
+                .get("glyph")
+                .or_else(|| map.get("text"))
+                .and_then(ComponentValue::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let color = match map.get("color").and_then(ComponentValue::as_str) {
+                Some(raw) => {
+                    Some(Color::from_str(raw).map_err(|_| format!("invalid color: {raw}"))?)
+                }
+                None => None,
+            };
+            Ok(FileTreeIcon { glyph, color })
+        }
+        other => Err(format!("expected icon string or map, got {other:?}")),
+    }
+}
+
+/// Parses the `icons` property: a map of lowercased file extension → icon
+/// (string or `{glyph,color}`). An empty/null map means no file-type icons.
+fn parse_file_tree_glyphs(value: &ComponentValue) -> Result<FileTreeGlyphs, String> {
+    let mut glyphs = FileTreeGlyphs::default();
+    match value {
+        ComponentValue::Null => {}
+        ComponentValue::Map(map) => {
+            for (ext, icon_value) in map {
+                glyphs.set_extension(ext.clone(), parse_file_tree_icon(icon_value)?);
+            }
+        }
+        other => return Err(format!("expected map of extension to icon, got {other:?}")),
+    }
+    Ok(glyphs)
+}
+
 fn prop_nodes(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<FileTreeNode>>, TreeError> {
     match spec.props.get(name) {
         Some(value) => parse_nodes_value(value)
@@ -2450,8 +2642,10 @@ fn prop_nodes(spec: &ComponentSpec, name: &str) -> Result<Option<Vec<FileTreeNod
 }
 
 fn build_scroll_container(bindings: Arc<RwLock<FileTreeBindings>>) -> ScrollContainer {
+    // Padding is ZERO: the FileTree itself computes the content rect (border inset
+    // plus any borderless scrollbar reservation) and passes it to the container.
     ScrollContainer::new(Box::new(FileTreeContent::new(bindings)))
-        .with_padding(EdgeInsets::all(1))
+        .with_padding(EdgeInsets::ZERO)
         .with_scroll_config(ScrollConfig::default())
 }
 
@@ -2487,6 +2681,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(glyphs.clone()),
@@ -2508,6 +2703,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(glyphs.clone()),
@@ -2537,6 +2733,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: Some(filter.clone()),
             glyphs: Arc::new(glyphs.clone()),
@@ -2554,17 +2751,17 @@ mod tests {
 
     #[test]
     fn build_prefix_marks_unloaded_directory_as_expandable() {
-        let glyphs = FileTreeGlyphs::default();
         let loaded_empty = FileTreeNode::dir(1, "empty", Vec::new());
         let unloaded = FileTreeNode::dir(2, "lazy", Vec::new()).with_children_loaded(false);
 
-        let loaded_prefix = build_prefix(&loaded_empty, 0, &[], true, &glyphs);
-        let unloaded_prefix = build_prefix(&unloaded, 0, &[], true, &glyphs);
+        let loaded_prefix = build_prefix(&loaded_empty, 0, &[], true);
+        let unloaded_prefix = build_prefix(&unloaded, 0, &[], true);
 
         // A loaded but empty directory shows no expand indicator.
-        assert!(!loaded_prefix.contains('+'));
-        // An unloaded directory shows the `+` indicator so it can be expanded.
-        assert!(unloaded_prefix.contains('+'));
+        assert!(!loaded_prefix.contains('▶'));
+        assert!(!loaded_prefix.contains('▼'));
+        // An unloaded directory shows the collapsed ▶ indicator so it can be expanded.
+        assert!(unloaded_prefix.contains('▶'));
     }
 
     #[test]
@@ -2572,8 +2769,23 @@ mod tests {
         let mut glyphs = FileTreeGlyphs::default();
         glyphs.set_extension("rs", "rs");
         let node = FileTreeNode::file(1, "main.rs");
-        let glyph = glyphs.glyph_for(&node, false);
-        assert_eq!(glyph, "rs");
+        let icon = glyphs.icon_for(&node, false);
+        assert_eq!(icon.glyph, "rs");
+        assert_eq!(icon.color, None);
+    }
+
+    #[test]
+    fn icons_carry_optional_color() {
+        let glyphs = FileTreeGlyphs::default()
+            .with_extension("rs", FileTreeIcon::colored("\u{e7a8}", Color::Red));
+        let node = FileTreeNode::file(1, "main.rs");
+        let icon = glyphs.icon_for(&node, false);
+        assert_eq!(icon.glyph, "\u{e7a8}");
+        assert_eq!(icon.color, Some(Color::Red));
+
+        // Unknown extensions fall back to the (empty) default icon.
+        let other = FileTreeNode::file(2, "notes.txt");
+        assert!(glyphs.icon_for(&other, false).is_empty());
     }
 
     #[test]
@@ -2587,6 +2799,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(glyphs.clone()),
@@ -2631,6 +2844,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(glyphs.clone()),
@@ -2658,7 +2872,99 @@ mod tests {
 
         assert_eq!(
             properties,
-            vec!["title", "enabled", "height", "selection", "nodes"]
+            vec![
+                "title",
+                "enabled",
+                "border",
+                "height",
+                "selection",
+                "nodes",
+                "icons"
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_icons_prop_builds_glyphs_with_color() {
+        let mut rs = BTreeMap::new();
+        rs.insert(
+            "glyph".to_string(),
+            ComponentValue::String("\u{e7a8}".into()),
+        );
+        rs.insert(
+            "color".to_string(),
+            ComponentValue::String("#ff8800".into()),
+        );
+        let mut icons = BTreeMap::new();
+        icons.insert("rs".to_string(), ComponentValue::Map(rs));
+        // Bare-string form (no color).
+        icons.insert("md".to_string(), ComponentValue::String("M".into()));
+
+        let glyphs = parse_file_tree_glyphs(&ComponentValue::Map(icons)).expect("parse icons");
+
+        let rs_icon = glyphs.icon_for(&FileTreeNode::file(1, "main.rs"), false);
+        assert_eq!(rs_icon.glyph, "\u{e7a8}");
+        assert_eq!(rs_icon.color, Some(Color::Rgb(0xff, 0x88, 0x00)));
+
+        let md_icon = glyphs.icon_for(&FileTreeNode::file(2, "README.md"), false);
+        assert_eq!(md_icon.glyph, "M");
+        assert_eq!(md_icon.color, None);
+    }
+
+    #[test]
+    fn set_icons_property_updates_provider_and_null_clears() {
+        let mut tree = FileTree::new("Files", sample_tree(true), Binding::new(None));
+
+        let mut entry = BTreeMap::new();
+        entry.insert("glyph".to_string(), ComponentValue::String("R".into()));
+        entry.insert("color".to_string(), ComponentValue::String("red".into()));
+        let mut icons = BTreeMap::new();
+        icons.insert("rs".to_string(), ComponentValue::Map(entry));
+
+        tree.set_property("icons", ComponentValue::Map(icons))
+            .expect("icons accepts a map");
+        let icon = tree
+            .bindings
+            .read()
+            .glyphs
+            .icon_for(&FileTreeNode::file(1, "main.rs"), false);
+        assert_eq!(icon.glyph, "R");
+        assert_eq!(icon.color, Some(Color::Red));
+
+        // Null resets to the empty default mapping.
+        tree.set_property("icons", ComponentValue::Null)
+            .expect("icons accepts null");
+        assert!(
+            tree.bindings
+                .read()
+                .glyphs
+                .icon_for(&FileTreeNode::file(1, "main.rs"), false)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn border_property_round_trips() {
+        let mut tree = FileTree::new("Files", sample_tree(true), Binding::new(None));
+        // Defaults to drawing its own border.
+        assert_eq!(
+            tree.get_property("border"),
+            Some(ComponentValue::Bool(true))
+        );
+
+        tree.set_property("border", ComponentValue::Bool(false))
+            .expect("border accepts bool");
+        assert_eq!(
+            tree.get_property("border"),
+            Some(ComponentValue::Bool(false))
+        );
+
+        // Builder form also works.
+        let borderless =
+            FileTree::new("Files", sample_tree(true), Binding::new(None)).border(false);
+        assert_eq!(
+            borderless.get_property("border"),
+            Some(ComponentValue::Bool(false))
         );
     }
 
@@ -2748,6 +3054,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(FileTreeGlyphs::default()),
@@ -2775,6 +3082,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(FileTreeGlyphs::default()),
@@ -2802,6 +3110,7 @@ mod tests {
             selections: BTreeSet::new().into(),
             selection_anchor: None,
             enabled: true.into(),
+            border: true.into(),
             height: 10.into(),
             filter: None,
             glyphs: Arc::new(FileTreeGlyphs::default()),

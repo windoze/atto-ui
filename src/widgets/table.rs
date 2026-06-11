@@ -34,6 +34,7 @@ struct TableViewBindings {
     headers: Binding<Vec<String>>,
     rows: Binding<Vec<Vec<String>>>,
     enabled: Binding<bool>,
+    border: Binding<bool>,
     selection: Binding<usize>,
     height: Binding<u16>,
     #[component(skip)]
@@ -95,6 +96,7 @@ impl TableView {
             headers: headers.into(),
             rows,
             enabled: true.into(),
+            border: true.into(),
             selection,
             height: 8.into(),
             on_change: None,
@@ -142,6 +144,13 @@ impl TableView {
         self
     }
 
+    /// Controls whether the table draws its own border. When `false`, the widget
+    /// renders borderless while keeping its scrollbar correct.
+    pub fn border(self, border: impl Into<Binding<bool>>) -> Self {
+        self.bindings.write().border = border.into();
+        self
+    }
+
     pub fn height(self, height: impl Into<Binding<u16>>) -> Self {
         self.bindings.write().height = height.into();
         self
@@ -183,31 +192,35 @@ impl Component for TableView {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
-        let bindings = self.bindings.read();
-        let enabled = bindings.enabled.get();
-        let base_style: Style = widget_style(ctx.theme, enabled, ctx.is_focused);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(ctx.theme.border_set(false))
-            .title(bindings.title.get())
-            .style(base_style);
-        frame.render_widget(block, area);
-
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
+        let (enabled, border, base_style, title) = {
+            let bindings = self.bindings.read();
+            let enabled = bindings.enabled.get();
+            (
+                enabled,
+                bindings.border.get(),
+                widget_style(ctx.theme, enabled, ctx.is_focused),
+                bindings.title.get(),
+            )
         };
-        if inner.width == 0 || inner.height == 0 {
-            return;
+        if border {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_set(ctx.theme.border_set(false))
+                .title(title)
+                .style(base_style);
+            frame.render_widget(block, area);
+        } else {
+            frame.render_widget(Block::default().style(base_style), area);
         }
 
-        let headers = bindings.headers.get();
-        let rows = bindings.rows.get();
+        let Some((inner, body_area, header_height)) = self.layout_areas(area) else {
+            return;
+        };
+
+        let headers = self.bindings.read().headers.get();
+        let rows = self.bindings.read().rows.get();
         let column_count = column_count(&headers, &rows);
         let widths = column_constraints(column_count);
-        let header_height = if headers.is_empty() { 0 } else { 1 };
         let link_overlay = self.markdown_link_style.markdown_link(ctx.theme);
 
         if header_height > 0 {
@@ -230,14 +243,7 @@ impl Component for TableView {
                 .style(base_style);
             frame.render_widget(header_table, header_area);
         }
-        drop(bindings);
 
-        let body_area = Rect {
-            x: inner.x,
-            y: inner.y.saturating_add(header_height),
-            width: inner.width,
-            height: inner.height.saturating_sub(header_height),
-        };
         if body_area.width == 0 || body_area.height == 0 {
             return;
         }
@@ -342,18 +348,46 @@ impl EventHandling for TableView {
 crate::impl_component_default_traits!(TableView => Scrollable, DynamicTree);
 
 impl TableView {
+    fn scrollbar_visibility(&self) -> (bool, bool) {
+        let cfg = self.scroll.scroll_config();
+        let content_size = self.scroll.content_size();
+        let viewport_size = self.scroll.viewport_size();
+        (
+            should_show_scrollbar(cfg.vertical_scrollbar, content_size.1, viewport_size.1),
+            should_show_scrollbar(cfg.horizontal_scrollbar, content_size.0, viewport_size.0),
+        )
+    }
+
     fn layout_areas(&self, area: Rect) -> Option<(Rect, Rect, u16)> {
-        let inner = Rect {
-            x: area.x.saturating_add(1),
-            y: area.y.saturating_add(1),
-            width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(2),
+        let (border, headers_empty) = {
+            let bindings = self.bindings.read();
+            (bindings.border.get(), bindings.headers.get().is_empty())
+        };
+        let inset = u16::from(border);
+        let mut inner = Rect {
+            x: area.x.saturating_add(inset),
+            y: area.y.saturating_add(inset),
+            width: area.width.saturating_sub(2 * inset),
+            height: area.height.saturating_sub(2 * inset),
         };
         if inner.width == 0 || inner.height == 0 {
             return None;
         }
-        let headers = self.bindings.read().headers.get();
-        let header_height = if headers.is_empty() { 0 } else { 1 };
+        // Borderless: reserve a strip for any visible scrollbar (with a border the
+        // scrollbar sits on the border line, outside `inner`).
+        if !border {
+            let (show_v, show_h) = self.scrollbar_visibility();
+            if show_v {
+                inner.width = inner.width.saturating_sub(1);
+            }
+            if show_h {
+                inner.height = inner.height.saturating_sub(1);
+            }
+            if inner.width == 0 || inner.height == 0 {
+                return None;
+            }
+        }
+        let header_height = if headers_empty { 0 } else { 1 };
         let body_area = Rect {
             x: inner.x,
             y: inner.y.saturating_add(header_height),

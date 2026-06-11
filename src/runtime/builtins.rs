@@ -272,11 +272,13 @@ fn register_textbox(
         let title = prop_string(spec, "title")?.unwrap_or_default();
         let text = prop_string(spec, "text")?.unwrap_or_default();
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let border = prop_bool(spec, "border")?.unwrap_or(true);
         let clipboard = prop_string(spec, "clipboard")?.unwrap_or_default();
         let placeholder = prop_string(spec, "placeholder")?;
 
         let mut textbox = TextBox::new(title, Binding::new(text))
             .enabled(enabled)
+            .border(border)
             .clipboard(clipboard);
         if let Some(value) = placeholder {
             textbox = textbox.placeholder(value);
@@ -518,10 +520,12 @@ fn register_list_box(
         let items = prop_vec_string(spec, "items")?.unwrap_or_default();
         let selection = prop_usize(spec, "selection")?.unwrap_or(0);
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let border = prop_bool(spec, "border")?.unwrap_or(true);
         let height = prop_u16(spec, "height")?;
 
-        let mut list =
-            ListBox::new(title, Binding::new(items), Binding::new(selection)).enabled(enabled);
+        let mut list = ListBox::new(title, Binding::new(items), Binding::new(selection))
+            .enabled(enabled)
+            .border(border);
         if let Some(height) = height {
             list = list.height(height);
         }
@@ -547,6 +551,7 @@ fn register_table_view(
         let rows = prop_table(spec, "rows")?.unwrap_or_default();
         let selection = prop_usize(spec, "selection")?.unwrap_or(0);
         let enabled = prop_bool(spec, "enabled")?.unwrap_or(true);
+        let border = prop_bool(spec, "border")?.unwrap_or(true);
         let height = prop_u16(spec, "height")?;
 
         let mut table = TableView::new(
@@ -555,7 +560,8 @@ fn register_table_view(
             Binding::new(rows),
             Binding::new(selection),
         )
-        .enabled(enabled);
+        .enabled(enabled)
+        .border(border);
         if let Some(height) = height {
             table = table.height(height);
         }

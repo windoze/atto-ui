@@ -30,9 +30,11 @@ fn enter_in_explorer_opens_file() -> anyhow::Result<()> {
 
     host.wait_for_text(file_name, PTY_WAIT)?;
 
-    // Click the file entry, then press Enter to open in a tab.
+    // Click the file entry, then press Enter to open in a tab. The explorer file
+    // tree is borderless, so rows are: menu (0), window border (1), root dir (2),
+    // first child file (3).
     let click_x = 6;
-    let click_y = 4;
+    let click_y = 3;
     host.click(click_x, click_y)?;
     std::thread::sleep(Duration::from_millis(50));
     host.send_str("\r")?;

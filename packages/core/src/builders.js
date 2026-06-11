@@ -51,6 +51,7 @@ function TextBox(options = {}) {
   return makeSpec('TextBox', options.id, {
     title: options.title,
     text: options.text,
+    border: options.border,
     placeholder: options.placeholder,
     clipboard: options.clipboard,
     enabled: enabledValue(options),
@@ -125,6 +126,7 @@ function ListBox(options = {}) {
     items: options.items,
     selection: options.selection,
     height: options.height,
+    border: options.border,
     enabled: enabledValue(options),
   }, events(options.events, { change: options.onChange }))
 }
@@ -136,6 +138,7 @@ function TableView(options = {}) {
     rows: options.rows,
     selection: options.selection,
     height: options.height,
+    border: options.border,
     enabled: enabledValue(options),
   }, events(options.events, { change: options.onChange }))
 }
@@ -272,15 +275,28 @@ function FileTree(options = {}) {
   const nodes = options.nodes ?? options.roots
   return makeSpec('FileTree', options.id, {
     title: options.title,
+    border: options.border,
     nodes: nodes?.map(fileTreeNodeValue),
     selection: options.selection,
     height: options.height,
+    icons: fileTreeIconsValue(options.icons),
     enabled: enabledValue(options),
   }, events(options.events, {
     select: options.onSelect,
     rename: options.onRename,
     delete: options.onDelete,
   }))
+}
+
+function fileTreeIconsValue(icons) {
+  if (icons === undefined) return undefined
+  const out = {}
+  for (const [ext, icon] of Object.entries(icons)) {
+    out[ext] = typeof icon === 'string'
+      ? icon
+      : { glyph: icon.glyph, ...(icon.color !== undefined ? { color: icon.color } : {}) }
+  }
+  return out
 }
 
 function ChatTextMessage(messageId, markdown, options = {}) {
