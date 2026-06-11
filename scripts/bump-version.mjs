@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-// Bump the version of every published npm package in lockstep.
+// Bump the release version across every published artifact in lockstep:
 //
-// Updates `version` in each package.json below, and rewrites any internal
-// `@atto-ui/*` dependency pin (dependencies / optionalDependencies /
-// peerDependencies / devDependencies) to the same version — these packages are
-// released together with exact-version pins, so they must move as a group.
+//   * npm packages   — `version` in each package.json below, plus any internal
+//     `@atto-ui/*` dependency pin (dependencies / optionalDependencies /
+//     peerDependencies / devDependencies), which are released together with
+//     exact-version pins and must move as a group.
+//   * Rust crates    — `[package] version` in the root Cargo.toml and every
+//     workspace member (auto-discovered from `[workspace] members`). Internal
+//     `atto-ui-*` deps are plain `path` dependencies with no version pin, so
+//     there is nothing else to rewrite on the Cargo side.
+//   * Python package — `[project] version` in the maturin pyproject.toml.
 //
-// It does NOT touch Cargo.toml: the Rust crate versions are independent and are
-// not published to npm (only the built `.node` binary ships, versioned by the
-// platform package.json files handled here).
+// After bumping Cargo.toml versions, refresh Cargo.lock (e.g. `cargo build`)
+// and include it in the release commit.
 //
 // Usage:
 //   node scripts/bump-version.mjs <version> [--dry]
@@ -27,10 +31,12 @@ const PACKAGE_JSON_PATHS = [
   'packages/react/package.json',
   'crates/atto-ui-node/package.json',
   'crates/atto-ui-node/npm/darwin-arm64/package.json',
-  'crates/atto-ui-node/npm/darwin-x64/package.json',
   'crates/atto-ui-node/npm/linux-x64-gnu/package.json',
   'crates/atto-ui-node/npm/win32-x64-msvc/package.json',
 ]
+
+// maturin-built Python packages, relative to the repo root.
+const PYPROJECT_PATHS = ['crates/atto-ui-python/pyproject.toml']
 
 const DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']
 // Dependency values that are not plain versions and must be left untouched.
@@ -58,16 +64,41 @@ function detectIndent(raw) {
   return match ? match[1] : '  '
 }
 
-let changeCount = 0
-
-for (const relPath of PACKAGE_JSON_PATHS) {
-  const absPath = join(repoRoot, relPath)
-  let raw
+function read(relPath) {
   try {
-    raw = readFileSync(absPath, 'utf8')
+    return readFileSync(join(repoRoot, relPath), 'utf8')
   } catch {
     fail(`cannot read ${relPath}`)
   }
+}
+
+let changeCount = 0
+
+function report(relPath, changes, write) {
+  if (changes.length === 0) {
+    console.log(`= ${relPath} (already ${version})`)
+    return
+  }
+  changeCount += changes.length
+  console.log(`${dryRun ? '~' : '*'} ${relPath}`)
+  for (const change of changes) console.log(`    ${change}`)
+  if (!dryRun) write()
+}
+
+// Resolve the root Cargo.toml plus every workspace member's Cargo.toml.
+function cargoTomlPaths() {
+  const raw = read('Cargo.toml')
+  const wsIdx = raw.indexOf('[workspace]')
+  const slice = wsIdx >= 0 ? raw.slice(wsIdx) : ''
+  const membersMatch = slice.match(/members\s*=\s*\[([\s\S]*?)\]/)
+  const members = membersMatch
+    ? [...membersMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    : []
+  return ['Cargo.toml', ...members.map((dir) => `${dir}/Cargo.toml`)]
+}
+
+function bumpPackageJson(relPath) {
+  const raw = read(relPath)
   const pkg = JSON.parse(raw)
   const indent = detectIndent(raw)
   const changes = []
@@ -90,24 +121,54 @@ for (const relPath of PACKAGE_JSON_PATHS) {
     }
   }
 
-  if (changes.length === 0) {
-    console.log(`= ${relPath} (already ${version})`)
-    continue
-  }
-
-  changeCount += changes.length
-  console.log(`${dryRun ? '~' : '*'} ${relPath}`)
-  for (const change of changes) console.log(`    ${change}`)
-
-  if (!dryRun) {
-    writeFileSync(absPath, `${JSON.stringify(pkg, null, indent)}\n`)
-  }
+  report(relPath, changes, () =>
+    writeFileSync(join(repoRoot, relPath), `${JSON.stringify(pkg, null, indent)}\n`),
+  )
 }
+
+// Replace the first `version = "..."` inside a given TOML table (e.g. `package`
+// or `project`), preserving all formatting and comments.
+function bumpTomlVersion(relPath, section) {
+  const raw = read(relPath)
+  const lines = raw.split('\n')
+  const changes = []
+  let inSection = false
+  let done = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const header = lines[i].match(/^\s*\[([^\]]+)\]/)
+    if (header) {
+      inSection = header[1].trim() === section
+      continue
+    }
+    if (inSection && !done) {
+      const m = lines[i].match(/^(\s*version\s*=\s*")([^"]*)(".*)$/)
+      if (m) {
+        if (m[2] !== version) {
+          changes.push(`[${section}] version ${m[2]} -> ${version}`)
+          lines[i] = `${m[1]}${version}${m[3]}`
+        }
+        done = true
+      }
+    }
+  }
+
+  if (!done) {
+    fail(`no [${section}] version field found in ${relPath}`)
+  }
+
+  report(relPath, changes, () => writeFileSync(join(repoRoot, relPath), lines.join('\n')))
+}
+
+for (const relPath of PACKAGE_JSON_PATHS) bumpPackageJson(relPath)
+for (const relPath of cargoTomlPaths()) bumpTomlVersion(relPath, 'package')
+for (const relPath of PYPROJECT_PATHS) bumpTomlVersion(relPath, 'project')
 
 console.log()
 if (dryRun) {
   console.log(`dry run: ${changeCount} change(s) would be applied. Re-run without --dry to write.`)
 } else {
   console.log(`done: applied ${changeCount} change(s) for version ${version}.`)
-  console.log('Next: commit, then tag e.g.  git tag v' + version + '  && git push origin v' + version)
+  console.log('Next: refresh Cargo.lock (cargo build), commit, then tag e.g.')
+  console.log(`  git tag v${version} && git push origin v${version}`)
 }
