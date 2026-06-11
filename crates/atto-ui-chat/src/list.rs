@@ -33,6 +33,8 @@ use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
 
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
+const ANSI_OUTPUT_TAIL_LINES: usize = 12;
+const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 
@@ -2051,6 +2053,8 @@ struct AnsiOutputView {
     text: Binding<String>,
     scroll_x: u16,
     viewport: (u16, u16),
+    show_all: bool,
+    last_area: Option<Rect>,
 }
 
 impl AnsiOutputView {
@@ -2059,15 +2063,42 @@ impl AnsiOutputView {
             text: text.into(),
             scroll_x: 0,
             viewport: (0, 0),
+            show_all: false,
+            last_area: None,
         }
     }
 
-    fn lines(&self, base: Style) -> Vec<Line<'static>> {
-        ansi_sgr_lines(&self.text.get(), base)
+    fn lines(&self, base: Style, action: Style) -> Vec<Line<'static>> {
+        let lines = ansi_sgr_lines(&self.text.get(), base);
+        if self.show_all || lines.len() <= ANSI_OUTPUT_TAIL_LINES {
+            return lines;
+        }
+
+        let hidden = lines.len().saturating_sub(ANSI_OUTPUT_TAIL_LINES);
+        let mut visible = Vec::with_capacity(ANSI_OUTPUT_TAIL_LINES.saturating_add(1));
+        visible.push(Line::styled(
+            format!("已隐藏 {hidden} 行，{ANSI_OUTPUT_EXPAND_LABEL}"),
+            action,
+        ));
+        visible.extend(lines.into_iter().skip(hidden));
+        visible
+    }
+
+    fn is_tail_collapsed(&self) -> bool {
+        !self.show_all
+            && ansi_sgr_lines(&self.text.get(), Style::default()).len() > ANSI_OUTPUT_TAIL_LINES
+    }
+
+    fn expand_all(&mut self) -> EventResult {
+        if !self.is_tail_collapsed() {
+            return EventResult::ignored();
+        }
+        self.show_all = true;
+        EventResult::changed()
     }
 
     fn display_width(&self) -> u16 {
-        self.lines(Style::default())
+        self.lines(Style::default(), Style::default())
             .iter()
             .map(Line::width)
             .max()
@@ -2077,7 +2108,7 @@ impl AnsiOutputView {
     }
 
     fn display_height(&self) -> u16 {
-        self.lines(Style::default())
+        self.lines(Style::default(), Style::default())
             .len()
             .max(1)
             .min(u16::MAX as usize) as u16
@@ -2101,13 +2132,15 @@ impl AnsiOutputView {
 
 impl Component for AnsiOutputView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         self.viewport = (area.width, area.height);
         self.clamp_scroll();
         if area.width == 0 || area.height == 0 {
             return;
         }
         frame.render_widget(
-            Paragraph::new(self.lines(ctx.theme.widget.normal)).scroll((0, self.scroll_x)),
+            Paragraph::new(self.lines(ctx.theme.widget.normal, ctx.theme.widget.accent))
+                .scroll((0, self.scroll_x)),
             area,
         );
     }
@@ -2136,10 +2169,35 @@ impl ::atto_ui::composable::Scrollable for AnsiOutputView {
         self.clamp_scroll();
     }
 }
-impl ::atto_ui::composable::FocusNav for AnsiOutputView {}
+impl ::atto_ui::composable::FocusNav for AnsiOutputView {
+    fn is_focusable(&self) -> bool {
+        self.is_tail_collapsed() || self.display_width() > self.viewport.0.max(1)
+    }
+}
 impl ::atto_ui::composable::DynamicTree for AnsiOutputView {}
 impl ::atto_ui::composable::EventHandling for AnsiOutputView {
-    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        match event {
+            Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                let Some(area) = self.last_area else {
+                    return EventResult::ignored();
+                };
+                if mouse_row_in_area(area, mouse, ctx.mouse_coordinate_space) == Some(0) {
+                    return self.expand_all();
+                }
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter | KeyCode::Char(' '),
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                let expanded = self.expand_all();
+                if expanded.is_consumed() {
+                    return expanded;
+                }
+            }
+            _ => {}
+        }
         horizontal_scroll_event(event, self.viewport.0).map_or_else(EventResult::ignored, |delta| {
             self.scroll_horizontally(delta)
         })
@@ -2564,14 +2622,23 @@ impl ::atto_ui::composable::EventHandling for ArtifactLink {
 }
 
 fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordinateSpace) -> bool {
+    mouse_row_in_area(area, mouse, coordinate_space).is_some()
+}
+
+fn mouse_row_in_area(
+    area: Rect,
+    mouse: &MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<u16> {
     match coordinate_space {
-        MouseCoordinateSpace::Absolute => {
-            mouse.column >= area.x
-                && mouse.column < area.x.saturating_add(area.width)
-                && mouse.row >= area.y
-                && mouse.row < area.y.saturating_add(area.height)
+        MouseCoordinateSpace::Absolute => (mouse.column >= area.x
+            && mouse.column < area.x.saturating_add(area.width)
+            && mouse.row >= area.y
+            && mouse.row < area.y.saturating_add(area.height))
+        .then(|| mouse.row.saturating_sub(area.y)),
+        MouseCoordinateSpace::Local => {
+            (mouse.column < area.width && mouse.row < area.height).then_some(mouse.row)
         }
-        MouseCoordinateSpace::Local => mouse.column < area.width && mouse.row < area.height,
     }
 }
 
@@ -2625,6 +2692,14 @@ mod tests {
         (0..width)
             .map(|x| buf.cell((x, 0)).expect("cell").symbol())
             .collect::<String>()
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        let mut text = String::new();
+        for span in &line.spans {
+            text.push_str(span.content.as_ref());
+        }
+        text
     }
 
     fn store_with_text_messages(count: u64) -> ChatMessageStore {
@@ -2840,6 +2915,27 @@ mod tests {
         view.set_scroll_offset(4, 0);
 
         assert!(draw_component_line(&mut view, 5, 1).starts_with("45678"));
+    }
+
+    #[test]
+    fn ansi_output_view_tails_long_output_until_expanded() {
+        let output = (0..(ANSI_OUTPUT_TAIL_LINES + 3))
+            .map(|idx| format!("LINE-{idx:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut view = AnsiOutputView::new(Binding::new(output));
+
+        let tailed = view.lines(Style::default(), Style::default());
+        assert_eq!(tailed.len(), ANSI_OUTPUT_TAIL_LINES + 1);
+        assert!(line_text(&tailed[0]).contains(ANSI_OUTPUT_EXPAND_LABEL));
+        assert_eq!(line_text(&tailed[1]), "LINE-03");
+        assert_eq!(line_text(tailed.last().expect("last line")), "LINE-14");
+
+        assert_eq!(view.expand_all(), EventResult::changed());
+
+        let expanded = view.lines(Style::default(), Style::default());
+        assert_eq!(expanded.len(), ANSI_OUTPUT_TAIL_LINES + 3);
+        assert_eq!(line_text(&expanded[0]), "LINE-00");
     }
 
     #[test]

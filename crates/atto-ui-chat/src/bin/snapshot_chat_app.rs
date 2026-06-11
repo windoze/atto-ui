@@ -54,6 +54,7 @@ fn main() -> Result<()> {
     let tool_call = args.iter().any(|arg| arg == "--tool-call");
     let artifact_link = args.iter().any(|arg| arg == "--artifact-link");
     let block_mapping = args.iter().any(|arg| arg == "--block-mapping");
+    let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -72,11 +73,15 @@ fn main() -> Result<()> {
     } else {
         HashMap::new()
     };
+    let mut long_tool_result_id = None;
     let tool_block_ids = if responsive_layout {
         seed_responsive_layout_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
+        None
+    } else if long_tool_output {
+        long_tool_result_id = Some(seed_long_tool_output_messages(&store));
         None
     } else if tool_call {
         let id = store.next_message_id();
@@ -109,20 +114,24 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let streaming_block_ids =
-        if responsive_layout || block_mapping || tool_block_ids.is_some() || artifact_link {
-            None
-        } else if streaming_markdown {
-            let id = store.next_message_id();
-            let message = ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
-                .with_status(ChatTurnStatus::Streaming);
-            let text_id = message.blocks[0].id();
-            store.push(message);
-            Some((id, text_id))
-        } else {
-            seed_messages(&store, 28);
-            None
-        };
+    let streaming_block_ids = if responsive_layout
+        || block_mapping
+        || long_tool_result_id.is_some()
+        || tool_block_ids.is_some()
+        || artifact_link
+    {
+        None
+    } else if streaming_markdown {
+        let id = store.next_message_id();
+        let message = ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_id = message.blocks[0].id();
+        store.push(message);
+        Some((id, text_id))
+    } else {
+        seed_messages(&store, 28);
+        None
+    };
 
     let input_handle = ChatInputHandle::new();
     let load_counter = Arc::new(AtomicU64::new(0));
@@ -170,7 +179,13 @@ fn main() -> Result<()> {
     let mut desktop = Desktop::new(Theme::dark(), menu);
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
-    let window_height = if block_mapping { 40 } else { 18 };
+    let window_height = if block_mapping {
+        40
+    } else if long_tool_output {
+        28
+    } else {
+        18
+    };
     let window_width = if responsive_layout {
         work.width.saturating_sub(4).max(30)
     } else {
@@ -282,6 +297,13 @@ fn main() -> Result<()> {
                     }
                     _ => {}
                 }
+            }
+
+            if let Some(tool_result_id) = long_tool_result_id
+                && cmd == '1'
+            {
+                store.append_tool_output(tool_result_id, "\nTOOL-LONG-STREAMED");
+                continue;
             }
 
             match cmd {
@@ -446,6 +468,41 @@ fn seed_responsive_layout_messages(store: &ChatMessageStore) {
             }),
         ],
     ));
+}
+
+fn seed_long_tool_output_messages(store: &ChatMessageStore) -> ChatBlockId {
+    let id = store.next_message_id();
+    let tool_result_id = snapshot_block_id(id, 1);
+    let output = (0..30)
+        .map(|idx| format!("TOOL-LONG-LINE-{idx:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::ToolUse(ToolUseBlock {
+                id: snapshot_block_id(id, 0),
+                call_id: "call-long".to_string(),
+                name: "long_tool".to_string(),
+                input: ToolInput::Text("generate long output".to_string()),
+                status: ToolStatus::Running,
+                approval: None,
+                collapsed: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: tool_result_id,
+                call_id: "call-long".to_string(),
+                ok: true,
+                exit_code: None,
+                output: ToolOutput::Ansi(output),
+                collapsed: false,
+            }),
+        ],
+    ));
+
+    tool_result_id
 }
 
 fn seed_block_mapping_messages(store: &ChatMessageStore) {

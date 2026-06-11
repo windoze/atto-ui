@@ -212,7 +212,7 @@
 - 已检查提交前状态：本次提交将包含 P3.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`src/widgets/disclosure.rs`、`src/theme/mod.rs`、`src/component_api.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.1] Render tool use inputs` 提交并停止。
 
-## 当前任务：P3.2 ToolResult 渲染 + use/result 配对
+## 历史记录：P3.2 ToolResult 渲染 + use/result 配对
 
 - 已在执行任何项目命令前写入本轮可审计计划；该初始写入曾覆盖历史记录，提交前已恢复既有历史并追加本次记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.2 ToolResult 渲染 + use/result 配对`。
@@ -226,3 +226,17 @@
 - 已更新 `TODO.md`：`P3.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P3.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.2] Pair tool results with uses` 提交并停止。
+
+## 当前任务：P3.3 超长输出尾部窗口
+
+- 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.3 超长输出尾部窗口`。
+- 已查看最近提交：`67c3306 [P3.2] Pair tool results with uses`，未声明与 `P3.3` 直接相关的未完成阻塞事项。
+- 执行范围限定为 `ToolOutput::Ansi` 的超长输出尾部窗口、snapshot 场景和 PTY 覆盖；不推进 P4 inline 审批或 diff 决策。
+- 实施计划：在 `AnsiOutputView` 中保留完整输出绑定，默认仅渲染尾部窗口和 `展开全部` 提示；支持点击提示或键盘展开完整输出；新增 deterministic `snapshot_chat_app --long-tool-output` 场景覆盖带入参工具调用、流式追加和超长折叠。
+- 已完成实现：`AnsiOutputView` 超过阈值时默认只显示尾部 12 行和隐藏行数提示，点击提示行或聚焦后按 Enter/Space 可展开完整输出；流式追加继续通过同一 binding 更新尾部窗口。
+- 已补充验证：新增 list 单测覆盖尾部窗口和展开；新增 PTY 测试覆盖 `long_tool` 入参、初始超长折叠、追加 `TOOL-LONG-STREAMED` 后仍保持折叠、点击 `展开全部` 后显示早期输出行。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib ansi_output_view_tails_long_output_until_expanded`、`cargo test -p atto-ui-chat --test pty_chat chat_tool_result_long_ansi_output_tails_streams_and_expands -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P3.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P3.3 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P3.3] Tail long ANSI tool output` 提交并停止。

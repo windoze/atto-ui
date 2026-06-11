@@ -325,6 +325,30 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
 }
 
 #[test]
+fn chat_tool_result_long_ansi_output_tails_streams_and_expands() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--long-tool-output"], 100, 36)?;
+
+    host.wait_for_text("long_tool", Duration::from_secs(2))?;
+    host.wait_for_text("Input: generate long output", Duration::from_secs(2))?;
+    host.wait_for_text("展开全部", Duration::from_secs(2))?;
+    host.wait_for_text("TOOL-LONG-LINE-29", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "TOOL-LONG-LINE-00", Duration::from_millis(120));
+
+    host.send_str("1")?;
+    host.wait_for_text("TOOL-LONG-STREAMED", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "TOOL-LONG-LINE-00", Duration::from_millis(120));
+
+    let (x, y) = find_text_position(&host, "展开全部").expect("expand all action");
+    host.click(x, y)?;
+    host.wait_for_text("TOOL-LONG-LINE-00", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

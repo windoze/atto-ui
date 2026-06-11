@@ -62,7 +62,9 @@
 - [x] **[DONE] P3.2 ToolResult 渲染 + use/result 配对** — `src/list.rs`:`Ansi`→ANSI SGR 上色解析,`Markdown`→`MarkdownViewer`,`Diff`→`diff_line_style`;按 `call_id` 把 use+result 相邻配对,result 缺失显示"等待中"。
   - 完成记录（2026-06-12）：已在 chat row 扁平化阶段按 `call_id` 将 ToolUse 与同消息或后续消息中的首个未配对 ToolResult 相邻展示，并跳过 result 原位置重复行；缺失 result 时新增 pending result 行，标题与内容显示“等待中”并使用运行中 disclosure 状态。现有 ToolResult 的 `Ansi`/`Markdown`/`Diff` 输出继续分别走 ANSI SGR 解析、`MarkdownViewer`、inline diff 着色渲染。补充行模型单测覆盖同消息重排、后续消息配对、缺失 result 等待行，并更新 block mapping PTY 用例断言等待行。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --test pty_chat chat_block_mapping_renders_each_block_with_target_widget -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P3.3 超长输出尾部窗口** — `src/list.rs`:`ToolOutput::Ansi` 超长默认只显示尾部 N 行 + "展开全部",避免撑爆列表。补 PTY 覆盖带入参调用、流式工具输出、超长折叠。
+- [x] **[DONE] P3.3 超长输出尾部窗口** — `src/list.rs`:`ToolOutput::Ansi` 超长默认只显示尾部 N 行 + "展开全部",避免撑爆列表。补 PTY 覆盖带入参调用、流式工具输出、超长折叠。
+  - 完成记录（2026-06-12）：已为 `ToolOutput::Ansi` 的 `AnsiOutputView` 增加默认尾部窗口，超出阈值时只渲染尾部 12 行并显示 `展开全部` 提示，支持点击提示或键盘展开为完整输出；流式追加时保持尾部跟随。新增 `snapshot_chat_app --long-tool-output` 场景，覆盖带入参工具调用、流式工具输出和超长折叠/展开。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib ansi_output_view_tails_long_output_until_expanded`、`cargo test -p atto-ui-chat --test pty_chat chat_tool_result_long_ansi_output_tails_streams_and_expands -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
 ## 阶段 P4 — inline 审批 + inline diff
 
