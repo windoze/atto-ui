@@ -197,7 +197,7 @@
 - 已检查提交前状态：本次提交将包含 P2.6 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P2.6] Fix miscellaneous chat rendering` 提交并停止。
 
-## 当前任务：P3.1 ToolUse 入参渲染
+## 历史记录：P3.1 ToolUse 入参渲染
 
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.1 ToolUse 入参渲染`。
 - 已查看最近提交：`f16b3c1 [P2.6] Fix miscellaneous chat rendering`，未声明与 `P3.1` 直接相关的未完成事项。
@@ -211,3 +211,18 @@
 - 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P3.1 记录。
 - 已检查提交前状态：本次提交将包含 P3.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`src/widgets/disclosure.rs`、`src/theme/mod.rs`、`src/component_api.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.1] Render tool use inputs` 提交并停止。
+
+## 当前任务：P3.2 ToolResult 渲染 + use/result 配对
+
+- 已在执行任何项目命令前写入本轮可审计计划；该初始写入曾覆盖历史记录，提交前已恢复既有历史并追加本次记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.2 ToolResult 渲染 + use/result 配对`。
+- 已查看最近提交：`b6ac361 [P3.1] Render tool use inputs`，未声明与 `P3.2` 直接相关的未完成事项。
+- 执行范围限定为 ToolResult 输出渲染和 ToolUse/ToolResult 的 `call_id` 配对；不推进 P3.3 的超长输出尾部窗口。
+- 已确认现状：P2.3 已具备 `ToolOutput::Ansi`/`Markdown`/`Diff` 的基础渲染；缺口是行扁平化仍按原始 block 顺序显示 result，缺失 result 时无等待行。
+- 实施计划：保留现有输出渲染组件；在 `row_keys_from_messages` 中预索引 ToolResult，遍历 ToolUse 时配对同消息或后续消息中首个未配对 result 并紧邻插入，原位置跳过；未找到 result 时插入 pending result 行显示“等待中”。
+- 已完成实现：新增 `PendingToolResult` 行 key/id/ref；ToolUse 按 `call_id` 与后续 ToolResult 相邻展示；缺失 result 渲染运行中 disclosure，标题和内容显示“等待中”。
+- 已补充验证：单测覆盖同消息重排、后续消息配对且不重复 header、缺失 result 等待行；PTY block mapping 用例断言 `Tool result: call-json (等待中)`，并先滚到顶部以适配预载 auto-scroll 行为。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --test pty_chat chat_block_mapping_renders_each_block_with_target_widget -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P3.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P3.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P3.2] Pair tool results with uses` 提交并停止。

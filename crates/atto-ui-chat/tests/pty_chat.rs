@@ -330,6 +330,11 @@ fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
     let mut host = PtyTestHost::spawn(bin, &["--block-mapping"], 100, 50)?;
 
+    for _ in 0..4 {
+        host.wheel_up(8, 10)?;
+        thread::sleep(Duration::from_millis(20));
+    }
+
     host.wait_for_text("BLOCK-TEXT", Duration::from_secs(2))?;
     host.wait_for_text("Thinking", Duration::from_secs(2))?;
     host.wait_for_text("BLOCK-THINKING", Duration::from_secs(2))?;
@@ -337,6 +342,7 @@ fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<
     host.wait_for_text("[ ] json_tool", Duration::from_secs(2))?;
     host.wait_for_text("count: 2", Duration::from_secs(2))?;
     host.wait_for_text("path: \"src/lib.rs\"", Duration::from_secs(2))?;
+    host.wait_for_text("Tool result: call-json (等待中)", Duration::from_secs(2))?;
     host.wait_for_text("Tool result: call-ansi (exit 0)", Duration::from_secs(2))?;
     host.wait_for_text("ANSI-GREEN", Duration::from_secs(2))?;
     host.wait_for_text("MARKDOWN-OUTPUT", Duration::from_secs(2))?;

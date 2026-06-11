@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use atto_ui::composable::{
@@ -457,6 +458,11 @@ enum ChatRowKey {
         block_id: ChatBlockId,
         kind_tag: ChatBlockKindTag,
     },
+    PendingToolResult {
+        message_id: ChatMessageId,
+        tool_use_id: ChatBlockId,
+        call_id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -466,12 +472,17 @@ enum ChatRowId {
         message_id: ChatMessageId,
         block_id: ChatBlockId,
     },
+    PendingToolResult {
+        message_id: ChatMessageId,
+        tool_use_id: ChatBlockId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChatRowRef {
     Header(ChatMessageId),
     Block(ChatBlockId),
+    PendingToolResult(ChatBlockId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -527,6 +538,14 @@ impl Identifiable for ChatRowKey {
                 message_id: *message_id,
                 block_id: *block_id,
             },
+            ChatRowKey::PendingToolResult {
+                message_id,
+                tool_use_id,
+                ..
+            } => ChatRowId::PendingToolResult {
+                message_id: *message_id,
+                tool_use_id: *tool_use_id,
+            },
         }
     }
 }
@@ -534,7 +553,9 @@ impl Identifiable for ChatRowKey {
 impl ChatRowKey {
     fn message_id(&self) -> ChatMessageId {
         match self {
-            ChatRowKey::Header { message_id } | ChatRowKey::Block { message_id, .. } => *message_id,
+            ChatRowKey::Header { message_id }
+            | ChatRowKey::Block { message_id, .. }
+            | ChatRowKey::PendingToolResult { message_id, .. } => *message_id,
         }
     }
 
@@ -542,6 +563,9 @@ impl ChatRowKey {
         match self {
             ChatRowKey::Header { message_id } => ChatRowRef::Header(*message_id),
             ChatRowKey::Block { block_id, .. } => ChatRowRef::Block(*block_id),
+            ChatRowKey::PendingToolResult { tool_use_id, .. } => {
+                ChatRowRef::PendingToolResult(*tool_use_id)
+            }
         }
     }
 
@@ -556,6 +580,7 @@ impl ChatRowKey {
                 ChatRowKey::Block {
                     block_id, kind_tag, ..
                 } => placeholder_block(*block_id, kind_tag).into_iter().collect(),
+                ChatRowKey::PendingToolResult { .. } => Vec::new(),
             },
         }
     }
@@ -634,19 +659,112 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
     }
 }
 
+#[derive(Clone, Debug)]
+struct ToolResultRowCandidate {
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    order: usize,
+    kind_tag: ChatBlockKindTag,
+}
+
 fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
+    let result_candidates = collect_tool_result_candidates(messages);
+    let mut paired_results = HashSet::new();
     let mut rows = Vec::new();
+    let mut order = 0usize;
+
     for message in messages {
-        rows.push(ChatRowKey::Header {
-            message_id: message.id,
-        });
-        rows.extend(message.blocks.iter().map(|block| ChatRowKey::Block {
-            message_id: message.id,
-            block_id: block.id(),
-            kind_tag: block_kind_tag(block),
-        }));
+        let mut header_inserted = false;
+        for block in &message.blocks {
+            let block_order = order;
+            order = order.saturating_add(1);
+
+            if paired_results.contains(&block.id()) {
+                continue;
+            }
+
+            ensure_message_header(&mut rows, &mut header_inserted, message.id);
+            rows.push(block_row_key(message.id, block));
+
+            if let ChatBlock::ToolUse(tool) = block {
+                if let Some(result) = matching_tool_result_candidate(
+                    &result_candidates,
+                    &paired_results,
+                    &tool.call_id,
+                    block_order,
+                ) {
+                    paired_results.insert(result.block_id);
+                    rows.push(ChatRowKey::Block {
+                        message_id: result.message_id,
+                        block_id: result.block_id,
+                        kind_tag: result.kind_tag.clone(),
+                    });
+                } else {
+                    rows.push(ChatRowKey::PendingToolResult {
+                        message_id: message.id,
+                        tool_use_id: tool.id,
+                        call_id: tool.call_id.clone(),
+                    });
+                }
+            }
+        }
     }
+
     rows
+}
+
+fn collect_tool_result_candidates(
+    messages: &[ChatMessage],
+) -> HashMap<String, Vec<ToolResultRowCandidate>> {
+    let mut candidates: HashMap<String, Vec<ToolResultRowCandidate>> = HashMap::new();
+    let mut order = 0usize;
+    for message in messages {
+        for block in &message.blocks {
+            if let ChatBlock::ToolResult(result) = block {
+                candidates.entry(result.call_id.clone()).or_default().push(
+                    ToolResultRowCandidate {
+                        message_id: message.id,
+                        block_id: result.id,
+                        order,
+                        kind_tag: block_kind_tag(block),
+                    },
+                );
+            }
+            order = order.saturating_add(1);
+        }
+    }
+    candidates
+}
+
+fn matching_tool_result_candidate<'a>(
+    candidates: &'a HashMap<String, Vec<ToolResultRowCandidate>>,
+    paired_results: &HashSet<ChatBlockId>,
+    call_id: &str,
+    after_order: usize,
+) -> Option<&'a ToolResultRowCandidate> {
+    candidates.get(call_id)?.iter().find(|candidate| {
+        candidate.order > after_order && !paired_results.contains(&candidate.block_id)
+    })
+}
+
+fn ensure_message_header(
+    rows: &mut Vec<ChatRowKey>,
+    header_inserted: &mut bool,
+    message_id: ChatMessageId,
+) {
+    if *header_inserted {
+        return;
+    }
+    rows.push(ChatRowKey::Header { message_id });
+    *header_inserted = true;
+}
+
+fn block_row_key(message_id: ChatMessageId, block: &ChatBlock) -> ChatRowKey {
+    ChatRowKey::Block {
+        message_id,
+        block_id: block.id(),
+        kind_tag: block_kind_tag(block),
+    }
 }
 
 fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
@@ -727,20 +845,19 @@ impl ChatMessageRow {
         let message_id = key.message_id();
         let row_ref = key.row_ref();
         let (view, body_bindings) = store
-            .with_message(message_id, |message| {
-                build_row_view(message, row_ref, &config)
-            })
+            .with_message(message_id, |message| build_row_view(message, &key, &config))
             .unwrap_or_else(|| {
                 let message = key.placeholder();
-                build_row_view(&message, row_ref, &config)
+                build_row_view(&message, &key, &config)
             });
         let last_message_version = match row_ref {
             ChatRowRef::Header(message_id) => store.message_version(message_id),
-            ChatRowRef::Block(_) => 0,
+            ChatRowRef::Block(_) | ChatRowRef::PendingToolResult(_) => 0,
         };
         let last_block_version = match row_ref {
             ChatRowRef::Header(_) => 0,
             ChatRowRef::Block(block_id) => store.block_version(block_id),
+            ChatRowRef::PendingToolResult(tool_use_id) => store.block_version(tool_use_id),
         };
         Self {
             row_ref,
@@ -757,6 +874,7 @@ impl ChatMessageRow {
         match self.row_ref {
             ChatRowRef::Header(message_id) => self.sync_header_bindings(message_id),
             ChatRowRef::Block(block_id) => self.sync_block_bindings(block_id),
+            ChatRowRef::PendingToolResult(tool_use_id) => self.sync_block_bindings(tool_use_id),
         }
     }
 
@@ -812,7 +930,7 @@ impl ChatMessageRow {
 
 fn build_row_view(
     message: &ChatMessage,
-    row_ref: ChatRowRef,
+    key: &ChatRowKey,
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let mut column = VStack::new().with_spacing(1);
@@ -821,8 +939,8 @@ fn build_row_view(
         ..LayoutParams::default()
     };
 
-    match row_ref {
-        ChatRowRef::Header(_) => {
+    match key {
+        ChatRowKey::Header { .. } => {
             let (bubble, mut bindings) = build_aligned_turn_header(message);
             if config.show_timestamps
                 && let Some(ts) = &message.meta.timestamp
@@ -834,9 +952,14 @@ fn build_row_view(
             column = column.child_with_layout(bubble, row_layout);
             (column, bindings)
         }
-        ChatRowRef::Block(block_id) => {
-            let block = find_block(message, block_id);
+        ChatRowKey::Block { block_id, .. } => {
+            let block = find_block(message, *block_id);
             let (bubble, body_bindings) = build_aligned_block(message, block, config);
+            column = column.child_with_layout(bubble, row_layout);
+            (column, body_bindings)
+        }
+        ChatRowKey::PendingToolResult { call_id, .. } => {
+            let (bubble, body_bindings) = build_aligned_pending_tool_result(message, call_id);
             column = column.child_with_layout(bubble, row_layout);
             (column, body_bindings)
         }
@@ -979,6 +1102,44 @@ fn build_aligned_block(
             .child_with_layout(bubble, bubble_layout),
     };
     (row, body_bindings)
+}
+
+fn build_aligned_pending_tool_result(
+    message: &ChatMessage,
+    call_id: &str,
+) -> (HStack, ChatMessageRowBindings) {
+    let body = ChatMessageBody::Disclosure(
+        Disclosure::new(pending_tool_result_title(call_id))
+            .expanded(true)
+            .status(DisclosureStatus::Running)
+            .child(Text::new("等待中")),
+    );
+    let bubble = VStack::new().with_spacing(1).child_with_layout(
+        body,
+        LayoutParams {
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
+    let bubble_layout = LayoutParams {
+        width: Size::Weight(3),
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+    let spacer_layout = LayoutParams {
+        width: Size::Weight(1),
+        ..LayoutParams::default()
+    };
+
+    let row = match message.role.alignment() {
+        ChatAlignment::Left => HStack::new()
+            .child_with_layout(bubble, bubble_layout)
+            .child_with_layout(Spacer::new(), spacer_layout),
+        ChatAlignment::Right => HStack::new()
+            .child_with_layout(Spacer::new(), spacer_layout)
+            .child_with_layout(bubble, bubble_layout),
+    };
+    (row, ChatMessageRowBindings::default())
 }
 
 fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) {
@@ -1540,6 +1701,10 @@ fn tool_result_title(result: &ToolResultBlock) -> String {
         Some(code) => format!("Tool result: {} (exit {code})", result.call_id),
         None => format!("Tool result: {}", result.call_id),
     }
+}
+
+fn pending_tool_result_title(call_id: &str) -> String {
+    format!("Tool result: {call_id} (等待中)")
 }
 
 fn diff_block_title(diff: &DiffBlock) -> String {
@@ -2745,6 +2910,142 @@ mod tests {
                 kind_tag: ChatBlockKindTag::ToolResult { .. },
             } if *message_id == id && *block_id == message.blocks[1].id()
         ));
+    }
+
+    #[test]
+    fn row_keys_pair_tool_result_after_matching_tool_use() {
+        let id = ChatMessageId::new(12);
+        let tool_use_id = ChatBlockId::new(12_001);
+        let text_id = ChatBlockId::new(12_002);
+        let result_id = ChatBlockId::new(12_003);
+        let message = ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::ToolUse(ToolUseBlock {
+                    id: tool_use_id,
+                    call_id: "call-pair".to_string(),
+                    name: "build".to_string(),
+                    input: ToolInput::Text("cargo build".to_string()),
+                    status: ToolStatus::Running,
+                    approval: None,
+                    collapsed: false,
+                }),
+                ChatBlock::Text(TextBlock {
+                    id: text_id,
+                    markdown: "between".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::ToolResult(ToolResultBlock {
+                    id: result_id,
+                    call_id: "call-pair".to_string(),
+                    ok: true,
+                    exit_code: Some(0),
+                    output: ToolOutput::Ansi("done".to_string()),
+                    collapsed: false,
+                }),
+            ],
+        );
+
+        let keys = row_keys_from_messages(&[message]);
+
+        assert_eq!(keys.len(), 4);
+        assert!(matches!(&keys[1], ChatRowKey::Block { block_id, .. } if *block_id == tool_use_id));
+        assert!(matches!(&keys[2], ChatRowKey::Block { block_id, .. } if *block_id == result_id));
+        assert!(matches!(&keys[3], ChatRowKey::Block { block_id, .. } if *block_id == text_id));
+    }
+
+    #[test]
+    fn row_keys_pair_tool_result_from_later_message_without_duplicate_header() {
+        let tool_message_id = ChatMessageId::new(13);
+        let result_message_id = ChatMessageId::new(14);
+        let tool_use_id = ChatBlockId::new(13_001);
+        let result_id = ChatBlockId::new(14_001);
+        let tool_message = ChatMessage::new(
+            tool_message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: tool_use_id,
+                call_id: "call-later".to_string(),
+                name: "test".to_string(),
+                input: ToolInput::Text("cargo test".to_string()),
+                status: ToolStatus::Running,
+                approval: None,
+                collapsed: false,
+            })],
+        );
+        let result_message = ChatMessage::new(
+            result_message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolResult(ToolResultBlock {
+                id: result_id,
+                call_id: "call-later".to_string(),
+                ok: true,
+                exit_code: None,
+                output: ToolOutput::Markdown("done".to_string()),
+                collapsed: false,
+            })],
+        );
+
+        let keys = row_keys_from_messages(&[tool_message, result_message]);
+
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0].id(), ChatRowId::Header(tool_message_id));
+        assert!(matches!(&keys[1], ChatRowKey::Block { block_id, .. } if *block_id == tool_use_id));
+        assert!(matches!(
+            &keys[2],
+            ChatRowKey::Block {
+                message_id,
+                block_id,
+                ..
+            } if *message_id == result_message_id && *block_id == result_id
+        ));
+        assert!(!keys
+            .iter()
+            .any(|key| matches!(key, ChatRowKey::Header { message_id } if *message_id == result_message_id)));
+    }
+
+    #[test]
+    fn row_keys_insert_pending_tool_result_when_result_is_missing() {
+        let id = ChatMessageId::new(15);
+        let tool_use_id = ChatBlockId::new(15_001);
+        let message = ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: tool_use_id,
+                call_id: "call-waiting".to_string(),
+                name: "deploy".to_string(),
+                input: ToolInput::Text("deploy".to_string()),
+                status: ToolStatus::Running,
+                approval: None,
+                collapsed: false,
+            })],
+        );
+
+        let keys = row_keys_from_messages(&[message]);
+
+        assert_eq!(keys.len(), 3);
+        assert!(matches!(&keys[1], ChatRowKey::Block { block_id, .. } if *block_id == tool_use_id));
+        assert!(matches!(
+            &keys[2],
+            ChatRowKey::PendingToolResult {
+                message_id,
+                tool_use_id: pending_tool_use_id,
+                call_id,
+            } if *message_id == id && *pending_tool_use_id == tool_use_id && call_id == "call-waiting"
+        ));
+        assert_eq!(
+            keys[2].id(),
+            ChatRowId::PendingToolResult {
+                message_id: id,
+                tool_use_id,
+            }
+        );
+        assert_eq!(
+            pending_tool_result_title("call-waiting"),
+            "Tool result: call-waiting (等待中)"
+        );
     }
 
     #[test]

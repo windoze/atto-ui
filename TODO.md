@@ -59,7 +59,9 @@
 - [x] **[DONE] P3.1 ToolUse 入参渲染** — `src/list.rs`:`Disclosure` 标题=name;`ToolInput::Text`→单行/代码,`ToolInput::Json`→key/value 列表;显示状态图标(Pending/Running/Done/Error/Canceled)。
   - 完成记录（2026-06-12）：已为 ToolUse disclosure 增加 `ToolUseDetailsView`，Text 入参渲染为 `Input: ...` 单行或多行缩进代码块，Json 入参渲染为 key/value 列表；ToolUse 行绑定随 block 版本同步入参/审批文本。`DisclosureStatus` 新增 Canceled 状态，ToolStatus 的 Pending/Running/Done/Error/Canceled 现在分别显示 `[ ]/[~]/[x]/[!]/[-]` 图标。snapshot chat app 与 PTY 测试覆盖 Text 入参、Json 入参、Pending/Running/Done/Error/Canceled 图标。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P3.2 ToolResult 渲染 + use/result 配对** — `src/list.rs`:`Ansi`→ANSI SGR 上色解析,`Markdown`→`MarkdownViewer`,`Diff`→`diff_line_style`;按 `call_id` 把 use+result 相邻配对,result 缺失显示"等待中"。
+- [x] **[DONE] P3.2 ToolResult 渲染 + use/result 配对** — `src/list.rs`:`Ansi`→ANSI SGR 上色解析,`Markdown`→`MarkdownViewer`,`Diff`→`diff_line_style`;按 `call_id` 把 use+result 相邻配对,result 缺失显示"等待中"。
+  - 完成记录（2026-06-12）：已在 chat row 扁平化阶段按 `call_id` 将 ToolUse 与同消息或后续消息中的首个未配对 ToolResult 相邻展示，并跳过 result 原位置重复行；缺失 result 时新增 pending result 行，标题与内容显示“等待中”并使用运行中 disclosure 状态。现有 ToolResult 的 `Ansi`/`Markdown`/`Diff` 输出继续分别走 ANSI SGR 解析、`MarkdownViewer`、inline diff 着色渲染。补充行模型单测覆盖同消息重排、后续消息配对、缺失 result 等待行，并更新 block mapping PTY 用例断言等待行。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --test pty_chat chat_block_mapping_renders_each_block_with_target_widget -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P3.3 超长输出尾部窗口** — `src/list.rs`:`ToolOutput::Ansi` 超长默认只显示尾部 N 行 + "展开全部",避免撑爆列表。补 PTY 覆盖带入参调用、流式工具输出、超长折叠。
 
 ## 阶段 P4 — inline 审批 + inline diff
