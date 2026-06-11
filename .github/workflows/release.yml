@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/react/package-lock.json
+          cache-dependency-path: packages/react/package.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -46,7 +46,7 @@ jobs:
           deno-version: v2.x
 
       - name: Install Node test dependencies
-        run: npm ci --prefix packages/react --ignore-scripts
+        run: npm install --prefix packages/react --ignore-scripts --no-save @atto-ui/core@file:../core
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -163,7 +163,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
-          cache-dependency-path: packages/react/package-lock.json
+          cache-dependency-path: packages/react/package.json
 
       - name: Download native artifacts
         uses: actions/download-artifact@v4
@@ -177,7 +177,7 @@ jobs:
         run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .
 
       - name: Install React dependencies
-        run: npm ci --prefix packages/react --ignore-scripts
+        run: npm install --prefix packages/react --ignore-scripts --no-save @atto-ui/core@file:../core
 
       - name: Build React package
         run: npm run build --prefix packages/react
