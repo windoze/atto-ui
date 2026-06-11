@@ -13,11 +13,15 @@ use atto_ui::{
 
 use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
 use crate::{
-    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatBlock, ChatError, ChatErrorKind,
-    ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
-    ChatRole, ChatTurnStatus, DiffBlock, NoticeBlock, TextBlock, ThinkingBlock, TodoBlock,
-    TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
+    ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle, ChatInputPanel, ChatMessage,
+    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData,
+    EditDecision, NoticeBlock, NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock,
+    TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
+
+type ValueMap = BTreeMap<String, ComponentValue>;
 
 impl ComponentPropertySchema for ChatMessageList {
     fn property_schema() -> Vec<PropertyMeta> {
@@ -72,23 +76,20 @@ pub(crate) fn parse_messages_value(value: &ComponentValue) -> Result<Vec<ChatMes
 }
 
 fn message_to_value(message: &ChatMessage) -> ComponentValue {
-    let mut out = BTreeMap::<String, ComponentValue>::new();
+    let mut out = ValueMap::new();
     out.insert("id".to_string(), ComponentValue::U64(message.id.0));
     out.insert(
-        "sender".to_string(),
+        "role".to_string(),
         ComponentValue::String(role_to_string(&message.role)),
     );
-    out.insert(
-        "timestamp".to_string(),
-        message
-            .meta
-            .timestamp
-            .as_ref()
-            .map(|v| ComponentValue::String(v.clone()))
-            .unwrap_or(ComponentValue::Null),
-    );
     out.insert("status".to_string(), status_to_value(&message.status));
-    out.insert("content".to_string(), content_to_value(message));
+    if let Some(meta) = meta_to_value(&message.meta) {
+        out.insert("meta".to_string(), meta);
+    }
+    out.insert(
+        "blocks".to_string(),
+        ComponentValue::List(message.blocks.iter().map(block_to_value).collect()),
+    );
     ComponentValue::Map(out)
 }
 
@@ -103,113 +104,338 @@ fn role_to_string(role: &ChatRole) -> String {
 
 fn status_to_value(status: &ChatTurnStatus) -> ComponentValue {
     match status {
-        ChatTurnStatus::Complete => ComponentValue::String("final".to_string()),
-        ChatTurnStatus::Streaming => ComponentValue::String("in_progress".to_string()),
+        ChatTurnStatus::Complete => ComponentValue::String("complete".to_string()),
+        ChatTurnStatus::Streaming => ComponentValue::String("streaming".to_string()),
         ChatTurnStatus::Canceled => ComponentValue::String("canceled".to_string()),
         ChatTurnStatus::Failed(error) => {
-            let mut map = BTreeMap::new();
-            map.insert(
-                "failed".to_string(),
-                ComponentValue::String(error.message.clone()),
-            );
+            let mut map = ValueMap::new();
+            map.insert("failed".to_string(), error_to_value(error));
             ComponentValue::Map(map)
         }
     }
 }
 
-fn content_to_value(message: &ChatMessage) -> ComponentValue {
-    let display_block = message
-        .blocks
-        .iter()
-        .find(|block| !matches!(block, ChatBlock::ToolResult(_)));
-    match display_block {
-        Some(ChatBlock::Text(TextBlock { markdown, .. })) => markdown_content_value(markdown),
-        Some(ChatBlock::Thinking(ThinkingBlock { markdown, .. })) => {
-            markdown_content_value(markdown)
-        }
-        Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
-            let mut file = BTreeMap::new();
-            file.insert("name".to_string(), ComponentValue::String(name.clone()));
-            file.insert(
-                "url".to_string(),
-                url.as_ref()
-                    .map(|v| ComponentValue::String(v.clone()))
-                    .unwrap_or(ComponentValue::Null),
-            );
-            let mut map = BTreeMap::new();
-            map.insert("file".to_string(), ComponentValue::Map(file));
-            ComponentValue::Map(map)
-        }
-        Some(ChatBlock::ToolUse(tool)) => {
-            let mut tool_map = BTreeMap::new();
-            tool_map.insert(
-                "name".to_string(),
-                ComponentValue::String(tool.name.clone()),
-            );
-            tool_map.insert(
-                "status".to_string(),
-                ComponentValue::String(tool_status_to_string(&tool.status).to_string()),
-            );
-            let output = message
-                .first_tool_result()
-                .map(|result| result.output.as_text().to_string())
-                .unwrap_or_default();
-            tool_map.insert("output".to_string(), ComponentValue::String(output));
-            let mut map = BTreeMap::new();
-            map.insert("tool_call".to_string(), ComponentValue::Map(tool_map));
-            ComponentValue::Map(map)
-        }
-        Some(ChatBlock::Diff(DiffBlock { diff, .. })) => markdown_content_value(&diff.unified),
-        Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
-            markdown_content_value(&todo_items_to_markdown(items))
-        }
-        Some(ChatBlock::Notice(NoticeBlock { text, .. })) => markdown_content_value(text),
-        Some(ChatBlock::Artifact(ArtifactBlock {
-            kind,
-            anchor,
-            title,
-            ..
-        })) => {
-            let mut artifact = BTreeMap::new();
-            artifact.insert(
-                "kind".to_string(),
-                ComponentValue::String(kind.as_str().to_string()),
-            );
-            artifact.insert(
-                "anchor".to_string(),
-                ComponentValue::String(anchor.to_string()),
-            );
-            artifact.insert("title".to_string(), ComponentValue::String(title.clone()));
-            let mut map = BTreeMap::new();
-            map.insert("artifact".to_string(), ComponentValue::Map(artifact));
-            ComponentValue::Map(map)
-        }
-        Some(ChatBlock::ToolResult(_)) | None => markdown_content_value(""),
-    }
-}
-
-fn markdown_content_value(markdown: &str) -> ComponentValue {
-    let mut map = BTreeMap::new();
+fn error_to_value(error: &ChatError) -> ComponentValue {
+    let mut map = ValueMap::new();
     map.insert(
-        "markdown".to_string(),
-        ComponentValue::String(markdown.to_string()),
+        "kind".to_string(),
+        ComponentValue::String(error_kind_to_string(&error.kind).to_string()),
+    );
+    map.insert(
+        "message".to_string(),
+        ComponentValue::String(error.message.clone()),
+    );
+    if let Some(detail) = &error.detail {
+        map.insert("detail".to_string(), ComponentValue::String(detail.clone()));
+    }
+    ComponentValue::Map(map)
+}
+
+fn meta_to_value(meta: &ChatMessageMeta) -> Option<ComponentValue> {
+    if meta.timestamp.is_none()
+        && meta.model.is_none()
+        && meta.usage.is_none()
+        && meta.elapsed_ms.is_none()
+        && meta.stop_reason.is_none()
+    {
+        return None;
+    }
+
+    let mut map = ValueMap::new();
+    if let Some(timestamp) = &meta.timestamp {
+        map.insert(
+            "timestamp".to_string(),
+            ComponentValue::String(timestamp.clone()),
+        );
+    }
+    if let Some(model) = &meta.model {
+        map.insert("model".to_string(), ComponentValue::String(model.clone()));
+    }
+    if let Some(usage) = &meta.usage {
+        let mut usage_map = ValueMap::new();
+        usage_map.insert("input".to_string(), ComponentValue::U64(usage.input));
+        usage_map.insert("output".to_string(), ComponentValue::U64(usage.output));
+        map.insert("usage".to_string(), ComponentValue::Map(usage_map));
+    }
+    if let Some(elapsed_ms) = meta.elapsed_ms {
+        map.insert("elapsed_ms".to_string(), ComponentValue::U64(elapsed_ms));
+    }
+    if let Some(stop_reason) = &meta.stop_reason {
+        map.insert(
+            "stop_reason".to_string(),
+            ComponentValue::String(stop_reason_to_string(stop_reason).to_string()),
+        );
+    }
+    Some(ComponentValue::Map(map))
+}
+
+fn block_to_value(block: &ChatBlock) -> ComponentValue {
+    match block {
+        ChatBlock::Text(block) => {
+            let mut map = block_base("text", block.id);
+            map.insert(
+                "markdown".to_string(),
+                ComponentValue::String(block.markdown.clone()),
+            );
+            insert_bool_if_true(&mut map, "streaming", block.streaming);
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Thinking(block) => {
+            let mut map = block_base("thinking", block.id);
+            map.insert(
+                "markdown".to_string(),
+                ComponentValue::String(block.markdown.clone()),
+            );
+            insert_bool_if_true(&mut map, "streaming", block.streaming);
+            insert_bool_if_true(&mut map, "collapsed", block.collapsed);
+            ComponentValue::Map(map)
+        }
+        ChatBlock::ToolUse(block) => {
+            let mut map = block_base("tool_use", block.id);
+            map.insert(
+                "call_id".to_string(),
+                ComponentValue::String(block.call_id.clone()),
+            );
+            map.insert(
+                "name".to_string(),
+                ComponentValue::String(block.name.clone()),
+            );
+            map.insert("input".to_string(), tool_input_to_value(&block.input));
+            map.insert(
+                "status".to_string(),
+                ComponentValue::String(tool_status_to_string(&block.status).to_string()),
+            );
+            if let Some(approval) = &block.approval {
+                map.insert("approval".to_string(), approval_to_value(approval));
+            }
+            insert_bool_if_true(&mut map, "collapsed", block.collapsed);
+            ComponentValue::Map(map)
+        }
+        ChatBlock::ToolResult(block) => {
+            let mut map = block_base("tool_result", block.id);
+            map.insert(
+                "call_id".to_string(),
+                ComponentValue::String(block.call_id.clone()),
+            );
+            map.insert("ok".to_string(), ComponentValue::Bool(block.ok));
+            if let Some(exit_code) = block.exit_code {
+                map.insert(
+                    "exit_code".to_string(),
+                    ComponentValue::I64(i64::from(exit_code)),
+                );
+            }
+            map.insert("output".to_string(), tool_output_to_value(&block.output));
+            insert_bool_if_true(&mut map, "collapsed", block.collapsed);
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Diff(block) => {
+            let mut map = block_base("diff", block.id);
+            map.insert(
+                "path".to_string(),
+                ComponentValue::String(block.path.clone()),
+            );
+            map.insert(
+                "diff".to_string(),
+                ComponentValue::String(block.diff.unified.clone()),
+            );
+            map.insert(
+                "decision".to_string(),
+                ComponentValue::String(edit_decision_to_string(block.decision).to_string()),
+            );
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Todo(block) => {
+            let mut map = block_base("todo", block.id);
+            map.insert(
+                "items".to_string(),
+                ComponentValue::List(block.items.iter().map(todo_item_to_value).collect()),
+            );
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Attachment(block) => {
+            let mut map = block_base("attachment", block.id);
+            map.insert(
+                "name".to_string(),
+                ComponentValue::String(block.name.clone()),
+            );
+            insert_optional_string(&mut map, "url", block.url.as_deref());
+            insert_optional_string(&mut map, "mime", block.mime.as_deref());
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Notice(block) => {
+            let mut map = block_base("notice", block.id);
+            map.insert(
+                "level".to_string(),
+                ComponentValue::String(notice_level_to_string(block.level).to_string()),
+            );
+            map.insert(
+                "text".to_string(),
+                ComponentValue::String(block.text.clone()),
+            );
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Artifact(block) => {
+            let mut map = block_base("artifact", block.id);
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String(block.kind.as_str().to_string()),
+            );
+            map.insert(
+                "anchor".to_string(),
+                ComponentValue::String(block.anchor.to_string()),
+            );
+            map.insert(
+                "title".to_string(),
+                ComponentValue::String(block.title.clone()),
+            );
+            ComponentValue::Map(map)
+        }
+    }
+}
+
+fn block_base(kind: &str, id: ChatBlockId) -> ValueMap {
+    let mut map = ValueMap::new();
+    map.insert("type".to_string(), ComponentValue::String(kind.to_string()));
+    map.insert("block_id".to_string(), ComponentValue::U64(id.0));
+    map
+}
+
+fn tool_input_to_value(input: &ToolInput) -> ComponentValue {
+    let mut map = ValueMap::new();
+    match input {
+        ToolInput::Text(text) => {
+            map.insert("text".to_string(), ComponentValue::String(text.clone()));
+        }
+        ToolInput::Json(value) => {
+            map.insert("json".to_string(), value.clone());
+        }
+    }
+    ComponentValue::Map(map)
+}
+
+fn tool_output_to_value(output: &ToolOutput) -> ComponentValue {
+    let mut map = ValueMap::new();
+    match output {
+        ToolOutput::Ansi(output) => {
+            map.insert("ansi".to_string(), ComponentValue::String(output.clone()));
+        }
+        ToolOutput::Markdown(output) => {
+            map.insert(
+                "markdown".to_string(),
+                ComponentValue::String(output.clone()),
+            );
+        }
+        ToolOutput::Diff(diff) => {
+            map.insert(
+                "diff".to_string(),
+                ComponentValue::String(diff.unified.clone()),
+            );
+        }
+    }
+    ComponentValue::Map(map)
+}
+
+fn approval_to_value(approval: &ApprovalRequest) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "id".to_string(),
+        ComponentValue::String(approval.id.clone()),
+    );
+    map.insert(
+        "prompt".to_string(),
+        ComponentValue::String(approval.prompt.clone()),
+    );
+    map.insert(
+        "options".to_string(),
+        ComponentValue::List(
+            approval
+                .options
+                .iter()
+                .map(approval_option_to_value)
+                .collect(),
+        ),
+    );
+    insert_optional_string(&mut map, "resolved", approval.resolved.as_deref());
+    ComponentValue::Map(map)
+}
+
+fn approval_option_to_value(option: &ApprovalOption) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert("id".to_string(), ComponentValue::String(option.id.clone()));
+    map.insert(
+        "label".to_string(),
+        ComponentValue::String(option.label.clone()),
     );
     ComponentValue::Map(map)
 }
 
-fn todo_items_to_markdown(items: &[TodoItem]) -> String {
-    items
-        .iter()
-        .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
-        .collect::<Vec<_>>()
-        .join("\n")
+fn todo_item_to_value(item: &TodoItem) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "text".to_string(),
+        ComponentValue::String(item.text.clone()),
+    );
+    map.insert(
+        "state".to_string(),
+        ComponentValue::String(todo_state_to_string(item.state).to_string()),
+    );
+    ComponentValue::Map(map)
 }
 
-fn todo_state_marker(state: TodoState) -> &'static str {
+fn insert_bool_if_true(map: &mut ValueMap, key: &str, value: bool) {
+    if value {
+        map.insert(key.to_string(), ComponentValue::Bool(true));
+    }
+}
+
+fn insert_optional_string(map: &mut ValueMap, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), ComponentValue::String(value.to_string()));
+    }
+}
+
+fn error_kind_to_string(kind: &ChatErrorKind) -> &'static str {
+    match kind {
+        ChatErrorKind::Api => "api",
+        ChatErrorKind::Tool => "tool",
+        ChatErrorKind::RateLimit => "rate_limit",
+        ChatErrorKind::Refusal => "refusal",
+        ChatErrorKind::Network => "network",
+        ChatErrorKind::Other => "other",
+    }
+}
+
+fn stop_reason_to_string(reason: &StopReason) -> &'static str {
+    match reason {
+        StopReason::EndTurn => "end_turn",
+        StopReason::MaxTokens => "max_tokens",
+        StopReason::ToolUse => "tool_use",
+        StopReason::StopSequence => "stop_sequence",
+        StopReason::Refusal => "refusal",
+    }
+}
+
+fn edit_decision_to_string(decision: EditDecision) -> &'static str {
+    match decision {
+        EditDecision::Pending => "pending",
+        EditDecision::Accepted => "accepted",
+        EditDecision::Rejected => "rejected",
+    }
+}
+
+fn todo_state_to_string(state: TodoState) -> &'static str {
     match state {
-        TodoState::Pending => "[ ]",
-        TodoState::InProgress => "[~]",
-        TodoState::Done => "[x]",
+        TodoState::Pending => "pending",
+        TodoState::InProgress => "in_progress",
+        TodoState::Done => "done",
+    }
+}
+
+fn notice_level_to_string(level: NoticeLevel) -> &'static str {
+    match level {
+        NoticeLevel::Info => "info",
+        NoticeLevel::Warning => "warning",
+        NoticeLevel::Error => "error",
     }
 }
 
@@ -240,22 +466,34 @@ fn parse_message_value(value: &ComponentValue) -> Result<ChatMessage, String> {
         .transpose()?
         .unwrap_or(ChatRole::Assistant);
 
-    let timestamp = map
-        .get("timestamp")
-        .and_then(ComponentValue::as_str)
-        .map(|s| s.to_string());
-
     let status = map
         .get("status")
         .map(parse_status_value)
         .transpose()?
         .unwrap_or(ChatTurnStatus::Complete);
 
-    let content_value = map
-        .get("content")
-        .or_else(|| map.get("markdown"))
-        .ok_or_else(|| "missing content".to_string())?;
-    let blocks = parse_content_value(ChatMessageId(id), content_value)?;
+    if let Some(blocks_value) = map.get("blocks") {
+        let meta = map
+            .get("meta")
+            .map(parse_meta_value)
+            .transpose()?
+            .unwrap_or_default();
+        let blocks = parse_blocks_value(blocks_value)?;
+        return Ok(ChatMessage {
+            id: ChatMessageId(id),
+            role,
+            blocks,
+            status,
+            meta,
+        });
+    }
+
+    let timestamp = map
+        .get("timestamp")
+        .and_then(ComponentValue::as_str)
+        .map(|s| s.to_string());
+    let content_value = legacy_content_value(map)?;
+    let blocks = parse_content_value(ChatMessageId(id), &content_value)?;
 
     Ok(ChatMessage {
         id: ChatMessageId(id),
@@ -267,6 +505,157 @@ fn parse_message_value(value: &ComponentValue) -> Result<ChatMessage, String> {
             ..ChatMessageMeta::default()
         },
     })
+}
+
+fn parse_meta_value(value: &ComponentValue) -> Result<ChatMessageMeta, String> {
+    let map = expect_map(value, "meta")?;
+    let timestamp = optional_string_field(map, "timestamp", "meta")?;
+    let model = optional_string_field(map, "model", "meta")?;
+    let usage = map.get("usage").map(parse_token_usage_value).transpose()?;
+    let elapsed_ms = map.get("elapsed_ms").map(required_u64_value).transpose()?;
+    let stop_reason = map
+        .get("stop_reason")
+        .map(parse_stop_reason_value)
+        .transpose()?;
+
+    Ok(ChatMessageMeta {
+        timestamp,
+        model,
+        usage,
+        elapsed_ms,
+        stop_reason,
+    })
+}
+
+fn parse_token_usage_value(value: &ComponentValue) -> Result<TokenUsage, String> {
+    let map = expect_map(value, "usage")?;
+    Ok(TokenUsage {
+        input: required_u64_field(map, "input", "usage")?,
+        output: required_u64_field(map, "output", "usage")?,
+    })
+}
+
+fn parse_blocks_value(value: &ComponentValue) -> Result<Vec<ChatBlock>, String> {
+    let ComponentValue::List(items) = value else {
+        return Err(format!("blocks must be list, got {value:?}"));
+    };
+    items.iter().map(parse_block_value).collect()
+}
+
+fn parse_block_value(value: &ComponentValue) -> Result<ChatBlock, String> {
+    let map = expect_map(value, "block")?;
+    let kind = required_string_field(map, "type", "block")?;
+    let id = ChatBlockId(required_u64_field(map, "block_id", "block")?);
+
+    match kind.as_str() {
+        "text" => Ok(ChatBlock::Text(TextBlock {
+            id,
+            markdown: required_string_field(map, "markdown", "text block")?,
+            streaming: optional_bool_field(map, "streaming", "text block")?.unwrap_or(false),
+        })),
+        "thinking" => Ok(ChatBlock::Thinking(ThinkingBlock {
+            id,
+            markdown: required_string_field(map, "markdown", "thinking block")?,
+            streaming: optional_bool_field(map, "streaming", "thinking block")?.unwrap_or(false),
+            collapsed: optional_bool_field(map, "collapsed", "thinking block")?.unwrap_or(false),
+        })),
+        "tool_use" => Ok(ChatBlock::ToolUse(ToolUseBlock {
+            id,
+            call_id: required_string_field(map, "call_id", "tool_use block")?,
+            name: required_string_field(map, "name", "tool_use block")?,
+            input: map
+                .get("input")
+                .map(parse_tool_input_value)
+                .transpose()?
+                .unwrap_or_else(|| ToolInput::Text(String::new())),
+            status: map
+                .get("status")
+                .map(parse_tool_status_value)
+                .transpose()?
+                .unwrap_or(ToolStatus::Pending),
+            approval: map.get("approval").map(parse_approval_value).transpose()?,
+            collapsed: optional_bool_field(map, "collapsed", "tool_use block")?.unwrap_or(false),
+        })),
+        "tool_result" => Ok(ChatBlock::ToolResult(ToolResultBlock {
+            id,
+            call_id: required_string_field(map, "call_id", "tool_result block")?,
+            ok: required_bool_field(map, "ok", "tool_result block")?,
+            exit_code: map.get("exit_code").map(parse_i32_value).transpose()?,
+            output: map
+                .get("output")
+                .map(parse_tool_output_value)
+                .transpose()?
+                .unwrap_or_else(|| ToolOutput::Ansi(String::new())),
+            collapsed: optional_bool_field(map, "collapsed", "tool_result block")?.unwrap_or(false),
+        })),
+        "diff" => Ok(ChatBlock::Diff(DiffBlock {
+            id,
+            path: required_string_field(map, "path", "diff block")?,
+            diff: DiffData {
+                unified: required_string_field(map, "diff", "diff block")?,
+            },
+            decision: map
+                .get("decision")
+                .map(parse_edit_decision_value)
+                .transpose()?
+                .unwrap_or(EditDecision::Pending),
+        })),
+        "todo" => Ok(ChatBlock::Todo(TodoBlock {
+            id,
+            items: map
+                .get("items")
+                .map(parse_todo_items_value)
+                .transpose()?
+                .unwrap_or_default(),
+        })),
+        "attachment" => Ok(ChatBlock::Attachment(AttachmentBlock {
+            id,
+            name: required_string_field(map, "name", "attachment block")?,
+            url: optional_string_field(map, "url", "attachment block")?,
+            mime: optional_string_field(map, "mime", "attachment block")?,
+        })),
+        "notice" => Ok(ChatBlock::Notice(NoticeBlock {
+            id,
+            level: map
+                .get("level")
+                .map(parse_notice_level_value)
+                .transpose()?
+                .unwrap_or(NoticeLevel::Info),
+            text: required_string_field(map, "text", "notice block")?,
+        })),
+        "artifact" => Ok(ChatBlock::Artifact(ArtifactBlock {
+            id,
+            kind: map
+                .get("kind")
+                .map(parse_artifact_kind_value)
+                .transpose()?
+                .unwrap_or(ArtifactKind::File),
+            anchor: map
+                .get("anchor")
+                .map(parse_artifact_id_value)
+                .transpose()?
+                .ok_or_else(|| "artifact block missing anchor".to_string())?,
+            title: required_string_field(map, "title", "artifact block")?,
+        })),
+        other => Err(format!("unknown block type '{other}'")),
+    }
+}
+
+fn legacy_content_value(map: &ValueMap) -> Result<ComponentValue, String> {
+    if let Some(value) = map.get("content") {
+        return Ok(value.clone());
+    }
+    if let Some(value) = map.get("markdown") {
+        return Ok(value.clone());
+    }
+    for key in ["tool_call", "file", "artifact"] {
+        if let Some(value) = map.get(key) {
+            let mut wrapper = ValueMap::new();
+            wrapper.insert(key.to_string(), value.clone());
+            return Ok(ComponentValue::Map(wrapper));
+        }
+    }
+    Err("missing content".to_string())
 }
 
 fn parse_role_value(value: &ComponentValue) -> Result<ChatRole, String> {
@@ -308,15 +697,30 @@ fn parse_status_value(value: &ComponentValue) -> Result<ChatTurnStatus, String> 
     match value {
         ComponentValue::String(raw) => parse_status_string(raw),
         ComponentValue::Map(map) => {
-            if let Some(reason) = map.get("failed").and_then(ComponentValue::as_str) {
-                return Ok(ChatTurnStatus::Failed(ChatError::new(
-                    ChatErrorKind::Other,
-                    reason.to_string(),
-                )));
+            if let Some(failed) = map.get("failed") {
+                return Ok(ChatTurnStatus::Failed(parse_error_value(failed)?));
             }
             Err("status map must contain 'failed'".to_string())
         }
         other => Err(format!("status must be string or map, got {other:?}")),
+    }
+}
+
+fn parse_error_value(value: &ComponentValue) -> Result<ChatError, String> {
+    match value {
+        ComponentValue::String(raw) => Ok(ChatError::new(ChatErrorKind::Other, raw.clone())),
+        ComponentValue::Map(map) => Ok(ChatError {
+            kind: map
+                .get("kind")
+                .map(parse_error_kind_value)
+                .transpose()?
+                .unwrap_or(ChatErrorKind::Other),
+            message: required_string_field(map, "message", "failed status")?,
+            detail: optional_string_field(map, "detail", "failed status")?,
+        }),
+        other => Err(format!(
+            "failed status must be string or map, got {other:?}"
+        )),
     }
 }
 
@@ -440,6 +844,256 @@ fn parse_content_value(
             )
         }
         other => Err(format!("content must be string or map, got {other:?}")),
+    }
+}
+
+fn parse_tool_input_value(value: &ComponentValue) -> Result<ToolInput, String> {
+    let map = expect_map(value, "tool input")?;
+    if let Some(value) = map.get("text") {
+        return match value {
+            ComponentValue::String(text) => Ok(ToolInput::Text(text.clone())),
+            other => Err(format!("tool input text must be string, got {other:?}")),
+        };
+    }
+    if let Some(value) = map.get("json") {
+        return Ok(ToolInput::Json(value.clone()));
+    }
+    Err("tool input must contain 'text' or 'json'".to_string())
+}
+
+fn parse_tool_output_value(value: &ComponentValue) -> Result<ToolOutput, String> {
+    let map = expect_map(value, "tool output")?;
+    if let Some(value) = map.get("ansi") {
+        return match value {
+            ComponentValue::String(output) => Ok(ToolOutput::Ansi(output.clone())),
+            other => Err(format!("tool output ansi must be string, got {other:?}")),
+        };
+    }
+    if let Some(value) = map.get("markdown") {
+        return match value {
+            ComponentValue::String(output) => Ok(ToolOutput::Markdown(output.clone())),
+            other => Err(format!(
+                "tool output markdown must be string, got {other:?}"
+            )),
+        };
+    }
+    if let Some(value) = map.get("diff") {
+        return match value {
+            ComponentValue::String(output) => Ok(ToolOutput::Diff(DiffData {
+                unified: output.clone(),
+            })),
+            other => Err(format!("tool output diff must be string, got {other:?}")),
+        };
+    }
+    Err("tool output must contain 'ansi', 'markdown', or 'diff'".to_string())
+}
+
+fn parse_approval_value(value: &ComponentValue) -> Result<ApprovalRequest, String> {
+    let map = expect_map(value, "approval")?;
+    Ok(ApprovalRequest {
+        id: required_string_field(map, "id", "approval")?,
+        prompt: required_string_field(map, "prompt", "approval")?,
+        options: map
+            .get("options")
+            .map(parse_approval_options_value)
+            .transpose()?
+            .unwrap_or_default(),
+        resolved: optional_string_field(map, "resolved", "approval")?,
+    })
+}
+
+fn parse_approval_options_value(value: &ComponentValue) -> Result<Vec<ApprovalOption>, String> {
+    let ComponentValue::List(items) = value else {
+        return Err(format!("approval options must be list, got {value:?}"));
+    };
+    items.iter().map(parse_approval_option_value).collect()
+}
+
+fn parse_approval_option_value(value: &ComponentValue) -> Result<ApprovalOption, String> {
+    let map = expect_map(value, "approval option")?;
+    Ok(ApprovalOption {
+        id: required_string_field(map, "id", "approval option")?,
+        label: required_string_field(map, "label", "approval option")?,
+    })
+}
+
+fn parse_todo_items_value(value: &ComponentValue) -> Result<Vec<TodoItem>, String> {
+    let ComponentValue::List(items) = value else {
+        return Err(format!("todo items must be list, got {value:?}"));
+    };
+    items.iter().map(parse_todo_item_value).collect()
+}
+
+fn parse_todo_item_value(value: &ComponentValue) -> Result<TodoItem, String> {
+    let map = expect_map(value, "todo item")?;
+    Ok(TodoItem {
+        text: required_string_field(map, "text", "todo item")?,
+        state: map
+            .get("state")
+            .map(parse_todo_state_value)
+            .transpose()?
+            .unwrap_or(TodoState::Pending),
+    })
+}
+
+fn parse_error_kind_value(value: &ComponentValue) -> Result<ChatErrorKind, String> {
+    match value {
+        ComponentValue::String(raw) => parse_error_kind_string(raw),
+        other => Err(format!("error kind must be string, got {other:?}")),
+    }
+}
+
+fn parse_error_kind_string(raw: &str) -> Result<ChatErrorKind, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "api" => Ok(ChatErrorKind::Api),
+        "tool" => Ok(ChatErrorKind::Tool),
+        "rate_limit" | "ratelimit" => Ok(ChatErrorKind::RateLimit),
+        "refusal" => Ok(ChatErrorKind::Refusal),
+        "network" => Ok(ChatErrorKind::Network),
+        "other" => Ok(ChatErrorKind::Other),
+        _ => Err(format!("unknown error kind '{raw}'")),
+    }
+}
+
+fn parse_stop_reason_value(value: &ComponentValue) -> Result<StopReason, String> {
+    match value {
+        ComponentValue::String(raw) => parse_stop_reason_string(raw),
+        other => Err(format!("stop_reason must be string, got {other:?}")),
+    }
+}
+
+fn parse_stop_reason_string(raw: &str) -> Result<StopReason, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "end_turn" | "endturn" => Ok(StopReason::EndTurn),
+        "max_tokens" | "maxtokens" => Ok(StopReason::MaxTokens),
+        "tool_use" | "tooluse" => Ok(StopReason::ToolUse),
+        "stop_sequence" | "stopsequence" => Ok(StopReason::StopSequence),
+        "refusal" => Ok(StopReason::Refusal),
+        _ => Err(format!("unknown stop_reason '{raw}'")),
+    }
+}
+
+fn parse_edit_decision_value(value: &ComponentValue) -> Result<EditDecision, String> {
+    match value {
+        ComponentValue::String(raw) => parse_edit_decision_string(raw),
+        other => Err(format!("edit decision must be string, got {other:?}")),
+    }
+}
+
+fn parse_edit_decision_string(raw: &str) -> Result<EditDecision, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "pending" => Ok(EditDecision::Pending),
+        "accepted" | "accept" => Ok(EditDecision::Accepted),
+        "rejected" | "reject" => Ok(EditDecision::Rejected),
+        _ => Err(format!("unknown edit decision '{raw}'")),
+    }
+}
+
+fn parse_todo_state_value(value: &ComponentValue) -> Result<TodoState, String> {
+    match value {
+        ComponentValue::String(raw) => parse_todo_state_string(raw),
+        other => Err(format!("todo state must be string, got {other:?}")),
+    }
+}
+
+fn parse_todo_state_string(raw: &str) -> Result<TodoState, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "pending" => Ok(TodoState::Pending),
+        "in_progress" | "inprogress" => Ok(TodoState::InProgress),
+        "done" => Ok(TodoState::Done),
+        _ => Err(format!("unknown todo state '{raw}'")),
+    }
+}
+
+fn parse_notice_level_value(value: &ComponentValue) -> Result<NoticeLevel, String> {
+    match value {
+        ComponentValue::String(raw) => parse_notice_level_string(raw),
+        other => Err(format!("notice level must be string, got {other:?}")),
+    }
+}
+
+fn parse_notice_level_string(raw: &str) -> Result<NoticeLevel, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "info" => Ok(NoticeLevel::Info),
+        "warning" | "warn" => Ok(NoticeLevel::Warning),
+        "error" => Ok(NoticeLevel::Error),
+        _ => Err(format!("unknown notice level '{raw}'")),
+    }
+}
+
+fn parse_i32_value(value: &ComponentValue) -> Result<i32, String> {
+    let raw = value
+        .as_i64()
+        .ok_or_else(|| format!("expected i32-compatible value, got {value:?}"))?;
+    i32::try_from(raw).map_err(|_| format!("value out of range for i32: {raw}"))
+}
+
+fn expect_map<'a>(value: &'a ComponentValue, context: &str) -> Result<&'a ValueMap, String> {
+    match value {
+        ComponentValue::Map(map) => Ok(map),
+        other => Err(format!("{context} must be map, got {other:?}")),
+    }
+}
+
+fn required_string_field(map: &ValueMap, key: &str, context: &str) -> Result<String, String> {
+    match map.get(key) {
+        Some(ComponentValue::String(value)) => Ok(value.clone()),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be string, got {other:?}"
+        )),
+        None => Err(format!("{context} missing {key}")),
+    }
+}
+
+fn optional_string_field(
+    map: &ValueMap,
+    key: &str,
+    context: &str,
+) -> Result<Option<String>, String> {
+    match map.get(key) {
+        Some(ComponentValue::String(value)) => Ok(Some(value.clone())),
+        Some(ComponentValue::Null) | None => Ok(None),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be string, got {other:?}"
+        )),
+    }
+}
+
+fn required_u64_field(map: &ValueMap, key: &str, context: &str) -> Result<u64, String> {
+    match map.get(key) {
+        Some(value) => required_u64_value(value),
+        None => Err(format!("{context} missing {key}")),
+    }
+}
+
+fn required_u64_value(value: &ComponentValue) -> Result<u64, String> {
+    value
+        .as_u64()
+        .ok_or_else(|| format!("expected u64-compatible value, got {value:?}"))
+}
+
+fn required_bool_field(map: &ValueMap, key: &str, context: &str) -> Result<bool, String> {
+    match map.get(key) {
+        Some(ComponentValue::Bool(value)) => Ok(*value),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be bool, got {other:?}"
+        )),
+        None => Err(format!("{context} missing {key}")),
+    }
+}
+
+fn optional_bool_field(map: &ValueMap, key: &str, context: &str) -> Result<Option<bool>, String> {
+    match map.get(key) {
+        Some(ComponentValue::Bool(value)) => Ok(Some(*value)),
+        Some(ComponentValue::Null) | None => Ok(None),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be bool, got {other:?}"
+        )),
     }
 }
 
@@ -671,6 +1325,148 @@ mod tests {
     }
 
     #[test]
+    fn chat_messages_serialize_to_new_block_shape() {
+        let messages = vec![ChatMessage::text(
+            ChatMessageId(41),
+            ChatRole::Assistant,
+            "hello",
+        )];
+
+        let value = messages_to_component_value(&messages);
+        let ComponentValue::List(items) = value else {
+            panic!("messages must serialize to list");
+        };
+        let ComponentValue::Map(message) = &items[0] else {
+            panic!("message must serialize to map");
+        };
+
+        assert_eq!(
+            message.get("role"),
+            Some(&ComponentValue::String("assistant".to_string()))
+        );
+        assert!(message.contains_key("blocks"));
+        assert!(!message.contains_key("sender"));
+        assert!(!message.contains_key("content"));
+
+        let Some(ComponentValue::List(blocks)) = message.get("blocks") else {
+            panic!("message blocks must serialize to list");
+        };
+        let ComponentValue::Map(block) = &blocks[0] else {
+            panic!("block must serialize to map");
+        };
+        assert_eq!(
+            block.get("type"),
+            Some(&ComponentValue::String("text".to_string()))
+        );
+        assert_eq!(block.get("block_id"), Some(&ComponentValue::U64(41_001)));
+    }
+
+    #[test]
+    fn chat_messages_round_trip_new_block_shape() {
+        let json_input = value_map([("path", ComponentValue::String("src/lib.rs".to_string()))]);
+        let message = ChatMessage {
+            id: ChatMessageId(7),
+            role: ChatRole::Custom("agent".to_string()),
+            blocks: vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(71),
+                    markdown: "answer".to_string(),
+                    streaming: true,
+                }),
+                ChatBlock::Thinking(ThinkingBlock {
+                    id: ChatBlockId::new(72),
+                    markdown: "reasoning".to_string(),
+                    streaming: true,
+                    collapsed: true,
+                }),
+                ChatBlock::ToolUse(ToolUseBlock {
+                    id: ChatBlockId::new(73),
+                    call_id: "call-1".to_string(),
+                    name: "bash".to_string(),
+                    input: ToolInput::Json(json_input),
+                    status: ToolStatus::Running,
+                    approval: Some(ApprovalRequest {
+                        id: "approval-1".to_string(),
+                        prompt: "Run command?".to_string(),
+                        options: vec![ApprovalOption {
+                            id: "allow".to_string(),
+                            label: "Allow".to_string(),
+                        }],
+                        resolved: Some("allow".to_string()),
+                    }),
+                    collapsed: true,
+                }),
+                ChatBlock::ToolResult(ToolResultBlock {
+                    id: ChatBlockId::new(74),
+                    call_id: "call-1".to_string(),
+                    ok: false,
+                    exit_code: Some(1),
+                    output: ToolOutput::Diff(DiffData {
+                        unified: "--- a\n+++ b".to_string(),
+                    }),
+                    collapsed: true,
+                }),
+                ChatBlock::Diff(DiffBlock {
+                    id: ChatBlockId::new(75),
+                    path: "src/lib.rs".to_string(),
+                    diff: DiffData {
+                        unified: "@@ hunk".to_string(),
+                    },
+                    decision: EditDecision::Accepted,
+                }),
+                ChatBlock::Todo(TodoBlock {
+                    id: ChatBlockId::new(76),
+                    items: vec![
+                        TodoItem {
+                            text: "write tests".to_string(),
+                            state: TodoState::Done,
+                        },
+                        TodoItem {
+                            text: "ship".to_string(),
+                            state: TodoState::InProgress,
+                        },
+                    ],
+                }),
+                ChatBlock::Attachment(AttachmentBlock {
+                    id: ChatBlockId::new(77),
+                    name: "report.txt".to_string(),
+                    url: Some("file:///tmp/report.txt".to_string()),
+                    mime: Some("text/plain".to_string()),
+                }),
+                ChatBlock::Notice(NoticeBlock {
+                    id: ChatBlockId::new(78),
+                    level: NoticeLevel::Warning,
+                    text: "context compacted".to_string(),
+                }),
+                ChatBlock::Artifact(ArtifactBlock {
+                    id: ChatBlockId::new(79),
+                    kind: ArtifactKind::Diff,
+                    anchor: ArtifactId::new("artifact-1"),
+                    title: "patch".to_string(),
+                }),
+            ],
+            status: ChatTurnStatus::Failed(
+                ChatError::new(ChatErrorKind::Tool, "tool failed").with_detail("exit 1"),
+            ),
+            meta: ChatMessageMeta {
+                timestamp: Some("2026-06-12T00:00:00Z".to_string()),
+                model: Some("test-model".to_string()),
+                usage: Some(TokenUsage {
+                    input: 12,
+                    output: 34,
+                }),
+                elapsed_ms: Some(567),
+                stop_reason: Some(StopReason::ToolUse),
+            },
+        };
+
+        let value = messages_to_component_value(std::slice::from_ref(&message));
+        let parsed = parse_messages_value(&value).expect("parse messages");
+
+        assert_eq!(parsed, vec![message]);
+    }
+
+    #[test]
     fn chat_messages_round_trip_tool_call_content() {
         let messages = vec![ChatMessage::tool_call(
             ChatMessageId(42),
@@ -699,5 +1495,126 @@ mod tests {
         let parsed = parse_messages_value(&value).expect("parse messages");
 
         assert_eq!(parsed, messages);
+    }
+
+    #[test]
+    fn chat_messages_parse_legacy_top_level_content_variants() {
+        let content = value_map([(
+            "markdown",
+            ComponentValue::String("from content".to_string()),
+        )]);
+        let parsed = parse_message_value(&value_map([
+            ("id", ComponentValue::U64(50)),
+            ("sender", ComponentValue::String("user".to_string())),
+            ("content", content),
+        ]))
+        .expect("parse legacy content");
+        assert_eq!(
+            parsed,
+            ChatMessage::text(50, ChatRole::User, "from content")
+        );
+
+        let parsed = parse_message_value(&value_map([
+            ("id", ComponentValue::U64(51)),
+            ("sender", ComponentValue::String("assistant".to_string())),
+            (
+                "markdown",
+                ComponentValue::String("top markdown".to_string()),
+            ),
+        ]))
+        .expect("parse legacy markdown");
+        assert_eq!(
+            parsed,
+            ChatMessage::text(51, ChatRole::Assistant, "top markdown")
+        );
+
+        let file = value_map([
+            ("name", ComponentValue::String("report.txt".to_string())),
+            (
+                "url",
+                ComponentValue::String("file:///report.txt".to_string()),
+            ),
+        ]);
+        let parsed = parse_message_value(&value_map([
+            ("id", ComponentValue::U64(52)),
+            ("sender", ComponentValue::String("assistant".to_string())),
+            ("file", file),
+        ]))
+        .expect("parse legacy file");
+        assert_eq!(
+            parsed,
+            ChatMessage::file(
+                52,
+                ChatRole::Assistant,
+                "report.txt",
+                Some("file:///report.txt".to_string())
+            )
+        );
+
+        let artifact = value_map([
+            ("kind", ComponentValue::String("diff".to_string())),
+            ("anchor", ComponentValue::String("artifact-1".to_string())),
+            ("title", ComponentValue::String("patch".to_string())),
+        ]);
+        let parsed = parse_message_value(&value_map([
+            ("id", ComponentValue::U64(53)),
+            ("sender", ComponentValue::String("assistant".to_string())),
+            ("artifact", artifact),
+        ]))
+        .expect("parse legacy artifact");
+        assert_eq!(
+            parsed,
+            ChatMessage::artifact(
+                53,
+                ChatRole::Assistant,
+                ArtifactKind::Diff,
+                ArtifactId::new("artifact-1"),
+                "patch"
+            )
+        );
+
+        let tool_call = value_map([
+            ("name", ComponentValue::String("build".to_string())),
+            ("status", ComponentValue::String("running".to_string())),
+            ("output", ComponentValue::String("cargo test".to_string())),
+        ]);
+        let parsed = parse_message_value(&value_map([
+            ("id", ComponentValue::U64(54)),
+            ("sender", ComponentValue::String("assistant".to_string())),
+            ("status", ComponentValue::String("in_progress".to_string())),
+            ("timestamp", ComponentValue::String("now".to_string())),
+            ("tool_call", tool_call),
+        ]))
+        .expect("parse legacy tool call");
+
+        assert_eq!(parsed.role, ChatRole::Assistant);
+        assert_eq!(parsed.status, ChatTurnStatus::Streaming);
+        assert_eq!(parsed.meta.timestamp.as_deref(), Some("now"));
+        assert_eq!(parsed.blocks.len(), 2);
+        assert!(matches!(
+            &parsed.blocks[0],
+            ChatBlock::ToolUse(block)
+                if block.id == ChatBlockId::new(54_001)
+                    && block.call_id == "tool-54"
+                    && block.name == "build"
+                    && block.status == ToolStatus::Running
+        ));
+        assert!(matches!(
+            &parsed.blocks[1],
+            ChatBlock::ToolResult(block)
+                if block.id == ChatBlockId::new(54_002)
+                    && block.call_id == "tool-54"
+                    && block.output == ToolOutput::Ansi("cargo test".to_string())
+        ));
+    }
+
+    fn value_map(
+        entries: impl IntoIterator<Item = (&'static str, ComponentValue)>,
+    ) -> ComponentValue {
+        let mut map = ValueMap::new();
+        for (key, value) in entries {
+            map.insert(key.to_string(), value);
+        }
+        ComponentValue::Map(map)
     }
 }

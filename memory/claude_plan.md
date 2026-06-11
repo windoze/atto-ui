@@ -45,7 +45,7 @@
 - 已检查提交前状态：本次提交包含 P1.2 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
 
-## 当前任务：P1.3 store 改造
+## 历史记录：P1.3 store 改造
 
 - 已读取 `TODO.md`：首个未完成任务为 `P1.3 store 改造`。
 - 已查看最近提交：`1cf224b [P1.2] Add chat content block types`，未声明与 `P1.3` 直接相关的额外未完成事项。
@@ -57,4 +57,18 @@
 - 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - 已更新 `TODO.md`：`P1.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P1.3 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+- 下一步创建任务提交并停止。
+
+## 当前任务：P1.4 序列化新形 + 旧形兼容
+
+- 已读取 `TODO.md`：首个未完成任务为 `P1.4 序列化新形 + 旧形兼容`。
+- 已查看最近提交：`080c0dd [P1.3] Rewrite chat message store`，未声明与 `P1.4` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/dynamic.rs` 的消息序列化/解析和单测；不推进 P1.5 渲染过渡或 P1.6 JS 侧同步。
+- 已检查 `CHAT_UI.md` §8、`dynamic.rs` 和 `message.rs`：需要输出新形 `{id,role,status,meta?,blocks:[...]}`，并保留旧形顶层 `content`/`markdown`/`tool_call`/`file`/`artifact` 兼容解析。
+- 实施策略：新增 block 级序列化/解析 helper，覆盖 meta、失败状态、工具输入输出、审批、diff/todo/notice/artifact 等字段；旧形解析保留 `sender`、`status:"in_progress"` 与派生 block id。
+- 已完成实现：`message_to_value` 现在只输出 `role/status/meta?/blocks` 新形；`parse_message_value` 优先解析新形 `blocks`，否则走旧形兼容路径。
+- 已补充单测：新形输出断言、完整多 block round-trip、旧形顶层 `content`/`markdown`/`file`/`artifact`/`tool_call` 解析兼容。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P1.4` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P1.4 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/dynamic.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
