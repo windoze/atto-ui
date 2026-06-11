@@ -2,9 +2,9 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, Identifiable, LayoutParams,
-    MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarVisibility, Size, Spacer, Text,
-    VStack,
+    Component, ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, Identifiable,
+    LayoutParams, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarVisibility, Size,
+    Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Disclosure, DisclosureStatus};
@@ -13,8 +13,8 @@ use atto_ui_markdown::MarkdownViewer;
 use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
@@ -26,6 +26,7 @@ use crate::message::{
     TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
+use crate::viewer::diff_line_style;
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
@@ -670,7 +671,7 @@ struct ChatMessageRowBindings {
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
     tool_output: Option<Binding<String>>,
-    tool_status: Option<Binding<DisclosureStatus>>,
+    disclosure_status: Option<Binding<DisclosureStatus>>,
 }
 
 struct ChatMessageRow {
@@ -755,10 +756,10 @@ impl ChatMessageRow {
                 binding.set(output);
             }
 
-            if let Some(binding) = &self.body_bindings.tool_status
-                && let ChatBlock::ToolUse(tool) = block
+            if let Some(binding) = &self.body_bindings.disclosure_status
+                && let Some(status) = block_disclosure_status(block)
             {
-                binding.set(tool_status_to_disclosure(&tool.status));
+                binding.set(status);
             }
         });
         self.last_block_version.set(version);
@@ -808,16 +809,29 @@ fn block_markdown_for_render(block: &ChatBlock, config: &ChatMessageRowConfig) -
         ChatBlock::Thinking(thinking) => (&thinking.markdown, thinking.streaming),
         _ => return None,
     };
-    let mut content = markdown.clone();
+    Some(markdown_for_render(markdown, streaming, config))
+}
+
+fn markdown_for_render(markdown: &str, streaming: bool, config: &ChatMessageRowConfig) -> String {
+    let mut content = markdown.to_string();
     if streaming && !config.in_progress_suffix.is_empty() {
         content.push_str(&config.in_progress_suffix);
     }
-    Some(content)
+    content
 }
 
 fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
     match block {
         ChatBlock::ToolResult(result) => Some(result.output.as_text().to_string()),
+        _ => None,
+    }
+}
+
+fn block_disclosure_status(block: &ChatBlock) -> Option<DisclosureStatus> {
+    match block {
+        ChatBlock::Thinking(thinking) => Some(thinking_status_to_disclosure(thinking)),
+        ChatBlock::ToolUse(tool) => Some(tool_status_to_disclosure(&tool.status)),
+        ChatBlock::ToolResult(result) => Some(tool_result_to_disclosure(result)),
         _ => None,
     }
 }
@@ -1029,8 +1043,10 @@ impl ::atto_ui::composable::EventHandling for ChatTimestampDivider {}
 
 enum ChatMessageBody {
     Markdown(MarkdownViewer),
-    File(VStack),
-    Tool(Disclosure),
+    Text(Text),
+    Disclosure(Disclosure),
+    Diff(DiffView),
+    Todo(TodoListView),
     Artifact(ArtifactLink),
 }
 
@@ -1059,47 +1075,47 @@ impl ChatMessageBody {
                     },
                 )
             }
-            Some(ChatBlock::Thinking(_)) => {
-                let content = Binding::new(
-                    block
-                        .and_then(|block| block_markdown_for_render(block, config))
-                        .unwrap_or_default(),
-                );
+            Some(ChatBlock::Thinking(thinking)) => {
+                let content = Binding::new(markdown_for_render(
+                    &thinking.markdown,
+                    thinking.streaming,
+                    config,
+                ));
+                let status = Binding::new(thinking_status_to_disclosure(thinking));
+                let viewer = MarkdownViewer::new(content.clone())
+                    .streaming_tolerant(true)
+                    .wrap_width(config.wrap_width)
+                    .text_color(Color::DarkGray)
+                    .vertical_scrollbar(ScrollbarVisibility::Never);
                 (
-                    ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content.clone())
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ChatMessageBody::Disclosure(
+                        Disclosure::new("Thinking")
+                            .expanded(!thinking.collapsed)
+                            .status(status.clone())
+                            .child(viewer),
                     ),
                     ChatMessageRowBindings {
                         markdown: Some(content),
+                        disclosure_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
                 )
             }
-            Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
-                let mut view = VStack::new().with_spacing(0);
-                view = view.child(Text::new(format!("File: {name}")));
-                if let Some(url) = url {
-                    view = view.child(Text::new(format!("Url: {url}")));
-                }
-                (
-                    ChatMessageBody::File(view),
-                    ChatMessageRowBindings::default(),
-                )
-            }
+            Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => (
+                ChatMessageBody::Text(Text::new(attachment_label(name, url.as_deref()))),
+                ChatMessageRowBindings::default(),
+            ),
             Some(ChatBlock::ToolUse(tool)) => {
-                let input = Binding::new(tool_input_to_text(&tool.input));
+                let input = Binding::new(tool_use_content(tool));
                 let status = Binding::new(tool_status_to_disclosure(&tool.status));
-                let view = Disclosure::new(format!("Tool: {}", tool.name))
+                let view = Disclosure::new(tool.name.clone())
                     .expanded(!tool.collapsed)
                     .status(status.clone())
                     .content(input);
                 (
-                    ChatMessageBody::Tool(view),
+                    ChatMessageBody::Disclosure(view),
                     ChatMessageRowBindings {
-                        tool_status: Some(status),
+                        disclosure_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
                 )
@@ -1107,54 +1123,40 @@ impl ChatMessageBody {
             Some(ChatBlock::ToolResult(result)) => {
                 let output = Binding::new(result.output.as_text().to_string());
                 let status = Binding::new(tool_result_to_disclosure(result));
-                let view = Disclosure::new(format!("Tool result: {}", result.call_id))
+                let view = Disclosure::new(tool_result_title(result))
                     .expanded(!result.collapsed)
-                    .status(status)
-                    .content(output.clone());
+                    .status(status.clone())
+                    .boxed_child(tool_output_component(
+                        &result.output,
+                        output.clone(),
+                        config,
+                    ));
                 (
-                    ChatMessageBody::Tool(view),
+                    ChatMessageBody::Disclosure(view),
                     ChatMessageRowBindings {
                         tool_output: Some(output),
+                        disclosure_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
                 )
             }
-            Some(ChatBlock::Diff(DiffBlock { diff, .. })) => {
-                let content = Binding::new(diff.unified.clone());
+            Some(ChatBlock::Diff(diff)) => {
+                let content = Binding::new(diff.diff.unified.clone());
                 (
-                    ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content)
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
-                    ),
+                    ChatMessageBody::Diff(DiffView::new(Some(diff_block_title(diff)), content)),
                     ChatMessageRowBindings::default(),
                 )
             }
-            Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
-                let content = Binding::new(todo_items_to_markdown(items));
-                (
-                    ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content)
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
-                    ),
-                    ChatMessageRowBindings::default(),
-                )
-            }
-            Some(ChatBlock::Notice(NoticeBlock { text, .. })) => {
-                let content = Binding::new(text.clone());
-                (
-                    ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content)
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
-                    ),
-                    ChatMessageRowBindings::default(),
-                )
-            }
+            Some(ChatBlock::Todo(TodoBlock { items, .. })) => (
+                ChatMessageBody::Todo(TodoListView::new(items.clone())),
+                ChatMessageRowBindings::default(),
+            ),
+            Some(ChatBlock::Notice(NoticeBlock { level, text, .. })) => (
+                ChatMessageBody::Text(
+                    Text::new(notice_label(*level, text)).fg(notice_color(*level)),
+                ),
+                ChatMessageRowBindings::default(),
+            ),
             Some(ChatBlock::Artifact(ArtifactBlock {
                 kind,
                 anchor,
@@ -1188,14 +1190,6 @@ impl ChatMessageBody {
     }
 }
 
-fn todo_items_to_markdown(items: &[TodoItem]) -> String {
-    items
-        .iter()
-        .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn todo_state_marker(state: TodoState) -> &'static str {
     match state {
         TodoState::Pending => "[ ]",
@@ -1204,9 +1198,45 @@ fn todo_state_marker(state: TodoState) -> &'static str {
     }
 }
 
+fn attachment_label(name: &str, url: Option<&str>) -> String {
+    match url.filter(|url| !url.is_empty()) {
+        Some(url) => format!("File: {name} ({url})"),
+        None => format!("File: {name}"),
+    }
+}
+
+fn notice_label(level: NoticeLevel, text: &str) -> String {
+    format!("{}: {text}", notice_level_label(level))
+}
+
+fn notice_level_label(level: NoticeLevel) -> &'static str {
+    match level {
+        NoticeLevel::Info => "Info",
+        NoticeLevel::Warning => "Warning",
+        NoticeLevel::Error => "Error",
+    }
+}
+
+fn notice_color(level: NoticeLevel) -> Color {
+    match level {
+        NoticeLevel::Info => Color::Cyan,
+        NoticeLevel::Warning => Color::Yellow,
+        NoticeLevel::Error => Color::Red,
+    }
+}
+
+fn thinking_status_to_disclosure(thinking: &ThinkingBlock) -> DisclosureStatus {
+    if thinking.streaming {
+        DisclosureStatus::Running
+    } else {
+        DisclosureStatus::Idle
+    }
+}
+
 fn tool_status_to_disclosure(status: &ToolStatus) -> DisclosureStatus {
     match status {
-        ToolStatus::Pending | ToolStatus::Running => DisclosureStatus::Running,
+        ToolStatus::Pending => DisclosureStatus::Idle,
+        ToolStatus::Running => DisclosureStatus::Running,
         ToolStatus::Done => DisclosureStatus::Done,
         ToolStatus::Error | ToolStatus::Canceled => DisclosureStatus::Error,
     }
@@ -1220,10 +1250,515 @@ fn tool_result_to_disclosure(result: &ToolResultBlock) -> DisclosureStatus {
     }
 }
 
+fn tool_result_title(result: &ToolResultBlock) -> String {
+    match result.exit_code {
+        Some(code) => format!("Tool result: {} (exit {code})", result.call_id),
+        None => format!("Tool result: {}", result.call_id),
+    }
+}
+
+fn diff_block_title(diff: &DiffBlock) -> String {
+    format!(
+        "Diff: {} ({})",
+        diff.path,
+        edit_decision_label(diff.decision)
+    )
+}
+
+fn edit_decision_label(decision: EditDecision) -> &'static str {
+    match decision {
+        EditDecision::Pending => "pending",
+        EditDecision::Accepted => "accepted",
+        EditDecision::Rejected => "rejected",
+    }
+}
+
+fn tool_output_component(
+    output: &ToolOutput,
+    content: Binding<String>,
+    config: &ChatMessageRowConfig,
+) -> Box<dyn Component> {
+    match output {
+        ToolOutput::Ansi(_) => Box::new(AnsiOutputView::new(content)),
+        ToolOutput::Markdown(_) => Box::new(
+            MarkdownViewer::new(content)
+                .streaming_tolerant(true)
+                .wrap_width(config.wrap_width)
+                .vertical_scrollbar(ScrollbarVisibility::Never),
+        ),
+        ToolOutput::Diff(_) => Box::new(DiffView::new(None, content)),
+    }
+}
+
+fn tool_use_content(tool: &ToolUseBlock) -> String {
+    let mut sections = vec![tool_input_to_text(&tool.input)];
+    if let Some(approval) = &tool.approval {
+        sections.push(approval_request_text(approval));
+    }
+    sections
+        .into_iter()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn tool_input_to_text(input: &ToolInput) -> String {
     match input {
         ToolInput::Text(text) => text.clone(),
-        ToolInput::Json(value) => format!("{value:?}"),
+        ToolInput::Json(value) => component_value_lines(value).join("\n"),
+    }
+}
+
+fn approval_request_text(approval: &crate::message::ApprovalRequest) -> String {
+    let mut lines = vec![format!("Approval: {}", approval.prompt)];
+    lines.extend(approval.options.iter().map(|option| {
+        let marker = if approval.resolved.as_deref() == Some(option.id.as_str()) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        format!("{marker} {}", option.label)
+    }));
+    lines.join("\n")
+}
+
+fn component_value_lines(value: &ComponentValue) -> Vec<String> {
+    match value {
+        ComponentValue::Map(map) if map.is_empty() => vec!["{}".to_string()],
+        ComponentValue::Map(map) => map
+            .iter()
+            .map(|(key, value)| format!("{key}: {}", component_value_compact(value)))
+            .collect(),
+        other => vec![component_value_compact(other)],
+    }
+}
+
+fn component_value_compact(value: &ComponentValue) -> String {
+    match value {
+        ComponentValue::Null => "null".to_string(),
+        ComponentValue::Bool(value) => value.to_string(),
+        ComponentValue::I64(value) => value.to_string(),
+        ComponentValue::U64(value) => value.to_string(),
+        ComponentValue::F64(value) => value.to_string(),
+        ComponentValue::String(value) => format!("{value:?}"),
+        ComponentValue::StringList(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ComponentValue::Table(rows) => format!("{} row table", rows.len()),
+        ComponentValue::Rect(rect) => format!(
+            "rect({}, {}, {}, {})",
+            rect.x, rect.y, rect.width, rect.height
+        ),
+        ComponentValue::Bytes(bytes) => format!("{} bytes", bytes.len()),
+        ComponentValue::List(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(component_value_compact)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ComponentValue::Map(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(key, value)| format!("{key}: {}", component_value_compact(value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+struct DiffView {
+    title: Option<String>,
+    diff: Binding<String>,
+}
+
+impl DiffView {
+    fn new(title: Option<String>, diff: impl Into<Binding<String>>) -> Self {
+        Self {
+            title,
+            diff: diff.into(),
+        }
+    }
+
+    fn display_height(&self) -> u16 {
+        let title = u16::from(self.title.is_some());
+        title.saturating_add(line_count(&self.diff.get()))
+    }
+
+    fn display_width(&self) -> u16 {
+        let diff_width = self
+            .diff
+            .get()
+            .lines()
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(0);
+        let title_width = self
+            .title
+            .as_deref()
+            .map(UnicodeWidthStr::width)
+            .unwrap_or(0);
+        diff_width.max(title_width).max(1).min(u16::MAX as usize) as u16
+    }
+}
+
+impl Component for DiffView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let base = ctx.theme.widget.normal;
+        let mut lines = Vec::new();
+        if let Some(title) = &self.title {
+            lines.push(Line::styled(title.clone(), ctx.theme.widget.dim));
+        }
+        let diff = self.diff.get();
+        lines.extend(diff_display_lines(&diff, base));
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for DiffView {}
+impl ::atto_ui::composable::Scrollable for DiffView {}
+impl ::atto_ui::composable::FocusNav for DiffView {}
+impl ::atto_ui::composable::DynamicTree for DiffView {}
+impl ::atto_ui::composable::EventHandling for DiffView {}
+
+impl ::atto_ui::composable::Layout for DiffView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.display_width())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_height())
+    }
+}
+
+struct TodoListView {
+    items: Vec<TodoItem>,
+}
+
+impl TodoListView {
+    fn new(items: Vec<TodoItem>) -> Self {
+        Self { items }
+    }
+
+    fn display_lines(&self) -> Vec<String> {
+        if self.items.is_empty() {
+            return vec!["(no todo items)".to_string()];
+        }
+        self.items
+            .iter()
+            .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
+            .collect()
+    }
+}
+
+impl Component for TodoListView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let lines = if self.items.is_empty() {
+            vec![Line::styled("(no todo items)", ctx.theme.widget.dim)]
+        } else {
+            self.items
+                .iter()
+                .map(|item| {
+                    Line::styled(
+                        format!("{} {}", todo_state_marker(item.state), item.text),
+                        todo_state_style(item.state, ctx),
+                    )
+                })
+                .collect()
+        };
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for TodoListView {}
+impl ::atto_ui::composable::Scrollable for TodoListView {}
+impl ::atto_ui::composable::FocusNav for TodoListView {}
+impl ::atto_ui::composable::DynamicTree for TodoListView {}
+impl ::atto_ui::composable::EventHandling for TodoListView {}
+
+impl ::atto_ui::composable::Layout for TodoListView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(max_line_width(&self.display_lines()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_lines().len().min(u16::MAX as usize) as u16)
+    }
+}
+
+struct AnsiOutputView {
+    text: Binding<String>,
+}
+
+impl AnsiOutputView {
+    fn new(text: impl Into<Binding<String>>) -> Self {
+        Self { text: text.into() }
+    }
+
+    fn lines(&self, base: Style) -> Vec<Line<'static>> {
+        ansi_sgr_lines(&self.text.get(), base)
+    }
+}
+
+impl Component for AnsiOutputView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        frame.render_widget(Paragraph::new(self.lines(ctx.theme.widget.normal)), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for AnsiOutputView {}
+impl ::atto_ui::composable::Scrollable for AnsiOutputView {}
+impl ::atto_ui::composable::FocusNav for AnsiOutputView {}
+impl ::atto_ui::composable::DynamicTree for AnsiOutputView {}
+impl ::atto_ui::composable::EventHandling for AnsiOutputView {}
+
+impl ::atto_ui::composable::Layout for AnsiOutputView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(
+            self.lines(Style::default())
+                .iter()
+                .map(Line::width)
+                .max()
+                .unwrap_or(1)
+                .max(1)
+                .min(u16::MAX as usize) as u16,
+        )
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(
+            self.lines(Style::default())
+                .len()
+                .max(1)
+                .min(u16::MAX as usize) as u16,
+        )
+    }
+}
+
+fn todo_state_style(state: TodoState, ctx: ComponentContext<'_>) -> Style {
+    match state {
+        TodoState::Pending => ctx.theme.widget.normal,
+        TodoState::InProgress => ctx.theme.widget.accent,
+        TodoState::Done => ctx.theme.widget.dim,
+    }
+}
+
+fn diff_display_lines(diff: &str, base: Style) -> Vec<Line<'static>> {
+    if diff.is_empty() {
+        return vec![Line::styled(String::new(), base)];
+    }
+    diff.lines()
+        .map(|line| Line::styled(line.to_string(), diff_line_style(line, base)))
+        .collect()
+}
+
+fn line_count(text: &str) -> u16 {
+    text.lines().count().max(1).min(u16::MAX as usize) as u16
+}
+
+fn max_line_width(lines: &[String]) -> u16 {
+    lines
+        .iter()
+        .map(|line| line.width())
+        .max()
+        .unwrap_or(1)
+        .max(1)
+        .min(u16::MAX as usize) as u16
+}
+
+fn ansi_sgr_lines(input: &str, base: Style) -> Vec<Line<'static>> {
+    let mut lines = vec![Vec::<Span<'static>>::new()];
+    let mut text = String::new();
+    let mut style = base;
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
+            chars.next();
+            let mut sequence = String::new();
+            let mut terminator = None;
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    terminator = Some(next);
+                    break;
+                }
+                sequence.push(next);
+            }
+            if terminator == Some('m') {
+                push_ansi_span(&mut lines, &mut text, style);
+                apply_sgr_sequence(&sequence, &mut style, base);
+            }
+            continue;
+        }
+
+        match ch {
+            '\n' => {
+                push_ansi_span(&mut lines, &mut text, style);
+                lines.push(Vec::new());
+            }
+            '\r' => {}
+            other => text.push(other),
+        }
+    }
+
+    push_ansi_span(&mut lines, &mut text, style);
+    lines
+        .into_iter()
+        .map(|spans| {
+            if spans.is_empty() {
+                Line::from(String::new())
+            } else {
+                Line::from(spans)
+            }
+        })
+        .collect()
+}
+
+fn push_ansi_span(lines: &mut [Vec<Span<'static>>], text: &mut String, style: Style) {
+    if text.is_empty() {
+        return;
+    }
+    let Some(line) = lines.last_mut() else {
+        return;
+    };
+    line.push(Span::styled(std::mem::take(text), style));
+}
+
+fn apply_sgr_sequence(sequence: &str, style: &mut Style, base: Style) {
+    let params = if sequence.trim().is_empty() {
+        vec![0]
+    } else {
+        sequence
+            .split(';')
+            .map(|part| part.parse::<u16>().unwrap_or(0))
+            .collect::<Vec<_>>()
+    };
+    let mut index = 0;
+    while index < params.len() {
+        match params[index] {
+            0 => *style = base,
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            2 => *style = style.add_modifier(Modifier::DIM),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            9 => *style = style.add_modifier(Modifier::CROSSED_OUT),
+            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            23 => *style = style.remove_modifier(Modifier::ITALIC),
+            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
+            29 => *style = style.remove_modifier(Modifier::CROSSED_OUT),
+            30..=37 => style.fg = Some(ansi_color((params[index] - 30) as u8, false)),
+            39 => style.fg = base.fg,
+            40..=47 => style.bg = Some(ansi_color((params[index] - 40) as u8, false)),
+            49 => style.bg = base.bg,
+            90..=97 => style.fg = Some(ansi_color((params[index] - 90) as u8, true)),
+            100..=107 => style.bg = Some(ansi_color((params[index] - 100) as u8, true)),
+            38 => apply_extended_ansi_color(&params, &mut index, style, true),
+            48 => apply_extended_ansi_color(&params, &mut index, style, false),
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn apply_extended_ansi_color(
+    params: &[u16],
+    index: &mut usize,
+    style: &mut Style,
+    foreground: bool,
+) {
+    let Some(mode) = params.get((*index).saturating_add(1)).copied() else {
+        return;
+    };
+    let color = match mode {
+        5 => {
+            let Some(value) = params.get((*index).saturating_add(2)).copied() else {
+                return;
+            };
+            *index = (*index).saturating_add(2);
+            Color::Indexed(value.min(u8::MAX as u16) as u8)
+        }
+        2 => {
+            let (Some(r), Some(g), Some(b)) = (
+                params.get((*index).saturating_add(2)).copied(),
+                params.get((*index).saturating_add(3)).copied(),
+                params.get((*index).saturating_add(4)).copied(),
+            ) else {
+                return;
+            };
+            *index = (*index).saturating_add(4);
+            Color::Rgb(
+                r.min(u8::MAX as u16) as u8,
+                g.min(u8::MAX as u16) as u8,
+                b.min(u8::MAX as u16) as u8,
+            )
+        }
+        _ => return,
+    };
+    if foreground {
+        style.fg = Some(color);
+    } else {
+        style.bg = Some(color);
+    }
+}
+
+fn ansi_color(index: u8, bright: bool) -> Color {
+    match (index, bright) {
+        (0, false) => Color::Black,
+        (1, false) => Color::Red,
+        (2, false) => Color::Green,
+        (3, false) => Color::Yellow,
+        (4, false) => Color::Blue,
+        (5, false) => Color::Magenta,
+        (6, false) => Color::Cyan,
+        (7, false) => Color::Gray,
+        (0, true) => Color::DarkGray,
+        (1, true) => Color::LightRed,
+        (2, true) => Color::LightGreen,
+        (3, true) => Color::LightYellow,
+        (4, true) => Color::LightBlue,
+        (5, true) => Color::LightMagenta,
+        (6, true) => Color::LightCyan,
+        (7, true) => Color::White,
+        _ => Color::Reset,
     }
 }
 
@@ -1231,8 +1766,10 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         match self {
             ChatMessageBody::Markdown(view) => view.draw(frame, area, ctx),
-            ChatMessageBody::File(view) => view.draw(frame, area, ctx),
-            ChatMessageBody::Tool(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Text(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Disclosure(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Diff(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Todo(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
         }
     }
@@ -1244,8 +1781,10 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn min_width(&self) -> u16 {
         match self {
             ChatMessageBody::Markdown(view) => view.min_width(),
-            ChatMessageBody::File(view) => view.min_width(),
-            ChatMessageBody::Tool(view) => view.min_width(),
+            ChatMessageBody::Text(view) => view.min_width(),
+            ChatMessageBody::Disclosure(view) => view.min_width(),
+            ChatMessageBody::Diff(view) => view.min_width(),
+            ChatMessageBody::Todo(view) => view.min_width(),
             ChatMessageBody::Artifact(view) => view.min_width(),
         }
     }
@@ -1253,8 +1792,10 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn min_height(&self) -> u16 {
         match self {
             ChatMessageBody::Markdown(view) => view.min_height(),
-            ChatMessageBody::File(view) => view.min_height(),
-            ChatMessageBody::Tool(view) => view.min_height(),
+            ChatMessageBody::Text(view) => view.min_height(),
+            ChatMessageBody::Disclosure(view) => view.min_height(),
+            ChatMessageBody::Diff(view) => view.min_height(),
+            ChatMessageBody::Todo(view) => view.min_height(),
             ChatMessageBody::Artifact(view) => view.min_height(),
         }
     }
@@ -1262,8 +1803,10 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn desired_width(&self) -> Option<u16> {
         match self {
             ChatMessageBody::Markdown(view) => view.desired_width(),
-            ChatMessageBody::File(view) => view.desired_width(),
-            ChatMessageBody::Tool(view) => view.desired_width(),
+            ChatMessageBody::Text(view) => view.desired_width(),
+            ChatMessageBody::Disclosure(view) => view.desired_width(),
+            ChatMessageBody::Diff(view) => view.desired_width(),
+            ChatMessageBody::Todo(view) => view.desired_width(),
             ChatMessageBody::Artifact(view) => view.desired_width(),
         }
     }
@@ -1271,8 +1814,10 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
     fn desired_height(&self) -> Option<u16> {
         match self {
             ChatMessageBody::Markdown(view) => view.desired_height(),
-            ChatMessageBody::File(view) => view.desired_height(),
-            ChatMessageBody::Tool(view) => view.desired_height(),
+            ChatMessageBody::Text(view) => view.desired_height(),
+            ChatMessageBody::Disclosure(view) => view.desired_height(),
+            ChatMessageBody::Diff(view) => view.desired_height(),
+            ChatMessageBody::Todo(view) => view.desired_height(),
             ChatMessageBody::Artifact(view) => view.desired_height(),
         }
     }
@@ -1288,8 +1833,10 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         match self {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
-            ChatMessageBody::File(view) => view.handle_event(event, ctx),
-            ChatMessageBody::Tool(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Text(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Disclosure(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Diff(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Todo(view) => view.handle_event(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
         }
     }
@@ -1409,8 +1956,51 @@ fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordina
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::message::{ChatMessageId, ChatRole};
+
+    #[test]
+    fn tool_input_json_map_renders_key_value_lines() {
+        let mut input = BTreeMap::new();
+        input.insert(
+            "path".to_string(),
+            ComponentValue::String("src/lib.rs".to_string()),
+        );
+        input.insert("count".to_string(), ComponentValue::U64(2));
+
+        let text = tool_input_to_text(&ToolInput::Json(ComponentValue::Map(input)));
+
+        assert_eq!(text, "count: 2\npath: \"src/lib.rs\"");
+    }
+
+    #[test]
+    fn ansi_sgr_lines_apply_color_spans() {
+        let lines = ansi_sgr_lines(
+            "plain \u{1b}[31mred\u{1b}[0m \u{1b}[38;5;42mindexed",
+            Style::default(),
+        );
+
+        assert_eq!(lines.len(), 1);
+        let spans = &lines[0].spans;
+        assert_eq!(spans[0].content.as_ref(), "plain ");
+        assert_eq!(spans[1].content.as_ref(), "red");
+        assert_eq!(spans[1].style.fg, Some(Color::Red));
+        assert_eq!(spans[2].content.as_ref(), " ");
+        assert_eq!(spans[2].style.fg, None);
+        assert_eq!(spans[3].content.as_ref(), "indexed");
+        assert_eq!(spans[3].style.fg, Some(Color::Indexed(42)));
+    }
+
+    #[test]
+    fn diff_display_lines_reuses_unified_diff_styles() {
+        let lines = diff_display_lines("+added\n-removed\n@@ hunk", Style::default());
+
+        assert_eq!(lines[0].style.fg, Some(Color::Green));
+        assert_eq!(lines[1].style.fg, Some(Color::Red));
+        assert_eq!(lines[2].style.fg, Some(Color::Yellow));
+    }
 
     #[test]
     fn row_keys_ignore_text_markdown_and_turn_status_for_streaming_deltas() {

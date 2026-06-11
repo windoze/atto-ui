@@ -129,3 +129,15 @@
 - 已更新 `TODO.md`：`P2.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P2.2 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
+
+## 历史记录：P2.3 块→控件映射
+
+- 已读取 `TODO.md`：首个未完成任务为 `P2.3 块→控件映射`。
+- 已查看最近提交：`fbf42ed [P2.2] Remove chat row message clones`，未声明与 `P2.3` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 的 block 渲染映射，以及用于验证的 `snapshot_chat_app`/PTY 覆盖；不推进 P2.4 滚动修复或 P3 工具配对语义。
+- 已实现映射：Text 使用 `MarkdownViewer`；Thinking 使用 `Disclosure + MarkdownViewer` 并弱化颜色；ToolUse 使用以工具名为标题的 `Disclosure`，渲染 Text/Json 输入和静态审批信息；ToolResult 按 Ansi/Markdown/Diff 分派，Ansi 解析 SGR 样式，Diff 复用 `viewer::diff_line_style`；Diff block 使用 inline diff；Todo 自绘；Attachment/Notice 使用 Text；Artifact 沿用 `ArtifactLink`。
+- 已新增验证：list 单测覆盖 Json 入参格式化、ANSI SGR 样式解析、diff 行样式复用；`snapshot_chat_app --block-mapping` 生成覆盖所有 block 的 deterministic 场景；PTY 测试验证终端可见渲染。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --test pty_chat chat_block_mapping_renders_each_block_with_target_widget -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P2.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 代码验证已在更新 `TODO.md` 前完成；之后仅修改文档记录，无需重跑测试。
+- 下一步检查提交范围并提交。

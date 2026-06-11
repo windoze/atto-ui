@@ -176,7 +176,7 @@ fn artifact_display_lines(artifact: &Artifact) -> Vec<String> {
     lines
 }
 
-fn diff_line_style(line: &str, base: Style) -> Style {
+pub(crate) fn diff_line_style(line: &str, base: Style) -> Style {
     if line.starts_with("@@") {
         base.fg(Color::Yellow)
     } else if line.starts_with("+++") || line.starts_with("---") {

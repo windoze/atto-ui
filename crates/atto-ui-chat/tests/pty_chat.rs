@@ -263,7 +263,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
     let mut host = PtyTestHost::spawn(bin, &["--tool-call"], 80, 24)?;
 
-    host.wait_for_text("Tool: build", Duration::from_secs(2))?;
+    host.wait_for_text("build", Duration::from_secs(2))?;
     host.wait_for_text("Tool result: tool-1", Duration::from_secs(2))?;
     host.wait_for_text("[~]", Duration::from_secs(2))?;
     host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
@@ -279,7 +279,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         |snapshot| {
             snapshot
                 .iter()
-                .any(|line| line.contains("[x]") && line.contains("Tool: build"))
+                .any(|line| line.contains("[x]") && line.contains("build"))
         },
         Duration::from_secs(2),
     )?;
@@ -299,10 +299,47 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         |snapshot| {
             snapshot
                 .iter()
-                .any(|line| line.contains("[!]") && line.contains("Tool: build"))
+                .any(|line| line.contains("[!]") && line.contains("build"))
         },
         Duration::from_secs(2),
     )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--block-mapping"], 100, 50)?;
+
+    host.wait_for_text("BLOCK-TEXT", Duration::from_secs(2))?;
+    host.wait_for_text("Thinking", Duration::from_secs(2))?;
+    host.wait_for_text("BLOCK-THINKING", Duration::from_secs(2))?;
+    host.wait_for_text("json_tool", Duration::from_secs(2))?;
+    host.wait_for_text("count: 2", Duration::from_secs(2))?;
+    host.wait_for_text("path: \"src/lib.rs\"", Duration::from_secs(2))?;
+    host.wait_for_text("Tool result: call-ansi (exit 0)", Duration::from_secs(2))?;
+    host.wait_for_text("ANSI-GREEN", Duration::from_secs(2))?;
+    host.wait_for_text("MARKDOWN-OUTPUT", Duration::from_secs(2))?;
+
+    for _ in 0..8 {
+        host.wheel_down(8, 10)?;
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    host.wait_for_text("+TOOL-DIFF", Duration::from_secs(2))?;
+    host.wait_for_text("Diff: src/main.rs (pending)", Duration::from_secs(2))?;
+    host.wait_for_text("+INLINE-DIFF", Duration::from_secs(2))?;
+    host.wait_for_text("[ ] BLOCK-TODO-PENDING", Duration::from_secs(2))?;
+    host.wait_for_text("[x] BLOCK-TODO-DONE", Duration::from_secs(2))?;
+    host.wait_for_text(
+        "File: report.txt (file:///tmp/report.txt)",
+        Duration::from_secs(2),
+    )?;
+    host.wait_for_text("Warning: BLOCK-NOTICE", Duration::from_secs(2))?;
+    host.wait_for_text("Artifact Code: block-artifact.rs", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())

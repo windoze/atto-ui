@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,12 +23,14 @@ use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
+use atto_ui::ComponentValue;
 use atto_ui_chat::{
-    Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatBlock, ChatBlockId,
-    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
+    Artifact, ArtifactBlock, ArtifactId, ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock,
+    ChatBlockId, ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel,
-    ChatRole, ChatTurnStatus, NoticeBlock, NoticeLevel, TextArtifactViewer, TextBlock,
-    ThinkingBlock, ToolStatus,
+    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel,
+    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -51,6 +53,7 @@ fn main() -> Result<()> {
     let streaming_markdown = args.iter().any(|arg| arg == "--streaming-markdown");
     let tool_call = args.iter().any(|arg| arg == "--tool-call");
     let artifact_link = args.iter().any(|arg| arg == "--artifact-link");
+    let block_mapping = args.iter().any(|arg| arg == "--block-mapping");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -68,7 +71,10 @@ fn main() -> Result<()> {
     } else {
         HashMap::new()
     };
-    let tool_block_ids = if tool_call {
+    let tool_block_ids = if block_mapping {
+        seed_block_mapping_messages(&store);
+        None
+    } else if tool_call {
         let id = store.next_message_id();
         let message = ChatMessage::tool_call(id, "build", ToolStatus::Running, "TOOL-START");
         let tool_use_id = message
@@ -92,7 +98,7 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let streaming_block_ids = if tool_block_ids.is_some() || artifact_link {
+    let streaming_block_ids = if block_mapping || tool_block_ids.is_some() || artifact_link {
         None
     } else if streaming_markdown {
         let id = store.next_message_id();
@@ -149,6 +155,7 @@ fn main() -> Result<()> {
     let mut desktop = Desktop::new(Theme::dark(), menu);
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
+    let window_height = if block_mapping { 40 } else { 18 };
 
     desktop.add_window(
         Window::new(
@@ -158,7 +165,7 @@ fn main() -> Result<()> {
                 x: work.x.saturating_add(2),
                 y: work.y.saturating_add(2),
                 width: 60.min(work.width.saturating_sub(2)).max(30),
-                height: 18.min(work.height.saturating_sub(2)).max(12),
+                height: window_height.min(work.height.saturating_sub(2)).max(12),
             },
             Box::new(panel),
         ),
@@ -380,6 +387,107 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_block_mapping_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    let mut input = BTreeMap::new();
+    input.insert(
+        "path".to_string(),
+        ComponentValue::String("src/lib.rs".to_string()),
+    );
+    input.insert("count".to_string(), ComponentValue::U64(2));
+
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "BLOCK-TEXT".to_string(),
+                streaming: false,
+            }),
+            ChatBlock::Thinking(ThinkingBlock {
+                id: snapshot_block_id(id, 1),
+                markdown: "BLOCK-THINKING".to_string(),
+                streaming: false,
+                collapsed: false,
+            }),
+            ChatBlock::ToolUse(ToolUseBlock {
+                id: snapshot_block_id(id, 2),
+                call_id: "call-json".to_string(),
+                name: "json_tool".to_string(),
+                input: ToolInput::Json(ComponentValue::Map(input)),
+                status: ToolStatus::Pending,
+                approval: None,
+                collapsed: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: snapshot_block_id(id, 3),
+                call_id: "call-ansi".to_string(),
+                ok: true,
+                exit_code: Some(0),
+                output: ToolOutput::Ansi("\u{1b}[32mANSI-GREEN\u{1b}[0m\nANSI-PLAIN".to_string()),
+                collapsed: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: snapshot_block_id(id, 4),
+                call_id: "call-markdown".to_string(),
+                ok: true,
+                exit_code: None,
+                output: ToolOutput::Markdown("MARKDOWN-OUTPUT".to_string()),
+                collapsed: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: snapshot_block_id(id, 5),
+                call_id: "call-diff".to_string(),
+                ok: true,
+                exit_code: None,
+                output: ToolOutput::Diff(DiffData {
+                    unified: "+TOOL-DIFF\n-TOOL-DIFF-OLD".to_string(),
+                }),
+                collapsed: false,
+            }),
+            ChatBlock::Diff(DiffBlock {
+                id: snapshot_block_id(id, 6),
+                path: "src/main.rs".to_string(),
+                diff: DiffData {
+                    unified: "+INLINE-DIFF".to_string(),
+                },
+                decision: EditDecision::Pending,
+            }),
+            ChatBlock::Todo(TodoBlock {
+                id: snapshot_block_id(id, 7),
+                items: vec![
+                    TodoItem {
+                        text: "BLOCK-TODO-PENDING".to_string(),
+                        state: TodoState::Pending,
+                    },
+                    TodoItem {
+                        text: "BLOCK-TODO-DONE".to_string(),
+                        state: TodoState::Done,
+                    },
+                ],
+            }),
+            ChatBlock::Attachment(AttachmentBlock {
+                id: snapshot_block_id(id, 8),
+                name: "report.txt".to_string(),
+                url: Some("file:///tmp/report.txt".to_string()),
+                mime: Some("text/plain".to_string()),
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 9),
+                level: NoticeLevel::Warning,
+                text: "BLOCK-NOTICE".to_string(),
+            }),
+            ChatBlock::Artifact(ArtifactBlock {
+                id: snapshot_block_id(id, 10),
+                kind: ArtifactKind::Code,
+                anchor: ArtifactId::new("block-artifact"),
+                title: "block-artifact.rs".to_string(),
+            }),
+        ],
+    ));
 }
 
 fn snapshot_block_id(message_id: ChatMessageId, ordinal: u64) -> ChatBlockId {
