@@ -351,6 +351,40 @@ fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<
 }
 
 #[test]
+fn chat_markdown_wraps_to_responsive_bubble_width() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+
+    let mut narrow = PtyTestHost::spawn(bin, &["--responsive-layout"], 70, 24)?;
+    narrow.wait_for_text("RESPONSIVE-WRAP", Duration::from_secs(2))?;
+    narrow.wait_for_text("RESPONSIVE-END", Duration::from_secs(2))?;
+    let narrow_snapshot = narrow.screen_snapshot()?;
+    assert!(
+        !narrow_snapshot
+            .iter()
+            .any(|line| line.contains("RESPONSIVE-WRAP") && line.contains("RESPONSIVE-END")),
+        "narrow layout should wrap the sentinel text:\n{}",
+        narrow_snapshot.join("\n")
+    );
+    narrow.send_ctrl('q')?;
+
+    let mut wide = PtyTestHost::spawn(bin, &["--responsive-layout"], 120, 24)?;
+    wide.wait_for_text("RESPONSIVE-WRAP", Duration::from_secs(2))?;
+    wide.wait_for_text("RESPONSIVE-END", Duration::from_secs(2))?;
+    let wide_snapshot = wide.screen_snapshot()?;
+    assert!(
+        wide_snapshot
+            .iter()
+            .any(|line| line.contains("RESPONSIVE-WRAP") && line.contains("RESPONSIVE-END")),
+        "wide layout should keep the sentinel text on one line:\n{}",
+        wide_snapshot.join("\n")
+    );
+    wide.send_ctrl('q')?;
+
+    Ok(())
+}
+
+#[test]
 fn chat_artifact_code_link_opens_text_viewer_window() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

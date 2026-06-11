@@ -54,6 +54,7 @@ fn main() -> Result<()> {
     let tool_call = args.iter().any(|arg| arg == "--tool-call");
     let artifact_link = args.iter().any(|arg| arg == "--artifact-link");
     let block_mapping = args.iter().any(|arg| arg == "--block-mapping");
+    let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -71,7 +72,10 @@ fn main() -> Result<()> {
     } else {
         HashMap::new()
     };
-    let tool_block_ids = if block_mapping {
+    let tool_block_ids = if responsive_layout {
+        seed_responsive_layout_messages(&store);
+        None
+    } else if block_mapping {
         seed_block_mapping_messages(&store);
         None
     } else if tool_call {
@@ -98,25 +102,29 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let streaming_block_ids = if block_mapping || tool_block_ids.is_some() || artifact_link {
-        None
-    } else if streaming_markdown {
-        let id = store.next_message_id();
-        let message = ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
-            .with_status(ChatTurnStatus::Streaming);
-        let text_id = message.blocks[0].id();
-        store.push(message);
-        Some((id, text_id))
-    } else {
-        seed_messages(&store, 28);
-        None
-    };
+    let streaming_block_ids =
+        if responsive_layout || block_mapping || tool_block_ids.is_some() || artifact_link {
+            None
+        } else if streaming_markdown {
+            let id = store.next_message_id();
+            let message = ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
+                .with_status(ChatTurnStatus::Streaming);
+            let text_id = message.blocks[0].id();
+            store.push(message);
+            Some((id, text_id))
+        } else {
+            seed_messages(&store, 28);
+            None
+        };
 
     let input_handle = ChatInputHandle::new();
     let load_counter = Arc::new(AtomicU64::new(0));
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
-    let list = ChatMessageList::new(store.clone())
-        .wrap_width(56)
+    let mut list = ChatMessageList::new(store.clone());
+    if !responsive_layout {
+        list = list.wrap_width(56);
+    }
+    let list = list
         .show_timestamps(false)
         .on_open_artifact({
             let open_artifacts = open_artifacts.clone();
@@ -156,6 +164,11 @@ fn main() -> Result<()> {
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
     let window_height = if block_mapping { 40 } else { 18 };
+    let window_width = if responsive_layout {
+        work.width.saturating_sub(4).max(30)
+    } else {
+        60.min(work.width.saturating_sub(2)).max(30)
+    };
 
     desktop.add_window(
         Window::new(
@@ -164,7 +177,7 @@ fn main() -> Result<()> {
             Rect {
                 x: work.x.saturating_add(2),
                 y: work.y.saturating_add(2),
-                width: 60.min(work.width.saturating_sub(2)).max(30),
+                width: window_width,
                 height: window_height.min(work.height.saturating_sub(2)).max(12),
             },
             Box::new(panel),
@@ -387,6 +400,41 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_responsive_layout_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "RESPONSIVE-WRAP alpha beta gamma delta epsilon zeta RESPONSIVE-END"
+                    .to_string(),
+                streaming: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: snapshot_block_id(id, 1),
+                call_id: "responsive-ansi".to_string(),
+                ok: true,
+                exit_code: Some(0),
+                output: ToolOutput::Ansi(
+                    "HSCROLL-START-abcdefghijklmnopqrstuvwxyz-HSCROLL-END".to_string(),
+                ),
+                collapsed: false,
+            }),
+            ChatBlock::Diff(DiffBlock {
+                id: snapshot_block_id(id, 2),
+                path: "responsive.patch".to_string(),
+                diff: DiffData {
+                    unified: "+HSCROLL-DIFF-abcdefghijklmnopqrstuvwxyz-HSCROLL-DIFF-END"
+                        .to_string(),
+                },
+                decision: EditDecision::Pending,
+            }),
+        ],
+    ));
 }
 
 fn seed_block_mapping_messages(store: &ChatMessageStore) {

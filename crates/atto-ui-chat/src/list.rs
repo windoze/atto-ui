@@ -10,7 +10,9 @@ use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Disclosure, DisclosureStatus};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
-use crossterm::event::{Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -28,14 +30,14 @@ use crate::message::{
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
 
-const DEFAULT_WRAP_WIDTH: u16 = 72;
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
 
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 
 #[derive(Clone)]
 struct ChatMessageListConfig {
-    wrap_width: u16,
+    wrap_width: Option<u16>,
+    responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
     show_timestamps: bool,
     spacing: Binding<u16>,
@@ -46,7 +48,8 @@ struct ChatMessageListConfig {
 
 #[derive(Clone)]
 struct ChatMessageRowConfig {
-    wrap_width: u16,
+    wrap_width: Option<u16>,
+    responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
     show_timestamps: bool,
     on_open_artifact: Option<ArtifactOpenCallback>,
@@ -70,14 +73,13 @@ pub struct ChatMessageList {
 impl ChatMessageList {
     pub fn new(store: ChatMessageStore) -> Self {
         let config = ChatMessageListConfig {
-            wrap_width: DEFAULT_WRAP_WIDTH,
+            wrap_width: None,
+            responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: true,
             spacing: 1u16.into(),
             padding: EdgeInsets::symmetric(0, 1).into(),
-            scroll_config: ScrollConfig::default()
-                .horizontal_scrollbar(ScrollbarVisibility::Never)
-                .into(),
+            scroll_config: ScrollConfig::default().into(),
             on_open_artifact: None,
         };
         let messages = store.binding();
@@ -130,7 +132,7 @@ impl ChatMessageList {
     }
 
     pub fn wrap_width(mut self, width: u16) -> Self {
-        self.config.wrap_width = width.max(1);
+        self.config.wrap_width = Some(width.max(1));
         self.rebuild_list();
         self
     }
@@ -252,6 +254,15 @@ impl ChatMessageList {
         self.pending_scroll_to_bottom = false;
         self.load_more_armed = true;
     }
+
+    fn update_responsive_wrap_width(&self, area_width: u16) {
+        self.config
+            .responsive_wrap_width
+            .set(estimated_bubble_content_width(
+                area_width,
+                self.config.padding.get(),
+            ));
+    }
 }
 
 impl ::atto_ui::composable::Component for ChatMessageList {
@@ -274,7 +285,12 @@ impl ::atto_ui::composable::Component for ChatMessageList {
             ),
             "spacing" => Some(ComponentValue::U64(self.config.spacing.get() as u64)),
             "padding" => Some(self.config.padding.get().to_component_value()),
-            "wrap_width" => Some(ComponentValue::U64(self.config.wrap_width as u64)),
+            "wrap_width" => Some(ComponentValue::U64(
+                self.config
+                    .wrap_width
+                    .or_else(|| self.config.responsive_wrap_width.get())
+                    .unwrap_or(0) as u64,
+            )),
             "show_timestamps" => Some(ComponentValue::Bool(self.config.show_timestamps)),
             "auto_scroll" => Some(ComponentValue::Bool(self.auto_scroll)),
             _ => None,
@@ -304,7 +320,7 @@ impl ::atto_ui::composable::Component for ChatMessageList {
             }
             "wrap_width" => {
                 let width = <u16 as ComponentValueCodec>::from_component_value(value, name)?;
-                self.config.wrap_width = width.max(1);
+                self.config.wrap_width = (width > 0).then_some(width);
                 self.rebuild_list();
                 Ok(())
             }
@@ -327,10 +343,19 @@ impl ::atto_ui::composable::Component for ChatMessageList {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.update_responsive_wrap_width(area.width);
         self.track_message_changes();
         self.queue_pending_scroll_to_bottom();
         self.list.draw(frame, area, ctx);
     }
+}
+
+fn estimated_bubble_content_width(area_width: u16, padding: EdgeInsets) -> Option<u16> {
+    let list_width = area_width.saturating_sub(padding.sum_horizontal());
+    if list_width == 0 {
+        return None;
+    }
+    Some((((list_width as u32) * 3) / 4).max(1).min(u16::MAX as u32) as u16)
 }
 
 impl ::atto_ui::composable::DragAndDrop for ChatMessageList {}
@@ -406,6 +431,7 @@ fn build_list(
 ) -> atto_ui::composable::ForEachIdentifiable<ChatRowKey, ChatMessageRow> {
     let row_config = ChatMessageRowConfig {
         wrap_width: config.wrap_width,
+        responsive_wrap_width: config.responsive_wrap_width.clone(),
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
         on_open_artifact: config.on_open_artifact.clone(),
@@ -1051,8 +1077,147 @@ impl ::atto_ui::composable::DynamicTree for ChatTimestampDivider {}
 
 impl ::atto_ui::composable::EventHandling for ChatTimestampDivider {}
 
+struct ResponsiveMarkdownView {
+    view: MarkdownViewer,
+    width: Binding<Option<u16>>,
+    fallback_width: Binding<Option<u16>>,
+    fallback_indent: u16,
+    max_width: Option<u16>,
+}
+
+impl ResponsiveMarkdownView {
+    fn new(content: Binding<String>, config: &ChatMessageRowConfig, fallback_indent: u16) -> Self {
+        let width = Binding::new(markdown_width_from_fallback(
+            config.responsive_wrap_width.get(),
+            fallback_indent,
+            config.wrap_width,
+        ));
+        let view = MarkdownViewer::new(content).wrap_width_binding(width.clone());
+        Self {
+            view,
+            width,
+            fallback_width: config.responsive_wrap_width.clone(),
+            fallback_indent,
+            max_width: config.wrap_width,
+        }
+    }
+
+    fn map_view(mut self, f: impl FnOnce(MarkdownViewer) -> MarkdownViewer) -> Self {
+        self.view = f(self.view);
+        self
+    }
+
+    fn sync_fallback_width(&self) {
+        if let Some(width) = markdown_width_from_fallback(
+            self.fallback_width.get(),
+            self.fallback_indent,
+            self.max_width,
+        ) {
+            self.width.set(Some(width));
+        }
+    }
+
+    fn sync_area_width(&self, area_width: u16) {
+        if area_width == 0 {
+            return;
+        }
+        self.width
+            .set(Some(apply_markdown_width_cap(area_width, self.max_width)));
+    }
+}
+
+fn markdown_width_from_fallback(
+    fallback: Option<u16>,
+    indent: u16,
+    max_width: Option<u16>,
+) -> Option<u16> {
+    let width = fallback?.saturating_sub(indent).max(1);
+    Some(apply_markdown_width_cap(width, max_width))
+}
+
+fn apply_markdown_width_cap(width: u16, max_width: Option<u16>) -> u16 {
+    max_width.map_or(width, |max| width.min(max)).max(1)
+}
+
+impl Component for ResponsiveMarkdownView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.sync_area_width(area.width);
+        self.view.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for ResponsiveMarkdownView {}
+
+impl ::atto_ui::composable::Layout for ResponsiveMarkdownView {
+    fn min_width(&self) -> u16 {
+        self.view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.view.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.sync_fallback_width();
+        self.view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.sync_fallback_width();
+        self.view.desired_height()
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for ResponsiveMarkdownView {
+    fn is_scrollable(&self) -> bool {
+        self.view.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.view.content_size()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.view.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.view.scroll_config()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.view.scroll_offset()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.view.set_scroll_offset(x, y);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for ResponsiveMarkdownView {
+    fn is_focusable(&self) -> bool {
+        self.view.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.view.focus_last()
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for ResponsiveMarkdownView {}
+
+impl ::atto_ui::composable::EventHandling for ResponsiveMarkdownView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.view.handle_event(event, ctx)
+    }
+}
+
 enum ChatMessageBody {
-    Markdown(MarkdownViewer),
+    Markdown(ResponsiveMarkdownView),
     Text(Text),
     Disclosure(Disclosure),
     Diff(DiffView),
@@ -1074,10 +1239,10 @@ impl ChatMessageBody {
                 );
                 (
                     ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content.clone())
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                        ResponsiveMarkdownView::new(content.clone(), config, 0).map_view(|view| {
+                            view.streaming_tolerant(true)
+                                .vertical_scrollbar(ScrollbarVisibility::Never)
+                        }),
                     ),
                     ChatMessageRowBindings {
                         markdown: Some(content),
@@ -1092,11 +1257,12 @@ impl ChatMessageBody {
                     config,
                 ));
                 let status = Binding::new(thinking_status_to_disclosure(thinking));
-                let viewer = MarkdownViewer::new(content.clone())
-                    .streaming_tolerant(true)
-                    .wrap_width(config.wrap_width)
-                    .text_color(Color::DarkGray)
-                    .vertical_scrollbar(ScrollbarVisibility::Never);
+                let viewer =
+                    ResponsiveMarkdownView::new(content.clone(), config, 2).map_view(|view| {
+                        view.streaming_tolerant(true)
+                            .text_color(Color::DarkGray)
+                            .vertical_scrollbar(ScrollbarVisibility::Never)
+                    });
                 (
                     ChatMessageBody::Disclosure(
                         Disclosure::new("Thinking")
@@ -1185,10 +1351,10 @@ impl ChatMessageBody {
                 let content = Binding::new(String::new());
                 (
                     ChatMessageBody::Markdown(
-                        MarkdownViewer::new(content.clone())
-                            .streaming_tolerant(true)
-                            .wrap_width(config.wrap_width)
-                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                        ResponsiveMarkdownView::new(content.clone(), config, 0).map_view(|view| {
+                            view.streaming_tolerant(true)
+                                .vertical_scrollbar(ScrollbarVisibility::Never)
+                        }),
                     ),
                     ChatMessageRowBindings {
                         markdown: Some(content),
@@ -1291,10 +1457,10 @@ fn tool_output_component(
     match output {
         ToolOutput::Ansi(_) => Box::new(AnsiOutputView::new(content)),
         ToolOutput::Markdown(_) => Box::new(
-            MarkdownViewer::new(content)
-                .streaming_tolerant(true)
-                .wrap_width(config.wrap_width)
-                .vertical_scrollbar(ScrollbarVisibility::Never),
+            ResponsiveMarkdownView::new(content, config, 2).map_view(|view| {
+                view.streaming_tolerant(true)
+                    .vertical_scrollbar(ScrollbarVisibility::Never)
+            }),
         ),
         ToolOutput::Diff(_) => Box::new(DiffView::new(None, content)),
     }
@@ -1386,6 +1552,8 @@ fn component_value_compact(value: &ComponentValue) -> String {
 struct DiffView {
     title: Option<String>,
     diff: Binding<String>,
+    scroll_x: u16,
+    viewport: (u16, u16),
 }
 
 impl DiffView {
@@ -1393,7 +1561,19 @@ impl DiffView {
         Self {
             title,
             diff: diff.into(),
+            scroll_x: 0,
+            viewport: (0, 0),
         }
+    }
+
+    fn display_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if let Some(title) = &self.title {
+            lines.push(Line::styled(title.clone(), title_style));
+        }
+        let diff = self.diff.get();
+        lines.extend(diff_display_lines(&diff, base));
+        lines
     }
 
     fn display_height(&self) -> u16 {
@@ -1416,29 +1596,70 @@ impl DiffView {
             .unwrap_or(0);
         diff_width.max(title_width).max(1).min(u16::MAX as usize) as u16
     }
+
+    fn clamp_scroll(&mut self) {
+        let max_x = self.display_width().saturating_sub(self.viewport.0);
+        self.scroll_x = self.scroll_x.min(max_x);
+    }
+
+    fn scroll_horizontally(&mut self, delta: i16) -> EventResult {
+        let before = self.scroll_x;
+        self.set_scroll_offset(add_signed_u16(self.scroll_x, delta), 0);
+        if self.scroll_x == before {
+            EventResult::ignored()
+        } else {
+            EventResult::changed()
+        }
+    }
 }
 
 impl Component for DiffView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.viewport = (area.width, area.height);
+        self.clamp_scroll();
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let base = ctx.theme.widget.normal;
-        let mut lines = Vec::new();
-        if let Some(title) = &self.title {
-            lines.push(Line::styled(title.clone(), ctx.theme.widget.dim));
-        }
-        let diff = self.diff.get();
-        lines.extend(diff_display_lines(&diff, base));
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(
+            Paragraph::new(self.display_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
+                .scroll((0, self.scroll_x)),
+            area,
+        );
     }
 }
 
 impl ::atto_ui::composable::DragAndDrop for DiffView {}
-impl ::atto_ui::composable::Scrollable for DiffView {}
+impl ::atto_ui::composable::Scrollable for DiffView {
+    fn is_scrollable(&self) -> bool {
+        true
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        (self.display_width(), self.display_height())
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        (self.scroll_x, 0)
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, _y: u16) {
+        self.scroll_x = x;
+        self.clamp_scroll();
+    }
+}
 impl ::atto_ui::composable::FocusNav for DiffView {}
 impl ::atto_ui::composable::DynamicTree for DiffView {}
-impl ::atto_ui::composable::EventHandling for DiffView {}
+impl ::atto_ui::composable::EventHandling for DiffView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        horizontal_scroll_event(event, self.viewport.0).map_or_else(EventResult::ignored, |delta| {
+            self.scroll_horizontally(delta)
+        })
+    }
+}
 
 impl ::atto_ui::composable::Layout for DiffView {
     fn min_width(&self) -> u16 {
@@ -1526,32 +1747,102 @@ impl ::atto_ui::composable::Layout for TodoListView {
 
 struct AnsiOutputView {
     text: Binding<String>,
+    scroll_x: u16,
+    viewport: (u16, u16),
 }
 
 impl AnsiOutputView {
     fn new(text: impl Into<Binding<String>>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            scroll_x: 0,
+            viewport: (0, 0),
+        }
     }
 
     fn lines(&self, base: Style) -> Vec<Line<'static>> {
         ansi_sgr_lines(&self.text.get(), base)
     }
+
+    fn display_width(&self) -> u16 {
+        self.lines(Style::default())
+            .iter()
+            .map(Line::width)
+            .max()
+            .unwrap_or(1)
+            .max(1)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn display_height(&self) -> u16 {
+        self.lines(Style::default())
+            .len()
+            .max(1)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn clamp_scroll(&mut self) {
+        let max_x = self.display_width().saturating_sub(self.viewport.0);
+        self.scroll_x = self.scroll_x.min(max_x);
+    }
+
+    fn scroll_horizontally(&mut self, delta: i16) -> EventResult {
+        let before = self.scroll_x;
+        self.set_scroll_offset(add_signed_u16(self.scroll_x, delta), 0);
+        if self.scroll_x == before {
+            EventResult::ignored()
+        } else {
+            EventResult::changed()
+        }
+    }
 }
 
 impl Component for AnsiOutputView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.viewport = (area.width, area.height);
+        self.clamp_scroll();
         if area.width == 0 || area.height == 0 {
             return;
         }
-        frame.render_widget(Paragraph::new(self.lines(ctx.theme.widget.normal)), area);
+        frame.render_widget(
+            Paragraph::new(self.lines(ctx.theme.widget.normal)).scroll((0, self.scroll_x)),
+            area,
+        );
     }
 }
 
 impl ::atto_ui::composable::DragAndDrop for AnsiOutputView {}
-impl ::atto_ui::composable::Scrollable for AnsiOutputView {}
+impl ::atto_ui::composable::Scrollable for AnsiOutputView {
+    fn is_scrollable(&self) -> bool {
+        true
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        (self.display_width(), self.display_height())
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        (self.scroll_x, 0)
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, _y: u16) {
+        self.scroll_x = x;
+        self.clamp_scroll();
+    }
+}
 impl ::atto_ui::composable::FocusNav for AnsiOutputView {}
 impl ::atto_ui::composable::DynamicTree for AnsiOutputView {}
-impl ::atto_ui::composable::EventHandling for AnsiOutputView {}
+impl ::atto_ui::composable::EventHandling for AnsiOutputView {
+    fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+        horizontal_scroll_event(event, self.viewport.0).map_or_else(EventResult::ignored, |delta| {
+            self.scroll_horizontally(delta)
+        })
+    }
+}
 
 impl ::atto_ui::composable::Layout for AnsiOutputView {
     fn min_width(&self) -> u16 {
@@ -1563,24 +1854,11 @@ impl ::atto_ui::composable::Layout for AnsiOutputView {
     }
 
     fn desired_width(&self) -> Option<u16> {
-        Some(
-            self.lines(Style::default())
-                .iter()
-                .map(Line::width)
-                .max()
-                .unwrap_or(1)
-                .max(1)
-                .min(u16::MAX as usize) as u16,
-        )
+        Some(self.display_width())
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(
-            self.lines(Style::default())
-                .len()
-                .max(1)
-                .min(u16::MAX as usize) as u16,
-        )
+        Some(self.display_height())
     }
 }
 
@@ -1589,6 +1867,37 @@ fn todo_state_style(state: TodoState, ctx: ComponentContext<'_>) -> Style {
         TodoState::Pending => ctx.theme.widget.normal,
         TodoState::InProgress => ctx.theme.widget.accent,
         TodoState::Done => ctx.theme.widget.dim,
+    }
+}
+
+fn horizontal_scroll_event(event: &Event, viewport_width: u16) -> Option<i16> {
+    let page = viewport_width.max(1).min(i16::MAX as u16) as i16;
+    match event {
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollLeft => Some(-3),
+            MouseEventKind::ScrollRight => Some(3),
+            _ => None,
+        },
+        Event::Key(KeyEvent {
+            code,
+            kind: KeyEventKind::Press,
+            ..
+        }) => match code {
+            KeyCode::Left => Some(-1),
+            KeyCode::Right => Some(1),
+            KeyCode::PageUp => Some(-page),
+            KeyCode::PageDown => Some(page),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn add_signed_u16(value: u16, delta: i16) -> u16 {
+    if delta.is_negative() {
+        value.saturating_sub(delta.wrapping_abs() as u16)
+    } else {
+        value.saturating_add(delta as u16)
     }
 }
 
@@ -1994,6 +2303,28 @@ mod tests {
         terminal.draw(|f| list.draw(f, area, ctx)).expect("draw");
     }
 
+    fn draw_component_line(component: &mut dyn Component, width: u16, height: u16) -> String {
+        let theme = Theme::dark();
+        let ctx = ComponentContext {
+            theme: &theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        };
+        let backend = TestBackend::new(width.max(1), height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| component.draw(f, Rect::new(0, 0, width, height), ctx))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+        (0..width)
+            .map(|x| buf.cell((x, 0)).expect("cell").symbol())
+            .collect::<String>()
+    }
+
     fn store_with_text_messages(count: u64) -> ChatMessageStore {
         let store = ChatMessageStore::new();
         for idx in 0..count {
@@ -2087,6 +2418,49 @@ mod tests {
         assert_eq!(lines[0].style.fg, Some(Color::Green));
         assert_eq!(lines[1].style.fg, Some(Color::Red));
         assert_eq!(lines[2].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn markdown_wrap_width_tracks_chat_layout_width() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "responsive words ".repeat(18),
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+
+        draw_chat_list(&mut list, 40, 20);
+        let narrow_height = list.content_size().1;
+        draw_chat_list(&mut list, 100, 20);
+        let wide_height = list.content_size().1;
+
+        assert!(
+            narrow_height > wide_height,
+            "narrow layout should wrap into more rows: narrow={narrow_height}, wide={wide_height}"
+        );
+    }
+
+    #[test]
+    fn diff_view_renders_horizontal_scroll_offset() {
+        let mut view = DiffView::new(None, Binding::new("+0123456789".to_string()));
+
+        assert!(draw_component_line(&mut view, 6, 1).starts_with("+0123"));
+        view.set_scroll_offset(3, 0);
+
+        assert!(draw_component_line(&mut view, 6, 1).starts_with("234567"));
+    }
+
+    #[test]
+    fn ansi_output_view_renders_horizontal_scroll_offset() {
+        let mut view = AnsiOutputView::new(Binding::new("0123456789".to_string()));
+
+        assert!(draw_component_line(&mut view, 5, 1).starts_with("01234"));
+        view.set_scroll_offset(4, 0);
+
+        assert!(draw_component_line(&mut view, 5, 1).starts_with("45678"));
     }
 
     #[test]

@@ -155,3 +155,29 @@
 - 已更新 `TODO.md`：`P2.4` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P2.4 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
+
+## 当前任务：P2.5 响应式换行 + 代码横向滚动
+
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P2.5 响应式换行 + 代码横向滚动`。
+- 任务目标：在 `crates/atto-ui-chat/src/list.rs` 中让 Text/Markdown 的换行宽度使用布局得到的气泡内容宽度并随 resize 重算，移除固定 `wrap_width=72`；代码、diff、工具输出区域允许水平滚动，移除强制 `horizontal_scrollbar(Never)` 的限制。
+- 执行边界：只完成 P2.5，不推进 P2.6 或 P3 工具语义；若发现实现被未跟踪的规格缺口或失败测试阻塞，将把最小前置任务写入 `TODO.md` 后提交并停止。
+- 下一步：查看最近提交，确认是否提到与 P2.5 直接相关的未完成事项；随后阅读 `list.rs` 中 MarkdownViewer、代码/diff/工具输出滚动相关实现和现有测试。
+- 已查看最近提交：`299b6be [P2.4] Fix chat scrolling`，未声明与 `P2.5` 直接相关的额外未完成事项。
+- 已检查当前工作区：存在既有未提交变更 `crates/atto-ui-node/index.js`，以及未跟踪 `notification.sh`、`run_agent.sh`；这些不属于当前任务，除非阻塞 P2.5，否则不修改、不回退、不提交。
+- 实施计划：定位固定 wrap 宽度和 horizontal scrollbar 设置；将正文 MarkdownViewer 的 wrap 宽度绑定到行/气泡布局宽度；确保 resize 后相关 binding 会重新同步或重建；为代码块、diff 与工具输出容器启用水平滚动或取消禁用设置；补充或调整 PTY/单元测试覆盖 resize 换行和横向滚动可见性。
+- 验证计划：先运行针对性测试覆盖新增行为；再按要求执行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 完成计划：验证通过后更新 `TODO.md` 标题为 `[DONE] P2.5 ...` 并填写完成记录；检查 `git status`/`git diff`/最近提交，提交本任务相关文件后停止。
+- 已阅读 `list.rs` 与 `MarkdownViewer`：如果直接移除 `.wrap_width(...)`，Markdown 首次布局高度会在拿到真实宽度前退化为 1 行；因此需要为 chat 行提供响应式宽度绑定，并在 draw 时用真实气泡宽度刷新。
+- 已阅读滚动实现：外层 `VStack` 的水平滚动不会自动让 block 内的 diff/ANSI 长行变成可滚动区域；P2.5 需要在 diff/ANSI 工具输出视图自身实现水平偏移，同时保留 Markdown 代码块已有的嵌入式水平滚动能力。
+- 修订实施计划：给 `MarkdownViewer` 增加可绑定 wrap width 的小 API；chat Markdown body 使用响应式 wrapper，以列表布局估算宽度作为首次布局 fallback，并在绘制时同步真实气泡宽度；`DiffView`/`AnsiOutputView` 增加 `scroll_x`、viewport/content size、鼠标/键盘横向滚动处理；默认列表滚动配置不再强制 `horizontal_scrollbar(Never)`。
+- 已完成首轮实现并通过 `cargo check -p atto-ui-chat --all-targets`：chat 默认不再使用固定 `72` 宽度；Text/Thinking/Markdown 工具输出通过响应式宽度绑定按气泡宽度重算；Diff/ANSI 输出增加水平偏移和滚动事件处理；列表默认滚动配置恢复为 `ScrollConfig::default()`。
+- 下一步补充单元测试和 PTY 场景，覆盖窄/宽布局换行差异与 diff/ANSI 横向滚动。
+- 已补充测试：list 单测覆盖响应式换行高度、DiffView 横向偏移、AnsiOutputView 横向偏移；`snapshot_chat_app --responsive-layout` 与 PTY 测试覆盖窄/宽终端下同一文本的换行差异。
+- 已运行验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_markdown_wraps_to_responsive_bubble_width -- --exact` 通过。曾误用多个 test filter 运行 `cargo test -p atto-ui-chat ...`，该命令因参数格式错误未执行测试，已改用 `--lib` 覆盖新增单测。
+- 下一步按全量验证顺序继续执行 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 全量验证已通过：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 下一步更新 `TODO.md`：将 `P2.5` 标题加 `[DONE]` 并写入完成记录与验证命令；随后检查提交范围并提交。
+- 已更新 `TODO.md`：`P2.5` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
+- 下一步检查 `git status`、`git diff`、最近提交记录，确认本次提交包含 P2.5 相关源码、测试、TODO 和计划文件，并排除既有无关工作区变更。
+- 已检查提交前状态/diff/最近提交：本次提交应包含 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`crates/atto-ui-markdown/src/markdown/viewer.rs`。既有无关变更 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P2.5] Add responsive chat wrapping` 提交并停止。

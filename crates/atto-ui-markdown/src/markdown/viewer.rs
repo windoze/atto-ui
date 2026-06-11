@@ -75,6 +75,11 @@ impl MarkdownViewer {
         self
     }
 
+    pub fn wrap_width_binding(self, width: impl Into<Binding<Option<u16>>>) -> Self {
+        self.shared.write().width = width.into();
+        self
+    }
+
     pub fn width(self, width: u16) -> Self {
         self.wrap_width(width)
     }
