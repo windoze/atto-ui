@@ -115,5 +115,7 @@
 
 ## 收尾
 
-- [ ] **收尾 1 — 全量校验** — `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets` 全过;JS 侧 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试通过。
+- [x] **[DONE] 收尾 1 — 全量校验** — `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets` 全过;JS 侧 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试通过。
+  - 完成记录（2026-06-12）：已完成收尾全量校验，Rust workspace 格式化、lint、构建和全量测试通过；React TSX 示例 smoke 与 core runtime Node/Bun/Deno 兼容测试通过。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`、`npm run smoke --prefix examples/react-tsx`、`npm run test:runtime --prefix packages/core` 全部通过。
 - [ ] **收尾 2 — 快照人工比对** — 用 `snapshot_chat_app` 抓屏,逐项核对 `CHAT_UI.md` §2 能力矩阵从 ❌/⚠️ 转为 ✅。

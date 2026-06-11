@@ -370,3 +370,15 @@
 - 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P7.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交 P7.1 相关文件并停止。
+
+## 当前任务：收尾 1 全量校验
+
+- 已在执行项目命令前写入本轮可审计计划；初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次收尾记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `收尾 1 — 全量校验`。
+- 已查看最近提交：`86440b5 [P7.1] Virtualize chat message rows`，未声明与收尾全量校验直接相关的未完成事项。
+- 执行范围限定为全量验证和任务记录更新，不推进 `收尾 2` 快照人工比对。
+- 已发现工作区既有无关变更：`crates/atto-ui-node/index.js` 已修改，且有未跟踪 `notification.sh`、`run_agent.sh`；本次不修改、不回退、不提交这些文件。
+- Rust 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- JS 验证已通过：`npm run smoke --prefix examples/react-tsx`、`npm run test:runtime --prefix packages/core`。
+- 已更新 `TODO.md`：`收尾 1 — 全量校验` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交收尾 1 相关 `TODO.md` 和 `memory/claude_plan.md` 后停止。
