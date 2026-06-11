@@ -193,9 +193,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish crates/atto-ui-node/npm/darwin-arm64 --access public
-          npm publish crates/atto-ui-node/npm/linux-x64-gnu --access public
-          npm publish crates/atto-ui-node/npm/win32-x64-msvc --access public
-          npm publish crates/atto-ui-node --access public
-          npm publish packages/core --access public
-          npm publish packages/react --access public
+          publish() {
+            local dir="$1"
+            local name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "Skip $name@$version (already published)"
+            else
+              npm publish "./$dir" --access public
+            fi
+          }
+          publish crates/atto-ui-node/npm/darwin-arm64
+          publish crates/atto-ui-node/npm/linux-x64-gnu
+          publish crates/atto-ui-node/npm/win32-x64-msvc
+          publish crates/atto-ui-node
+          publish packages/core
+          publish packages/react
