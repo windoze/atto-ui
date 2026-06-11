@@ -24,9 +24,9 @@ pub use message::{
     ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatAlignment, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatMessage,
     ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
-    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 pub use panel::ChatPanel;
 pub use store::ChatMessageStore;

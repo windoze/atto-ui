@@ -217,6 +217,7 @@ export type ChatArtifactKind = 'code' | 'diff' | 'file' | (string & {})
 export type ChatToolOutputKind = 'ansi' | 'markdown' | 'diff'
 export type ChatEditDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
+export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
 
@@ -333,6 +334,20 @@ export interface ChatPlanBlock extends ChatBlockBase {
   readonly decision: ChatPlanDecision
 }
 
+export interface ChatTaskTranscriptItem {
+  readonly role: ChatRole
+  readonly blocks: readonly ChatBlockInput[]
+}
+
+export interface ChatTaskBlock extends ChatBlockBase {
+  readonly type: 'task'
+  readonly title: string
+  readonly status: ChatTaskStatus
+  readonly summary: string
+  readonly transcript: readonly ChatTaskTranscriptItem[]
+  readonly collapsed?: boolean
+}
+
 export interface ChatTodoItem {
   readonly text: string
   readonly state: ChatTodoState
@@ -370,6 +385,7 @@ export type ChatBlockInput =
   | ChatToolResultBlock
   | ChatDiffBlock
   | ChatPlanBlock
+  | ChatTaskBlock
   | ChatTodoBlock
   | ChatAttachmentBlock
   | ChatNoticeBlock
@@ -478,6 +494,13 @@ export interface ChatDiffBlockOptions {
 
 export interface ChatPlanBlockOptions {
   readonly decision?: ChatPlanDecision
+}
+
+export interface ChatTaskBlockOptions {
+  readonly status?: ChatTaskStatus
+  readonly summary?: string
+  readonly transcript?: readonly ChatTaskTranscriptItem[]
+  readonly collapsed?: boolean
 }
 
 export interface ChatTextMessageOptions extends ChatMessageBaseOptions, ChatTextBlockOptions {
@@ -988,6 +1011,29 @@ export function ChatPlanBlock(
     items,
     decision: options.decision ?? 'pending',
   }) as unknown as ChatPlanBlock
+}
+
+export function ChatTaskTranscriptItem(
+  role: ChatRole,
+  blocks: readonly ChatBlockInput[],
+): ChatTaskTranscriptItem {
+  return { role, blocks }
+}
+
+export function ChatTaskBlock(
+  blockId: number,
+  title: string,
+  options: ChatTaskBlockOptions = {},
+): ChatTaskBlock {
+  return compactRecord({
+    type: 'task',
+    block_id: blockId,
+    title,
+    status: options.status ?? 'pending',
+    summary: options.summary ?? '',
+    transcript: options.transcript ?? [],
+    collapsed: options.collapsed,
+  }) as unknown as ChatTaskBlock
 }
 
 export function ChatTodoBlock(blockId: number, items: readonly ChatTodoItem[]): ChatTodoBlock {

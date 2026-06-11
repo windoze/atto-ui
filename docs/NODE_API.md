@@ -159,13 +159,14 @@ Block values are discriminated by `type` and carry a stable `block_id`:
 { type: 'tool_result', block_id: 1004, call_id: 'call-1', ok: true, output: { ansi: 'ok' } }
 { type: 'diff', block_id: 1005, path: 'src/lib.rs', diff: '@@ ...', decision: 'pending' }
 { type: 'plan', block_id: 1006, items: [{ text: 'write tests' }], decision: 'pending' }
-{ type: 'todo', block_id: 1007, items: [{ text: 'write tests', state: 'done' }] }
-{ type: 'attachment', block_id: 1008, name: 'report.txt', url: 'file:///tmp/report.txt' }
-{ type: 'notice', block_id: 1009, level: 'warning', text: 'context compacted' }
-{ type: 'artifact', block_id: 1010, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
+{ type: 'task', block_id: 1007, title: 'Search subagent', status: 'running', summary: 'searching', transcript: [{ role: 'assistant', blocks: [{ type: 'text', block_id: 1008, markdown: 'Nested output' }] }], collapsed: true }
+{ type: 'todo', block_id: 1009, items: [{ text: 'write tests', state: 'done' }] }
+{ type: 'attachment', block_id: 1010, name: 'report.txt', url: 'file:///tmp/report.txt' }
+{ type: 'notice', block_id: 1011, level: 'warning', text: 'context compacted' }
+{ type: 'artifact', block_id: 1012, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
 ```
 
-`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatPlanBlock`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
+`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatPlanBlock`, `ChatTaskBlock`, `ChatTaskTranscriptItem`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
 
 ```js
 const {

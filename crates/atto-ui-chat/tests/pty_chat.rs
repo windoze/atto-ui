@@ -418,6 +418,47 @@ fn chat_plan_mode_buttons_emit_and_lock() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_nested_task_block_renders_updates_and_virtualizes() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--nested-task"], 100, 28)?;
+
+    host.wait_for_text("TASK-TRAIL-04", Duration::from_secs(2))?;
+    for _ in 0..24 {
+        host.wheel_up(8, 10)?;
+        thread::sleep(Duration::from_millis(25));
+        if host.screen_contents()?.contains("Task: SUBAGENT-SEARCH") {
+            break;
+        }
+    }
+    host.wait_for_text("Task: SUBAGENT-SEARCH", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "NESTED-SEARCH", Duration::from_millis(160));
+
+    let (x, y) = find_text_position(&host, "Task: SUBAGENT-SEARCH").expect("nested task title");
+    host.click(x, y)?;
+    host.wait_for_text("Status: running", Duration::from_secs(2))?;
+    host.wait_for_text("SUBAGENT-INITIAL", Duration::from_secs(2))?;
+    host.wait_for_text("NESTED-SEARCH", Duration::from_secs(2))?;
+    host.wait_for_text("Tool use: grep", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_text("Status: complete", Duration::from_secs(2))?;
+    host.wait_for_text("SUBAGENT-DONE", Duration::from_secs(2))?;
+    host.wait_for_text("NESTED-FINAL", Duration::from_secs(2))?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("[x]") && line.contains("Task: SUBAGENT-SEARCH"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_tool_result_long_ansi_output_tails_streams_and_expands() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

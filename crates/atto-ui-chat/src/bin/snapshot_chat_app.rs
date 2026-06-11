@@ -31,9 +31,9 @@ use atto_ui_chat::{
     ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
     ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
     EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
-    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TextArtifactViewer, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
+    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -61,6 +61,7 @@ fn main() -> Result<()> {
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
     let plan_mode = args.iter().any(|arg| arg == "--plan-mode");
+    let nested_task = args.iter().any(|arg| arg == "--nested-task");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
@@ -86,6 +87,7 @@ fn main() -> Result<()> {
     };
     let mut long_tool_result_id = None;
     let mut todo_block_id = None;
+    let mut task_block_id = None;
     let tool_block_ids = if responsive_layout {
         seed_responsive_layout_messages(&store);
         None
@@ -97,6 +99,9 @@ fn main() -> Result<()> {
         None
     } else if plan_mode {
         seed_plan_mode_messages(&store);
+        None
+    } else if nested_task {
+        task_block_id = Some(seed_nested_task_messages(&store));
         None
     } else if thinking_notice {
         seed_thinking_notice_messages(&store);
@@ -155,6 +160,7 @@ fn main() -> Result<()> {
         || inline_approval
         || inline_diff
         || plan_mode
+        || nested_task
         || thinking_notice
         || todo_block_id.is_some()
         || turn_meta_error
@@ -258,6 +264,8 @@ fn main() -> Result<()> {
         28
     } else if inline_approval || inline_diff || plan_mode || message_actions || cancel_action {
         24
+    } else if nested_task {
+        22
     } else {
         18
     };
@@ -401,6 +409,15 @@ fn main() -> Result<()> {
                         },
                     ],
                 );
+                continue;
+            }
+
+            if let Some(task_id) = task_block_id
+                && cmd == '1'
+            {
+                store.set_task_status(task_id, TaskStatus::Complete);
+                store.set_task_summary(task_id, "SUBAGENT-DONE");
+                store.set_task_transcript(task_id, completed_nested_task_transcript());
                 continue;
             }
 
@@ -690,6 +707,74 @@ fn seed_plan_mode_messages(store: &ChatMessageStore) {
             decision: PlanDecision::Pending,
         })],
     ));
+}
+
+fn seed_nested_task_messages(store: &ChatMessageStore) -> ChatBlockId {
+    for idx in 0..35u64 {
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            format!("TASK-HISTORY-{idx:02}"),
+        ));
+    }
+
+    let id = store.next_message_id();
+    let task_id = snapshot_block_id(id, 0);
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Task(TaskBlock {
+            id: task_id,
+            title: "SUBAGENT-SEARCH".to_string(),
+            status: TaskStatus::Running,
+            summary: "SUBAGENT-INITIAL".to_string(),
+            transcript: initial_nested_task_transcript(),
+            collapsed: true,
+        })],
+    ));
+
+    for idx in 0..5u64 {
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            format!("TASK-TRAIL-{idx:02}"),
+        ));
+    }
+
+    task_id
+}
+
+fn initial_nested_task_transcript() -> Vec<TaskTranscriptItem> {
+    vec![TaskTranscriptItem {
+        role: ChatRole::Assistant,
+        blocks: vec![
+            ChatBlock::Text(TextBlock {
+                id: ChatBlockId::new(900_001),
+                markdown: "NESTED-SEARCH".to_string(),
+                streaming: false,
+            }),
+            ChatBlock::ToolUse(ToolUseBlock {
+                id: ChatBlockId::new(900_002),
+                call_id: "nested-call".to_string(),
+                name: "grep".to_string(),
+                input: ToolInput::Text("rg SUBAGENT".to_string()),
+                status: ToolStatus::Done,
+                approval: None,
+                collapsed: false,
+            }),
+        ],
+    }]
+}
+
+fn completed_nested_task_transcript() -> Vec<TaskTranscriptItem> {
+    vec![TaskTranscriptItem {
+        role: ChatRole::Assistant,
+        blocks: vec![ChatBlock::Text(TextBlock {
+            id: ChatBlockId::new(900_003),
+            markdown: "NESTED-FINAL".to_string(),
+            streaming: false,
+        })],
+    }]
 }
 
 fn seed_thinking_notice_messages(store: &ChatMessageStore) {

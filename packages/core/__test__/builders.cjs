@@ -9,6 +9,8 @@ const {
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatTaskBlock,
+  ChatTaskTranscriptItem,
   ChatTextMessage,
   ChatThinkingBlock,
   ChatToolCallMessage,
@@ -160,6 +162,12 @@ assert.deepStrictEqual(chatMessage, {
 const multiBlockMessage = ChatMessage(2, [
   ChatThinkingBlock(2001, 'checking tools', { collapsed: true }),
   ChatPlanBlock(2003, [{ text: 'write tests' }], { decision: 'pending' }),
+  ChatTaskBlock(2004, 'subagent', {
+    status: 'running',
+    summary: 'searching',
+    transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])],
+    collapsed: true,
+  }),
   ChatNoticeBlock(2002, 'warning', 'context compacted'),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' } })
 assert.deepStrictEqual(multiBlockMessage, {
@@ -170,6 +178,15 @@ assert.deepStrictEqual(multiBlockMessage, {
   blocks: [
     { type: 'thinking', block_id: 2001, markdown: 'checking tools', collapsed: true },
     { type: 'plan', block_id: 2003, items: [{ text: 'write tests' }], decision: 'pending' },
+    {
+      type: 'task',
+      block_id: 2004,
+      title: 'subagent',
+      status: 'running',
+      summary: 'searching',
+      transcript: [{ role: 'assistant', blocks: [{ type: 'text', block_id: 20001, markdown: 'nested' }] }],
+      collapsed: true,
+    },
     { type: 'notice', block_id: 2002, level: 'warning', text: 'context compacted' },
   ],
 })

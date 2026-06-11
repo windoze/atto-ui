@@ -17,8 +17,9 @@ use crate::{
     ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
     ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction,
     MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent,
-    PlanItem, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock,
+    TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -261,6 +262,36 @@ fn block_to_value(block: &ChatBlock) -> ComponentValue {
             map.insert(
                 "decision".to_string(),
                 ComponentValue::String(plan_decision_to_string(block.decision).to_string()),
+            );
+            ComponentValue::Map(map)
+        }
+        ChatBlock::Task(block) => {
+            let mut map = block_base("task", block.id);
+            map.insert(
+                "title".to_string(),
+                ComponentValue::String(block.title.clone()),
+            );
+            map.insert(
+                "status".to_string(),
+                ComponentValue::String(task_status_to_string(block.status).to_string()),
+            );
+            map.insert(
+                "summary".to_string(),
+                ComponentValue::String(block.summary.clone()),
+            );
+            map.insert(
+                "transcript".to_string(),
+                ComponentValue::List(
+                    block
+                        .transcript
+                        .iter()
+                        .map(task_transcript_item_to_value)
+                        .collect(),
+                ),
+            );
+            map.insert(
+                "collapsed".to_string(),
+                ComponentValue::Bool(block.collapsed),
             );
             ComponentValue::Map(map)
         }
@@ -514,6 +545,19 @@ fn plan_item_to_value(item: &PlanItem) -> ComponentValue {
     ComponentValue::Map(map)
 }
 
+fn task_transcript_item_to_value(item: &TaskTranscriptItem) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "role".to_string(),
+        ComponentValue::String(role_to_string(&item.role)),
+    );
+    map.insert(
+        "blocks".to_string(),
+        ComponentValue::List(item.blocks.iter().map(block_to_value).collect()),
+    );
+    ComponentValue::Map(map)
+}
+
 fn insert_bool_if_true(map: &mut ValueMap, key: &str, value: bool) {
     if value {
         map.insert(key.to_string(), ComponentValue::Bool(true));
@@ -560,6 +604,16 @@ fn plan_decision_to_string(decision: PlanDecision) -> &'static str {
         PlanDecision::Pending => "pending",
         PlanDecision::Accepted => "accepted",
         PlanDecision::Rejected => "rejected",
+    }
+}
+
+fn task_status_to_string(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::Complete => "complete",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Canceled => "canceled",
     }
 }
 
@@ -752,6 +806,22 @@ fn parse_block_value(value: &ComponentValue) -> Result<ChatBlock, String> {
                 .map(parse_plan_decision_value)
                 .transpose()?
                 .unwrap_or(PlanDecision::Pending),
+        })),
+        "task" => Ok(ChatBlock::Task(TaskBlock {
+            id,
+            title: required_string_field(map, "title", "task block")?,
+            status: map
+                .get("status")
+                .map(parse_task_status_value)
+                .transpose()?
+                .unwrap_or(TaskStatus::Pending),
+            summary: optional_string_field(map, "summary", "task block")?.unwrap_or_default(),
+            transcript: map
+                .get("transcript")
+                .map(parse_task_transcript_value)
+                .transpose()?
+                .unwrap_or_default(),
+            collapsed: optional_bool_field(map, "collapsed", "task block")?.unwrap_or(true),
         })),
         "todo" => Ok(ChatBlock::Todo(TodoBlock {
             id,
@@ -1091,6 +1161,29 @@ fn parse_plan_item_value(value: &ComponentValue) -> Result<PlanItem, String> {
     })
 }
 
+fn parse_task_transcript_value(value: &ComponentValue) -> Result<Vec<TaskTranscriptItem>, String> {
+    let ComponentValue::List(items) = value else {
+        return Err(format!("task transcript must be list, got {value:?}"));
+    };
+    items.iter().map(parse_task_transcript_item_value).collect()
+}
+
+fn parse_task_transcript_item_value(value: &ComponentValue) -> Result<TaskTranscriptItem, String> {
+    let map = expect_map(value, "task transcript item")?;
+    Ok(TaskTranscriptItem {
+        role: map
+            .get("role")
+            .map(parse_role_value)
+            .transpose()?
+            .unwrap_or(ChatRole::Assistant),
+        blocks: map
+            .get("blocks")
+            .map(parse_blocks_value)
+            .transpose()?
+            .unwrap_or_default(),
+    })
+}
+
 fn parse_todo_item_value(value: &ComponentValue) -> Result<TodoItem, String> {
     let map = expect_map(value, "todo item")?;
     Ok(TodoItem {
@@ -1173,6 +1266,25 @@ fn parse_plan_decision_string(raw: &str) -> Result<PlanDecision, String> {
         "accepted" | "accept" => Ok(PlanDecision::Accepted),
         "rejected" | "reject" => Ok(PlanDecision::Rejected),
         _ => Err(format!("unknown plan decision '{raw}'")),
+    }
+}
+
+fn parse_task_status_value(value: &ComponentValue) -> Result<TaskStatus, String> {
+    match value {
+        ComponentValue::String(raw) => parse_task_status_string(raw),
+        other => Err(format!("task status must be string, got {other:?}")),
+    }
+}
+
+fn parse_task_status_string(raw: &str) -> Result<TaskStatus, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "pending" => Ok(TaskStatus::Pending),
+        "running" => Ok(TaskStatus::Running),
+        "complete" | "completed" | "done" => Ok(TaskStatus::Complete),
+        "failed" | "error" => Ok(TaskStatus::Failed),
+        "canceled" | "cancelled" => Ok(TaskStatus::Canceled),
+        _ => Err(format!("unknown task status '{raw}'")),
     }
 }
 
@@ -1778,6 +1890,21 @@ mod tests {
                     ],
                     decision: PlanDecision::Accepted,
                 }),
+                ChatBlock::Task(TaskBlock {
+                    id: ChatBlockId::new(81),
+                    title: "search subagent".to_string(),
+                    status: TaskStatus::Running,
+                    summary: "SEARCH-SUMMARY".to_string(),
+                    transcript: vec![TaskTranscriptItem {
+                        role: ChatRole::Assistant,
+                        blocks: vec![ChatBlock::Text(TextBlock {
+                            id: ChatBlockId::new(82),
+                            markdown: "NESTED-TEXT".to_string(),
+                            streaming: false,
+                        })],
+                    }],
+                    collapsed: false,
+                }),
                 ChatBlock::Todo(TodoBlock {
                     id: ChatBlockId::new(77),
                     items: vec![
@@ -1877,6 +2004,20 @@ mod tests {
 
         assert!(
             matches!(parsed, ChatBlock::Plan(block) if block.decision == PlanDecision::Pending)
+        );
+    }
+
+    #[test]
+    fn chat_task_blocks_default_to_pending_and_collapsed() {
+        let parsed = parse_block_value(&value_map([
+            ("type", ComponentValue::String("task".to_string())),
+            ("block_id", ComponentValue::U64(83)),
+            ("title", ComponentValue::String("subagent".to_string())),
+        ]))
+        .expect("parse task block");
+
+        assert!(
+            matches!(parsed, ChatBlock::Task(block) if block.status == TaskStatus::Pending && block.collapsed)
         );
     }
 

@@ -7,6 +7,8 @@ import {
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatTaskBlock,
+  ChatTaskTranscriptItem,
   ChatTextMessage,
   ChatThinkingBlock,
   ChatToolCallMessage,
@@ -95,6 +97,11 @@ const chatMode: ComponentValue = ChatInputMode('choice', { options: ['yes', 'no'
 const chatMessage = ChatMessage(2, [
   ChatThinkingBlock(2001, 'thinking', { collapsed: true }),
   ChatPlanBlock(2003, [{ text: 'review plan' }], { decision: 'pending' }),
+  ChatTaskBlock(2004, 'subagent', {
+    status: 'running',
+    summary: 'searching',
+    transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])],
+  }),
   ChatNoticeBlock(2002, 'info', 'ready'),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 1, output: 2 } } })
 const chatToolMessage = ChatToolCallMessage(3, 'bash', {

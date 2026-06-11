@@ -2,6 +2,8 @@ import {
   Button,
   ChatMessageList,
   ChatPlanBlock,
+  ChatTaskBlock,
+  ChatTaskTranscriptItem,
   ChatTextMessage,
   Grid,
   HStack,
@@ -23,7 +25,7 @@ const textbox = <TextBox value="Ada" onChange={(value, event) => {
 }} />
 const list = <ListBox items={['one', 'two']} selectedIndex={0} onSelect={(index) => index.toFixed()} />
 const table = <Table headers={['name']} rows={[["Ada"], ["Grace"]]} onChange={(index) => index.toFixed()} />
-const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' }), { id: 2, role: 'assistant', status: 'complete', blocks: [ChatPlanBlock(2001, [{ text: 'plan' }])] }]} autoScroll onLoadMore={() => {}} onPlanDecision={(event) => event.payload} />
+const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' }), { id: 2, role: 'assistant', status: 'complete', blocks: [ChatPlanBlock(2001, [{ text: 'plan' }]), ChatTaskBlock(2002, 'subagent', { transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])] })] }]} autoScroll onLoadMore={() => {}} onPlanDecision={(event) => event.payload} />
 const layout = <Grid columns={2} rowGap={1} columnGap={1}>{button}{textbox}</Grid>
 const stack = <VStack spacing={1}><HStack>{layout}</HStack>{list}{table}{chat}</VStack>
 const desktop = <>

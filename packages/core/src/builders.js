@@ -393,6 +393,22 @@ function ChatPlanBlock(blockId, items, options = {}) {
   }) ?? {}
 }
 
+function ChatTaskTranscriptItem(role, blocks) {
+  return { role, blocks }
+}
+
+function ChatTaskBlock(blockId, title, options = {}) {
+  return compactRecord({
+    type: 'task',
+    block_id: blockId,
+    title,
+    status: options.status ?? 'pending',
+    summary: options.summary ?? '',
+    transcript: options.transcript ?? [],
+    collapsed: options.collapsed,
+  }) ?? {}
+}
+
 function ChatTodoBlock(blockId, items) {
   return compactRecord({ type: 'todo', block_id: blockId, items }) ?? {}
 }
@@ -684,6 +700,8 @@ module.exports = {
   ChatToolResultBlock,
   ChatDiffBlock,
   ChatPlanBlock,
+  ChatTaskTranscriptItem,
+  ChatTaskBlock,
   ChatTodoBlock,
   ChatAttachmentBlock,
   ChatNoticeBlock,

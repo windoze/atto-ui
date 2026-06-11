@@ -31,9 +31,9 @@ use crate::message::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
     ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
     ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
-    NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TextBlock, ThinkingBlock,
-    TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
@@ -1171,6 +1171,10 @@ fn estimate_block_row_height(
             .max(1)
             .saturating_add(2)
             .min(u16::MAX as usize) as u16,
+        Some(ChatBlock::Task(task)) => estimate_disclosure_height(
+            !task.collapsed,
+            task_details_desired_height(&TaskDetails::from(task)),
+        ),
         Some(ChatBlock::Todo(todo)) => todo.items.len().max(1).min(u16::MAX as usize) as u16,
     };
     if block.is_some() && config.on_message_action.is_some() {
@@ -1448,6 +1452,10 @@ enum ChatBlockKindTag {
     Plan {
         decision: PlanDecision,
     },
+    Task {
+        title: String,
+        collapsed: bool,
+    },
     Todo,
     Notice {
         level: NoticeLevel,
@@ -1577,6 +1585,14 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
             id: block_id,
             items: Vec::new(),
             decision: *decision,
+        })),
+        ChatBlockKindTag::Task { title, collapsed } => Some(ChatBlock::Task(TaskBlock {
+            id: block_id,
+            title: title.clone(),
+            status: TaskStatus::Pending,
+            summary: String::new(),
+            transcript: Vec::new(),
+            collapsed: *collapsed,
         })),
         ChatBlockKindTag::Todo => Some(ChatBlock::Todo(TodoBlock {
             id: block_id,
@@ -1744,6 +1760,12 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
         ChatBlock::Plan(PlanBlock { decision, .. }) => ChatBlockKindTag::Plan {
             decision: *decision,
         },
+        ChatBlock::Task(TaskBlock {
+            title, collapsed, ..
+        }) => ChatBlockKindTag::Task {
+            title: title.clone(),
+            collapsed: *collapsed,
+        },
         ChatBlock::Todo(_) => ChatBlockKindTag::Todo,
         ChatBlock::Notice(NoticeBlock { level, text, .. }) => ChatBlockKindTag::Notice {
             level: *level,
@@ -1770,6 +1792,7 @@ struct ChatMessageRowBindings {
     markdown: Option<Binding<String>>,
     diff: Option<Binding<String>>,
     plan_items: Option<Binding<Vec<PlanItem>>>,
+    task_details: Option<Binding<TaskDetails>>,
     todo_items: Option<Binding<Vec<TodoItem>>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
@@ -1871,6 +1894,12 @@ impl ChatMessageRow {
                 && let Some(items) = block_plan_items_for_render(block)
             {
                 binding.set(items);
+            }
+
+            if let Some(binding) = &self.body_bindings.task_details
+                && let Some(details) = block_task_details_for_render(block)
+            {
+                binding.set(details);
             }
 
             if let Some(binding) = &self.body_bindings.todo_items
@@ -1975,6 +2004,13 @@ fn block_plan_items_for_render(block: &ChatBlock) -> Option<Vec<PlanItem>> {
     }
 }
 
+fn block_task_details_for_render(block: &ChatBlock) -> Option<TaskDetails> {
+    match block {
+        ChatBlock::Task(task) => Some(TaskDetails::from(task)),
+        _ => None,
+    }
+}
+
 fn block_todo_items_for_render(block: &ChatBlock) -> Option<Vec<TodoItem>> {
     match block {
         ChatBlock::Todo(todo) => Some(todo.items.clone()),
@@ -1994,6 +2030,7 @@ fn block_disclosure_status(block: &ChatBlock) -> Option<DisclosureStatus> {
         ChatBlock::Thinking(thinking) => Some(thinking_status_to_disclosure(thinking)),
         ChatBlock::ToolUse(tool) => Some(tool_status_to_disclosure(&tool.status)),
         ChatBlock::ToolResult(result) => Some(tool_result_to_disclosure(result)),
+        ChatBlock::Task(task) => Some(task_status_to_disclosure(task.status)),
         _ => None,
     }
 }
@@ -3453,6 +3490,86 @@ impl ::atto_ui::composable::Layout for PlanDecisionView {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct TaskDetails {
+    title: String,
+    status: TaskStatus,
+    summary: String,
+    transcript: Vec<TaskTranscriptItem>,
+}
+
+impl From<&TaskBlock> for TaskDetails {
+    fn from(task: &TaskBlock) -> Self {
+        Self {
+            title: task.title.clone(),
+            status: task.status,
+            summary: task.summary.clone(),
+            transcript: task.transcript.clone(),
+        }
+    }
+}
+
+struct TaskBlockView {
+    details: Binding<TaskDetails>,
+}
+
+impl TaskBlockView {
+    fn new(details: impl Into<Binding<TaskDetails>>) -> Self {
+        Self {
+            details: details.into(),
+        }
+    }
+
+    fn display_lines(&self) -> Vec<String> {
+        self.details.with(task_display_lines)
+    }
+}
+
+impl Component for TaskBlockView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let details = self.details.get();
+        let lines = task_display_lines(&details)
+            .into_iter()
+            .enumerate()
+            .map(|(idx, line)| {
+                if idx == 0 {
+                    Line::styled(line, ctx.theme.widget.dim)
+                } else {
+                    Line::styled(line, ctx.theme.widget.normal)
+                }
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for TaskBlockView {}
+impl ::atto_ui::composable::Scrollable for TaskBlockView {}
+impl ::atto_ui::composable::FocusNav for TaskBlockView {}
+impl ::atto_ui::composable::DynamicTree for TaskBlockView {}
+impl ::atto_ui::composable::EventHandling for TaskBlockView {}
+
+impl ::atto_ui::composable::Layout for TaskBlockView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(max_line_width(&self.display_lines()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_lines().len().max(1).min(u16::MAX as usize) as u16)
+    }
+}
+
 enum ChatMessageBody {
     Markdown(ResponsiveMarkdownView),
     Text(Text),
@@ -3600,6 +3717,22 @@ impl ChatMessageBody {
                     },
                 )
             }
+            Some(ChatBlock::Task(task)) => {
+                let details = Binding::new(TaskDetails::from(task));
+                let status = Binding::new(task_status_to_disclosure(task.status));
+                let view = Disclosure::new(task_block_title(task))
+                    .expanded(!task.collapsed)
+                    .status(status.clone())
+                    .child(TaskBlockView::new(details.clone()));
+                (
+                    ChatMessageBody::Disclosure(view),
+                    ChatMessageRowBindings {
+                        task_details: Some(details),
+                        disclosure_status: Some(status),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
             Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
                 let items = Binding::new(items.clone());
                 (
@@ -3699,6 +3832,16 @@ fn tool_status_to_disclosure(status: &ToolStatus) -> DisclosureStatus {
         ToolStatus::Done => DisclosureStatus::Done,
         ToolStatus::Error => DisclosureStatus::Error,
         ToolStatus::Canceled => DisclosureStatus::Canceled,
+    }
+}
+
+fn tool_status_label(status: &ToolStatus) -> &'static str {
+    match status {
+        ToolStatus::Pending => "pending",
+        ToolStatus::Running => "running",
+        ToolStatus::Done => "done",
+        ToolStatus::Error => "error",
+        ToolStatus::Canceled => "canceled",
     }
 }
 
@@ -3882,6 +4025,138 @@ fn plan_display_lines(items: &[PlanItem]) -> Vec<String> {
 
 fn plan_display_line(item: &PlanItem) -> String {
     format!("- {}", item.text)
+}
+
+fn task_block_title(task: &TaskBlock) -> String {
+    format!("Task: {}", task.title)
+}
+
+fn task_status_label(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::Complete => "complete",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Canceled => "canceled",
+    }
+}
+
+fn task_status_to_disclosure(status: TaskStatus) -> DisclosureStatus {
+    match status {
+        TaskStatus::Pending => DisclosureStatus::Idle,
+        TaskStatus::Running => DisclosureStatus::Running,
+        TaskStatus::Complete => DisclosureStatus::Done,
+        TaskStatus::Failed => DisclosureStatus::Error,
+        TaskStatus::Canceled => DisclosureStatus::Canceled,
+    }
+}
+
+fn task_display_lines(details: &TaskDetails) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "Task: {} ({})",
+            details.title,
+            task_status_label(details.status)
+        ),
+        format!("Status: {}", task_status_label(details.status)),
+    ];
+    if !details.summary.is_empty() {
+        lines.push(format!("Summary: {}", details.summary));
+    }
+    if details.transcript.is_empty() {
+        lines.push("(no task transcript)".to_string());
+        return lines;
+    }
+
+    lines.push("Transcript:".to_string());
+    for item in &details.transcript {
+        lines.push(format!("  {}:", item.role.label()));
+        for block in &item.blocks {
+            append_task_block_lines(&mut lines, block, 4);
+        }
+    }
+    lines
+}
+
+fn append_task_block_lines(lines: &mut Vec<String>, block: &ChatBlock, indent: usize) {
+    let prefix = " ".repeat(indent);
+    match block {
+        ChatBlock::Text(text) => append_prefixed_text_lines(lines, &text.markdown, &prefix),
+        ChatBlock::Thinking(thinking) => {
+            lines.push(format!("{prefix}Thinking:"));
+            append_prefixed_text_lines(lines, &thinking.markdown, &format!("{prefix}  "));
+        }
+        ChatBlock::ToolUse(tool) => {
+            lines.push(format!(
+                "{prefix}Tool use: {} ({})",
+                tool.name,
+                tool_status_label(&tool.status)
+            ));
+            for line in tool_input_detail_lines(&tool.input) {
+                lines.push(format!("{prefix}  {line}"));
+            }
+        }
+        ChatBlock::ToolResult(result) => {
+            lines.push(format!("{prefix}{}", tool_result_title(result)));
+            append_prefixed_text_lines(lines, result.output.as_text(), &format!("{prefix}  "));
+        }
+        ChatBlock::Diff(diff) => {
+            lines.push(format!("{prefix}{}", diff_block_title(diff)));
+            append_prefixed_text_lines(lines, &diff.diff.unified, &format!("{prefix}  "));
+        }
+        ChatBlock::Plan(plan) => {
+            lines.push(format!("{prefix}{}", plan_block_title(plan.decision)));
+            for line in plan_display_lines(&plan.items) {
+                lines.push(format!("{prefix}  {line}"));
+            }
+        }
+        ChatBlock::Task(task) => {
+            lines.push(format!(
+                "{prefix}Task: {} ({})",
+                task.title,
+                task_status_label(task.status)
+            ));
+            for line in task_display_lines(&TaskDetails::from(task)) {
+                lines.push(format!("{prefix}  {line}"));
+            }
+        }
+        ChatBlock::Todo(todo) => {
+            lines.push(format!("{prefix}Todo:"));
+            for line in todo_display_lines(&todo.items) {
+                lines.push(format!("{prefix}  {line}"));
+            }
+        }
+        ChatBlock::Attachment(attachment) => lines.push(format!(
+            "{prefix}{}",
+            attachment_label(&attachment.name, attachment.url.as_deref())
+        )),
+        ChatBlock::Notice(notice) => {
+            lines.push(format!(
+                "{prefix}{}",
+                notice_label(notice.level, &notice.text)
+            ));
+        }
+        ChatBlock::Artifact(artifact) => lines.push(format!(
+            "{prefix}Artifact {}: {}",
+            artifact.kind.label(),
+            artifact.title
+        )),
+    }
+}
+
+fn append_prefixed_text_lines(lines: &mut Vec<String>, text: &str, prefix: &str) {
+    if text.is_empty() {
+        lines.push(prefix.to_string());
+        return;
+    }
+    lines.extend(text.lines().map(|line| format!("{prefix}{line}")));
+}
+
+fn task_details_desired_height(details: &TaskDetails) -> u16 {
+    task_display_lines(details)
+        .len()
+        .max(1)
+        .min(u16::MAX as usize) as u16
 }
 
 fn tool_output_component(
@@ -5584,6 +5859,59 @@ mod tests {
     }
 
     #[test]
+    fn task_body_renders_nested_transcript_and_binding_updates() {
+        let details = Binding::new(TaskDetails {
+            title: "SUBAGENT-SEARCH".to_string(),
+            status: TaskStatus::Running,
+            summary: "SUBAGENT-INITIAL".to_string(),
+            transcript: vec![TaskTranscriptItem {
+                role: ChatRole::Assistant,
+                blocks: vec![ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(90_001),
+                    markdown: "NESTED-SEARCH".to_string(),
+                    streaming: false,
+                })],
+            }],
+        });
+        let mut view = TaskBlockView::new(details.clone());
+
+        let (initial, _) = draw_component_snapshot(&mut view, 80, 6);
+        assert!(initial[0].contains("Task: SUBAGENT-SEARCH (running)"));
+        assert!(initial.iter().any(|line| line.contains("Status: running")));
+        assert!(
+            initial
+                .iter()
+                .any(|line| line.contains("Summary: SUBAGENT-INITIAL"))
+        );
+        assert!(initial.iter().any(|line| line.contains("Assistant:")));
+        assert!(initial.iter().any(|line| line.contains("NESTED-SEARCH")));
+
+        details.set(TaskDetails {
+            title: "SUBAGENT-SEARCH".to_string(),
+            status: TaskStatus::Complete,
+            summary: "SUBAGENT-DONE".to_string(),
+            transcript: vec![TaskTranscriptItem {
+                role: ChatRole::Assistant,
+                blocks: vec![ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(90_002),
+                    markdown: "NESTED-FINAL".to_string(),
+                    streaming: false,
+                })],
+            }],
+        });
+        let (updated, _) = draw_component_snapshot(&mut view, 80, 6);
+        assert!(updated[0].contains("Task: SUBAGENT-SEARCH (complete)"));
+        assert!(updated.iter().any(|line| line.contains("Status: complete")));
+        assert!(
+            updated
+                .iter()
+                .any(|line| line.contains("Summary: SUBAGENT-DONE"))
+        );
+        assert!(updated.iter().any(|line| line.contains("NESTED-FINAL")));
+        assert!(!updated.iter().any(|line| line.contains("NESTED-SEARCH")));
+    }
+
+    #[test]
     fn chat_list_syncs_todo_items_from_store_set_todo() {
         let store = ChatMessageStore::new();
         let message_id = store.next_message_id();
@@ -5630,6 +5958,58 @@ mod tests {
         assert!(updated.iter().any(|line| line.contains("[x] TODO-ONE")));
         assert!(updated.iter().any(|line| line.contains("[ ] TODO-THREE")));
         assert!(!updated.iter().any(|line| line.contains("TODO-TWO")));
+    }
+
+    #[test]
+    fn chat_list_syncs_task_details_from_store_updates() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let task_id = ChatBlockId::new(71_001);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Task(TaskBlock {
+                id: task_id,
+                title: "SUBAGENT-SEARCH".to_string(),
+                status: TaskStatus::Running,
+                summary: "SUBAGENT-INITIAL".to_string(),
+                transcript: vec![TaskTranscriptItem {
+                    role: ChatRole::Assistant,
+                    blocks: vec![ChatBlock::Text(TextBlock {
+                        id: ChatBlockId::new(71_101),
+                        markdown: "NESTED-SEARCH".to_string(),
+                        streaming: false,
+                    })],
+                }],
+                collapsed: false,
+            })],
+        ));
+        let mut list = ChatMessageList::new(store.clone())
+            .show_timestamps(false)
+            .auto_scroll(false);
+
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 10);
+        assert!(initial.iter().any(|line| line.contains("Status: running")));
+        assert!(initial.iter().any(|line| line.contains("NESTED-SEARCH")));
+
+        assert!(store.set_task_status(task_id, TaskStatus::Complete));
+        assert!(store.set_task_summary(task_id, "SUBAGENT-DONE"));
+        assert!(store.set_task_transcript(
+            task_id,
+            vec![TaskTranscriptItem {
+                role: ChatRole::Assistant,
+                blocks: vec![ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(71_102),
+                    markdown: "NESTED-FINAL".to_string(),
+                    streaming: false,
+                })],
+            }]
+        ));
+        let (updated, _) = draw_component_snapshot(&mut list, 80, 10);
+        assert!(updated.iter().any(|line| line.contains("Status: complete")));
+        assert!(updated.iter().any(|line| line.contains("SUBAGENT-DONE")));
+        assert!(updated.iter().any(|line| line.contains("NESTED-FINAL")));
+        assert!(!updated.iter().any(|line| line.contains("NESTED-SEARCH")));
     }
 
     #[test]
@@ -5742,6 +6122,48 @@ mod tests {
         assert!(
             list.realized_row_count() < 80,
             "scrolling should prune offscreen rows instead of retaining all {total_rows}"
+        );
+    }
+
+    #[test]
+    fn chat_list_virtualizes_nested_task_rows_to_visible_window() {
+        let store = ChatMessageStore::new();
+        for idx in 0..180 {
+            let id = store.next_message_id();
+            store.push(ChatMessage::new(
+                id,
+                ChatRole::Assistant,
+                vec![ChatBlock::Task(TaskBlock {
+                    id: ChatBlockId::new(id.0.saturating_mul(1_000).saturating_add(1)),
+                    title: format!("task-{idx}"),
+                    status: TaskStatus::Running,
+                    summary: format!("summary-{idx}"),
+                    transcript: vec![TaskTranscriptItem {
+                        role: ChatRole::Assistant,
+                        blocks: vec![ChatBlock::Text(TextBlock {
+                            id: ChatBlockId::new(id.0.saturating_mul(1_000).saturating_add(2)),
+                            markdown: format!("nested-{idx}"),
+                            streaming: false,
+                        })],
+                    }],
+                    collapsed: false,
+                })],
+            ));
+        }
+        let total_rows = store
+            .binding()
+            .with(|messages| row_keys_from_messages(messages).len());
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+
+        draw_chat_list(&mut list, 80, 10);
+
+        assert!(total_rows >= 360, "fixture should contain many task rows");
+        assert!(
+            list.realized_row_count() < 80,
+            "task rows should be virtualized to the visible window, got {} of {total_rows}",
+            list.realized_row_count()
         );
     }
 
@@ -6221,6 +6643,46 @@ mod tests {
         let decision_key = row_keys_from_messages(&[message]);
 
         assert_ne!(items_key, decision_key);
+    }
+
+    #[test]
+    fn row_keys_ignore_task_runtime_details_but_track_identity() {
+        let id = ChatMessageId::new(18);
+        let mut message = ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Task(TaskBlock {
+                id: ChatBlockId::new(18_001),
+                title: "subagent".to_string(),
+                status: TaskStatus::Running,
+                summary: "initial".to_string(),
+                transcript: Vec::new(),
+                collapsed: true,
+            })],
+        );
+        let first_key = row_keys_from_messages(&[message.clone()]);
+
+        if let ChatBlock::Task(task) = &mut message.blocks[0] {
+            task.status = TaskStatus::Complete;
+            task.summary = "done".to_string();
+            task.transcript = vec![TaskTranscriptItem {
+                role: ChatRole::Assistant,
+                blocks: vec![ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(18_101),
+                    markdown: "nested".to_string(),
+                    streaming: false,
+                })],
+            }];
+        }
+        let updated_key = row_keys_from_messages(&[message.clone()]);
+        assert_eq!(first_key, updated_key);
+
+        if let ChatBlock::Task(task) = &mut message.blocks[0] {
+            task.title = "renamed subagent".to_string();
+        }
+        let renamed_key = row_keys_from_messages(&[message]);
+
+        assert_ne!(updated_key, renamed_key);
     }
 
     #[test]

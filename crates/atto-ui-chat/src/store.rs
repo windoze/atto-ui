@@ -6,7 +6,8 @@ use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
     ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta,
-    ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TodoItem, ToolResultBlock, ToolStatus,
+    ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus, TaskTranscriptItem, TodoItem,
+    ToolResultBlock, ToolStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -518,6 +519,71 @@ impl ChatMessageStore {
         found_plan
     }
 
+    pub fn set_task_status(&self, id: ChatBlockId, status: TaskStatus) -> bool {
+        let mut found_task = false;
+        let changed = self.messages.update_if(|messages| {
+            let Some(ChatBlock::Task(task)) = find_block_mut(messages, id) else {
+                return false;
+            };
+            found_task = true;
+            if task.status == status {
+                false
+            } else {
+                task.status = status;
+                true
+            }
+        });
+        if changed {
+            self.versions.bump_block(id);
+        }
+        found_task
+    }
+
+    pub fn set_task_summary(&self, id: ChatBlockId, summary: impl Into<String>) -> bool {
+        let summary = summary.into();
+        let mut found_task = false;
+        let changed = self.messages.update_if(|messages| {
+            let Some(ChatBlock::Task(task)) = find_block_mut(messages, id) else {
+                return false;
+            };
+            found_task = true;
+            if task.summary == summary {
+                false
+            } else {
+                task.summary = summary;
+                true
+            }
+        });
+        if changed {
+            self.versions.bump_block(id);
+        }
+        found_task
+    }
+
+    pub fn set_task_transcript(
+        &self,
+        id: ChatBlockId,
+        transcript: Vec<TaskTranscriptItem>,
+    ) -> bool {
+        let mut found_task = false;
+        let changed = self.messages.update_if(|messages| {
+            let Some(ChatBlock::Task(task)) = find_block_mut(messages, id) else {
+                return false;
+            };
+            found_task = true;
+            if task.transcript == transcript {
+                false
+            } else {
+                task.transcript = transcript;
+                true
+            }
+        });
+        if changed {
+            self.versions.bump_block(id);
+        }
+        found_task
+    }
+
     pub fn set_todo(&self, id: ChatBlockId, items: Vec<TodoItem>) -> bool {
         let mut found_todo = false;
         let changed = self.messages.update_if(|messages| {
@@ -555,12 +621,22 @@ impl ChatMessageStore {
         let next_block_id = messages
             .iter()
             .flat_map(|message| message.blocks.iter())
-            .map(|block| block.id().0.saturating_add(1))
+            .map(|block| max_nested_block_id(block).saturating_add(1))
             .max()
             .unwrap_or(1);
         bump_counter(&self.next_id, next_message_id);
         bump_counter(&self.next_block_id, next_block_id);
     }
+}
+
+fn max_nested_block_id(block: &ChatBlock) -> u64 {
+    let mut max_id = block.id().0;
+    if let ChatBlock::Task(task) = block {
+        for nested in task.transcript.iter().flat_map(|item| item.blocks.iter()) {
+            max_id = max_id.max(max_nested_block_id(nested));
+        }
+    }
+    max_id
 }
 
 fn find_block_mut(messages: &mut [ChatMessage], id: ChatBlockId) -> Option<&mut ChatBlock> {
@@ -578,6 +654,7 @@ fn set_block_id(block: &mut ChatBlock, id: ChatBlockId) {
         ChatBlock::ToolResult(block) => block.id = id,
         ChatBlock::Diff(block) => block.id = id,
         ChatBlock::Plan(block) => block.id = id,
+        ChatBlock::Task(block) => block.id = id,
         ChatBlock::Todo(block) => block.id = id,
         ChatBlock::Attachment(block) => block.id = id,
         ChatBlock::Notice(block) => block.id = id,
@@ -628,8 +705,9 @@ impl Default for ChatMessageStore {
 mod tests {
     use super::*;
     use crate::message::{
-        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, PlanBlock, TextBlock,
-        ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
+        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock,
+        TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput,
+        ToolOutput, ToolUseBlock,
     };
 
     fn block_id_for(
@@ -1018,6 +1096,47 @@ mod tests {
         assert!(!binding.check_dirty(&mut observer));
 
         assert!(!store.set_plan(ChatBlockId::new(999), Vec::new()));
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn task_updates_skip_unchanged_values() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let task_id = ChatBlockId::new(40);
+        let transcript = vec![TaskTranscriptItem {
+            role: ChatRole::Assistant,
+            blocks: vec![ChatBlock::Text(TextBlock {
+                id: ChatBlockId::new(41),
+                markdown: "TASK-NESTED".to_string(),
+                streaming: false,
+            })],
+        }];
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Task(TaskBlock {
+                id: task_id,
+                title: "subagent".to_string(),
+                status: TaskStatus::Running,
+                summary: "searching".to_string(),
+                transcript: Vec::new(),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.set_task_status(task_id, TaskStatus::Complete));
+        assert!(store.set_task_summary(task_id, "done"));
+        assert!(store.set_task_transcript(task_id, transcript.clone()));
+
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+        assert!(store.set_task_status(task_id, TaskStatus::Complete));
+        assert!(store.set_task_summary(task_id, "done"));
+        assert!(store.set_task_transcript(task_id, transcript));
+        assert!(!binding.check_dirty(&mut observer));
+
+        assert!(!store.set_task_status(ChatBlockId::new(999), TaskStatus::Failed));
         assert!(!binding.check_dirty(&mut observer));
     }
 

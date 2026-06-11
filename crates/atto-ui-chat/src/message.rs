@@ -241,6 +241,7 @@ pub enum ChatBlock {
     ToolResult(ToolResultBlock),
     Diff(DiffBlock),
     Plan(PlanBlock),
+    Task(TaskBlock),
     Todo(TodoBlock),
     Attachment(AttachmentBlock),
     Notice(NoticeBlock),
@@ -256,6 +257,7 @@ impl ChatBlock {
             ChatBlock::ToolResult(block) => block.id,
             ChatBlock::Diff(block) => block.id,
             ChatBlock::Plan(block) => block.id,
+            ChatBlock::Task(block) => block.id,
             ChatBlock::Todo(block) => block.id,
             ChatBlock::Attachment(block) => block.id,
             ChatBlock::Notice(block) => block.id,
@@ -396,6 +398,31 @@ pub enum PlanDecision {
     Pending,
     Accepted,
     Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskBlock {
+    pub id: ChatBlockId,
+    pub title: String,
+    pub status: TaskStatus,
+    pub summary: String,
+    pub transcript: Vec<TaskTranscriptItem>,
+    pub collapsed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskStatus {
+    Pending,
+    Running,
+    Complete,
+    Failed,
+    Canceled,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskTranscriptItem {
+    pub role: ChatRole,
+    pub blocks: Vec<ChatBlock>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -649,26 +676,41 @@ mod tests {
                 }],
                 decision: PlanDecision::Pending,
             }),
-            ChatBlock::Todo(TodoBlock {
+            ChatBlock::Task(TaskBlock {
                 id: ChatBlockId::new(7),
+                title: "subagent".to_string(),
+                status: TaskStatus::Running,
+                summary: "searching".to_string(),
+                transcript: vec![TaskTranscriptItem {
+                    role: ChatRole::Assistant,
+                    blocks: vec![ChatBlock::Text(TextBlock {
+                        id: ChatBlockId::new(70),
+                        markdown: "nested".to_string(),
+                        streaming: false,
+                    })],
+                }],
+                collapsed: true,
+            }),
+            ChatBlock::Todo(TodoBlock {
+                id: ChatBlockId::new(8),
                 items: vec![TodoItem {
                     text: "ship".to_string(),
                     state: TodoState::InProgress,
                 }],
             }),
             ChatBlock::Attachment(AttachmentBlock {
-                id: ChatBlockId::new(8),
+                id: ChatBlockId::new(9),
                 name: "report.txt".to_string(),
                 url: None,
                 mime: Some("text/plain".to_string()),
             }),
             ChatBlock::Notice(NoticeBlock {
-                id: ChatBlockId::new(9),
+                id: ChatBlockId::new(10),
                 level: NoticeLevel::Warning,
                 text: "context compacted".to_string(),
             }),
             ChatBlock::Artifact(ArtifactBlock {
-                id: ChatBlockId::new(10),
+                id: ChatBlockId::new(11),
                 kind: ArtifactKind::Diff,
                 anchor: ArtifactId::new("artifact-1"),
                 title: "patch".to_string(),
@@ -677,7 +719,7 @@ mod tests {
 
         let ids = blocks.iter().map(ChatBlock::id).collect::<Vec<_>>();
 
-        assert_eq!(ids, (1..=10).map(ChatBlockId::new).collect::<Vec<_>>());
+        assert_eq!(ids, (1..=11).map(ChatBlockId::new).collect::<Vec<_>>());
     }
 
     #[test]
