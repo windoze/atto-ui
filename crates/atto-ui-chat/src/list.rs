@@ -40,6 +40,7 @@ type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
 type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
+type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalDecision {
@@ -84,6 +85,7 @@ struct ChatMessageListConfig {
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
+    on_cancel: Option<CancelCallback>,
 }
 
 #[derive(Clone)]
@@ -96,6 +98,7 @@ struct ChatMessageRowConfig {
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
+    on_cancel: Option<CancelCallback>,
 }
 
 pub struct ChatMessageList {
@@ -127,6 +130,7 @@ impl ChatMessageList {
             on_approve: None,
             on_edit_decision: None,
             on_message_action: None,
+            on_cancel: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
@@ -239,6 +243,15 @@ impl ChatMessageList {
         self
     }
 
+    pub fn on_cancel<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ChatMessageId) + Send + Sync + 'static,
+    {
+        self.config.on_cancel = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
     pub fn auto_scroll(mut self, enabled: bool) -> Self {
         self.auto_scroll = enabled;
         if !enabled {
@@ -250,6 +263,10 @@ impl ChatMessageList {
     pub fn scroll_to_bottom(&mut self) {
         self.pending_scroll_to_bottom = true;
         self.follow_tail = true;
+    }
+
+    pub fn is_following_tail(&self) -> bool {
+        self.follow_tail
     }
 
     fn rebuild_list(&mut self) {
@@ -511,6 +528,7 @@ fn build_list(
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
         on_message_action: config.on_message_action.clone(),
+        on_cancel: config.on_cancel.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
         ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
@@ -893,6 +911,7 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
 #[derive(Default)]
 struct ChatMessageRowBindings {
     header: Option<Binding<String>>,
+    turn_status: Option<Binding<ChatTurnStatus>>,
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
     diff: Option<Binding<String>>,
@@ -958,6 +977,9 @@ impl ChatMessageRow {
         self.store.with_message(message_id, |message| {
             if let Some(binding) = &self.body_bindings.header {
                 binding.set(turn_header_label(message));
+            }
+            if let Some(binding) = &self.body_bindings.turn_status {
+                binding.set(message.status.clone());
             }
             if let Some(binding) = &self.body_bindings.timestamp {
                 binding.set(message.meta.timestamp.clone());
@@ -1248,6 +1270,7 @@ fn build_turn_header(
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let header_label = Binding::new(turn_header_label(message));
+    let turn_status = Binding::new(message.status.clone());
     let header = Text::new(String::new()).text(header_label.clone()).style(
         Style::default()
             .fg(Color::DarkGray)
@@ -1262,7 +1285,13 @@ fn build_turn_header(
         .with_spacing(1)
         .child_with_layout(header, content_layout);
 
-    if let Some(actions) = turn_action_row(message.id, &message.role, &config.on_message_action) {
+    if let Some(actions) = turn_action_row(
+        message.id,
+        &message.role,
+        turn_status.clone(),
+        &config.on_message_action,
+        &config.on_cancel,
+    ) {
         bubble = bubble.child_with_layout(actions, content_layout);
     }
 
@@ -1270,6 +1299,7 @@ fn build_turn_header(
         bubble,
         ChatMessageRowBindings {
             header: Some(header_label),
+            turn_status: Some(turn_status),
             ..ChatMessageRowBindings::default()
         },
     )
@@ -1303,19 +1333,37 @@ fn build_block_bubble(
 fn turn_action_row(
     message_id: ChatMessageId,
     role: &ChatRole,
+    turn_status: Binding<ChatTurnStatus>,
     on_message_action: &Option<MessageActionCallback>,
+    on_cancel: &Option<CancelCallback>,
 ) -> Option<HStack> {
-    let callback = on_message_action.clone()?;
+    let show_cancel = on_cancel.is_some() && turn_status.get().is_streaming();
+    if on_message_action.is_none() && !show_cancel {
+        return None;
+    }
     let mut row = HStack::new().with_spacing(1);
-    for (label, kind) in turn_action_specs(role) {
+    if show_cancel && let Some(callback) = on_cancel.clone() {
+        let label = "Cancel";
         row = row.child_with_layout(
-            message_action_button(label, message_id, kind, callback.clone()),
+            streaming_cancel_button(label, message_id, turn_status, callback),
             LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
+                width: Size::Content,
                 height: Size::Content,
                 ..LayoutParams::default()
             },
         );
+    }
+    if let Some(callback) = on_message_action.clone() {
+        for (label, kind) in turn_action_specs(role) {
+            row = row.child_with_layout(
+                message_action_button(label, message_id, kind, callback.clone()),
+                LayoutParams {
+                    width: Size::Fixed(button_width_for_label(label)),
+                    height: Size::Content,
+                    ..LayoutParams::default()
+                },
+            );
+        }
     }
     Some(row)
 }
@@ -1366,6 +1414,75 @@ fn message_action_button(
     let action = MessageAction { message_id, kind };
     Button::new(label).on_click(move || callback(action.clone()))
 }
+
+fn streaming_cancel_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    status: Binding<ChatTurnStatus>,
+    callback: CancelCallback,
+) -> StreamingCancelButton {
+    StreamingCancelButton {
+        label,
+        status,
+        button: Button::new(label).on_click(move || callback(message_id)),
+    }
+}
+
+struct StreamingCancelButton {
+    label: &'static str,
+    status: Binding<ChatTurnStatus>,
+    button: Button,
+}
+
+impl StreamingCancelButton {
+    fn active(&self) -> bool {
+        self.status.get().is_streaming()
+    }
+}
+
+impl ::atto_ui::composable::Component for StreamingCancelButton {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if self.active() {
+            self.button.draw(frame, area, ctx);
+        }
+    }
+}
+
+impl ::atto_ui::composable::Layout for StreamingCancelButton {
+    fn min_width(&self) -> u16 {
+        if self.active() {
+            button_width_for_label(self.label)
+        } else {
+            0
+        }
+    }
+
+    fn min_height(&self) -> u16 {
+        u16::from(self.active())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.min_height())
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for StreamingCancelButton {
+    fn is_focusable(&self) -> bool {
+        self.active()
+    }
+}
+
+impl ::atto_ui::composable::EventHandling for StreamingCancelButton {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if self.active() {
+            self.button.handle_event(event, ctx)
+        } else {
+            EventResult::ignored()
+        }
+    }
+}
+
+atto_ui::impl_component_default_traits!(StreamingCancelButton => Scrollable, DynamicTree);
 
 fn turn_header_label(message: &ChatMessage) -> String {
     let mut label = message.role.label();
@@ -3580,6 +3697,7 @@ mod tests {
             on_approve: None,
             on_edit_decision: None,
             on_message_action: None,
+            on_cancel: None,
         }
     }
 
@@ -3641,6 +3759,54 @@ mod tests {
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
         );
+    }
+
+    #[test]
+    fn streaming_cancel_button_emits_only_while_streaming() {
+        let message_id = ChatMessageId::new(60);
+        let status = Binding::new(ChatTurnStatus::Streaming);
+        let canceled = Arc::new(Mutex::new(Vec::new()));
+        let captured = canceled.clone();
+        let mut button = streaming_cancel_button(
+            "Cancel",
+            message_id,
+            status.clone(),
+            Arc::new(move |id| captured.lock().expect("cancel lock").push(id)),
+        );
+        let theme = Theme::dark();
+
+        assert!(button.is_focusable());
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+
+        status.set(ChatTurnStatus::Canceled);
+        assert!(!button.is_focusable());
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+    }
+
+    #[test]
+    fn host_can_detect_unfollowed_tail_and_request_scroll_to_bottom() {
+        let store = store_with_text_messages(20);
+        let mut list = ChatMessageList::new(store).show_timestamps(false);
+
+        draw_chat_list(&mut list, 40, 6);
+        assert!(list.is_following_tail());
+
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+        assert!(!list.is_following_tail());
+
+        list.scroll_to_bottom();
+        draw_chat_list(&mut list, 40, 6);
+        assert!(list.is_following_tail());
+        assert_eq!(list.scroll_offset().1, list.max_scroll_y());
     }
 
     #[test]

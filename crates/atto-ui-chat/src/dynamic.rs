@@ -56,6 +56,7 @@ pub fn chat_message_list_schema() -> ComponentSchema {
         .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
         .with_event(EventMeta::new("approve").with_payload(ValueType::Map))
         .with_event(EventMeta::new("edit_decision").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("cancel").with_payload(ValueType::Map))
         .with_event(EventMeta::new("message_action").with_payload(ValueType::Map))
         .allow_children(false)
 }
@@ -410,6 +411,12 @@ fn edit_decision_event_to_value(event: EditDecisionEvent) -> ComponentValue {
         "decision".to_string(),
         ComponentValue::String(edit_decision_to_string(event.decision).to_string()),
     );
+    ComponentValue::Map(map)
+}
+
+fn cancel_event_to_value(message_id: ChatMessageId) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert("message_id".to_string(), ComponentValue::U64(message_id.0));
     ComponentValue::Map(map)
 }
 
@@ -1304,6 +1311,12 @@ pub fn register_chat_message_list(
             });
         }
 
+        if let Some(cb) = event_handle(spec, "cancel", callbacks.clone()) {
+            view = view.on_cancel(move |message_id| {
+                cb.emit_with(Some(cancel_event_to_value(message_id)));
+            });
+        }
+
         if let Some(cb) = event_handle(spec, "message_action", callbacks.clone()) {
             view = view.on_message_action(move |action| {
                 cb.emit_with(Some(message_action_to_value(action)));
@@ -1460,6 +1473,18 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_list_schema_exposes_cancel_event_payload() {
+        let schema = chat_message_list_schema();
+
+        assert!(
+            schema
+                .events
+                .iter()
+                .any(|event| event.name == "cancel" && event.payload == Some(ValueType::Map))
+        );
+    }
+
+    #[test]
     fn approval_decision_serializes_to_runtime_payload() {
         let value = approval_decision_to_value(ApprovalDecision {
             message_id: ChatMessageId::new(10),
@@ -1501,6 +1526,13 @@ mod tests {
                 ("decision", ComponentValue::String("accepted".to_string())),
             ])
         );
+    }
+
+    #[test]
+    fn cancel_event_serializes_to_runtime_payload() {
+        let value = cancel_event_to_value(ChatMessageId::new(13));
+
+        assert_eq!(value, value_map([("message_id", ComponentValue::U64(13))]));
     }
 
     #[test]

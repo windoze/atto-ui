@@ -328,3 +328,15 @@
 - 全量验证已通过：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P6.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
 - 下一步检查 `git status`、`git diff`、最近提交记录，确认提交范围后创建 `[P6.1] Add chat message actions` 提交并停止。
+
+## 当前任务：P6.2 中断 + 回底
+
+- 已在执行项目命令前写入本轮初始计划；初始写入覆盖了历史记录，已恢复既有历史并追加本次 P6.2 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P6.2 中断 + 回底`。
+- 已查看最近提交：`7b7437a [P6.1] Add chat message actions`，未声明与 `P6.2` 直接相关的未完成事项。
+- 执行范围限定为 streaming 回合中断回调和回底入口判断，不推进 P6.3 复制快捷键。
+- 已完成实现：`ChatMessageList::on_cancel` 对 streaming 回合头渲染 `Cancel` 控件并回调 `ChatMessageId`；dynamic schema/注册新增 `cancel(Map)` 事件；新增 `is_following_tail()`，宿主可在 `false` 时显示回底入口并调用既有 `scroll_to_bottom()`。
+- 已补充验证：list 单测覆盖 cancel 控件仅在 streaming 状态触发、宿主检测离开尾部并请求回底；dynamic 单测覆盖 `cancel` schema 和 payload；`snapshot_chat_app --cancel-action` 与 PTY 覆盖点击 Cancel 后宿主将回合置为 `Canceled`。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib cancel`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P6.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
+- 下一步检查 `git status`、`git diff`、最近提交记录，确认提交范围后创建 `[P6.2] Add chat cancel action` 提交并停止。

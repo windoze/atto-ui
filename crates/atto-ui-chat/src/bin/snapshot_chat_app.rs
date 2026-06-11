@@ -63,6 +63,7 @@ fn main() -> Result<()> {
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
     let message_actions = args.iter().any(|arg| arg == "--message-actions");
+    let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -103,6 +104,9 @@ fn main() -> Result<()> {
         None
     } else if message_actions {
         seed_message_action_messages(&store);
+        None
+    } else if cancel_action {
+        seed_cancel_action_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -149,6 +153,7 @@ fn main() -> Result<()> {
         || todo_block_id.is_some()
         || turn_meta_error
         || message_actions
+        || cancel_action
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -172,6 +177,7 @@ fn main() -> Result<()> {
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
+    let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
     if !responsive_layout {
         list = list.wrap_width(56);
@@ -213,6 +219,12 @@ fn main() -> Result<()> {
             move |action| message_action_events.push(action)
         });
     }
+    if cancel_action {
+        list = list.on_cancel({
+            let cancel_events = cancel_events.clone();
+            move |message_id| cancel_events.push(message_id)
+        });
+    }
     let input_panel = input_handle.panel().on_submit({
         let store = store.clone();
         move |response| {
@@ -233,7 +245,7 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output || turn_meta_error {
         28
-    } else if inline_approval || inline_diff || message_actions {
+    } else if inline_approval || inline_diff || message_actions || cancel_action {
         24
     } else {
         18
@@ -473,6 +485,13 @@ fn main() -> Result<()> {
                 action.message_id.0,
                 message_action_label(&action.kind)
             ));
+        }
+
+        for message_id in cancel_events.drain() {
+            store.set_turn_status(message_id, ChatTurnStatus::Canceled);
+            input_handle
+                .draft_binding()
+                .set(format!("CANCELLED: {}", message_id.0));
         }
 
         if let Event::Key(KeyEvent {
@@ -736,6 +755,22 @@ fn seed_message_action_messages(store: &ChatMessageStore) {
             streaming: false,
         })],
     ));
+}
+
+fn seed_cancel_action_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(
+        ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "CANCEL-STREAMING-MESSAGE".to_string(),
+                streaming: true,
+            })],
+        )
+        .with_status(ChatTurnStatus::Streaming),
+    );
 }
 
 fn edit_decision_event_label(decision: EditDecision) -> &'static str {
