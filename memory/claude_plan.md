@@ -340,3 +340,18 @@
 - 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib cancel`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P6.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
 - 下一步检查 `git status`、`git diff`、最近提交记录，确认提交范围后创建 `[P6.2] Add chat cancel action` 提交并停止。
+
+## 当前任务：P6.3 复制目标块
+
+- 已在执行项目命令前写入本轮初始计划；初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次 P6.3 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P6.3 复制目标块`。
+- 已查看最近提交：`451514a [P6.2] Add chat cancel action`，未声明与 `P6.3` 直接相关的未完成事项。
+- 执行范围限定为 block 正文/代码/命令目标聚焦与复制快捷键，以及任务要求的 PTY 覆盖；不推进 P7 虚拟化。
+- 已确认现有按钮式 `CopyBlock`、`Retry`/`Regenerate` 和 `Cancel` 事件可复用；本次实现复用 `MessageActionKind::CopyBlock(block_id)`。
+- 已完成实现：为 chat block body 增加可聚焦复制目标包装层，复制快捷键触发既有 `CopyBlock` message action；`ChatMessageList`、`ChatMessageRow`、`ChatMessageBody` 补齐 `FocusNav` 委托，使点击 block body 后键盘事件能路由到目标块。
+- 首次 PTY 快捷键测试失败原因：list/row 没有向外层委托 focusability，键盘焦点仍留在输入区。已补焦点委托并复测 message action PTY 通过。
+- 完整测试首次运行发现列表变为可聚焦后抢占输入框初始焦点。已在 `ChatPanel` 构造时将初始焦点恢复到输入区，并复测相关输入 PTY 通过。
+- 已补充验证：新增 `block_copy_target_emits_copy_action_on_shortcut` 单测；`chat_message_action_buttons_emit_turn_and_block_actions` PTY 覆盖点击正文后复制快捷键，并保留 Retry/Regenerate 回调断言；既有 cancel PTY 覆盖流式中断置 `Canceled`。
+- 验证已通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib block_copy_target_emits_copy_action_on_shortcut`、`cargo test -p atto-ui-chat --test pty_chat chat_message_action_buttons_emit_turn_and_block_actions -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_input_modes_submit_callbacks -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring -- --exact`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P6.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交 P6.3 相关文件并停止。

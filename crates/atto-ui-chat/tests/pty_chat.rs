@@ -488,6 +488,11 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
     host.wait_for_text("Regenerate", Duration::from_secs(2))?;
     host.wait_for_text("Copy block", Duration::from_secs(2))?;
 
+    let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("copy target body");
+    host.click(x, y)?;
+    host.key_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)?;
+    host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
+
     let (x, y) = find_text_position(&host, "Copy").expect("copy action");
     host.click(x, y)?;
     host.wait_for_text("MESSAGE_ACTION: 1/copy", Duration::from_secs(2))?;

@@ -101,7 +101,9 @@
 - [x] **[DONE] P6.2 中断 + 回底** — `src/list.rs`:对 `Streaming` 回合暴露 `on_cancel(message_id)`;`!follow_tail` 时提供回底入口(宿主调用 `scroll_to_bottom()`)。
   - 完成记录（2026-06-12）：已新增 `ChatMessageList::on_cancel`，streaming 回合头在配置回调后显示 `Cancel` 控件并向宿主回传 `ChatMessageId`；`dynamic.rs` 同步新增 `cancel(Map)` 事件，payload 包含 `message_id`。新增 `is_following_tail()`，宿主可在返回 `false` 时显示回底入口并调用既有 `scroll_to_bottom()`。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib cancel`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P6.3 复制目标块** — `src/list.rs`:目标 block(代码/命令/正文)可聚焦并响应复制快捷键(文本选择留后续)。补 PTY 覆盖复制、retry/regenerate 回调、流式中断置 `Canceled`。
+- [x] **[DONE] P6.3 复制目标块** — `src/list.rs`:目标 block(代码/命令/正文)可聚焦并响应复制快捷键(文本选择留后续)。补 PTY 覆盖复制、retry/regenerate 回调、流式中断置 `Canceled`。
+  - 完成记录（2026-06-12）：已为 chat block body 增加可聚焦复制目标包装层，点击正文/代码/命令类 block 后按复制快捷键会触发既有 `MessageActionKind::CopyBlock(block_id)`；同时补齐 `ChatMessageList`、`ChatMessageRow`、`ChatMessageBody` 的焦点委托，使 block body 能接收键盘事件。`ChatPanel` 构造时显式保留输入框为初始焦点，避免列表变为可聚焦后影响既有输入体验。PTY 覆盖已在 message action 场景验证正文复制快捷键、Retry/Regenerate 回调；既有 cancel PTY 覆盖验证流式中断置 `Canceled`。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib block_copy_target_emits_copy_action_on_shortcut`、`cargo test -p atto-ui-chat --test pty_chat chat_message_action_buttons_emit_turn_and_block_actions -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_cancel_button_emits_and_marks_turn_canceled -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_input_modes_submit_callbacks -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_textarea_multiline_history_and_kill_ring -- --exact`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
 ## 阶段 P7 — 规模
 

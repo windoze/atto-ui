@@ -1,4 +1,4 @@
-use atto_ui::composable::{ComponentContext, EventResult, LayoutParams, Size, VStack};
+use atto_ui::composable::{ComponentContext, EventResult, FocusNav, LayoutParams, Size, VStack};
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -21,10 +21,11 @@ impl ChatPanel {
             ..LayoutParams::default()
         };
 
-        let view = VStack::new()
+        let mut view = VStack::new()
             .with_spacing(1)
             .child_with_layout(list, list_layout)
             .child_with_layout(input, input_layout);
+        let _ = view.focus_last();
 
         Self { view }
     }

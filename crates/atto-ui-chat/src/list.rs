@@ -3,16 +3,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use atto_ui::composable::{
-    Component, ComponentAction, ComponentContext, EdgeInsets, EventResult, HStack, Identifiable,
-    LayoutParams, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarVisibility, Size,
-    Spacer, Text, VStack,
+    Component, ComponentAction, ComponentContext, ComponentId, EdgeInsets, EventResult, FocusNav,
+    HStack, Identifiable, LayoutParams, MouseCoordinateSpace, ScrollConfig, Scrollable,
+    ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::widgets::{Button, Disclosure, DisclosureStatus};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -494,7 +494,23 @@ impl ::atto_ui::composable::Scrollable for ChatMessageList {
     }
 }
 
-impl ::atto_ui::composable::FocusNav for ChatMessageList {}
+impl ::atto_ui::composable::FocusNav for ChatMessageList {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.list.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.list.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.list.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.list.focus_last()
+    }
+}
 
 impl ::atto_ui::composable::DynamicTree for ChatMessageList {}
 
@@ -1163,7 +1179,23 @@ impl ::atto_ui::composable::Layout for ChatMessageRow {
 
 impl ::atto_ui::composable::Scrollable for ChatMessageRow {}
 
-impl ::atto_ui::composable::FocusNav for ChatMessageRow {}
+impl ::atto_ui::composable::FocusNav for ChatMessageRow {
+    fn focused_child(&self) -> Option<ComponentId> {
+        self.view.focused_child()
+    }
+
+    fn is_focusable(&self) -> bool {
+        self.view.is_focusable()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.view.focus_last()
+    }
+}
 
 impl ::atto_ui::composable::DynamicTree for ChatMessageRow {}
 
@@ -1311,6 +1343,10 @@ fn build_block_bubble(
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let (body, body_bindings) = ChatMessageBody::from_block(message_id, block, config);
+    let body = match block.zip(config.on_message_action.clone()) {
+        Some((block, callback)) => body.with_copy_shortcut(message_id, block.id(), callback),
+        None => body,
+    };
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -2358,9 +2394,19 @@ enum ChatMessageBody {
     Diff(DiffDecisionView),
     Todo(TodoListView),
     Artifact(ArtifactLink),
+    CopyTarget(BlockCopyTarget),
 }
 
 impl ChatMessageBody {
+    fn with_copy_shortcut(
+        self,
+        message_id: ChatMessageId,
+        block_id: ChatBlockId,
+        callback: MessageActionCallback,
+    ) -> Self {
+        ChatMessageBody::CopyTarget(BlockCopyTarget::new(self, message_id, block_id, callback))
+    }
+
     fn from_block(
         message_id: ChatMessageId,
         block: Option<&ChatBlock>,
@@ -3372,6 +3418,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Todo(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::CopyTarget(view) => view.draw(frame, area, ctx),
         }
     }
 }
@@ -3387,6 +3434,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_width(),
             ChatMessageBody::Todo(view) => view.min_width(),
             ChatMessageBody::Artifact(view) => view.min_width(),
+            ChatMessageBody::CopyTarget(view) => view.min_width(),
         }
     }
 
@@ -3398,6 +3446,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_height(),
             ChatMessageBody::Todo(view) => view.min_height(),
             ChatMessageBody::Artifact(view) => view.min_height(),
+            ChatMessageBody::CopyTarget(view) => view.min_height(),
         }
     }
 
@@ -3409,6 +3458,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_width(),
             ChatMessageBody::Todo(view) => view.desired_width(),
             ChatMessageBody::Artifact(view) => view.desired_width(),
+            ChatMessageBody::CopyTarget(view) => view.desired_width(),
         }
     }
 
@@ -3420,17 +3470,150 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_height(),
             ChatMessageBody::Todo(view) => view.desired_height(),
             ChatMessageBody::Artifact(view) => view.desired_height(),
+            ChatMessageBody::CopyTarget(view) => view.desired_height(),
         }
     }
 }
 
-impl ::atto_ui::composable::Scrollable for ChatMessageBody {}
+impl ::atto_ui::composable::Scrollable for ChatMessageBody {
+    fn is_scrollable(&self) -> bool {
+        match self {
+            ChatMessageBody::Markdown(view) => view.is_scrollable(),
+            ChatMessageBody::Text(view) => view.is_scrollable(),
+            ChatMessageBody::Disclosure(view) => view.is_scrollable(),
+            ChatMessageBody::Diff(view) => view.is_scrollable(),
+            ChatMessageBody::Todo(view) => view.is_scrollable(),
+            ChatMessageBody::Artifact(view) => view.is_scrollable(),
+            ChatMessageBody::CopyTarget(view) => view.is_scrollable(),
+        }
+    }
 
-impl ::atto_ui::composable::FocusNav for ChatMessageBody {}
+    fn content_size(&self) -> (u16, u16) {
+        match self {
+            ChatMessageBody::Markdown(view) => view.content_size(),
+            ChatMessageBody::Text(view) => view.content_size(),
+            ChatMessageBody::Disclosure(view) => view.content_size(),
+            ChatMessageBody::Diff(view) => view.content_size(),
+            ChatMessageBody::Todo(view) => view.content_size(),
+            ChatMessageBody::Artifact(view) => view.content_size(),
+            ChatMessageBody::CopyTarget(view) => view.content_size(),
+        }
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        match self {
+            ChatMessageBody::Markdown(view) => view.viewport_size(),
+            ChatMessageBody::Text(view) => view.viewport_size(),
+            ChatMessageBody::Disclosure(view) => view.viewport_size(),
+            ChatMessageBody::Diff(view) => view.viewport_size(),
+            ChatMessageBody::Todo(view) => view.viewport_size(),
+            ChatMessageBody::Artifact(view) => view.viewport_size(),
+            ChatMessageBody::CopyTarget(view) => view.viewport_size(),
+        }
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        match self {
+            ChatMessageBody::Markdown(view) => view.scroll_config(),
+            ChatMessageBody::Text(view) => view.scroll_config(),
+            ChatMessageBody::Disclosure(view) => view.scroll_config(),
+            ChatMessageBody::Diff(view) => view.scroll_config(),
+            ChatMessageBody::Todo(view) => view.scroll_config(),
+            ChatMessageBody::Artifact(view) => view.scroll_config(),
+            ChatMessageBody::CopyTarget(view) => view.scroll_config(),
+        }
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        match self {
+            ChatMessageBody::Markdown(view) => view.scroll_offset(),
+            ChatMessageBody::Text(view) => view.scroll_offset(),
+            ChatMessageBody::Disclosure(view) => view.scroll_offset(),
+            ChatMessageBody::Diff(view) => view.scroll_offset(),
+            ChatMessageBody::Todo(view) => view.scroll_offset(),
+            ChatMessageBody::Artifact(view) => view.scroll_offset(),
+            ChatMessageBody::CopyTarget(view) => view.scroll_offset(),
+        }
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        match self {
+            ChatMessageBody::Markdown(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Text(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Disclosure(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Diff(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Todo(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Artifact(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::CopyTarget(view) => view.set_scroll_offset(x, y),
+        }
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for ChatMessageBody {
+    fn is_focusable(&self) -> bool {
+        match self {
+            ChatMessageBody::Markdown(view) => view.is_focusable(),
+            ChatMessageBody::Text(view) => view.is_focusable(),
+            ChatMessageBody::Disclosure(view) => view.is_focusable(),
+            ChatMessageBody::Diff(view) => view.is_focusable(),
+            ChatMessageBody::Todo(view) => view.is_focusable(),
+            ChatMessageBody::Artifact(view) => view.is_focusable(),
+            ChatMessageBody::CopyTarget(view) => view.is_focusable(),
+        }
+    }
+
+    fn focus_first(&mut self) -> bool {
+        match self {
+            ChatMessageBody::Markdown(view) => view.focus_first(),
+            ChatMessageBody::Text(view) => view.focus_first(),
+            ChatMessageBody::Disclosure(view) => view.focus_first(),
+            ChatMessageBody::Diff(view) => view.focus_first(),
+            ChatMessageBody::Todo(view) => view.focus_first(),
+            ChatMessageBody::Artifact(view) => view.focus_first(),
+            ChatMessageBody::CopyTarget(view) => view.focus_first(),
+        }
+    }
+
+    fn focus_last(&mut self) -> bool {
+        match self {
+            ChatMessageBody::Markdown(view) => view.focus_last(),
+            ChatMessageBody::Text(view) => view.focus_last(),
+            ChatMessageBody::Disclosure(view) => view.focus_last(),
+            ChatMessageBody::Diff(view) => view.focus_last(),
+            ChatMessageBody::Todo(view) => view.focus_last(),
+            ChatMessageBody::Artifact(view) => view.focus_last(),
+            ChatMessageBody::CopyTarget(view) => view.focus_last(),
+        }
+    }
+}
 
 impl ::atto_ui::composable::DynamicTree for ChatMessageBody {}
 
 impl ::atto_ui::composable::EventHandling for ChatMessageBody {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        match self {
+            ChatMessageBody::Markdown(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Text(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Disclosure(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Diff(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Todo(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Artifact(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::CopyTarget(view) => view.handle_event_capture(event, ctx),
+        }
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        match self {
+            ChatMessageBody::Markdown(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Text(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Disclosure(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Diff(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Todo(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Artifact(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::CopyTarget(view) => view.handle_event_bubble(event, ctx),
+        }
+    }
+
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         match self {
             ChatMessageBody::Markdown(view) => view.handle_event(event, ctx),
@@ -3439,7 +3622,213 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
+            ChatMessageBody::CopyTarget(view) => view.handle_event(event, ctx),
         }
+    }
+}
+
+struct BlockCopyTarget {
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    callback: MessageActionCallback,
+    child_focused: bool,
+    view: Box<ChatMessageBody>,
+}
+
+impl BlockCopyTarget {
+    fn new(
+        view: ChatMessageBody,
+        message_id: ChatMessageId,
+        block_id: ChatBlockId,
+        callback: MessageActionCallback,
+    ) -> Self {
+        Self {
+            message_id,
+            block_id,
+            callback,
+            child_focused: false,
+            view: Box::new(view),
+        }
+    }
+
+    fn emit_copy(&self) {
+        (self.callback)(MessageAction {
+            message_id: self.message_id,
+            kind: MessageActionKind::CopyBlock(self.block_id),
+        });
+    }
+
+    fn child_ctx<'a>(&self, ctx: ComponentContext<'a>) -> ComponentContext<'a> {
+        ComponentContext {
+            theme: ctx.theme,
+            window_id: ctx.window_id,
+            is_focused: ctx.is_focused && self.child_focused,
+            scrollbar_host: ctx.scrollbar_host.for_child(),
+            tab_mode: ctx.tab_mode.for_child(),
+            mouse_coordinate_space: ctx.mouse_coordinate_space,
+            drag: None,
+        }
+    }
+}
+
+impl Component for BlockCopyTarget {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.view.draw(frame, area, ctx);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for BlockCopyTarget {}
+
+impl ::atto_ui::composable::Layout for BlockCopyTarget {
+    fn min_width(&self) -> u16 {
+        self.view.min_width()
+    }
+
+    fn min_height(&self) -> u16 {
+        self.view.min_height()
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        self.view.desired_width()
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        self.view.desired_height()
+    }
+}
+
+impl ::atto_ui::composable::Scrollable for BlockCopyTarget {
+    fn is_scrollable(&self) -> bool {
+        self.view.is_scrollable()
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        self.view.content_size()
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.view.viewport_size()
+    }
+
+    fn scroll_config(&self) -> ScrollConfig {
+        self.view.scroll_config()
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        self.view.scroll_offset()
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, y: u16) {
+        self.view.set_scroll_offset(x, y);
+    }
+}
+
+impl ::atto_ui::composable::FocusNav for BlockCopyTarget {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.child_focused = false;
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        if self.view.is_focusable() {
+            self.child_focused = true;
+            let _ = self.view.focus_last();
+        } else {
+            self.child_focused = false;
+        }
+        true
+    }
+}
+
+impl ::atto_ui::composable::DynamicTree for BlockCopyTarget {}
+
+impl ::atto_ui::composable::EventHandling for BlockCopyTarget {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Some(next) = copy_target_tab_direction(event) else {
+            if self.child_focused {
+                let child_ctx = self.child_ctx(ctx);
+                return self.view.handle_event_capture(event, child_ctx);
+            }
+            return EventResult::ignored();
+        };
+        if !ctx.is_focused {
+            return EventResult::ignored();
+        }
+
+        if next {
+            if self.child_focused {
+                let child_ctx = self.child_ctx(ctx);
+                let res = self.view.handle_event_capture(event, child_ctx);
+                if res.is_consumed() {
+                    return res;
+                }
+                self.child_focused = false;
+                return EventResult::ignored();
+            }
+            if self.view.is_focusable() {
+                self.child_focused = true;
+                let _ = self.view.focus_first();
+                return EventResult::consumed();
+            }
+            return EventResult::ignored();
+        }
+
+        if self.child_focused {
+            let child_ctx = self.child_ctx(ctx);
+            let res = self.view.handle_event_capture(event, child_ctx);
+            if res.is_consumed() {
+                return res;
+            }
+            self.child_focused = false;
+            return EventResult::consumed();
+        }
+        EventResult::ignored()
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let child_ctx = self.child_ctx(ctx);
+        self.view.handle_event_bubble(event, child_ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if ctx.is_focused && is_copy_shortcut(event) {
+            self.emit_copy();
+            return EventResult::submitted();
+        }
+
+        let child_ctx = self.child_ctx(ctx);
+        self.view.handle_event(event, child_ctx)
+    }
+}
+
+fn is_copy_shortcut(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('c' | 'C'),
+            modifiers,
+            kind: KeyEventKind::Press,
+            ..
+        }) if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+    )
+}
+
+fn copy_target_tab_direction(event: &Event) -> Option<bool> {
+    match event {
+        Event::Key(KeyEvent {
+            code: KeyCode::Tab,
+            modifiers,
+            ..
+        }) => Some(!modifiers.contains(KeyModifiers::SHIFT)),
+        Event::Key(KeyEvent {
+            code: KeyCode::BackTab,
+            ..
+        }) => Some(false),
+        _ => None,
     }
 }
 
@@ -3752,6 +4141,37 @@ mod tests {
             component_context(&theme),
         );
 
+        assert_eq!(
+            *actions.lock().expect("actions lock"),
+            vec![MessageAction {
+                message_id,
+                kind: MessageActionKind::CopyBlock(block_id),
+            }]
+        );
+    }
+
+    #[test]
+    fn block_copy_target_emits_copy_action_on_shortcut() {
+        let message_id = ChatMessageId::new(51);
+        let block_id = ChatBlockId::new(51_001);
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let mut body = ChatMessageBody::Text(Text::new("COPY-TARGET")).with_copy_shortcut(
+            message_id,
+            block_id,
+            Arc::new(move |action| {
+                captured.lock().expect("actions lock").push(action);
+            }),
+        );
+        let theme = Theme::dark();
+
+        assert!(body.is_focusable());
+        let result = body.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+
+        assert!(result.is_consumed());
         assert_eq!(
             *actions.lock().expect("actions lock"),
             vec![MessageAction {
