@@ -39,6 +39,7 @@ const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
 type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
+type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalDecision {
@@ -55,6 +56,21 @@ pub struct EditDecisionEvent {
     pub decision: EditDecision,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MessageAction {
+    pub message_id: ChatMessageId,
+    pub kind: MessageActionKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageActionKind {
+    Copy,
+    Retry,
+    Regenerate,
+    EditUser,
+    CopyBlock(ChatBlockId),
+}
+
 #[derive(Clone)]
 struct ChatMessageListConfig {
     wrap_width: Option<u16>,
@@ -67,6 +83,7 @@ struct ChatMessageListConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    on_message_action: Option<MessageActionCallback>,
 }
 
 #[derive(Clone)]
@@ -78,6 +95,7 @@ struct ChatMessageRowConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    on_message_action: Option<MessageActionCallback>,
 }
 
 pub struct ChatMessageList {
@@ -108,6 +126,7 @@ impl ChatMessageList {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            on_message_action: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
@@ -207,6 +226,15 @@ impl ChatMessageList {
         F: Fn(EditDecisionEvent) + Send + Sync + 'static,
     {
         self.config.on_edit_decision = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    pub fn on_message_action<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(MessageAction) + Send + Sync + 'static,
+    {
+        self.config.on_message_action = Some(Arc::new(callback));
         self.rebuild_list();
         self
     }
@@ -482,6 +510,7 @@ fn build_list(
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
+        on_message_action: config.on_message_action.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
         ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
@@ -996,7 +1025,7 @@ fn build_row_view(
 
     match key {
         ChatRowKey::Header { .. } => {
-            let (bubble, mut bindings) = build_aligned_turn_header(message);
+            let (bubble, mut bindings) = build_aligned_turn_header(message, config);
             if config.show_timestamps
                 && let Some(ts) = &message.meta.timestamp
             {
@@ -1123,8 +1152,11 @@ impl ::atto_ui::composable::EventHandling for ChatMessageRow {
     }
 }
 
-fn build_aligned_turn_header(message: &ChatMessage) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, bindings) = build_turn_header(message);
+fn build_aligned_turn_header(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (HStack, ChatMessageRowBindings) {
+    let (bubble, bindings) = build_turn_header(message, config);
     let bubble_layout = LayoutParams {
         width: Size::Weight(3),
         height: Size::Content,
@@ -1211,7 +1243,10 @@ fn build_aligned_pending_tool_result(
     (row, ChatMessageRowBindings::default())
 }
 
-fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) {
+fn build_turn_header(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (VStack, ChatMessageRowBindings) {
     let header_label = Binding::new(turn_header_label(message));
     let header = Text::new(String::new()).text(header_label.clone()).style(
         Style::default()
@@ -1223,9 +1258,13 @@ fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) 
         ..LayoutParams::default()
     };
 
-    let bubble = VStack::new()
+    let mut bubble = VStack::new()
         .with_spacing(1)
         .child_with_layout(header, content_layout);
+
+    if let Some(actions) = turn_action_row(message.id, &message.role, &config.on_message_action) {
+        bubble = bubble.child_with_layout(actions, content_layout);
+    }
 
     (
         bubble,
@@ -1247,11 +1286,85 @@ fn build_block_bubble(
         ..LayoutParams::default()
     };
 
-    let bubble = VStack::new()
+    let mut bubble = VStack::new()
         .with_spacing(1)
         .child_with_layout(body, content_layout);
 
+    if let Some(block) = block
+        && let Some(actions) =
+            block_copy_action_row(message_id, block.id(), &config.on_message_action)
+    {
+        bubble = bubble.child_with_layout(actions, content_layout);
+    }
+
     (bubble, body_bindings)
+}
+
+fn turn_action_row(
+    message_id: ChatMessageId,
+    role: &ChatRole,
+    on_message_action: &Option<MessageActionCallback>,
+) -> Option<HStack> {
+    let callback = on_message_action.clone()?;
+    let mut row = HStack::new().with_spacing(1);
+    for (label, kind) in turn_action_specs(role) {
+        row = row.child_with_layout(
+            message_action_button(label, message_id, kind, callback.clone()),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    Some(row)
+}
+
+fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> {
+    match role {
+        ChatRole::User => vec![
+            ("Copy", MessageActionKind::Copy),
+            ("Edit", MessageActionKind::EditUser),
+        ],
+        ChatRole::Assistant => vec![
+            ("Copy", MessageActionKind::Copy),
+            ("Retry", MessageActionKind::Retry),
+            ("Regenerate", MessageActionKind::Regenerate),
+        ],
+        ChatRole::System | ChatRole::Custom(_) => vec![("Copy", MessageActionKind::Copy)],
+    }
+}
+
+fn block_copy_action_row(
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    on_message_action: &Option<MessageActionCallback>,
+) -> Option<HStack> {
+    let callback = on_message_action.clone()?;
+    let label = "Copy block";
+    Some(HStack::new().child_with_layout(
+        message_action_button(
+            label,
+            message_id,
+            MessageActionKind::CopyBlock(block_id),
+            callback,
+        ),
+        LayoutParams {
+            width: Size::Fixed(button_width_for_label(label)),
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    ))
+}
+
+fn message_action_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    kind: MessageActionKind,
+    callback: MessageActionCallback,
+) -> Button {
+    let action = MessageAction { message_id, kind };
+    Button::new(label).on_click(move || callback(action.clone()))
 }
 
 fn turn_header_label(message: &ChatMessage) -> String {
@@ -3466,6 +3579,7 @@ mod tests {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            on_message_action: None,
         }
     }
 
@@ -3477,6 +3591,55 @@ mod tests {
         assert_eq!(
             list.get_property("show_timestamps"),
             Some(ComponentValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn turn_action_specs_cover_role_appropriate_actions() {
+        assert_eq!(
+            turn_action_specs(&ChatRole::User),
+            vec![
+                ("Copy", MessageActionKind::Copy),
+                ("Edit", MessageActionKind::EditUser),
+            ]
+        );
+        assert_eq!(
+            turn_action_specs(&ChatRole::Assistant),
+            vec![
+                ("Copy", MessageActionKind::Copy),
+                ("Retry", MessageActionKind::Retry),
+                ("Regenerate", MessageActionKind::Regenerate),
+            ]
+        );
+    }
+
+    #[test]
+    fn message_action_button_emits_selected_action() {
+        let message_id = ChatMessageId::new(50);
+        let block_id = ChatBlockId::new(50_001);
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let mut button = message_action_button(
+            "Copy block",
+            message_id,
+            MessageActionKind::CopyBlock(block_id),
+            Arc::new(move |action| {
+                captured.lock().expect("actions lock").push(action);
+            }),
+        );
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            *actions.lock().expect("actions lock"),
+            vec![MessageAction {
+                message_id,
+                kind: MessageActionKind::CopyBlock(block_id),
+            }]
         );
     }
 

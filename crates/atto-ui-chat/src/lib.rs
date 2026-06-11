@@ -16,7 +16,9 @@ pub use input::{
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputPanel,
     ChatInputResponse, ChatTextInputConfig,
 };
-pub use list::{ApprovalDecision, ChatMessageList, EditDecisionEvent};
+pub use list::{
+    ApprovalDecision, ChatMessageList, EditDecisionEvent, MessageAction, MessageActionKind,
+};
 pub use message::{
     ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatAlignment, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatMessage,

@@ -30,9 +30,9 @@ use atto_ui_chat::{
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
     ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
-    EditDecisionEvent, NoticeBlock, NoticeLevel, StopReason, TextArtifactViewer, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, StopReason,
+    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -62,6 +62,7 @@ fn main() -> Result<()> {
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
+    let message_actions = args.iter().any(|arg| arg == "--message-actions");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -99,6 +100,9 @@ fn main() -> Result<()> {
         None
     } else if turn_meta_error {
         seed_turn_meta_error_messages(&store);
+        None
+    } else if message_actions {
+        seed_message_action_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -144,6 +148,7 @@ fn main() -> Result<()> {
         || thinking_notice
         || todo_block_id.is_some()
         || turn_meta_error
+        || message_actions
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -166,11 +171,12 @@ fn main() -> Result<()> {
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
+    let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
     if !responsive_layout {
         list = list.wrap_width(56);
     }
-    let list = list
+    let mut list = list
         .show_timestamps(false)
         .on_open_artifact({
             let open_artifacts = open_artifacts.clone();
@@ -201,6 +207,12 @@ fn main() -> Result<()> {
                 store.prepend_many(older);
             }
         });
+    if message_actions {
+        list = list.on_message_action({
+            let message_action_events = message_action_events.clone();
+            move |action| message_action_events.push(action)
+        });
+    }
     let input_panel = input_handle.panel().on_submit({
         let store = store.clone();
         move |response| {
@@ -221,7 +233,7 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output || turn_meta_error {
         28
-    } else if inline_approval || inline_diff {
+    } else if inline_approval || inline_diff || message_actions {
         24
     } else {
         18
@@ -452,6 +464,14 @@ fn main() -> Result<()> {
                     decision.block_id.0,
                     edit_decision_event_label(decision.decision)
                 ),
+            ));
+        }
+
+        for action in message_action_events.drain() {
+            input_handle.draft_binding().set(format!(
+                "MESSAGE_ACTION: {}/{}",
+                action.message_id.0,
+                message_action_label(&action.kind)
             ));
         }
 
@@ -698,11 +718,41 @@ fn seed_turn_meta_error_messages(store: &ChatMessageStore) {
     store.push(error_message);
 }
 
+fn seed_message_action_messages(store: &ChatMessageStore) {
+    let user_id = store.next_message_id();
+    store.push(ChatMessage::text(
+        user_id,
+        ChatRole::User,
+        "ACTION-USER-MESSAGE",
+    ));
+
+    let assistant_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        assistant_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Text(TextBlock {
+            id: snapshot_block_id(assistant_id, 0),
+            markdown: "ACTION-ASSISTANT-MESSAGE".to_string(),
+            streaming: false,
+        })],
+    ));
+}
+
 fn edit_decision_event_label(decision: EditDecision) -> &'static str {
     match decision {
         EditDecision::Pending => "pending",
         EditDecision::Accepted => "accepted",
         EditDecision::Rejected => "rejected",
+    }
+}
+
+fn message_action_label(kind: &MessageActionKind) -> String {
+    match kind {
+        MessageActionKind::Copy => "copy".to_string(),
+        MessageActionKind::Retry => "retry".to_string(),
+        MessageActionKind::Regenerate => "regenerate".to_string(),
+        MessageActionKind::EditUser => "edit_user".to_string(),
+        MessageActionKind::CopyBlock(block_id) => format!("copy_block:{}", block_id.0),
     }
 }
 

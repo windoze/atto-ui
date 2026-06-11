@@ -299,7 +299,7 @@
 - 已检查提交前状态：本次提交将包含 P5.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P5.2] Implement todo panel updates` 提交并停止。
 
-## 当前任务：P5.3 回合 meta + 错误展示
+## 历史记录：P5.3 回合 meta + 错误展示
 
 - 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.3 记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.3 回合 meta + 错误展示`。
@@ -310,3 +310,21 @@
 - 修复过程中发现 header 旧包装层产生空白 header 行，已改为直接绘制绑定文本；既有滚动 PTY fixture 按真实可见 header 高度更新滚动次数和可见历史行断言。
 - 验证已通过：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_turn_header_renders_meta_and_structured_error -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_load_more_on_scroll_top -- --exact`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P5.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+
+## 当前任务：P6.1 逐条/回合操作
+
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P6.1 逐条/回合操作`。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 的消息/回合操作 API 与交互，不推进 P6.2 中断/回底或 P6.3 复制快捷键。
+- 任务要求：新增 `on_message_action` 回调，事件结构为 `MessageAction { message_id, kind }`，`kind` 覆盖 `Copy`、`Retry`、`Regenerate`、`EditUser`、`CopyBlock(block_id)`。
+- 计划步骤：查看最近提交是否有与 P6.1 直接相关的未完成事项；阅读 `list.rs`、`dynamic.rs`、`lib.rs`、`snapshot_chat_app.rs` 和 PTY 测试中现有 approve/edit_decision 事件模式；按既有组件风格实现可触发的回合/块操作；补充单元测试和必要 PTY 覆盖；运行格式化、clippy、构建和全量测试；更新 `TODO.md` 完成记录并提交。
+- 验证计划：优先跑新增/相关定向测试，再按要求执行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已查看最近提交：`699b808 [P5.3] Render turn metadata and errors`，未声明与 `P6.1` 直接相关的未完成事项。
+- 已发现工作区既有无关变更：`crates/atto-ui-node/index.js` 已修改，且有未跟踪 `notification.sh`、`run_agent.sh`；本次不修改、不回退、不提交这些文件。
+- 已完成首轮实现：新增 `MessageAction`/`MessageActionKind`、`ChatMessageList::on_message_action`、回合操作按钮与 block `Copy block` 按钮；同步导出类型，并在 dynamic schema 中加入 `message_action(Map)` 事件。
+- 已补充首轮验证资产：list 单测覆盖 action spec 与按钮回调，dynamic 单测覆盖 schema/payload，`snapshot_chat_app --message-actions` 和 PTY 覆盖 Copy/Edit/Retry/Regenerate/CopyBlock 回调。
+- `cargo check -p atto-ui-chat --all-targets` 已通过。
+- 首次 `chat_message_action_buttons_emit_turn_and_block_actions` PTY 失败原因：测试场景包含无关 ToolUse，缺失 result 自动生成等待行后初始滚底隐藏用户回合；已将 `--message-actions` 场景收敛为用户文本 + assistant 文本，只覆盖本任务的操作回调。
+- 定向验证已通过：`cargo test -p atto-ui-chat --lib message_action`、`cargo test -p atto-ui-chat --lib turn_action_specs`、`cargo test -p atto-ui-chat --test pty_chat chat_message_action_buttons_emit_turn_and_block_actions -- --exact`。
+- 全量验证已通过：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P6.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
+- 下一步检查 `git status`、`git diff`、最近提交记录，确认提交范围后创建 `[P6.1] Add chat message actions` 提交并停止。

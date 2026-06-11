@@ -477,6 +477,42 @@ fn chat_turn_header_renders_meta_and_structured_error() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--message-actions"], 110, 32)?;
+
+    host.wait_for_text("ACTION-USER-MESSAGE", Duration::from_secs(2))?;
+    host.wait_for_text("ACTION-ASSISTANT-MESSAGE", Duration::from_secs(2))?;
+    host.wait_for_text("Retry", Duration::from_secs(2))?;
+    host.wait_for_text("Regenerate", Duration::from_secs(2))?;
+    host.wait_for_text("Copy block", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Copy").expect("copy action");
+    host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 1/copy", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Edit").expect("edit user action");
+    host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 1/edit_user", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Retry").expect("retry action");
+    host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 2/retry", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Regenerate").expect("regenerate action");
+    host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 2/regenerate", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Copy block").expect("copy block action");
+    host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

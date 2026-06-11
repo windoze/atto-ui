@@ -15,9 +15,10 @@ use crate::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
     ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
-    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, NoticeBlock,
-    NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction,
+    MessageActionKind, NoticeBlock, NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock,
+    TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -55,6 +56,7 @@ pub fn chat_message_list_schema() -> ComponentSchema {
         .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
         .with_event(EventMeta::new("approve").with_payload(ValueType::Map))
         .with_event(EventMeta::new("edit_decision").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("message_action").with_payload(ValueType::Map))
         .allow_children(false)
 }
 
@@ -408,6 +410,48 @@ fn edit_decision_event_to_value(event: EditDecisionEvent) -> ComponentValue {
         "decision".to_string(),
         ComponentValue::String(edit_decision_to_string(event.decision).to_string()),
     );
+    ComponentValue::Map(map)
+}
+
+fn message_action_to_value(action: MessageAction) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "message_id".to_string(),
+        ComponentValue::U64(action.message_id.0),
+    );
+    match action.kind {
+        MessageActionKind::Copy => {
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String("copy".to_string()),
+            );
+        }
+        MessageActionKind::Retry => {
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String("retry".to_string()),
+            );
+        }
+        MessageActionKind::Regenerate => {
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String("regenerate".to_string()),
+            );
+        }
+        MessageActionKind::EditUser => {
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String("edit_user".to_string()),
+            );
+        }
+        MessageActionKind::CopyBlock(block_id) => {
+            map.insert(
+                "kind".to_string(),
+                ComponentValue::String("copy_block".to_string()),
+            );
+            map.insert("block_id".to_string(), ComponentValue::U64(block_id.0));
+        }
+    }
     ComponentValue::Map(map)
 }
 
@@ -1260,6 +1304,12 @@ pub fn register_chat_message_list(
             });
         }
 
+        if let Some(cb) = event_handle(spec, "message_action", callbacks.clone()) {
+            view = view.on_message_action(move |action| {
+                cb.emit_with(Some(message_action_to_value(action)));
+            });
+        }
+
         Ok(wrap_with_id(spec, Box::new(view)))
     });
 }
@@ -1401,6 +1451,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_list_schema_exposes_message_action_event_payload() {
+        let schema = chat_message_list_schema();
+
+        assert!(schema.events.iter().any(|event| {
+            event.name == "message_action" && event.payload == Some(ValueType::Map)
+        }));
+    }
+
+    #[test]
     fn approval_decision_serializes_to_runtime_payload() {
         let value = approval_decision_to_value(ApprovalDecision {
             message_id: ChatMessageId::new(10),
@@ -1440,6 +1499,23 @@ mod tests {
                 ("message_id", ComponentValue::U64(11)),
                 ("block_id", ComponentValue::U64(21)),
                 ("decision", ComponentValue::String("accepted".to_string())),
+            ])
+        );
+    }
+
+    #[test]
+    fn message_action_serializes_to_runtime_payload() {
+        let value = message_action_to_value(MessageAction {
+            message_id: ChatMessageId::new(12),
+            kind: MessageActionKind::CopyBlock(ChatBlockId::new(22)),
+        });
+
+        assert_eq!(
+            value,
+            value_map([
+                ("message_id", ComponentValue::U64(12)),
+                ("kind", ComponentValue::String("copy_block".to_string())),
+                ("block_id", ComponentValue::U64(22)),
             ])
         );
     }

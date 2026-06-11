@@ -95,7 +95,9 @@
 
 参考 `CHAT_UI.md` §5(6)、§6.3。
 
-- [ ] **P6.1 逐条/回合操作** — `src/list.rs`:`on_message_action`(`MessageAction{message_id,kind}`,kind ∈ Copy/Retry/Regenerate/EditUser/CopyBlock(block_id))。
+- [x] **[DONE] P6.1 逐条/回合操作** — `src/list.rs`:`on_message_action`(`MessageAction{message_id,kind}`,kind ∈ Copy/Retry/Regenerate/EditUser/CopyBlock(block_id))。
+  - 完成记录（2026-06-12）：已新增 `MessageAction` / `MessageActionKind` 和 `ChatMessageList::on_message_action`，回合 header 在设置回调时渲染 Copy/Edit 或 Copy/Retry/Regenerate 操作按钮，block 行渲染 `Copy block` 操作按钮并携带目标 `ChatBlockId`；`dynamic.rs` 同步新增 `message_action(Map)` 事件与 payload 序列化，`snapshot_chat_app --message-actions` 覆盖 Copy/Edit/Retry/Regenerate/CopyBlock 回调路径。
+  - 验证：`cargo check -p atto-ui-chat --all-targets`、`cargo fmt --all`、`cargo test -p atto-ui-chat --lib message_action`、`cargo test -p atto-ui-chat --lib turn_action_specs`、`cargo test -p atto-ui-chat --test pty_chat chat_message_action_buttons_emit_turn_and_block_actions -- --exact`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P6.2 中断 + 回底** — `src/list.rs`:对 `Streaming` 回合暴露 `on_cancel(message_id)`;`!follow_tail` 时提供回底入口(宿主调用 `scroll_to_bottom()`)。
 - [ ] **P6.3 复制目标块** — `src/list.rs`:目标 block(代码/命令/正文)可聚焦并响应复制快捷键(文本选择留后续)。补 PTY 覆盖复制、retry/regenerate 回调、流式中断置 `Canceled`。
 
