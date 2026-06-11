@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use atto_ui::composable::Component;
-use atto_ui::reactive::Binding;
 use atto_ui::runtime::{
     component_schema, event_handle, invalid_prop, invalid_prop_reason, prop_bool, prop_string,
     prop_u16, prop_usize, prop_vec_string, register_registry_extension, wrap_with_id,
@@ -15,10 +14,10 @@ use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode
 use crate::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
     ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle, ChatInputPanel, ChatMessage,
-    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData,
-    EditDecision, NoticeBlock, NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock,
-    TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatRole, ChatTurnStatus,
+    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, StopReason, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -1166,8 +1165,9 @@ pub fn register_chat_message_list(
             None => Vec::new(),
         };
 
-        let messages: Binding<Vec<ChatMessage>> = messages.into();
-        let mut view = ChatMessageList::new(messages);
+        let store = ChatMessageStore::new();
+        store.replace_all(messages);
+        let mut view = ChatMessageList::new(store);
 
         if let Some(spacing) = prop_u16(spec, "spacing")? {
             view = view.spacing(spacing);

@@ -114,3 +114,18 @@
 - 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - 已更新 `TODO.md`：`P2.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查提交前状态/diff/最近提交，确认提交范围后创建任务提交并停止。
+
+## 历史记录：P2.2 去除每行全量 clone(性能头号)
+
+- 已读取 `TODO.md`：首个未完成任务为 `P2.2 去除每行全量 clone(性能头号)`。
+- 已查看最近提交：`1250696 [P2.1] Split chat rows into turn headers`，未声明与 `P2.2` 直接相关的额外未完成事项。
+- 执行范围限定为 chat list 的行同步性能路径和 store 版本跟踪；不推进 P2.3 的完整 block 控件映射或 P2.4 的滚动修复。
+- 已定位 `sync_body_bindings` 中的 `self.messages.get()` 全量 clone 路径，以及 `ChatMessageRow` 持有整条 messages binding 的设计。
+- 实施方案：让 `ChatMessageList` 持有 `ChatMessageStore`，在 store 中维护 message/block 版本号；header 行按 message 版本同步，block 行按自身 block 版本同步，并通过 `with_message`/`with_block` 只读访问数据。
+- 已完成实现：`ChatMessageList` 构造和动态注册改为传入 store；行构造和同步使用 store 只读访问；block 行只保存自身 `ChatBlockId`，header 行保存对应 message id；row key 刷新改为 `Binding::with`，不再克隆整条消息列表。
+- 已完成 store 版本跟踪：文本 delta、工具输出、工具状态、turn status、审批/diff/todo、append/upsert/replace 等实际变更路径会 bump 对应 message/block 版本；`set_turn_status` 同步 bump Text/Thinking block 版本以刷新 streaming suffix。
+- 已补充单测：覆盖 message/block 版本独立更新、目标 block delta 不影响兄弟 block、turn status 会更新文本 block 版本。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P2.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P2.2 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+- 下一步创建任务提交并停止。

@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     seed_messages(&store);
 
     let history_counter = Arc::new(AtomicU64::new(0));
-    let list = ChatMessageList::new(store.binding())
+    let list = ChatMessageList::new(store.clone())
         .wrap_width(72)
         .on_load_more({
             let store = store.clone();

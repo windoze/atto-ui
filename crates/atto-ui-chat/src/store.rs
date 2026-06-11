@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use atto_ui::reactive::{Binding, Property};
 
@@ -13,6 +14,119 @@ pub struct ChatMessageStore {
     messages: Property<Vec<ChatMessage>>,
     next_id: Arc<AtomicU64>,
     next_block_id: Arc<AtomicU64>,
+    versions: Arc<ChatMessageVersions>,
+}
+
+#[derive(Debug)]
+struct ChatMessageVersions {
+    next: AtomicU64,
+    messages: RwLock<HashMap<ChatMessageId, u64>>,
+    blocks: RwLock<HashMap<ChatBlockId, u64>>,
+}
+
+impl ChatMessageVersions {
+    fn new() -> Self {
+        Self {
+            next: AtomicU64::new(1),
+            messages: RwLock::new(HashMap::new()),
+            blocks: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn message_version(&self, id: ChatMessageId) -> u64 {
+        *self
+            .messages
+            .read()
+            .expect("message version lock poisoned")
+            .get(&id)
+            .unwrap_or(&0)
+    }
+
+    fn block_version(&self, id: ChatBlockId) -> u64 {
+        *self
+            .blocks
+            .read()
+            .expect("block version lock poisoned")
+            .get(&id)
+            .unwrap_or(&0)
+    }
+
+    fn register_messages(&self, messages: &[ChatMessage]) {
+        if messages.is_empty() {
+            return;
+        }
+        let version = self.next_version();
+        let mut message_versions = self
+            .messages
+            .write()
+            .expect("message version lock poisoned");
+        let mut block_versions = self.blocks.write().expect("block version lock poisoned");
+        for message in messages {
+            message_versions.insert(message.id, version);
+            for block in &message.blocks {
+                block_versions.insert(block.id(), version);
+            }
+        }
+    }
+
+    fn replace_all(&self, messages: &[ChatMessage]) {
+        let version = self.next_version();
+        let message_ids = messages
+            .iter()
+            .map(|message| message.id)
+            .collect::<HashSet<_>>();
+        let block_ids = messages
+            .iter()
+            .flat_map(|message| message.blocks.iter().map(ChatBlock::id))
+            .collect::<HashSet<_>>();
+
+        let mut message_versions = self
+            .messages
+            .write()
+            .expect("message version lock poisoned");
+        message_versions.retain(|id, _| message_ids.contains(id));
+        for id in message_ids {
+            message_versions.insert(id, version);
+        }
+
+        let mut block_versions = self.blocks.write().expect("block version lock poisoned");
+        block_versions.retain(|id, _| block_ids.contains(id));
+        for id in block_ids {
+            block_versions.insert(id, version);
+        }
+    }
+
+    fn bump_message(&self, id: ChatMessageId) {
+        let version = self.next_version();
+        self.messages
+            .write()
+            .expect("message version lock poisoned")
+            .insert(id, version);
+    }
+
+    fn bump_block(&self, id: ChatBlockId) {
+        let version = self.next_version();
+        self.blocks
+            .write()
+            .expect("block version lock poisoned")
+            .insert(id, version);
+    }
+
+    fn bump_message_and_blocks(&self, message_id: ChatMessageId, block_ids: &[ChatBlockId]) {
+        let version = self.next_version();
+        self.messages
+            .write()
+            .expect("message version lock poisoned")
+            .insert(message_id, version);
+        let mut block_versions = self.blocks.write().expect("block version lock poisoned");
+        for id in block_ids {
+            block_versions.insert(*id, version);
+        }
+    }
+
+    fn next_version(&self) -> u64 {
+        self.next.fetch_add(1, Ordering::Relaxed)
+    }
 }
 
 impl ChatMessageStore {
@@ -21,6 +135,7 @@ impl ChatMessageStore {
             messages: Property::new(Vec::new()),
             next_id: Arc::new(AtomicU64::new(1)),
             next_block_id: Arc::new(AtomicU64::new(1)),
+            versions: Arc::new(ChatMessageVersions::new()),
         }
     }
 
@@ -34,6 +149,10 @@ impl ChatMessageStore {
 
     pub fn replace_all(&self, messages: Vec<ChatMessage>) {
         self.bump_next_ids(&messages);
+        if self.messages.with(|items| items == &messages) {
+            return;
+        }
+        self.versions.replace_all(&messages);
         self.messages.set(messages);
     }
 
@@ -49,11 +168,15 @@ impl ChatMessageStore {
 
     pub fn push(&self, message: ChatMessage) {
         self.bump_next_ids(std::slice::from_ref(&message));
+        self.versions
+            .register_messages(std::slice::from_ref(&message));
         self.messages.update(|items| items.push(message));
     }
 
     pub fn prepend(&self, message: ChatMessage) {
         self.bump_next_ids(std::slice::from_ref(&message));
+        self.versions
+            .register_messages(std::slice::from_ref(&message));
         self.messages.update(|items| items.insert(0, message));
     }
 
@@ -62,6 +185,7 @@ impl ChatMessageStore {
             return;
         }
         self.bump_next_ids(&messages);
+        self.versions.register_messages(&messages);
         self.messages.update(|items| {
             messages.append(items);
             *items = messages;
@@ -72,14 +196,25 @@ impl ChatMessageStore {
     where
         F: FnOnce(&mut ChatMessage),
     {
-        self.messages.update_if(|items| {
+        let mut block_ids = Vec::new();
+        let changed = self.messages.update_if(|items| {
             if let Some(item) = items.iter_mut().find(|item| item.id == id) {
+                let before = item.clone();
                 f(item);
-                true
+                if *item == before {
+                    false
+                } else {
+                    block_ids = item.blocks.iter().map(ChatBlock::id).collect();
+                    true
+                }
             } else {
                 false
             }
-        })
+        });
+        if changed {
+            self.versions.bump_message_and_blocks(id, &block_ids);
+        }
+        changed
     }
 
     pub fn append_block(
@@ -96,7 +231,20 @@ impl ChatMessageStore {
             message.blocks.push(block);
             true
         });
+        if changed {
+            self.versions
+                .bump_message_and_blocks(message_id, &[block_id]);
+        }
         changed.then_some(block_id)
+    }
+
+    pub(crate) fn with_message<R>(
+        &self,
+        id: ChatMessageId,
+        f: impl FnOnce(&ChatMessage) -> R,
+    ) -> Option<R> {
+        self.messages
+            .with(|items| items.iter().find(|message| message.id == id).map(f))
     }
 
     pub fn with_block<R>(&self, id: ChatBlockId, f: impl FnOnce(&ChatBlock) -> R) -> Option<R> {
@@ -111,7 +259,8 @@ impl ChatMessageStore {
 
     pub fn set_turn_status(&self, id: ChatMessageId, status: ChatTurnStatus) -> bool {
         let mut found = false;
-        self.messages.update_if(|items| {
+        let mut block_ids = Vec::new();
+        let changed = self.messages.update_if(|items| {
             let Some(item) = items.iter_mut().find(|item| item.id == id) else {
                 return false;
             };
@@ -120,15 +269,26 @@ impl ChatMessageStore {
                 false
             } else {
                 item.set_turn_status(status);
+                block_ids = item
+                    .blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ChatBlock::Text(_) | ChatBlock::Thinking(_) => Some(block.id()),
+                        _ => None,
+                    })
+                    .collect();
                 true
             }
         });
+        if changed {
+            self.versions.bump_message_and_blocks(id, &block_ids);
+        }
         found
     }
 
     pub fn set_meta(&self, id: ChatMessageId, meta: ChatMessageMeta) -> bool {
         let mut found = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(item) = items.iter_mut().find(|item| item.id == id) else {
                 return false;
             };
@@ -140,12 +300,15 @@ impl ChatMessageStore {
                 true
             }
         });
+        if changed {
+            self.versions.bump_message(id);
+        }
         found
     }
 
     pub fn append_text_delta(&self, id: ChatBlockId, delta: &str) -> bool {
         let mut found_text = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(ChatBlock::Text(text_block)) = find_block_mut(items, id) else {
                 return false;
             };
@@ -156,12 +319,15 @@ impl ChatMessageStore {
             text_block.markdown.push_str(delta);
             true
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_text
     }
 
     pub fn append_tool_output(&self, id: ChatBlockId, delta: &str) -> bool {
         let mut found_tool = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(ChatBlock::ToolResult(result)) = find_block_mut(items, id) else {
                 return false;
             };
@@ -172,12 +338,15 @@ impl ChatMessageStore {
             result.output.append_delta(delta);
             true
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_tool
     }
 
     pub fn set_tool_status(&self, id: ChatBlockId, status: ToolStatus) -> bool {
         let mut found_tool = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(ChatBlock::ToolUse(tool)) = find_block_mut(items, id) else {
                 return false;
             };
@@ -189,6 +358,9 @@ impl ChatMessageStore {
                 true
             }
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_tool
     }
 
@@ -200,7 +372,8 @@ impl ChatMessageStore {
         let call_id = call_id.into();
         result.call_id = call_id.clone();
         let mut result_id = None;
-        self.messages.update_if(|items| {
+        let mut inserted_message_id = None;
+        let changed = self.messages.update_if(|items| {
             for message in items.iter_mut() {
                 if let Some(block) = message.blocks.iter_mut().find(|block| {
                     matches!(block, ChatBlock::ToolResult(existing) if existing.call_id == call_id)
@@ -228,16 +401,25 @@ impl ChatMessageStore {
             let block_id = self.next_block_id();
             result.id = block_id;
             result_id = Some(block_id);
+            inserted_message_id = Some(message.id);
             message.blocks.push(ChatBlock::ToolResult(result));
             true
         });
+        if changed && let Some(block_id) = result_id {
+            if let Some(message_id) = inserted_message_id {
+                self.versions
+                    .bump_message_and_blocks(message_id, &[block_id]);
+            } else {
+                self.versions.bump_block(block_id);
+            }
+        }
         result_id
     }
 
     pub fn resolve_approval(&self, id: ChatBlockId, option_id: impl Into<String>) -> bool {
         let option_id = option_id.into();
         let mut found_approval = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(ChatBlock::ToolUse(tool)) = find_block_mut(items, id) else {
                 return false;
             };
@@ -252,12 +434,15 @@ impl ChatMessageStore {
                 true
             }
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_approval
     }
 
     pub fn set_edit_decision(&self, id: ChatBlockId, decision: EditDecision) -> bool {
         let mut found_diff = false;
-        self.messages.update_if(|items| {
+        let changed = self.messages.update_if(|items| {
             let Some(ChatBlock::Diff(diff)) = find_block_mut(items, id) else {
                 return false;
             };
@@ -269,12 +454,15 @@ impl ChatMessageStore {
                 true
             }
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_diff
     }
 
     pub fn set_todo(&self, id: ChatBlockId, items: Vec<TodoItem>) -> bool {
         let mut found_todo = false;
-        self.messages.update_if(|messages| {
+        let changed = self.messages.update_if(|messages| {
             let Some(ChatBlock::Todo(todo)) = find_block_mut(messages, id) else {
                 return false;
             };
@@ -286,7 +474,18 @@ impl ChatMessageStore {
                 true
             }
         });
+        if changed {
+            self.versions.bump_block(id);
+        }
         found_todo
+    }
+
+    pub(crate) fn message_version(&self, id: ChatMessageId) -> u64 {
+        self.versions.message_version(id)
+    }
+
+    pub(crate) fn block_version(&self, id: ChatBlockId) -> u64 {
+        self.versions.block_version(id)
     }
 
     fn bump_next_ids(&self, messages: &[ChatMessage]) {
@@ -438,6 +637,45 @@ mod tests {
 
         assert_eq!(text_for(&store, text_id), "hello");
         assert_eq!(store.messages()[0].status, ChatTurnStatus::Streaming);
+    }
+
+    #[test]
+    fn versions_track_message_and_block_updates_independently() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let first_id = ChatBlockId::new(101);
+        let second_id = ChatBlockId::new(102);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: first_id,
+                    markdown: "first".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Text(TextBlock {
+                    id: second_id,
+                    markdown: "second".to_string(),
+                    streaming: false,
+                }),
+            ],
+        ));
+        let message_version = store.message_version(message_id);
+        let first_version = store.block_version(first_id);
+        let second_version = store.block_version(second_id);
+
+        assert!(store.append_text_delta(first_id, "!"));
+        assert_eq!(store.message_version(message_id), message_version);
+        assert!(store.block_version(first_id) > first_version);
+        assert_eq!(store.block_version(second_id), second_version);
+
+        let first_version = store.block_version(first_id);
+        let second_version = store.block_version(second_id);
+        assert!(store.set_turn_status(message_id, ChatTurnStatus::Streaming));
+        assert!(store.message_version(message_id) > message_version);
+        assert!(store.block_version(first_id) > first_version);
+        assert!(store.block_version(second_id) > second_version);
     }
 
     #[test]

@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     let store = ChatMessageStore::new();
     let artifacts = seed_artifacts(&store);
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
-    let list = ChatMessageList::new(store.binding())
+    let list = ChatMessageList::new(store.clone())
         .wrap_width(56)
         .show_timestamps(false)
         .on_open_artifact({

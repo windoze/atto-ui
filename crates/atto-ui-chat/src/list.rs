@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::Arc;
 
 use atto_ui::composable::{
@@ -24,6 +25,7 @@ use crate::message::{
     DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock, TodoBlock,
     TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
+use crate::store::ChatMessageStore;
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
@@ -50,6 +52,7 @@ struct ChatMessageRowConfig {
 }
 
 pub struct ChatMessageList {
+    store: ChatMessageStore,
     messages: Binding<Vec<ChatMessage>>,
     row_keys: Binding<Vec<ChatRowKey>>,
     list: atto_ui::composable::ForEachIdentifiable<ChatRowKey, ChatMessageRow>,
@@ -64,7 +67,7 @@ pub struct ChatMessageList {
 }
 
 impl ChatMessageList {
-    pub fn new(messages: Binding<Vec<ChatMessage>>) -> Self {
+    pub fn new(store: ChatMessageStore) -> Self {
         let config = ChatMessageListConfig {
             wrap_width: DEFAULT_WRAP_WIDTH,
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
@@ -76,10 +79,12 @@ impl ChatMessageList {
                 .into(),
             on_open_artifact: None,
         };
-        let row_keys = Binding::new(row_keys_from_messages(&messages.get()));
-        let list = build_list(row_keys.clone(), messages.clone(), &config);
+        let messages = store.binding();
+        let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
+        let list = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
+            store,
             messages,
             row_keys,
             list,
@@ -163,9 +168,11 @@ impl ChatMessageList {
     }
 
     fn rebuild_list(&mut self) {
-        self.row_keys
-            .set(row_keys_from_messages(&self.messages.get()));
-        self.list = build_list(self.row_keys.clone(), self.messages.clone(), &self.config);
+        self.row_keys.set(
+            self.messages
+                .with(|messages| row_keys_from_messages(messages)),
+        );
+        self.list = build_list(self.row_keys.clone(), self.store.clone(), &self.config);
     }
 
     fn maybe_trigger_load_more(&mut self) -> bool {
@@ -195,8 +202,10 @@ impl ChatMessageList {
         if !self.messages.check_dirty(&mut self.messages_observer) {
             return;
         }
-        self.row_keys
-            .set(row_keys_from_messages(&self.messages.get()));
+        self.row_keys.set(
+            self.messages
+                .with(|messages| row_keys_from_messages(messages)),
+        );
         if self.suppress_auto_scroll_once {
             self.suppress_auto_scroll_once = false;
             return;
@@ -251,7 +260,10 @@ impl ::atto_ui::composable::Component for ChatMessageList {
 
     fn get_property(&self, name: &str) -> Option<ComponentValue> {
         match name {
-            "messages" => Some(messages_to_component_value(&self.messages.get())),
+            "messages" => Some(
+                self.messages
+                    .with(|messages| messages_to_component_value(messages)),
+            ),
             "spacing" => Some(ComponentValue::U64(self.config.spacing.get() as u64)),
             "padding" => Some(self.config.padding.get().to_component_value()),
             "wrap_width" => Some(ComponentValue::U64(self.config.wrap_width as u64)),
@@ -266,7 +278,7 @@ impl ::atto_ui::composable::Component for ChatMessageList {
             "messages" => {
                 let messages = parse_messages_value(&value)
                     .map_err(|_| ComponentError::invalid_value(name, "chat messages"))?;
-                self.messages.set(messages);
+                self.store.replace_all(messages);
                 Ok(())
             }
             "spacing" => {
@@ -378,7 +390,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageList {
 
 fn build_list(
     row_keys: Binding<Vec<ChatRowKey>>,
-    messages: Binding<Vec<ChatMessage>>,
+    store: ChatMessageStore,
     config: &ChatMessageListConfig,
 ) -> atto_ui::composable::ForEachIdentifiable<ChatRowKey, ChatMessageRow> {
     let row_config = ChatMessageRowConfig {
@@ -388,7 +400,7 @@ fn build_list(
         on_open_artifact: config.on_open_artifact.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
-        ChatMessageRow::new(key.clone(), messages.clone(), row_config.clone())
+        ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
     })
     .spacing(config.spacing.clone())
     .padding_insets(config.padding.clone())
@@ -419,8 +431,8 @@ enum ChatRowId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChatRowKind {
-    Header,
+enum ChatRowRef {
+    Header(ChatMessageId),
     Block(ChatBlockId),
 }
 
@@ -488,10 +500,10 @@ impl ChatRowKey {
         }
     }
 
-    fn row_kind(&self) -> ChatRowKind {
+    fn row_ref(&self) -> ChatRowRef {
         match self {
-            ChatRowKey::Header { .. } => ChatRowKind::Header,
-            ChatRowKey::Block { block_id, .. } => ChatRowKind::Block(*block_id),
+            ChatRowKey::Header { message_id } => ChatRowRef::Header(*message_id),
+            ChatRowKey::Block { block_id, .. } => ChatRowRef::Block(*block_id),
         }
     }
 
@@ -662,29 +674,40 @@ struct ChatMessageRowBindings {
 }
 
 struct ChatMessageRow {
-    message_id: ChatMessageId,
-    row_kind: ChatRowKind,
-    messages: Binding<Vec<ChatMessage>>,
+    row_ref: ChatRowRef,
+    store: ChatMessageStore,
+    last_message_version: Cell<u64>,
+    last_block_version: Cell<u64>,
     body_bindings: ChatMessageRowBindings,
     config: ChatMessageRowConfig,
     view: VStack,
 }
 
 impl ChatMessageRow {
-    fn new(
-        key: ChatRowKey,
-        messages: Binding<Vec<ChatMessage>>,
-        config: ChatMessageRowConfig,
-    ) -> Self {
+    fn new(key: ChatRowKey, store: ChatMessageStore, config: ChatMessageRowConfig) -> Self {
         let message_id = key.message_id();
-        let row_kind = key.row_kind();
-        let message =
-            find_message(&messages.get(), message_id).unwrap_or_else(|| key.placeholder());
-        let (view, body_bindings) = build_row_view(&message, row_kind, &config);
+        let row_ref = key.row_ref();
+        let (view, body_bindings) = store
+            .with_message(message_id, |message| {
+                build_row_view(message, row_ref, &config)
+            })
+            .unwrap_or_else(|| {
+                let message = key.placeholder();
+                build_row_view(&message, row_ref, &config)
+            });
+        let last_message_version = match row_ref {
+            ChatRowRef::Header(message_id) => store.message_version(message_id),
+            ChatRowRef::Block(_) => 0,
+        };
+        let last_block_version = match row_ref {
+            ChatRowRef::Header(_) => 0,
+            ChatRowRef::Block(block_id) => store.block_version(block_id),
+        };
         Self {
-            message_id,
-            row_kind,
-            messages,
+            row_ref,
+            store,
+            last_message_version: Cell::new(last_message_version),
+            last_block_version: Cell::new(last_block_version),
             body_bindings,
             config,
             view,
@@ -692,30 +715,40 @@ impl ChatMessageRow {
     }
 
     fn sync_body_bindings(&self) {
-        let messages = self.messages.get();
-        let Some(message) = find_message(&messages, self.message_id) else {
+        match self.row_ref {
+            ChatRowRef::Header(message_id) => self.sync_header_bindings(message_id),
+            ChatRowRef::Block(block_id) => self.sync_block_bindings(block_id),
+        }
+    }
+
+    fn sync_header_bindings(&self, message_id: ChatMessageId) {
+        let version = self.store.message_version(message_id);
+        if version == self.last_message_version.get() {
             return;
-        };
-        if let Some(binding) = &self.body_bindings.header {
-            binding.set(turn_header_label(&message));
         }
-        if let Some(binding) = &self.body_bindings.timestamp {
-            binding.set(message.meta.timestamp.clone());
+        self.store.with_message(message_id, |message| {
+            if let Some(binding) = &self.body_bindings.header {
+                binding.set(turn_header_label(message));
+            }
+            if let Some(binding) = &self.body_bindings.timestamp {
+                binding.set(message.meta.timestamp.clone());
+            }
+        });
+        self.last_message_version.set(version);
+    }
+
+    fn sync_block_bindings(&self, block_id: ChatBlockId) {
+        let version = self.store.block_version(block_id);
+        if version == self.last_block_version.get() {
+            return;
         }
+        self.store.with_block(block_id, |block| {
+            if let Some(binding) = &self.body_bindings.markdown
+                && let Some(markdown) = block_markdown_for_render(block, &self.config)
+            {
+                binding.set(markdown);
+            }
 
-        let block = match self.row_kind {
-            ChatRowKind::Header => None,
-            ChatRowKind::Block(block_id) => find_block(&message, block_id),
-        };
-
-        if let Some(binding) = &self.body_bindings.markdown
-            && let Some(markdown) =
-                block.and_then(|block| block_markdown_for_render(block, &self.config))
-        {
-            binding.set(markdown);
-        }
-
-        if let Some(block) = block {
             if let Some(binding) = &self.body_bindings.tool_output
                 && let Some(output) = block_tool_output_for_render(block)
             {
@@ -727,13 +760,14 @@ impl ChatMessageRow {
             {
                 binding.set(tool_status_to_disclosure(&tool.status));
             }
-        }
+        });
+        self.last_block_version.set(version);
     }
 }
 
 fn build_row_view(
     message: &ChatMessage,
-    row_kind: ChatRowKind,
+    row_ref: ChatRowRef,
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let mut column = VStack::new().with_spacing(1);
@@ -742,8 +776,8 @@ fn build_row_view(
         ..LayoutParams::default()
     };
 
-    match row_kind {
-        ChatRowKind::Header => {
+    match row_ref {
+        ChatRowRef::Header(_) => {
             let (bubble, mut bindings) = build_aligned_turn_header(message);
             if config.show_timestamps
                 && let Some(ts) = &message.meta.timestamp
@@ -755,17 +789,13 @@ fn build_row_view(
             column = column.child_with_layout(bubble, row_layout);
             (column, bindings)
         }
-        ChatRowKind::Block(block_id) => {
+        ChatRowRef::Block(block_id) => {
             let block = find_block(message, block_id);
             let (bubble, body_bindings) = build_aligned_block(message, block, config);
             column = column.child_with_layout(bubble, row_layout);
             (column, body_bindings)
         }
     }
-}
-
-fn find_message(messages: &[ChatMessage], id: ChatMessageId) -> Option<ChatMessage> {
-    messages.iter().find(|message| message.id == id).cloned()
 }
 
 fn find_block(message: &ChatMessage, id: ChatBlockId) -> Option<&ChatBlock> {
