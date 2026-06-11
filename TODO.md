@@ -87,7 +87,9 @@
 - [x] **[DONE] P5.2 Todo 面板** — `src/list.rs` + `src/store.rs`:自绘 `[ ]/[~]/[x] text`;store `set_todo` 更新。
   - 完成记录（2026-06-12）：Todo 面板现通过稳定 Todo 行 key + `Binding<Vec<TodoItem>>` 渲染 `[ ]/[~]/[x] text`，`ChatMessageStore::set_todo` 的块级版本更新会同步到既有 Todo 行而不重建行；保留未变化不发脏通知。新增 `snapshot_chat_app --todo-panel` 场景和 PTY 覆盖 Todo 状态更新。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib todo`、`cargo test -p atto-ui-chat --test pty_chat chat_todo_panel_renders_and_updates_state -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P5.3 回合 meta + 错误展示** — `src/list.rs`:回合 header 渲染 model/usage/elapsed/stop_reason;`ChatTurnStatus::Failed(ChatError)` 结构化展示(kind+message+detail)。补 PTY 覆盖 thinking 折叠、todo 状态更新、错误展示。
+- [x] **[DONE] P5.3 回合 meta + 错误展示** — `src/list.rs`:回合 header 渲染 model/usage/elapsed/stop_reason;`ChatTurnStatus::Failed(ChatError)` 结构化展示(kind+message+detail)。补 PTY 覆盖 thinking 折叠、todo 状态更新、错误展示。
+  - 完成记录（2026-06-12）：回合 header 现在直接渲染绑定文本，并按行显示 `model`、`usage`、`elapsed_ms`、`stop_reason`；`ChatTurnStatus::Failed(ChatError)` 显示 failed 状态以及 `Error kind`、`Error message`、`Error detail` 结构化字段。新增 `snapshot_chat_app --turn-meta-error` 场景和 PTY 覆盖；既有滚动 PTY fixture 已按真实可见 header 高度更新。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_turn_header_renders_meta_and_structured_error -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_load_more_on_scroll_top -- --exact`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
 ## 阶段 P6 — 逐条交互
 

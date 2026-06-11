@@ -24,10 +24,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
-    ChatAlignment, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole,
-    ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
-    ToolStatus, ToolUseBlock,
+    ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
+    ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
+    NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
@@ -1213,12 +1213,10 @@ fn build_aligned_pending_tool_result(
 
 fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) {
     let header_label = Binding::new(turn_header_label(message));
-    let header = HStack::new().with_spacing(1).child(
-        Text::new(String::new()).text(header_label.clone()).style(
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
+    let header = Text::new(String::new()).text(header_label.clone()).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
     );
     let content_layout = LayoutParams {
         height: Size::Content,
@@ -1260,15 +1258,74 @@ fn turn_header_label(message: &ChatMessage) -> String {
     let mut label = message.role.label();
     match &message.status {
         ChatTurnStatus::Failed(error) => {
-            label.push_str(&format!(" (failed: {})", error.message));
+            label.push_str(" · failed");
+            append_turn_meta_lines(&mut label, &message.meta);
+            label.push_str(&format!(
+                "\nError kind: {}\nError message: {}",
+                error_kind_label(&error.kind),
+                error.message
+            ));
+            if let Some(detail) = error.detail.as_deref().filter(|detail| !detail.is_empty()) {
+                label.push_str(&format!("\nError detail: {detail}"));
+            }
+            return label;
         }
         ChatTurnStatus::Canceled => {
-            label.push_str(" (canceled)");
+            label.push_str(" · canceled");
         }
         ChatTurnStatus::Complete | ChatTurnStatus::Streaming => {}
     }
 
+    append_turn_meta_lines(&mut label, &message.meta);
     label
+}
+
+fn append_turn_meta_lines(label: &mut String, meta: &ChatMessageMeta) {
+    for part in turn_meta_parts(meta) {
+        label.push('\n');
+        label.push_str(&part);
+    }
+}
+
+fn turn_meta_parts(meta: &ChatMessageMeta) -> Vec<String> {
+    let mut parts = Vec::new();
+    if let Some(model) = meta.model.as_deref().filter(|model| !model.is_empty()) {
+        parts.push(format!("model: {model}"));
+    }
+    if let Some(usage) = &meta.usage {
+        parts.push(format!(
+            "usage: {} input/{} output",
+            usage.input, usage.output
+        ));
+    }
+    if let Some(elapsed_ms) = meta.elapsed_ms {
+        parts.push(format!("elapsed: {elapsed_ms}ms"));
+    }
+    if let Some(stop_reason) = &meta.stop_reason {
+        parts.push(format!("stop: {}", stop_reason_label(stop_reason)));
+    }
+    parts
+}
+
+fn error_kind_label(kind: &ChatErrorKind) -> &'static str {
+    match kind {
+        ChatErrorKind::Api => "api",
+        ChatErrorKind::Tool => "tool",
+        ChatErrorKind::RateLimit => "rate_limit",
+        ChatErrorKind::Refusal => "refusal",
+        ChatErrorKind::Network => "network",
+        ChatErrorKind::Other => "other",
+    }
+}
+
+fn stop_reason_label(reason: &StopReason) -> &'static str {
+    match reason {
+        StopReason::EndTurn => "end_turn",
+        StopReason::MaxTokens => "max_tokens",
+        StopReason::ToolUse => "tool_use",
+        StopReason::StopSequence => "stop_sequence",
+        StopReason::Refusal => "refusal",
+    }
 }
 
 struct ChatTimestampDivider {
@@ -3606,6 +3663,30 @@ mod tests {
         assert!(updated.iter().any(|line| line.contains("[x] TODO-ONE")));
         assert!(updated.iter().any(|line| line.contains("[ ] TODO-THREE")));
         assert!(!updated.iter().any(|line| line.contains("TODO-TWO")));
+    }
+
+    #[test]
+    fn turn_header_label_includes_meta_and_structured_error() {
+        let mut message = ChatMessage::text(ChatMessageId::new(80), ChatRole::Assistant, "body");
+        message.meta = ChatMessageMeta {
+            timestamp: None,
+            model: Some("claude-test".to_string()),
+            usage: Some(crate::message::TokenUsage {
+                input: 123,
+                output: 45,
+            }),
+            elapsed_ms: Some(6789),
+            stop_reason: Some(StopReason::MaxTokens),
+        };
+        message.set_turn_status(ChatTurnStatus::Failed(
+            crate::message::ChatError::new(ChatErrorKind::Network, "TURN-ERROR-MESSAGE")
+                .with_detail("TURN-ERROR-DETAIL"),
+        ));
+
+        assert_eq!(
+            turn_header_label(&message),
+            "Assistant · failed\nmodel: claude-test\nusage: 123 input/45 output\nelapsed: 6789ms\nstop: max_tokens\nError kind: network\nError message: TURN-ERROR-MESSAGE\nError detail: TURN-ERROR-DETAIL"
+        );
     }
 
     #[test]

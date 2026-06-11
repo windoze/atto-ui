@@ -284,7 +284,7 @@
 - 已更新 `TODO.md`：`P5.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
 - 已检查提交范围：本次提交包含 P5.1 相关 `TODO.md`、`memory/claude_plan.md`、chat Rust 源码与 PTY 测试；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 
-## 当前任务：P5.2 Todo 面板
+## 历史记录：P5.2 Todo 面板
 
 - 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.2 记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.2 Todo 面板`。
@@ -298,3 +298,15 @@
 - 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P5.2 记录。
 - 已检查提交前状态：本次提交将包含 P5.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P5.2] Implement todo panel updates` 提交并停止。
+
+## 当前任务：P5.3 回合 meta + 错误展示
+
+- 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.3 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.3 回合 meta + 错误展示`。
+- 已查看最近提交：`62207ff [P5.2] Implement todo panel updates`，未声明与 `P5.3` 直接相关的未完成阻塞事项。
+- 执行范围限定为回合 header 的 meta 渲染和 `ChatTurnStatus::Failed(ChatError)` 结构化展示；不推进 P6 逐条交互任务。
+- 已完成实现：回合 header 直接渲染绑定 `Text`，并按行显示 `model`、`usage`、`elapsed_ms`、`stop_reason`；失败回合显示 `failed` 状态以及 `Error kind`、`Error message`、`Error detail`。
+- 已补充验证：新增 `turn_header_label_includes_meta_and_structured_error` 单测，新增 `snapshot_chat_app --turn-meta-error` 场景和 `chat_turn_header_renders_meta_and_structured_error` PTY 覆盖。
+- 修复过程中发现 header 旧包装层产生空白 header 行，已改为直接绘制绑定文本；既有滚动 PTY fixture 按真实可见 header 高度更新滚动次数和可见历史行断言。
+- 验证已通过：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_turn_header_renders_meta_and_structured_error -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_load_more_on_scroll_top -- --exact`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P5.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。

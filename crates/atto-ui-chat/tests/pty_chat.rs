@@ -163,9 +163,12 @@ fn chat_auto_follow_pauses_after_user_scrolls_up() -> anyhow::Result<()> {
     host.send_str("a")?;
     host.wait_for_text("FOLLOW-1", Duration::from_secs(2))?;
 
-    for _ in 0..10 {
+    for _ in 0..24 {
         host.wheel_up(6, 6)?;
         thread::sleep(Duration::from_millis(30));
+        if host.screen_contents()?.contains("MSG-15") {
+            break;
+        }
     }
     host.wait_for_text("MSG-15", Duration::from_secs(2))?;
 
@@ -193,7 +196,7 @@ fn chat_load_more_on_scroll_top() -> anyhow::Result<()> {
 
     host.wait_for_text("MSG-27", Duration::from_secs(2))?;
 
-    for _ in 0..30 {
+    for _ in 0..80 {
         host.wheel_up(6, 6)?;
         thread::sleep(Duration::from_millis(60));
         if host.screen_contents()?.contains("MSG-00") {
@@ -208,7 +211,7 @@ fn chat_load_more_on_scroll_top() -> anyhow::Result<()> {
         host.wheel_up(6, 6)?;
         thread::sleep(Duration::from_millis(60));
     }
-    host.wait_for_text("HISTORY-1-1", Duration::from_secs(2))?;
+    host.wait_for_text("HISTORY-1-2", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())
@@ -449,6 +452,25 @@ fn chat_todo_panel_renders_and_updates_state() -> anyhow::Result<()> {
     host.wait_for_text("[x] TODO-IMPLEMENT", Duration::from_secs(2))?;
     host.wait_for_text("[~] TODO-VERIFY", Duration::from_secs(2))?;
     assert_text_absent_for(&host, "[~] TODO-IMPLEMENT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_turn_header_renders_meta_and_structured_error() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--turn-meta-error"], 110, 34)?;
+
+    host.wait_for_text("model: claude-sonnet-test", Duration::from_secs(2))?;
+    host.wait_for_text("usage: 1234 input/56 output", Duration::from_secs(2))?;
+    host.wait_for_text("elapsed: 1530ms", Duration::from_secs(2))?;
+    host.wait_for_text("stop: tool_use", Duration::from_secs(2))?;
+    host.wait_for_text("failed", Duration::from_secs(2))?;
+    host.wait_for_text("Error kind: network", Duration::from_secs(2))?;
+    host.wait_for_text("Error message: TURN-ERROR-MESSAGE", Duration::from_secs(2))?;
+    host.wait_for_text("Error detail: TURN-ERROR-DETAIL", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())

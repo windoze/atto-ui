@@ -27,11 +27,12 @@ use atto_ui::ComponentValue;
 use atto_ui_chat::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
-    ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
-    ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, EditDecisionEvent, NoticeBlock, NoticeLevel,
-    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
-    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
+    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
+    ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
+    EditDecisionEvent, NoticeBlock, NoticeLevel, StopReason, TextArtifactViewer, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -60,6 +61,7 @@ fn main() -> Result<()> {
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
+    let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -94,6 +96,9 @@ fn main() -> Result<()> {
         None
     } else if todo_panel {
         todo_block_id = Some(seed_todo_panel_messages(&store));
+        None
+    } else if turn_meta_error {
+        seed_turn_meta_error_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -138,6 +143,7 @@ fn main() -> Result<()> {
         || inline_diff
         || thinking_notice
         || todo_block_id.is_some()
+        || turn_meta_error
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -213,7 +219,7 @@ fn main() -> Result<()> {
     let work = Desktop::layout(screen).work_area;
     let window_height = if block_mapping {
         40
-    } else if long_tool_output {
+    } else if long_tool_output || turn_meta_error {
         28
     } else if inline_approval || inline_diff {
         24
@@ -656,6 +662,40 @@ fn seed_todo_panel_messages(store: &ChatMessageStore) -> ChatBlockId {
         })],
     ));
     todo_id
+}
+
+fn seed_turn_meta_error_messages(store: &ChatMessageStore) {
+    let meta_id = store.next_message_id();
+    let mut meta_message = ChatMessage::text(meta_id, ChatRole::Assistant, "META-BODY");
+    meta_message.meta = ChatMessageMeta {
+        timestamp: None,
+        model: Some("claude-sonnet-test".to_string()),
+        usage: Some(TokenUsage {
+            input: 1234,
+            output: 56,
+        }),
+        elapsed_ms: Some(1530),
+        stop_reason: Some(StopReason::ToolUse),
+    };
+    store.push(meta_message);
+
+    let error_id = store.next_message_id();
+    let mut error_message = ChatMessage::text(error_id, ChatRole::Assistant, "FAILED-BODY")
+        .with_status(ChatTurnStatus::Failed(
+            ChatError::new(ChatErrorKind::Network, "TURN-ERROR-MESSAGE")
+                .with_detail("TURN-ERROR-DETAIL"),
+        ));
+    error_message.meta = ChatMessageMeta {
+        timestamp: None,
+        model: Some("error-model".to_string()),
+        usage: Some(TokenUsage {
+            input: 7,
+            output: 0,
+        }),
+        elapsed_ms: Some(987),
+        stop_reason: Some(StopReason::MaxTokens),
+    };
+    store.push(error_message);
 }
 
 fn edit_decision_event_label(decision: EditDecision) -> &'static str {
