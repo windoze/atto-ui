@@ -252,12 +252,24 @@ impl EditorView {
         let line_count = editor.line_index().line_count().max(1);
         let digits = line_count.to_string().len().max(2);
 
-        let mut fold_regions_by_start =
-            std::collections::HashMap::<usize, editor_core::FoldRegion>::new();
+        // Glyph shown in the folding-marker column for each logical line.
+        // Precedence (highest last): middle connector `│` < end `▲` < start (`▶`/`▼`).
+        let mut fold_glyph = std::collections::HashMap::<usize, char>::new();
         for r in editor.folding_manager().regions() {
-            fold_regions_by_start
-                .entry(r.start_line)
-                .or_insert_with(|| r.clone());
+            if r.is_collapsed {
+                continue;
+            }
+            for line in (r.start_line + 1)..r.end_line {
+                fold_glyph.insert(line, '│');
+            }
+        }
+        for r in editor.folding_manager().regions() {
+            if !r.is_collapsed {
+                fold_glyph.insert(r.end_line, '▲');
+            }
+        }
+        for r in editor.folding_manager().regions() {
+            fold_glyph.insert(r.start_line, if r.is_collapsed { '▶' } else { '▼' });
         }
 
         let mut diagnostic_by_line = std::collections::HashMap::<usize, DiagnosticSeverity>::new();
@@ -313,12 +325,8 @@ impl EditorView {
             if show_folding_markers {
                 if is_wrapped {
                     base.push_str("  ");
-                } else if let Some(region) = fold_regions_by_start.get(&logical_line) {
-                    if region.is_collapsed {
-                        base.push('▶');
-                    } else {
-                        base.push('▼');
-                    }
+                } else if let Some(&glyph) = fold_glyph.get(&logical_line) {
+                    base.push(glyph);
                     base.push(' ');
                 } else {
                     base.push_str("  ");

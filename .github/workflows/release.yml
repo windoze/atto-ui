@@ -108,9 +108,6 @@ jobs:
           - os: macos-14
             rust-target: aarch64-apple-darwin
             triple: darwin-arm64
-          - os: macos-13
-            rust-target: x86_64-apple-darwin
-            triple: darwin-x64
           - os: ubuntu-22.04
             rust-target: x86_64-unknown-linux-gnu
             triple: linux-x64-gnu
@@ -185,7 +182,6 @@ jobs:
       - name: Verify package contents
         run: |
           npm pack --dry-run --json ./crates/atto-ui-node/npm/darwin-arm64
-          npm pack --dry-run --json ./crates/atto-ui-node/npm/darwin-x64
           npm pack --dry-run --json ./crates/atto-ui-node/npm/linux-x64-gnu
           npm pack --dry-run --json ./crates/atto-ui-node/npm/win32-x64-msvc
           npm pack --dry-run --json ./crates/atto-ui-node
@@ -198,7 +194,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish crates/atto-ui-node/npm/darwin-arm64 --access public
-          npm publish crates/atto-ui-node/npm/darwin-x64 --access public
           npm publish crates/atto-ui-node/npm/linux-x64-gnu --access public
           npm publish crates/atto-ui-node/npm/win32-x64-msvc --access public
           npm publish crates/atto-ui-node --access public
