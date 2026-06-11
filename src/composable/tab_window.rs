@@ -207,8 +207,8 @@ impl TabWindow {
 
         let theme = ctx.theme;
         let sep = theme.glyph("tab-separator").unwrap_or("|");
-        let active_left = theme.glyph("tab-active-left").unwrap_or(">");
-        let active_right = theme.glyph("tab-active-right").unwrap_or("<");
+        let active_left = theme.glyph("tab-active-left").unwrap_or("▶");
+        let active_right = theme.glyph("tab-active-right").unwrap_or("◀");
         let overflow_left_marker = theme.glyph("scrollbar-left-arrow").unwrap_or("\u{25C4}");
         let overflow_right_marker = theme.glyph("scrollbar-right-arrow").unwrap_or("\u{25BA}");
 

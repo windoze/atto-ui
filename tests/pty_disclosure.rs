@@ -18,7 +18,7 @@ fn pty_disclosure_toggles_status_and_streamed_content() {
     let bin = env!("CARGO_BIN_EXE_snapshot_disclosure_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
-    host.wait_for_text("> [~] Tool Call", Duration::from_secs(2))
+    host.wait_for_text("▶ [~] Tool Call", Duration::from_secs(2))
         .expect("collapsed running disclosure visible");
     let screen = host.screen_contents().expect("screen");
     assert!(
@@ -28,7 +28,7 @@ fn pty_disclosure_toggles_status_and_streamed_content() {
 
     host.key_with_mods(KeyCode::Enter, KeyModifiers::empty())
         .expect("expand with Enter");
-    host.wait_for_text("v [~] Tool Call", Duration::from_secs(2))
+    host.wait_for_text("▼ [~] Tool Call", Duration::from_secs(2))
         .expect("expanded running disclosure visible");
     host.wait_for_text("chunk 1 ready", Duration::from_secs(2))
         .expect("bound content visible after expand");
@@ -38,10 +38,10 @@ fn pty_disclosure_toggles_status_and_streamed_content() {
         .expect("streamed content append visible");
 
     host.send_str("d").expect("set done status");
-    host.wait_for_text("v [x] Tool Call", Duration::from_secs(2))
+    host.wait_for_text("▼ [x] Tool Call", Duration::from_secs(2))
         .expect("done status visible");
     host.send_str("e").expect("set error status");
-    host.wait_for_text("v [!] Tool Call", Duration::from_secs(2))
+    host.wait_for_text("▼ [!] Tool Call", Duration::from_secs(2))
         .expect("error status visible");
 
     let screen = host.screen_contents().expect("screen");
@@ -51,7 +51,7 @@ fn pty_disclosure_toggles_status_and_streamed_content() {
     host.wait_for_screen(
         |rows| {
             let screen = rows.join("\n");
-            screen.contains("> [!] Tool Call") && !screen.contains("chunk 1 ready")
+            screen.contains("▶ [!] Tool Call") && !screen.contains("chunk 1 ready")
         },
         Duration::from_secs(2),
     )

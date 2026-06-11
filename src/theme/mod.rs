@@ -748,8 +748,8 @@ fn default_glyphs() -> HashMap<String, String> {
 
     // Tab window titlebar glyphs.
     g.insert("tab-separator".into(), "|".into());
-    g.insert("tab-active-left".into(), ">".into());
-    g.insert("tab-active-right".into(), "<".into());
+    g.insert("tab-active-left".into(), "▶".into());
+    g.insert("tab-active-right".into(), "◀".into());
 
     // Controls.
     //
@@ -759,8 +759,8 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("checkbox-checked".into(), "[X]".into());
     g.insert("radio-unselected".into(), "( )".into());
     g.insert("radio-selected".into(), "(•)".into());
-    g.insert("disclosure-collapsed".into(), ">".into());
-    g.insert("disclosure-expanded".into(), "v".into());
+    g.insert("disclosure-collapsed".into(), "▶".into());
+    g.insert("disclosure-expanded".into(), "▼".into());
     g.insert("disclosure-idle-indicator".into(), "[ ]".into());
     g.insert("disclosure-running-indicator".into(), "[~]".into());
     g.insert("disclosure-done-indicator".into(), "[x]".into());
@@ -776,8 +776,8 @@ fn default_glyphs() -> HashMap<String, String> {
 
     // Tabs.
     g.insert("tab-separator".into(), "|".into());
-    g.insert("tab-active-left".into(), ">".into());
-    g.insert("tab-active-right".into(), "<".into());
+    g.insert("tab-active-left".into(), "▶".into());
+    g.insert("tab-active-right".into(), "◀".into());
 
     // Status bar.
     g.insert("status-separator".into(), " ".into());

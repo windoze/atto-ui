@@ -252,8 +252,8 @@ impl TabView {
         selected: Option<usize>,
     ) -> (Vec<Span<'static>>, Vec<(u16, u16)>, u16) {
         let separator = ctx.theme.glyph("tab-separator").unwrap_or("|");
-        let active_left = ctx.theme.glyph("tab-active-left").unwrap_or(">");
-        let active_right = ctx.theme.glyph("tab-active-right").unwrap_or("<");
+        let active_left = ctx.theme.glyph("tab-active-left").unwrap_or("▶");
+        let active_right = ctx.theme.glyph("tab-active-right").unwrap_or("◀");
 
         let inactive_style = ctx
             .theme

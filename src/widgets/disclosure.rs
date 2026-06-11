@@ -198,9 +198,9 @@ impl Disclosure {
             ctx.theme.widget.disabled
         };
         let marker = if self.expanded.get() {
-            ctx.theme.glyph("disclosure-expanded").unwrap_or("v")
+            ctx.theme.glyph("disclosure-expanded").unwrap_or("▼")
         } else {
-            ctx.theme.glyph("disclosure-collapsed").unwrap_or(">")
+            ctx.theme.glyph("disclosure-collapsed").unwrap_or("▶")
         };
         let indicator = ctx
             .theme
