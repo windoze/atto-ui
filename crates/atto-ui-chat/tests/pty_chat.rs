@@ -264,6 +264,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     let mut host = PtyTestHost::spawn(bin, &["--tool-call"], 80, 24)?;
 
     host.wait_for_text("Tool: build", Duration::from_secs(2))?;
+    host.wait_for_text("Tool result: tool-1", Duration::from_secs(2))?;
     host.wait_for_text("[~]", Duration::from_secs(2))?;
     host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
 
@@ -283,7 +284,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         Duration::from_secs(2),
     )?;
 
-    let (x, y) = find_text_position(&host, "Tool: build").expect("tool header position");
+    let (x, y) = find_text_position(&host, "Tool result: tool-1").expect("tool result position");
     host.click(x, y)?;
     host.wait_for_screen(
         |snapshot| snapshot.iter().all(|line| !line.contains("TOOL-OUTPUT-1")),

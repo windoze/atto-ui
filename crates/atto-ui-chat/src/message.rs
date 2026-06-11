@@ -551,28 +551,6 @@ impl ChatMessage {
             }
         }
     }
-
-    pub(crate) fn first_text(&self) -> Option<&TextBlock> {
-        self.blocks.iter().find_map(|block| match block {
-            ChatBlock::Text(text) => Some(text),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn first_tool_use(&self) -> Option<&ToolUseBlock> {
-        self.blocks.iter().find_map(|block| match block {
-            ChatBlock::ToolUse(tool) => Some(tool),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn first_tool_result(&self) -> Option<&ToolResultBlock> {
-        let call_id = self.first_tool_use().map(|tool| tool.call_id.as_str())?;
-        self.blocks.iter().find_map(|block| match block {
-            ChatBlock::ToolResult(result) if result.call_id == call_id => Some(result),
-            _ => None,
-        })
-    }
 }
 
 impl Identifiable for ChatMessage {

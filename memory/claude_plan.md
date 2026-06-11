@@ -59,7 +59,7 @@
 - 已检查提交前状态：本次提交将包含 P1.3 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
 
-## 当前任务：P1.4 序列化新形 + 旧形兼容
+## 历史记录：P1.4 序列化新形 + 旧形兼容
 
 - 已读取 `TODO.md`：首个未完成任务为 `P1.4 序列化新形 + 旧形兼容`。
 - 已查看最近提交：`080c0dd [P1.3] Rewrite chat message store`，未声明与 `P1.4` 直接相关的额外未完成事项。
@@ -72,3 +72,16 @@
 - 已更新 `TODO.md`：`P1.4` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P1.4 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/dynamic.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
+
+## 历史记录：P1.5 渲染过渡(每 block 一行)
+
+- 已读取 `TODO.md`：首个未完成任务为 `P1.5 渲染过渡(每 block 一行)`。
+- 已查看最近提交：`d14da67 [P1.4] Implement chat message serialization`，未声明与 `P1.5` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 和 `crates/atto-ui-chat/src/bin/snapshot_chat_app.rs` 的渲染过渡；不推进 P1.6 JS 侧同步或 P2 回合头拆分。
+- 已检查 `list.rs`：当前实现每条消息只生成一个行 key，并只渲染第一个非 `ToolResult` block，工具输出通过 `ToolUse` 行间接显示。
+- 实施策略：将 row key 过渡为 block 级，空消息保留消息级占位；按消息内 `blocks` 顺序生成行；`ToolResult` 单独渲染为 disclosure 行；保持文本/工具输出 delta 不进入 key，避免流式更新频繁重建。
+- 已完成实现：`ChatMessageList` 现在为每个 block 生成独立行，`Text`/`Thinking` 继续使用 Markdown 渲染，`ToolUse` 和 `ToolResult` 分别渲染为 disclosure，工具输出绑定到 `ToolResult` block 刷新。
+- 已更新 `snapshot_chat_app`：默认种子数据包含一个由 `Text`、`Thinking`、`Notice` 组成的多 block assistant 回合。
+- 首次 `clippy` 失败原因：P1.5 后旧 `ChatMessage::first_*` helper 不再使用，且一个嵌套 `if` 可折叠。已删除 stale helper 并修正 lint。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P1.5` 标题已加 `[DONE]`，完成记录和验证结果已写入。

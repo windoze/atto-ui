@@ -27,7 +27,8 @@ use atto_ui_chat::{
     Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatBlock, ChatBlockId,
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel,
-    ChatRole, ChatTurnStatus, TextArtifactViewer, ToolStatus,
+    ChatRole, ChatTurnStatus, NoticeBlock, NoticeLevel, TextArtifactViewer, TextBlock,
+    ThinkingBlock, ToolStatus,
 };
 
 fn main() -> Result<()> {
@@ -350,9 +351,44 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         } else {
             ChatRole::Assistant
         };
+        if idx == 1 {
+            let id = store.next_message_id();
+            store.push(ChatMessage::new(
+                id,
+                sender,
+                vec![
+                    ChatBlock::Text(TextBlock {
+                        id: snapshot_block_id(id, 0),
+                        markdown: "MSG-01".to_string(),
+                        streaming: false,
+                    }),
+                    ChatBlock::Thinking(ThinkingBlock {
+                        id: snapshot_block_id(id, 1),
+                        markdown: "MULTI-BLOCK-THINKING".to_string(),
+                        streaming: false,
+                        collapsed: false,
+                    }),
+                    ChatBlock::Notice(NoticeBlock {
+                        id: snapshot_block_id(id, 2),
+                        level: NoticeLevel::Info,
+                        text: "MULTI-BLOCK-NOTICE".to_string(),
+                    }),
+                ],
+            ));
+            continue;
+        }
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn snapshot_block_id(message_id: ChatMessageId, ordinal: u64) -> ChatBlockId {
+    ChatBlockId::new(
+        message_id
+            .0
+            .saturating_mul(1_000)
+            .saturating_add(ordinal + 1),
+    )
 }
 
 fn set_text_block(

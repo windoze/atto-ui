@@ -20,9 +20,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
     ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
-    ChatMessage, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
-    NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
-    ToolStatus, ToolUseBlock,
+    ChatBlockId, ChatMessage, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData,
+    EditDecision, NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
+    TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
@@ -399,11 +399,19 @@ fn build_list(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ChatMessageRowKey {
-    id: crate::message::ChatMessageId,
+    id: ChatMessageRowId,
+    message_id: crate::message::ChatMessageId,
+    block_id: Option<ChatBlockId>,
     role: ChatRole,
     timestamp: Option<String>,
     status: ChatTurnStatus,
     content: ChatMessageContentKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ChatMessageRowId {
+    Message(crate::message::ChatMessageId),
+    Block(ChatBlockId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -421,6 +429,12 @@ enum ChatMessageContentKey {
     ToolUse {
         call_id: String,
         name: String,
+    },
+    ToolResult {
+        call_id: String,
+        ok: bool,
+        exit_code: Option<i32>,
+        collapsed: bool,
     },
     Diff {
         path: String,
@@ -441,7 +455,7 @@ enum ChatMessageContentKey {
 }
 
 impl Identifiable for ChatMessageRowKey {
-    type Id = crate::message::ChatMessageId;
+    type Id = ChatMessageRowId;
 
     fn id(&self) -> Self::Id {
         self.id
@@ -451,7 +465,7 @@ impl Identifiable for ChatMessageRowKey {
 impl ChatMessageRowKey {
     fn placeholder(&self) -> ChatMessage {
         ChatMessage {
-            id: self.id,
+            id: self.message_id,
             role: self.role.clone(),
             status: self.status.clone(),
             meta: ChatMessageMeta {
@@ -461,13 +475,13 @@ impl ChatMessageRowKey {
             blocks: match &self.content {
                 ChatMessageContentKey::Empty => Vec::new(),
                 ChatMessageContentKey::Text => vec![ChatBlock::Text(TextBlock {
-                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                    id: self.placeholder_block_id(),
                     markdown: String::new(),
                     streaming: self.status.is_streaming(),
                 })],
                 ChatMessageContentKey::Thinking { collapsed } => {
                     vec![ChatBlock::Thinking(ThinkingBlock {
-                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        id: self.placeholder_block_id(),
                         markdown: String::new(),
                         streaming: self.status.is_streaming(),
                         collapsed: *collapsed,
@@ -475,7 +489,7 @@ impl ChatMessageRowKey {
                 }
                 ChatMessageContentKey::Attachment { name, url, mime } => {
                     vec![ChatBlock::Attachment(AttachmentBlock {
-                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        id: self.placeholder_block_id(),
                         name: name.clone(),
                         url: url.clone(),
                         mime: mime.clone(),
@@ -483,7 +497,7 @@ impl ChatMessageRowKey {
                 }
                 ChatMessageContentKey::ToolUse { call_id, name } => {
                     vec![ChatBlock::ToolUse(ToolUseBlock {
-                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        id: self.placeholder_block_id(),
                         call_id: call_id.clone(),
                         name: name.clone(),
                         input: ToolInput::Text(String::new()),
@@ -492,9 +506,22 @@ impl ChatMessageRowKey {
                         collapsed: false,
                     })]
                 }
+                ChatMessageContentKey::ToolResult {
+                    call_id,
+                    ok,
+                    exit_code,
+                    collapsed,
+                } => vec![ChatBlock::ToolResult(ToolResultBlock {
+                    id: self.placeholder_block_id(),
+                    call_id: call_id.clone(),
+                    ok: *ok,
+                    exit_code: *exit_code,
+                    output: ToolOutput::Ansi(String::new()),
+                    collapsed: *collapsed,
+                })],
                 ChatMessageContentKey::Diff { path, decision } => {
                     vec![ChatBlock::Diff(DiffBlock {
-                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        id: self.placeholder_block_id(),
                         path: path.clone(),
                         diff: DiffData {
                             unified: String::new(),
@@ -503,12 +530,12 @@ impl ChatMessageRowKey {
                     })]
                 }
                 ChatMessageContentKey::Todo { items } => vec![ChatBlock::Todo(TodoBlock {
-                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                    id: self.placeholder_block_id(),
                     items: items.clone(),
                 })],
                 ChatMessageContentKey::Notice { level, text } => {
                     vec![ChatBlock::Notice(NoticeBlock {
-                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        id: self.placeholder_block_id(),
                         level: *level,
                         text: text.clone(),
                     })]
@@ -518,7 +545,7 @@ impl ChatMessageRowKey {
                     anchor,
                     title,
                 } => vec![ChatBlock::Artifact(ArtifactBlock {
-                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                    id: self.placeholder_block_id(),
                     kind: kind.clone(),
                     anchor: anchor.clone(),
                     title: title.clone(),
@@ -526,78 +553,98 @@ impl ChatMessageRowKey {
             },
         }
     }
+
+    fn placeholder_block_id(&self) -> ChatBlockId {
+        self.block_id.unwrap_or_else(|| {
+            ChatBlockId::new(self.message_id.0.saturating_mul(1_000).saturating_add(1))
+        })
+    }
 }
 
 fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageRowKey> {
     messages
         .iter()
-        .map(|message| ChatMessageRowKey {
-            id: message.id,
-            role: message.role.clone(),
-            timestamp: message.meta.timestamp.clone(),
-            status: message.status.clone(),
-            content: message_content_key(message),
+        .flat_map(|message| {
+            if message.blocks.is_empty() {
+                return vec![ChatMessageRowKey {
+                    id: ChatMessageRowId::Message(message.id),
+                    message_id: message.id,
+                    block_id: None,
+                    role: message.role.clone(),
+                    timestamp: message.meta.timestamp.clone(),
+                    status: message.status.clone(),
+                    content: ChatMessageContentKey::Empty,
+                }];
+            }
+
+            message
+                .blocks
+                .iter()
+                .map(|block| ChatMessageRowKey {
+                    id: ChatMessageRowId::Block(block.id()),
+                    message_id: message.id,
+                    block_id: Some(block.id()),
+                    role: message.role.clone(),
+                    timestamp: message.meta.timestamp.clone(),
+                    status: message.status.clone(),
+                    content: block_content_key(block),
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
 
-fn message_content_key(message: &ChatMessage) -> ChatMessageContentKey {
-    for block in &message.blocks {
-        match block {
-            ChatBlock::Text(_) => return ChatMessageContentKey::Text,
-            ChatBlock::Thinking(ThinkingBlock { collapsed, .. }) => {
-                return ChatMessageContentKey::Thinking {
-                    collapsed: *collapsed,
-                };
-            }
-            ChatBlock::Attachment(AttachmentBlock {
-                name, url, mime, ..
-            }) => {
-                return ChatMessageContentKey::Attachment {
-                    name: name.clone(),
-                    url: url.clone(),
-                    mime: mime.clone(),
-                };
-            }
-            ChatBlock::ToolUse(ToolUseBlock { call_id, name, .. }) => {
-                return ChatMessageContentKey::ToolUse {
-                    call_id: call_id.clone(),
-                    name: name.clone(),
-                };
-            }
-            ChatBlock::Diff(DiffBlock { path, decision, .. }) => {
-                return ChatMessageContentKey::Diff {
-                    path: path.clone(),
-                    decision: *decision,
-                };
-            }
-            ChatBlock::Todo(TodoBlock { items, .. }) => {
-                return ChatMessageContentKey::Todo {
-                    items: items.clone(),
-                };
-            }
-            ChatBlock::Notice(NoticeBlock { level, text, .. }) => {
-                return ChatMessageContentKey::Notice {
-                    level: *level,
-                    text: text.clone(),
-                };
-            }
-            ChatBlock::Artifact(ArtifactBlock {
-                kind,
-                anchor,
-                title,
-                ..
-            }) => {
-                return ChatMessageContentKey::Artifact {
-                    kind: kind.clone(),
-                    anchor: anchor.clone(),
-                    title: title.clone(),
-                };
-            }
-            ChatBlock::ToolResult(_) => {}
-        }
+fn block_content_key(block: &ChatBlock) -> ChatMessageContentKey {
+    match block {
+        ChatBlock::Text(_) => ChatMessageContentKey::Text,
+        ChatBlock::Thinking(ThinkingBlock { collapsed, .. }) => ChatMessageContentKey::Thinking {
+            collapsed: *collapsed,
+        },
+        ChatBlock::Attachment(AttachmentBlock {
+            name, url, mime, ..
+        }) => ChatMessageContentKey::Attachment {
+            name: name.clone(),
+            url: url.clone(),
+            mime: mime.clone(),
+        },
+        ChatBlock::ToolUse(ToolUseBlock { call_id, name, .. }) => ChatMessageContentKey::ToolUse {
+            call_id: call_id.clone(),
+            name: name.clone(),
+        },
+        ChatBlock::ToolResult(ToolResultBlock {
+            call_id,
+            ok,
+            exit_code,
+            collapsed,
+            ..
+        }) => ChatMessageContentKey::ToolResult {
+            call_id: call_id.clone(),
+            ok: *ok,
+            exit_code: *exit_code,
+            collapsed: *collapsed,
+        },
+        ChatBlock::Diff(DiffBlock { path, decision, .. }) => ChatMessageContentKey::Diff {
+            path: path.clone(),
+            decision: *decision,
+        },
+        ChatBlock::Todo(TodoBlock { items, .. }) => ChatMessageContentKey::Todo {
+            items: items.clone(),
+        },
+        ChatBlock::Notice(NoticeBlock { level, text, .. }) => ChatMessageContentKey::Notice {
+            level: *level,
+            text: text.clone(),
+        },
+        ChatBlock::Artifact(ArtifactBlock {
+            kind,
+            anchor,
+            title,
+            ..
+        }) => ChatMessageContentKey::Artifact {
+            kind: kind.clone(),
+            anchor: anchor.clone(),
+            title: title.clone(),
+        },
     }
-    ChatMessageContentKey::Empty
 }
 
 #[derive(Default)]
@@ -609,6 +656,7 @@ struct ChatMessageRowBindings {
 
 struct ChatMessageRow {
     message_id: crate::message::ChatMessageId,
+    block_id: Option<ChatBlockId>,
     messages: Binding<Vec<ChatMessage>>,
     body_bindings: ChatMessageRowBindings,
     config: ChatMessageRowConfig,
@@ -621,10 +669,12 @@ impl ChatMessageRow {
         messages: Binding<Vec<ChatMessage>>,
         config: ChatMessageRowConfig,
     ) -> Self {
-        let message = find_message(&messages.get(), key.id).unwrap_or_else(|| key.placeholder());
-        let (view, body_bindings) = build_row_view(&message, &config);
+        let message =
+            find_message(&messages.get(), key.message_id).unwrap_or_else(|| key.placeholder());
+        let (view, body_bindings) = build_row_view(&message, key.block_id, &config);
         Self {
-            message_id: key.id,
+            message_id: key.message_id,
+            block_id: key.block_id,
             messages,
             body_bindings,
             config,
@@ -637,22 +687,27 @@ impl ChatMessageRow {
         let Some(message) = find_message(&messages, self.message_id) else {
             return;
         };
+        let block = self
+            .block_id
+            .and_then(|block_id| find_block(&message, block_id));
 
         if let Some(binding) = &self.body_bindings.markdown
-            && let Some(markdown) = message_markdown_for_render(&message, &self.config)
+            && let Some(markdown) =
+                block.and_then(|block| block_markdown_for_render(block, &self.config))
         {
             binding.set(markdown);
         }
 
-        if let Some(tool) = message.first_tool_use() {
-            if let Some(binding) = &self.body_bindings.tool_output {
-                let output = message
-                    .first_tool_result()
-                    .map(|result| result.output.as_text().to_string())
-                    .unwrap_or_default();
+        if let Some(block) = block {
+            if let Some(binding) = &self.body_bindings.tool_output
+                && let Some(output) = block_tool_output_for_render(block)
+            {
                 binding.set(output);
             }
-            if let Some(binding) = &self.body_bindings.tool_status {
+
+            if let Some(binding) = &self.body_bindings.tool_status
+                && let ChatBlock::ToolUse(tool) = block
+            {
                 binding.set(tool_status_to_disclosure(&tool.status));
             }
         }
@@ -661,6 +716,7 @@ impl ChatMessageRow {
 
 fn build_row_view(
     message: &ChatMessage,
+    block_id: Option<ChatBlockId>,
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let mut column = VStack::new().with_spacing(1);
@@ -675,7 +731,8 @@ fn build_row_view(
         column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
     }
 
-    let (bubble, body_bindings) = build_aligned_bubble(message, config);
+    let block = block_id.and_then(|block_id| find_block(message, block_id));
+    let (bubble, body_bindings) = build_aligned_bubble(message, block, config);
     column = column.child_with_layout(bubble, row_layout);
 
     (column, body_bindings)
@@ -688,24 +745,28 @@ fn find_message(
     messages.iter().find(|message| message.id == id).cloned()
 }
 
-fn message_markdown_for_render(
-    message: &ChatMessage,
-    config: &ChatMessageRowConfig,
-) -> Option<String> {
-    let markdown = message
-        .first_text()
-        .map(|text| &text.markdown)
-        .or_else(|| {
-            message.blocks.iter().find_map(|block| match block {
-                ChatBlock::Thinking(thinking) => Some(&thinking.markdown),
-                _ => None,
-            })
-        })?;
+fn find_block(message: &ChatMessage, id: ChatBlockId) -> Option<&ChatBlock> {
+    message.blocks.iter().find(|block| block.id() == id)
+}
+
+fn block_markdown_for_render(block: &ChatBlock, config: &ChatMessageRowConfig) -> Option<String> {
+    let (markdown, streaming) = match block {
+        ChatBlock::Text(text) => (&text.markdown, text.streaming),
+        ChatBlock::Thinking(thinking) => (&thinking.markdown, thinking.streaming),
+        _ => return None,
+    };
     let mut content = markdown.clone();
-    if message.status.is_streaming() && !config.in_progress_suffix.is_empty() {
+    if streaming && !config.in_progress_suffix.is_empty() {
         content.push_str(&config.in_progress_suffix);
     }
     Some(content)
+}
+
+fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
+    match block {
+        ChatBlock::ToolResult(result) => Some(result.output.as_text().to_string()),
+        _ => None,
+    }
 }
 
 impl ::atto_ui::composable::Component for ChatMessageRow {
@@ -754,9 +815,10 @@ impl ::atto_ui::composable::EventHandling for ChatMessageRow {
 
 fn build_aligned_bubble(
     message: &ChatMessage,
+    block: Option<&ChatBlock>,
     config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, body_bindings) = build_bubble(message, config);
+    let (bubble, body_bindings) = build_bubble(message, block, config);
     let bubble_layout = LayoutParams {
         width: Size::Weight(3),
         height: Size::Content,
@@ -780,10 +842,11 @@ fn build_aligned_bubble(
 
 fn build_bubble(
     message: &ChatMessage,
+    block: Option<&ChatBlock>,
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
     let header = build_header(message);
-    let (body, body_bindings) = ChatMessageBody::from_message(message, config);
+    let (body, body_bindings) = ChatMessageBody::from_block(block, config);
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -881,18 +944,17 @@ enum ChatMessageBody {
 }
 
 impl ChatMessageBody {
-    fn from_message(
-        message: &ChatMessage,
+    fn from_block(
+        block: Option<&ChatBlock>,
         config: &ChatMessageRowConfig,
     ) -> (Self, ChatMessageRowBindings) {
-        let display_block = message
-            .blocks
-            .iter()
-            .find(|block| !matches!(block, ChatBlock::ToolResult(_)));
-        match display_block {
+        match block {
             Some(ChatBlock::Text(_)) => {
-                let content =
-                    Binding::new(message_markdown_for_render(message, config).unwrap_or_default());
+                let content = Binding::new(
+                    block
+                        .and_then(|block| block_markdown_for_render(block, config))
+                        .unwrap_or_default(),
+                );
                 (
                     ChatMessageBody::Markdown(
                         MarkdownViewer::new(content.clone())
@@ -907,8 +969,11 @@ impl ChatMessageBody {
                 )
             }
             Some(ChatBlock::Thinking(_)) => {
-                let content =
-                    Binding::new(message_markdown_for_render(message, config).unwrap_or_default());
+                let content = Binding::new(
+                    block
+                        .and_then(|block| block_markdown_for_render(block, config))
+                        .unwrap_or_default(),
+                );
                 (
                     ChatMessageBody::Markdown(
                         MarkdownViewer::new(content.clone())
@@ -934,21 +999,31 @@ impl ChatMessageBody {
                 )
             }
             Some(ChatBlock::ToolUse(tool)) => {
-                let current_output = message
-                    .first_tool_result()
-                    .map(|result| result.output.as_text().to_string())
-                    .unwrap_or_default();
-                let output = Binding::new(current_output);
+                let input = Binding::new(tool_input_to_text(&tool.input));
                 let status = Binding::new(tool_status_to_disclosure(&tool.status));
                 let view = Disclosure::new(format!("Tool: {}", tool.name))
-                    .expanded(true)
+                    .expanded(!tool.collapsed)
                     .status(status.clone())
+                    .content(input);
+                (
+                    ChatMessageBody::Tool(view),
+                    ChatMessageRowBindings {
+                        tool_status: Some(status),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
+            Some(ChatBlock::ToolResult(result)) => {
+                let output = Binding::new(result.output.as_text().to_string());
+                let status = Binding::new(tool_result_to_disclosure(result));
+                let view = Disclosure::new(format!("Tool result: {}", result.call_id))
+                    .expanded(!result.collapsed)
+                    .status(status)
                     .content(output.clone());
                 (
                     ChatMessageBody::Tool(view),
                     ChatMessageRowBindings {
                         tool_output: Some(output),
-                        tool_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
                 )
@@ -1003,7 +1078,7 @@ impl ChatMessageBody {
                 )),
                 ChatMessageRowBindings::default(),
             ),
-            Some(ChatBlock::ToolResult(_)) | None => {
+            None => {
                 let content = Binding::new(String::new());
                 (
                     ChatMessageBody::Markdown(
@@ -1043,6 +1118,21 @@ fn tool_status_to_disclosure(status: &ToolStatus) -> DisclosureStatus {
         ToolStatus::Pending | ToolStatus::Running => DisclosureStatus::Running,
         ToolStatus::Done => DisclosureStatus::Done,
         ToolStatus::Error | ToolStatus::Canceled => DisclosureStatus::Error,
+    }
+}
+
+fn tool_result_to_disclosure(result: &ToolResultBlock) -> DisclosureStatus {
+    if result.ok {
+        DisclosureStatus::Done
+    } else {
+        DisclosureStatus::Error
+    }
+}
+
+fn tool_input_to_text(input: &ToolInput) -> String {
+    match input {
+        ToolInput::Text(text) => text.clone(),
+        ToolInput::Json(value) => format!("{value:?}"),
     }
 }
 
@@ -1269,6 +1359,28 @@ mod tests {
         }
         let renamed_key = row_keys_from_messages(&[first]);
         assert_ne!(updated_key, renamed_key);
+    }
+
+    #[test]
+    fn row_keys_create_one_row_per_block_in_message_order() {
+        let id = ChatMessageId::new(10);
+        let message = ChatMessage::tool_call(id, "build", ToolStatus::Running, "starting");
+
+        let keys = row_keys_from_messages(std::slice::from_ref(&message));
+
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].message_id, id);
+        assert_eq!(keys[0].block_id, Some(message.blocks[0].id()));
+        assert!(matches!(
+            keys[0].content,
+            ChatMessageContentKey::ToolUse { .. }
+        ));
+        assert_eq!(keys[1].message_id, id);
+        assert_eq!(keys[1].block_id, Some(message.blocks[1].id()));
+        assert!(matches!(
+            keys[1].content,
+            ChatMessageContentKey::ToolResult { .. }
+        ));
     }
 
     #[test]

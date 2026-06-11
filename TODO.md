@@ -22,7 +22,9 @@
 - [x] **[DONE] P1.4 序列化新形 + 旧形兼容** — `src/dynamic.rs`:`message_to_value`/`parse_message_value` 改为 `CHAT_UI.md` §8 的 `{id,role,status,meta?,blocks:[...]}` 形;block 以 `type` 区分。`parse_message_value` 保留旧形解析(顶层 `content`/`markdown`/`tool_call`/`file`/`artifact`、`sender`、`status:"in_progress"`)→ 包成单 block 新消息。新形 round-trip 单测 + 旧形解析单测。
   - 完成记录（2026-06-12）：已将 `messages_to_component_value` 输出改为新形 `role/status/meta?/blocks`，按 `type` 序列化 Text/Thinking/ToolUse/ToolResult/Diff/Todo/Attachment/Notice/Artifact block；`parse_message_value` 支持新形完整 round-trip，并保留旧形 `content`/`markdown`/`tool_call`/`file`/`artifact`、`sender`、`status:"in_progress"` 解析兼容。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P1.5 渲染过渡(每 block 一行)** — `src/list.rs`:先让新模型可渲染——把回合的 blocks 顺序渲染为行,外观与旧版大致持平,保证编译与 PTY 测试可调整通过。`snapshot_chat_app`(`src/bin/snapshot_chat_app.rs`)更新为构造含多 block 的回合。
+- [x] **[DONE] P1.5 渲染过渡(每 block 一行)** — `src/list.rs`:先让新模型可渲染——把回合的 blocks 顺序渲染为行,外观与旧版大致持平,保证编译与 PTY 测试可调整通过。`snapshot_chat_app`(`src/bin/snapshot_chat_app.rs`)更新为构造含多 block 的回合。
+  - 完成记录（2026-06-12）：已将 `ChatMessageList` 行 key 从消息级过渡为 block 级,按消息内 `blocks` 顺序生成一行一个 block；空消息保留消息级占位行。`Text`/`Thinking` 继续用 Markdown 渲染并支持流式 delta,`ToolUse` 与 `ToolResult` 分别渲染为 disclosure 行,工具输出更新按 `ToolResult` block 绑定刷新。`snapshot_chat_app` 默认种子数据新增一个多 block assistant 回合,PTY 工具调用测试同步改为验证独立 tool result 行折叠。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P1.6 运行时/JS 侧同步** — 更新 `crates/atto-ui-node`、`packages/core`(chat builders,见 `packages/core/src/builders.ts`)、`packages/react` 的 chat 相关 TS 类型/构造器以匹配新 block 形;更新 `docs/NODE_API.md` 的 chat 段。跑 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试。
 
 ## 阶段 P2 — 回合分组 + 性能 + 滚动
