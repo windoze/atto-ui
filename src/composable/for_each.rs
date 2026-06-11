@@ -210,6 +210,19 @@ where
         self
     }
 
+    pub fn scroll_to_bottom_on_next_layout(&mut self) {
+        self.cached_view.scroll_to_bottom_on_next_layout();
+    }
+
+    pub fn preserve_scroll_y_after_next_layout(
+        &mut self,
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    ) {
+        self.cached_view
+            .preserve_scroll_y_after_next_layout(previous_content_height, previous_scroll_y);
+    }
+
     /// 创建使用 Identifiable 的优化 ForEach
     pub fn with_id(self) -> ForEachIdentifiable<T, V>
     where
@@ -413,6 +426,19 @@ where
     T::Id: Hash + Eq + Send + Sync,
     V: Component + 'static,
 {
+    pub fn scroll_to_bottom_on_next_layout(&mut self) {
+        self.cached_view.scroll_to_bottom_on_next_layout();
+    }
+
+    pub fn preserve_scroll_y_after_next_layout(
+        &mut self,
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    ) {
+        self.cached_view
+            .preserve_scroll_y_after_next_layout(previous_content_height, previous_scroll_y);
+    }
+
     fn reconcile_children(&mut self) {
         let items = self.data.get();
 

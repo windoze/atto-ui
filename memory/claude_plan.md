@@ -141,3 +141,17 @@
 - 已更新 `TODO.md`：`P2.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 代码验证已在更新 `TODO.md` 前完成；之后仅修改文档记录，无需重跑测试。
 - 下一步检查提交范围并提交。
+
+## 历史记录：P2.4 滚动修复
+
+- 已读取 `TODO.md`：首个未完成任务为 `P2.4 滚动修复`。
+- 已查看最近提交：`ac84df2 [P2.3] Render chat block widgets`，未声明与 `P2.4` 直接相关的额外未完成事项。
+- 已检查 `crates/atto-ui-chat/src/list.rs`、`snapshot_chat_app.rs`、PTY 测试，以及 `atto_ui` 的 `ForEach`/`VStack` 滚动实现。
+- 关键发现：旧实现把 `apply_pending_scroll` 放在 `draw` 末尾，导致新内容尺寸已经计算但本帧已渲染，滚动只能下一帧生效；prepend 也需要在新布局后、子组件渲染前按新增高度补偿。
+- 实施方案：在底层 `StackCore` 增加下一次布局后生效的滚动调整（滚到底、按内容高度差保锚点），通过 `VStack`/`ForEachIdentifiable` 暴露给 `ChatMessageList` 使用。
+- 已完成实现：`ChatMessageList` 初始已有消息时预载滚底，消息变更在同帧排队滚底，`on_load_more` prepend 后按新增内容高度补偿 `scroll_y`，并公开 `scroll_to_bottom()`。
+- 已补充/调整测试：新增 list 单测覆盖首帧预载滚底和 prepend 锚点补偿；更新 PTY 覆盖验证初始在底部、load-more 后锚点不被新历史顶走且继续上滚可见历史。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat messages_`、`cargo test -p atto-ui-chat --test pty_chat chat_auto_follow_pauses_after_user_scrolls_up -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_load_more_on_scroll_top -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P2.4` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P2.4 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+- 下一步创建任务提交并停止。

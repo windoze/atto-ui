@@ -24,6 +24,15 @@ enum StackAxis {
     Horizontal,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingScrollAdjustment {
+    ToBottom,
+    PreserveYAfterContentHeightChange {
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    },
+}
+
 #[derive(ComponentProperties)]
 struct StackCore {
     axis: StackAxis,
@@ -37,6 +46,7 @@ struct StackCore {
     scroll: Binding<ScrollOffset>,
     content_size: (u16, u16),
     viewport_size: (u16, u16),
+    pending_scroll_adjustment: Option<PendingScrollAdjustment>,
     scroll_config: Binding<ScrollConfig>,
     scrollbars: Option<Scrollbars>,
     scrollbar_drag: Option<ScrollbarDrag>,
@@ -66,6 +76,7 @@ impl StackCore {
             scroll: ScrollOffset::ZERO.into(),
             content_size: (0, 0),
             viewport_size: (0, 0),
+            pending_scroll_adjustment: None,
             scroll_config: ScrollConfig::default().into(),
             scrollbars: None,
             scrollbar_drag: None,
@@ -94,6 +105,54 @@ impl StackCore {
     fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
         self.scroll_config = config.into();
         self
+    }
+
+    fn scroll_to_bottom_on_next_layout(&mut self) {
+        if self.scrollable.get() {
+            self.pending_scroll_adjustment = Some(PendingScrollAdjustment::ToBottom);
+        }
+    }
+
+    fn preserve_scroll_y_after_next_layout(
+        &mut self,
+        previous_content_height: u16,
+        previous_scroll_y: u16,
+    ) {
+        if self.scrollable.get() {
+            self.pending_scroll_adjustment =
+                Some(PendingScrollAdjustment::PreserveYAfterContentHeightChange {
+                    previous_content_height,
+                    previous_scroll_y,
+                });
+        }
+    }
+
+    fn apply_pending_scroll_adjustment(&mut self) {
+        if !self.scrollable.get() {
+            self.pending_scroll_adjustment = None;
+            return;
+        }
+        if self.viewport_size.1 == 0 {
+            return;
+        }
+
+        let Some(adjustment) = self.pending_scroll_adjustment.take() else {
+            return;
+        };
+        let current = self.scroll.get();
+        let desired_y = match adjustment {
+            PendingScrollAdjustment::ToBottom => {
+                self.content_size.1.saturating_sub(self.viewport_size.1)
+            }
+            PendingScrollAdjustment::PreserveYAfterContentHeightChange {
+                previous_content_height,
+                previous_scroll_y,
+            } => {
+                let inserted_height = self.content_size.1.saturating_sub(previous_content_height);
+                previous_scroll_y.saturating_add(inserted_height)
+            }
+        };
+        let _ = self.scroll_to_clamped(current.x, desired_y);
     }
 
     fn child(mut self, view: impl Component + 'static) -> Self {
@@ -1145,6 +1204,21 @@ macro_rules! define_stack {
 
             pub fn scroll_config(self, config: impl Into<Binding<ScrollConfig>>) -> Self {
                 self.with_scroll_config(config)
+            }
+
+            pub fn scroll_to_bottom_on_next_layout(&mut self) {
+                self.core.scroll_to_bottom_on_next_layout();
+            }
+
+            pub fn preserve_scroll_y_after_next_layout(
+                &mut self,
+                previous_content_height: u16,
+                previous_scroll_y: u16,
+            ) {
+                self.core.preserve_scroll_y_after_next_layout(
+                    previous_content_height,
+                    previous_scroll_y,
+                );
             }
 
             pub fn child(mut self, view: impl Component + 'static) -> Self {

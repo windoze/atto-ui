@@ -158,7 +158,7 @@ fn chat_auto_follow_pauses_after_user_scrolls_up() -> anyhow::Result<()> {
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24)?;
 
-    host.wait_for_text("MSG-00", Duration::from_secs(2))?;
+    host.wait_for_text("MSG-27", Duration::from_secs(2))?;
 
     host.send_str("a")?;
     host.wait_for_text("FOLLOW-1", Duration::from_secs(2))?;
@@ -191,19 +191,24 @@ fn chat_load_more_on_scroll_top() -> anyhow::Result<()> {
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24)?;
 
-    host.wait_for_text("MSG-00", Duration::from_secs(2))?;
+    host.wait_for_text("MSG-27", Duration::from_secs(2))?;
 
-    for _ in 0..6 {
-        host.wheel_down(6, 6)?;
+    for _ in 0..30 {
+        host.wheel_up(6, 6)?;
         thread::sleep(Duration::from_millis(60));
+        if host.screen_contents()?.contains("MSG-00") {
+            break;
+        }
     }
 
-    for _ in 0..12 {
+    host.wait_for_text("MSG-00", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "HISTORY-1-", Duration::from_millis(250));
+
+    for _ in 0..2 {
         host.wheel_up(6, 6)?;
         thread::sleep(Duration::from_millis(60));
     }
-
-    host.wait_for_text("HISTORY-1-0", Duration::from_secs(2))?;
+    host.wait_for_text("HISTORY-1-1", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())

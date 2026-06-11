@@ -81,6 +81,7 @@ impl ChatMessageList {
             on_open_artifact: None,
         };
         let messages = store.binding();
+        let has_initial_messages = messages.with(|messages| !messages.is_empty());
         let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
         let list = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
@@ -95,7 +96,7 @@ impl ChatMessageList {
             auto_scroll: true,
             follow_tail: true,
             suppress_auto_scroll_once: false,
-            pending_scroll_to_bottom: false,
+            pending_scroll_to_bottom: has_initial_messages,
             messages_observer,
         }
     }
@@ -165,7 +166,15 @@ impl ChatMessageList {
 
     pub fn auto_scroll(mut self, enabled: bool) -> Self {
         self.auto_scroll = enabled;
+        if !enabled {
+            self.pending_scroll_to_bottom = false;
+        }
         self
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.pending_scroll_to_bottom = true;
+        self.follow_tail = true;
     }
 
     fn rebuild_list(&mut self) {
@@ -193,9 +202,13 @@ impl ChatMessageList {
         if !self.load_more_armed {
             return false;
         }
+        let previous_content_h = content_h;
+        let previous_scroll_y = scroll_y;
         self.load_more_armed = false;
         self.suppress_auto_scroll_once = true;
         callback();
+        self.list
+            .preserve_scroll_y_after_next_layout(previous_content_h, previous_scroll_y);
         true
     }
 
@@ -230,17 +243,11 @@ impl ChatMessageList {
         self.follow_tail = self.is_scrolled_to_bottom();
     }
 
-    fn apply_pending_scroll(&mut self) {
+    fn queue_pending_scroll_to_bottom(&mut self) {
         if !self.pending_scroll_to_bottom {
             return;
         }
-        let viewport_h = self.list.viewport_size().1;
-        if viewport_h == 0 {
-            return;
-        }
-        let content_h = self.list.content_size().1;
-        let max_y = content_h.saturating_sub(viewport_h);
-        self.list.set_scroll_offset(0, max_y);
+        self.list.scroll_to_bottom_on_next_layout();
         self.follow_tail = true;
         self.pending_scroll_to_bottom = false;
         self.load_more_armed = true;
@@ -310,6 +317,9 @@ impl ::atto_ui::composable::Component for ChatMessageList {
             "auto_scroll" => {
                 let enabled = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.auto_scroll = enabled;
+                if !enabled {
+                    self.pending_scroll_to_bottom = false;
+                }
                 Ok(())
             }
             _ => Err(ComponentError::unsupported_property(name)),
@@ -318,8 +328,8 @@ impl ::atto_ui::composable::Component for ChatMessageList {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.track_message_changes();
+        self.queue_pending_scroll_to_bottom();
         self.list.draw(frame, area, ctx);
-        self.apply_pending_scroll();
     }
 }
 
@@ -1958,8 +1968,85 @@ fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordina
 mod tests {
     use std::collections::BTreeMap;
 
+    use atto_ui::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use atto_ui::theme::Theme;
+    use atto_ui::wm::WindowId;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
     use super::*;
     use crate::message::{ChatMessageId, ChatRole};
+
+    fn draw_chat_list(list: &mut ChatMessageList, width: u16, height: u16) {
+        let theme = Theme::dark();
+        let ctx = ComponentContext {
+            theme: &theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        };
+        let area = Rect::new(0, 0, width, height);
+        let backend = TestBackend::new(width.max(1), height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| list.draw(f, area, ctx)).expect("draw");
+    }
+
+    fn store_with_text_messages(count: u64) -> ChatMessageStore {
+        let store = ChatMessageStore::new();
+        for idx in 0..count {
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("MSG-{idx:02}"),
+            ));
+        }
+        store
+    }
+
+    #[test]
+    fn preloaded_messages_scroll_to_bottom_on_first_draw() {
+        let store = store_with_text_messages(20);
+        let mut list = ChatMessageList::new(store).show_timestamps(false);
+
+        draw_chat_list(&mut list, 40, 6);
+
+        let max_y = list.content_size().1.saturating_sub(list.viewport_size().1);
+        assert!(max_y > 0, "fixture should overflow vertically");
+        assert_eq!(list.scroll_offset().1, max_y);
+    }
+
+    #[test]
+    fn prepended_messages_preserve_scroll_anchor() {
+        let store = store_with_text_messages(20);
+        let mut list = ChatMessageList::new(store.clone()).show_timestamps(false);
+        draw_chat_list(&mut list, 40, 6);
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+
+        let previous_content_h = list.content_size().1;
+        let previous_scroll_y = list.scroll_offset().1;
+        let older = (0..3)
+            .map(|idx| {
+                ChatMessage::text(
+                    store.next_message_id(),
+                    ChatRole::System,
+                    format!("HISTORY-{idx}"),
+                )
+            })
+            .collect();
+        store.prepend_many(older);
+        list.list
+            .preserve_scroll_y_after_next_layout(previous_content_h, previous_scroll_y);
+
+        draw_chat_list(&mut list, 40, 6);
+
+        let inserted_height = list.content_size().1.saturating_sub(previous_content_h);
+        assert!(inserted_height > 0, "prepended rows should increase height");
+        assert_eq!(list.scroll_offset().1, inserted_height);
+    }
 
     #[test]
     fn tool_input_json_map_renders_key_value_lines() {

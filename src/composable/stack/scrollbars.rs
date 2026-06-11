@@ -38,6 +38,8 @@ impl StackCore {
             self.scrollbar_drag = None;
         }
 
+        self.apply_pending_scroll_adjustment();
+
         let scroll = self.scroll.get();
         self.scroll.set(clamp_scroll_offset(
             self.content_size,
