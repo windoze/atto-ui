@@ -382,3 +382,17 @@
 - JS 验证已通过：`npm run smoke --prefix examples/react-tsx`、`npm run test:runtime --prefix packages/core`。
 - 已更新 `TODO.md`：`收尾 1 — 全量校验` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查提交范围，排除无关既有变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交收尾 1 相关 `TODO.md` 和 `memory/claude_plan.md` 后停止。
+
+## 当前任务：收尾 2 快照人工比对（阻塞排期）
+
+- 已在执行项目命令前写入本轮初始计划；初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `收尾 2 — 快照人工比对`。
+- 已查看最近提交：`b82b896 [收尾 1] Complete full validation`，未声明与收尾 2 直接相关的未完成事项。
+- 已读取 `CHAT_UI.md` §2 和 `snapshot_chat_app` 场景，确认收尾 2 需要逐项核对能力矩阵，而不是继续推进无关历史问题。
+- 已构建 `snapshot_chat_app`：`cargo build -p atto-ui-chat --bin snapshot_chat_app` 通过。
+- 已用临时 PTY 审计辅助程序抓取 13 组可读快照：default tail、block mapping top/bottom、long tool output、inline approval、inline diff、thinking/notice、todo、turn meta/error、message actions、cancel、responsive layout、artifact link。
+- 审计结论：多数矩阵项已有可见覆盖，但 `Plan 模式(展示+接受)`、`子 agent / Task 嵌套`、以及 `复制消息/代码、文本选择` 的“文本选择”部分仍缺少 spec-correct 模型/渲染/PTY 场景。
+- 已按阻塞策略更新 `TODO.md`：新增 P8.1 Plan 模式、P8.2 子 agent / Task 嵌套、P8.3 聊天文本选择，并让 `收尾 2` 显式依赖这些前置任务。
+- 已同步 `PLAN.md` 的阶段依赖，新增 P8 阶段；已同步 `CHAT_UI.md` §6.3，说明完整文本选择由 P8 补齐。
+- 当前只修改文档/计划记录，代码未改动；完整验证复用收尾 1 的绿色结果，本轮额外运行了 snapshot binary 构建与 PTY 快照审计。
+- 下一步检查提交范围，排除既有无关变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交本轮阻塞排期相关文档后停止。

@@ -113,9 +113,18 @@
   - 完成记录（2026-06-12）：`ChatMessageList` 已从 eager `ForEachIdentifiable` 切换为 `ScrollContainer` + chat 专用虚拟 `ScrollContent`；现在仅为可见窗口附近的行构建/缓存 `ChatMessageRow`，滚动时会裁剪屏外行缓存，并通过轻量行高估算 + 可见行实测高度维持滚动内容尺寸。补充长会话压测单测覆盖 300 个工具调用回合只实现可见行，并补充偏移窗口下虚拟行按钮鼠标分发测试；虚拟行同时保留 captured row，修复按钮 Down/Up 在窗口偏移布局中的事件回传。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
+## 阶段 P8 — 能力矩阵遗留项(收尾 2 前置)
+
+收尾 2 快照审计（2026-06-12）确认 `CHAT_UI.md` §2 仍有三个能力不能按 spec-correct 方式标为 ✅；这些任务必须在最终人工比对前完成。
+
+- [ ] **P8.1 Plan 模式展示+接受** — 新增独立 plan block 模型和渲染,不要用 Todo/Approval 组合替代。`src/message.rs` 增加 `PlanBlock`/`PlanItem`/`PlanDecision`;`src/store.rs` 增加 plan 更新与决策 API;`src/list.rs` 渲染 plan 面板并在 pending 时显示 Accept/Reject,决策后锁定;`src/dynamic.rs`、`packages/core`、`packages/react`、`docs/NODE_API.md` 同步新形。`snapshot_chat_app --plan-mode` + PTY 覆盖展示、接受事件和锁定状态。
+- [ ] **P8.2 子 agent / Task 嵌套块** — 新增显式 task/subagent block,支持在 assistant 回合内展示一个可折叠的子 agent 运行摘要和嵌套 transcript/blocks,不要把它建模成普通 tool output 文本。同步 store 定点更新、dynamic/TS 类型、React builders 和文档。`snapshot_chat_app --nested-task` + PTY 覆盖折叠/展开、嵌套内容渲染、状态更新和虚拟化下可见窗口行为。
+- [ ] **P8.3 聊天文本选择** — 在 `ChatMessageList` 的文本/代码/命令目标 block 内实现真实文本选择,与已有 Copy/CopyBlock 动作并存；支持鼠标拖选和复制所选文本,选择范围跨软换行时保持显示宽度正确。补单元测试和 `snapshot_chat_app --text-selection` PTY 覆盖选区渲染、复制所选文本、未选择时仍触发 CopyBlock。
+
 ## 收尾
 
 - [x] **[DONE] 收尾 1 — 全量校验** — `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --all --all-targets` 全过;JS 侧 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试通过。
   - 完成记录（2026-06-12）：已完成收尾全量校验，Rust workspace 格式化、lint、构建和全量测试通过；React TSX 示例 smoke 与 core runtime Node/Bun/Deno 兼容测试通过。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`、`npm run smoke --prefix examples/react-tsx`、`npm run test:runtime --prefix packages/core` 全部通过。
-- [ ] **收尾 2 — 快照人工比对** — 用 `snapshot_chat_app` 抓屏,逐项核对 `CHAT_UI.md` §2 能力矩阵从 ❌/⚠️ 转为 ✅。
+- [ ] **收尾 2 — 快照人工比对** — 依赖 P8.1、P8.2、P8.3。用 `snapshot_chat_app` 抓屏,逐项核对 `CHAT_UI.md` §2 能力矩阵从 ❌/⚠️ 转为 ✅。
+  - 阻塞记录（2026-06-12）：已构建 `snapshot_chat_app` 并通过临时 PTY 审计辅助程序抓取 13 组快照（default tail、block mapping top/bottom、long tool output、inline approval、inline diff、thinking/notice、todo、turn meta/error、message actions、cancel、responsive layout、artifact link）。审计确认多数矩阵项已有可见覆盖，但 `Plan 模式(展示+接受)`、`子 agent / Task 嵌套`、以及“复制消息/代码、文本选择”中的文本选择仍缺少 spec-correct 实现与快照覆盖；已新增 P8.1-P8.3 作为本任务前置。

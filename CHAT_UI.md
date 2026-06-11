@@ -363,7 +363,7 @@ pub struct ApprovalOption { pub id: String, pub label: String }
 ### 6.3 逐条/回合操作
 - `ChatMessageList::on_message_action(impl Fn(MessageAction))`,`MessageAction { message_id, kind }`,
   `kind ∈ { Copy, Retry, Regenerate, EditUser, CopyBlock(block_id) }`。
-- 复制:需让目标 block(代码/命令/正文)可聚焦并响应复制快捷键;文本选择为后续增强。
+- 复制:需让目标 block(代码/命令/正文)可聚焦并响应复制快捷键;完整文本选择由 P8 补齐。
 
 ---
 

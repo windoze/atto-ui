@@ -60,7 +60,7 @@
 对应 `CHAT_UI.md` §5(6)、§6.3。
 
 - `ChatMessageList::on_message_action`(Copy/Retry/Regenerate/EditUser/CopyBlock)、`on_cancel(message_id)` 中断、回底入口。
-- 目标 block 可聚焦 + 响应复制快捷键(文本选择为后续增强)。
+- 目标 block 可聚焦 + 响应复制快捷键；完整文本选择由 P8 补齐。
 - **验收**:PTY 覆盖复制、retry/regenerate 回调、流式中断置 `Canceled`。
 
 ### P7 — 规模
@@ -69,9 +69,17 @@
 - 长会话虚拟化收尾:屏外行不构建重型子视图;超大日志压测。
 - **验收**:数百条(含大量工具调用)会话流畅。
 
+### P8 — 能力矩阵遗留项
+对应 `CHAT_UI.md` §2 收尾审计发现的剩余能力,在最终快照人工比对前补齐。
+
+- Plan 模式:新增独立 plan block 模型、store/dynamic/TS 类型和渲染,支持展示与 Accept/Reject 决策锁定。
+- 子 agent / Task 嵌套:新增显式 task/subagent block,支持折叠的嵌套 transcript/blocks 与状态更新。
+- 文本选择:在 chat 文本/代码/命令目标 block 内支持真实选区和复制所选文本,与现有 CopyBlock 并存。
+- **验收**:`snapshot_chat_app` 增加 plan、nested task、text selection 场景;PTY 覆盖展示、交互、状态锁定和复制行为。
+
 ## 依赖关系
 
-- P1 → P2 → P3 → (P4, P5 并行) → P6 → P7。
+- P1 → P2 → P3 → (P4, P5 并行) → P6 → P7 → P8 → 收尾 2。
 - P1/P2 是阻塞项;P3 起的功能均依赖新 block 模型。
 - 每个触及 `src/message.rs`/`src/dynamic.rs` 的阶段都要在该阶段末同步 Node/React 侧。
 
