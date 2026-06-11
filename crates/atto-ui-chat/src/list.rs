@@ -38,6 +38,7 @@ const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
+type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalDecision {
@@ -45,6 +46,13 @@ pub struct ApprovalDecision {
     pub block_id: ChatBlockId,
     pub approval_id: String,
     pub option_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditDecisionEvent {
+    pub message_id: ChatMessageId,
+    pub block_id: ChatBlockId,
+    pub decision: EditDecision,
 }
 
 #[derive(Clone)]
@@ -58,6 +66,7 @@ struct ChatMessageListConfig {
     scroll_config: Binding<ScrollConfig>,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
+    on_edit_decision: Option<EditDecisionCallback>,
 }
 
 #[derive(Clone)]
@@ -68,6 +77,7 @@ struct ChatMessageRowConfig {
     show_timestamps: bool,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
+    on_edit_decision: Option<EditDecisionCallback>,
 }
 
 pub struct ChatMessageList {
@@ -97,6 +107,7 @@ impl ChatMessageList {
             scroll_config: ScrollConfig::default().into(),
             on_open_artifact: None,
             on_approve: None,
+            on_edit_decision: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
@@ -187,6 +198,15 @@ impl ChatMessageList {
         F: Fn(ApprovalDecision) + Send + Sync + 'static,
     {
         self.config.on_approve = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    pub fn on_edit_decision<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(EditDecisionEvent) + Send + Sync + 'static,
+    {
+        self.config.on_edit_decision = Some(Arc::new(callback));
         self.rebuild_list();
         self
     }
@@ -461,6 +481,7 @@ fn build_list(
         show_timestamps: config.show_timestamps,
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
+        on_edit_decision: config.on_edit_decision.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
         ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
@@ -849,6 +870,7 @@ struct ChatMessageRowBindings {
     header: Option<Binding<String>>,
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
+    diff: Option<Binding<String>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
     disclosure_status: Option<Binding<DisclosureStatus>>,
@@ -936,6 +958,12 @@ impl ChatMessageRow {
                 binding.set(output);
             }
 
+            if let Some(binding) = &self.body_bindings.diff
+                && let Some(diff) = block_diff_for_render(block)
+            {
+                binding.set(diff);
+            }
+
             if let Some(binding) = &self.body_bindings.tool_use
                 && let Some(details) = block_tool_use_for_render(block)
             {
@@ -1014,6 +1042,13 @@ fn markdown_for_render(markdown: &str, streaming: bool, config: &ChatMessageRowC
 fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
     match block {
         ChatBlock::ToolResult(result) => Some(result.output.as_text().to_string()),
+        _ => None,
+    }
+}
+
+fn block_diff_for_render(block: &ChatBlock) -> Option<String> {
+    match block {
+        ChatBlock::Diff(diff) => Some(diff.diff.unified.clone()),
         _ => None,
     }
 }
@@ -1755,11 +1790,275 @@ impl ::atto_ui::composable::Layout for ToolUseDetailsView {
     }
 }
 
+struct DiffDecisionView {
+    title: Option<String>,
+    diff: Binding<String>,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    decision: EditDecision,
+    on_edit_decision: Option<EditDecisionCallback>,
+    focused_action: usize,
+    scroll_x: u16,
+    viewport: (u16, u16),
+    last_area: Option<Rect>,
+}
+
+impl DiffDecisionView {
+    fn new(
+        title: Option<String>,
+        diff: impl Into<Binding<String>>,
+        message_id: ChatMessageId,
+        block_id: ChatBlockId,
+        decision: EditDecision,
+        on_edit_decision: Option<EditDecisionCallback>,
+    ) -> Self {
+        Self {
+            title,
+            diff: diff.into(),
+            message_id,
+            block_id,
+            decision,
+            on_edit_decision,
+            focused_action: 0,
+            scroll_x: 0,
+            viewport: (0, 0),
+            last_area: None,
+        }
+    }
+
+    fn diff_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if let Some(title) = &self.title {
+            lines.push(Line::styled(title.clone(), title_style));
+        }
+        let diff = self.diff.get();
+        lines.extend(diff_display_lines(&diff, base));
+        lines
+    }
+
+    fn diff_height(&self) -> u16 {
+        u16::from(self.title.is_some()).saturating_add(line_count(&self.diff.get()))
+    }
+
+    fn action_height(&self) -> u16 {
+        1
+    }
+
+    fn display_height(&self) -> u16 {
+        self.diff_height().saturating_add(self.action_height())
+    }
+
+    fn display_width(&self) -> u16 {
+        let diff_width = self
+            .diff
+            .get()
+            .lines()
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(0);
+        let title_width = self
+            .title
+            .as_deref()
+            .map(UnicodeWidthStr::width)
+            .unwrap_or(0);
+        diff_width
+            .max(title_width)
+            .max(edit_decision_action_line_width(self.decision))
+            .max(1)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn clamp_scroll(&mut self) {
+        let max_x = self.display_width().saturating_sub(self.viewport.0);
+        self.scroll_x = self.scroll_x.min(max_x);
+    }
+
+    fn scroll_horizontally(&mut self, delta: i16) -> EventResult {
+        let before = self.scroll_x;
+        self.set_scroll_offset(add_signed_u16(self.scroll_x, delta), 0);
+        if self.scroll_x == before {
+            EventResult::ignored()
+        } else {
+            EventResult::changed()
+        }
+    }
+
+    fn has_focusable_action(&self) -> bool {
+        self.decision == EditDecision::Pending && self.on_edit_decision.is_some()
+    }
+
+    fn emit_decision(&self, decision: EditDecision) -> EventResult {
+        let Some(callback) = &self.on_edit_decision else {
+            return EventResult::ignored();
+        };
+        if self.decision != EditDecision::Pending {
+            return EventResult::ignored();
+        }
+        callback(EditDecisionEvent {
+            message_id: self.message_id,
+            block_id: self.block_id,
+            decision,
+        });
+        EventResult::changed()
+    }
+
+    fn focused_decision(&self) -> EditDecision {
+        if self.focused_action == 0 {
+            EditDecision::Accepted
+        } else {
+            EditDecision::Rejected
+        }
+    }
+
+    fn click_decision(&self, event: &Event, ctx: ComponentContext<'_>) -> Option<EditDecision> {
+        let Event::Mouse(mouse) = event else {
+            return None;
+        };
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return None;
+        }
+        let area = self.last_area?;
+        let (column, row) = mouse_position_in_area(area, mouse, ctx.mouse_coordinate_space)?;
+        if row != self.diff_height() {
+            return None;
+        }
+        edit_decision_action_at_column(column)
+    }
+}
+
+impl Component for DiffDecisionView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        self.viewport = (area.width, area.height);
+        self.clamp_scroll();
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let diff_height = self.diff_height().min(area.height);
+        if diff_height > 0 {
+            let diff_area = Rect {
+                height: diff_height,
+                ..area
+            };
+            frame.render_widget(
+                Paragraph::new(self.diff_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
+                    .scroll((0, self.scroll_x)),
+                diff_area,
+            );
+        }
+
+        if area.height > diff_height {
+            let action_area = Rect {
+                y: area.y.saturating_add(diff_height),
+                height: 1,
+                ..area
+            };
+            frame.render_widget(
+                Paragraph::new(edit_decision_action_line(
+                    self.decision,
+                    self.focused_action,
+                    self.has_focusable_action() && ctx.is_focused,
+                    ctx,
+                )),
+                action_area,
+            );
+        }
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for DiffDecisionView {}
+impl ::atto_ui::composable::Scrollable for DiffDecisionView {
+    fn is_scrollable(&self) -> bool {
+        true
+    }
+
+    fn content_size(&self) -> (u16, u16) {
+        (self.display_width(), self.display_height())
+    }
+
+    fn viewport_size(&self) -> (u16, u16) {
+        self.viewport
+    }
+
+    fn scroll_offset(&self) -> (u16, u16) {
+        (self.scroll_x, 0)
+    }
+
+    fn set_scroll_offset(&mut self, x: u16, _y: u16) {
+        self.scroll_x = x;
+        self.clamp_scroll();
+    }
+}
+impl ::atto_ui::composable::FocusNav for DiffDecisionView {
+    fn is_focusable(&self) -> bool {
+        self.has_focusable_action()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        if !self.has_focusable_action() {
+            return false;
+        }
+        self.focused_action = 0;
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        if !self.has_focusable_action() {
+            return false;
+        }
+        self.focused_action = 1;
+        true
+    }
+}
+impl ::atto_ui::composable::DynamicTree for DiffDecisionView {}
+impl ::atto_ui::composable::EventHandling for DiffDecisionView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Some(decision) = self.click_decision(event, ctx) {
+            return self.emit_decision(decision);
+        }
+
+        if matches!(
+            event,
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter | KeyCode::Char(' '),
+                kind: KeyEventKind::Press,
+                ..
+            })
+        ) && self.has_focusable_action()
+        {
+            return self.emit_decision(self.focused_decision());
+        }
+
+        horizontal_scroll_event(event, self.viewport.0).map_or_else(EventResult::ignored, |delta| {
+            self.scroll_horizontally(delta)
+        })
+    }
+}
+
+impl ::atto_ui::composable::Layout for DiffDecisionView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.display_width())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_height())
+    }
+}
+
 enum ChatMessageBody {
     Markdown(ResponsiveMarkdownView),
     Text(Text),
     Disclosure(Disclosure),
-    Diff(DiffView),
+    Diff(DiffDecisionView),
     Todo(TodoListView),
     Artifact(ArtifactLink),
 }
@@ -1861,8 +2160,18 @@ impl ChatMessageBody {
             Some(ChatBlock::Diff(diff)) => {
                 let content = Binding::new(diff.diff.unified.clone());
                 (
-                    ChatMessageBody::Diff(DiffView::new(Some(diff_block_title(diff)), content)),
-                    ChatMessageRowBindings::default(),
+                    ChatMessageBody::Diff(DiffDecisionView::new(
+                        Some(diff_block_title(diff)),
+                        content.clone(),
+                        message_id,
+                        diff.id,
+                        diff.decision,
+                        config.on_edit_decision.clone(),
+                    )),
+                    ChatMessageRowBindings {
+                        diff: Some(content),
+                        ..ChatMessageRowBindings::default()
+                    },
                 )
             }
             Some(ChatBlock::Todo(TodoBlock { items, .. })) => (
@@ -1993,6 +2302,68 @@ fn edit_decision_label(decision: EditDecision) -> &'static str {
         EditDecision::Pending => "pending",
         EditDecision::Accepted => "accepted",
         EditDecision::Rejected => "rejected",
+    }
+}
+
+fn edit_decision_action_line_width(decision: EditDecision) -> usize {
+    match decision {
+        EditDecision::Pending => EDIT_ACCEPT_LABEL
+            .width()
+            .saturating_add(1)
+            .saturating_add(EDIT_REJECT_LABEL.width()),
+        EditDecision::Accepted => EDIT_ACCEPTED_LABEL.width(),
+        EditDecision::Rejected => EDIT_REJECTED_LABEL.width(),
+    }
+}
+
+const EDIT_ACCEPT_LABEL: &str = "[ Accept ]";
+const EDIT_REJECT_LABEL: &str = "[ Reject ]";
+const EDIT_ACCEPTED_LABEL: &str = "[x] Accepted";
+const EDIT_REJECTED_LABEL: &str = "[x] Rejected";
+
+fn edit_decision_action_at_column(column: u16) -> Option<EditDecision> {
+    let column = column as usize;
+    let accept_width = EDIT_ACCEPT_LABEL.width();
+    if column < accept_width {
+        return Some(EditDecision::Accepted);
+    }
+    let reject_start = accept_width.saturating_add(1);
+    let reject_end = reject_start.saturating_add(EDIT_REJECT_LABEL.width());
+    (column >= reject_start && column < reject_end).then_some(EditDecision::Rejected)
+}
+
+fn edit_decision_action_line(
+    decision: EditDecision,
+    focused_action: usize,
+    focused: bool,
+    ctx: ComponentContext<'_>,
+) -> Line<'static> {
+    match decision {
+        EditDecision::Pending => {
+            let base = ctx.theme.widget.accent;
+            let focused_style = base.add_modifier(Modifier::REVERSED);
+            Line::from(vec![
+                Span::styled(
+                    EDIT_ACCEPT_LABEL,
+                    if focused && focused_action == 0 {
+                        focused_style
+                    } else {
+                        base
+                    },
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    EDIT_REJECT_LABEL,
+                    if focused && focused_action == 1 {
+                        focused_style
+                    } else {
+                        base
+                    },
+                ),
+            ])
+        }
+        EditDecision::Accepted => Line::styled(EDIT_ACCEPTED_LABEL, ctx.theme.widget.dim),
+        EditDecision::Rejected => Line::styled(EDIT_REJECTED_LABEL, ctx.theme.widget.dim),
     }
 }
 
@@ -2868,21 +3239,33 @@ fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordina
     mouse_row_in_area(area, mouse, coordinate_space).is_some()
 }
 
-fn mouse_row_in_area(
+fn mouse_position_in_area(
     area: Rect,
     mouse: &MouseEvent,
     coordinate_space: MouseCoordinateSpace,
-) -> Option<u16> {
+) -> Option<(u16, u16)> {
     match coordinate_space {
         MouseCoordinateSpace::Absolute => (mouse.column >= area.x
             && mouse.column < area.x.saturating_add(area.width)
             && mouse.row >= area.y
             && mouse.row < area.y.saturating_add(area.height))
-        .then(|| mouse.row.saturating_sub(area.y)),
-        MouseCoordinateSpace::Local => {
-            (mouse.column < area.width && mouse.row < area.height).then_some(mouse.row)
-        }
+        .then(|| {
+            (
+                mouse.column.saturating_sub(area.x),
+                mouse.row.saturating_sub(area.y),
+            )
+        }),
+        MouseCoordinateSpace::Local => (mouse.column < area.width && mouse.row < area.height)
+            .then_some((mouse.column, mouse.row)),
     }
+}
+
+fn mouse_row_in_area(
+    area: Rect,
+    mouse: &MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<u16> {
+    mouse_position_in_area(area, mouse, coordinate_space).map(|(_, row)| row)
 }
 
 #[cfg(test)]
@@ -2981,6 +3364,7 @@ mod tests {
             show_timestamps: false,
             on_open_artifact: None,
             on_approve: None,
+            on_edit_decision: None,
         }
     }
 
@@ -3172,6 +3556,63 @@ mod tests {
         );
 
         assert!(!locked_view.is_focusable());
+    }
+
+    #[test]
+    fn diff_decision_view_emits_decision_and_locks_when_resolved() {
+        let message_id = ChatMessageId::new(40);
+        let block_id = ChatBlockId::new(40_001);
+        let decisions = Arc::new(Mutex::new(Vec::new()));
+        let captured = decisions.clone();
+        let mut view = DiffDecisionView::new(
+            Some("Diff: src/lib.rs (pending)".to_string()),
+            Binding::new("+new".to_string()),
+            message_id,
+            block_id,
+            EditDecision::Pending,
+            Some(Arc::new(move |decision| {
+                captured.lock().expect("decisions lock").push(decision);
+            })),
+        );
+        let theme = Theme::dark();
+
+        assert!(view.is_focusable());
+        assert!(view.focus_last());
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            *decisions.lock().expect("decisions lock"),
+            vec![EditDecisionEvent {
+                message_id,
+                block_id,
+                decision: EditDecision::Rejected,
+            }]
+        );
+
+        let locked_view = DiffDecisionView::new(
+            Some("Diff: src/lib.rs (accepted)".to_string()),
+            Binding::new("+new".to_string()),
+            message_id,
+            block_id,
+            EditDecision::Accepted,
+            Some(Arc::new(|_| {
+                panic!("resolved diff decision must be locked")
+            })),
+        );
+
+        assert!(!locked_view.is_focusable());
+        assert_eq!(
+            line_text(&edit_decision_action_line(
+                EditDecision::Accepted,
+                0,
+                false,
+                component_context(&theme),
+            )),
+            "[x] Accepted"
+        );
     }
 
     #[test]

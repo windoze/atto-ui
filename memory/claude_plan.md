@@ -241,7 +241,7 @@
 - 已检查提交前状态：本次提交将包含 P3.3 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.3] Tail long ANSI tool output` 提交并停止。
 
-## 当前任务：P4.1 inline 审批
+## 历史记录：P4.1 inline 审批
 
 - 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P4.1 inline 审批`。
@@ -256,3 +256,17 @@
 - 已更新 `TODO.md`：`P4.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P4.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/store.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P4.1] Implement inline approvals` 提交并停止。
+
+## 当前任务：P4.2 inline diff + Accept/Reject
+
+- 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P4.2 inline diff + Accept/Reject`。
+- 已查看最近提交：`ed46372 [P4.1] Implement inline approvals`，未声明与 `P4.2` 直接相关的未完成阻塞事项。
+- 执行范围限定为 inline diff Accept/Reject、`on_edit_decision` 回调、dynamic `edit_decision(Map)` 事件、snapshot 场景和 PTY 覆盖；不推进 P5 agent 工作流类型。
+- 已确认现状：`DiffBlock` 和 `ToolOutput::Diff` 已 inline 复用 diff 着色，store 已有 `set_edit_decision`；缺口是 `DiffBlock` pending 行无 Accept/Reject UI，`ChatMessageList` 无 edit decision 回调，动态 schema 无 `edit_decision` 事件。
+- 实施方案：新增 `EditDecisionEvent`，`DiffBlock` pending 行显示 Accept/Reject 并触发回调；accepted/rejected 后显示锁定状态；`ToolOutput::Diff` 继续 inline 着色但不显示决策按钮，因为该类型没有 `decision` 字段。
+- 已完成实现：`ChatMessageList::on_edit_decision`、`DiffDecisionView`、dynamic schema/注册、`snapshot_chat_app --inline-diff` 场景，以及单元/PTY 覆盖。
+- 验证已通过：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib diff_decision_view_emits_decision_and_locks_when_resolved`、`cargo test -p atto-ui-chat --lib edit_decision`、`cargo test -p atto-ui-chat --test pty_chat chat_inline_diff_buttons_emit_and_lock -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_inline_approval_buttons_emit_and_lock -- --exact`、`cargo test -p atto-ui-chat --test pty_chat chat_block_mapping_renders_each_block_with_target_widget -- --exact`、`cargo test -p atto-ui-chat --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P4.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P4.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P4.2] Implement inline diff decisions` 提交并停止。

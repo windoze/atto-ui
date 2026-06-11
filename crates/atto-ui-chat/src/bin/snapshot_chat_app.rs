@@ -29,9 +29,9 @@ use atto_ui_chat::{
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
     ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextArtifactViewer, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
-    ToolStatus, ToolUseBlock,
+    DiffBlock, DiffData, EditDecision, EditDecisionEvent, NoticeBlock, NoticeLevel,
+    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -57,6 +57,7 @@ fn main() -> Result<()> {
     let block_mapping = args.iter().any(|arg| arg == "--block-mapping");
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
+    let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -81,6 +82,9 @@ fn main() -> Result<()> {
         None
     } else if inline_approval {
         seed_inline_approval_messages(&store);
+        None
+    } else if inline_diff {
+        seed_inline_diff_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -122,6 +126,7 @@ fn main() -> Result<()> {
     let streaming_block_ids = if responsive_layout
         || block_mapping
         || inline_approval
+        || inline_diff
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -143,6 +148,7 @@ fn main() -> Result<()> {
     let load_counter = Arc::new(AtomicU64::new(0));
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
+    let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
     if !responsive_layout {
         list = list.wrap_width(56);
@@ -156,6 +162,10 @@ fn main() -> Result<()> {
         .on_approve({
             let approvals = approvals.clone();
             move |decision| approvals.push(decision)
+        })
+        .on_edit_decision({
+            let edit_decisions = edit_decisions.clone();
+            move |decision| edit_decisions.push(decision)
         })
         .on_load_more({
             let store = store.clone();
@@ -194,7 +204,7 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output {
         28
-    } else if inline_approval {
+    } else if inline_approval || inline_diff {
         24
     } else {
         18
@@ -392,6 +402,19 @@ fn main() -> Result<()> {
             ));
         }
 
+        for decision in edit_decisions.drain() {
+            store.set_edit_decision(decision.block_id, decision.decision);
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::System,
+                format!(
+                    "EDIT_DECISION: {}/{}",
+                    decision.block_id.0,
+                    edit_decision_event_label(decision.decision)
+                ),
+            ));
+        }
+
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
             modifiers,
@@ -525,6 +548,30 @@ fn seed_inline_approval_messages(store: &ChatMessageStore) {
             collapsed: false,
         })],
     ));
+}
+
+fn seed_inline_diff_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Diff(DiffBlock {
+            id: snapshot_block_id(id, 0),
+            path: "src/inline_diff.rs".to_string(),
+            diff: DiffData {
+                unified: "@@ inline diff\n-OLD-INLINE-DIFF\n+NEW-INLINE-DIFF".to_string(),
+            },
+            decision: EditDecision::Pending,
+        })],
+    ));
+}
+
+fn edit_decision_event_label(decision: EditDecision) -> &'static str {
+    match decision {
+        EditDecision::Pending => "pending",
+        EditDecision::Accepted => "accepted",
+        EditDecision::Rejected => "rejected",
+    }
 }
 
 fn seed_long_tool_output_messages(store: &ChatMessageStore) -> ChatBlockId {

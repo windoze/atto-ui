@@ -15,9 +15,9 @@ use crate::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
     ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
-    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel,
-    StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput,
-    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, NoticeBlock,
+    NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -54,6 +54,7 @@ pub fn chat_message_list_schema() -> ComponentSchema {
         .with_event(EventMeta::new("load_more"))
         .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
         .with_event(EventMeta::new("approve").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("edit_decision").with_payload(ValueType::Map))
         .allow_children(false)
 }
 
@@ -386,6 +387,23 @@ fn approval_decision_to_value(decision: ApprovalDecision) -> ComponentValue {
     map.insert(
         "option_id".to_string(),
         ComponentValue::String(decision.option_id),
+    );
+    ComponentValue::Map(map)
+}
+
+fn edit_decision_event_to_value(event: EditDecisionEvent) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "message_id".to_string(),
+        ComponentValue::U64(event.message_id.0),
+    );
+    map.insert(
+        "block_id".to_string(),
+        ComponentValue::U64(event.block_id.0),
+    );
+    map.insert(
+        "decision".to_string(),
+        ComponentValue::String(edit_decision_to_string(event.decision).to_string()),
     );
     ComponentValue::Map(map)
 }
@@ -1233,6 +1251,12 @@ pub fn register_chat_message_list(
             });
         }
 
+        if let Some(cb) = event_handle(spec, "edit_decision", callbacks.clone()) {
+            view = view.on_edit_decision(move |event| {
+                cb.emit_with(Some(edit_decision_event_to_value(event)));
+            });
+        }
+
         Ok(wrap_with_id(spec, Box::new(view)))
     });
 }
@@ -1365,6 +1389,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_list_schema_exposes_edit_decision_event_payload() {
+        let schema = chat_message_list_schema();
+
+        assert!(schema.events.iter().any(|event| {
+            event.name == "edit_decision" && event.payload == Some(ValueType::Map)
+        }));
+    }
+
+    #[test]
     fn approval_decision_serializes_to_runtime_payload() {
         let value = approval_decision_to_value(ApprovalDecision {
             message_id: ChatMessageId::new(10),
@@ -1386,6 +1419,24 @@ mod tests {
                     "option_id",
                     ComponentValue::String("allow_always".to_string())
                 ),
+            ])
+        );
+    }
+
+    #[test]
+    fn edit_decision_event_serializes_to_runtime_payload() {
+        let value = edit_decision_event_to_value(EditDecisionEvent {
+            message_id: ChatMessageId::new(11),
+            block_id: ChatBlockId::new(21),
+            decision: EditDecision::Accepted,
+        });
+
+        assert_eq!(
+            value,
+            value_map([
+                ("message_id", ComponentValue::U64(11)),
+                ("block_id", ComponentValue::U64(21)),
+                ("decision", ComponentValue::String("accepted".to_string())),
             ])
         );
     }
