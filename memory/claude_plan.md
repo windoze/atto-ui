@@ -2,34 +2,22 @@
 
 > 说明：这里记录可审计的执行计划、决策依据和进度，不记录私有推理链。
 
-## 当前目标
+## 通用流程
 
-- 按 `TODO.md` 的权威顺序完成第一个标题未带 `[DONE]` 的任务。
-- 完成该任务后更新 `TODO.md` 的完成记录，提交 Git commit，并停止。
-
-## 初始步骤
-
-1. 读取 `TODO.md`，只定位第一个未完成任务，不做开放式历史问题扫描。
+1. 读取 `TODO.md`，只定位第一个标题未带 `[DONE]` 的任务，不做开放式历史问题扫描。
 2. 查看最近提交信息，只有在其明确提到与当前任务直接相关的未完成问题时才纳入当前任务或作为前置任务写入 `TODO.md`。
 3. 阅读当前任务涉及的源码、测试和文档，确认任务要求、依赖和验证方式。
 4. 若发现当前任务被缺失功能、规格不匹配或未安排的失败测试阻塞，按要求在 `TODO.md` 中新增最小前置任务并提交后停止。
+5. 以最小正确改动实现当前任务，不绕开规格要求。
+6. 为新增或变更行为补充必要测试。
+7. 分阶段运行格式化、lint 和测试：先 `cargo fmt`，再 `cargo clippy --workspace --all-targets -- -D warnings`，最后运行完整测试套件。
+8. 将当前任务标题前缀更新为 `[DONE]`，并填写完成记录和验证结果。
+9. 仅在阶段计划本身变化时更新 `PLAN.md`。
+10. 检查 `git status`、`git diff`、最近提交记录，确认只提交本次相关变更。
+11. 提交 Git commit，提交信息包含任务编号和简要说明。
+12. 停止，不继续下一个任务。
 
-## 实施步骤
-
-1. 以最小正确改动实现当前任务，不绕开规格要求。
-2. 为新增或变更行为补充必要测试。
-3. 分阶段运行格式化、lint 和测试：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后运行相关或完整测试套件。
-4. 如验证失败，修复根因；未安排的失败测试不能忽略。
-
-## 收尾步骤
-
-1. 将当前任务标题前缀更新为 `[DONE]`，并填写完成记录和验证结果。
-2. 仅在阶段计划本身变化时更新 `PLAN.md`。
-3. 检查 `git status`、`git diff`、最近提交记录，确认仅提交本次相关变更。
-4. 提交 Git commit，提交信息包含任务编号和简要说明。
-5. 停止，不继续下一个任务。
-
-## 进度日志
+## 历史记录：P1.1
 
 - 已创建本计划文件，下一步读取 `TODO.md` 定位首个未完成任务。
 - 已读取 `TODO.md`：首个未完成任务为 `P1.1 新消息模型`。
@@ -43,3 +31,16 @@
 - 已更新 `TODO.md`：`P1.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查工作区状态/diff/最近提交，确认提交范围后创建任务提交。
 - 已检查提交前状态：本次提交将包含 `P1.1` 相关 Rust/TODO/计划文件，并按用户要求包含已变更的 `PROMPT.md`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+
+## 当前任务：P1.2 内容块类型
+
+- 已读取 `TODO.md`：首个未完成任务为 `P1.2 内容块类型`。
+- 已查看最近提交：`e28ca50 [P1.1] Implement new chat message model`，未声明与 `P1.2` 直接相关的未完成事项。
+- 实施范围：补齐 `crates/atto-ui-chat/src/message.rs` 的剩余 block variants/types，从 `src/lib.rs` 公开导出，并调整现有过渡期 `list.rs`/`dynamic.rs` match 分支以保持编译通过。
+- 已实现 `Thinking`、`Diff`、`Todo`、`Notice` block 类型和 `ToolOutput::Diff`，新增 `ThinkingBlock`、`DiffData`/`EditDecision`、`TodoBlock`/`TodoItem`/`TodoState`、`NoticeBlock`/`NoticeLevel`。
+- 已为完整 block id 覆盖、thinking streaming 状态同步、diff tool output 文本更新补充单元测试。
+- 首次 `clippy` 失败原因：过渡渲染不再使用 `ChatMessage::first_text` 的非测试路径导致 dead code。已改为复用该 helper，同时保留 thinking block 支持。
+- 已通过验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --workspace --all-targets`。
+- 已更新 `TODO.md`：`P1.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交包含 P1.2 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+- 下一步创建任务提交并停止。

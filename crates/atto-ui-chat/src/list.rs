@@ -20,8 +20,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
     ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
-    ChatMessage, ChatMessageMeta, ChatRole, ChatTurnStatus, TextBlock, ToolInput, ToolStatus,
-    ToolUseBlock,
+    ChatMessage, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
+    NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolStatus, ToolUseBlock,
 };
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
@@ -409,6 +410,9 @@ struct ChatMessageRowKey {
 enum ChatMessageContentKey {
     Empty,
     Text,
+    Thinking {
+        collapsed: bool,
+    },
     Attachment {
         name: String,
         url: Option<String>,
@@ -417,6 +421,17 @@ enum ChatMessageContentKey {
     ToolUse {
         call_id: String,
         name: String,
+    },
+    Diff {
+        path: String,
+        decision: EditDecision,
+    },
+    Todo {
+        items: Vec<TodoItem>,
+    },
+    Notice {
+        level: NoticeLevel,
+        text: String,
     },
     Artifact {
         kind: ArtifactKind,
@@ -450,6 +465,14 @@ impl ChatMessageRowKey {
                     markdown: String::new(),
                     streaming: self.status.is_streaming(),
                 })],
+                ChatMessageContentKey::Thinking { collapsed } => {
+                    vec![ChatBlock::Thinking(ThinkingBlock {
+                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        markdown: String::new(),
+                        streaming: self.status.is_streaming(),
+                        collapsed: *collapsed,
+                    })]
+                }
                 ChatMessageContentKey::Attachment { name, url, mime } => {
                     vec![ChatBlock::Attachment(AttachmentBlock {
                         id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
@@ -467,6 +490,27 @@ impl ChatMessageRowKey {
                         status: ToolStatus::Running,
                         approval: None,
                         collapsed: false,
+                    })]
+                }
+                ChatMessageContentKey::Diff { path, decision } => {
+                    vec![ChatBlock::Diff(DiffBlock {
+                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        path: path.clone(),
+                        diff: DiffData {
+                            unified: String::new(),
+                        },
+                        decision: *decision,
+                    })]
+                }
+                ChatMessageContentKey::Todo { items } => vec![ChatBlock::Todo(TodoBlock {
+                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                    items: items.clone(),
+                })],
+                ChatMessageContentKey::Notice { level, text } => {
+                    vec![ChatBlock::Notice(NoticeBlock {
+                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        level: *level,
+                        text: text.clone(),
                     })]
                 }
                 ChatMessageContentKey::Artifact {
@@ -501,6 +545,11 @@ fn message_content_key(message: &ChatMessage) -> ChatMessageContentKey {
     for block in &message.blocks {
         match block {
             ChatBlock::Text(_) => return ChatMessageContentKey::Text,
+            ChatBlock::Thinking(ThinkingBlock { collapsed, .. }) => {
+                return ChatMessageContentKey::Thinking {
+                    collapsed: *collapsed,
+                };
+            }
             ChatBlock::Attachment(AttachmentBlock {
                 name, url, mime, ..
             }) => {
@@ -514,6 +563,23 @@ fn message_content_key(message: &ChatMessage) -> ChatMessageContentKey {
                 return ChatMessageContentKey::ToolUse {
                     call_id: call_id.clone(),
                     name: name.clone(),
+                };
+            }
+            ChatBlock::Diff(DiffBlock { path, decision, .. }) => {
+                return ChatMessageContentKey::Diff {
+                    path: path.clone(),
+                    decision: *decision,
+                };
+            }
+            ChatBlock::Todo(TodoBlock { items, .. }) => {
+                return ChatMessageContentKey::Todo {
+                    items: items.clone(),
+                };
+            }
+            ChatBlock::Notice(NoticeBlock { level, text, .. }) => {
+                return ChatMessageContentKey::Notice {
+                    level: *level,
+                    text: text.clone(),
                 };
             }
             ChatBlock::Artifact(ArtifactBlock {
@@ -626,7 +692,15 @@ fn message_markdown_for_render(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
 ) -> Option<String> {
-    let markdown = &message.first_text()?.markdown;
+    let markdown = message
+        .first_text()
+        .map(|text| &text.markdown)
+        .or_else(|| {
+            message.blocks.iter().find_map(|block| match block {
+                ChatBlock::Thinking(thinking) => Some(&thinking.markdown),
+                _ => None,
+            })
+        })?;
     let mut content = markdown.clone();
     if message.status.is_streaming() && !config.in_progress_suffix.is_empty() {
         content.push_str(&config.in_progress_suffix);
@@ -832,6 +906,22 @@ impl ChatMessageBody {
                     },
                 )
             }
+            Some(ChatBlock::Thinking(_)) => {
+                let content =
+                    Binding::new(message_markdown_for_render(message, config).unwrap_or_default());
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content.clone())
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    ChatMessageRowBindings {
+                        markdown: Some(content),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
             Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
                 let mut view = VStack::new().with_spacing(0);
                 view = view.child(Text::new(format!("File: {name}")));
@@ -861,6 +951,42 @@ impl ChatMessageBody {
                         tool_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
+                )
+            }
+            Some(ChatBlock::Diff(DiffBlock { diff, .. })) => {
+                let content = Binding::new(diff.unified.clone());
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content)
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    ChatMessageRowBindings::default(),
+                )
+            }
+            Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
+                let content = Binding::new(todo_items_to_markdown(items));
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content)
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    ChatMessageRowBindings::default(),
+                )
+            }
+            Some(ChatBlock::Notice(NoticeBlock { text, .. })) => {
+                let content = Binding::new(text.clone());
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content)
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    ChatMessageRowBindings::default(),
                 )
             }
             Some(ChatBlock::Artifact(ArtifactBlock {
@@ -893,6 +1019,22 @@ impl ChatMessageBody {
                 )
             }
         }
+    }
+}
+
+fn todo_items_to_markdown(items: &[TodoItem]) -> String {
+    items
+        .iter()
+        .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn todo_state_marker(state: TodoState) -> &'static str {
+    match state {
+        TodoState::Pending => "[ ]",
+        TodoState::InProgress => "[~]",
+        TodoState::Done => "[x]",
     }
 }
 

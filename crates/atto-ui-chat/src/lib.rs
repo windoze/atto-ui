@@ -20,8 +20,9 @@ pub use list::ChatMessageList;
 pub use message::{
     ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatAlignment, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatMessage,
-    ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus, StopReason, TextBlock, TokenUsage,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
+    NoticeBlock, NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState,
+    TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 pub use panel::ChatPanel;
 pub use store::ChatMessageStore;

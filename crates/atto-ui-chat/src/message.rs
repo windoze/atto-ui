@@ -236,9 +236,13 @@ pub struct ChatMessageMeta {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChatBlock {
     Text(TextBlock),
+    Thinking(ThinkingBlock),
     ToolUse(ToolUseBlock),
     ToolResult(ToolResultBlock),
+    Diff(DiffBlock),
+    Todo(TodoBlock),
     Attachment(AttachmentBlock),
+    Notice(NoticeBlock),
     Artifact(ArtifactBlock),
 }
 
@@ -246,9 +250,13 @@ impl ChatBlock {
     pub fn id(&self) -> ChatBlockId {
         match self {
             ChatBlock::Text(block) => block.id,
+            ChatBlock::Thinking(block) => block.id,
             ChatBlock::ToolUse(block) => block.id,
             ChatBlock::ToolResult(block) => block.id,
+            ChatBlock::Diff(block) => block.id,
+            ChatBlock::Todo(block) => block.id,
             ChatBlock::Attachment(block) => block.id,
+            ChatBlock::Notice(block) => block.id,
             ChatBlock::Artifact(block) => block.id,
         }
     }
@@ -259,6 +267,14 @@ pub struct TextBlock {
     pub id: ChatBlockId,
     pub markdown: String,
     pub streaming: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThinkingBlock {
+    pub id: ChatBlockId,
+    pub markdown: String,
+    pub streaming: bool,
+    pub collapsed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -315,26 +331,69 @@ pub struct ToolResultBlock {
 pub enum ToolOutput {
     Ansi(String),
     Markdown(String),
+    Diff(DiffData),
 }
 
 impl ToolOutput {
     pub fn as_text(&self) -> &str {
         match self {
             ToolOutput::Ansi(output) | ToolOutput::Markdown(output) => output,
+            ToolOutput::Diff(diff) => &diff.unified,
         }
     }
 
     pub fn set_text(&mut self, output: String) {
         match self {
             ToolOutput::Ansi(current) | ToolOutput::Markdown(current) => *current = output,
+            ToolOutput::Diff(diff) => diff.unified = output,
         }
     }
 
     pub fn append_delta(&mut self, delta: &str) {
         match self {
             ToolOutput::Ansi(output) | ToolOutput::Markdown(output) => output.push_str(delta),
+            ToolOutput::Diff(diff) => diff.unified.push_str(delta),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffBlock {
+    pub id: ChatBlockId,
+    pub path: String,
+    pub diff: DiffData,
+    pub decision: EditDecision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffData {
+    pub unified: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditDecision {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TodoBlock {
+    pub id: ChatBlockId,
+    pub items: Vec<TodoItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TodoItem {
+    pub text: String,
+    pub state: TodoState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TodoState {
+    Pending,
+    InProgress,
+    Done,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -343,6 +402,20 @@ pub struct AttachmentBlock {
     pub name: String,
     pub url: Option<String>,
     pub mime: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoticeBlock {
+    pub id: ChatBlockId,
+    pub level: NoticeLevel,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeLevel {
+    Info,
+    Warning,
+    Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -471,8 +544,10 @@ impl ChatMessage {
         let streaming = status.is_streaming();
         self.status = status;
         for block in &mut self.blocks {
-            if let ChatBlock::Text(text) = block {
-                text.streaming = streaming;
+            match block {
+                ChatBlock::Text(text) => text.streaming = streaming,
+                ChatBlock::Thinking(thinking) => thinking.streaming = streaming,
+                _ => {}
             }
         }
     }
@@ -563,4 +638,126 @@ fn derived_block_id(message_id: ChatMessageId, ordinal: u64) -> ChatBlockId {
             .saturating_mul(1_000)
             .saturating_add(ordinal + 1),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_block_id_is_available_for_every_block_kind() {
+        let blocks = vec![
+            ChatBlock::Text(TextBlock {
+                id: ChatBlockId::new(1),
+                markdown: "hello".to_string(),
+                streaming: false,
+            }),
+            ChatBlock::Thinking(ThinkingBlock {
+                id: ChatBlockId::new(2),
+                markdown: "reasoning".to_string(),
+                streaming: true,
+                collapsed: true,
+            }),
+            ChatBlock::ToolUse(ToolUseBlock {
+                id: ChatBlockId::new(3),
+                call_id: "call-1".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("cargo test".to_string()),
+                status: ToolStatus::Running,
+                approval: Some(ApprovalRequest {
+                    id: "approval-1".to_string(),
+                    prompt: "Run command?".to_string(),
+                    options: vec![ApprovalOption {
+                        id: "allow".to_string(),
+                        label: "Allow".to_string(),
+                    }],
+                    resolved: None,
+                }),
+                collapsed: false,
+            }),
+            ChatBlock::ToolResult(ToolResultBlock {
+                id: ChatBlockId::new(4),
+                call_id: "call-1".to_string(),
+                ok: true,
+                exit_code: Some(0),
+                output: ToolOutput::Markdown("done".to_string()),
+                collapsed: false,
+            }),
+            ChatBlock::Diff(DiffBlock {
+                id: ChatBlockId::new(5),
+                path: "src/lib.rs".to_string(),
+                diff: DiffData {
+                    unified: "+line".to_string(),
+                },
+                decision: EditDecision::Pending,
+            }),
+            ChatBlock::Todo(TodoBlock {
+                id: ChatBlockId::new(6),
+                items: vec![TodoItem {
+                    text: "ship".to_string(),
+                    state: TodoState::InProgress,
+                }],
+            }),
+            ChatBlock::Attachment(AttachmentBlock {
+                id: ChatBlockId::new(7),
+                name: "report.txt".to_string(),
+                url: None,
+                mime: Some("text/plain".to_string()),
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: ChatBlockId::new(8),
+                level: NoticeLevel::Warning,
+                text: "context compacted".to_string(),
+            }),
+            ChatBlock::Artifact(ArtifactBlock {
+                id: ChatBlockId::new(9),
+                kind: ArtifactKind::Diff,
+                anchor: ArtifactId::new("artifact-1"),
+                title: "patch".to_string(),
+            }),
+        ];
+
+        let ids = blocks.iter().map(ChatBlock::id).collect::<Vec<_>>();
+
+        assert_eq!(ids, (1..=9).map(ChatBlockId::new).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn set_turn_status_updates_streaming_blocks() {
+        let mut message = ChatMessage::new(
+            ChatMessageId::new(1),
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(1),
+                    markdown: "answer".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Thinking(ThinkingBlock {
+                    id: ChatBlockId::new(2),
+                    markdown: "thinking".to_string(),
+                    streaming: false,
+                    collapsed: true,
+                }),
+            ],
+        );
+
+        message.set_turn_status(ChatTurnStatus::Streaming);
+
+        assert!(matches!(&message.blocks[0], ChatBlock::Text(block) if block.streaming));
+        assert!(matches!(&message.blocks[1], ChatBlock::Thinking(block) if block.streaming));
+    }
+
+    #[test]
+    fn diff_tool_output_exposes_unified_text_for_legacy_updates() {
+        let mut output = ToolOutput::Diff(DiffData {
+            unified: "--- a".to_string(),
+        });
+
+        output.append_delta("\n+++ b");
+        assert_eq!(output.as_text(), "--- a\n+++ b");
+
+        output.set_text("@@ hunk".to_string());
+        assert_eq!(output.as_text(), "@@ hunk");
+    }
 }

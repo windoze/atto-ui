@@ -15,8 +15,8 @@ use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode
 use crate::{
     ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatBlock, ChatError, ChatErrorKind,
     ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
-    ChatRole, ChatTurnStatus, TextBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ChatRole, ChatTurnStatus, DiffBlock, NoticeBlock, TextBlock, ThinkingBlock, TodoBlock,
+    TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 impl ComponentPropertySchema for ChatMessageList {
@@ -123,13 +123,9 @@ fn content_to_value(message: &ChatMessage) -> ComponentValue {
         .iter()
         .find(|block| !matches!(block, ChatBlock::ToolResult(_)));
     match display_block {
-        Some(ChatBlock::Text(TextBlock { markdown, .. })) => {
-            let mut map = BTreeMap::new();
-            map.insert(
-                "markdown".to_string(),
-                ComponentValue::String(markdown.clone()),
-            );
-            ComponentValue::Map(map)
+        Some(ChatBlock::Text(TextBlock { markdown, .. })) => markdown_content_value(markdown),
+        Some(ChatBlock::Thinking(ThinkingBlock { markdown, .. })) => {
+            markdown_content_value(markdown)
         }
         Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
             let mut file = BTreeMap::new();
@@ -163,6 +159,11 @@ fn content_to_value(message: &ChatMessage) -> ComponentValue {
             map.insert("tool_call".to_string(), ComponentValue::Map(tool_map));
             ComponentValue::Map(map)
         }
+        Some(ChatBlock::Diff(DiffBlock { diff, .. })) => markdown_content_value(&diff.unified),
+        Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
+            markdown_content_value(&todo_items_to_markdown(items))
+        }
+        Some(ChatBlock::Notice(NoticeBlock { text, .. })) => markdown_content_value(text),
         Some(ChatBlock::Artifact(ArtifactBlock {
             kind,
             anchor,
@@ -183,14 +184,32 @@ fn content_to_value(message: &ChatMessage) -> ComponentValue {
             map.insert("artifact".to_string(), ComponentValue::Map(artifact));
             ComponentValue::Map(map)
         }
-        Some(ChatBlock::ToolResult(_)) | None => {
-            let mut map = BTreeMap::new();
-            map.insert(
-                "markdown".to_string(),
-                ComponentValue::String(String::new()),
-            );
-            ComponentValue::Map(map)
-        }
+        Some(ChatBlock::ToolResult(_)) | None => markdown_content_value(""),
+    }
+}
+
+fn markdown_content_value(markdown: &str) -> ComponentValue {
+    let mut map = BTreeMap::new();
+    map.insert(
+        "markdown".to_string(),
+        ComponentValue::String(markdown.to_string()),
+    );
+    ComponentValue::Map(map)
+}
+
+fn todo_items_to_markdown(items: &[TodoItem]) -> String {
+    items
+        .iter()
+        .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn todo_state_marker(state: TodoState) -> &'static str {
+    match state {
+        TodoState::Pending => "[ ]",
+        TodoState::InProgress => "[~]",
+        TodoState::Done => "[x]",
     }
 }
 
