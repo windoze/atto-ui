@@ -117,6 +117,72 @@ export interface Rect {
   height: number
 }
 
+/** JavaScript-facing value accepted by runtime component props. */
+export type ComponentValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly string[]
+  | readonly (readonly string[])[]
+  | Uint8Array
+  | Rect
+  | readonly ComponentValue[]
+  | { readonly [key: string]: ComponentValue }
+
+export type ChatRole = 'user' | 'assistant' | 'system' | `custom:${string}`
+export type ChatErrorKind = 'api' | 'tool' | 'rate_limit' | 'refusal' | 'network' | 'other'
+export type ChatTurnStatus = 'complete' | 'streaming' | 'canceled' | { readonly failed: ChatError }
+export type ChatToolStatus = 'pending' | 'running' | 'done' | 'error' | 'canceled'
+export type ChatArtifactKind = 'code' | 'diff' | 'file' | (string & {})
+export type ChatEditDecision = 'pending' | 'accepted' | 'rejected'
+export type ChatTodoState = 'pending' | 'in_progress' | 'done'
+export type ChatNoticeLevel = 'info' | 'warning' | 'error'
+export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'refusal'
+
+export interface ChatError {
+  readonly kind: ChatErrorKind
+  readonly message: string
+  readonly detail?: string
+}
+
+export interface ChatMessageMeta {
+  readonly timestamp?: string | null
+  readonly model?: string
+  readonly usage?: { readonly input: number; readonly output: number }
+  readonly elapsed_ms?: number
+  readonly stop_reason?: StopReason
+}
+
+export type ChatToolInput = { readonly text: string } | { readonly json: ComponentValue }
+export type ChatToolOutput = { readonly ansi: string } | { readonly markdown: string } | { readonly diff: string }
+
+export interface ChatApprovalRequest {
+  readonly id: string
+  readonly prompt: string
+  readonly options: readonly { readonly id: string; readonly label: string }[]
+  readonly resolved?: string
+}
+
+export type ChatBlock =
+  | { readonly type: 'text'; readonly block_id: number; readonly markdown: string; readonly streaming?: boolean }
+  | { readonly type: 'thinking'; readonly block_id: number; readonly markdown: string; readonly streaming?: boolean; readonly collapsed?: boolean }
+  | { readonly type: 'tool_use'; readonly block_id: number; readonly call_id: string; readonly name: string; readonly input: ChatToolInput; readonly status: ChatToolStatus; readonly approval?: ChatApprovalRequest; readonly collapsed?: boolean }
+  | { readonly type: 'tool_result'; readonly block_id: number; readonly call_id: string; readonly ok: boolean; readonly exit_code?: number; readonly output: ChatToolOutput; readonly collapsed?: boolean }
+  | { readonly type: 'diff'; readonly block_id: number; readonly path: string; readonly diff: string; readonly decision: ChatEditDecision }
+  | { readonly type: 'todo'; readonly block_id: number; readonly items: readonly { readonly text: string; readonly state: ChatTodoState }[] }
+  | { readonly type: 'attachment'; readonly block_id: number; readonly name: string; readonly url?: string | null; readonly mime?: string | null }
+  | { readonly type: 'notice'; readonly block_id: number; readonly level: ChatNoticeLevel; readonly text: string }
+  | { readonly type: 'artifact'; readonly block_id: number; readonly kind: ChatArtifactKind; readonly anchor: string | number; readonly title: string }
+
+export interface ChatMessageValue {
+  readonly id: number
+  readonly role: ChatRole
+  readonly status: ChatTurnStatus
+  readonly meta?: ChatMessageMeta
+  readonly blocks: readonly ChatBlock[]
+}
+
 /** Register optional runtime components from workspace companion crates. */
 export declare function registerAllRuntimeComponents(): void
 

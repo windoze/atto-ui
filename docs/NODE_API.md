@@ -136,6 +136,59 @@ const root = VStack({ id: 'root', spacing: 1 }, [
 
 Builder props accept camelCase convenience names where the runtime uses snake_case. Event aliases such as `onClick`, `onChange`, `onSelect`, `onSubmit`, and `onLink` are converted into `events` entries with callback handles.
 
+### Chat Message Builders
+
+`ChatMessageList` now consumes the block-based chat value shape used by the Rust runtime:
+
+```ts
+type ChatMessageValue = {
+  id: number
+  role: 'user' | 'assistant' | 'system' | `custom:${string}`
+  status: 'streaming' | 'complete' | 'canceled' | { failed: { kind: string; message: string; detail?: string } }
+  meta?: { timestamp?: string; model?: string; usage?: { input: number; output: number }; elapsed_ms?: number; stop_reason?: string }
+  blocks: ChatBlock[]
+}
+```
+
+Block values are discriminated by `type` and carry a stable `block_id`:
+
+```ts
+{ type: 'text', block_id: 1001, markdown: 'Hello' }
+{ type: 'thinking', block_id: 1002, markdown: 'Reasoning', collapsed: true }
+{ type: 'tool_use', block_id: 1003, call_id: 'call-1', name: 'bash', input: { text: 'cargo test' }, status: 'running' }
+{ type: 'tool_result', block_id: 1004, call_id: 'call-1', ok: true, output: { ansi: 'ok' } }
+{ type: 'diff', block_id: 1005, path: 'src/lib.rs', diff: '@@ ...', decision: 'pending' }
+{ type: 'todo', block_id: 1006, items: [{ text: 'write tests', state: 'done' }] }
+{ type: 'attachment', block_id: 1007, name: 'report.txt', url: 'file:///tmp/report.txt' }
+{ type: 'notice', block_id: 1008, level: 'warning', text: 'context compacted' }
+{ type: 'artifact', block_id: 1009, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
+```
+
+`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
+
+```js
+const {
+  ChatMessage,
+  ChatMessageList,
+  ChatTextBlock,
+  ChatToolCallMessage,
+} = require('@atto-ui/core')
+
+const answer = ChatMessage(1, [
+  ChatTextBlock(1001, 'Hello from the assistant'),
+])
+
+const toolTurn = ChatToolCallMessage(2, 'bash', {
+  output: 'ok',
+  outputKind: 'ansi',
+  toolStatus: 'done',
+})
+
+const root = ChatMessageList({ messages: [answer, toolTurn], autoScroll: true })
+```
+
+The runtime still accepts the previous `sender/content` message form for parsing compatibility, but new JavaScript builders always produce the block-based form.
+
 ## React API
 
 `@atto-ui/react` exposes a React reconciler and component wrappers.
@@ -174,12 +227,15 @@ Common wrappers:
 | `Border` | Bordered container around `children`. |
 | `Editor` | Code editor (`value`, `languageId`, `showLineNumbers`, `showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`). |
 | `FileTree` | Tree of `nodes`, controlled `selection`, `onSelect`/`onRename`/`onDelete`, optional `icons`. |
+| `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `onLoadMore`, `onOpenArtifact`). |
 | `VStack` / `HStack` / `Grid` | Layout containers. |
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
 | `Markdown` | `MarkdownViewer`. |
 | `Desktop`, `Window`, `MenuBar`, `Menu`, `MenuItem`, `StatusBar` | Virtual desktop root and chrome mapping. |
 | `MinimizedWindowsMenu` | Runtime-managed list of minimized windows (see below). |
 | `WindowOpMenuItem` | Menu item wired to a built-in window operation (see below). |
+
+`@atto-ui/react` re-exports the chat value builders (`ChatMessage`, `ChatTextMessage`, `ChatToolCallMessage`, block builders, and related types) for use with the `ChatMessageList` component.
 
 `Window` reports lifecycle through `onClose` / `onMinimize` / `onMaximize` /
 `onRestore` (drained from `drainWindowEvents()`); controlled widgets

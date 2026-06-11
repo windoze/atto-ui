@@ -3,8 +3,13 @@ import {
   Button,
   ChatInputMode,
   ChatInputPanel,
+  ChatMessage,
   ChatMessageList,
+  ChatNoticeBlock,
   ChatTextMessage,
+  ChatThinkingBlock,
+  ChatToolCallMessage,
+  ChatToolJsonInput,
   FileTree,
   FileTreeNode,
   Grid,
@@ -86,8 +91,17 @@ const fileTreeSpec: ComponentSpec = FileTree({
   onSelect: 'atto:callback:6',
 })
 const chatMode: ComponentValue = ChatInputMode('choice', { options: ['yes', 'no'] })
+const chatMessage = ChatMessage(2, [
+  ChatThinkingBlock(2001, 'thinking', { collapsed: true }),
+  ChatNoticeBlock(2002, 'info', 'ready'),
+], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 1, output: 2 } } })
+const chatToolMessage = ChatToolCallMessage(3, 'bash', {
+  input: ChatToolJsonInput({ command: 'cargo test' }),
+  output: 'ok',
+  toolStatus: 'done',
+})
 const chatListSpec: ComponentSpec = ChatMessageList({
-  messages: [ChatTextMessage(1, 'hello', { sender: 'user' })],
+  messages: [ChatTextMessage(1, 'hello', { role: 'user' }), chatMessage, chatToolMessage],
   onLoadMore: 'atto:callback:7',
 })
 const chatInputSpec: ComponentSpec = ChatInputPanel({ mode: ChatInputMode(), onSubmit: 'atto:callback:8' })
@@ -115,5 +129,7 @@ void markdownSpec
 void terminalSpec
 void fileTreeSpec
 void chatMode
+void chatMessage
+void chatToolMessage
 void chatListSpec
 void chatInputSpec

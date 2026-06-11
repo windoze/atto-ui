@@ -85,3 +85,19 @@
 - 首次 `clippy` 失败原因：P1.5 后旧 `ChatMessage::first_*` helper 不再使用，且一个嵌套 `if` 可折叠。已删除 stale helper 并修正 lint。
 - 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - 已更新 `TODO.md`：`P1.5` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+
+## 历史记录：P1.6 运行时/JS 侧同步
+
+- 已读取 `TODO.md`：首个未完成任务为 `P1.6 运行时/JS 侧同步`。
+- 已查看最近提交：`8b690fc [P1.5] Render chat blocks as rows`，未声明与 `P1.6` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-node`、`packages/core`、`packages/react` 和 `docs/NODE_API.md` 的 JS/TS 侧同步；不推进 P2 渲染结构任务。
+- 已确认 Rust `crates/atto-ui-chat/src/dynamic.rs` 已使用新消息形：`{id, role, status, meta?, blocks}`，block 用 `type` 和 `block_id` 区分；旧形仅作为解析兼容。
+- 已发现工作区既有未提交变更：`crates/atto-ui-node/index.js` 已修改，且有未跟踪脚本 `notification.sh`、`run_agent.sh`。这些不是本次计划产生的变更；除非验证显示它们阻塞当前任务，否则不修改或回退。
+- 已更新 `packages/core/src/builders.ts` 与对应 CommonJS 文件，使 chat builder 产出新 block 形，并补充 Text/Thinking/ToolUse/ToolResult/Diff/Todo/Attachment/Notice/Artifact block 构造器。
+- 已同步 core builder 与类型测试中的 chat 期望。
+- 已同步 React：新增 `ChatMessageList` wrapper、raw JSX `chatMessageList`/`chatmessagelist` 类型、host type 映射，并在 React 类型测试中覆盖新消息 builder。
+- 已同步 `crates/atto-ui-node/index.d.ts` 的 raw chat value 类型声明，并更新 `docs/NODE_API.md` 的 chat 段，说明新 block-based shape 和 builders。
+- 验证已通过：`npm run typecheck --prefix packages/core`、`node packages/core/__test__/builders.cjs`、`npm run typecheck --prefix packages/react`、`npm run build --prefix packages/react`、`npm run test:runtime --prefix packages/core`、`npm run smoke --prefix examples/react-tsx`、`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`、`npm test --prefix packages/core`、`npm test --prefix packages/react`。
+- 后续调整 `ChatToolCallMessage` 的默认 turn status：`pending`/`running` 生成 `streaming`，其他工具状态生成 `complete`；已重跑 `npm run typecheck --prefix packages/core`、`node packages/core/__test__/builders.cjs`、`npm test --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm run smoke --prefix examples/react-tsx`。
+- 已更新 `TODO.md`：`P1.6` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 下一步检查提交前状态/diff/最近提交，确认提交范围后创建任务提交并停止。

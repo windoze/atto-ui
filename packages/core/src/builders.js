@@ -299,35 +299,158 @@ function fileTreeIconsValue(icons) {
   return out
 }
 
+function ChatMessage(messageId, blocks, options = {}) {
+  const meta = chatMetaValue(options)
+  return compactRecord({
+    id: messageId,
+    role: options.role ?? 'assistant',
+    status: options.status ?? 'complete',
+    meta,
+    blocks,
+  }) ?? {}
+}
+
+function ChatTextBlock(blockId, markdown, options = {}) {
+  return compactRecord({
+    type: 'text',
+    block_id: blockId,
+    markdown,
+    streaming: options.streaming,
+  }) ?? {}
+}
+
+function ChatThinkingBlock(blockId, markdown, options = {}) {
+  return compactRecord({
+    type: 'thinking',
+    block_id: blockId,
+    markdown,
+    streaming: options.streaming,
+    collapsed: options.collapsed,
+  }) ?? {}
+}
+
+function ChatToolTextInput(text) {
+  return { text }
+}
+
+function ChatToolJsonInput(json) {
+  return { json }
+}
+
+function ChatToolAnsiOutput(ansi) {
+  return { ansi }
+}
+
+function ChatToolMarkdownOutput(markdown) {
+  return { markdown }
+}
+
+function ChatToolDiffOutput(diff) {
+  return { diff }
+}
+
+function ChatToolUseBlock(blockId, callId, name, options = {}) {
+  return compactRecord({
+    type: 'tool_use',
+    block_id: blockId,
+    call_id: callId,
+    name,
+    input: options.input ?? ChatToolTextInput(''),
+    status: options.status ?? 'pending',
+    approval: options.approval,
+    collapsed: options.collapsed,
+  }) ?? {}
+}
+
+function ChatToolResultBlock(blockId, callId, options = {}) {
+  return compactRecord({
+    type: 'tool_result',
+    block_id: blockId,
+    call_id: callId,
+    ok: options.ok ?? true,
+    exit_code: options.exitCode,
+    output: options.output ?? ChatToolAnsiOutput(''),
+    collapsed: options.collapsed,
+  }) ?? {}
+}
+
+function ChatDiffBlock(blockId, path, diff, options = {}) {
+  return compactRecord({
+    type: 'diff',
+    block_id: blockId,
+    path,
+    diff,
+    decision: options.decision ?? 'pending',
+  }) ?? {}
+}
+
+function ChatTodoBlock(blockId, items) {
+  return compactRecord({ type: 'todo', block_id: blockId, items }) ?? {}
+}
+
+function ChatAttachmentBlock(blockId, name, options = {}) {
+  return compactRecord({
+    type: 'attachment',
+    block_id: blockId,
+    name,
+    url: options.url,
+    mime: options.mime,
+  }) ?? {}
+}
+
+function ChatNoticeBlock(blockId, level, text) {
+  return compactRecord({ type: 'notice', block_id: blockId, level, text }) ?? {}
+}
+
+function ChatArtifactBlock(blockId, options) {
+  return compactRecord({
+    type: 'artifact',
+    block_id: blockId,
+    kind: options.kind,
+    anchor: options.anchor,
+    title: options.title,
+  }) ?? {}
+}
+
 function ChatTextMessage(messageId, markdown, options = {}) {
-  return chatMessage(messageId, { markdown }, options)
+  return ChatMessage(messageId, [
+    ChatTextBlock(options.blockId ?? derivedChatBlockId(messageId, 0), markdown, options),
+  ], options)
 }
 
 function ChatFileMessage(messageId, name, options = {}) {
-  return chatMessage(messageId, { file: { name, url: options.url ?? null } }, options)
+  return ChatMessage(messageId, [
+    ChatAttachmentBlock(options.blockId ?? derivedChatBlockId(messageId, 0), name, options),
+  ], options)
 }
 
 function ChatToolCallMessage(messageId, name, options = {}) {
-  return chatMessage(messageId, {
-    tool_call: {
-      name,
-      status: options.toolStatus ?? 'running',
-      output: options.output ?? '',
-    },
-  }, {
-    ...options,
-    status: options.status ?? 'in_progress',
-  })
+  const callId = options.callId ?? `tool-${messageId}`
+  const toolStatus = options.toolStatus ?? 'running'
+  const turnStatus = toolStatus === 'pending' || toolStatus === 'running' ? 'streaming' : 'complete'
+  const blocks = [
+    ChatToolUseBlock(options.toolUseBlockId ?? derivedChatBlockId(messageId, 0), callId, name, {
+      input: options.input,
+      status: toolStatus,
+      approval: options.approval,
+      collapsed: options.toolUseCollapsed,
+    }),
+  ]
+  if (options.output !== undefined && options.output !== '') {
+    blocks.push(ChatToolResultBlock(options.toolResultBlockId ?? derivedChatBlockId(messageId, 1), callId, {
+      ok: options.ok ?? toolStatus !== 'error',
+      exitCode: options.exitCode,
+      output: chatToolOutputFromString(options.outputKind ?? 'ansi', options.output),
+      collapsed: options.toolResultCollapsed,
+    }))
+  }
+  return ChatMessage(messageId, blocks, { ...options, status: options.status ?? turnStatus })
 }
 
 function ChatArtifactMessage(messageId, options) {
-  return chatMessage(messageId, {
-    artifact: {
-      kind: options.kind,
-      anchor: options.anchor,
-      title: options.title,
-    },
-  }, options)
+  return ChatMessage(messageId, [
+    ChatArtifactBlock(options.blockId ?? derivedChatBlockId(messageId, 0), options),
+  ], options)
 }
 
 function ChatMessageList(options = {}) {
@@ -468,14 +591,29 @@ function fileTreeNodeValue(node) {
   }) ?? {}
 }
 
-function chatMessage(messageId, content, options) {
+function chatMetaValue(options) {
   return compactRecord({
-    id: messageId,
-    sender: options.sender ?? 'assistant',
-    timestamp: options.timestamp ?? null,
-    status: options.status ?? 'final',
-    content,
-  }) ?? {}
+    timestamp: options.timestamp !== undefined ? options.timestamp : options.meta?.timestamp,
+    model: options.meta?.model,
+    usage: options.meta?.usage,
+    elapsed_ms: options.meta?.elapsed_ms,
+    stop_reason: options.meta?.stop_reason,
+  })
+}
+
+function derivedChatBlockId(messageId, ordinal) {
+  return messageId * 1000 + ordinal + 1
+}
+
+function chatToolOutputFromString(kind, output) {
+  switch (kind) {
+    case 'ansi':
+      return ChatToolAnsiOutput(output)
+    case 'markdown':
+      return ChatToolMarkdownOutput(output)
+    case 'diff':
+      return ChatToolDiffOutput(output)
+  }
 }
 
 function normalizeName(name) {
@@ -524,6 +662,21 @@ module.exports = {
   FileTreeNode,
   FileTree,
   fileTreeNodeValue,
+  ChatMessage,
+  ChatTextBlock,
+  ChatThinkingBlock,
+  ChatToolTextInput,
+  ChatToolJsonInput,
+  ChatToolAnsiOutput,
+  ChatToolMarkdownOutput,
+  ChatToolDiffOutput,
+  ChatToolUseBlock,
+  ChatToolResultBlock,
+  ChatDiffBlock,
+  ChatTodoBlock,
+  ChatAttachmentBlock,
+  ChatNoticeBlock,
+  ChatArtifactBlock,
   ChatTextMessage,
   ChatFileMessage,
   ChatToolCallMessage,

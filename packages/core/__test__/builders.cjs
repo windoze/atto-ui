@@ -5,8 +5,13 @@ const {
   Button,
   ChatInputMode,
   ChatInputPanel,
+  ChatMessage,
   ChatMessageList,
+  ChatNoticeBlock,
   ChatTextMessage,
+  ChatThinkingBlock,
+  ChatToolCallMessage,
+  ChatToolJsonInput,
   FileTree,
   FileTreeNode,
   Grid,
@@ -142,13 +147,43 @@ assert.deepStrictEqual(ListBox({ items: ['a'], border: false }).props.border, fa
 assert.deepStrictEqual(TableView({ rows: [['a']], border: false }).props.border, false)
 assert.deepStrictEqual(TextBox({ border: false }).props.border, false)
 
-const chatMessage = ChatTextMessage(1, 'hello', { sender: 'user', timestamp: '2026-06-07T00:00:00Z' })
+const chatMessage = ChatTextMessage(1, 'hello', { role: 'user', timestamp: '2026-06-07T00:00:00Z' })
 assert.deepStrictEqual(chatMessage, {
   id: 1,
-  sender: 'user',
-  timestamp: '2026-06-07T00:00:00Z',
-  status: 'final',
-  content: { markdown: 'hello' },
+  role: 'user',
+  status: 'complete',
+  meta: { timestamp: '2026-06-07T00:00:00Z' },
+  blocks: [{ type: 'text', block_id: 1001, markdown: 'hello' }],
+})
+
+const multiBlockMessage = ChatMessage(2, [
+  ChatThinkingBlock(2001, 'checking tools', { collapsed: true }),
+  ChatNoticeBlock(2002, 'warning', 'context compacted'),
+], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' } })
+assert.deepStrictEqual(multiBlockMessage, {
+  id: 2,
+  role: 'custom:agent',
+  status: 'complete',
+  meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' },
+  blocks: [
+    { type: 'thinking', block_id: 2001, markdown: 'checking tools', collapsed: true },
+    { type: 'notice', block_id: 2002, level: 'warning', text: 'context compacted' },
+  ],
+})
+
+assert.deepStrictEqual(ChatToolCallMessage(3, 'bash', {
+  input: ChatToolJsonInput({ command: 'cargo test' }),
+  output: 'ok',
+  outputKind: 'markdown',
+  toolStatus: 'done',
+}), {
+  id: 3,
+  role: 'assistant',
+  status: 'complete',
+  blocks: [
+    { type: 'tool_use', block_id: 3001, call_id: 'tool-3', name: 'bash', input: { json: { command: 'cargo test' } }, status: 'done' },
+    { type: 'tool_result', block_id: 3002, call_id: 'tool-3', ok: true, output: { markdown: 'ok' } },
+  ],
 })
 
 assert.deepStrictEqual(ChatMessageList({ messages: [chatMessage], autoScroll: true, onOpenArtifact: 'atto:callback:8' }), {

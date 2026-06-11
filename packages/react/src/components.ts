@@ -1,6 +1,7 @@
 import { createElement, type ReactElement, type ReactNode } from 'react'
 import {
   fileTreeNodeValue,
+  type ChatMessageInput,
   type EdgeInsetsSpec,
   type FileTreeIconLike,
   type FileTreeNodeLike,
@@ -211,6 +212,28 @@ export interface FileTreeProps
   readonly onDelete?: FileTreeDeleteHandler
 }
 
+export interface ChatMessageListHostProps {
+  readonly messages?: readonly ChatMessageInput[]
+  readonly spacing?: number
+  readonly padding?: EdgeInsetsSpec
+  readonly wrap_width?: number
+  readonly show_timestamps?: boolean
+  readonly auto_scroll?: boolean
+  readonly onLoad_more?: AttoUiEventHandler
+  readonly onOpen_artifact?: AttoUiEventHandler
+}
+
+export interface ChatMessageListProps extends LayoutProps {
+  readonly messages?: readonly ChatMessageInput[]
+  readonly spacing?: number
+  readonly padding?: EdgeInsetsSpec
+  readonly wrapWidth?: number
+  readonly showTimestamps?: boolean
+  readonly autoScroll?: boolean
+  readonly onLoadMore?: AttoUiEventHandler
+  readonly onOpenArtifact?: AttoUiEventHandler
+}
+
 /** Typed FileTree wrapper. Pass `nodes` as plain node inputs or core node maps. */
 export function FileTree(props: FileTreeProps): ReactElement {
   const { title, nodes, selection, height, enabled, border, icons, onSelect, onRename, onDelete, layout } = props
@@ -225,6 +248,22 @@ export function FileTree(props: FileTreeProps): ReactElement {
     onSelect: fileTreeSelectHandler(onSelect),
     onRename: fileTreeRenameHandler(onRename),
     onDelete: fileTreeDeleteHandler(onDelete),
+    layout,
+  })
+}
+
+/** Chat transcript wrapper using the block-based runtime message shape. */
+export function ChatMessageList(props: ChatMessageListProps): ReactElement {
+  const { messages, spacing, padding, wrapWidth, showTimestamps, autoScroll, onLoadMore, onOpenArtifact, layout } = props
+  return hostElement('chatMessageList', {
+    messages,
+    spacing,
+    padding,
+    wrap_width: wrapWidth,
+    show_timestamps: showTimestamps,
+    auto_scroll: autoScroll,
+    onLoad_more: onLoadMore,
+    onOpen_artifact: onOpenArtifact,
     layout,
   })
 }

@@ -1,5 +1,6 @@
 export type {
   ButtonHostProps,
+  ChatMessageListHostProps,
   FileTreeHostProps,
   GridHostProps,
   LabelProps,

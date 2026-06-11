@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 
 import type {
   ButtonHostProps,
+  ChatMessageListHostProps,
   FileTreeHostProps,
   GridProps,
   LabelProps,
@@ -90,6 +91,8 @@ declare global {
         readonly enabled?: boolean
         readonly onChange?: AttoUiEventHandler
       }
+      chatMessageList: ChatMessageListHostProps
+      chatmessagelist: ChatMessageListHostProps
       fileTree: FileTreeHostProps
       filetree: FileTreeHostProps
       grid: GridHostProps
@@ -130,6 +133,7 @@ declare global {
 
 export type {
   ButtonHostProps,
+  ChatMessageListHostProps,
   FileTreeHostProps,
   LabelProps,
   MarkdownProps,
