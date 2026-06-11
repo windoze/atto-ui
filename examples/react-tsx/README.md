@@ -13,6 +13,8 @@ build step or `dist/` output.
 | Markdown stream | `src/05-markdown-stream.tsx` | `Markdown` driven by a `for await` token stream. |
 | Theme switch | `src/06-theme-switch.tsx` | Runtime theme change via `handle.host.setTheme(...)`. |
 | Component gallery | `src/07-component-gallery.tsx` | All core components across several windows; `<Window>` lifecycle (onClose/onMinimize) + menu to re-create/restore windows. |
+| Routing | `src/08-router.tsx` | React Router via DOM-free `MemoryRouter`; navigate from Buttons with `useNavigate`. |
+| Form validation | `src/09-form-validation.tsx` | React Hook Form via `Controller`; required/pattern rules with inline errors. |
 
 ## Setup
 
@@ -40,7 +42,7 @@ npm install --prefix examples/react-tsx --omit=optional
 
 ```sh
 cd examples/react-tsx
-npm run hello      # or: counter | todo | desktop | markdown | theme | gallery
+npm run hello      # or: counter | todo | desktop | markdown | theme | gallery | router | form
 ```
 
 Press `Ctrl+Q` to quit the TUI.
@@ -54,7 +56,7 @@ support the native N-API binding. The setup above (native binding + React build
 **Bun** (`bun src/...` reads `tsconfig.json` and resolves the `file:` deps):
 
 ```sh
-npm run gallery:bun     # or hello:bun | counter:bun | todo:bun | desktop:bun | markdown:bun | theme:bun
+npm run gallery:bun     # or hello:bun | counter:bun | todo:bun | desktop:bun | markdown:bun | theme:bun | router:bun | form:bun
 # equivalently: bun src/07-component-gallery.tsx
 ```
 

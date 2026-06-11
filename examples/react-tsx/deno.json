@@ -12,6 +12,8 @@
     "desktop": "deno run -A src/04-multi-window.tsx",
     "markdown": "deno run -A src/05-markdown-stream.tsx",
     "theme": "deno run -A src/06-theme-switch.tsx",
-    "gallery": "deno run -A src/07-component-gallery.tsx"
+    "gallery": "deno run -A src/07-component-gallery.tsx",
+    "router": "deno run -A src/08-router.tsx",
+    "form": "deno run -A src/09-form-validation.tsx"
   }
 }

@@ -208,6 +208,140 @@ For a complete agent example with a real OpenAI/Anthropic provider, see
 [`examples/node/agent_chat.cjs`](../examples/node/agent_chat.cjs)
 ([README](../examples/node/README.md)).
 
+## 6. Routing (React Router)
+
+`@atto-ui/react` is a DOM-free reconciler, so React Router works — but only
+through its **`MemoryRouter`**. `BrowserRouter` / `HashRouter` and the DOM
+`<Link>` / `<NavLink>` rely on `window.location` and `<a>` elements that don't
+exist in a terminal. Install the core `react-router` package, keep the history
+in memory, and navigate from atto-ui `Button` / `MenuItem` handlers with
+`useNavigate()`.
+
+```sh
+npm install react-router
+```
+
+```tsx
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { Button, Divider, Text, VStack, Window, render } from '@atto-ui/react'
+
+function Home() {
+  const navigate = useNavigate()
+  return (
+    <VStack spacing={1} padding={1}>
+      <Text>Home — pick a destination.</Text>
+      <Button onClick={() => navigate('/about')}>Open About</Button>
+    </VStack>
+  )
+}
+
+function About() {
+  const navigate = useNavigate()
+  return (
+    <VStack spacing={1} padding={1}>
+      <Text>About page.</Text>
+      <Button onClick={() => navigate(-1)}>Back</Button>
+    </VStack>
+  )
+}
+
+function App() {
+  return (
+    <Window title="Router" rect={[2, 1, 46, 12]}>
+      <MemoryRouter>
+        <VStack padding={1}>
+          <Breadcrumb />
+          <Divider />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/about" element={<About />} />
+          </Routes>
+        </VStack>
+      </MemoryRouter>
+    </Window>
+  )
+}
+
+function Breadcrumb() {
+  const { pathname } = useLocation()
+  return <Text>{`Path: ${pathname}`}</Text>
+}
+
+render(<App />, { singleWindow: false })
+```
+
+Notes:
+
+- Use `react-router` (core), not `react-router-dom`'s `BrowserRouter`. The data
+  router (`createMemoryRouter` + `<RouterProvider>`) works too.
+- Route `element`s render atto-ui components, never DOM tags.
+- The single-React-copy rule applies: `react-router` must resolve to the same
+  `react` as the reconciler, or you'll hit `Invalid hook call`.
+- Runnable version: [`examples/react-tsx/src/08-router.tsx`](../examples/react-tsx/src/08-router.tsx).
+
+## 7. Forms with React Hook Form
+
+React Hook Form's state and validation are pure logic, so they work — but its
+default `register()` returns a DOM input `ref` that has nothing to attach to in
+a terminal. Use **`Controller`** (or `useController`) instead, the same path RHF
+uses for React Native and UI libraries: it gives you `field.value` /
+`field.onChange` to wire onto atto-ui's controlled widgets.
+
+```sh
+npm install react-hook-form
+```
+
+```tsx
+import { Controller, useForm } from 'react-hook-form'
+import { Button, Text, TextBox, VStack, Window, render } from '@atto-ui/react'
+
+type SignUp = { name: string; email: string }
+
+function App() {
+  const { control, handleSubmit, formState: { errors } } = useForm<SignUp>({
+    mode: 'onChange',
+    defaultValues: { name: '', email: '' },
+  })
+
+  const onValid = (data: SignUp) => { /* submit data */ }
+
+  return (
+    <Window title="Sign up" rect={[2, 1, 48, 14]}>
+      <VStack spacing={1} padding={1}>
+        <Controller
+          name="email"
+          control={control}
+          rules={{
+            required: 'Email is required',
+            pattern: { value: /^[^@\s]+@[^@\s]+$/, message: 'Invalid email' },
+          }}
+          render={({ field }) => (
+            <TextBox title="Email" value={field.value} onChange={field.onChange} />
+          )}
+        />
+        {errors.email && <Text>{`! ${errors.email.message}`}</Text>}
+
+        <Button onClick={() => void handleSubmit(onValid)()}>Submit</Button>
+      </VStack>
+    </Window>
+  )
+}
+
+render(<App />, { singleWindow: false })
+```
+
+Notes:
+
+- Use `Controller` / `useController`, **not `register()`** (it needs a DOM ref).
+- atto-ui widgets pass the new value as the first `onChange` argument, which is
+  exactly what `field.onChange` expects.
+- Don't forward `field.ref` to atto-ui components — they take no DOM ref, so
+  RHF's auto-focus-first-error is unavailable, but validation is unaffected.
+- `Button` expects a `() => void` handler, so call the submit handler inside an
+  arrow: `onClick={() => void handleSubmit(onValid)()}`.
+- Rules (`required` / `pattern` / `validate`) and zod/yup resolvers all work.
+- Runnable version: [`examples/react-tsx/src/09-form-validation.tsx`](../examples/react-tsx/src/09-form-validation.tsx).
+
 ## Testing without a terminal
 
 `render(element, { headless: true, cols, rows })` runs against an in-memory
