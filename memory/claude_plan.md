@@ -101,3 +101,16 @@
 - 后续调整 `ChatToolCallMessage` 的默认 turn status：`pending`/`running` 生成 `streaming`，其他工具状态生成 `complete`；已重跑 `npm run typecheck --prefix packages/core`、`node packages/core/__test__/builders.cjs`、`npm test --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm run smoke --prefix examples/react-tsx`。
 - 已更新 `TODO.md`：`P1.6` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 下一步检查提交前状态/diff/最近提交，确认提交范围后创建任务提交并停止。
+
+## 历史记录：P2.1 行模型改为「回合头 + 各 block」
+
+- 已读取 `TODO.md`：首个未完成任务为 `P2.1 行模型改为「回合头 + 各 block」`。
+- 已查看最近提交：`7a13613 [P1.6] Sync JavaScript chat block shape`，未声明与 `P2.1` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 的行 key 与渲染结构；不推进 P2.2 的去全量 clone、P2.3 的完整 block 控件映射或 P2.4 滚动修复。
+- 已确认现状：P1.5 已让每个 block 独立成行，但 header/timestamp 仍嵌在每个 block 行中，多 block 回合会重复 header。
+- 实施策略：将行 key 拆为 `ChatRowKey::Header` 与 `ChatRowKey::Block`；每个消息先生成 header 行，再按 block 顺序生成 block 行；block `kind_tag` 继续排除 markdown/output/status 等流式易变字段。
+- 已完成实现：header 行负责回合角色/状态/时间戳，block 行只渲染内容气泡；header 文本通过 binding 随回合状态刷新，block 行不再重复角色 header。
+- 已补充/调整单测：覆盖文本 delta/status 不改行 key、工具 output/status 不改 block key、多 block 消息只产生一个 header 且 block 顺序稳定。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P2.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 下一步检查提交前状态/diff/最近提交，确认提交范围后创建任务提交并停止。
