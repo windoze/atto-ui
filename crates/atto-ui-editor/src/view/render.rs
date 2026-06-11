@@ -278,7 +278,7 @@ impl EditorView {
         for r in editor.folding_manager().regions() {
             if r.start_line <= cursor_line && cursor_line <= r.end_line {
                 let span = r.end_line - r.start_line;
-                if active_region.map_or(true, |(s, e)| span < e - s) {
+                if active_region.is_none_or(|(s, e)| span < e - s) {
                     active_region = Some((r.start_line, r.end_line));
                 }
             }
