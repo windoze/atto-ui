@@ -309,14 +309,18 @@ impl ChatMessageStore {
     pub fn append_text_delta(&self, id: ChatBlockId, delta: &str) -> bool {
         let mut found_text = false;
         let changed = self.messages.update_if(|items| {
-            let Some(ChatBlock::Text(text_block)) = find_block_mut(items, id) else {
+            let Some(markdown) = find_block_mut(items, id).and_then(|block| match block {
+                ChatBlock::Text(text_block) => Some(&mut text_block.markdown),
+                ChatBlock::Thinking(thinking_block) => Some(&mut thinking_block.markdown),
+                _ => None,
+            }) else {
                 return false;
             };
             found_text = true;
             if delta.is_empty() {
                 return false;
             }
-            text_block.markdown.push_str(delta);
+            markdown.push_str(delta);
             true
         });
         if changed {
@@ -583,8 +587,8 @@ impl Default for ChatMessageStore {
 mod tests {
     use super::*;
     use crate::message::{
-        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, TextBlock, TodoBlock,
-        TodoState, ToolInput, ToolOutput, ToolUseBlock,
+        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, TextBlock, ThinkingBlock,
+        TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
     };
 
     fn block_id_for(
@@ -613,6 +617,15 @@ mod tests {
                 _ => panic!("expected text block"),
             })
             .expect("text block should exist")
+    }
+
+    fn thinking_for(store: &ChatMessageStore, id: ChatBlockId) -> String {
+        store
+            .with_block(id, |block| match block {
+                ChatBlock::Thinking(thinking) => thinking.markdown.clone(),
+                _ => panic!("expected thinking block"),
+            })
+            .expect("thinking block should exist")
     }
 
     fn tool_status_for(store: &ChatMessageStore, id: ChatBlockId) -> ToolStatus {
@@ -662,21 +675,43 @@ mod tests {
     }
 
     #[test]
-    fn append_text_delta_targets_text_block_id() {
+    fn append_text_delta_targets_text_and_thinking_block_ids() {
         let store = ChatMessageStore::new();
         let message_id = store.next_message_id();
         store.push(
-            ChatMessage::text(message_id, ChatRole::Assistant, "")
-                .with_status(ChatTurnStatus::Streaming),
+            ChatMessage::new(
+                message_id,
+                ChatRole::Assistant,
+                vec![
+                    ChatBlock::Text(TextBlock {
+                        id: ChatBlockId::new(10),
+                        markdown: String::new(),
+                        streaming: false,
+                    }),
+                    ChatBlock::Thinking(ThinkingBlock {
+                        id: ChatBlockId::new(11),
+                        markdown: String::new(),
+                        streaming: false,
+                        collapsed: true,
+                    }),
+                ],
+            )
+            .with_status(ChatTurnStatus::Streaming),
         );
         let text_id = block_id_for(&store, message_id, |block| {
             matches!(block, ChatBlock::Text(_))
         });
+        let thinking_id = block_id_for(&store, message_id, |block| {
+            matches!(block, ChatBlock::Thinking(_))
+        });
 
         assert!(store.append_text_delta(text_id, "hel"));
         assert!(store.append_text_delta(text_id, "lo"));
+        assert!(store.append_text_delta(thinking_id, "rea"));
+        assert!(store.append_text_delta(thinking_id, "soning"));
 
         assert_eq!(text_for(&store, text_id), "hello");
+        assert_eq!(thinking_for(&store, thinking_id), "reasoning");
         assert_eq!(store.messages()[0].status, ChatTurnStatus::Streaming);
     }
 

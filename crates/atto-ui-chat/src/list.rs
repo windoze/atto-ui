@@ -3302,7 +3302,11 @@ mod tests {
         terminal.draw(|f| list.draw(f, area, ctx)).expect("draw");
     }
 
-    fn draw_component_line(component: &mut dyn Component, width: u16, height: u16) -> String {
+    fn draw_component_snapshot(
+        component: &mut dyn Component,
+        width: u16,
+        height: u16,
+    ) -> (Vec<String>, Vec<Vec<Color>>) {
         let theme = Theme::dark();
         let ctx = ComponentContext {
             theme: &theme,
@@ -3319,9 +3323,28 @@ mod tests {
             .draw(|f| component.draw(f, Rect::new(0, 0, width, height), ctx))
             .expect("draw");
         let buf = terminal.backend().buffer();
-        (0..width)
-            .map(|x| buf.cell((x, 0)).expect("cell").symbol())
-            .collect::<String>()
+        let mut lines = Vec::new();
+        let mut colors = Vec::new();
+        for y in 0..height {
+            let mut line = String::new();
+            let mut fgs = Vec::new();
+            for x in 0..width {
+                let cell = buf.cell((x, y)).expect("cell");
+                line.push_str(cell.symbol());
+                fgs.push(cell.fg);
+            }
+            lines.push(line);
+            colors.push(fgs);
+        }
+        (lines, colors)
+    }
+
+    fn draw_component_line(component: &mut dyn Component, width: u16, height: u16) -> String {
+        draw_component_snapshot(component, width, height)
+            .0
+            .into_iter()
+            .next()
+            .unwrap_or_default()
     }
 
     fn component_context(theme: &Theme) -> ComponentContext<'_> {
@@ -3402,6 +3425,85 @@ mod tests {
             block_markdown_for_render(&thinking, &config).as_deref(),
             Some("thinking")
         );
+    }
+
+    #[test]
+    fn thinking_body_renders_collapsed_dim_disclosure_and_expands() {
+        let config = row_config_for_tests();
+        let block = ChatBlock::Thinking(ThinkingBlock {
+            id: ChatBlockId::new(2),
+            markdown: "THINKING-DETAIL".to_string(),
+            streaming: true,
+            collapsed: true,
+        });
+        let (mut body, bindings) =
+            ChatMessageBody::from_block(ChatMessageId::new(1), Some(&block), &config);
+        assert_eq!(
+            bindings
+                .disclosure_status
+                .as_ref()
+                .expect("thinking status binding")
+                .get(),
+            DisclosureStatus::Running
+        );
+
+        let (collapsed, _) = draw_component_snapshot(&mut body, 60, 3);
+        assert!(collapsed[0].contains("Thinking"));
+        assert!(
+            collapsed
+                .iter()
+                .all(|line| !line.contains("THINKING-DETAIL"))
+        );
+
+        let theme = Theme::dark();
+        assert_eq!(
+            body.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                component_context(&theme),
+            ),
+            EventResult::changed()
+        );
+        let (expanded, colors) = draw_component_snapshot(&mut body, 60, 3);
+        let detail_y = expanded
+            .iter()
+            .position(|line| line.contains("THINKING-DETAIL"))
+            .expect("expanded thinking content should be visible");
+        let detail_x = expanded[detail_y]
+            .find("THINKING-DETAIL")
+            .expect("thinking content x position");
+        assert_eq!(colors[detail_y][detail_x], Color::DarkGray);
+    }
+
+    #[test]
+    fn notice_body_renders_level_label_with_color() {
+        let config = row_config_for_tests();
+        let cases = [
+            (NoticeLevel::Info, "Info: INFO-NOTICE", Color::Cyan),
+            (
+                NoticeLevel::Warning,
+                "Warning: WARNING-NOTICE",
+                Color::Yellow,
+            ),
+            (NoticeLevel::Error, "Error: ERROR-NOTICE", Color::Red),
+        ];
+
+        for (level, expected, color) in cases {
+            let block = ChatBlock::Notice(NoticeBlock {
+                id: ChatBlockId::new(3),
+                level,
+                text: expected
+                    .split_once(": ")
+                    .map(|(_, text)| text)
+                    .expect("fixture label")
+                    .to_string(),
+            });
+            let (mut body, _) =
+                ChatMessageBody::from_block(ChatMessageId::new(1), Some(&block), &config);
+
+            let (lines, colors) = draw_component_snapshot(&mut body, 40, 1);
+            assert!(lines[0].starts_with(expected));
+            assert_eq!(colors[0][0], color);
+        }
     }
 
     #[test]

@@ -415,6 +415,26 @@ fn chat_tool_result_long_ansi_output_tails_streams_and_expands() -> anyhow::Resu
 }
 
 #[test]
+fn chat_thinking_notice_renders_collapsed_and_level_labels() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--thinking-notice"], 100, 28)?;
+
+    host.wait_for_text("Thinking", Duration::from_secs(2))?;
+    host.wait_for_text("Info: CONTEXT-INFO", Duration::from_secs(2))?;
+    host.wait_for_text("Warning: CONTEXT-WARNING", Duration::from_secs(2))?;
+    host.wait_for_text("Error: CONTEXT-ERROR", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "THINKING-DETAIL", Duration::from_millis(250));
+
+    let (x, y) = find_text_position(&host, "Thinking").expect("thinking disclosure");
+    host.click(x, y)?;
+    host.wait_for_text("THINKING-DETAIL", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

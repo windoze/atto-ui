@@ -257,7 +257,7 @@
 - 已检查提交前状态：本次提交将包含 P4.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/store.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P4.1] Implement inline approvals` 提交并停止。
 
-## 当前任务：P4.2 inline diff + Accept/Reject
+## 历史记录：P4.2 inline diff + Accept/Reject
 
 - 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P4.2 inline diff + Accept/Reject`。
@@ -270,3 +270,16 @@
 - 已更新 `TODO.md`：`P4.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P4.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P4.2] Implement inline diff decisions` 提交并停止。
+
+## 当前任务：P5.1 Thinking / Notice 渲染
+
+- 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.1 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.1 Thinking / Notice 渲染`。
+- 已查看最近提交：`e10cf3a [P4.2] Implement inline diff decisions`，未声明与 `P5.1` 直接相关的未完成阻塞事项。
+- 执行范围限定为 Thinking 默认折叠/弱化/流式渲染与 Notice level 着色；不推进 P5.2 Todo 面板或 P5.3 回合 meta/错误展示。
+- 审查发现 `Thinking` 的视图路径已有 `Disclosure`、弱化 Markdown 和运行状态，但 store 的 `append_text_delta` 只支持 `Text`，会阻断 thinking 流式追加。
+- 已完成实现：`append_text_delta` 同时支持 `Text` 与 `Thinking` block；动态解析省略 `collapsed` 的 thinking block 时默认折叠，并在序列化时显式保留 `collapsed=false` 以保证 round-trip；新增 `snapshot_chat_app --thinking-notice` 场景。
+- 已补充验证：store 单测覆盖 thinking delta；dynamic 单测覆盖 thinking 默认折叠与显式展开 round-trip；list 单测覆盖 collapsed disclosure、dim 内容和 Notice 颜色；PTY 覆盖 thinking 默认折叠、点击展开和 Notice level 标签。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P5.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
+- 已检查提交范围：本次提交包含 P5.1 相关 `TODO.md`、`memory/claude_plan.md`、chat Rust 源码与 PTY 测试；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。

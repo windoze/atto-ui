@@ -81,7 +81,9 @@
 
 参考 `CHAT_UI.md` §3(Thinking/Todo/Notice/Meta/Error)。
 
-- [ ] **P5.1 Thinking / Notice 渲染** — `src/list.rs`:Thinking 默认折叠 `Disclosure`+dim 流式;Notice 按 `NoticeLevel` 着色单行。
+- [x] **[DONE] P5.1 Thinking / Notice 渲染** — `src/list.rs`:Thinking 默认折叠 `Disclosure`+dim 流式;Notice 按 `NoticeLevel` 着色单行。
+  - 完成记录（2026-06-12）：已补齐 Thinking 流式更新路径，`append_text_delta` 现在支持 Text/Thinking block；动态解析省略 `collapsed` 的 thinking block 时默认折叠，序列化显式保留 `collapsed=false` 以保证展开状态 round-trip。Thinking 渲染保持 `Disclosure + MarkdownViewer`、运行状态与弱化内容样式；Notice 按 Info/Warning/Error 分别使用 Cyan/Yellow/Red 单行标签。新增 `snapshot_chat_app --thinking-notice` 和 PTY 覆盖 thinking 默认折叠/展开与 Notice level 标签。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P5.2 Todo 面板** — `src/list.rs` + `src/store.rs`:自绘 `[ ]/[~]/[x] text`;store `set_todo` 更新。
 - [ ] **P5.3 回合 meta + 错误展示** — `src/list.rs`:回合 header 渲染 model/usage/elapsed/stop_reason;`ChatTurnStatus::Failed(ChatError)` 结构化展示(kind+message+detail)。补 PTY 覆盖 thinking 折叠、todo 状态更新、错误展示。
 

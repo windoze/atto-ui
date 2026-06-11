@@ -188,7 +188,10 @@ fn block_to_value(block: &ChatBlock) -> ComponentValue {
                 ComponentValue::String(block.markdown.clone()),
             );
             insert_bool_if_true(&mut map, "streaming", block.streaming);
-            insert_bool_if_true(&mut map, "collapsed", block.collapsed);
+            map.insert(
+                "collapsed".to_string(),
+                ComponentValue::Bool(block.collapsed),
+            );
             ComponentValue::Map(map)
         }
         ChatBlock::ToolUse(block) => {
@@ -596,7 +599,7 @@ fn parse_block_value(value: &ComponentValue) -> Result<ChatBlock, String> {
             id,
             markdown: required_string_field(map, "markdown", "thinking block")?,
             streaming: optional_bool_field(map, "streaming", "thinking block")?.unwrap_or(false),
-            collapsed: optional_bool_field(map, "collapsed", "thinking block")?.unwrap_or(false),
+            collapsed: optional_bool_field(map, "collapsed", "thinking block")?.unwrap_or(true),
         })),
         "tool_use" => Ok(ChatBlock::ToolUse(ToolUseBlock {
             id,
@@ -1581,6 +1584,36 @@ mod tests {
         let parsed = parse_messages_value(&value).expect("parse messages");
 
         assert_eq!(parsed, vec![message]);
+    }
+
+    #[test]
+    fn chat_thinking_blocks_default_to_collapsed_when_omitted() {
+        let parsed = parse_block_value(&value_map([
+            ("type", ComponentValue::String("thinking".to_string())),
+            ("block_id", ComponentValue::U64(72)),
+            ("markdown", ComponentValue::String("reasoning".to_string())),
+        ]))
+        .expect("parse thinking block");
+
+        assert!(matches!(parsed, ChatBlock::Thinking(block) if block.collapsed));
+
+        let expanded = ChatBlock::Thinking(ThinkingBlock {
+            id: ChatBlockId::new(73),
+            markdown: "reasoning".to_string(),
+            streaming: false,
+            collapsed: false,
+        });
+        let ComponentValue::Map(serialized) = block_to_value(&expanded) else {
+            panic!("thinking block must serialize to map");
+        };
+        assert_eq!(
+            serialized.get("collapsed"),
+            Some(&ComponentValue::Bool(false))
+        );
+
+        let parsed = parse_block_value(&ComponentValue::Map(serialized))
+            .expect("parse expanded thinking block");
+        assert!(matches!(parsed, ChatBlock::Thinking(block) if !block.collapsed));
     }
 
     #[test]

@@ -58,6 +58,7 @@ fn main() -> Result<()> {
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
+    let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -85,6 +86,9 @@ fn main() -> Result<()> {
         None
     } else if inline_diff {
         seed_inline_diff_messages(&store);
+        None
+    } else if thinking_notice {
+        seed_thinking_notice_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -127,6 +131,7 @@ fn main() -> Result<()> {
         || block_mapping
         || inline_approval
         || inline_diff
+        || thinking_notice
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -563,6 +568,37 @@ fn seed_inline_diff_messages(store: &ChatMessageStore) {
             },
             decision: EditDecision::Pending,
         })],
+    ));
+}
+
+fn seed_thinking_notice_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Thinking(ThinkingBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "THINKING-DETAIL".to_string(),
+                streaming: true,
+                collapsed: true,
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 1),
+                level: NoticeLevel::Info,
+                text: "CONTEXT-INFO".to_string(),
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 2),
+                level: NoticeLevel::Warning,
+                text: "CONTEXT-WARNING".to_string(),
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 3),
+                level: NoticeLevel::Error,
+                text: "CONTEXT-ERROR".to_string(),
+            }),
+        ],
     ));
 }
 
