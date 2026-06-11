@@ -23,6 +23,11 @@ impl<T: Clone + PartialEq> Property<T> {
         self.value.read().clone()
     }
 
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        let guard = self.value.read();
+        f(&*guard)
+    }
+
     pub fn set(&self, new_value: T) {
         let mut guard = self.value.write();
         if *guard != new_value {
@@ -106,6 +111,11 @@ impl<T: Clone + PartialEq> Binding<T> {
 
     pub fn get(&self) -> T {
         self.value.read().clone()
+    }
+
+    pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        let guard = self.value.read();
+        f(&*guard)
     }
 
     pub fn set(&self, new_value: T) {

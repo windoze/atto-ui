@@ -234,6 +234,7 @@ fn stream_reply(store: &ChatMessageStore, reply: String) {
     let message = ChatMessage::text(id, ChatRole::Assistant, "")
         .with_status(ChatTurnStatus::Streaming)
         .with_timestamp(now_label());
+    let text_id = message.blocks[0].id();
     store.push(message);
 
     let chars: Vec<char> = reply.chars().collect();
@@ -243,13 +244,13 @@ fn stream_reply(store: &ChatMessageStore, reply: String) {
         let step = rng.gen_range(1, 3) as usize;
         let end = (idx + step).min(chars.len());
         let delta: String = chars[idx..end].iter().collect();
-        store.append_delta(id, &delta);
+        store.append_text_delta(text_id, &delta);
         idx = end;
         let pause = rng.gen_range(120, 260);
         thread::sleep(Duration::from_millis(pause));
     }
 
-    store.set_status(id, ChatTurnStatus::Complete);
+    store.set_turn_status(id, ChatTurnStatus::Complete);
 }
 
 fn now_label() -> String {

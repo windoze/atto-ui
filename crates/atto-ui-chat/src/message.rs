@@ -559,22 +559,8 @@ impl ChatMessage {
         })
     }
 
-    pub(crate) fn first_text_mut(&mut self) -> Option<&mut TextBlock> {
-        self.blocks.iter_mut().find_map(|block| match block {
-            ChatBlock::Text(text) => Some(text),
-            _ => None,
-        })
-    }
-
     pub(crate) fn first_tool_use(&self) -> Option<&ToolUseBlock> {
         self.blocks.iter().find_map(|block| match block {
-            ChatBlock::ToolUse(tool) => Some(tool),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn first_tool_use_mut(&mut self) -> Option<&mut ToolUseBlock> {
-        self.blocks.iter_mut().find_map(|block| match block {
             ChatBlock::ToolUse(tool) => Some(tool),
             _ => None,
         })
@@ -586,40 +572,6 @@ impl ChatMessage {
             ChatBlock::ToolResult(result) if result.call_id == call_id => Some(result),
             _ => None,
         })
-    }
-
-    pub(crate) fn first_tool_result_mut(&mut self) -> Option<&mut ToolResultBlock> {
-        let call_id = self.first_tool_use().map(|tool| tool.call_id.clone())?;
-        self.blocks.iter_mut().find_map(|block| match block {
-            ChatBlock::ToolResult(result) if result.call_id == call_id => Some(result),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn ensure_first_tool_result_mut(&mut self) -> Option<&mut ToolResultBlock> {
-        let call_id = self.first_tool_use().map(|tool| tool.call_id.clone())?;
-        let existing = self.blocks.iter().position(
-            |block| matches!(block, ChatBlock::ToolResult(result) if result.call_id == call_id),
-        );
-        let index = match existing {
-            Some(index) => index,
-            None => {
-                let index = self.blocks.len();
-                self.blocks.push(ChatBlock::ToolResult(ToolResultBlock {
-                    id: derived_block_id(self.id, index as u64),
-                    call_id,
-                    ok: true,
-                    exit_code: None,
-                    output: ToolOutput::Ansi(String::new()),
-                    collapsed: false,
-                }));
-                index
-            }
-        };
-        match self.blocks.get_mut(index) {
-            Some(ChatBlock::ToolResult(result)) => Some(result),
-            _ => None,
-        }
     }
 }
 

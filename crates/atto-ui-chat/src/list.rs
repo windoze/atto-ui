@@ -1238,7 +1238,9 @@ mod tests {
             .with_status(ChatTurnStatus::Streaming);
         let first_key = row_keys_from_messages(&[first.clone()]);
 
-        first.first_text_mut().expect("text block").markdown = "hello world".to_string();
+        if let ChatBlock::Text(text) = &mut first.blocks[0] {
+            text.markdown = "hello world".to_string();
+        }
         let delta_key = row_keys_from_messages(&[first.clone()]);
         assert_eq!(first_key, delta_key);
 
@@ -1253,16 +1255,18 @@ mod tests {
         let mut first = ChatMessage::tool_call(id, "build", ToolStatus::Running, "starting");
         let first_key = row_keys_from_messages(&[first.clone()]);
 
-        first.first_tool_use_mut().expect("tool block").status = ToolStatus::Done;
-        first
-            .first_tool_result_mut()
-            .expect("tool result block")
-            .output
-            .set_text("starting\nfinished".to_string());
+        if let ChatBlock::ToolUse(tool) = &mut first.blocks[0] {
+            tool.status = ToolStatus::Done;
+        }
+        if let ChatBlock::ToolResult(result) = &mut first.blocks[1] {
+            result.output.set_text("starting\nfinished".to_string());
+        }
         let updated_key = row_keys_from_messages(&[first.clone()]);
         assert_eq!(first_key, updated_key);
 
-        first.first_tool_use_mut().expect("tool block").name = "test".to_string();
+        if let ChatBlock::ToolUse(tool) = &mut first.blocks[0] {
+            tool.name = "test".to_string();
+        }
         let renamed_key = row_keys_from_messages(&[first]);
         assert_ne!(updated_key, renamed_key);
     }

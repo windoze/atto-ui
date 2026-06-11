@@ -32,7 +32,7 @@
 - 下一步检查工作区状态/diff/最近提交，确认提交范围后创建任务提交。
 - 已检查提交前状态：本次提交将包含 `P1.1` 相关 Rust/TODO/计划文件，并按用户要求包含已变更的 `PROMPT.md`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 
-## 当前任务：P1.2 内容块类型
+## 历史记录：P1.2 内容块类型
 
 - 已读取 `TODO.md`：首个未完成任务为 `P1.2 内容块类型`。
 - 已查看最近提交：`e28ca50 [P1.1] Implement new chat message model`，未声明与 `P1.2` 直接相关的未完成事项。
@@ -43,4 +43,18 @@
 - 已通过验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --workspace --all-targets`。
 - 已更新 `TODO.md`：`P1.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交包含 P1.2 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+- 下一步创建任务提交并停止。
+
+## 当前任务：P1.3 store 改造
+
+- 已读取 `TODO.md`：首个未完成任务为 `P1.3 store 改造`。
+- 已查看最近提交：`1cf224b [P1.2] Add chat content block types`，未声明与 `P1.3` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/store.rs` 的新 block/message store API、脏通知语义与单测；不推进 P1.4/P1.5。
+- 已检查 `store.rs`、`message.rs` 与 `CHAT_UI.md` 相关章节；当前 store 仍使用按 `ChatMessageId` 的文本/工具流式更新，需改为按 `ChatBlockId`。
+- 实施策略：保留基础集合操作，新增块级 API；移除/替换旧 delta 调用点；给 reactive `Property` 增加只读访问能力以实现不克隆的 `with_block`。
+- 已完成首轮实现：`ChatMessageStore` 增加 `next_block_id`、`append_block`、`with_block`、按 `ChatBlockId` 的文本/工具/审批/diff/todo 更新 API，并同步 `chat_demo` 与 `snapshot_chat_app` 的旧调用点。
+- 首次 `clippy` 失败原因：P1.3 删除旧 store 调用后，`ChatMessage` 的旧可变 helper 只剩测试间接使用而触发 dead code。已改 list 单测直接操作 block 并删除这些旧 helper。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P1.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P1.3 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。

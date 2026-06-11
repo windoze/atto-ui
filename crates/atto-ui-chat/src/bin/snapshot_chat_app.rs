@@ -24,10 +24,10 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui_chat::{
-    Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatChoiceInputConfig,
-    ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
-    ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, TextArtifactViewer,
-    ToolStatus,
+    Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatBlock, ChatBlockId,
+    ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
+    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel,
+    ChatRole, ChatTurnStatus, TextArtifactViewer, ToolStatus,
 };
 
 fn main() -> Result<()> {
@@ -67,27 +67,39 @@ fn main() -> Result<()> {
     } else {
         HashMap::new()
     };
-    let tool_message_id = if tool_call {
+    let tool_block_ids = if tool_call {
         let id = store.next_message_id();
-        store.push(ChatMessage::tool_call(
-            id,
-            "build",
-            ToolStatus::Running,
-            "TOOL-START",
-        ));
-        Some(id)
+        let message = ChatMessage::tool_call(id, "build", ToolStatus::Running, "TOOL-START");
+        let tool_use_id = message
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(_) => Some(block.id()),
+                _ => None,
+            })
+            .expect("tool use block should exist");
+        let tool_result_id = message
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ChatBlock::ToolResult(_) => Some(block.id()),
+                _ => None,
+            })
+            .expect("tool result block should exist");
+        store.push(message);
+        Some((tool_use_id, tool_result_id))
     } else {
         None
     };
-    let streaming_message_id = if tool_message_id.is_some() || artifact_link {
+    let streaming_block_ids = if tool_block_ids.is_some() || artifact_link {
         None
     } else if streaming_markdown {
         let id = store.next_message_id();
-        store.push(
-            ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
-                .with_status(ChatTurnStatus::Streaming),
-        );
-        Some(id)
+        let message = ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_id = message.blocks[0].id();
+        store.push(message);
+        Some((id, text_id))
     } else {
         seed_messages(&store, 28);
         None
@@ -168,63 +180,72 @@ fn main() -> Result<()> {
         }) = ev
             && modifiers.is_empty()
         {
-            if let Some(id) = streaming_message_id {
+            if let Some((id, text_id)) = streaming_block_ids {
                 match cmd {
                     '1' => {
-                        store.update_text(
+                        set_text_block(
+                            &store,
                             id,
+                            text_id,
                             "```rust\nfn main() {\n    println!(\"STREAMING-CODE\");",
                         );
                         continue;
                     }
                     '2' => {
-                        store.append_delta(id, "\n}\n```");
-                        store.set_status(id, ChatTurnStatus::Complete);
+                        store.append_text_delta(text_id, "\n}\n```");
+                        store.set_turn_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     '3' => {
-                        store.update_text(id, "| Name | Value |\n| --- | --- |\n| half |");
-                        store.set_status(id, ChatTurnStatus::Streaming);
+                        set_text_block(
+                            &store,
+                            id,
+                            text_id,
+                            "| Name | Value |\n| --- | --- |\n| half |",
+                        );
+                        store.set_turn_status(id, ChatTurnStatus::Streaming);
                         continue;
                     }
                     '4' => {
-                        store.update_text(
+                        set_text_block(
+                            &store,
                             id,
+                            text_id,
                             "| Name | Value |\n| --- | --- |\n| half | stable |\n",
                         );
-                        store.set_status(id, ChatTurnStatus::Complete);
+                        store.set_turn_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     '5' => {
-                        store.update_text(id, "STREAM-DELTA-A");
-                        store.set_status(id, ChatTurnStatus::Streaming);
+                        set_text_block(&store, id, text_id, "STREAM-DELTA-A");
+                        store.set_turn_status(id, ChatTurnStatus::Streaming);
                         continue;
                     }
                     '6' => {
-                        store.append_delta(id, " + STREAM-DELTA-B");
-                        store.set_status(id, ChatTurnStatus::Complete);
+                        store.append_text_delta(text_id, " + STREAM-DELTA-B");
+                        store.set_turn_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     _ => {}
                 }
             }
 
-            if let Some(id) = tool_message_id {
+            if let Some((tool_use_id, tool_result_id)) = tool_block_ids {
                 match cmd {
                     '1' => {
-                        store.append_tool_delta(id, "\nTOOL-OUTPUT-1");
+                        store.append_tool_output(tool_result_id, "\nTOOL-OUTPUT-1");
                         continue;
                     }
                     '2' => {
-                        store.append_tool_delta(id, "\nTOOL-OUTPUT-2");
+                        store.append_tool_output(tool_result_id, "\nTOOL-OUTPUT-2");
                         continue;
                     }
                     '3' => {
-                        store.set_tool_status(id, ToolStatus::Done);
+                        store.set_tool_status(tool_use_id, ToolStatus::Done);
                         continue;
                     }
                     '4' => {
-                        store.set_tool_status(id, ToolStatus::Error);
+                        store.set_tool_status(tool_use_id, ToolStatus::Error);
                         continue;
                     }
                     _ => {}
@@ -332,6 +353,34 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn set_text_block(
+    store: &ChatMessageStore,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    markdown: &str,
+) {
+    let should_update = store
+        .with_block(block_id, |block| match block {
+            ChatBlock::Text(text) => text.markdown != markdown,
+            _ => false,
+        })
+        .unwrap_or(false);
+    if !should_update {
+        return;
+    }
+
+    let markdown = markdown.to_string();
+    store.update_message(message_id, |message| {
+        if let Some(ChatBlock::Text(text)) = message
+            .blocks
+            .iter_mut()
+            .find(|block| block.id() == block_id)
+        {
+            text.markdown = markdown;
+        }
+    });
 }
 
 fn seed_artifacts(store: &ChatMessageStore) -> HashMap<ArtifactId, Artifact> {
