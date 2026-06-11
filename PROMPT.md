@@ -94,7 +94,7 @@ For the first incomplete task in `TODO.md`:
    - Ensure all tests pass.
    - Confirm that the code is well‑organized and documented.
 2. Commit any final adjustments with a message like "Complete project implementation."
-3. Create a Git tag `v0.1.0` to mark the first release.
+3. Create a Git tag `endtag` to mark that all tasks are done.
 
 **Important Reminders:**
 - Always read `TODO.md` first for the actual task body and completion state.

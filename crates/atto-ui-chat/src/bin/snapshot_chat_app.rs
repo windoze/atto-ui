@@ -26,8 +26,8 @@ use atto_ui::wm::{Window, WindowKind};
 use atto_ui_chat::{
     Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatChoiceInputConfig,
     ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
-    ChatMessageList, ChatMessageStatus, ChatMessageStore, ChatPanel, ChatSender,
-    ChatToolCallStatus, TextArtifactViewer,
+    ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, TextArtifactViewer,
+    ToolStatus,
 };
 
 fn main() -> Result<()> {
@@ -72,7 +72,7 @@ fn main() -> Result<()> {
         store.push(ChatMessage::tool_call(
             id,
             "build",
-            ChatToolCallStatus::Running,
+            ToolStatus::Running,
             "TOOL-START",
         ));
         Some(id)
@@ -84,8 +84,8 @@ fn main() -> Result<()> {
     } else if streaming_markdown {
         let id = store.next_message_id();
         store.push(
-            ChatMessage::text(id, ChatSender::Assistant, "STREAMING-MARKDOWN")
-                .with_status(ChatMessageStatus::InProgress),
+            ChatMessage::text(id, ChatRole::Assistant, "STREAMING-MARKDOWN")
+                .with_status(ChatTurnStatus::Streaming),
         );
         Some(id)
     } else {
@@ -112,7 +112,7 @@ fn main() -> Result<()> {
                 for idx in 0..3u64 {
                     let message = ChatMessage::text(
                         store.next_message_id(),
-                        ChatSender::System,
+                        ChatRole::System,
                         format!("HISTORY-{page}-{idx}"),
                     );
                     older.push(message);
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
             let text = submit_response_text(response);
             store.push(ChatMessage::text(
                 store.next_message_id(),
-                ChatSender::System,
+                ChatRole::System,
                 text,
             ));
         }
@@ -179,12 +179,12 @@ fn main() -> Result<()> {
                     }
                     '2' => {
                         store.append_delta(id, "\n}\n```");
-                        store.set_status(id, ChatMessageStatus::Final);
+                        store.set_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     '3' => {
                         store.update_text(id, "| Name | Value |\n| --- | --- |\n| half |");
-                        store.set_status(id, ChatMessageStatus::InProgress);
+                        store.set_status(id, ChatTurnStatus::Streaming);
                         continue;
                     }
                     '4' => {
@@ -192,17 +192,17 @@ fn main() -> Result<()> {
                             id,
                             "| Name | Value |\n| --- | --- |\n| half | stable |\n",
                         );
-                        store.set_status(id, ChatMessageStatus::Final);
+                        store.set_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     '5' => {
                         store.update_text(id, "STREAM-DELTA-A");
-                        store.set_status(id, ChatMessageStatus::InProgress);
+                        store.set_status(id, ChatTurnStatus::Streaming);
                         continue;
                     }
                     '6' => {
                         store.append_delta(id, " + STREAM-DELTA-B");
-                        store.set_status(id, ChatMessageStatus::Final);
+                        store.set_status(id, ChatTurnStatus::Complete);
                         continue;
                     }
                     _ => {}
@@ -220,11 +220,11 @@ fn main() -> Result<()> {
                         continue;
                     }
                     '3' => {
-                        store.set_tool_status(id, ChatToolCallStatus::Done);
+                        store.set_tool_status(id, ToolStatus::Done);
                         continue;
                     }
                     '4' => {
-                        store.set_tool_status(id, ChatToolCallStatus::Error);
+                        store.set_tool_status(id, ToolStatus::Error);
                         continue;
                     }
                     _ => {}
@@ -235,7 +235,7 @@ fn main() -> Result<()> {
                 'a' => {
                     store.push(ChatMessage::text(
                         store.next_message_id(),
-                        ChatSender::Assistant,
+                        ChatRole::Assistant,
                         "FOLLOW-1",
                     ));
                     continue;
@@ -243,7 +243,7 @@ fn main() -> Result<()> {
                 'b' => {
                     store.push(ChatMessage::text(
                         store.next_message_id(),
-                        ChatSender::Assistant,
+                        ChatRole::Assistant,
                         "FOLLOW-2",
                     ));
                     continue;
@@ -251,7 +251,7 @@ fn main() -> Result<()> {
                 'd' => {
                     store.push(ChatMessage::text(
                         store.next_message_id(),
-                        ChatSender::Assistant,
+                        ChatRole::Assistant,
                         "FOLLOW-3",
                     ));
                     continue;
@@ -325,9 +325,9 @@ fn main() -> Result<()> {
 fn seed_messages(store: &ChatMessageStore, count: u64) {
     for idx in 0..count {
         let sender = if idx % 2 == 0 {
-            ChatSender::User
+            ChatRole::User
         } else {
-            ChatSender::Assistant
+            ChatRole::Assistant
         };
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
@@ -340,14 +340,14 @@ fn seed_artifacts(store: &ChatMessageStore) -> HashMap<ArtifactId, Artifact> {
 
     store.push(ChatMessage::artifact(
         store.next_message_id(),
-        ChatSender::Assistant,
+        ChatRole::Assistant,
         ArtifactKind::Code,
         code_id.clone(),
         "main.rs",
     ));
     store.push(ChatMessage::artifact(
         store.next_message_id(),
-        ChatSender::Assistant,
+        ChatRole::Assistant,
         ArtifactKind::Diff,
         diff_id.clone(),
         "main.patch",

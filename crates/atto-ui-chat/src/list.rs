@@ -19,8 +19,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
-    ArtifactId, ArtifactKind, ChatAlignment, ChatMessage, ChatMessageContent, ChatMessageStatus,
-    ChatToolCallStatus,
+    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
+    ChatMessage, ChatMessageMeta, ChatRole, ChatTurnStatus, TextBlock, ToolInput, ToolStatus,
+    ToolUseBlock,
 };
 
 const DEFAULT_WRAP_WIDTH: u16 = 72;
@@ -398,20 +399,23 @@ fn build_list(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ChatMessageRowKey {
     id: crate::message::ChatMessageId,
-    sender: crate::message::ChatSender,
+    role: ChatRole,
     timestamp: Option<String>,
-    status: ChatMessageStatus,
+    status: ChatTurnStatus,
     content: ChatMessageContentKey,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ChatMessageContentKey {
+    Empty,
     Text,
-    File {
+    Attachment {
         name: String,
         url: Option<String>,
+        mime: Option<String>,
     },
-    ToolCall {
+    ToolUse {
+        call_id: String,
         name: String,
     },
     Artifact {
@@ -433,31 +437,48 @@ impl ChatMessageRowKey {
     fn placeholder(&self) -> ChatMessage {
         ChatMessage {
             id: self.id,
-            sender: self.sender.clone(),
-            timestamp: self.timestamp.clone(),
+            role: self.role.clone(),
             status: self.status.clone(),
-            content: match &self.content {
-                ChatMessageContentKey::Text => ChatMessageContent::Text {
+            meta: ChatMessageMeta {
+                timestamp: self.timestamp.clone(),
+                ..ChatMessageMeta::default()
+            },
+            blocks: match &self.content {
+                ChatMessageContentKey::Empty => Vec::new(),
+                ChatMessageContentKey::Text => vec![ChatBlock::Text(TextBlock {
+                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
                     markdown: String::new(),
-                },
-                ChatMessageContentKey::File { name, url } => ChatMessageContent::File {
-                    name: name.clone(),
-                    url: url.clone(),
-                },
-                ChatMessageContentKey::ToolCall { name } => ChatMessageContent::ToolCall {
-                    name: name.clone(),
-                    status: ChatToolCallStatus::Running,
-                    output: String::new(),
-                },
+                    streaming: self.status.is_streaming(),
+                })],
+                ChatMessageContentKey::Attachment { name, url, mime } => {
+                    vec![ChatBlock::Attachment(AttachmentBlock {
+                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        name: name.clone(),
+                        url: url.clone(),
+                        mime: mime.clone(),
+                    })]
+                }
+                ChatMessageContentKey::ToolUse { call_id, name } => {
+                    vec![ChatBlock::ToolUse(ToolUseBlock {
+                        id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                        input: ToolInput::Text(String::new()),
+                        status: ToolStatus::Running,
+                        approval: None,
+                        collapsed: false,
+                    })]
+                }
                 ChatMessageContentKey::Artifact {
                     kind,
                     anchor,
                     title,
-                } => ChatMessageContent::Artifact {
+                } => vec![ChatBlock::Artifact(ArtifactBlock {
+                    id: crate::message::ChatBlockId::new(self.id.0.saturating_mul(1_000) + 1),
                     kind: kind.clone(),
                     anchor: anchor.clone(),
                     title: title.clone(),
-                },
+                })],
             },
         }
     }
@@ -468,30 +489,49 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageRowKey> {
         .iter()
         .map(|message| ChatMessageRowKey {
             id: message.id,
-            sender: message.sender.clone(),
-            timestamp: message.timestamp.clone(),
+            role: message.role.clone(),
+            timestamp: message.meta.timestamp.clone(),
             status: message.status.clone(),
-            content: match &message.content {
-                ChatMessageContent::Text { .. } => ChatMessageContentKey::Text,
-                ChatMessageContent::File { name, url } => ChatMessageContentKey::File {
+            content: message_content_key(message),
+        })
+        .collect()
+}
+
+fn message_content_key(message: &ChatMessage) -> ChatMessageContentKey {
+    for block in &message.blocks {
+        match block {
+            ChatBlock::Text(_) => return ChatMessageContentKey::Text,
+            ChatBlock::Attachment(AttachmentBlock {
+                name, url, mime, ..
+            }) => {
+                return ChatMessageContentKey::Attachment {
                     name: name.clone(),
                     url: url.clone(),
-                },
-                ChatMessageContent::ToolCall { name, .. } => {
-                    ChatMessageContentKey::ToolCall { name: name.clone() }
-                }
-                ChatMessageContent::Artifact {
-                    kind,
-                    anchor,
-                    title,
-                } => ChatMessageContentKey::Artifact {
+                    mime: mime.clone(),
+                };
+            }
+            ChatBlock::ToolUse(ToolUseBlock { call_id, name, .. }) => {
+                return ChatMessageContentKey::ToolUse {
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                };
+            }
+            ChatBlock::Artifact(ArtifactBlock {
+                kind,
+                anchor,
+                title,
+                ..
+            }) => {
+                return ChatMessageContentKey::Artifact {
                     kind: kind.clone(),
                     anchor: anchor.clone(),
                     title: title.clone(),
-                },
-            },
-        })
-        .collect()
+                };
+            }
+            ChatBlock::ToolResult(_) => {}
+        }
+    }
+    ChatMessageContentKey::Empty
 }
 
 #[derive(Default)]
@@ -538,12 +578,16 @@ impl ChatMessageRow {
             binding.set(markdown);
         }
 
-        if let ChatMessageContent::ToolCall { status, output, .. } = &message.content {
+        if let Some(tool) = message.first_tool_use() {
             if let Some(binding) = &self.body_bindings.tool_output {
-                binding.set(output.clone());
+                let output = message
+                    .first_tool_result()
+                    .map(|result| result.output.as_text().to_string())
+                    .unwrap_or_default();
+                binding.set(output);
             }
             if let Some(binding) = &self.body_bindings.tool_status {
-                binding.set(tool_status_to_disclosure(status));
+                binding.set(tool_status_to_disclosure(&tool.status));
             }
         }
     }
@@ -560,7 +604,7 @@ fn build_row_view(
     };
 
     if config.show_timestamps
-        && let Some(ts) = &message.timestamp
+        && let Some(ts) = &message.meta.timestamp
     {
         column = column.child_with_layout(ChatTimestampDivider::new(ts.clone()), row_layout);
     }
@@ -582,13 +626,9 @@ fn message_markdown_for_render(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
 ) -> Option<String> {
-    let ChatMessageContent::Text { markdown } = &message.content else {
-        return None;
-    };
+    let markdown = &message.first_text()?.markdown;
     let mut content = markdown.clone();
-    if matches!(message.status, ChatMessageStatus::InProgress)
-        && !config.in_progress_suffix.is_empty()
-    {
+    if message.status.is_streaming() && !config.in_progress_suffix.is_empty() {
         content.push_str(&config.in_progress_suffix);
     }
     Some(content)
@@ -653,7 +693,7 @@ fn build_aligned_bubble(
         ..LayoutParams::default()
     };
 
-    let row = match message.sender.alignment() {
+    let row = match message.role.alignment() {
         ChatAlignment::Left => HStack::new()
             .child_with_layout(bubble, bubble_layout)
             .child_with_layout(Spacer::new(), spacer_layout),
@@ -680,7 +720,7 @@ fn build_bubble(
         .child_with_layout(header, content_layout)
         .child_with_layout(body, content_layout);
 
-    if matches!(message.status, ChatMessageStatus::InProgress) {
+    if message.status.is_streaming() {
         let spinner = Spinner::new("Generating")
             .icon_style(SpinnerIconStyle::Dots)
             .spacing(1);
@@ -692,14 +732,16 @@ fn build_bubble(
 
 fn build_header(message: &ChatMessage) -> HStack {
     let mut header = HStack::new().with_spacing(1);
-    header = header.child(Text::new(message.sender.label()));
+    header = header.child(Text::new(message.role.label()));
 
     match &message.status {
-        ChatMessageStatus::Failed(reason) => {
-            header = header.child(Text::new(format!("(failed: {reason})")));
+        ChatTurnStatus::Failed(error) => {
+            header = header.child(Text::new(format!("(failed: {})", error.message)));
         }
-        ChatMessageStatus::Final => {}
-        ChatMessageStatus::InProgress => {}
+        ChatTurnStatus::Canceled => {
+            header = header.child(Text::new("(canceled)"));
+        }
+        ChatTurnStatus::Complete | ChatTurnStatus::Streaming => {}
     }
 
     header
@@ -769,8 +811,12 @@ impl ChatMessageBody {
         message: &ChatMessage,
         config: &ChatMessageRowConfig,
     ) -> (Self, ChatMessageRowBindings) {
-        match &message.content {
-            ChatMessageContent::Text { .. } => {
+        let display_block = message
+            .blocks
+            .iter()
+            .find(|block| !matches!(block, ChatBlock::ToolResult(_)));
+        match display_block {
+            Some(ChatBlock::Text(_)) => {
                 let content =
                     Binding::new(message_markdown_for_render(message, config).unwrap_or_default());
                 (
@@ -786,7 +832,7 @@ impl ChatMessageBody {
                     },
                 )
             }
-            ChatMessageContent::File { name, url } => {
+            Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
                 let mut view = VStack::new().with_spacing(0);
                 view = view.child(Text::new(format!("File: {name}")));
                 if let Some(url) = url {
@@ -797,14 +843,14 @@ impl ChatMessageBody {
                     ChatMessageRowBindings::default(),
                 )
             }
-            ChatMessageContent::ToolCall {
-                name,
-                status,
-                output,
-            } => {
-                let output = Binding::new(output.clone());
-                let status = Binding::new(tool_status_to_disclosure(status));
-                let view = Disclosure::new(format!("Tool: {name}"))
+            Some(ChatBlock::ToolUse(tool)) => {
+                let current_output = message
+                    .first_tool_result()
+                    .map(|result| result.output.as_text().to_string())
+                    .unwrap_or_default();
+                let output = Binding::new(current_output);
+                let status = Binding::new(tool_status_to_disclosure(&tool.status));
+                let view = Disclosure::new(format!("Tool: {}", tool.name))
                     .expanded(true)
                     .status(status.clone())
                     .content(output.clone());
@@ -817,11 +863,12 @@ impl ChatMessageBody {
                     },
                 )
             }
-            ChatMessageContent::Artifact {
+            Some(ChatBlock::Artifact(ArtifactBlock {
                 kind,
                 anchor,
                 title,
-            } => (
+                ..
+            })) => (
                 ChatMessageBody::Artifact(ArtifactLink::new(
                     kind.clone(),
                     anchor.clone(),
@@ -830,15 +877,30 @@ impl ChatMessageBody {
                 )),
                 ChatMessageRowBindings::default(),
             ),
+            Some(ChatBlock::ToolResult(_)) | None => {
+                let content = Binding::new(String::new());
+                (
+                    ChatMessageBody::Markdown(
+                        MarkdownViewer::new(content.clone())
+                            .streaming_tolerant(true)
+                            .wrap_width(config.wrap_width)
+                            .vertical_scrollbar(ScrollbarVisibility::Never),
+                    ),
+                    ChatMessageRowBindings {
+                        markdown: Some(content),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
         }
     }
 }
 
-fn tool_status_to_disclosure(status: &ChatToolCallStatus) -> DisclosureStatus {
+fn tool_status_to_disclosure(status: &ToolStatus) -> DisclosureStatus {
     match status {
-        ChatToolCallStatus::Running => DisclosureStatus::Running,
-        ChatToolCallStatus::Done => DisclosureStatus::Done,
-        ChatToolCallStatus::Error => DisclosureStatus::Error,
+        ToolStatus::Pending | ToolStatus::Running => DisclosureStatus::Running,
+        ToolStatus::Done => DisclosureStatus::Done,
+        ToolStatus::Error | ToolStatus::Canceled => DisclosureStatus::Error,
     }
 }
 
@@ -1025,22 +1087,20 @@ fn mouse_in_area(area: Rect, mouse: &MouseEvent, coordinate_space: MouseCoordina
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ChatMessageId, ChatSender};
+    use crate::message::{ChatMessageId, ChatRole};
 
     #[test]
     fn row_keys_ignore_text_markdown_for_streaming_deltas() {
         let id = ChatMessageId::new(7);
-        let mut first = ChatMessage::text(id, ChatSender::Assistant, "hello")
-            .with_status(ChatMessageStatus::InProgress);
+        let mut first = ChatMessage::text(id, ChatRole::Assistant, "hello")
+            .with_status(ChatTurnStatus::Streaming);
         let first_key = row_keys_from_messages(&[first.clone()]);
 
-        first.content = ChatMessageContent::Text {
-            markdown: "hello world".to_string(),
-        };
+        first.first_text_mut().expect("text block").markdown = "hello world".to_string();
         let delta_key = row_keys_from_messages(&[first.clone()]);
         assert_eq!(first_key, delta_key);
 
-        first.status = ChatMessageStatus::Final;
+        first.set_turn_status(ChatTurnStatus::Complete);
         let final_key = row_keys_from_messages(&[first]);
         assert_ne!(delta_key, final_key);
     }
@@ -1048,23 +1108,19 @@ mod tests {
     #[test]
     fn row_keys_ignore_tool_output_and_tool_status_for_streaming_updates() {
         let id = ChatMessageId::new(8);
-        let mut first =
-            ChatMessage::tool_call(id, "build", ChatToolCallStatus::Running, "starting");
+        let mut first = ChatMessage::tool_call(id, "build", ToolStatus::Running, "starting");
         let first_key = row_keys_from_messages(&[first.clone()]);
 
-        first.content = ChatMessageContent::ToolCall {
-            name: "build".to_string(),
-            status: ChatToolCallStatus::Done,
-            output: "starting\nfinished".to_string(),
-        };
+        first.first_tool_use_mut().expect("tool block").status = ToolStatus::Done;
+        first
+            .first_tool_result_mut()
+            .expect("tool result block")
+            .output
+            .set_text("starting\nfinished".to_string());
         let updated_key = row_keys_from_messages(&[first.clone()]);
         assert_eq!(first_key, updated_key);
 
-        first.content = ChatMessageContent::ToolCall {
-            name: "test".to_string(),
-            status: ChatToolCallStatus::Done,
-            output: "starting\nfinished".to_string(),
-        };
+        first.first_tool_use_mut().expect("tool block").name = "test".to_string();
         let renamed_key = row_keys_from_messages(&[first]);
         assert_ne!(updated_key, renamed_key);
     }
@@ -1074,18 +1130,16 @@ mod tests {
         let id = ChatMessageId::new(9);
         let mut first = ChatMessage::artifact(
             id,
-            ChatSender::Assistant,
+            ChatRole::Assistant,
             ArtifactKind::Code,
             ArtifactId::new("code-1"),
             "main.rs",
         );
         let first_key = row_keys_from_messages(&[first.clone()]);
 
-        first.content = ChatMessageContent::Artifact {
-            kind: ArtifactKind::Code,
-            anchor: ArtifactId::new("code-1"),
-            title: "lib.rs".to_string(),
-        };
+        if let ChatBlock::Artifact(artifact) = &mut first.blocks[0] {
+            artifact.title = "lib.rs".to_string();
+        }
         let renamed_key = row_keys_from_messages(&[first]);
 
         assert_ne!(first_key, renamed_key);

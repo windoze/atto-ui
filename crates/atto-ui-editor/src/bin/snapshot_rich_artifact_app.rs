@@ -11,7 +11,7 @@ use atto_ui::reactive::EventQueue;
 use atto_ui::wm::{Window, WindowKind};
 use atto_ui_chat::{
     Artifact, ArtifactId, ArtifactKind, ArtifactViewer, ChatMessage, ChatMessageList,
-    ChatMessageStore, ChatSender,
+    ChatMessageStore, ChatRole,
 };
 use atto_ui_editor::RichArtifactViewer;
 
@@ -72,14 +72,14 @@ fn seed_artifacts(store: &ChatMessageStore) -> HashMap<ArtifactId, Artifact> {
 
     store.push(ChatMessage::artifact(
         store.next_message_id(),
-        ChatSender::Assistant,
+        ChatRole::Assistant,
         ArtifactKind::Code,
         code_id.clone(),
         "main.rs",
     ));
     store.push(ChatMessage::artifact(
         store.next_message_id(),
-        ChatSender::Assistant,
+        ChatRole::Assistant,
         ArtifactKind::Diff,
         diff_id.clone(),
         "main.patch",

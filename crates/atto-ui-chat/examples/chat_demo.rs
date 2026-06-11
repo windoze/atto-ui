@@ -15,8 +15,8 @@ use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui_chat::{
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMessage, ChatMessageList, ChatMessageStatus, ChatMessageStore,
-    ChatPanel, ChatSender,
+    ChatInputResponse, ChatMessage, ChatMessageList, ChatMessageStore, ChatPanel, ChatRole,
+    ChatTurnStatus,
 };
 
 const REPLIES: &[&str] = &[
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
                 for idx in 0..3u64 {
                     let id = store.next_message_id();
                     let text = format!("(历史记录 {page}) 上一段对话 #{idx}");
-                    let message = ChatMessage::text(id, ChatSender::System, text)
+                    let message = ChatMessage::text(id, ChatRole::System, text)
                         .with_timestamp(format!("History {page}"));
                     older.push(message);
                 }
@@ -157,14 +157,14 @@ fn handle_command(handle: &ChatInputHandle, text: &str) -> bool {
 
 fn push_user_message(store: &ChatMessageStore, text: String) {
     let id = store.next_message_id();
-    let message = ChatMessage::text(id, ChatSender::User, text).with_timestamp(now_label());
+    let message = ChatMessage::text(id, ChatRole::User, text).with_timestamp(now_label());
     store.push(message);
 }
 
 fn seed_messages(store: &ChatMessageStore) {
     let welcome = ChatMessage::text(
         store.next_message_id(),
-        ChatSender::System,
+        ChatRole::System,
         "欢迎来到 ChatMessageList Demo。输入 /confirm 或 /choices 体验不同输入模式。",
     )
     .with_timestamp("Boot".to_string());
@@ -208,7 +208,7 @@ impl MockAiServer {
                 let id = store.next_message_id();
                 let message = ChatMessage::file(
                     id,
-                    ChatSender::Assistant,
+                    ChatRole::Assistant,
                     "report.txt",
                     Some("https://example.com/report.txt".to_string()),
                 )
@@ -222,7 +222,7 @@ impl MockAiServer {
             } else {
                 let id = store.next_message_id();
                 let message =
-                    ChatMessage::text(id, ChatSender::Assistant, reply).with_timestamp(now_label());
+                    ChatMessage::text(id, ChatRole::Assistant, reply).with_timestamp(now_label());
                 store.push(message);
             }
         });
@@ -231,8 +231,8 @@ impl MockAiServer {
 
 fn stream_reply(store: &ChatMessageStore, reply: String) {
     let id = store.next_message_id();
-    let message = ChatMessage::text(id, ChatSender::Assistant, "")
-        .with_status(ChatMessageStatus::InProgress)
+    let message = ChatMessage::text(id, ChatRole::Assistant, "")
+        .with_status(ChatTurnStatus::Streaming)
         .with_timestamp(now_label());
     store.push(message);
 
@@ -249,7 +249,7 @@ fn stream_reply(store: &ChatMessageStore, reply: String) {
         thread::sleep(Duration::from_millis(pause));
     }
 
-    store.set_status(id, ChatMessageStatus::Final);
+    store.set_status(id, ChatTurnStatus::Complete);
 }
 
 fn now_label() -> String {

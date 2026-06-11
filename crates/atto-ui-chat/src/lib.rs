@@ -18,8 +18,10 @@ pub use input::{
 };
 pub use list::ChatMessageList;
 pub use message::{
-    Artifact, ArtifactId, ArtifactKind, ChatAlignment, ChatMessage, ChatMessageContent,
-    ChatMessageId, ChatMessageStatus, ChatSender, ChatToolCallStatus,
+    ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId, ArtifactKind,
+    AttachmentBlock, ChatAlignment, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatMessage,
+    ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus, StopReason, TextBlock, TokenUsage,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 pub use panel::ChatPanel;
 pub use store::ChatMessageStore;

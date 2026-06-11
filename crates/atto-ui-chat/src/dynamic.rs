@@ -13,8 +13,10 @@ use atto_ui::{
 
 use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
 use crate::{
-    ArtifactId, ArtifactKind, ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageContent,
-    ChatMessageId, ChatMessageList, ChatMessageStatus, ChatSender, ChatToolCallStatus,
+    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatBlock, ChatError, ChatErrorKind,
+    ChatInputHandle, ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
+    ChatRole, ChatTurnStatus, TextBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 
 impl ComponentPropertySchema for ChatMessageList {
@@ -74,46 +76,54 @@ fn message_to_value(message: &ChatMessage) -> ComponentValue {
     out.insert("id".to_string(), ComponentValue::U64(message.id.0));
     out.insert(
         "sender".to_string(),
-        ComponentValue::String(sender_to_string(&message.sender)),
+        ComponentValue::String(role_to_string(&message.role)),
     );
     out.insert(
         "timestamp".to_string(),
         message
+            .meta
             .timestamp
             .as_ref()
             .map(|v| ComponentValue::String(v.clone()))
             .unwrap_or(ComponentValue::Null),
     );
     out.insert("status".to_string(), status_to_value(&message.status));
-    out.insert("content".to_string(), content_to_value(&message.content));
+    out.insert("content".to_string(), content_to_value(message));
     ComponentValue::Map(out)
 }
 
-fn sender_to_string(sender: &ChatSender) -> String {
-    match sender {
-        ChatSender::User => "user".to_string(),
-        ChatSender::Assistant => "assistant".to_string(),
-        ChatSender::System => "system".to_string(),
-        ChatSender::Tool(name) => format!("tool:{name}"),
-        ChatSender::Custom(name) => format!("custom:{name}"),
+fn role_to_string(role: &ChatRole) -> String {
+    match role {
+        ChatRole::User => "user".to_string(),
+        ChatRole::Assistant => "assistant".to_string(),
+        ChatRole::System => "system".to_string(),
+        ChatRole::Custom(name) => format!("custom:{name}"),
     }
 }
 
-fn status_to_value(status: &ChatMessageStatus) -> ComponentValue {
+fn status_to_value(status: &ChatTurnStatus) -> ComponentValue {
     match status {
-        ChatMessageStatus::Final => ComponentValue::String("final".to_string()),
-        ChatMessageStatus::InProgress => ComponentValue::String("in_progress".to_string()),
-        ChatMessageStatus::Failed(reason) => {
+        ChatTurnStatus::Complete => ComponentValue::String("final".to_string()),
+        ChatTurnStatus::Streaming => ComponentValue::String("in_progress".to_string()),
+        ChatTurnStatus::Canceled => ComponentValue::String("canceled".to_string()),
+        ChatTurnStatus::Failed(error) => {
             let mut map = BTreeMap::new();
-            map.insert("failed".to_string(), ComponentValue::String(reason.clone()));
+            map.insert(
+                "failed".to_string(),
+                ComponentValue::String(error.message.clone()),
+            );
             ComponentValue::Map(map)
         }
     }
 }
 
-fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
-    match content {
-        ChatMessageContent::Text { markdown } => {
+fn content_to_value(message: &ChatMessage) -> ComponentValue {
+    let display_block = message
+        .blocks
+        .iter()
+        .find(|block| !matches!(block, ChatBlock::ToolResult(_)));
+    match display_block {
+        Some(ChatBlock::Text(TextBlock { markdown, .. })) => {
             let mut map = BTreeMap::new();
             map.insert(
                 "markdown".to_string(),
@@ -121,7 +131,7 @@ fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
             );
             ComponentValue::Map(map)
         }
-        ChatMessageContent::File { name, url } => {
+        Some(ChatBlock::Attachment(AttachmentBlock { name, url, .. })) => {
             let mut file = BTreeMap::new();
             file.insert("name".to_string(), ComponentValue::String(name.clone()));
             file.insert(
@@ -134,27 +144,31 @@ fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
             map.insert("file".to_string(), ComponentValue::Map(file));
             ComponentValue::Map(map)
         }
-        ChatMessageContent::ToolCall {
-            name,
-            status,
-            output,
-        } => {
-            let mut tool = BTreeMap::new();
-            tool.insert("name".to_string(), ComponentValue::String(name.clone()));
-            tool.insert(
-                "status".to_string(),
-                ComponentValue::String(tool_status_to_string(status).to_string()),
+        Some(ChatBlock::ToolUse(tool)) => {
+            let mut tool_map = BTreeMap::new();
+            tool_map.insert(
+                "name".to_string(),
+                ComponentValue::String(tool.name.clone()),
             );
-            tool.insert("output".to_string(), ComponentValue::String(output.clone()));
+            tool_map.insert(
+                "status".to_string(),
+                ComponentValue::String(tool_status_to_string(&tool.status).to_string()),
+            );
+            let output = message
+                .first_tool_result()
+                .map(|result| result.output.as_text().to_string())
+                .unwrap_or_default();
+            tool_map.insert("output".to_string(), ComponentValue::String(output));
             let mut map = BTreeMap::new();
-            map.insert("tool_call".to_string(), ComponentValue::Map(tool));
+            map.insert("tool_call".to_string(), ComponentValue::Map(tool_map));
             ComponentValue::Map(map)
         }
-        ChatMessageContent::Artifact {
+        Some(ChatBlock::Artifact(ArtifactBlock {
             kind,
             anchor,
             title,
-        } => {
+            ..
+        })) => {
             let mut artifact = BTreeMap::new();
             artifact.insert(
                 "kind".to_string(),
@@ -169,14 +183,24 @@ fn content_to_value(content: &ChatMessageContent) -> ComponentValue {
             map.insert("artifact".to_string(), ComponentValue::Map(artifact));
             ComponentValue::Map(map)
         }
+        Some(ChatBlock::ToolResult(_)) | None => {
+            let mut map = BTreeMap::new();
+            map.insert(
+                "markdown".to_string(),
+                ComponentValue::String(String::new()),
+            );
+            ComponentValue::Map(map)
+        }
     }
 }
 
-fn tool_status_to_string(status: &ChatToolCallStatus) -> &'static str {
+fn tool_status_to_string(status: &ToolStatus) -> &'static str {
     match status {
-        ChatToolCallStatus::Running => "running",
-        ChatToolCallStatus::Done => "done",
-        ChatToolCallStatus::Error => "error",
+        ToolStatus::Pending => "pending",
+        ToolStatus::Running => "running",
+        ToolStatus::Done => "done",
+        ToolStatus::Error => "error",
+        ToolStatus::Canceled => "canceled",
     }
 }
 
@@ -190,11 +214,12 @@ fn parse_message_value(value: &ComponentValue) -> Result<ChatMessage, String> {
         .and_then(ComponentValue::as_u64)
         .ok_or_else(|| "missing id".to_string())?;
 
-    let sender = map
-        .get("sender")
-        .map(parse_sender_value)
+    let role = map
+        .get("role")
+        .or_else(|| map.get("sender"))
+        .map(parse_role_value)
         .transpose()?
-        .unwrap_or(ChatSender::Assistant);
+        .unwrap_or(ChatRole::Assistant);
 
     let timestamp = map
         .get("timestamp")
@@ -205,64 +230,70 @@ fn parse_message_value(value: &ComponentValue) -> Result<ChatMessage, String> {
         .get("status")
         .map(parse_status_value)
         .transpose()?
-        .unwrap_or(ChatMessageStatus::Final);
+        .unwrap_or(ChatTurnStatus::Complete);
 
     let content_value = map
         .get("content")
         .or_else(|| map.get("markdown"))
         .ok_or_else(|| "missing content".to_string())?;
-    let content = parse_content_value(content_value)?;
+    let blocks = parse_content_value(ChatMessageId(id), content_value)?;
 
     Ok(ChatMessage {
         id: ChatMessageId(id),
-        sender,
-        timestamp,
+        role,
+        blocks,
         status,
-        content,
+        meta: ChatMessageMeta {
+            timestamp,
+            ..ChatMessageMeta::default()
+        },
     })
 }
 
-fn parse_sender_value(value: &ComponentValue) -> Result<ChatSender, String> {
+fn parse_role_value(value: &ComponentValue) -> Result<ChatRole, String> {
     match value {
-        ComponentValue::String(raw) => parse_sender_string(raw),
+        ComponentValue::String(raw) => parse_role_string(raw),
         ComponentValue::Map(map) => {
-            if let Some(name) = map.get("tool").and_then(ComponentValue::as_str) {
-                return Ok(ChatSender::Tool(name.to_string()));
+            if map.contains_key("tool") {
+                return Ok(ChatRole::Assistant);
             }
             if let Some(name) = map.get("custom").and_then(ComponentValue::as_str) {
-                return Ok(ChatSender::Custom(name.to_string()));
+                return Ok(ChatRole::Custom(name.to_string()));
             }
-            Err("sender map must contain 'tool' or 'custom'".to_string())
+            Err("role map must contain 'tool' or 'custom'".to_string())
         }
-        other => Err(format!("sender must be string or map, got {other:?}")),
+        other => Err(format!("role must be string or map, got {other:?}")),
     }
 }
 
-fn parse_sender_string(raw: &str) -> Result<ChatSender, String> {
+fn parse_role_string(raw: &str) -> Result<ChatRole, String> {
     let raw = raw.trim();
     let lower = raw.to_ascii_lowercase();
     match lower.as_str() {
-        "user" => Ok(ChatSender::User),
-        "assistant" => Ok(ChatSender::Assistant),
-        "system" => Ok(ChatSender::System),
+        "user" => Ok(ChatRole::User),
+        "assistant" => Ok(ChatRole::Assistant),
+        "system" => Ok(ChatRole::System),
         _ => {
-            if let Some(rest) = raw.strip_prefix("tool:") {
-                return Ok(ChatSender::Tool(rest.trim().to_string()));
+            if raw.strip_prefix("tool:").is_some() {
+                return Ok(ChatRole::Assistant);
             }
             if let Some(rest) = raw.strip_prefix("custom:") {
-                return Ok(ChatSender::Custom(rest.trim().to_string()));
+                return Ok(ChatRole::Custom(rest.trim().to_string()));
             }
-            Err(format!("unknown sender '{raw}'"))
+            Err(format!("unknown role '{raw}'"))
         }
     }
 }
 
-fn parse_status_value(value: &ComponentValue) -> Result<ChatMessageStatus, String> {
+fn parse_status_value(value: &ComponentValue) -> Result<ChatTurnStatus, String> {
     match value {
         ComponentValue::String(raw) => parse_status_string(raw),
         ComponentValue::Map(map) => {
             if let Some(reason) = map.get("failed").and_then(ComponentValue::as_str) {
-                return Ok(ChatMessageStatus::Failed(reason.to_string()));
+                return Ok(ChatTurnStatus::Failed(ChatError::new(
+                    ChatErrorKind::Other,
+                    reason.to_string(),
+                )));
             }
             Err("status map must contain 'failed'".to_string())
         }
@@ -270,30 +301,40 @@ fn parse_status_value(value: &ComponentValue) -> Result<ChatMessageStatus, Strin
     }
 }
 
-fn parse_status_string(raw: &str) -> Result<ChatMessageStatus, String> {
+fn parse_status_string(raw: &str) -> Result<ChatTurnStatus, String> {
     let lower = raw.trim().to_ascii_lowercase();
     match lower.as_str() {
-        "final" => Ok(ChatMessageStatus::Final),
-        "inprogress" | "in_progress" => Ok(ChatMessageStatus::InProgress),
+        "final" | "complete" => Ok(ChatTurnStatus::Complete),
+        "inprogress" | "in_progress" | "streaming" => Ok(ChatTurnStatus::Streaming),
+        "canceled" | "cancelled" => Ok(ChatTurnStatus::Canceled),
         _ => Err(format!("unknown status '{raw}'")),
     }
 }
 
-fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, String> {
+fn parse_content_value(
+    message_id: ChatMessageId,
+    value: &ComponentValue,
+) -> Result<Vec<ChatBlock>, String> {
     match value {
-        ComponentValue::String(markdown) => Ok(ChatMessageContent::Text {
+        ComponentValue::String(markdown) => Ok(vec![ChatBlock::Text(TextBlock {
+            id: legacy_block_id(message_id, 0),
             markdown: markdown.clone(),
-        }),
+            streaming: false,
+        })]),
         ComponentValue::Map(map) => {
             if let Some(markdown) = map.get("markdown").and_then(ComponentValue::as_str) {
-                return Ok(ChatMessageContent::Text {
+                return Ok(vec![ChatBlock::Text(TextBlock {
+                    id: legacy_block_id(message_id, 0),
                     markdown: markdown.to_string(),
-                });
+                    streaming: false,
+                })]);
             }
             if let Some(text) = map.get("text").and_then(ComponentValue::as_str) {
-                return Ok(ChatMessageContent::Text {
+                return Ok(vec![ChatBlock::Text(TextBlock {
+                    id: legacy_block_id(message_id, 0),
                     markdown: text.to_string(),
-                });
+                    streaming: false,
+                })]);
             }
             if let Some(ComponentValue::Map(file)) = map.get("file") {
                 let name = file
@@ -305,7 +346,12 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
                     .get("url")
                     .and_then(ComponentValue::as_str)
                     .map(|s| s.to_string());
-                return Ok(ChatMessageContent::File { name, url });
+                return Ok(vec![ChatBlock::Attachment(AttachmentBlock {
+                    id: legacy_block_id(message_id, 0),
+                    name,
+                    url,
+                    mime: None,
+                })]);
             }
             if let Some(ComponentValue::Map(tool)) = map.get("tool_call") {
                 let name = tool
@@ -317,17 +363,33 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
                     .get("status")
                     .map(parse_tool_status_value)
                     .transpose()?
-                    .unwrap_or(ChatToolCallStatus::Running);
+                    .unwrap_or(ToolStatus::Running);
                 let output = tool
                     .get("output")
                     .and_then(ComponentValue::as_str)
                     .unwrap_or_default()
                     .to_string();
-                return Ok(ChatMessageContent::ToolCall {
+                let call_id = format!("tool-{}", message_id.0);
+                let mut blocks = vec![ChatBlock::ToolUse(ToolUseBlock {
+                    id: legacy_block_id(message_id, 0),
+                    call_id: call_id.clone(),
                     name,
+                    input: ToolInput::Text(String::new()),
                     status,
-                    output,
-                });
+                    approval: None,
+                    collapsed: false,
+                })];
+                if !output.is_empty() {
+                    blocks.push(ChatBlock::ToolResult(ToolResultBlock {
+                        id: legacy_block_id(message_id, 1),
+                        call_id,
+                        ok: status != ToolStatus::Error,
+                        exit_code: None,
+                        output: ToolOutput::Ansi(output),
+                        collapsed: false,
+                    }));
+                }
+                return Ok(blocks);
             }
             if let Some(ComponentValue::Map(artifact)) = map.get("artifact") {
                 let kind = artifact
@@ -346,11 +408,12 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
                     .and_then(ComponentValue::as_str)
                     .ok_or_else(|| "artifact missing title".to_string())?
                     .to_string();
-                return Ok(ChatMessageContent::Artifact {
+                return Ok(vec![ChatBlock::Artifact(ArtifactBlock {
+                    id: legacy_block_id(message_id, 0),
                     kind,
                     anchor,
                     title,
-                });
+                })]);
             }
             Err(
                 "content must contain 'markdown'/'text', 'file', 'tool_call', or 'artifact'"
@@ -359,6 +422,15 @@ fn parse_content_value(value: &ComponentValue) -> Result<ChatMessageContent, Str
         }
         other => Err(format!("content must be string or map, got {other:?}")),
     }
+}
+
+fn legacy_block_id(message_id: ChatMessageId, ordinal: u64) -> crate::ChatBlockId {
+    crate::ChatBlockId::new(
+        message_id
+            .0
+            .saturating_mul(1_000)
+            .saturating_add(ordinal + 1),
+    )
 }
 
 fn parse_artifact_id_value(value: &ComponentValue) -> Result<ArtifactId, String> {
@@ -389,19 +461,21 @@ fn parse_artifact_kind_string(raw: &str) -> Result<ArtifactKind, String> {
     }
 }
 
-fn parse_tool_status_value(value: &ComponentValue) -> Result<ChatToolCallStatus, String> {
+fn parse_tool_status_value(value: &ComponentValue) -> Result<ToolStatus, String> {
     match value {
         ComponentValue::String(raw) => parse_tool_status_string(raw),
         other => Err(format!("tool_call status must be string, got {other:?}")),
     }
 }
 
-fn parse_tool_status_string(raw: &str) -> Result<ChatToolCallStatus, String> {
+fn parse_tool_status_string(raw: &str) -> Result<ToolStatus, String> {
     let lower = raw.trim().to_ascii_lowercase();
     match lower.as_str() {
-        "running" => Ok(ChatToolCallStatus::Running),
-        "done" => Ok(ChatToolCallStatus::Done),
-        "error" => Ok(ChatToolCallStatus::Error),
+        "pending" => Ok(ToolStatus::Pending),
+        "running" => Ok(ToolStatus::Running),
+        "done" => Ok(ToolStatus::Done),
+        "error" => Ok(ToolStatus::Error),
+        "canceled" | "cancelled" => Ok(ToolStatus::Canceled),
         _ => Err(format!("unknown tool_call status '{raw}'")),
     }
 }
@@ -582,7 +656,7 @@ mod tests {
         let messages = vec![ChatMessage::tool_call(
             ChatMessageId(42),
             "build",
-            ChatToolCallStatus::Running,
+            ToolStatus::Running,
             "cargo test",
         )];
 
@@ -596,7 +670,7 @@ mod tests {
     fn chat_messages_round_trip_artifact_content() {
         let messages = vec![ChatMessage::artifact(
             ChatMessageId(43),
-            ChatSender::Assistant,
+            ChatRole::Assistant,
             ArtifactKind::Diff,
             ArtifactId::new("diff-1"),
             "main.patch",
