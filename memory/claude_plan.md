@@ -182,7 +182,7 @@
 - 已检查提交前状态/diff/最近提交：本次提交应包含 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`crates/atto-ui-markdown/src/markdown/viewer.rs`。既有无关变更 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P2.5] Add responsive chat wrapping` 提交并停止。
 
-## 当前任务：P2.6 杂项渲染修复
+## 历史记录：P2.6 杂项渲染修复
 
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P2.6 杂项渲染修复`。
 - 已查看最近提交：`ea0b02d [P2.5] Add responsive chat wrapping`，未声明与 `P2.6` 直接相关的额外未完成事项。
@@ -196,3 +196,18 @@
 - 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P2.6 记录。
 - 已检查提交前状态：本次提交将包含 P2.6 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P2.6] Fix miscellaneous chat rendering` 提交并停止。
+
+## 当前任务：P3.1 ToolUse 入参渲染
+
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.1 ToolUse 入参渲染`。
+- 已查看最近提交：`f16b3c1 [P2.6] Fix miscellaneous chat rendering`，未声明与 `P3.1` 直接相关的未完成事项。
+- 执行范围限定为 ToolUse 入参展示和状态图标，不推进 P3.2 的 ToolResult 配对或 P3.3 的超长输出尾部窗口。
+- 已确认现状：ToolUse 标题已使用工具名，Json 已能输出 key/value 文本；不足是 Text 入参没有明确单行/代码式呈现，ToolUse 内容不会随 block 版本同步刷新，且 `ToolStatus::Canceled` 复用 Error 图标。
+- 实施计划：新增 ToolUse 内容子视图与绑定，渲染 Text/Json/审批文本并支持后续同步；扩展 `DisclosureStatus` 增加 Canceled 图标；更新 snapshot/PTY 和单元测试覆盖 Text/Json/status 映射。
+- 已完成实现：`ToolUseDetailsView` 渲染 Text 入参为 `Input: ...` 单行或多行缩进代码块，Json 入参为 key/value 列表；ToolUse 行绑定随 block 版本同步入参和审批文本；`ToolStatus::Canceled` 映射到独立 `DisclosureStatus::Canceled`，默认图标为 `[-]`。
+- 已补充验证：snapshot chat app 的 tool-call 场景填充 Text 入参并支持切到 Canceled；PTY 测试覆盖 Text 入参、Json 入参和 Pending/Running/Done/Error/Canceled 图标；单测覆盖 Text/Json 入参格式与 Canceled 映射。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P3.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P3.1 记录。
+- 已检查提交前状态：本次提交将包含 P3.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`src/widgets/disclosure.rs`、`src/theme/mod.rs`、`src/component_api.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P3.1] Render tool use inputs` 提交并停止。

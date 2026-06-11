@@ -539,6 +539,10 @@ impl Theme {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         );
         self.named_styles.insert(
+            "disclosure-canceled".into(),
+            self.widget.dim.add_modifier(Modifier::CROSSED_OUT),
+        );
+        self.named_styles.insert(
             "disclosure-content".into(),
             self.window_bg.patch(self.widget.normal),
         );
@@ -765,6 +769,7 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("disclosure-running-indicator".into(), "[~]".into());
     g.insert("disclosure-done-indicator".into(), "[x]".into());
     g.insert("disclosure-error-indicator".into(), "[!]".into());
+    g.insert("disclosure-canceled-indicator".into(), "[-]".into());
 
     // Scrollbars (default matches current behavior).
     g.insert("scrollbar-track".into(), "░".into());

@@ -80,7 +80,14 @@ fn main() -> Result<()> {
         None
     } else if tool_call {
         let id = store.next_message_id();
-        let message = ChatMessage::tool_call(id, "build", ToolStatus::Running, "TOOL-START");
+        let mut message = ChatMessage::tool_call(id, "build", ToolStatus::Running, "TOOL-START");
+        if let Some(ChatBlock::ToolUse(tool)) = message
+            .blocks
+            .iter_mut()
+            .find(|block| matches!(block, ChatBlock::ToolUse(_)))
+        {
+            tool.input = ToolInput::Text("cargo build --workspace".to_string());
+        }
         let tool_use_id = message
             .blocks
             .iter()
@@ -267,6 +274,10 @@ fn main() -> Result<()> {
                     }
                     '4' => {
                         store.set_tool_status(tool_use_id, ToolStatus::Error);
+                        continue;
+                    }
+                    '5' => {
+                        store.set_tool_status(tool_use_id, ToolStatus::Canceled);
                         continue;
                     }
                     _ => {}

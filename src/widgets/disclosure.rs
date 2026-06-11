@@ -26,6 +26,7 @@ pub enum DisclosureStatus {
     Running,
     Done,
     Error,
+    Canceled,
 }
 
 impl DisclosureStatus {
@@ -35,6 +36,7 @@ impl DisclosureStatus {
             "Running" | "running" => Some(Self::Running),
             "Done" | "done" => Some(Self::Done),
             "Error" | "error" => Some(Self::Error),
+            "Canceled" | "canceled" | "Cancelled" | "cancelled" => Some(Self::Canceled),
             _ => None,
         }
     }
@@ -45,6 +47,7 @@ impl DisclosureStatus {
             Self::Running => "disclosure-running-indicator",
             Self::Done => "disclosure-done-indicator",
             Self::Error => "disclosure-error-indicator",
+            Self::Canceled => "disclosure-canceled-indicator",
         }
     }
 
@@ -54,6 +57,7 @@ impl DisclosureStatus {
             Self::Running => "[~]",
             Self::Done => "[x]",
             Self::Error => "[!]",
+            Self::Canceled => "[-]",
         }
     }
 
@@ -63,6 +67,7 @@ impl DisclosureStatus {
             Self::Running => "disclosure-running",
             Self::Done => "disclosure-done",
             Self::Error => "disclosure-error",
+            Self::Canceled => "disclosure-canceled",
         }
     }
 }
@@ -625,6 +630,15 @@ mod tests {
             EventResult::changed()
         );
         assert!(disclosure.is_expanded());
+    }
+
+    #[test]
+    fn canceled_status_parses_and_has_distinct_indicator() {
+        assert_eq!(
+            DisclosureStatus::parse("canceled"),
+            Some(DisclosureStatus::Canceled)
+        );
+        assert_eq!(DisclosureStatus::Canceled.indicator_fallback(), "[-]");
     }
 
     #[test]

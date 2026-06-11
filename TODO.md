@@ -56,7 +56,9 @@
 
 参考 `CHAT_UI.md` §3(ToolUse/ToolResult)、§4.2、§5(7)。
 
-- [ ] **P3.1 ToolUse 入参渲染** — `src/list.rs`:`Disclosure` 标题=name;`ToolInput::Text`→单行/代码,`ToolInput::Json`→key/value 列表;显示状态图标(Pending/Running/Done/Error/Canceled)。
+- [x] **[DONE] P3.1 ToolUse 入参渲染** — `src/list.rs`:`Disclosure` 标题=name;`ToolInput::Text`→单行/代码,`ToolInput::Json`→key/value 列表;显示状态图标(Pending/Running/Done/Error/Canceled)。
+  - 完成记录（2026-06-12）：已为 ToolUse disclosure 增加 `ToolUseDetailsView`，Text 入参渲染为 `Input: ...` 单行或多行缩进代码块，Json 入参渲染为 key/value 列表；ToolUse 行绑定随 block 版本同步入参/审批文本。`DisclosureStatus` 新增 Canceled 状态，ToolStatus 的 Pending/Running/Done/Error/Canceled 现在分别显示 `[ ]/[~]/[x]/[!]/[-]` 图标。snapshot chat app 与 PTY 测试覆盖 Text 入参、Json 入参、Pending/Running/Done/Error/Canceled 图标。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P3.2 ToolResult 渲染 + use/result 配对** — `src/list.rs`:`Ansi`→ANSI SGR 上色解析,`Markdown`→`MarkdownViewer`,`Diff`→`diff_line_style`;按 `call_id` 把 use+result 相邻配对,result 缺失显示"等待中"。
 - [ ] **P3.3 超长输出尾部窗口** — `src/list.rs`:`ToolOutput::Ansi` 超长默认只显示尾部 N 行 + "展开全部",避免撑爆列表。补 PTY 覆盖带入参调用、流式工具输出、超长折叠。
 

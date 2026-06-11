@@ -269,6 +269,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     let mut host = PtyTestHost::spawn(bin, &["--tool-call"], 80, 24)?;
 
     host.wait_for_text("build", Duration::from_secs(2))?;
+    host.wait_for_text("Input: cargo build --workspace", Duration::from_secs(2))?;
     host.wait_for_text("Tool result: tool-1", Duration::from_secs(2))?;
     host.wait_for_text("[~]", Duration::from_secs(2))?;
     host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
@@ -309,6 +310,16 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         Duration::from_secs(2),
     )?;
 
+    host.send_str("5")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("[-]") && line.contains("build"))
+        },
+        Duration::from_secs(2),
+    )?;
+
     host.send_ctrl('q')?;
     Ok(())
 }
@@ -323,6 +334,7 @@ fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<
     host.wait_for_text("Thinking", Duration::from_secs(2))?;
     host.wait_for_text("BLOCK-THINKING", Duration::from_secs(2))?;
     host.wait_for_text("json_tool", Duration::from_secs(2))?;
+    host.wait_for_text("[ ] json_tool", Duration::from_secs(2))?;
     host.wait_for_text("count: 2", Duration::from_secs(2))?;
     host.wait_for_text("path: \"src/lib.rs\"", Duration::from_secs(2))?;
     host.wait_for_text("Tool result: call-ansi (exit 0)", Duration::from_secs(2))?;

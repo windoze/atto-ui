@@ -311,7 +311,7 @@ impl ComponentValueCodec for crate::widgets::DisclosureStatus {
     fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
         let v = expect_string(value, name)?;
         crate::widgets::DisclosureStatus::parse(&v)
-            .ok_or_else(|| ComponentError::invalid_value(name, "Idle/Running/Done/Error"))
+            .ok_or_else(|| ComponentError::invalid_value(name, "Idle/Running/Done/Error/Canceled"))
     }
 }
 

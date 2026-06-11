@@ -22,10 +22,11 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
-    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
-    ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock,
-    DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock, TodoBlock,
-    TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment,
+    ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus,
+    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock,
+    TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
@@ -706,6 +707,7 @@ struct ChatMessageRowBindings {
     header: Option<Binding<String>>,
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
+    tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
     disclosure_status: Option<Binding<DisclosureStatus>>,
 }
@@ -792,6 +794,12 @@ impl ChatMessageRow {
                 binding.set(output);
             }
 
+            if let Some(binding) = &self.body_bindings.tool_use
+                && let Some(details) = block_tool_use_for_render(block)
+            {
+                binding.set(details);
+            }
+
             if let Some(binding) = &self.body_bindings.disclosure_status
                 && let Some(status) = block_disclosure_status(block)
             {
@@ -859,6 +867,13 @@ fn markdown_for_render(markdown: &str, streaming: bool, config: &ChatMessageRowC
 fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
     match block {
         ChatBlock::ToolResult(result) => Some(result.output.as_text().to_string()),
+        _ => None,
+    }
+}
+
+fn block_tool_use_for_render(block: &ChatBlock) -> Option<ToolUseDetails> {
+    match block {
+        ChatBlock::ToolUse(tool) => Some(ToolUseDetails::from(tool)),
         _ => None,
     }
 }
@@ -1243,6 +1258,75 @@ impl ::atto_ui::composable::EventHandling for ResponsiveMarkdownView {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct ToolUseDetails {
+    input: ToolInput,
+    approval: Option<ApprovalRequest>,
+}
+
+impl From<&ToolUseBlock> for ToolUseDetails {
+    fn from(tool: &ToolUseBlock) -> Self {
+        Self {
+            input: tool.input.clone(),
+            approval: tool.approval.clone(),
+        }
+    }
+}
+
+struct ToolUseDetailsView {
+    details: Binding<ToolUseDetails>,
+}
+
+impl ToolUseDetailsView {
+    fn new(details: impl Into<Binding<ToolUseDetails>>) -> Self {
+        Self {
+            details: details.into(),
+        }
+    }
+
+    fn display_lines(&self) -> Vec<String> {
+        self.details.with(tool_use_detail_lines)
+    }
+}
+
+impl Component for ToolUseDetailsView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let lines = self
+            .display_lines()
+            .into_iter()
+            .map(|line| Line::styled(line, ctx.theme.widget.normal))
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for ToolUseDetailsView {}
+impl ::atto_ui::composable::Scrollable for ToolUseDetailsView {}
+impl ::atto_ui::composable::FocusNav for ToolUseDetailsView {}
+impl ::atto_ui::composable::DynamicTree for ToolUseDetailsView {}
+impl ::atto_ui::composable::EventHandling for ToolUseDetailsView {}
+
+impl ::atto_ui::composable::Layout for ToolUseDetailsView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(max_line_width(&self.display_lines()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_lines().len().max(1).min(u16::MAX as usize) as u16)
+    }
+}
+
 enum ChatMessageBody {
     Markdown(ResponsiveMarkdownView),
     Text(Text),
@@ -1305,15 +1389,16 @@ impl ChatMessageBody {
                 ChatMessageRowBindings::default(),
             ),
             Some(ChatBlock::ToolUse(tool)) => {
-                let input = Binding::new(tool_use_content(tool));
+                let details = Binding::new(ToolUseDetails::from(tool));
                 let status = Binding::new(tool_status_to_disclosure(&tool.status));
                 let view = Disclosure::new(tool.name.clone())
                     .expanded(!tool.collapsed)
                     .status(status.clone())
-                    .content(input);
+                    .child(ToolUseDetailsView::new(details.clone()));
                 (
                     ChatMessageBody::Disclosure(view),
                     ChatMessageRowBindings {
+                        tool_use: Some(details),
                         disclosure_status: Some(status),
                         ..ChatMessageRowBindings::default()
                     },
@@ -1437,7 +1522,8 @@ fn tool_status_to_disclosure(status: &ToolStatus) -> DisclosureStatus {
         ToolStatus::Pending => DisclosureStatus::Idle,
         ToolStatus::Running => DisclosureStatus::Running,
         ToolStatus::Done => DisclosureStatus::Done,
-        ToolStatus::Error | ToolStatus::Canceled => DisclosureStatus::Error,
+        ToolStatus::Error => DisclosureStatus::Error,
+        ToolStatus::Canceled => DisclosureStatus::Canceled,
     }
 }
 
@@ -1489,26 +1575,54 @@ fn tool_output_component(
     }
 }
 
-fn tool_use_content(tool: &ToolUseBlock) -> String {
-    let mut sections = vec![tool_input_to_text(&tool.input)];
-    if let Some(approval) = &tool.approval {
-        sections.push(approval_request_text(approval));
+fn tool_use_detail_lines(details: &ToolUseDetails) -> Vec<String> {
+    let mut lines = tool_input_detail_lines(&details.input);
+    if let Some(approval) = &details.approval {
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.extend(approval_request_lines(approval));
     }
-    sections
-        .into_iter()
-        .filter(|section| !section.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    if lines.is_empty() {
+        vec![String::new()]
+    } else {
+        lines
+    }
 }
 
-fn tool_input_to_text(input: &ToolInput) -> String {
+fn tool_input_detail_lines(input: &ToolInput) -> Vec<String> {
     match input {
-        ToolInput::Text(text) => text.clone(),
-        ToolInput::Json(value) => component_value_lines(value).join("\n"),
+        ToolInput::Text(text) => tool_text_input_lines(text),
+        ToolInput::Json(value) => tool_json_input_lines(value),
     }
 }
 
-fn approval_request_text(approval: &crate::message::ApprovalRequest) -> String {
+fn tool_text_input_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return vec!["Input: (empty)".to_string()];
+    }
+    if !text.contains('\n') {
+        return vec![format!("Input: {text}")];
+    }
+
+    let mut lines = vec!["Input:".to_string()];
+    lines.extend(text.lines().map(|line| format!("  {line}")));
+    lines
+}
+
+fn tool_json_input_lines(value: &ComponentValue) -> Vec<String> {
+    match value {
+        ComponentValue::Map(map) if map.is_empty() => vec!["Input: {}".to_string()],
+        ComponentValue::Map(_) => {
+            let mut lines = vec!["Input:".to_string()];
+            lines.extend(component_value_lines(value));
+            lines
+        }
+        other => vec![format!("Input: {}", component_value_compact(other))],
+    }
+}
+
+fn approval_request_lines(approval: &ApprovalRequest) -> Vec<String> {
     let mut lines = vec![format!("Approval: {}", approval.prompt)];
     lines.extend(approval.options.iter().map(|option| {
         let marker = if approval.resolved.as_deref() == Some(option.id.as_str()) {
@@ -1518,7 +1632,7 @@ fn approval_request_text(approval: &crate::message::ApprovalRequest) -> String {
         };
         format!("{marker} {}", option.label)
     }));
-    lines.join("\n")
+    lines
 }
 
 fn component_value_lines(value: &ComponentValue) -> Vec<String> {
@@ -2468,9 +2582,29 @@ mod tests {
         );
         input.insert("count".to_string(), ComponentValue::U64(2));
 
-        let text = tool_input_to_text(&ToolInput::Json(ComponentValue::Map(input)));
+        let lines = tool_input_detail_lines(&ToolInput::Json(ComponentValue::Map(input)));
 
-        assert_eq!(text, "count: 2\npath: \"src/lib.rs\"");
+        assert_eq!(lines, vec!["Input:", "count: 2", "path: \"src/lib.rs\""]);
+    }
+
+    #[test]
+    fn tool_input_text_renders_single_line_or_code_block() {
+        assert_eq!(
+            tool_input_detail_lines(&ToolInput::Text("cargo test".to_string())),
+            vec!["Input: cargo test"]
+        );
+        assert_eq!(
+            tool_input_detail_lines(&ToolInput::Text("line 1\nline 2".to_string())),
+            vec!["Input:", "  line 1", "  line 2"]
+        );
+    }
+
+    #[test]
+    fn tool_status_canceled_uses_distinct_disclosure_status() {
+        assert_eq!(
+            tool_status_to_disclosure(&ToolStatus::Canceled),
+            DisclosureStatus::Canceled
+        );
     }
 
     #[test]
