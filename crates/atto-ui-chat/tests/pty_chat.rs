@@ -2,6 +2,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use atto_ui::clipboard::osc52_sequence;
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use unicode_width::UnicodeWidthStr;
 
@@ -576,6 +577,39 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 
     let (x, y) = find_text_position(&host, "Copy block").expect("copy block action");
     host.click(x, y)?;
+    host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_text_selection_highlights_copies_selection_and_falls_back() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--text-selection"], 100, 32)?;
+
+    host.wait_for_text("TEXT-SELECTION-COPY", Duration::from_secs(2))?;
+    host.wait_for_text("TEXT-SELECTION-COMMAND", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "TEXT-SELECTION-COPY").expect("selection body");
+    let before_bg = host.cell_bgcolor(x, y)?;
+    let selected_width = "TEXT-SELECTION-COPY".width().min(u16::MAX as usize) as u16;
+    host.drag_left(x, y, x.saturating_add(selected_width), y)?;
+    host.wait_for_screen(
+        |_| host.cell_bgcolor(x, y).is_ok_and(|bg| bg != before_bg),
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)?;
+    host.wait_for_output(
+        osc52_sequence("TEXT-SELECTION-COPY").as_bytes(),
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+    host.click(x, y)?;
+    host.key_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)?;
     host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;

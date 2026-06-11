@@ -5087,11 +5087,224 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RenderedTextRow {
+    text: String,
+    width: u16,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct RenderedTextPosition {
+    row: u16,
+    col: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RenderedTextSelectionRange {
+    start: RenderedTextPosition,
+    end: RenderedTextPosition,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RenderedTextSelectionState {
+    anchor: Option<RenderedTextPosition>,
+    focus: Option<RenderedTextPosition>,
+}
+
+impl RenderedTextSelectionState {
+    fn start(&mut self, pos: RenderedTextPosition) {
+        self.anchor = Some(pos);
+        self.focus = Some(pos);
+    }
+
+    fn update(&mut self, pos: RenderedTextPosition) {
+        if self.anchor.is_some() {
+            self.focus = Some(pos);
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.anchor.is_some()
+    }
+
+    fn range(&self) -> Option<RenderedTextSelectionRange> {
+        let anchor = self.anchor?;
+        let focus = self.focus?;
+        if anchor == focus {
+            return None;
+        }
+        let (start, end) = if anchor <= focus {
+            (anchor, focus)
+        } else {
+            (focus, anchor)
+        };
+        Some(RenderedTextSelectionRange { start, end })
+    }
+
+    fn clear(&mut self) -> bool {
+        let had_selection = self.anchor.is_some() || self.focus.is_some();
+        self.anchor = None;
+        self.focus = None;
+        had_selection
+    }
+}
+
+fn rendered_rows_from_buffer(buf: &Buffer, area: Rect) -> Vec<RenderedTextRow> {
+    (0..area.height)
+        .map(|dy| rendered_row_from_buffer(buf, area, dy))
+        .collect()
+}
+
+fn rendered_row_from_buffer(buf: &Buffer, area: Rect, dy: u16) -> RenderedTextRow {
+    let y = area.y.saturating_add(dy);
+    let mut text = String::new();
+    let mut dx = 0u16;
+    while dx < area.width {
+        let x = area.x.saturating_add(dx);
+        let symbol = buf.cell((x, y)).map(|cell| cell.symbol()).unwrap_or(" ");
+        let width = symbol.width().max(1).min(u16::MAX as usize) as u16;
+        text.push_str(symbol);
+        dx = dx.saturating_add(width.max(1));
+    }
+    let text = text.trim_end_matches(' ').to_string();
+    let width = text.width().min(u16::MAX as usize) as u16;
+    RenderedTextRow { text, width }
+}
+
+fn apply_rendered_selection(
+    buf: &mut Buffer,
+    area: Rect,
+    rows: &[RenderedTextRow],
+    range: RenderedTextSelectionRange,
+    style: Style,
+) {
+    for (row_idx, row) in rows.iter().enumerate() {
+        let Some((start, end)) = selection_cols_for_rendered_row(range, row_idx, row.width) else {
+            continue;
+        };
+        for (start, end) in selected_cell_ranges_for_line(&row.text, start, end) {
+            for dx in start..end.min(area.width) {
+                let x = area.x.saturating_add(dx);
+                let y = area
+                    .y
+                    .saturating_add(row_idx.min(usize::from(u16::MAX)) as u16);
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_style(style);
+                }
+            }
+        }
+    }
+}
+
+fn selection_cols_for_rendered_row(
+    range: RenderedTextSelectionRange,
+    row: usize,
+    row_width: u16,
+) -> Option<(u16, u16)> {
+    let row = row.min(usize::from(u16::MAX)) as u16;
+    if row < range.start.row || row > range.end.row {
+        return None;
+    }
+    let (start, end) = if range.start.row == range.end.row {
+        (range.start.col.min(row_width), range.end.col.min(row_width))
+    } else if row == range.start.row {
+        (range.start.col.min(row_width), row_width)
+    } else if row == range.end.row {
+        (0, range.end.col.min(row_width))
+    } else {
+        (0, row_width)
+    };
+    (start < end).then_some((start, end))
+}
+
+fn selected_cell_ranges_for_line(line: &str, start_col: u16, end_col: u16) -> Vec<(u16, u16)> {
+    let mut ranges = Vec::new();
+    let mut col = 0u16;
+    for ch in line.chars() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0).max(1) as u16;
+        let next = col.saturating_add(width);
+        if start_col < next && end_col > col {
+            ranges.push((col, next));
+        }
+        col = next;
+    }
+    ranges
+}
+
+fn selected_text_from_rendered_rows(
+    rows: &[RenderedTextRow],
+    range: RenderedTextSelectionRange,
+) -> Option<String> {
+    let start_row = usize::from(range.start.row);
+    let end_row = usize::from(range.end.row);
+    if start_row >= rows.len() || end_row >= rows.len() {
+        return None;
+    }
+
+    let mut out = String::new();
+    for (row_idx, row) in rows
+        .iter()
+        .enumerate()
+        .take(end_row.saturating_add(1))
+        .skip(start_row)
+    {
+        if row_idx > start_row {
+            out.push('\n');
+        }
+        let Some((start, end)) = selection_cols_for_rendered_row(range, row_idx, row.width) else {
+            continue;
+        };
+        out.push_str(&slice_line_by_display_cols(&row.text, start, end));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn slice_line_by_display_cols(line: &str, start_col: u16, end_col: u16) -> String {
+    if start_col >= end_col {
+        return String::new();
+    }
+    let start = byte_index_at_display_col_start(line, start_col);
+    let end = byte_index_at_display_col_end(line, end_col).max(start);
+    line[start..end].to_string()
+}
+
+fn byte_index_at_display_col_start(text: &str, target_col: u16) -> usize {
+    let mut col = 0u16;
+    for (byte_idx, ch) in text.char_indices() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0).max(1) as u16;
+        let next = col.saturating_add(width);
+        if target_col < next {
+            return byte_idx;
+        }
+        col = next;
+    }
+    text.len()
+}
+
+fn byte_index_at_display_col_end(text: &str, target_col: u16) -> usize {
+    let mut col = 0u16;
+    for (byte_idx, ch) in text.char_indices() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0).max(1) as u16;
+        let next = col.saturating_add(width);
+        if target_col <= col {
+            return byte_idx;
+        }
+        if target_col < next {
+            return byte_idx.saturating_add(ch.len_utf8());
+        }
+        col = next;
+    }
+    text.len()
+}
+
 struct BlockCopyTarget {
     message_id: ChatMessageId,
     block_id: ChatBlockId,
     callback: MessageActionCallback,
     child_focused: bool,
+    selection: RenderedTextSelectionState,
+    rendered_rows: Vec<RenderedTextRow>,
+    last_area: Option<Rect>,
     view: Box<ChatMessageBody>,
 }
 
@@ -5107,6 +5320,9 @@ impl BlockCopyTarget {
             block_id,
             callback,
             child_focused: false,
+            selection: RenderedTextSelectionState::default(),
+            rendered_rows: Vec::new(),
+            last_area: None,
             view: Box::new(view),
         }
     }
@@ -5116,6 +5332,114 @@ impl BlockCopyTarget {
             message_id: self.message_id,
             kind: MessageActionKind::CopyBlock(self.block_id),
         });
+    }
+
+    fn copy_selected_text(&self) -> bool {
+        let Some(text) = self.selected_text() else {
+            return false;
+        };
+        let _ = atto_ui::clipboard::copy_to_system_clipboard(&text);
+        true
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        selected_text_from_rendered_rows(&self.rendered_rows, self.selection.range()?)
+    }
+
+    fn selection_position_for_mouse(
+        &self,
+        mouse: &MouseEvent,
+        coordinate_space: MouseCoordinateSpace,
+        clamp_outside: bool,
+    ) -> Option<RenderedTextPosition> {
+        let area = self.last_area?;
+        let (mut x, mut y) = match coordinate_space {
+            MouseCoordinateSpace::Absolute => {
+                if area.width == 0 || area.height == 0 {
+                    return None;
+                }
+                if clamp_outside {
+                    let max_x = area.x.saturating_add(area.width.saturating_sub(1));
+                    let max_y = area.y.saturating_add(area.height.saturating_sub(1));
+                    (
+                        mouse.column.clamp(area.x, max_x).saturating_sub(area.x),
+                        mouse.row.clamp(area.y, max_y).saturating_sub(area.y),
+                    )
+                } else {
+                    mouse_position_in_area(area, mouse, coordinate_space)?
+                }
+            }
+            MouseCoordinateSpace::Local => {
+                if area.width == 0 || area.height == 0 {
+                    return None;
+                }
+                if clamp_outside {
+                    (
+                        mouse.column.min(area.width.saturating_sub(1)),
+                        mouse.row.min(area.height.saturating_sub(1)),
+                    )
+                } else {
+                    mouse_position_in_area(area, mouse, coordinate_space)?
+                }
+            }
+        };
+
+        if self.rendered_rows.is_empty() {
+            return None;
+        }
+        y = y.min(
+            self.rendered_rows
+                .len()
+                .saturating_sub(1)
+                .min(usize::from(u16::MAX)) as u16,
+        );
+        let row_width = self
+            .rendered_rows
+            .get(usize::from(y))
+            .map_or(0, |row| row.width);
+        x = x.min(row_width);
+        Some(RenderedTextPosition { row: y, col: x })
+    }
+
+    fn handle_selection_mouse(
+        &mut self,
+        event: &Event,
+        ctx: ComponentContext<'_>,
+    ) -> Option<EventResult> {
+        let Event::Mouse(mouse) = event else {
+            return None;
+        };
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let child_ctx = self.child_ctx(ctx);
+                let child_res = self.view.handle_event(event, child_ctx);
+                if child_res.is_consumed() {
+                    return Some(child_res);
+                }
+                let pos =
+                    self.selection_position_for_mouse(mouse, ctx.mouse_coordinate_space, false)?;
+                self.selection.start(pos);
+                Some(EventResult::consumed().with_capture(Capture::Request))
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selection.is_active() => {
+                if let Some(pos) =
+                    self.selection_position_for_mouse(mouse, ctx.mouse_coordinate_space, true)
+                {
+                    self.selection.update(pos);
+                }
+                Some(EventResult::consumed())
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.selection.is_active() => {
+                if let Some(pos) =
+                    self.selection_position_for_mouse(mouse, ctx.mouse_coordinate_space, true)
+                {
+                    self.selection.update(pos);
+                }
+                Some(EventResult::consumed().with_capture(Capture::Release))
+            }
+            _ => None,
+        }
     }
 
     fn child_ctx<'a>(&self, ctx: ComponentContext<'a>) -> ComponentContext<'a> {
@@ -5133,7 +5457,14 @@ impl BlockCopyTarget {
 
 impl Component for BlockCopyTarget {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         self.view.draw(frame, area, ctx);
+        let selection = self.selection.range();
+        let buf = frame.buffer_mut();
+        self.rendered_rows = rendered_rows_from_buffer(buf, area);
+        if let Some(range) = selection {
+            apply_rendered_selection(buf, area, &self.rendered_rows, range, ctx.theme.selection);
+        }
     }
 }
 
@@ -5255,9 +5586,30 @@ impl ::atto_ui::composable::EventHandling for BlockCopyTarget {
     }
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Some(res) = self.handle_selection_mouse(event, ctx) {
+            return res;
+        }
+
         if ctx.is_focused && is_copy_shortcut(event) {
+            if self.copy_selected_text() {
+                return EventResult::submitted();
+            }
             self.emit_copy();
             return EventResult::submitted();
+        }
+
+        if ctx.is_focused
+            && matches!(
+                event,
+                Event::Key(KeyEvent {
+                    code: KeyCode::Esc,
+                    kind: KeyEventKind::Press,
+                    ..
+                })
+            )
+            && self.selection.clear()
+        {
+            return EventResult::consumed();
         }
 
         let child_ctx = self.child_ctx(ctx);
@@ -5496,6 +5848,43 @@ mod tests {
         (lines, colors)
     }
 
+    fn draw_component_bg_snapshot(
+        component: &mut dyn Component,
+        width: u16,
+        height: u16,
+    ) -> (Vec<String>, Vec<Vec<Color>>) {
+        let theme = Theme::dark();
+        let ctx = ComponentContext {
+            theme: &theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        };
+        let backend = TestBackend::new(width.max(1), height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| component.draw(f, Rect::new(0, 0, width, height), ctx))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+        let mut lines = Vec::new();
+        let mut colors = Vec::new();
+        for y in 0..height {
+            let mut line = String::new();
+            let mut bgs = Vec::new();
+            for x in 0..width {
+                let cell = buf.cell((x, y)).expect("cell");
+                line.push_str(cell.symbol());
+                bgs.push(cell.bg);
+            }
+            lines.push(line);
+            colors.push(bgs);
+        }
+        (lines, colors)
+    }
+
     fn draw_component_line(component: &mut dyn Component, width: u16, height: u16) -> String {
         draw_component_snapshot(component, width, height)
             .0
@@ -5639,6 +6028,78 @@ mod tests {
                 message_id,
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
+        );
+    }
+
+    #[test]
+    fn rendered_selection_spans_visual_rows_and_wide_chars() {
+        let rows = vec![
+            RenderedTextRow {
+                text: "alpha 你".to_string(),
+                width: 8,
+            },
+            RenderedTextRow {
+                text: "beta".to_string(),
+                width: 4,
+            },
+        ];
+        let range = RenderedTextSelectionRange {
+            start: RenderedTextPosition { row: 0, col: 6 },
+            end: RenderedTextPosition { row: 1, col: 2 },
+        };
+
+        assert_eq!(
+            selected_text_from_rendered_rows(&rows, range).as_deref(),
+            Some("你\nbe")
+        );
+        assert_eq!(
+            selected_cell_ranges_for_line("alpha 你", 6, 7),
+            vec![(6, 8)]
+        );
+    }
+
+    #[test]
+    fn block_copy_target_renders_drag_selection_highlight() {
+        let message_id = ChatMessageId::new(52);
+        let block_id = ChatBlockId::new(52_001);
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let mut body = ChatMessageBody::Text(Text::new("SELECT ME")).with_copy_shortcut(
+            message_id,
+            block_id,
+            Arc::new(move |action| {
+                captured.lock().expect("actions lock").push(action);
+            }),
+        );
+        let theme = Theme::dark();
+        let ctx = component_context(&theme);
+
+        let (_, before) = draw_component_bg_snapshot(&mut body, 20, 1);
+        body.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }),
+            ctx,
+        );
+        body.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 6,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }),
+            ctx,
+        );
+        let (_, after) = draw_component_bg_snapshot(&mut body, 20, 1);
+
+        assert_ne!(before[0][0], after[0][0]);
+        assert_eq!(after[0][0], Color::LightBlue);
+        assert_eq!(
+            *actions.lock().expect("actions lock"),
+            Vec::<MessageAction>::new()
         );
     }
 

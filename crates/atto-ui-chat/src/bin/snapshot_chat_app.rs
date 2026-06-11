@@ -68,6 +68,7 @@ fn main() -> Result<()> {
     let message_actions = args.iter().any(|arg| arg == "--message-actions");
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
+    let text_selection = args.iter().any(|arg| arg == "--text-selection");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -114,6 +115,9 @@ fn main() -> Result<()> {
         None
     } else if message_actions {
         seed_message_action_messages(&store);
+        None
+    } else if text_selection {
+        seed_text_selection_messages(&store);
         None
     } else if cancel_action {
         seed_cancel_action_messages(&store);
@@ -165,6 +169,7 @@ fn main() -> Result<()> {
         || todo_block_id.is_some()
         || turn_meta_error
         || message_actions
+        || text_selection
         || cancel_action
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
@@ -192,7 +197,9 @@ fn main() -> Result<()> {
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
-    if !responsive_layout {
+    if text_selection {
+        list = list.wrap_width(24);
+    } else if !responsive_layout {
         list = list.wrap_width(56);
     }
     let mut list = list
@@ -230,7 +237,7 @@ fn main() -> Result<()> {
                 store.prepend_many(older);
             }
         });
-    if message_actions {
+    if message_actions || text_selection {
         list = list.on_message_action({
             let message_action_events = message_action_events.clone();
             move |action| message_action_events.push(action)
@@ -262,7 +269,13 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output || turn_meta_error {
         28
-    } else if inline_approval || inline_diff || plan_mode || message_actions || cancel_action {
+    } else if inline_approval
+        || inline_diff
+        || plan_mode
+        || message_actions
+        || text_selection
+        || cancel_action
+    {
         24
     } else if nested_task {
         22
@@ -886,6 +899,31 @@ fn seed_message_action_messages(store: &ChatMessageStore) {
             markdown: "ACTION-ASSISTANT-MESSAGE".to_string(),
             streaming: false,
         })],
+    ));
+}
+
+fn seed_text_selection_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "TEXT-SELECTION-COPY alpha beta gamma delta TEXT-SELECTION-WRAP\n\n```sh\nTEXT-SELECTION-COMMAND --flag\n```"
+                    .to_string(),
+                streaming: false,
+            }),
+            ChatBlock::ToolUse(ToolUseBlock {
+                id: snapshot_block_id(id, 1),
+                call_id: "selection-command".to_string(),
+                name: "selection_command".to_string(),
+                input: ToolInput::Text("TEXT-SELECTION-COMMAND --flag".to_string()),
+                status: ToolStatus::Pending,
+                approval: None,
+                collapsed: false,
+            }),
+        ],
     ));
 }
 
