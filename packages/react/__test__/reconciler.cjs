@@ -3,6 +3,7 @@ const React = require('react')
 const {
   B,
   Button,
+  FileTree,
   Grid,
   ListBox,
   I,
@@ -647,3 +648,73 @@ assert.deepEqual(controlledTransformOps, [
     op: { op: 'set_prop', id: transformedTextBox.id, name: 'text', value: 'AB' },
   },
 ])
+
+// FileTree: node normalization, border/icons/selection props, and select/rename/delete events.
+const { host: fileTreeHost, ops: fileTreeOps } = createMockHost()
+const fileTreeRoot = createRoot(fileTreeHost, 'file-tree-window', { idPrefix: 'ft' })
+let ftSelected
+let ftRenamed
+let ftDeleted
+fileTreeRoot.render(React.createElement(FileTree, {
+  border: false,
+  selection: 2,
+  icons: { rs: { glyph: 'R', color: '#ff8800' }, md: 'M' },
+  nodes: [
+    { id: 1, name: 'src', kind: 'directory', isExpanded: true, nodes: [{ id: 2, name: 'main.rs' }] },
+  ],
+  onSelect: (id) => { ftSelected = id },
+  onRename: (payload) => { ftRenamed = payload },
+  onDelete: (payload) => { ftDeleted = payload },
+}))
+
+assert.deepEqual(fileTreeOps, [
+  {
+    windowId: 'file-tree-window',
+    op: {
+      op: 'set_tree',
+      tree: {
+        type: 'FileTree',
+        id: 'ft-1',
+        props: {
+          border: false,
+          selection: 2,
+          icons: { rs: { glyph: 'R', color: '#ff8800' }, md: 'M' },
+          nodes: [
+            { id: 1, name: 'src', kind: 'directory', children: [{ id: 2, name: 'main.rs' }], expanded: true },
+          ],
+        },
+        events: {
+          select: 'callback-1',
+          rename: 'callback-2',
+          delete: 'callback-3',
+        },
+      },
+    },
+  },
+])
+
+const fileTreeInstance = fileTreeRoot.container.rootChildren[0]
+dispatchHostCallbacks(fileTreeRoot.container, [
+  { callbackId: fileTreeInstance.events.select.callbackId, targetId: fileTreeInstance.id, event: 'select', payload: 2 },
+])
+assert.equal(ftSelected, 2)
+
+dispatchHostCallbacks(fileTreeRoot.container, [
+  {
+    callbackId: fileTreeInstance.events.rename.callbackId,
+    targetId: fileTreeInstance.id,
+    event: 'rename',
+    payload: { id: 2, kind: 'file', old_name: 'main.rs', new_name: 'lib.rs' },
+  },
+])
+assert.deepEqual(ftRenamed, { id: 2, kind: 'file', oldName: 'main.rs', newName: 'lib.rs' })
+
+dispatchHostCallbacks(fileTreeRoot.container, [
+  {
+    callbackId: fileTreeInstance.events.delete.callbackId,
+    targetId: fileTreeInstance.id,
+    event: 'delete',
+    payload: { id: 2, kind: 'file', name: 'main.rs' },
+  },
+])
+assert.deepEqual(ftDeleted, { id: 2, kind: 'file', name: 'main.rs' })

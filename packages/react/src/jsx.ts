@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 
 import type {
   ButtonHostProps,
+  FileTreeHostProps,
   GridProps,
   LabelProps,
   ListBoxHostProps,
@@ -89,6 +90,8 @@ declare global {
         readonly enabled?: boolean
         readonly onChange?: AttoUiEventHandler
       }
+      fileTree: FileTreeHostProps
+      filetree: FileTreeHostProps
       grid: GridHostProps
       hstack: StackProps
       listBox: ListBoxHostProps
@@ -127,6 +130,7 @@ declare global {
 
 export type {
   ButtonHostProps,
+  FileTreeHostProps,
   LabelProps,
   MarkdownProps,
   GridHostProps,

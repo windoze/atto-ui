@@ -1401,6 +1401,8 @@ const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   divider: 'Divider',
   disclosure: 'Disclosure',
   editor: 'Editor',
+  fileTree: 'FileTree',
+  filetree: 'FileTree',
   grid: 'Grid',
   hstack: 'HStack',
   label: 'Label',

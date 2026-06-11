@@ -4,7 +4,7 @@
  * One desktop, several windows, each showing a group of components:
  *   Controls (Button/Checkbox/RadioGroup/Slider/ProgressBar/Spinner/TextBox/TextArea/Label),
  *   Layout (HStack/Grid/Border/Divider/Disclosure), Data (ListBox/Table),
- *   Markdown, and Editor.
+ *   File Tree (FileTree with colored file-type icons), Markdown, and Editor.
  *
  * Window lifecycle (the binding/React feature this demo exercises):
  *   - The "Demos" menu re-creates a window after it was closed.
@@ -28,6 +28,7 @@ import {
   Disclosure,
   Divider,
   Editor,
+  FileTree,
   Grid,
   HStack,
   Label,
@@ -52,7 +53,7 @@ import {
 
 import { startDemo, waitFor, hasText } from './_runtime'
 
-type WindowKey = 'controls' | 'layout' | 'data' | 'markdown' | 'editor'
+type WindowKey = 'controls' | 'layout' | 'data' | 'filetree' | 'markdown' | 'editor'
 
 const WINDOWS: ReadonlyArray<{ key: WindowKey; title: string; rect: [number, number, number, number] }> = [
   { key: 'controls', title: 'Controls', rect: [1, 1, 40, 21] },
@@ -60,7 +61,33 @@ const WINDOWS: ReadonlyArray<{ key: WindowKey; title: string; rect: [number, num
   { key: 'data', title: 'Data', rect: [2, 4, 40, 14] },
   { key: 'markdown', title: 'Markdown', rect: [38, 4, 40, 14] },
   { key: 'editor', title: 'Editor', rect: [8, 7, 64, 11] },
+  { key: 'filetree', title: 'File Tree', rect: [4, 2, 36, 18] },
 ]
+
+const FILE_TREE_NODES = [
+  {
+    id: 1,
+    name: 'src',
+    kind: 'directory',
+    expanded: true,
+    children: [
+      { id: 2, name: 'main.rs' },
+      { id: 3, name: 'lib.rs' },
+    ],
+  },
+  { id: 4, name: 'assets', kind: 'directory', children: [{ id: 5, name: 'logo.png' }] },
+  { id: 6, name: 'README.md' },
+  { id: 7, name: 'Cargo.toml' },
+] as const
+
+// File-type icons are opt-in (empty by default). Short text glyphs keep this
+// readable on terminals without Nerd Fonts; each carries its own color.
+const FILE_TREE_ICONS = {
+  rs: { glyph: 'rs', color: '#dd6644' },
+  md: { glyph: 'md', color: '#66aadd' },
+  toml: { glyph: 'tm', color: '#aa88cc' },
+  png: { glyph: 'im', color: '#66bb88' },
+} as const
 
 const MARKDOWN = `# Component Gallery
 
@@ -83,6 +110,7 @@ function App(): React.ReactElement {
     controls: true,
     layout: true,
     data: true,
+    filetree: true,
     markdown: true,
     editor: true,
   })
@@ -95,6 +123,7 @@ function App(): React.ReactElement {
   const [name, setName] = useState('atto')
   const [notes, setNotes] = useState('multi-line\ntext area')
   const [fruit, setFruit] = useState(0)
+  const [treeSelection, setTreeSelection] = useState<number | null>(2)
 
   const show = (key: WindowKey) => {
     setVisible((v) => ({ ...v, [key]: true }))
@@ -204,6 +233,24 @@ function App(): React.ReactElement {
         </Window>
       )}
 
+      {visible.filetree && (
+        <Window title="File Tree" rect={WINDOWS[5].rect} {...windowChrome('filetree')}>
+          <VStack spacing={1} padding={1}>
+            <Label text="Project files" />
+            <FileTree
+              nodes={FILE_TREE_NODES}
+              icons={FILE_TREE_ICONS}
+              selection={treeSelection}
+              onSelect={(id) => {
+                setTreeSelection(id)
+                setLog(id === null ? 'file tree: cleared' : `file tree: selected ${id}`)
+              }}
+              layout={{ height: 'fill' }}
+            />
+          </VStack>
+        </Window>
+      )}
+
       {visible.markdown && (
         <Window title="Markdown" rect={WINDOWS[3].rect} {...windowChrome('markdown')}>
           <VStack padding={1}>
@@ -233,10 +280,11 @@ startDemo(<App />, {
   cols: 80,
   rows: 24,
   async headlessProbe(h) {
-    await waitFor(() => h.windowIds().length === 5, 'five windows')
+    await waitFor(() => h.windowIds().length === 6, 'six windows')
     await waitFor(() => hasText(h, 'Buttons & inputs'), 'controls window')
     await waitFor(() => hasText(h, 'Grid 2x2'), 'layout window')
     await waitFor(() => hasText(h, 'Lists & tables'), 'data window')
+    await waitFor(() => hasText(h, 'Project files'), 'file tree window')
     await waitFor(() => hasText(h, 'Markdown docs'), 'markdown window')
     await waitFor(() => hasText(h, 'Rust source'), 'editor window')
   },

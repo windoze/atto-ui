@@ -1,5 +1,11 @@
 import { createElement, type ReactElement, type ReactNode } from 'react'
-import type { EdgeInsetsSpec, LayoutSpec } from '@atto-ui/core'
+import {
+  fileTreeNodeValue,
+  type EdgeInsetsSpec,
+  type FileTreeIconLike,
+  type FileTreeNodeLike,
+  type LayoutSpec,
+} from '@atto-ui/core'
 
 import type { AttoUiCallbackEvent, AttoUiEventHandler } from './events'
 
@@ -162,6 +168,67 @@ export function Table(props: TableProps): ReactElement {
 
 export const TableView = Table
 
+/** Payload delivered to `onRename` when a file-tree entry is renamed. */
+export interface FileTreeRenamePayload {
+  readonly id: number
+  readonly kind: string
+  readonly oldName: string
+  readonly newName: string
+}
+
+/** Payload delivered to `onDelete` when a file-tree entry is removed. */
+export interface FileTreeDeletePayload {
+  readonly id: number
+  readonly kind: string
+  readonly name: string
+}
+
+export type FileTreeSelectHandler = (nodeId: number | null, event: AttoUiCallbackEvent) => void
+export type FileTreeRenameHandler = (payload: FileTreeRenamePayload, event: AttoUiCallbackEvent) => void
+export type FileTreeDeleteHandler = (payload: FileTreeDeletePayload, event: AttoUiCallbackEvent) => void
+
+export interface FileTreeHostProps {
+  readonly title?: string
+  readonly nodes?: readonly FileTreeNodeLike[]
+  /** Selected node id, or `null` for no selection. */
+  readonly selection?: number | null
+  readonly height?: number
+  readonly enabled?: boolean
+  /** Draw the widget's own border. Defaults to `true`. */
+  readonly border?: boolean
+  /** Map of lowercased file extension → icon (string or `{glyph,color}`). */
+  readonly icons?: Readonly<Record<string, FileTreeIconLike>>
+  readonly onSelect?: AttoUiEventHandler
+  readonly onRename?: AttoUiEventHandler
+  readonly onDelete?: AttoUiEventHandler
+}
+
+export interface FileTreeProps
+  extends Omit<FileTreeHostProps, 'onSelect' | 'onRename' | 'onDelete'>,
+    LayoutProps {
+  readonly onSelect?: FileTreeSelectHandler
+  readonly onRename?: FileTreeRenameHandler
+  readonly onDelete?: FileTreeDeleteHandler
+}
+
+/** Typed FileTree wrapper. Pass `nodes` as plain node inputs or core node maps. */
+export function FileTree(props: FileTreeProps): ReactElement {
+  const { title, nodes, selection, height, enabled, border, icons, onSelect, onRename, onDelete, layout } = props
+  return hostElement('fileTree', {
+    title,
+    nodes: nodes?.map(fileTreeNodeValue),
+    selection,
+    height,
+    enabled,
+    border,
+    icons,
+    onSelect: fileTreeSelectHandler(onSelect),
+    onRename: fileTreeRenameHandler(onRename),
+    onDelete: fileTreeDeleteHandler(onDelete),
+    layout,
+  })
+}
+
 /** Vertical stack wrapper with camelCase props matching the Rust component schema. */
 export function VStack({ spacing, padding, scrollable, children, layout }: StackProps): ReactElement {
   return hostElement('vstack', { spacing, padding, scrollable, layout }, children)
@@ -206,6 +273,64 @@ function selectionHandler(
     onChange?.(selected, event)
     onSelect?.(selected, event)
   }
+}
+
+function fileTreeSelectHandler(onSelect: FileTreeSelectHandler | undefined): AttoUiEventHandler | undefined {
+  if (onSelect === undefined) return undefined
+  return (event) => {
+    const payload = event.payload
+    const nodeId = typeof payload === 'number' && Number.isFinite(payload) ? payload : null
+    onSelect(nodeId, event)
+  }
+}
+
+function fileTreeRenameHandler(onRename: FileTreeRenameHandler | undefined): AttoUiEventHandler | undefined {
+  if (onRename === undefined) return undefined
+  return (event) => {
+    const map = mapPayload('FileTree', event)
+    onRename(
+      {
+        id: numberField(map, 'id'),
+        kind: stringField(map, 'kind'),
+        oldName: stringField(map, 'old_name'),
+        newName: stringField(map, 'new_name'),
+      },
+      event,
+    )
+  }
+}
+
+function fileTreeDeleteHandler(onDelete: FileTreeDeleteHandler | undefined): AttoUiEventHandler | undefined {
+  if (onDelete === undefined) return undefined
+  return (event) => {
+    const map = mapPayload('FileTree', event)
+    onDelete(
+      {
+        id: numberField(map, 'id'),
+        kind: stringField(map, 'kind'),
+        name: stringField(map, 'name'),
+      },
+      event,
+    )
+  }
+}
+
+function mapPayload(componentName: string, event: AttoUiCallbackEvent): Record<string, unknown> {
+  const payload = event.payload
+  if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+    return payload as Record<string, unknown>
+  }
+  throw new Error(`${componentName} event expected a map payload`)
+}
+
+function numberField(map: Record<string, unknown>, key: string): number {
+  const value = map[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function stringField(map: Record<string, unknown>, key: string): string {
+  const value = map[key]
+  return typeof value === 'string' ? value : ''
 }
 
 function childrenLabel(children: PrimitiveLabel | undefined): string | undefined {

@@ -715,8 +715,12 @@ impl ::atto_ui::composable::Component for FileTree {
             drag: ctx.drag,
             ..ctx
         };
-        let content = self.content_rect(area, border, ctx.scrollbar_host);
-        self.scroll.draw(frame, content, body_ctx);
+        // The inset is applied via the container's padding (not by pre-insetting
+        // the area) so draw and event coordinates stay consistent in both
+        // absolute and local mouse-coordinate spaces.
+        self.scroll
+            .set_padding(self.body_padding(border, ctx.scrollbar_host));
+        self.scroll.draw(frame, area, body_ctx);
 
         if matches!(ctx.scrollbar_host, ScrollbarHost::Component) {
             self.draw_border_scrollbar(frame, area, border, ctx);
@@ -889,27 +893,24 @@ impl FileTree {
         )
     }
 
-    /// Absolute rect the scroll body should be drawn into: the area inset by the
-    /// border (1 cell) and, when borderless and hosting its own scrollbars, with
-    /// a strip reserved for the visible scrollbar(s).
-    fn content_rect(&self, area: Rect, border: bool, host: ScrollbarHost) -> Rect {
-        let inset = if border { 1 } else { 0 };
-        let mut rect = Rect {
-            x: area.x.saturating_add(inset),
-            y: area.y.saturating_add(inset),
-            width: area.width.saturating_sub(2 * inset),
-            height: area.height.saturating_sub(2 * inset),
-        };
-        if !border && matches!(host, ScrollbarHost::Component) {
+    /// Padding applied to the scroll body. With a border the content is inset by
+    /// one cell on every side (the border itself); borderless, only a strip is
+    /// reserved on the right/bottom for any self-hosted scrollbar.
+    fn body_padding(&self, border: bool, host: ScrollbarHost) -> EdgeInsets {
+        if border {
+            return EdgeInsets::all(1);
+        }
+        let mut padding = EdgeInsets::ZERO;
+        if matches!(host, ScrollbarHost::Component) {
             let (show_v, show_h) = self.scrollbar_visibility();
             if show_v {
-                rect.width = rect.width.saturating_sub(1);
+                padding.right = 1;
             }
             if show_h {
-                rect.height = rect.height.saturating_sub(1);
+                padding.bottom = 1;
             }
         }
-        rect
+        padding
     }
 
     fn border_scrollbars(&self, area: Rect, border: bool) -> Option<Scrollbars> {
@@ -2786,6 +2787,61 @@ mod tests {
         // Unknown extensions fall back to the (empty) default icon.
         let other = FileTreeNode::file(2, "notes.txt");
         assert!(glyphs.icon_for(&other, false).is_empty());
+    }
+
+    #[test]
+    fn mouse_click_selects_correct_row_in_both_coordinate_spaces() {
+        use atto_ui::composable::{EventHandling, TabMode};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let theme = atto_ui::theme::Theme::dark();
+        // Off-origin area so absolute vs local coordinate spaces differ.
+        let area = Rect::new(0, 5, 30, 12);
+
+        // sample_tree(true) visible rows (border on): src(1), main.rs(2), lib.rs(3), ...
+        // Inside the border the first content row is one below the top; main.rs is
+        // the second content row.
+        let select_main_rs = |space: MouseCoordinateSpace| -> Option<FileTreeNodeId> {
+            let selection = Binding::new(None);
+            let mut tree = FileTree::new("Files", sample_tree(true), selection.clone());
+            let ctx = ComponentContext {
+                theme: &theme,
+                window_id: atto_ui::wm::WindowId::from_raw(1),
+                is_focused: true,
+                scrollbar_host: ScrollbarHost::Component,
+                tab_mode: TabMode::Cycle,
+                mouse_coordinate_space: space,
+                drag: None,
+            };
+            let backend = TestBackend::new(30, 20);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            terminal.draw(|f| tree.draw(f, area, ctx)).expect("draw");
+
+            let row = match space {
+                // Absolute: border row at area.y, first entry at area.y+1, main.rs at area.y+2.
+                MouseCoordinateSpace::Absolute => area.y + 2,
+                // Local: coordinates are relative to the widget area (0-based).
+                MouseCoordinateSpace::Local => 2,
+            };
+            let event = Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 4,
+                row,
+                modifiers: KeyModifiers::NONE,
+            });
+            EventHandling::handle_event(&mut tree, &event, ctx);
+            selection.get()
+        };
+
+        assert_eq!(
+            select_main_rs(MouseCoordinateSpace::Absolute),
+            Some(FileTreeNodeId::new(2)),
+        );
+        assert_eq!(
+            select_main_rs(MouseCoordinateSpace::Local),
+            Some(FileTreeNodeId::new(2)),
+        );
     }
 
     #[test]

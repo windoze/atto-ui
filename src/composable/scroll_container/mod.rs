@@ -211,6 +211,14 @@ impl ScrollContainer {
         self
     }
 
+    /// Updates the content padding. Padding is applied inside the scroll
+    /// container, so it keeps draw and event coordinates consistent across both
+    /// absolute and local mouse-coordinate spaces (unlike pre-insetting the
+    /// area passed to [`ScrollContainer::draw`]).
+    pub fn set_padding(&mut self, padding: EdgeInsets) {
+        self.padding.set(padding);
+    }
+
     pub fn with_scroll_config(mut self, config: impl Into<Binding<ScrollConfig>>) -> Self {
         self.scroll_config = config.into();
         self

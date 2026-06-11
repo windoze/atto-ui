@@ -210,8 +210,10 @@ impl Component for ListBox {
             drag: None,
             ..ctx
         };
-        let content = self.content_rect(area, border);
-        self.scroll.draw(frame, content, body_ctx);
+        // Inset via padding (not by pre-insetting the area) so draw and event
+        // coordinates agree in both absolute and local mouse-coordinate spaces.
+        self.scroll.set_padding(self.body_padding(border));
+        self.scroll.draw(frame, area, body_ctx);
 
         self.draw_border_scrollbar(frame, area, border, ctx);
     }
@@ -284,26 +286,21 @@ impl ListBox {
         )
     }
 
-    /// Absolute rect the scroll body draws into: area inset by the border (1 cell)
-    /// and, when borderless, with a strip reserved for any visible scrollbar.
-    fn content_rect(&self, area: Rect, border: bool) -> Rect {
-        let inset = u16::from(border);
-        let mut rect = Rect {
-            x: area.x.saturating_add(inset),
-            y: area.y.saturating_add(inset),
-            width: area.width.saturating_sub(2 * inset),
-            height: area.height.saturating_sub(2 * inset),
-        };
-        if !border {
-            let (show_v, show_h) = self.scrollbar_visibility();
-            if show_v {
-                rect.width = rect.width.saturating_sub(1);
-            }
-            if show_h {
-                rect.height = rect.height.saturating_sub(1);
-            }
+    /// Padding applied to the scroll body: one cell on each side for the border,
+    /// or (borderless) just a reserved strip for any visible self-hosted scrollbar.
+    fn body_padding(&self, border: bool) -> EdgeInsets {
+        if border {
+            return EdgeInsets::all(1);
         }
-        rect
+        let mut padding = EdgeInsets::ZERO;
+        let (show_v, show_h) = self.scrollbar_visibility();
+        if show_v {
+            padding.right = 1;
+        }
+        if show_h {
+            padding.bottom = 1;
+        }
+        padding
     }
 
     fn border_scrollbars(&self, area: Rect, border: bool) -> Option<Scrollbars> {

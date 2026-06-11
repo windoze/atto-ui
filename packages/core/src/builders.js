@@ -523,6 +523,7 @@ module.exports = {
   TerminalEmulator,
   FileTreeNode,
   FileTree,
+  fileTreeNodeValue,
   ChatTextMessage,
   ChatFileMessage,
   ChatToolCallMessage,

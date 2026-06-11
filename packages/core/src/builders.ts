@@ -833,7 +833,12 @@ function typeAheadEvents(options: TypeAheadOptions): ComponentEvents | undefined
   })
 }
 
-function fileTreeNodeValue(node: FileTreeNodeLike): ComponentValueMap {
+/**
+ * Normalizes a file-tree node input into the runtime node value map (mapping
+ * `isExpanded`→`expanded`, `nodes`→`children`, recursively). A node that is
+ * already a `ComponentValueMap` is returned unchanged.
+ */
+export function fileTreeNodeValue(node: FileTreeNodeLike): ComponentValueMap {
   if (!isFileTreeNodeInput(node)) return node
   const children = node.children ?? node.nodes
   return compactRecord({
