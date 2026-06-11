@@ -205,7 +205,8 @@ render(<App />, { singleWindow: false })
 ```
 
 For a complete agent example with a real OpenAI/Anthropic provider, see
-[`examples/node/agent_chat.cjs`](../examples/node/README.md).
+[`examples/node/agent_chat.cjs`](../examples/node/agent_chat.cjs)
+([README](../examples/node/README.md)).
 
 ## Testing without a terminal
 

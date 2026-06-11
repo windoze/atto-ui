@@ -12,11 +12,14 @@ This document covers the JavaScript-facing API provided by `@atto-ui/node`, `@at
 |---|---|
 | `@atto-ui/node` | Raw N-API package generated from `crates/atto-ui-node`. |
 | `@atto-ui/node-darwin-arm64` | macOS arm64 native binary package. |
-| `@atto-ui/node-darwin-x64` | macOS x64 native binary package. |
 | `@atto-ui/node-linux-x64-gnu` | Linux x64 glibc native binary package. |
 | `@atto-ui/node-win32-x64-msvc` | Windows x64 MSVC native binary package. |
 | `@atto-ui/core` | Typed CommonJS facade and spec builders. |
 | `@atto-ui/react` | React reconciler, JSX components, and render loop. |
+
+Published native binary packages currently cover macOS arm64, Linux x64 (glibc),
+and Windows x64 (MSVC). macOS x64 is not published; build it locally from
+`crates/atto-ui-node` if you need it.
 
 `@atto-ui/core` loads native bindings in this order:
 
@@ -56,13 +59,28 @@ Primary methods:
 | `step()` | Advances one non-blocking frame; returns `false` when the host requests exit. |
 | `dispose()` | Restores terminal state; idempotent and safe for headless hosts. |
 | `drainCallbacks()` | Returns queued UI callback invocations. |
+| `drainWindowEvents()` | Returns queued window lifecycle events (close/minimize/maximize/restore). |
 | `allocCallback()` / `releaseCallback(id)` | Manages opaque string callback handles. |
 | `sendEvent(windowId, event)` | Injects a key, mouse, paste, resize, or focus event into one window. |
-| `closeWindow` / `focusWindow` / `moveWindow` / `resizeWindow` / `setTitle` | Window management. |
+| `closeWindow` / `focusWindow` / `moveWindow` / `resizeWindow` / `setTitle` | Per-window management. |
+| `minimizeWindow` / `maximizeWindow` / `restoreWindow` | Window state changes by id. |
+| `listWindows()` | Current window handles and their state. |
+| `cascadeWindows()` / `tileWindows()` | Arrange all open windows. |
+| `focusNextWindow()` / `focusPreviousWindow()` | Cycle focus across windows. |
+| `minimizeAllWindows()` / `restoreAllWindows()` / `closeAllWindows()` | Bulk window operations. |
 | `setMenuBar(spec)` / `setStatusBar(left, right)` | Desktop chrome slots used by React desktop roots. |
 | `setProperty(id, name, value)` / `getProperty(id, name)` | Runtime property access by component id. |
+| `setTheme(name)` | Switch to a built-in theme by name (e.g. `dark`, `light`). |
+| `loadTheme(path, base?)` | Load a JSON/YAML theme file, optionally extending a built-in `base`. |
 | `snapshot()` | Deterministic desktop snapshot for tests. |
 | `schemas()` | Registered component schema metadata. |
+
+The N-API package also exports two module-level functions:
+
+| Function | Notes |
+|---|---|
+| `registerAllRuntimeComponents()` | Registers optional runtime components from workspace companion crates. `@atto-ui/core` calls this on load; call it manually only when using the raw `@atto-ui/node` package directly. |
+| `version()` | Returns the native package version string (used by smoke tests). |
 
 ## Component Specs
 
@@ -142,13 +160,32 @@ Common wrappers:
 | Component | Runtime mapping |
 |---|---|
 | `Button` | `Button`, `onClick -> click`. |
-| `TextBox` | Controlled text input, `value` and `onChange(value, event)`. |
-| `ListBox` / `Table` | Selection payloads as numbers. |
+| `Label` | Static single-line text (`text`, `enabled`). |
+| `TextBox` | Controlled single-line input, `value` and `onChange(value, event)`. |
+| `TextArea` | Controlled multi-line input, `value` / `onChange`, optional `enterSubmits`. |
+| `ListBox` / `Table` / `TableView` | Selection payloads as numbers (`onSelect` / `onChange`). |
+| `Checkbox` | Controlled boolean, `checked` + `onChange(checked)`. |
+| `RadioGroup` | `options`, controlled `selectedIndex` + `onChange(index)`. |
+| `Slider` | Numeric `value` in `[min, max]`, `onChange(value)`. |
+| `ProgressBar` | Read-only numeric `value` in `[min, max]`, optional `showText`/`text`. |
+| `Spinner` | Activity indicator, `running` + optional `text`. |
+| `Disclosure` | Collapsible section, controlled `expanded` + `onToggle(expanded)`. |
+| `Divider` | Horizontal/vertical rule (`orientation`). |
+| `Border` | Bordered container around `children`. |
+| `Editor` | Code editor (`value`, `languageId`, `showLineNumbers`, `showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`). |
+| `FileTree` | Tree of `nodes`, controlled `selection`, `onSelect`/`onRename`/`onDelete`, optional `icons`. |
 | `VStack` / `HStack` / `Grid` | Layout containers. |
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
 | `Markdown` | `MarkdownViewer`. |
 | `Desktop`, `Window`, `MenuBar`, `Menu`, `MenuItem`, `StatusBar` | Virtual desktop root and chrome mapping. |
 | `MinimizedWindowsMenu` | Runtime-managed list of minimized windows (see below). |
+| `WindowOpMenuItem` | Menu item wired to a built-in window operation (see below). |
+
+`Window` reports lifecycle through `onClose` / `onMinimize` / `onMaximize` /
+`onRestore` (drained from `drainWindowEvents()`); controlled widgets
+(`TextBox`, `TextArea`, `ListBox`, `Table`, `Checkbox`, `RadioGroup`, `Slider`,
+`FileTree`) keep their value in React state and update it from the change
+handler.
 
 Events are not called directly from Rust. The binding queues callback invocations, the React render loop drains them after each `step()`, and handlers can safely call `setState`.
 
@@ -175,6 +212,37 @@ import { Menu, MenuItem, MinimizedWindowsMenu } from '@atto-ui/react'
 ```
 
 Do not provide your own `items`/children or an `onClick` for this item — the submenu and the restore action are owned by Rust, and any children you set are overwritten each frame.
+
+### Window operation menu items
+
+The runtime also recognizes a family of reserved menu item ids (`atto_ui:window_*`)
+that perform built-in window operations without any JavaScript handler. The
+desktop owns the action, so you only supply the menu item.
+
+| Operation | Reserved id |
+|---|---|
+| `cascade` | `atto_ui:window_cascade` |
+| `tile` | `atto_ui:window_tile` |
+| `minimize` / `maximize` / `restore` | `atto_ui:window_minimize` / `_maximize` / `_restore` |
+| `close` | `atto_ui:window_close` |
+| `next` / `previous` | `atto_ui:window_next` / `_previous` |
+| `minimizeAll` / `restoreAll` / `closeAll` | `atto_ui:window_minimize_all` / `_restore_all` / `_close_all` |
+
+- **`@atto-ui/react`**: use `<WindowOpMenuItem op="cascade" />` (optionally
+  `label`/`shortcut`/`enabled`). The `WINDOW_OP_MENU_IDS` map exposes the id for
+  each operation.
+- **Raw `setMenuBar` spec / `@atto-ui/core`**: add a `MenuItemSpec` whose `id`
+  equals the reserved id; do not attach an `onClick`.
+
+```tsx
+import { Menu, WindowOpMenuItem } from '@atto-ui/react'
+
+<Menu title="Window">
+  <WindowOpMenuItem op="cascade" />
+  <WindowOpMenuItem op="tile" />
+  <WindowOpMenuItem op="closeAll" label="Close all" />
+</Menu>
+```
 
 ## Runtime Compatibility
 

@@ -52,17 +52,31 @@ and `stop()`.
 
 | Export | Host element | Purpose |
 |---|---|---|
-| `Window` | `window` | A desktop window; requires `rect={[x, y, w, h]}`. |
+| `Window` | `window` | A desktop window; requires `rect={[x, y, w, h]}`. Reports `onClose`/`onMinimize`/`onMaximize`/`onRestore`. |
 | `VStack` / `HStack` | `vstack` / `hstack` | Vertical / horizontal layout. `spacing`, `padding`, `scrollable`. |
 | `Grid` | `grid` | Column grid with `columns`, `rowGap`, `columnGap`. |
+| `Border` | `border` | Bordered container around children. |
+| `Divider` | `divider` | Horizontal/vertical rule (`orientation`). |
+| `Disclosure` | `disclosure` | Collapsible section: `expanded` + `onToggle`. |
 | `Button` | `button` | `onClick`; label from children or `label`. |
-| `TextBox` | `textBox` | Controlled input: `value` + `onChange(value)`. |
+| `Label` | `label` | Static single-line text (`text`, `enabled`). |
+| `TextBox` | `textBox` | Controlled single-line input: `value` + `onChange(value)`. |
+| `TextArea` | `textArea` | Controlled multi-line input: `value`, `height`, `enterSubmits`. |
+| `Checkbox` | `checkbox` | Controlled boolean: `checked` + `onChange(checked)`. |
+| `RadioGroup` | `radioGroup` | `options`, `selectedIndex`, `onChange(index)`. |
+| `Slider` | `slider` | Numeric `value` in `[min, max]`, `onChange(value)`. |
+| `ProgressBar` | `progressBar` | Read-only `value`; optional `showText`/`text`. |
+| `Spinner` | `spinner` | Activity indicator: `running`, `text`. |
 | `ListBox` | `listBox` | `items`, `selectedIndex`, `onSelect(index)`. |
 | `Table` / `TableView` | `tableView` | `headers`, `rows`, `onSelect(index)`. |
+| `FileTree` | `fileTree` | `nodes`, `selection`, `onSelect`/`onRename`/`onDelete`, `icons`. |
+| `Editor` | `editor` | Code editor: `value`, `languageId`, `showLineNumbers`, `readOnly`, … |
 | `Text` + `B`/`I`/`U`/`S`/`Link` | `richText` / `textSpan` | Inline styled text. |
 | `Markdown` | `markdownViewer` | Block markdown rendering. |
+| `Desktop` | desktop root | Explicit desktop root (usually implicit with `singleWindow: false`). |
 | `MenuBar` / `Menu` / `MenuItem` | menu slots | Desktop menu bar. |
 | `MinimizedWindowsMenu` | menu slot | Runtime-filled list of minimized windows; restores on click. No `onClick`/children. |
+| `WindowOpMenuItem` | menu slot | Menu item bound to a built-in window op (`cascade`, `tile`, `close`, …). |
 | `StatusBar` | `statusBar` | Desktop status bar (`left` / `right`). |
 
 Lowercase host elements (e.g. `<vstack>`, `<textBox>`) are also available as
@@ -81,7 +95,8 @@ recommended surface.
 ## Examples
 
 Runnable TSX demos live in [`examples/react-tsx`](../../examples/react-tsx):
-hello, counter, todo list, multi-window desktop, and streaming markdown.
+hello, counter, todo list, multi-window desktop, streaming markdown, runtime
+theme switch, and a component gallery covering every wrapper above.
 
 ## Docs
 

@@ -81,6 +81,33 @@ const [name, setName] = useState('')
 The widget's live text is in the runtime tree's `properties.text`. Mirror it
 into a `<Text>` node if you want it visible elsewhere.
 
+## TextArea (controlled)
+
+Multi-line input. Like `TextBox` but with a `height` and an `enterSubmits` knob
+(when `false`, Enter inserts a newline and `onSubmit` is not fired).
+
+```tsx
+const [body, setBody] = useState('')
+
+<TextArea
+  title="Message"
+  height={6}
+  value={body}
+  enterSubmits={false}
+  onChange={(value) => setBody(value)}
+/>
+```
+
+## Label
+
+A static single-line text widget (distinct from rich `Text`). Use it for plain
+captions next to other widgets.
+
+```tsx
+<Label text="Project files" />
+<Label text="Disabled" enabled={false} />
+```
+
 ## ListBox
 
 `items` is the list; `selectedIndex` is the controlled selection; `onSelect`
@@ -115,6 +142,146 @@ const [index, setIndex] = useState(0)
 ```
 
 `TableView` is an alias for `Table`.
+
+## Checkbox
+
+Controlled boolean. `onChange` receives the next `checked` value.
+
+```tsx
+const [on, setOn] = useState(false)
+
+<Checkbox label="Enable feature" checked={on} onChange={setOn} />
+```
+
+## RadioGroup
+
+Controlled single choice over `options`. `onChange` receives the selected index.
+
+```tsx
+const [choice, setChoice] = useState(0)
+
+<RadioGroup
+  label="Mode"
+  options={['Auto', 'Manual', 'Off']}
+  selectedIndex={choice}
+  onChange={setChoice}
+/>
+```
+
+## Slider
+
+Numeric input in `[min, max]` with an optional `step`. `onChange` receives the
+new value.
+
+```tsx
+const [volume, setVolume] = useState(50)
+
+<Slider min={0} max={100} step={5} value={volume} onChange={setVolume} />
+```
+
+## ProgressBar
+
+Read-only progress indicator. Set `showText` to render a percentage, or pass an
+explicit `text`.
+
+```tsx
+<ProgressBar min={0} max={100} value={pct} showText />
+<ProgressBar min={0} max={100} value={pct} text={`${pct}%`} />
+```
+
+## Spinner
+
+Activity indicator. Set `running` to animate; `text` adds a trailing label.
+
+```tsx
+<Spinner running text="Loading…" />
+```
+
+## Disclosure
+
+A collapsible section. Controlled via `expanded` + `onToggle`; children render
+when expanded.
+
+```tsx
+const [open, setOpen] = useState(true)
+
+<Disclosure title="Details" expanded={open} onToggle={setOpen}>
+  <Text>Hidden until expanded.</Text>
+</Disclosure>
+```
+
+## Divider
+
+A horizontal (default) or vertical rule.
+
+```tsx
+<Divider />
+<Divider orientation="vertical" />
+```
+
+## Border
+
+Wraps children in a box border.
+
+```tsx
+<Border>
+  <VStack padding={1}>
+    <Text>Boxed content</Text>
+  </VStack>
+</Border>
+```
+
+## Editor
+
+A full code editor widget. Common knobs: `languageId`, `showLineNumbers`,
+`showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`.
+
+```tsx
+<Editor
+  value={"fn main() {\n    println!(\"hi\");\n}"}
+  languageId="rust"
+  showLineNumbers
+  layout={{ height: 'fill' }}
+/>
+```
+
+## FileTree
+
+A file/directory tree. `nodes` is a list of `{ id, name, kind?, expanded?,
+children? }`; `selection` is the controlled selected id; `onSelect` reports the
+new id (or `null` when cleared). `icons` maps file extensions to glyphs/colors.
+
+```tsx
+const NODES = [
+  {
+    id: 1,
+    name: 'src',
+    kind: 'directory',
+    expanded: true,
+    children: [
+      { id: 2, name: 'main.rs' },
+      { id: 3, name: 'lib.rs' },
+    ],
+  },
+  { id: 4, name: 'README.md' },
+] as const
+
+const ICONS = {
+  rs: { glyph: 'rs', color: '#dd6644' },
+  md: { glyph: 'md', color: '#66aadd' },
+} as const
+
+const [selected, setSelected] = useState<number | null>(null)
+
+<FileTree
+  nodes={NODES}
+  icons={ICONS}
+  selection={selected}
+  onSelect={(id) => setSelected(id)}
+  onRename={(payload) => rename(payload)}
+  onDelete={(payload) => remove(payload)}
+/>
+```
 
 ## Text with inline styles
 
@@ -165,6 +332,21 @@ Only valid as a desktop child (`singleWindow: false`). Items support `shortcut`,
 </MenuBar>
 ```
 
+For window management, use the built-in items instead of wiring your own
+handlers: `<MinimizedWindowsMenu />` (a runtime-filled submenu of minimized
+windows) and `<WindowOpMenuItem op="cascade" />` for operations like `cascade`,
+`tile`, `minimize`, `maximize`, `restore`, `close`, `next`, `previous`,
+`minimizeAll`, `restoreAll`, `closeAll`. The desktop owns these actions.
+
+```tsx
+<Menu title="Window">
+  <WindowOpMenuItem op="cascade" />
+  <WindowOpMenuItem op="tile" />
+  <WindowOpMenuItem op="closeAll" label="Close all" />
+  <MinimizedWindowsMenu />
+</Menu>
+```
+
 ## StatusBar
 
 A fixed desktop slot with `left` and `right` text. It takes no children.
@@ -187,10 +369,10 @@ need more than the convenience value:
 
 ## Raw host intrinsics (advanced)
 
-Beyond the wrappers above, the reconciler exposes lowercase JSX intrinsics for
-runtime components that don't yet have a typed wrapper — e.g. `checkbox`,
-`radioGroup`, `slider`, `progressBar`, `spinner`. These take runtime-shaped
-props (often `snake_case`) and an `onChange` callback handle:
+Every capitalized wrapper has a matching lowercase JSX intrinsic (e.g.
+`<vstack>`, `<textBox>`, `<checkbox>`, `<slider>`, `<progressBar>`). The
+intrinsics take runtime-shaped props (often `snake_case`) and raw `onChange`
+callback handles instead of the convenience value handlers:
 
 ```tsx
 <checkbox label="Enable" checked={on} onChange={handle} />
@@ -198,5 +380,6 @@ props (often `snake_case`) and an `onChange` callback handle:
 <progressBar min={0} max={100} value={pct} show_text text={`${pct}%`} />
 ```
 
-Prefer the capitalized wrappers when one exists; reach for raw intrinsics only
-for components without a wrapper.
+Prefer the capitalized wrappers — they add controlled-value ergonomics and
+typed props. Reach for raw intrinsics only when a runtime component has no
+wrapper yet, or when you need a prop the wrapper does not expose.

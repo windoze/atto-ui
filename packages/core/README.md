@@ -52,9 +52,11 @@ tick()
   for the full method list.
 - **Spec builders** (`src/builders.ts`) — typed helpers that return
   `ComponentSpec` objects: `VStack` / `HStack` / `Grid`, `Text` / `Label` /
-  `Button` / `TextBox` / `Checkbox` / `RadioGroup` / `Slider` / `ProgressBar` /
-  `ListBox` / `TableView`, rich text (`RichText` / `TextSpan` / `StyledLabel`),
-  `MarkdownViewer`, `TabView`, `Splitter`, chat builders, and more.
+  `Button` / `TextBox` / `TextArea` / `Checkbox` / `RadioGroup` / `Slider` /
+  `ProgressBar` / `Spinner` / `Divider` / `Disclosure` / `ListBox` /
+  `TableView` / `FileTree` (with `FileTreeNode`), rich text (`RichText` /
+  `TextSpan` / `StyledLabel`), `MarkdownViewer`, `TabView`, `Splitter`,
+  `CommandPalette`, `TerminalEmulator`, chat builders, and more.
 - **Types** — `ComponentSpec`, `ComponentValue`, `TreeOp`, `Rect`/`RectLike`,
   `CallbackInvocation`, and the `AppHostConfig` shape.
 
