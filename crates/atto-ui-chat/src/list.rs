@@ -8,7 +8,7 @@ use atto_ui::composable::{
     Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
-use atto_ui::widgets::{Disclosure, DisclosureStatus};
+use atto_ui::widgets::{Button, Disclosure, DisclosureStatus};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
 use crossterm::event::{
@@ -23,11 +23,11 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
-    ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment,
-    ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock, ThinkingBlock,
-    TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
+    ChatAlignment, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole,
+    ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
+    ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
@@ -37,6 +37,15 @@ const ANSI_OUTPUT_TAIL_LINES: usize = 12;
 const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
+type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalDecision {
+    pub message_id: ChatMessageId,
+    pub block_id: ChatBlockId,
+    pub approval_id: String,
+    pub option_id: String,
+}
 
 #[derive(Clone)]
 struct ChatMessageListConfig {
@@ -48,6 +57,7 @@ struct ChatMessageListConfig {
     padding: Binding<EdgeInsets>,
     scroll_config: Binding<ScrollConfig>,
     on_open_artifact: Option<ArtifactOpenCallback>,
+    on_approve: Option<ApprovalCallback>,
 }
 
 #[derive(Clone)]
@@ -57,6 +67,7 @@ struct ChatMessageRowConfig {
     in_progress_suffix: String,
     show_timestamps: bool,
     on_open_artifact: Option<ArtifactOpenCallback>,
+    on_approve: Option<ApprovalCallback>,
 }
 
 pub struct ChatMessageList {
@@ -85,6 +96,7 @@ impl ChatMessageList {
             padding: EdgeInsets::symmetric(0, 1).into(),
             scroll_config: ScrollConfig::default().into(),
             on_open_artifact: None,
+            on_approve: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
@@ -166,6 +178,15 @@ impl ChatMessageList {
         F: Fn(ArtifactId) + Send + Sync + 'static,
     {
         self.config.on_open_artifact = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    pub fn on_approve<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ApprovalDecision) + Send + Sync + 'static,
+    {
+        self.config.on_approve = Some(Arc::new(callback));
         self.rebuild_list();
         self
     }
@@ -439,6 +460,7 @@ fn build_list(
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
         on_open_artifact: config.on_open_artifact.clone(),
+        on_approve: config.on_approve.clone(),
     };
     let list = atto_ui::composable::ForEach::new(row_keys, move |key, _| {
         ChatMessageRow::new(key.clone(), store.clone(), row_config.clone())
@@ -1084,7 +1106,7 @@ fn build_aligned_block(
     block: Option<&ChatBlock>,
     config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, body_bindings) = build_block_bubble(block, config);
+    let (bubble, body_bindings) = build_block_bubble(message.id, block, config);
     let bubble_layout = LayoutParams {
         width: Size::Weight(3),
         height: Size::Content,
@@ -1172,10 +1194,11 @@ fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) 
 }
 
 fn build_block_bubble(
+    message_id: ChatMessageId,
     block: Option<&ChatBlock>,
     config: &ChatMessageRowConfig,
 ) -> (VStack, ChatMessageRowBindings) {
-    let (body, body_bindings) = ChatMessageBody::from_block(block, config);
+    let (body, body_bindings) = ChatMessageBody::from_block(message_id, block, config);
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -1438,39 +1461,281 @@ impl From<&ToolUseBlock> for ToolUseDetails {
 
 struct ToolUseDetailsView {
     details: Binding<ToolUseDetails>,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    on_approve: Option<ApprovalCallback>,
+    last_details: Option<ToolUseDetails>,
+    last_area: Option<Rect>,
+    view: VStack,
 }
 
 impl ToolUseDetailsView {
-    fn new(details: impl Into<Binding<ToolUseDetails>>) -> Self {
+    fn new(
+        details: impl Into<Binding<ToolUseDetails>>,
+        message_id: ChatMessageId,
+        block_id: ChatBlockId,
+        on_approve: Option<ApprovalCallback>,
+    ) -> Self {
+        let details = details.into();
+        let initial_details = details.get();
+        let view = build_tool_use_details_stack(
+            &initial_details,
+            message_id,
+            block_id,
+            on_approve.clone(),
+        );
         Self {
-            details: details.into(),
+            details,
+            message_id,
+            block_id,
+            on_approve,
+            last_details: Some(initial_details),
+            last_area: None,
+            view,
         }
     }
 
-    fn display_lines(&self) -> Vec<String> {
-        self.details.with(tool_use_detail_lines)
+    fn sync_view(&mut self) {
+        let details = self.details.get();
+        if self.last_details.as_ref() == Some(&details) {
+            return;
+        }
+        self.view = build_tool_use_details_stack(
+            &details,
+            self.message_id,
+            self.block_id,
+            self.on_approve.clone(),
+        );
+        self.last_details = Some(details);
     }
+
+    fn has_focusable_approval(&self) -> bool {
+        self.details.with(|details| {
+            details.approval.as_ref().is_some_and(|approval| {
+                approval.resolved.is_none()
+                    && !approval.options.is_empty()
+                    && self.on_approve.is_some()
+            })
+        })
+    }
+
+    fn event_for_inner<'a>(
+        &self,
+        event: &Event,
+        mut ctx: ComponentContext<'a>,
+    ) -> (Event, ComponentContext<'a>) {
+        let Event::Mouse(mouse) = event else {
+            return (event.clone(), ctx);
+        };
+        if ctx.mouse_coordinate_space != MouseCoordinateSpace::Local {
+            return (event.clone(), ctx);
+        }
+        let Some(area) = self.last_area else {
+            return (event.clone(), ctx);
+        };
+
+        ctx.mouse_coordinate_space = MouseCoordinateSpace::Absolute;
+        (
+            Event::Mouse(MouseEvent {
+                column: area.x.saturating_add(mouse.column),
+                row: area.y.saturating_add(mouse.row),
+                ..*mouse
+            }),
+            ctx,
+        )
+    }
+}
+
+fn build_tool_use_details_stack(
+    details: &ToolUseDetails,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    on_approve: Option<ApprovalCallback>,
+) -> VStack {
+    let content_layout = LayoutParams {
+        height: Size::Content,
+        ..LayoutParams::default()
+    };
+    let mut column = VStack::new().with_spacing(1);
+    let input_lines = tool_input_detail_lines(&details.input);
+    if !input_lines.is_empty() {
+        column = column.child_with_layout(Text::new(input_lines.join("\n")), content_layout);
+    }
+
+    let Some(approval) = &details.approval else {
+        if input_lines.is_empty() {
+            column = column.child_with_layout(Text::new(String::new()), content_layout);
+        }
+        return column;
+    };
+
+    column = column.child_with_layout(
+        Text::new(format!("Approval: {}", approval.prompt)),
+        content_layout,
+    );
+
+    if let Some(resolved) = &approval.resolved {
+        return column.child_with_layout(
+            Text::new(approval_resolved_label(approval, resolved)),
+            content_layout,
+        );
+    }
+
+    let mut row = HStack::new().with_spacing(1);
+    let enabled = on_approve.is_some();
+    for option in &approval.options {
+        let label = approval_option_button_label(approval, option);
+        let mut button = Button::new(label.clone()).enabled(enabled);
+        if enabled {
+            let decision = ApprovalDecision {
+                message_id,
+                block_id,
+                approval_id: approval.id.clone(),
+                option_id: option.id.clone(),
+            };
+            let callback = on_approve.clone();
+            button = button.on_click(move || {
+                if let Some(callback) = &callback {
+                    callback(decision.clone());
+                }
+            });
+        }
+        row = row.child_with_layout(
+            button,
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(&label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    if approval.options.is_empty() {
+        column.child_with_layout(Text::new("No approval options"), content_layout)
+    } else {
+        column.child_with_layout(row, content_layout)
+    }
+}
+
+fn approval_option_button_label(approval: &ApprovalRequest, option: &ApprovalOption) -> String {
+    match approval.resolved.as_deref() {
+        Some(resolved) if resolved == option.id => format!("[x] {}", option.label),
+        Some(_) => format!("[ ] {}", option.label),
+        None => option.label.clone(),
+    }
+}
+
+fn approval_resolved_label(approval: &ApprovalRequest, resolved: &str) -> String {
+    let label = approval
+        .options
+        .iter()
+        .find(|option| option.id == resolved)
+        .map(|option| option.label.as_str())
+        .unwrap_or(resolved);
+    format!("[x] {label}")
+}
+
+fn button_width_for_label(label: &str) -> u16 {
+    label
+        .width()
+        .saturating_add(4)
+        .max(3)
+        .min(u16::MAX as usize) as u16
+}
+
+fn tool_use_details_desired_width(details: &ToolUseDetails) -> u16 {
+    let input_width = max_line_width(&tool_input_detail_lines(&details.input));
+    let Some(approval) = &details.approval else {
+        return input_width;
+    };
+
+    let prompt_width = format!("Approval: {}", approval.prompt)
+        .width()
+        .min(u16::MAX as usize) as u16;
+    if let Some(resolved) = &approval.resolved {
+        let resolved_width = approval_resolved_label(approval, resolved)
+            .width()
+            .min(u16::MAX as usize) as u16;
+        return input_width.max(prompt_width).max(resolved_width).max(1);
+    }
+
+    let options_width = if approval.options.is_empty() {
+        "No approval options".width().min(u16::MAX as usize) as u16
+    } else {
+        approval
+            .options
+            .iter()
+            .map(|option| button_width_for_label(&approval_option_button_label(approval, option)))
+            .fold(0u16, |width, option_width| {
+                if width == 0 {
+                    option_width
+                } else {
+                    width.saturating_add(1).saturating_add(option_width)
+                }
+            })
+    };
+
+    input_width.max(prompt_width).max(options_width).max(1)
+}
+
+fn tool_use_details_desired_height(details: &ToolUseDetails) -> u16 {
+    let input_height = tool_input_detail_lines(&details.input)
+        .len()
+        .max(1)
+        .min(u16::MAX as usize) as u16;
+    if details.approval.is_none() {
+        return input_height;
+    }
+
+    // Input text, approval prompt, and one option row separated by VStack spacing.
+    input_height.saturating_add(4)
 }
 
 impl Component for ToolUseDetailsView {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let lines = self
-            .display_lines()
-            .into_iter()
-            .map(|line| Line::styled(line, ctx.theme.widget.normal))
-            .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(lines), area);
+        self.last_area = Some(area);
+        self.sync_view();
+        self.view.draw(frame, area, ctx);
     }
 }
 
 impl ::atto_ui::composable::DragAndDrop for ToolUseDetailsView {}
 impl ::atto_ui::composable::Scrollable for ToolUseDetailsView {}
-impl ::atto_ui::composable::FocusNav for ToolUseDetailsView {}
+impl ::atto_ui::composable::FocusNav for ToolUseDetailsView {
+    fn is_focusable(&self) -> bool {
+        self.has_focusable_approval()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        self.sync_view();
+        self.view.focus_first()
+    }
+
+    fn focus_last(&mut self) -> bool {
+        self.sync_view();
+        self.view.focus_last()
+    }
+}
 impl ::atto_ui::composable::DynamicTree for ToolUseDetailsView {}
-impl ::atto_ui::composable::EventHandling for ToolUseDetailsView {}
+impl ::atto_ui::composable::EventHandling for ToolUseDetailsView {
+    fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_view();
+        let (event, ctx) = self.event_for_inner(event, ctx);
+        self.view.handle_event_capture(&event, ctx)
+    }
+
+    fn handle_event_bubble(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_view();
+        let (event, ctx) = self.event_for_inner(event, ctx);
+        self.view.handle_event_bubble(&event, ctx)
+    }
+
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        self.sync_view();
+        let (event, ctx) = self.event_for_inner(event, ctx);
+        self.view.handle_event(&event, ctx)
+    }
+}
 
 impl ::atto_ui::composable::Layout for ToolUseDetailsView {
     fn min_width(&self) -> u16 {
@@ -1482,11 +1747,11 @@ impl ::atto_ui::composable::Layout for ToolUseDetailsView {
     }
 
     fn desired_width(&self) -> Option<u16> {
-        Some(max_line_width(&self.display_lines()))
+        Some(self.details.with(tool_use_details_desired_width))
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(self.display_lines().len().max(1).min(u16::MAX as usize) as u16)
+        Some(self.details.with(tool_use_details_desired_height))
     }
 }
 
@@ -1501,6 +1766,7 @@ enum ChatMessageBody {
 
 impl ChatMessageBody {
     fn from_block(
+        message_id: ChatMessageId,
         block: Option<&ChatBlock>,
         config: &ChatMessageRowConfig,
     ) -> (Self, ChatMessageRowBindings) {
@@ -1557,7 +1823,12 @@ impl ChatMessageBody {
                 let view = Disclosure::new(tool.name.clone())
                     .expanded(!tool.collapsed)
                     .status(status.clone())
-                    .child(ToolUseDetailsView::new(details.clone()));
+                    .child(ToolUseDetailsView::new(
+                        details.clone(),
+                        message_id,
+                        tool.id,
+                        config.on_approve.clone(),
+                    ));
                 (
                     ChatMessageBody::Disclosure(view),
                     ChatMessageRowBindings {
@@ -1742,21 +2013,6 @@ fn tool_output_component(
     }
 }
 
-fn tool_use_detail_lines(details: &ToolUseDetails) -> Vec<String> {
-    let mut lines = tool_input_detail_lines(&details.input);
-    if let Some(approval) = &details.approval {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.extend(approval_request_lines(approval));
-    }
-    if lines.is_empty() {
-        vec![String::new()]
-    } else {
-        lines
-    }
-}
-
 fn tool_input_detail_lines(input: &ToolInput) -> Vec<String> {
     match input {
         ToolInput::Text(text) => tool_text_input_lines(text),
@@ -1787,19 +2043,6 @@ fn tool_json_input_lines(value: &ComponentValue) -> Vec<String> {
         }
         other => vec![format!("Input: {}", component_value_compact(other))],
     }
-}
-
-fn approval_request_lines(approval: &ApprovalRequest) -> Vec<String> {
-    let mut lines = vec![format!("Approval: {}", approval.prompt)];
-    lines.extend(approval.options.iter().map(|option| {
-        let marker = if approval.resolved.as_deref() == Some(option.id.as_str()) {
-            "[x]"
-        } else {
-            "[ ]"
-        };
-        format!("{marker} {}", option.label)
-    }));
-    lines
 }
 
 fn component_value_lines(value: &ComponentValue) -> Vec<String> {
@@ -2645,10 +2888,14 @@ fn mouse_row_in_area(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
-    use atto_ui::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use atto_ui::composable::{
+        EventHandling, FocusNav, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    };
     use atto_ui::theme::Theme;
     use atto_ui::wm::WindowId;
+    use crossterm::event::KeyModifiers;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -2694,6 +2941,18 @@ mod tests {
             .collect::<String>()
     }
 
+    fn component_context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        }
+    }
+
     fn line_text(line: &Line<'_>) -> String {
         let mut text = String::new();
         for span in &line.spans {
@@ -2721,6 +2980,7 @@ mod tests {
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: false,
             on_open_artifact: None,
+            on_approve: None,
         }
     }
 
@@ -2845,6 +3105,73 @@ mod tests {
             tool_status_to_disclosure(&ToolStatus::Canceled),
             DisclosureStatus::Canceled
         );
+    }
+
+    #[test]
+    fn tool_use_approval_buttons_emit_decision_and_lock_when_resolved() {
+        let message_id = ChatMessageId::new(30);
+        let block_id = ChatBlockId::new(30_001);
+        let decisions = Arc::new(Mutex::new(Vec::new()));
+        let captured = decisions.clone();
+        let details = ToolUseDetails {
+            input: ToolInput::Text("cargo test".to_string()),
+            approval: Some(ApprovalRequest {
+                id: "approval-1".to_string(),
+                prompt: "Run tests?".to_string(),
+                options: vec![ApprovalOption {
+                    id: "allow_always".to_string(),
+                    label: "Allow always".to_string(),
+                }],
+                resolved: None,
+            }),
+        };
+        let mut view = ToolUseDetailsView::new(
+            Binding::new(details),
+            message_id,
+            block_id,
+            Some(Arc::new(move |decision| {
+                captured.lock().expect("decisions lock").push(decision);
+            })),
+        );
+        let theme = Theme::dark();
+
+        assert!(view.is_focusable());
+        assert!(view.focus_first());
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            *decisions.lock().expect("decisions lock"),
+            vec![ApprovalDecision {
+                message_id,
+                block_id,
+                approval_id: "approval-1".to_string(),
+                option_id: "allow_always".to_string(),
+            }]
+        );
+
+        let locked = ToolUseDetails {
+            input: ToolInput::Text("cargo test".to_string()),
+            approval: Some(ApprovalRequest {
+                id: "approval-1".to_string(),
+                prompt: "Run tests?".to_string(),
+                options: vec![ApprovalOption {
+                    id: "allow_always".to_string(),
+                    label: "Allow always".to_string(),
+                }],
+                resolved: Some("allow_always".to_string()),
+            }),
+        };
+        let locked_view = ToolUseDetailsView::new(
+            Binding::new(locked),
+            message_id,
+            block_id,
+            Some(Arc::new(|_| panic!("resolved approval must be locked"))),
+        );
+
+        assert!(!locked_view.is_focusable());
     }
 
     #[test]

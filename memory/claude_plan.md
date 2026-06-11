@@ -227,7 +227,7 @@
 - 已检查提交前状态：本次提交将包含 P3.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.2] Pair tool results with uses` 提交并停止。
 
-## 当前任务：P3.3 超长输出尾部窗口
+## 历史记录：P3.3 超长输出尾部窗口
 
 - 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P3.3 超长输出尾部窗口`。
@@ -240,3 +240,19 @@
 - 已更新 `TODO.md`：`P3.3` 标题已加 `[DONE]`，完成记录和验证结果已写入。
 - 已检查提交前状态：本次提交将包含 P3.3 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P3.3] Tail long ANSI tool output` 提交并停止。
+
+## 当前任务：P4.1 inline 审批
+
+- 已在执行任何项目命令前写入本轮可审计计划；该初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P4.1 inline 审批`。
+- 已查看最近提交：`3c43618 [P3.3] Tail long ANSI tool output`，未声明与 `P4.1` 直接相关的未完成阻塞事项。
+- 执行范围限定为 inline approval 渲染、`on_approve` 回调、store 审批状态推进、dynamic `approve(Map)` 事件以及相应测试；不推进 `P4.2` inline diff 决策。
+- 已确认现状：审批序列化/解析已存在，但 `ToolUseDetailsView` 仅渲染静态审批文本，`ChatMessageList` 无 `on_approve`，动态 schema 无 `approve` 事件，`resolve_approval` 只记录 resolved、不推进 `ToolStatus`。
+- 实施方案：新增 `ApprovalDecision`，在 ToolUse 折叠区内把 unresolved approval 渲染为可聚焦按钮并触发回调；resolved approval 显示为锁定的已选结果；`resolve_approval` 校验 option id，并按 allow/always 类选项推进 `Running`、deny/reject/cancel 类选项推进 `Canceled`；dynamic 注册 `approve(Map)` payload。
+- 已完成实现：`ChatMessageList::on_approve`、ToolUse inline 审批按钮、resolved 锁定展示、store 状态推进、dynamic schema/注册、`snapshot_chat_app --inline-approval` 场景。
+- 首次完整测试发现新增 PTY 点击未触发回调；原因是 ToolUse 详情包装层把鼠标坐标转为局部后再传给内部按钮，破坏了按钮按下/释放捕获路径。已修复为转发给内部视图前恢复绝对坐标。
+- 已补充验证：list 单测覆盖按钮回调与 resolved 锁定；store 单测覆盖 allow 推进 running、deny 推进 canceled、无效 option 不发脏；dynamic 单测覆盖 approve schema 和 payload；PTY 覆盖 allow always、状态推进和锁定行为。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P4.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 已检查提交前状态：本次提交将包含 P4.1 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/store.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P4.1] Implement inline approvals` 提交并停止。

@@ -5,8 +5,8 @@ use std::sync::{Arc, RwLock};
 use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
-    ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta, ChatTurnStatus,
-    EditDecision, TodoItem, ToolResultBlock, ToolStatus,
+    ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta,
+    ChatTurnStatus, EditDecision, TodoItem, ToolResultBlock, ToolStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -426,13 +426,27 @@ impl ChatMessageStore {
             let Some(approval) = &mut tool.approval else {
                 return false;
             };
+            let Some(next_status) = approval
+                .options
+                .iter()
+                .find(|option| option.id == option_id)
+                .map(approval_option_status)
+            else {
+                return false;
+            };
             found_approval = true;
-            if approval.resolved.as_deref() == Some(option_id.as_str()) {
-                false
-            } else {
+            let mut changed = false;
+            if approval.resolved.as_deref() != Some(option_id.as_str()) {
                 approval.resolved = Some(option_id);
-                true
+                changed = true;
             }
+
+            if tool_status_can_advance(tool.status, next_status) {
+                tool.status = next_status;
+                changed = true;
+            }
+
+            changed
         });
         if changed {
             self.versions.bump_block(id);
@@ -530,6 +544,33 @@ fn bump_counter(counter: &AtomicU64, next: u64) {
     let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         (current < next).then_some(next)
     });
+}
+
+fn approval_option_status(option: &ApprovalOption) -> ToolStatus {
+    let id = option.id.trim().to_ascii_lowercase();
+    let label = option.label.trim().to_ascii_lowercase();
+    if is_deny_approval_option(&id) || is_deny_approval_option(&label) {
+        ToolStatus::Canceled
+    } else {
+        ToolStatus::Running
+    }
+}
+
+fn is_deny_approval_option(value: &str) -> bool {
+    value == "no"
+        || value.contains("deny")
+        || value.contains("reject")
+        || value.contains("decline")
+        || value.contains("cancel")
+        || value.contains("stop")
+}
+
+fn tool_status_can_advance(current: ToolStatus, next: ToolStatus) -> bool {
+    match next {
+        ToolStatus::Running => current == ToolStatus::Pending,
+        ToolStatus::Canceled => matches!(current, ToolStatus::Pending | ToolStatus::Running),
+        ToolStatus::Pending | ToolStatus::Done | ToolStatus::Error => false,
+    }
 }
 
 impl Default for ChatMessageStore {
@@ -823,10 +864,16 @@ mod tests {
                     approval: Some(ApprovalRequest {
                         id: "approval-1".to_string(),
                         prompt: "Run command?".to_string(),
-                        options: vec![ApprovalOption {
-                            id: "allow".to_string(),
-                            label: "Allow".to_string(),
-                        }],
+                        options: vec![
+                            ApprovalOption {
+                                id: "allow".to_string(),
+                                label: "Allow".to_string(),
+                            },
+                            ApprovalOption {
+                                id: "deny".to_string(),
+                                label: "Deny".to_string(),
+                            },
+                        ],
                         resolved: None,
                     }),
                     collapsed: false,
@@ -850,6 +897,7 @@ mod tests {
         ));
 
         assert!(store.resolve_approval(approval_id, "allow"));
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Running);
         assert!(store.set_edit_decision(diff_id, EditDecision::Accepted));
         assert!(store.set_todo(todo_id, next_items.clone()));
 
@@ -859,5 +907,40 @@ mod tests {
         assert!(store.set_edit_decision(diff_id, EditDecision::Accepted));
         assert!(store.set_todo(todo_id, next_items));
         assert!(!binding.check_dirty(&mut observer));
+
+        assert!(!store.resolve_approval(approval_id, "missing"));
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn resolve_approval_deny_option_cancels_pending_tool() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let approval_id = ChatBlockId::new(20);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: approval_id,
+                call_id: "call-deny".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("rm -rf build".to_string()),
+                status: ToolStatus::Pending,
+                approval: Some(ApprovalRequest {
+                    id: "approval-deny".to_string(),
+                    prompt: "Run command?".to_string(),
+                    options: vec![ApprovalOption {
+                        id: "deny".to_string(),
+                        label: "Deny".to_string(),
+                    }],
+                    resolved: None,
+                }),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.resolve_approval(approval_id, "deny"));
+
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Canceled);
     }
 }

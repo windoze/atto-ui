@@ -325,6 +325,46 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
 }
 
 #[test]
+fn chat_inline_approval_buttons_emit_and_lock() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--inline-approval"], 100, 28)?;
+
+    host.wait_for_text("inline_approval", Duration::from_secs(2))?;
+    host.wait_for_text("Input: INLINE-APPROVAL-COMMAND", Duration::from_secs(2))?;
+    host.wait_for_text(
+        "Approval: Run INLINE-APPROVAL-COMMAND?",
+        Duration::from_secs(2),
+    )?;
+    host.wait_for_text("Allow once", Duration::from_secs(2))?;
+    host.wait_for_text("Allow always", Duration::from_secs(2))?;
+    host.wait_for_text("Deny", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Allow always").expect("allow always button");
+    host.click(x, y)?;
+
+    host.wait_for_text(
+        "APPROVED: approval-inline/allow_always",
+        Duration::from_secs(2),
+    )?;
+    host.wait_for_text("[x] Allow always", Duration::from_secs(2))?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("[~]") && line.contains("inline_approval"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    assert_text_absent_for(&host, "Deny", Duration::from_millis(250));
+    assert_text_absent_for(&host, "option=deny", Duration::from_millis(250));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_tool_result_long_ansi_output_tails_streams_and_expands() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

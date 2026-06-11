@@ -25,12 +25,13 @@ use atto_ui::wm::{Window, WindowKind};
 
 use atto_ui::ComponentValue;
 use atto_ui_chat::{
-    Artifact, ArtifactBlock, ArtifactId, ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock,
-    ChatBlockId, ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel,
-    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel,
-    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
-    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
+    ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
+    ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage,
+    ChatMessageId, ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus,
+    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, TextArtifactViewer, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
+    ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -55,6 +56,7 @@ fn main() -> Result<()> {
     let artifact_link = args.iter().any(|arg| arg == "--artifact-link");
     let block_mapping = args.iter().any(|arg| arg == "--block-mapping");
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
+    let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -76,6 +78,9 @@ fn main() -> Result<()> {
     let mut long_tool_result_id = None;
     let tool_block_ids = if responsive_layout {
         seed_responsive_layout_messages(&store);
+        None
+    } else if inline_approval {
+        seed_inline_approval_messages(&store);
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -116,6 +121,7 @@ fn main() -> Result<()> {
     };
     let streaming_block_ids = if responsive_layout
         || block_mapping
+        || inline_approval
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -136,6 +142,7 @@ fn main() -> Result<()> {
     let input_handle = ChatInputHandle::new();
     let load_counter = Arc::new(AtomicU64::new(0));
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
+    let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
     if !responsive_layout {
         list = list.wrap_width(56);
@@ -145,6 +152,10 @@ fn main() -> Result<()> {
         .on_open_artifact({
             let open_artifacts = open_artifacts.clone();
             move |artifact_id| open_artifacts.push(artifact_id)
+        })
+        .on_approve({
+            let approvals = approvals.clone();
+            move |decision| approvals.push(decision)
         })
         .on_load_more({
             let store = store.clone();
@@ -183,6 +194,8 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output {
         28
+    } else if inline_approval {
+        24
     } else {
         18
     };
@@ -370,6 +383,15 @@ fn main() -> Result<()> {
             }
         }
 
+        for decision in approvals.drain() {
+            store.resolve_approval(decision.block_id, decision.option_id.clone());
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::System,
+                format!("APPROVED: {}/{}", decision.approval_id, decision.option_id),
+            ));
+        }
+
         if let Event::Key(KeyEvent {
             code: KeyCode::Char('q'),
             modifiers,
@@ -467,6 +489,41 @@ fn seed_responsive_layout_messages(store: &ChatMessageStore) {
                 decision: EditDecision::Pending,
             }),
         ],
+    ));
+}
+
+fn seed_inline_approval_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::ToolUse(ToolUseBlock {
+            id: snapshot_block_id(id, 0),
+            call_id: "call-approval".to_string(),
+            name: "inline_approval".to_string(),
+            input: ToolInput::Text("INLINE-APPROVAL-COMMAND".to_string()),
+            status: ToolStatus::Pending,
+            approval: Some(ApprovalRequest {
+                id: "approval-inline".to_string(),
+                prompt: "Run INLINE-APPROVAL-COMMAND?".to_string(),
+                options: vec![
+                    ApprovalOption {
+                        id: "allow_once".to_string(),
+                        label: "Allow once".to_string(),
+                    },
+                    ApprovalOption {
+                        id: "allow_always".to_string(),
+                        label: "Allow always".to_string(),
+                    },
+                    ApprovalOption {
+                        id: "deny".to_string(),
+                        label: "Deny".to_string(),
+                    },
+                ],
+                resolved: None,
+            }),
+            collapsed: false,
+        })],
     ));
 }
 

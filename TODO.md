@@ -70,7 +70,9 @@
 
 参考 `CHAT_UI.md` §6。
 
-- [ ] **P4.1 inline 审批** — `src/list.rs` + `src/store.rs`:`ToolUseBlock.approval` 折叠区内渲染可聚焦选项(复用 `RadioGroup`/按钮),`resolved=Some` 时锁定;`ChatMessageList::on_approve`(`ApprovalDecision{message_id,block_id,approval_id,option_id}`);store `resolve_approval` 并推进 `ToolStatus`。`dynamic.rs` 加 `approve(Map)` 事件。
+- [x] **[DONE] P4.1 inline 审批** — `src/list.rs` + `src/store.rs`:`ToolUseBlock.approval` 折叠区内渲染可聚焦选项(复用 `RadioGroup`/按钮),`resolved=Some` 时锁定;`ChatMessageList::on_approve`(`ApprovalDecision{message_id,block_id,approval_id,option_id}`);store `resolve_approval` 并推进 `ToolStatus`。`dynamic.rs` 加 `approve(Map)` 事件。
+  - 完成记录（2026-06-12）：已新增 `ApprovalDecision` 和 `ChatMessageList::on_approve`，ToolUse 折叠区内的 unresolved approval 渲染为可聚焦按钮并触发审批回调；resolved approval 改为锁定的已选结果显示。`ChatMessageStore::resolve_approval` 现在校验 option id，并将 allow/always 类选项推进到 `Running`、deny/reject/cancel 类选项推进到 `Canceled`。`dynamic.rs` schema/注册增加 `approve(Map)` 事件，payload 包含 `message_id`、`block_id`、`approval_id`、`option_id`。`snapshot_chat_app --inline-approval` 与 PTY 覆盖了 always 审批、状态推进和锁定行为。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 - [ ] **P4.2 inline diff + Accept/Reject** — `src/list.rs` + `src/store.rs`:`DiffBlock`/`ToolOutput::Diff` inline 着色 + `decision==Pending` 时 Accept/Reject;`on_edit_decision`;store `set_edit_decision`;`dynamic.rs` 加 `edit_decision(Map)` 事件。补 PTY 覆盖审批(含 always)与 diff 决策锁定。
 
 ## 阶段 P5 — agent 工作流类型

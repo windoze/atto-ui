@@ -12,12 +12,12 @@ use atto_ui::{
 
 use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
 use crate::{
-    ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
-    ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle, ChatInputPanel, ChatMessage,
-    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, StopReason, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    ApprovalDecision, ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind,
+    AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
+    ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
+    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel,
+    StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -53,6 +53,7 @@ pub fn chat_message_list_schema() -> ComponentSchema {
     component_schema::<ChatMessageList>("ChatMessageList")
         .with_event(EventMeta::new("load_more"))
         .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
+        .with_event(EventMeta::new("approve").with_payload(ValueType::Map))
         .allow_children(false)
 }
 
@@ -364,6 +365,27 @@ fn approval_option_to_value(option: &ApprovalOption) -> ComponentValue {
     map.insert(
         "label".to_string(),
         ComponentValue::String(option.label.clone()),
+    );
+    ComponentValue::Map(map)
+}
+
+fn approval_decision_to_value(decision: ApprovalDecision) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "message_id".to_string(),
+        ComponentValue::U64(decision.message_id.0),
+    );
+    map.insert(
+        "block_id".to_string(),
+        ComponentValue::U64(decision.block_id.0),
+    );
+    map.insert(
+        "approval_id".to_string(),
+        ComponentValue::String(decision.approval_id),
+    );
+    map.insert(
+        "option_id".to_string(),
+        ComponentValue::String(decision.option_id),
     );
     ComponentValue::Map(map)
 }
@@ -1205,6 +1227,12 @@ pub fn register_chat_message_list(
             });
         }
 
+        if let Some(cb) = event_handle(spec, "approve", callbacks.clone()) {
+            view = view.on_approve(move |decision| {
+                cb.emit_with(Some(approval_decision_to_value(decision)));
+            });
+        }
+
         Ok(wrap_with_id(spec, Box::new(view)))
     });
 }
@@ -1321,6 +1349,44 @@ mod tests {
         assert_eq!(
             view.get_property("draft"),
             Some(ComponentValue::String("next".to_string()))
+        );
+    }
+
+    #[test]
+    fn chat_message_list_schema_exposes_approve_event_payload() {
+        let schema = chat_message_list_schema();
+
+        assert!(
+            schema
+                .events
+                .iter()
+                .any(|event| { event.name == "approve" && event.payload == Some(ValueType::Map) })
+        );
+    }
+
+    #[test]
+    fn approval_decision_serializes_to_runtime_payload() {
+        let value = approval_decision_to_value(ApprovalDecision {
+            message_id: ChatMessageId::new(10),
+            block_id: ChatBlockId::new(20),
+            approval_id: "approval-1".to_string(),
+            option_id: "allow_always".to_string(),
+        });
+
+        assert_eq!(
+            value,
+            value_map([
+                ("message_id", ComponentValue::U64(10)),
+                ("block_id", ComponentValue::U64(20)),
+                (
+                    "approval_id",
+                    ComponentValue::String("approval-1".to_string())
+                ),
+                (
+                    "option_id",
+                    ComponentValue::String("allow_always".to_string())
+                ),
+            ])
         );
     }
 
