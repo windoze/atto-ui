@@ -272,6 +272,18 @@ impl EditorView {
             fold_glyph.insert(r.start_line, if r.is_collapsed { '▶' } else { '▼' });
         }
 
+        // Innermost (smallest) fold region containing the cursor; its connector
+        // line and both end triangles are highlighted in the gutter.
+        let mut active_region: Option<(usize, usize)> = None;
+        for r in editor.folding_manager().regions() {
+            if r.start_line <= cursor_line && cursor_line <= r.end_line {
+                let span = r.end_line - r.start_line;
+                if active_region.map_or(true, |(s, e)| span < e - s) {
+                    active_region = Some((r.start_line, r.end_line));
+                }
+            }
+        }
+
         let mut diagnostic_by_line = std::collections::HashMap::<usize, DiagnosticSeverity>::new();
         if show_diagnostics {
             let line_index = editor.line_index();
@@ -322,20 +334,32 @@ impl EditorView {
                 }
             }
 
-            if show_folding_markers {
-                if is_wrapped {
-                    base.push_str("  ");
-                } else if let Some(&glyph) = fold_glyph.get(&logical_line) {
-                    base.push(glyph);
-                    base.push(' ');
-                } else {
-                    base.push_str("  ");
-                }
-            }
-
             used += base.chars().count();
             if !base.is_empty() {
                 spans.push(Span::styled(base, gutter_style));
+            }
+
+            if show_folding_markers {
+                let glyph = if is_wrapped {
+                    None
+                } else {
+                    fold_glyph.get(&logical_line).copied()
+                };
+                if let Some(g) = glyph {
+                    let in_active_region = active_region
+                        .map(|(s, e)| s <= logical_line && logical_line <= e)
+                        .unwrap_or(false);
+                    let marker_style = if in_active_region {
+                        theme.fold_marker.add_modifier(Modifier::BOLD)
+                    } else {
+                        gutter_style
+                    };
+                    spans.push(Span::styled(g.to_string(), marker_style));
+                    spans.push(Span::styled(" ".to_string(), gutter_style));
+                } else {
+                    spans.push(Span::styled("  ".to_string(), gutter_style));
+                }
+                used += 2;
             }
 
             if show_diagnostics {

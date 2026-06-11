@@ -104,6 +104,26 @@ impl EditorView {
             }
         }
 
+        // Fall back to a region *ending* at this line (innermost = largest
+        // `start_line`), so clicking the bottom triangle ▲ folds the same region.
+        // The end line is only visible while the region is expanded, so this path
+        // collapses it; re-expanding happens via the start marker.
+        if best_idx.is_none() {
+            let mut best_start = None::<usize>;
+            for (idx, region) in regions.iter().enumerate() {
+                if region.end_line != logical_line {
+                    continue;
+                }
+                if region.end_line <= region.start_line {
+                    continue;
+                }
+                if best_start.is_none_or(|s| region.start_line > s) {
+                    best_start = Some(region.start_line);
+                    best_idx = Some(idx);
+                }
+            }
+        }
+
         let Some(idx) = best_idx else {
             return;
         };
