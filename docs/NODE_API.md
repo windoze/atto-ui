@@ -158,24 +158,27 @@ Block values are discriminated by `type` and carry a stable `block_id`:
 { type: 'tool_use', block_id: 1003, call_id: 'call-1', name: 'bash', input: { text: 'cargo test' }, status: 'running' }
 { type: 'tool_result', block_id: 1004, call_id: 'call-1', ok: true, output: { ansi: 'ok' } }
 { type: 'diff', block_id: 1005, path: 'src/lib.rs', diff: '@@ ...', decision: 'pending' }
-{ type: 'todo', block_id: 1006, items: [{ text: 'write tests', state: 'done' }] }
-{ type: 'attachment', block_id: 1007, name: 'report.txt', url: 'file:///tmp/report.txt' }
-{ type: 'notice', block_id: 1008, level: 'warning', text: 'context compacted' }
-{ type: 'artifact', block_id: 1009, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
+{ type: 'plan', block_id: 1006, items: [{ text: 'write tests' }], decision: 'pending' }
+{ type: 'todo', block_id: 1007, items: [{ text: 'write tests', state: 'done' }] }
+{ type: 'attachment', block_id: 1008, name: 'report.txt', url: 'file:///tmp/report.txt' }
+{ type: 'notice', block_id: 1009, level: 'warning', text: 'context compacted' }
+{ type: 'artifact', block_id: 1010, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
 ```
 
-`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
+`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatPlanBlock`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
 
 ```js
 const {
   ChatMessage,
   ChatMessageList,
+  ChatPlanBlock,
   ChatTextBlock,
   ChatToolCallMessage,
 } = require('@atto-ui/core')
 
 const answer = ChatMessage(1, [
   ChatTextBlock(1001, 'Hello from the assistant'),
+  ChatPlanBlock(1002, [{ text: 'write tests' }, { text: 'verify output' }]),
 ])
 
 const toolTurn = ChatToolCallMessage(2, 'bash', {
@@ -184,8 +187,14 @@ const toolTurn = ChatToolCallMessage(2, 'bash', {
   toolStatus: 'done',
 })
 
-const root = ChatMessageList({ messages: [answer, toolTurn], autoScroll: true })
+const root = ChatMessageList({
+  messages: [answer, toolTurn],
+  autoScroll: true,
+  onPlanDecision: 'atto:callback:plan',
+})
 ```
+
+`onPlanDecision` receives `{ message_id, block_id, decision }` with `decision` equal to `'accepted'` or `'rejected'` when a pending plan is resolved.
 
 The runtime still accepts the previous `sender/content` message form for parsing compatibility, but new JavaScript builders always produce the block-based form.
 
@@ -227,7 +236,7 @@ Common wrappers:
 | `Border` | Bordered container around `children`. |
 | `Editor` | Code editor (`value`, `languageId`, `showLineNumbers`, `showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`). |
 | `FileTree` | Tree of `nodes`, controlled `selection`, `onSelect`/`onRename`/`onDelete`, optional `icons`. |
-| `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `onLoadMore`, `onOpenArtifact`). |
+| `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `onLoadMore`, `onOpenArtifact`, `onPlanDecision`). |
 | `VStack` / `HStack` / `Grid` | Layout containers. |
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
 | `Markdown` | `MarkdownViewer`. |

@@ -221,6 +221,7 @@ export interface ChatMessageListHostProps {
   readonly auto_scroll?: boolean
   readonly onLoad_more?: AttoUiEventHandler
   readonly onOpen_artifact?: AttoUiEventHandler
+  readonly onPlan_decision?: AttoUiEventHandler
 }
 
 export interface ChatMessageListProps extends LayoutProps {
@@ -232,6 +233,7 @@ export interface ChatMessageListProps extends LayoutProps {
   readonly autoScroll?: boolean
   readonly onLoadMore?: AttoUiEventHandler
   readonly onOpenArtifact?: AttoUiEventHandler
+  readonly onPlanDecision?: AttoUiEventHandler
 }
 
 /** Typed FileTree wrapper. Pass `nodes` as plain node inputs or core node maps. */
@@ -254,7 +256,7 @@ export function FileTree(props: FileTreeProps): ReactElement {
 
 /** Chat transcript wrapper using the block-based runtime message shape. */
 export function ChatMessageList(props: ChatMessageListProps): ReactElement {
-  const { messages, spacing, padding, wrapWidth, showTimestamps, autoScroll, onLoadMore, onOpenArtifact, layout } = props
+  const { messages, spacing, padding, wrapWidth, showTimestamps, autoScroll, onLoadMore, onOpenArtifact, onPlanDecision, layout } = props
   return hostElement('chatMessageList', {
     messages,
     spacing,
@@ -264,6 +266,7 @@ export function ChatMessageList(props: ChatMessageListProps): ReactElement {
     auto_scroll: autoScroll,
     onLoad_more: onLoadMore,
     onOpen_artifact: onOpenArtifact,
+    onPlan_decision: onPlanDecision,
     layout,
   })
 }

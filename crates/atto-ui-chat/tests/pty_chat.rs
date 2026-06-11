@@ -394,6 +394,30 @@ fn chat_inline_diff_buttons_emit_and_lock() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_plan_mode_buttons_emit_and_lock() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--plan-mode"], 100, 28)?;
+
+    host.wait_for_text("Plan: pending", Duration::from_secs(2))?;
+    host.wait_for_text("PLAN-STEP-1", Duration::from_secs(2))?;
+    host.wait_for_text("PLAN-STEP-2", Duration::from_secs(2))?;
+    host.wait_for_text("Accept", Duration::from_secs(2))?;
+    host.wait_for_text("Reject", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Accept").expect("accept button");
+    host.click(x, y)?;
+
+    host.wait_for_text("PLAN_DECISION: 1001/accepted", Duration::from_secs(2))?;
+    host.wait_for_text("Plan: accepted", Duration::from_secs(2))?;
+    host.wait_for_text("[x] Accepted", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "Reject", Duration::from_millis(250));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_tool_result_long_ansi_output_tails_streams_and_expands() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

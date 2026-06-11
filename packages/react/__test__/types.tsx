@@ -1,6 +1,7 @@
 import {
   Button,
   ChatMessageList,
+  ChatPlanBlock,
   ChatTextMessage,
   Grid,
   HStack,
@@ -22,7 +23,7 @@ const textbox = <TextBox value="Ada" onChange={(value, event) => {
 }} />
 const list = <ListBox items={['one', 'two']} selectedIndex={0} onSelect={(index) => index.toFixed()} />
 const table = <Table headers={['name']} rows={[["Ada"], ["Grace"]]} onChange={(index) => index.toFixed()} />
-const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' })]} autoScroll onLoadMore={() => {}} />
+const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' }), { id: 2, role: 'assistant', status: 'complete', blocks: [ChatPlanBlock(2001, [{ text: 'plan' }])] }]} autoScroll onLoadMore={() => {}} onPlanDecision={(event) => event.payload} />
 const layout = <Grid columns={2} rowGap={1} columnGap={1}>{button}{textbox}</Grid>
 const stack = <VStack spacing={1}><HStack>{layout}</HStack>{list}{table}{chat}</VStack>
 const desktop = <>
@@ -34,7 +35,7 @@ const desktop = <>
 const rawTextBox = <textBox title="Raw" text="value" onChange={(event) => event.payload} />
 const rawList = <listBox items={['one']} selection={0} onChange={(event) => event.callbackId} />
 const rawGrid = <grid columns={2} row_gap={1} column_gap={1} />
-const rawChat = <chatMessageList messages={[ChatTextMessage(2, 'raw')]} onLoad_more={(event) => event.callbackId} />
+const rawChat = <chatMessageList messages={[ChatTextMessage(2, 'raw')]} onLoad_more={(event) => event.callbackId} onPlan_decision={(event) => event.payload} />
 const menuEvent = <MenuBar><Menu title="File"><MenuItem label="Open" onClick={(event) => event.callbackId.toUpperCase()} /></Menu></MenuBar>
 void desktop
 void rawTextBox

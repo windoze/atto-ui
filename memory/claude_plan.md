@@ -396,3 +396,17 @@
 - 已同步 `PLAN.md` 的阶段依赖，新增 P8 阶段；已同步 `CHAT_UI.md` §6.3，说明完整文本选择由 P8 补齐。
 - 当前只修改文档/计划记录，代码未改动；完整验证复用收尾 1 的绿色结果，本轮额外运行了 snapshot binary 构建与 PTY 快照审计。
 - 下一步检查提交范围，排除既有无关变更 `crates/atto-ui-node/index.js` 与未跟踪脚本，只提交本轮阻塞排期相关文档后停止。
+
+## 当前任务：P8.1 Plan 模式展示+接受
+
+- 已在执行项目命令前写入本轮可审计计划；初始写入覆盖了历史记录，提交前已恢复既有历史并追加本次 P8.1 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P8.1 Plan 模式展示+接受`。
+- 已查看最近提交：`11577f8 [收尾 2] Schedule remaining matrix prerequisites`，该提交仅排期 P8 前置项，未声明与 P8.1 直接相关的额外未完成阻塞事项。
+- 执行范围限定为独立 plan block 模型、store 更新/决策 API、list plan 面板和 Accept/Reject 锁定、dynamic 事件与序列化、snapshot/PT​​Y 覆盖，以及 core/react/node/docs 同步；不推进 P8.2 或 P8.3。
+- 已完成 Rust 实现：新增 `PlanBlock`、`PlanItem`、`PlanDecision` 与 `ChatBlock::Plan`；`ChatMessageStore` 新增 `set_plan` 和 `set_plan_decision`；`ChatMessageList` 新增 `PlanDecisionView`、`on_plan_decision`、plan row key/binding 同步和锁定行为；`dynamic.rs` 同步 `plan` block round-trip 与 `plan_decision(Map)` 事件。
+- 已新增验证资产：`snapshot_chat_app --plan-mode` 场景，PTY 覆盖 plan 展示、Accept 事件和锁定状态；单测覆盖 plan block id、store 未变化不发脏、dynamic 默认 pending/round-trip/event payload、list plan view 和 row key 行为。
+- 已完成 JS/React/文档同步：`packages/core` 新增 `ChatPlanBlock`、`ChatPlanDecision`、`onPlanDecision`；CommonJS builder、core 类型/断言、React wrapper/raw JSX 类型和 React 类型测试已更新；`crates/atto-ui-node/index.d.ts` 和 `docs/NODE_API.md` 已补充 plan block 形与事件说明。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`、`npm run typecheck --prefix packages/core`、`node packages/core/__test__/builders.cjs`、`npm test --prefix packages/core`、`npm run test:runtime --prefix packages/core`、`npm run typecheck --prefix packages/react`、`npm run build --prefix packages/react`、`npm test --prefix packages/react`、`npm test --prefix crates/atto-ui-node`、`npm run smoke --prefix examples/react-tsx`。
+- 已更新 `TODO.md`：`P8.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 提交前检查发现既有无关变更：`crates/atto-ui-node/index.js` 已修改，且有未跟踪 `notification.sh`、`run_agent.sh`；本次不修改、不回退、不提交这些文件。
+- 下一步只 stage 本任务相关文件，创建 `[P8.1] Add plan mode block` 提交并停止。

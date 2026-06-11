@@ -6,6 +6,7 @@ import {
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
+  ChatPlanBlock,
   ChatTextMessage,
   ChatThinkingBlock,
   ChatToolCallMessage,
@@ -93,6 +94,7 @@ const fileTreeSpec: ComponentSpec = FileTree({
 const chatMode: ComponentValue = ChatInputMode('choice', { options: ['yes', 'no'] })
 const chatMessage = ChatMessage(2, [
   ChatThinkingBlock(2001, 'thinking', { collapsed: true }),
+  ChatPlanBlock(2003, [{ text: 'review plan' }], { decision: 'pending' }),
   ChatNoticeBlock(2002, 'info', 'ready'),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 1, output: 2 } } })
 const chatToolMessage = ChatToolCallMessage(3, 'bash', {
@@ -103,6 +105,7 @@ const chatToolMessage = ChatToolCallMessage(3, 'bash', {
 const chatListSpec: ComponentSpec = ChatMessageList({
   messages: [ChatTextMessage(1, 'hello', { role: 'user' }), chatMessage, chatToolMessage],
   onLoadMore: 'atto:callback:7',
+  onPlanDecision: 'atto:callback:9',
 })
 const chatInputSpec: ComponentSpec = ChatInputPanel({ mode: ChatInputMode(), onSubmit: 'atto:callback:8' })
 

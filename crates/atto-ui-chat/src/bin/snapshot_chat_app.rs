@@ -30,9 +30,10 @@ use atto_ui_chat::{
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
     ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
-    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, StopReason,
-    TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
+    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TextArtifactViewer, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -59,6 +60,7 @@ fn main() -> Result<()> {
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
+    let plan_mode = args.iter().any(|arg| arg == "--plan-mode");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
@@ -92,6 +94,9 @@ fn main() -> Result<()> {
         None
     } else if inline_diff {
         seed_inline_diff_messages(&store);
+        None
+    } else if plan_mode {
+        seed_plan_mode_messages(&store);
         None
     } else if thinking_notice {
         seed_thinking_notice_messages(&store);
@@ -149,6 +154,7 @@ fn main() -> Result<()> {
         || block_mapping
         || inline_approval
         || inline_diff
+        || plan_mode
         || thinking_notice
         || todo_block_id.is_some()
         || turn_meta_error
@@ -176,6 +182,7 @@ fn main() -> Result<()> {
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
+    let plan_decisions: EventQueue<PlanDecisionEvent> = EventQueue::new();
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
@@ -195,6 +202,10 @@ fn main() -> Result<()> {
         .on_edit_decision({
             let edit_decisions = edit_decisions.clone();
             move |decision| edit_decisions.push(decision)
+        })
+        .on_plan_decision({
+            let plan_decisions = plan_decisions.clone();
+            move |decision| plan_decisions.push(decision)
         })
         .on_load_more({
             let store = store.clone();
@@ -245,7 +256,7 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output || turn_meta_error {
         28
-    } else if inline_approval || inline_diff || message_actions || cancel_action {
+    } else if inline_approval || inline_diff || plan_mode || message_actions || cancel_action {
         24
     } else {
         18
@@ -479,6 +490,19 @@ fn main() -> Result<()> {
             ));
         }
 
+        for decision in plan_decisions.drain() {
+            store.set_plan_decision(decision.block_id, decision.decision);
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::System,
+                format!(
+                    "PLAN_DECISION: {}/{}",
+                    decision.block_id.0,
+                    plan_decision_event_label(decision.decision)
+                ),
+            ));
+        }
+
         for action in message_action_events.drain() {
             input_handle.draft_binding().set(format!(
                 "MESSAGE_ACTION: {}/{}",
@@ -645,6 +669,29 @@ fn seed_inline_diff_messages(store: &ChatMessageStore) {
     ));
 }
 
+fn seed_plan_mode_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Plan(PlanBlock {
+            id: snapshot_block_id(id, 0),
+            items: vec![
+                PlanItem {
+                    text: "PLAN-STEP-1 inspect requirements".to_string(),
+                },
+                PlanItem {
+                    text: "PLAN-STEP-2 implement changes".to_string(),
+                },
+                PlanItem {
+                    text: "PLAN-STEP-3 verify behavior".to_string(),
+                },
+            ],
+            decision: PlanDecision::Pending,
+        })],
+    ));
+}
+
 fn seed_thinking_notice_messages(store: &ChatMessageStore) {
     let id = store.next_message_id();
     store.push(ChatMessage::new(
@@ -778,6 +825,14 @@ fn edit_decision_event_label(decision: EditDecision) -> &'static str {
         EditDecision::Pending => "pending",
         EditDecision::Accepted => "accepted",
         EditDecision::Rejected => "rejected",
+    }
+}
+
+fn plan_decision_event_label(decision: PlanDecision) -> &'static str {
+    match decision {
+        PlanDecision::Pending => "pending",
+        PlanDecision::Accepted => "accepted",
+        PlanDecision::Rejected => "rejected",
     }
 }
 

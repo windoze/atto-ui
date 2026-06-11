@@ -240,6 +240,7 @@ pub enum ChatBlock {
     ToolUse(ToolUseBlock),
     ToolResult(ToolResultBlock),
     Diff(DiffBlock),
+    Plan(PlanBlock),
     Todo(TodoBlock),
     Attachment(AttachmentBlock),
     Notice(NoticeBlock),
@@ -254,6 +255,7 @@ impl ChatBlock {
             ChatBlock::ToolUse(block) => block.id,
             ChatBlock::ToolResult(block) => block.id,
             ChatBlock::Diff(block) => block.id,
+            ChatBlock::Plan(block) => block.id,
             ChatBlock::Todo(block) => block.id,
             ChatBlock::Attachment(block) => block.id,
             ChatBlock::Notice(block) => block.id,
@@ -372,6 +374,25 @@ pub struct DiffData {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditDecision {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanBlock {
+    pub id: ChatBlockId,
+    pub items: Vec<PlanItem>,
+    pub decision: PlanDecision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanItem {
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanDecision {
     Pending,
     Accepted,
     Rejected,
@@ -621,26 +642,33 @@ mod tests {
                 },
                 decision: EditDecision::Pending,
             }),
-            ChatBlock::Todo(TodoBlock {
+            ChatBlock::Plan(PlanBlock {
                 id: ChatBlockId::new(6),
+                items: vec![PlanItem {
+                    text: "design".to_string(),
+                }],
+                decision: PlanDecision::Pending,
+            }),
+            ChatBlock::Todo(TodoBlock {
+                id: ChatBlockId::new(7),
                 items: vec![TodoItem {
                     text: "ship".to_string(),
                     state: TodoState::InProgress,
                 }],
             }),
             ChatBlock::Attachment(AttachmentBlock {
-                id: ChatBlockId::new(7),
+                id: ChatBlockId::new(8),
                 name: "report.txt".to_string(),
                 url: None,
                 mime: Some("text/plain".to_string()),
             }),
             ChatBlock::Notice(NoticeBlock {
-                id: ChatBlockId::new(8),
+                id: ChatBlockId::new(9),
                 level: NoticeLevel::Warning,
                 text: "context compacted".to_string(),
             }),
             ChatBlock::Artifact(ArtifactBlock {
-                id: ChatBlockId::new(9),
+                id: ChatBlockId::new(10),
                 kind: ArtifactKind::Diff,
                 anchor: ArtifactId::new("artifact-1"),
                 title: "patch".to_string(),
@@ -649,7 +677,7 @@ mod tests {
 
         let ids = blocks.iter().map(ChatBlock::id).collect::<Vec<_>>();
 
-        assert_eq!(ids, (1..=9).map(ChatBlockId::new).collect::<Vec<_>>());
+        assert_eq!(ids, (1..=10).map(ChatBlockId::new).collect::<Vec<_>>());
     }
 
     #[test]

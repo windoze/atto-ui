@@ -136,6 +136,7 @@ export type ChatTurnStatus = 'complete' | 'streaming' | 'canceled' | { readonly 
 export type ChatToolStatus = 'pending' | 'running' | 'done' | 'error' | 'canceled'
 export type ChatArtifactKind = 'code' | 'diff' | 'file' | (string & {})
 export type ChatEditDecision = 'pending' | 'accepted' | 'rejected'
+export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'refusal'
@@ -170,6 +171,7 @@ export type ChatBlock =
   | { readonly type: 'tool_use'; readonly block_id: number; readonly call_id: string; readonly name: string; readonly input: ChatToolInput; readonly status: ChatToolStatus; readonly approval?: ChatApprovalRequest; readonly collapsed?: boolean }
   | { readonly type: 'tool_result'; readonly block_id: number; readonly call_id: string; readonly ok: boolean; readonly exit_code?: number; readonly output: ChatToolOutput; readonly collapsed?: boolean }
   | { readonly type: 'diff'; readonly block_id: number; readonly path: string; readonly diff: string; readonly decision: ChatEditDecision }
+  | { readonly type: 'plan'; readonly block_id: number; readonly items: readonly { readonly text: string }[]; readonly decision: ChatPlanDecision }
   | { readonly type: 'todo'; readonly block_id: number; readonly items: readonly { readonly text: string; readonly state: ChatTodoState }[] }
   | { readonly type: 'attachment'; readonly block_id: number; readonly name: string; readonly url?: string | null; readonly mime?: string | null }
   | { readonly type: 'notice'; readonly block_id: number; readonly level: ChatNoticeLevel; readonly text: string }

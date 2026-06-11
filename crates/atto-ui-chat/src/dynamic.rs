@@ -16,9 +16,9 @@ use crate::{
     AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
     ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
     ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction,
-    MessageActionKind, NoticeBlock, NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock,
-    TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent,
+    PlanItem, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -56,6 +56,7 @@ pub fn chat_message_list_schema() -> ComponentSchema {
         .with_event(EventMeta::new("open_artifact").with_payload(ValueType::String))
         .with_event(EventMeta::new("approve").with_payload(ValueType::Map))
         .with_event(EventMeta::new("edit_decision").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("plan_decision").with_payload(ValueType::Map))
         .with_event(EventMeta::new("cancel").with_payload(ValueType::Map))
         .with_event(EventMeta::new("message_action").with_payload(ValueType::Map))
         .allow_children(false)
@@ -251,6 +252,18 @@ fn block_to_value(block: &ChatBlock) -> ComponentValue {
             );
             ComponentValue::Map(map)
         }
+        ChatBlock::Plan(block) => {
+            let mut map = block_base("plan", block.id);
+            map.insert(
+                "items".to_string(),
+                ComponentValue::List(block.items.iter().map(plan_item_to_value).collect()),
+            );
+            map.insert(
+                "decision".to_string(),
+                ComponentValue::String(plan_decision_to_string(block.decision).to_string()),
+            );
+            ComponentValue::Map(map)
+        }
         ChatBlock::Todo(block) => {
             let mut map = block_base("todo", block.id);
             map.insert(
@@ -414,6 +427,23 @@ fn edit_decision_event_to_value(event: EditDecisionEvent) -> ComponentValue {
     ComponentValue::Map(map)
 }
 
+fn plan_decision_event_to_value(event: PlanDecisionEvent) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "message_id".to_string(),
+        ComponentValue::U64(event.message_id.0),
+    );
+    map.insert(
+        "block_id".to_string(),
+        ComponentValue::U64(event.block_id.0),
+    );
+    map.insert(
+        "decision".to_string(),
+        ComponentValue::String(plan_decision_to_string(event.decision).to_string()),
+    );
+    ComponentValue::Map(map)
+}
+
 fn cancel_event_to_value(message_id: ChatMessageId) -> ComponentValue {
     let mut map = ValueMap::new();
     map.insert("message_id".to_string(), ComponentValue::U64(message_id.0));
@@ -475,6 +505,15 @@ fn todo_item_to_value(item: &TodoItem) -> ComponentValue {
     ComponentValue::Map(map)
 }
 
+fn plan_item_to_value(item: &PlanItem) -> ComponentValue {
+    let mut map = ValueMap::new();
+    map.insert(
+        "text".to_string(),
+        ComponentValue::String(item.text.clone()),
+    );
+    ComponentValue::Map(map)
+}
+
 fn insert_bool_if_true(map: &mut ValueMap, key: &str, value: bool) {
     if value {
         map.insert(key.to_string(), ComponentValue::Bool(true));
@@ -513,6 +552,14 @@ fn edit_decision_to_string(decision: EditDecision) -> &'static str {
         EditDecision::Pending => "pending",
         EditDecision::Accepted => "accepted",
         EditDecision::Rejected => "rejected",
+    }
+}
+
+fn plan_decision_to_string(decision: PlanDecision) -> &'static str {
+    match decision {
+        PlanDecision::Pending => "pending",
+        PlanDecision::Accepted => "accepted",
+        PlanDecision::Rejected => "rejected",
     }
 }
 
@@ -692,6 +739,19 @@ fn parse_block_value(value: &ComponentValue) -> Result<ChatBlock, String> {
                 .map(parse_edit_decision_value)
                 .transpose()?
                 .unwrap_or(EditDecision::Pending),
+        })),
+        "plan" => Ok(ChatBlock::Plan(PlanBlock {
+            id,
+            items: map
+                .get("items")
+                .map(parse_plan_items_value)
+                .transpose()?
+                .unwrap_or_default(),
+            decision: map
+                .get("decision")
+                .map(parse_plan_decision_value)
+                .transpose()?
+                .unwrap_or(PlanDecision::Pending),
         })),
         "todo" => Ok(ChatBlock::Todo(TodoBlock {
             id,
@@ -1017,6 +1077,20 @@ fn parse_todo_items_value(value: &ComponentValue) -> Result<Vec<TodoItem>, Strin
     items.iter().map(parse_todo_item_value).collect()
 }
 
+fn parse_plan_items_value(value: &ComponentValue) -> Result<Vec<PlanItem>, String> {
+    let ComponentValue::List(items) = value else {
+        return Err(format!("plan items must be list, got {value:?}"));
+    };
+    items.iter().map(parse_plan_item_value).collect()
+}
+
+fn parse_plan_item_value(value: &ComponentValue) -> Result<PlanItem, String> {
+    let map = expect_map(value, "plan item")?;
+    Ok(PlanItem {
+        text: required_string_field(map, "text", "plan item")?,
+    })
+}
+
 fn parse_todo_item_value(value: &ComponentValue) -> Result<TodoItem, String> {
     let map = expect_map(value, "todo item")?;
     Ok(TodoItem {
@@ -1082,6 +1156,23 @@ fn parse_edit_decision_string(raw: &str) -> Result<EditDecision, String> {
         "accepted" | "accept" => Ok(EditDecision::Accepted),
         "rejected" | "reject" => Ok(EditDecision::Rejected),
         _ => Err(format!("unknown edit decision '{raw}'")),
+    }
+}
+
+fn parse_plan_decision_value(value: &ComponentValue) -> Result<PlanDecision, String> {
+    match value {
+        ComponentValue::String(raw) => parse_plan_decision_string(raw),
+        other => Err(format!("plan decision must be string, got {other:?}")),
+    }
+}
+
+fn parse_plan_decision_string(raw: &str) -> Result<PlanDecision, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "pending" => Ok(PlanDecision::Pending),
+        "accepted" | "accept" => Ok(PlanDecision::Accepted),
+        "rejected" | "reject" => Ok(PlanDecision::Rejected),
+        _ => Err(format!("unknown plan decision '{raw}'")),
     }
 }
 
@@ -1311,6 +1402,12 @@ pub fn register_chat_message_list(
             });
         }
 
+        if let Some(cb) = event_handle(spec, "plan_decision", callbacks.clone()) {
+            view = view.on_plan_decision(move |event| {
+                cb.emit_with(Some(plan_decision_event_to_value(event)));
+            });
+        }
+
         if let Some(cb) = event_handle(spec, "cancel", callbacks.clone()) {
             view = view.on_cancel(move |message_id| {
                 cb.emit_with(Some(cancel_event_to_value(message_id)));
@@ -1464,6 +1561,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_message_list_schema_exposes_plan_decision_event_payload() {
+        let schema = chat_message_list_schema();
+
+        assert!(schema.events.iter().any(|event| {
+            event.name == "plan_decision" && event.payload == Some(ValueType::Map)
+        }));
+    }
+
+    #[test]
     fn chat_message_list_schema_exposes_message_action_event_payload() {
         let schema = chat_message_list_schema();
 
@@ -1523,6 +1629,24 @@ mod tests {
             value_map([
                 ("message_id", ComponentValue::U64(11)),
                 ("block_id", ComponentValue::U64(21)),
+                ("decision", ComponentValue::String("accepted".to_string())),
+            ])
+        );
+    }
+
+    #[test]
+    fn plan_decision_event_serializes_to_runtime_payload() {
+        let value = plan_decision_event_to_value(PlanDecisionEvent {
+            message_id: ChatMessageId::new(14),
+            block_id: ChatBlockId::new(24),
+            decision: PlanDecision::Accepted,
+        });
+
+        assert_eq!(
+            value,
+            value_map([
+                ("message_id", ComponentValue::U64(14)),
+                ("block_id", ComponentValue::U64(24)),
                 ("decision", ComponentValue::String("accepted".to_string())),
             ])
         );
@@ -1642,8 +1766,20 @@ mod tests {
                     },
                     decision: EditDecision::Accepted,
                 }),
-                ChatBlock::Todo(TodoBlock {
+                ChatBlock::Plan(PlanBlock {
                     id: ChatBlockId::new(76),
+                    items: vec![
+                        PlanItem {
+                            text: "write tests".to_string(),
+                        },
+                        PlanItem {
+                            text: "verify output".to_string(),
+                        },
+                    ],
+                    decision: PlanDecision::Accepted,
+                }),
+                ChatBlock::Todo(TodoBlock {
+                    id: ChatBlockId::new(77),
                     items: vec![
                         TodoItem {
                             text: "write tests".to_string(),
@@ -1656,18 +1792,18 @@ mod tests {
                     ],
                 }),
                 ChatBlock::Attachment(AttachmentBlock {
-                    id: ChatBlockId::new(77),
+                    id: ChatBlockId::new(78),
                     name: "report.txt".to_string(),
                     url: Some("file:///tmp/report.txt".to_string()),
                     mime: Some("text/plain".to_string()),
                 }),
                 ChatBlock::Notice(NoticeBlock {
-                    id: ChatBlockId::new(78),
+                    id: ChatBlockId::new(79),
                     level: NoticeLevel::Warning,
                     text: "context compacted".to_string(),
                 }),
                 ChatBlock::Artifact(ArtifactBlock {
-                    id: ChatBlockId::new(79),
+                    id: ChatBlockId::new(80),
                     kind: ArtifactKind::Diff,
                     anchor: ArtifactId::new("artifact-1"),
                     title: "patch".to_string(),
@@ -1722,6 +1858,26 @@ mod tests {
         let parsed = parse_block_value(&ComponentValue::Map(serialized))
             .expect("parse expanded thinking block");
         assert!(matches!(parsed, ChatBlock::Thinking(block) if !block.collapsed));
+    }
+
+    #[test]
+    fn chat_plan_blocks_default_to_pending_when_decision_omitted() {
+        let parsed = parse_block_value(&value_map([
+            ("type", ComponentValue::String("plan".to_string())),
+            ("block_id", ComponentValue::U64(82)),
+            (
+                "items",
+                ComponentValue::List(vec![value_map([(
+                    "text",
+                    ComponentValue::String("PLAN-STEP".to_string()),
+                )])]),
+            ),
+        ]))
+        .expect("parse plan block");
+
+        assert!(
+            matches!(parsed, ChatBlock::Plan(block) if block.decision == PlanDecision::Pending)
+        );
     }
 
     #[test]

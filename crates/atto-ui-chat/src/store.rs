@@ -6,7 +6,7 @@ use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
     ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta,
-    ChatTurnStatus, EditDecision, TodoItem, ToolResultBlock, ToolStatus,
+    ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TodoItem, ToolResultBlock, ToolStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -478,6 +478,46 @@ impl ChatMessageStore {
         found_diff
     }
 
+    pub fn set_plan(&self, id: ChatBlockId, items: Vec<PlanItem>) -> bool {
+        let mut found_plan = false;
+        let changed = self.messages.update_if(|messages| {
+            let Some(ChatBlock::Plan(plan)) = find_block_mut(messages, id) else {
+                return false;
+            };
+            found_plan = true;
+            if plan.items == items {
+                false
+            } else {
+                plan.items = items;
+                true
+            }
+        });
+        if changed {
+            self.versions.bump_block(id);
+        }
+        found_plan
+    }
+
+    pub fn set_plan_decision(&self, id: ChatBlockId, decision: PlanDecision) -> bool {
+        let mut found_plan = false;
+        let changed = self.messages.update_if(|messages| {
+            let Some(ChatBlock::Plan(plan)) = find_block_mut(messages, id) else {
+                return false;
+            };
+            found_plan = true;
+            if plan.decision == decision {
+                false
+            } else {
+                plan.decision = decision;
+                true
+            }
+        });
+        if changed {
+            self.versions.bump_block(id);
+        }
+        found_plan
+    }
+
     pub fn set_todo(&self, id: ChatBlockId, items: Vec<TodoItem>) -> bool {
         let mut found_todo = false;
         let changed = self.messages.update_if(|messages| {
@@ -537,6 +577,7 @@ fn set_block_id(block: &mut ChatBlock, id: ChatBlockId) {
         ChatBlock::ToolUse(block) => block.id = id,
         ChatBlock::ToolResult(block) => block.id = id,
         ChatBlock::Diff(block) => block.id = id,
+        ChatBlock::Plan(block) => block.id = id,
         ChatBlock::Todo(block) => block.id = id,
         ChatBlock::Attachment(block) => block.id = id,
         ChatBlock::Notice(block) => block.id = id,
@@ -587,8 +628,8 @@ impl Default for ChatMessageStore {
 mod tests {
     use super::*;
     use crate::message::{
-        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, TextBlock, ThinkingBlock,
-        TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
+        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, PlanBlock, TextBlock,
+        ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
     };
 
     fn block_id_for(
@@ -944,6 +985,39 @@ mod tests {
         assert!(!binding.check_dirty(&mut observer));
 
         assert!(!store.resolve_approval(approval_id, "missing"));
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn plan_updates_skip_unchanged_values() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let plan_id = ChatBlockId::new(30);
+        let next_items = vec![PlanItem {
+            text: "verify".to_string(),
+        }];
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Plan(PlanBlock {
+                id: plan_id,
+                items: vec![PlanItem {
+                    text: "design".to_string(),
+                }],
+                decision: PlanDecision::Pending,
+            })],
+        ));
+
+        assert!(store.set_plan(plan_id, next_items.clone()));
+        assert!(store.set_plan_decision(plan_id, PlanDecision::Accepted));
+
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+        assert!(store.set_plan(plan_id, next_items));
+        assert!(store.set_plan_decision(plan_id, PlanDecision::Accepted));
+        assert!(!binding.check_dirty(&mut observer));
+
+        assert!(!store.set_plan(ChatBlockId::new(999), Vec::new()));
         assert!(!binding.check_dirty(&mut observer));
     }
 

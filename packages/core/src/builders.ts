@@ -216,6 +216,7 @@ export type ChatToolCallStatus = ChatToolStatus
 export type ChatArtifactKind = 'code' | 'diff' | 'file' | (string & {})
 export type ChatToolOutputKind = 'ansi' | 'markdown' | 'diff'
 export type ChatEditDecision = 'pending' | 'accepted' | 'rejected'
+export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
 
@@ -322,6 +323,16 @@ export interface ChatDiffBlock extends ChatBlockBase {
   readonly decision: ChatEditDecision
 }
 
+export interface ChatPlanItem {
+  readonly text: string
+}
+
+export interface ChatPlanBlock extends ChatBlockBase {
+  readonly type: 'plan'
+  readonly items: readonly ChatPlanItem[]
+  readonly decision: ChatPlanDecision
+}
+
 export interface ChatTodoItem {
   readonly text: string
   readonly state: ChatTodoState
@@ -358,6 +369,7 @@ export type ChatBlockInput =
   | ChatToolUseBlock
   | ChatToolResultBlock
   | ChatDiffBlock
+  | ChatPlanBlock
   | ChatTodoBlock
   | ChatAttachmentBlock
   | ChatNoticeBlock
@@ -464,6 +476,10 @@ export interface ChatDiffBlockOptions {
   readonly decision?: ChatEditDecision
 }
 
+export interface ChatPlanBlockOptions {
+  readonly decision?: ChatPlanDecision
+}
+
 export interface ChatTextMessageOptions extends ChatMessageBaseOptions, ChatTextBlockOptions {
   readonly blockId?: number
 }
@@ -505,6 +521,7 @@ export interface ChatMessageListOptions extends BuilderBaseOptions {
   readonly autoScroll?: boolean
   readonly onLoadMore?: CallbackHandle
   readonly onOpenArtifact?: CallbackHandle
+  readonly onPlanDecision?: CallbackHandle
 }
 
 export interface ChatInputModeOptions {
@@ -960,6 +977,19 @@ export function ChatDiffBlock(
   }) as unknown as ChatDiffBlock
 }
 
+export function ChatPlanBlock(
+  blockId: number,
+  items: readonly ChatPlanItem[],
+  options: ChatPlanBlockOptions = {},
+): ChatPlanBlock {
+  return compactRecord({
+    type: 'plan',
+    block_id: blockId,
+    items,
+    decision: options.decision ?? 'pending',
+  }) as unknown as ChatPlanBlock
+}
+
 export function ChatTodoBlock(blockId: number, items: readonly ChatTodoItem[]): ChatTodoBlock {
   return compactRecord({ type: 'todo', block_id: blockId, items }) as unknown as ChatTodoBlock
 }
@@ -1062,6 +1092,7 @@ export function ChatMessageList(options: ChatMessageListOptions = {}): Component
   }, events(options.events, {
     load_more: options.onLoadMore,
     open_artifact: options.onOpenArtifact,
+    plan_decision: options.onPlanDecision,
   }))
 }
 

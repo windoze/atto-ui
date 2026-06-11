@@ -31,8 +31,9 @@ use crate::message::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
     ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
     ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
-    NoticeLevel, StopReason, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
-    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TextBlock, ThinkingBlock,
+    TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
@@ -44,6 +45,7 @@ const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
 type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
+type PlanDecisionCallback = Arc<dyn Fn(PlanDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
 
@@ -60,6 +62,13 @@ pub struct EditDecisionEvent {
     pub message_id: ChatMessageId,
     pub block_id: ChatBlockId,
     pub decision: EditDecision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanDecisionEvent {
+    pub message_id: ChatMessageId,
+    pub block_id: ChatBlockId,
+    pub decision: PlanDecision,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +98,7 @@ struct ChatMessageListConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
 }
@@ -102,6 +112,7 @@ struct ChatMessageRowConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
 }
@@ -135,6 +146,7 @@ impl ChatMessageList {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
         };
@@ -237,6 +249,15 @@ impl ChatMessageList {
         F: Fn(EditDecisionEvent) + Send + Sync + 'static,
     {
         self.config.on_edit_decision = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    pub fn on_plan_decision<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(PlanDecisionEvent) + Send + Sync + 'static,
+    {
+        self.config.on_plan_decision = Some(Arc::new(callback));
         self.rebuild_list();
         self
     }
@@ -558,6 +579,7 @@ fn build_list(
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
+        on_plan_decision: config.on_plan_decision.clone(),
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
     };
@@ -1143,6 +1165,12 @@ fn estimate_block_row_height(
         Some(ChatBlock::Diff(diff)) => 1u16
             .saturating_add(line_count(&diff.diff.unified))
             .saturating_add(1),
+        Some(ChatBlock::Plan(plan)) => plan
+            .items
+            .len()
+            .max(1)
+            .saturating_add(2)
+            .min(u16::MAX as usize) as u16,
         Some(ChatBlock::Todo(todo)) => todo.items.len().max(1).min(u16::MAX as usize) as u16,
     };
     if block.is_some() && config.on_message_action.is_some() {
@@ -1417,6 +1445,9 @@ enum ChatBlockKindTag {
         path: String,
         decision: EditDecision,
     },
+    Plan {
+        decision: PlanDecision,
+    },
     Todo,
     Notice {
         level: NoticeLevel,
@@ -1540,6 +1571,11 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
             diff: DiffData {
                 unified: String::new(),
             },
+            decision: *decision,
+        })),
+        ChatBlockKindTag::Plan { decision } => Some(ChatBlock::Plan(PlanBlock {
+            id: block_id,
+            items: Vec::new(),
             decision: *decision,
         })),
         ChatBlockKindTag::Todo => Some(ChatBlock::Todo(TodoBlock {
@@ -1705,6 +1741,9 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
             path: path.clone(),
             decision: *decision,
         },
+        ChatBlock::Plan(PlanBlock { decision, .. }) => ChatBlockKindTag::Plan {
+            decision: *decision,
+        },
         ChatBlock::Todo(_) => ChatBlockKindTag::Todo,
         ChatBlock::Notice(NoticeBlock { level, text, .. }) => ChatBlockKindTag::Notice {
             level: *level,
@@ -1730,6 +1769,7 @@ struct ChatMessageRowBindings {
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
     diff: Option<Binding<String>>,
+    plan_items: Option<Binding<Vec<PlanItem>>>,
     todo_items: Option<Binding<Vec<TodoItem>>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
@@ -1827,6 +1867,12 @@ impl ChatMessageRow {
                 binding.set(diff);
             }
 
+            if let Some(binding) = &self.body_bindings.plan_items
+                && let Some(items) = block_plan_items_for_render(block)
+            {
+                binding.set(items);
+            }
+
             if let Some(binding) = &self.body_bindings.todo_items
                 && let Some(items) = block_todo_items_for_render(block)
             {
@@ -1918,6 +1964,13 @@ fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
 fn block_diff_for_render(block: &ChatBlock) -> Option<String> {
     match block {
         ChatBlock::Diff(diff) => Some(diff.diff.unified.clone()),
+        _ => None,
+    }
+}
+
+fn block_plan_items_for_render(block: &ChatBlock) -> Option<Vec<PlanItem>> {
+    match block {
+        ChatBlock::Plan(plan) => Some(plan.items.clone()),
         _ => None,
     }
 }
@@ -3186,11 +3239,226 @@ impl ::atto_ui::composable::Layout for DiffDecisionView {
     }
 }
 
+struct PlanDecisionView {
+    items: Binding<Vec<PlanItem>>,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    decision: PlanDecision,
+    on_plan_decision: Option<PlanDecisionCallback>,
+    focused_action: usize,
+    last_area: Option<Rect>,
+}
+
+impl PlanDecisionView {
+    fn new(
+        items: impl Into<Binding<Vec<PlanItem>>>,
+        message_id: ChatMessageId,
+        block_id: ChatBlockId,
+        decision: PlanDecision,
+        on_plan_decision: Option<PlanDecisionCallback>,
+    ) -> Self {
+        Self {
+            items: items.into(),
+            message_id,
+            block_id,
+            decision,
+            on_plan_decision,
+            focused_action: 0,
+            last_area: None,
+        }
+    }
+
+    fn plan_lines(&self, ctx: ComponentContext<'_>) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::styled(
+            plan_block_title(self.decision),
+            ctx.theme.widget.dim,
+        )];
+        let items = self.items.get();
+        if items.is_empty() {
+            lines.push(Line::styled("(no plan items)", ctx.theme.widget.dim));
+        } else {
+            lines.extend(
+                items
+                    .iter()
+                    .map(|item| Line::styled(plan_display_line(item), ctx.theme.widget.normal)),
+            );
+        }
+        lines
+    }
+
+    fn plan_height(&self) -> u16 {
+        self.items
+            .with(|items| items.len().max(1).saturating_add(1).min(u16::MAX as usize) as u16)
+    }
+
+    fn display_height(&self) -> u16 {
+        self.plan_height().saturating_add(1)
+    }
+
+    fn display_width(&self) -> u16 {
+        let item_width = self.items.with(|items| {
+            plan_display_lines(items)
+                .iter()
+                .map(|line| UnicodeWidthStr::width(line.as_str()))
+                .max()
+                .unwrap_or(0)
+        });
+        plan_block_title(self.decision)
+            .width()
+            .max(item_width)
+            .max(plan_decision_action_line_width(self.decision))
+            .max(1)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn has_focusable_action(&self) -> bool {
+        self.decision == PlanDecision::Pending && self.on_plan_decision.is_some()
+    }
+
+    fn emit_decision(&self, decision: PlanDecision) -> EventResult {
+        let Some(callback) = &self.on_plan_decision else {
+            return EventResult::ignored();
+        };
+        if self.decision != PlanDecision::Pending || decision == PlanDecision::Pending {
+            return EventResult::ignored();
+        }
+        callback(PlanDecisionEvent {
+            message_id: self.message_id,
+            block_id: self.block_id,
+            decision,
+        });
+        EventResult::changed()
+    }
+
+    fn focused_decision(&self) -> PlanDecision {
+        if self.focused_action == 0 {
+            PlanDecision::Accepted
+        } else {
+            PlanDecision::Rejected
+        }
+    }
+
+    fn click_decision(&self, event: &Event, ctx: ComponentContext<'_>) -> Option<PlanDecision> {
+        let Event::Mouse(mouse) = event else {
+            return None;
+        };
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return None;
+        }
+        let area = self.last_area?;
+        let (column, row) = mouse_position_in_area(area, mouse, ctx.mouse_coordinate_space)?;
+        if row != self.plan_height() {
+            return None;
+        }
+        plan_decision_action_at_column(column)
+    }
+}
+
+impl Component for PlanDecisionView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let plan_height = self.plan_height().min(area.height);
+        if plan_height > 0 {
+            let plan_area = Rect {
+                height: plan_height,
+                ..area
+            };
+            frame.render_widget(Paragraph::new(self.plan_lines(ctx)), plan_area);
+        }
+
+        if area.height > plan_height {
+            let action_area = Rect {
+                y: area.y.saturating_add(plan_height),
+                height: 1,
+                ..area
+            };
+            frame.render_widget(
+                Paragraph::new(plan_decision_action_line(
+                    self.decision,
+                    self.focused_action,
+                    self.has_focusable_action() && ctx.is_focused,
+                    ctx,
+                )),
+                action_area,
+            );
+        }
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for PlanDecisionView {}
+impl ::atto_ui::composable::Scrollable for PlanDecisionView {}
+impl ::atto_ui::composable::FocusNav for PlanDecisionView {
+    fn is_focusable(&self) -> bool {
+        self.has_focusable_action()
+    }
+
+    fn focus_first(&mut self) -> bool {
+        if !self.has_focusable_action() {
+            return false;
+        }
+        self.focused_action = 0;
+        true
+    }
+
+    fn focus_last(&mut self) -> bool {
+        if !self.has_focusable_action() {
+            return false;
+        }
+        self.focused_action = 1;
+        true
+    }
+}
+impl ::atto_ui::composable::DynamicTree for PlanDecisionView {}
+impl ::atto_ui::composable::EventHandling for PlanDecisionView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        if let Some(decision) = self.click_decision(event, ctx) {
+            return self.emit_decision(decision);
+        }
+
+        if matches!(
+            event,
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter | KeyCode::Char(' '),
+                kind: KeyEventKind::Press,
+                ..
+            })
+        ) && self.has_focusable_action()
+        {
+            return self.emit_decision(self.focused_decision());
+        }
+
+        EventResult::ignored()
+    }
+}
+
+impl ::atto_ui::composable::Layout for PlanDecisionView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(self.display_width())
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_height())
+    }
+}
+
 enum ChatMessageBody {
     Markdown(ResponsiveMarkdownView),
     Text(Text),
     Disclosure(Disclosure),
     Diff(DiffDecisionView),
+    Plan(PlanDecisionView),
     Todo(TodoListView),
     Artifact(ArtifactLink),
     CopyTarget(BlockCopyTarget),
@@ -3312,6 +3580,22 @@ impl ChatMessageBody {
                     )),
                     ChatMessageRowBindings {
                         diff: Some(content),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
+            Some(ChatBlock::Plan(plan)) => {
+                let items = Binding::new(plan.items.clone());
+                (
+                    ChatMessageBody::Plan(PlanDecisionView::new(
+                        items.clone(),
+                        message_id,
+                        plan.id,
+                        plan.decision,
+                        config.on_plan_decision.clone(),
+                    )),
+                    ChatMessageRowBindings {
+                        plan_items: Some(items),
                         ..ChatMessageRowBindings::default()
                     },
                 )
@@ -3513,6 +3797,91 @@ fn edit_decision_action_line(
         EditDecision::Accepted => Line::styled(EDIT_ACCEPTED_LABEL, ctx.theme.widget.dim),
         EditDecision::Rejected => Line::styled(EDIT_REJECTED_LABEL, ctx.theme.widget.dim),
     }
+}
+
+fn plan_block_title(decision: PlanDecision) -> String {
+    format!("Plan: {}", plan_decision_label(decision))
+}
+
+fn plan_decision_label(decision: PlanDecision) -> &'static str {
+    match decision {
+        PlanDecision::Pending => "pending",
+        PlanDecision::Accepted => "accepted",
+        PlanDecision::Rejected => "rejected",
+    }
+}
+
+fn plan_decision_action_line_width(decision: PlanDecision) -> usize {
+    match decision {
+        PlanDecision::Pending => PLAN_ACCEPT_LABEL
+            .width()
+            .saturating_add(1)
+            .saturating_add(PLAN_REJECT_LABEL.width()),
+        PlanDecision::Accepted => PLAN_ACCEPTED_LABEL.width(),
+        PlanDecision::Rejected => PLAN_REJECTED_LABEL.width(),
+    }
+}
+
+const PLAN_ACCEPT_LABEL: &str = "[ Accept ]";
+const PLAN_REJECT_LABEL: &str = "[ Reject ]";
+const PLAN_ACCEPTED_LABEL: &str = "[x] Accepted";
+const PLAN_REJECTED_LABEL: &str = "[x] Rejected";
+
+fn plan_decision_action_at_column(column: u16) -> Option<PlanDecision> {
+    let column = column as usize;
+    let accept_width = PLAN_ACCEPT_LABEL.width();
+    if column < accept_width {
+        return Some(PlanDecision::Accepted);
+    }
+    let reject_start = accept_width.saturating_add(1);
+    let reject_end = reject_start.saturating_add(PLAN_REJECT_LABEL.width());
+    (column >= reject_start && column < reject_end).then_some(PlanDecision::Rejected)
+}
+
+fn plan_decision_action_line(
+    decision: PlanDecision,
+    focused_action: usize,
+    focused: bool,
+    ctx: ComponentContext<'_>,
+) -> Line<'static> {
+    match decision {
+        PlanDecision::Pending => {
+            let base = ctx.theme.widget.accent;
+            let focused_style = base.add_modifier(Modifier::REVERSED);
+            Line::from(vec![
+                Span::styled(
+                    PLAN_ACCEPT_LABEL,
+                    if focused && focused_action == 0 {
+                        focused_style
+                    } else {
+                        base
+                    },
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    PLAN_REJECT_LABEL,
+                    if focused && focused_action == 1 {
+                        focused_style
+                    } else {
+                        base
+                    },
+                ),
+            ])
+        }
+        PlanDecision::Accepted => Line::styled(PLAN_ACCEPTED_LABEL, ctx.theme.widget.dim),
+        PlanDecision::Rejected => Line::styled(PLAN_REJECTED_LABEL, ctx.theme.widget.dim),
+    }
+}
+
+fn plan_display_lines(items: &[PlanItem]) -> Vec<String> {
+    if items.is_empty() {
+        return vec!["(no plan items)".to_string()];
+    }
+    items.iter().map(plan_display_line).collect()
+}
+
+fn plan_display_line(item: &PlanItem) -> String {
+    format!("- {}", item.text)
 }
 
 fn tool_output_component(
@@ -4215,6 +4584,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
             ChatMessageBody::Text(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Disclosure(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Diff(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Plan(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Todo(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
             ChatMessageBody::CopyTarget(view) => view.draw(frame, area, ctx),
@@ -4231,6 +4601,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Text(view) => view.min_width(),
             ChatMessageBody::Disclosure(view) => view.min_width(),
             ChatMessageBody::Diff(view) => view.min_width(),
+            ChatMessageBody::Plan(view) => view.min_width(),
             ChatMessageBody::Todo(view) => view.min_width(),
             ChatMessageBody::Artifact(view) => view.min_width(),
             ChatMessageBody::CopyTarget(view) => view.min_width(),
@@ -4243,6 +4614,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Text(view) => view.min_height(),
             ChatMessageBody::Disclosure(view) => view.min_height(),
             ChatMessageBody::Diff(view) => view.min_height(),
+            ChatMessageBody::Plan(view) => view.min_height(),
             ChatMessageBody::Todo(view) => view.min_height(),
             ChatMessageBody::Artifact(view) => view.min_height(),
             ChatMessageBody::CopyTarget(view) => view.min_height(),
@@ -4255,6 +4627,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Text(view) => view.desired_width(),
             ChatMessageBody::Disclosure(view) => view.desired_width(),
             ChatMessageBody::Diff(view) => view.desired_width(),
+            ChatMessageBody::Plan(view) => view.desired_width(),
             ChatMessageBody::Todo(view) => view.desired_width(),
             ChatMessageBody::Artifact(view) => view.desired_width(),
             ChatMessageBody::CopyTarget(view) => view.desired_width(),
@@ -4267,6 +4640,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Text(view) => view.desired_height(),
             ChatMessageBody::Disclosure(view) => view.desired_height(),
             ChatMessageBody::Diff(view) => view.desired_height(),
+            ChatMessageBody::Plan(view) => view.desired_height(),
             ChatMessageBody::Todo(view) => view.desired_height(),
             ChatMessageBody::Artifact(view) => view.desired_height(),
             ChatMessageBody::CopyTarget(view) => view.desired_height(),
@@ -4281,6 +4655,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.is_scrollable(),
             ChatMessageBody::Disclosure(view) => view.is_scrollable(),
             ChatMessageBody::Diff(view) => view.is_scrollable(),
+            ChatMessageBody::Plan(view) => view.is_scrollable(),
             ChatMessageBody::Todo(view) => view.is_scrollable(),
             ChatMessageBody::Artifact(view) => view.is_scrollable(),
             ChatMessageBody::CopyTarget(view) => view.is_scrollable(),
@@ -4293,6 +4668,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.content_size(),
             ChatMessageBody::Disclosure(view) => view.content_size(),
             ChatMessageBody::Diff(view) => view.content_size(),
+            ChatMessageBody::Plan(view) => view.content_size(),
             ChatMessageBody::Todo(view) => view.content_size(),
             ChatMessageBody::Artifact(view) => view.content_size(),
             ChatMessageBody::CopyTarget(view) => view.content_size(),
@@ -4305,6 +4681,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.viewport_size(),
             ChatMessageBody::Disclosure(view) => view.viewport_size(),
             ChatMessageBody::Diff(view) => view.viewport_size(),
+            ChatMessageBody::Plan(view) => view.viewport_size(),
             ChatMessageBody::Todo(view) => view.viewport_size(),
             ChatMessageBody::Artifact(view) => view.viewport_size(),
             ChatMessageBody::CopyTarget(view) => view.viewport_size(),
@@ -4317,6 +4694,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.scroll_config(),
             ChatMessageBody::Disclosure(view) => view.scroll_config(),
             ChatMessageBody::Diff(view) => view.scroll_config(),
+            ChatMessageBody::Plan(view) => view.scroll_config(),
             ChatMessageBody::Todo(view) => view.scroll_config(),
             ChatMessageBody::Artifact(view) => view.scroll_config(),
             ChatMessageBody::CopyTarget(view) => view.scroll_config(),
@@ -4329,6 +4707,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.scroll_offset(),
             ChatMessageBody::Disclosure(view) => view.scroll_offset(),
             ChatMessageBody::Diff(view) => view.scroll_offset(),
+            ChatMessageBody::Plan(view) => view.scroll_offset(),
             ChatMessageBody::Todo(view) => view.scroll_offset(),
             ChatMessageBody::Artifact(view) => view.scroll_offset(),
             ChatMessageBody::CopyTarget(view) => view.scroll_offset(),
@@ -4341,6 +4720,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Text(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Disclosure(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Diff(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Plan(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Todo(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Artifact(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::CopyTarget(view) => view.set_scroll_offset(x, y),
@@ -4355,6 +4735,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Text(view) => view.is_focusable(),
             ChatMessageBody::Disclosure(view) => view.is_focusable(),
             ChatMessageBody::Diff(view) => view.is_focusable(),
+            ChatMessageBody::Plan(view) => view.is_focusable(),
             ChatMessageBody::Todo(view) => view.is_focusable(),
             ChatMessageBody::Artifact(view) => view.is_focusable(),
             ChatMessageBody::CopyTarget(view) => view.is_focusable(),
@@ -4367,6 +4748,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Text(view) => view.focus_first(),
             ChatMessageBody::Disclosure(view) => view.focus_first(),
             ChatMessageBody::Diff(view) => view.focus_first(),
+            ChatMessageBody::Plan(view) => view.focus_first(),
             ChatMessageBody::Todo(view) => view.focus_first(),
             ChatMessageBody::Artifact(view) => view.focus_first(),
             ChatMessageBody::CopyTarget(view) => view.focus_first(),
@@ -4379,6 +4761,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Text(view) => view.focus_last(),
             ChatMessageBody::Disclosure(view) => view.focus_last(),
             ChatMessageBody::Diff(view) => view.focus_last(),
+            ChatMessageBody::Plan(view) => view.focus_last(),
             ChatMessageBody::Todo(view) => view.focus_last(),
             ChatMessageBody::Artifact(view) => view.focus_last(),
             ChatMessageBody::CopyTarget(view) => view.focus_last(),
@@ -4395,6 +4778,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Text(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Disclosure(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Diff(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Plan(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_capture(event, ctx),
@@ -4407,6 +4791,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Text(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Disclosure(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Diff(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Plan(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_bubble(event, ctx),
@@ -4419,6 +4804,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Text(view) => view.handle_event(event, ctx),
             ChatMessageBody::Disclosure(view) => view.handle_event(event, ctx),
             ChatMessageBody::Diff(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Plan(view) => view.handle_event(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event(event, ctx),
@@ -4884,6 +5270,7 @@ mod tests {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
         }
@@ -5162,6 +5549,38 @@ mod tests {
         let (updated, _) = draw_component_snapshot(&mut view, 40, 2);
         assert!(updated[0].starts_with("[x] TODO-PENDING"));
         assert!(!updated.iter().any(|line| line.contains("TODO-RUNNING")));
+    }
+
+    #[test]
+    fn plan_body_renders_items_and_binding_updates() {
+        let items = Binding::new(vec![
+            PlanItem {
+                text: "PLAN-STEP-1".to_string(),
+            },
+            PlanItem {
+                text: "PLAN-STEP-2".to_string(),
+            },
+        ]);
+        let mut view = PlanDecisionView::new(
+            items.clone(),
+            ChatMessageId::new(1),
+            ChatBlockId::new(1_001),
+            PlanDecision::Pending,
+            None,
+        );
+
+        let (initial, _) = draw_component_snapshot(&mut view, 40, 4);
+        assert!(initial[0].contains("Plan: pending"));
+        assert!(initial[1].starts_with("- PLAN-STEP-1"));
+        assert!(initial[2].starts_with("- PLAN-STEP-2"));
+        assert!(initial[3].contains("Accept"));
+
+        items.set(vec![PlanItem {
+            text: "PLAN-STEP-3".to_string(),
+        }]);
+        let (updated, _) = draw_component_snapshot(&mut view, 40, 3);
+        assert!(updated[1].starts_with("- PLAN-STEP-3"));
+        assert!(!updated.iter().any(|line| line.contains("PLAN-STEP-2")));
     }
 
     #[test]
@@ -5545,6 +5964,65 @@ mod tests {
     }
 
     #[test]
+    fn plan_decision_view_emits_decision_and_locks_when_resolved() {
+        let message_id = ChatMessageId::new(41);
+        let block_id = ChatBlockId::new(41_001);
+        let decisions = Arc::new(Mutex::new(Vec::new()));
+        let captured = decisions.clone();
+        let mut view = PlanDecisionView::new(
+            Binding::new(vec![PlanItem {
+                text: "PLAN-STEP".to_string(),
+            }]),
+            message_id,
+            block_id,
+            PlanDecision::Pending,
+            Some(Arc::new(move |decision| {
+                captured.lock().expect("decisions lock").push(decision);
+            })),
+        );
+        let theme = Theme::dark();
+
+        assert!(view.is_focusable());
+        assert!(view.focus_first());
+        view.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            *decisions.lock().expect("decisions lock"),
+            vec![PlanDecisionEvent {
+                message_id,
+                block_id,
+                decision: PlanDecision::Accepted,
+            }]
+        );
+
+        let locked_view = PlanDecisionView::new(
+            Binding::new(vec![PlanItem {
+                text: "PLAN-STEP".to_string(),
+            }]),
+            message_id,
+            block_id,
+            PlanDecision::Accepted,
+            Some(Arc::new(|_| {
+                panic!("resolved plan decision must be locked")
+            })),
+        );
+
+        assert!(!locked_view.is_focusable());
+        assert_eq!(
+            line_text(&plan_decision_action_line(
+                PlanDecision::Accepted,
+                0,
+                false,
+                component_context(&theme),
+            )),
+            "[x] Accepted"
+        );
+    }
+
+    #[test]
     fn ansi_sgr_lines_apply_color_spans() {
         let lines = ansi_sgr_lines(
             "plain \u{1b}[31mred\u{1b}[0m \u{1b}[38;5;42mindexed",
@@ -5706,6 +6184,43 @@ mod tests {
         let updated_key = row_keys_from_messages(&[message]);
 
         assert_eq!(first_key, updated_key);
+    }
+
+    #[test]
+    fn row_keys_ignore_plan_items_but_track_plan_decision() {
+        let id = ChatMessageId::new(17);
+        let mut message = ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Plan(PlanBlock {
+                id: ChatBlockId::new(17_001),
+                items: vec![PlanItem {
+                    text: "draft".to_string(),
+                }],
+                decision: PlanDecision::Pending,
+            })],
+        );
+        let first_key = row_keys_from_messages(&[message.clone()]);
+
+        if let ChatBlock::Plan(plan) = &mut message.blocks[0] {
+            plan.items = vec![
+                PlanItem {
+                    text: "draft".to_string(),
+                },
+                PlanItem {
+                    text: "verify".to_string(),
+                },
+            ];
+        }
+        let items_key = row_keys_from_messages(&[message.clone()]);
+        assert_eq!(first_key, items_key);
+
+        if let ChatBlock::Plan(plan) = &mut message.blocks[0] {
+            plan.decision = PlanDecision::Accepted;
+        }
+        let decision_key = row_keys_from_messages(&[message]);
+
+        assert_ne!(items_key, decision_key);
     }
 
     #[test]

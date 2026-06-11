@@ -8,6 +8,7 @@ const {
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
+  ChatPlanBlock,
   ChatTextMessage,
   ChatThinkingBlock,
   ChatToolCallMessage,
@@ -158,6 +159,7 @@ assert.deepStrictEqual(chatMessage, {
 
 const multiBlockMessage = ChatMessage(2, [
   ChatThinkingBlock(2001, 'checking tools', { collapsed: true }),
+  ChatPlanBlock(2003, [{ text: 'write tests' }], { decision: 'pending' }),
   ChatNoticeBlock(2002, 'warning', 'context compacted'),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' } })
 assert.deepStrictEqual(multiBlockMessage, {
@@ -167,6 +169,7 @@ assert.deepStrictEqual(multiBlockMessage, {
   meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' },
   blocks: [
     { type: 'thinking', block_id: 2001, markdown: 'checking tools', collapsed: true },
+    { type: 'plan', block_id: 2003, items: [{ text: 'write tests' }], decision: 'pending' },
     { type: 'notice', block_id: 2002, level: 'warning', text: 'context compacted' },
   ],
 })
@@ -186,10 +189,10 @@ assert.deepStrictEqual(ChatToolCallMessage(3, 'bash', {
   ],
 })
 
-assert.deepStrictEqual(ChatMessageList({ messages: [chatMessage], autoScroll: true, onOpenArtifact: 'atto:callback:8' }), {
+assert.deepStrictEqual(ChatMessageList({ messages: [chatMessage], autoScroll: true, onOpenArtifact: 'atto:callback:8', onPlanDecision: 'atto:callback:10' }), {
   type: 'ChatMessageList',
   props: { messages: [chatMessage], auto_scroll: true },
-  events: { open_artifact: 'atto:callback:8' },
+  events: { open_artifact: 'atto:callback:8', plan_decision: 'atto:callback:10' },
 })
 
 const choiceMode = ChatInputMode('choice', { title: 'Pick one', options: ['A', 'B'] })

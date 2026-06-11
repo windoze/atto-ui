@@ -384,6 +384,15 @@ function ChatDiffBlock(blockId, path, diff, options = {}) {
   }) ?? {}
 }
 
+function ChatPlanBlock(blockId, items, options = {}) {
+  return compactRecord({
+    type: 'plan',
+    block_id: blockId,
+    items,
+    decision: options.decision ?? 'pending',
+  }) ?? {}
+}
+
 function ChatTodoBlock(blockId, items) {
   return compactRecord({ type: 'todo', block_id: blockId, items }) ?? {}
 }
@@ -464,6 +473,7 @@ function ChatMessageList(options = {}) {
   }, events(options.events, {
     load_more: options.onLoadMore,
     open_artifact: options.onOpenArtifact,
+    plan_decision: options.onPlanDecision,
   }))
 }
 
@@ -673,6 +683,7 @@ module.exports = {
   ChatToolUseBlock,
   ChatToolResultBlock,
   ChatDiffBlock,
+  ChatPlanBlock,
   ChatTodoBlock,
   ChatAttachmentBlock,
   ChatNoticeBlock,
