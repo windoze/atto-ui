@@ -18,7 +18,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::message::{
@@ -76,7 +76,7 @@ impl ChatMessageList {
             wrap_width: None,
             responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
-            show_timestamps: true,
+            show_timestamps: false,
             spacing: 1u16.into(),
             padding: EdgeInsets::symmetric(0, 1).into(),
             scroll_config: ScrollConfig::default().into(),
@@ -840,12 +840,12 @@ fn find_block(message: &ChatMessage, id: ChatBlockId) -> Option<&ChatBlock> {
 }
 
 fn block_markdown_for_render(block: &ChatBlock, config: &ChatMessageRowConfig) -> Option<String> {
-    let (markdown, streaming) = match block {
+    let (markdown, streaming_cursor) = match block {
         ChatBlock::Text(text) => (&text.markdown, text.streaming),
-        ChatBlock::Thinking(thinking) => (&thinking.markdown, thinking.streaming),
+        ChatBlock::Thinking(thinking) => (&thinking.markdown, false),
         _ => return None,
     };
-    Some(markdown_for_render(markdown, streaming, config))
+    Some(markdown_for_render(markdown, streaming_cursor, config))
 }
 
 fn markdown_for_render(markdown: &str, streaming: bool, config: &ChatMessageRowConfig) -> String {
@@ -968,9 +968,13 @@ fn build_aligned_block(
 
 fn build_turn_header(message: &ChatMessage) -> (VStack, ChatMessageRowBindings) {
     let header_label = Binding::new(turn_header_label(message));
-    let header = HStack::new()
-        .with_spacing(1)
-        .child(Text::new(String::new()).text(header_label.clone()));
+    let header = HStack::new().with_spacing(1).child(
+        Text::new(String::new()).text(header_label.clone()).style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+    );
     let content_layout = LayoutParams {
         height: Size::Content,
         ..LayoutParams::default()
@@ -1041,20 +1045,43 @@ impl ::atto_ui::composable::Component for ChatTimestampDivider {
         let Some(raw_label) = self.label.get() else {
             return;
         };
-        let width = area.width as usize;
-        let label = format!(" {raw_label} ");
-        let label_width = label.width();
-        let line = if label_width >= width {
-            label.chars().take(width).collect::<String>()
-        } else {
-            let padding = width.saturating_sub(label_width);
-            let left = padding / 2;
-            let right = padding.saturating_sub(left);
-            format!("{}{}{}", "─".repeat(left), label, "─".repeat(right))
-        };
+        let line = labeled_divider_line(&raw_label, area.width as usize);
         let style = ctx.theme.widget.dim;
         frame.render_widget(Paragraph::new(Line::styled(line, style)), area);
     }
+}
+
+fn labeled_divider_line(raw_label: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let label = format!(" {raw_label} ");
+    let label_width = UnicodeWidthStr::width(label.as_str());
+    if label_width >= width {
+        return fit_to_display_width(raw_label, width);
+    }
+
+    let padding = width.saturating_sub(label_width);
+    let left = padding / 2;
+    let right = padding.saturating_sub(left);
+    format!("{}{}{}", "─".repeat(left), label, "─".repeat(right))
+}
+
+fn fit_to_display_width(text: &str, width: usize) -> String {
+    let mut line = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used.saturating_add(char_width) > width {
+            break;
+        }
+        line.push(ch);
+        used = used.saturating_add(char_width);
+    }
+    if used < width {
+        line.push_str(&" ".repeat(width - used));
+    }
+    line
 }
 
 impl ::atto_ui::composable::DragAndDrop for ChatTimestampDivider {}
@@ -1251,11 +1278,7 @@ impl ChatMessageBody {
                 )
             }
             Some(ChatBlock::Thinking(thinking)) => {
-                let content = Binding::new(markdown_for_render(
-                    &thinking.markdown,
-                    thinking.streaming,
-                    config,
-                ));
+                let content = Binding::new(markdown_for_render(&thinking.markdown, false, config));
                 let status = Binding::new(thinking_status_to_disclosure(thinking));
                 let viewer =
                     ResponsiveMarkdownView::new(content.clone(), config, 2).map_view(|view| {
@@ -2335,6 +2358,63 @@ mod tests {
             ));
         }
         store
+    }
+
+    fn row_config_for_tests() -> ChatMessageRowConfig {
+        ChatMessageRowConfig {
+            wrap_width: None,
+            responsive_wrap_width: Binding::new(None),
+            in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
+            show_timestamps: false,
+            on_open_artifact: None,
+        }
+    }
+
+    #[test]
+    fn chat_list_hides_timestamps_by_default_for_agent_view() {
+        let store = ChatMessageStore::new();
+        let list = ChatMessageList::new(store);
+
+        assert_eq!(
+            list.get_property("show_timestamps"),
+            Some(ComponentValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn streaming_cursor_is_not_duplicated_for_running_thinking_blocks() {
+        let config = row_config_for_tests();
+        let text = ChatBlock::Text(TextBlock {
+            id: ChatBlockId::new(1),
+            markdown: "text".to_string(),
+            streaming: true,
+        });
+        let thinking = ChatBlock::Thinking(ThinkingBlock {
+            id: ChatBlockId::new(2),
+            markdown: "thinking".to_string(),
+            streaming: true,
+            collapsed: false,
+        });
+
+        assert_eq!(
+            block_markdown_for_render(&text, &config).as_deref(),
+            Some("text ▍")
+        );
+        assert_eq!(
+            block_markdown_for_render(&thinking, &config).as_deref(),
+            Some("thinking")
+        );
+    }
+
+    #[test]
+    fn labeled_divider_uses_display_width_for_unicode_labels() {
+        let centered = labeled_divider_line("时间", 10);
+        assert_eq!(UnicodeWidthStr::width(centered.as_str()), 10);
+        assert_eq!(centered, "── 时间 ──");
+
+        let truncated = labeled_divider_line("时间戳", 5);
+        assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 5);
+        assert_eq!(truncated, "时间 ");
     }
 
     #[test]

@@ -48,7 +48,9 @@
 - [x] **[DONE] P2.5 响应式换行 + 代码横向滚动** — `src/list.rs`:Text/Markdown 换行宽度=布局得到的气泡内容宽度(resize 重算),去掉写死 `wrap_width=72`(list.rs:26);代码/diff/工具输出区允许水平滚动,去掉强制 `horizontal_scrollbar(Never)`(list.rs:72)。
   - 完成记录（2026-06-12）：已移除 chat list 的固定默认 `wrap_width=72`，默认按布局估算气泡宽度并在实际绘制时用真实内容区宽度刷新 Markdown wrap width；保留显式 `wrap_width` 作为上限。`Text`、`Thinking` 与 Markdown 工具输出随终端/窗口宽度重算换行；默认 list scroll config 不再强制禁用横向滚动。`DiffView` 与 `AnsiOutputView` 新增水平偏移、viewport/content size 和横向滚动事件处理，Markdown 代码块继续使用既有嵌入式水平滚动。新增响应式布局 snapshot 场景、PTY 窄/宽换行覆盖，以及 diff/ANSI 横向偏移单测。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_markdown_wraps_to_responsive_bubble_width -- --exact`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
-- [ ] **P2.6 杂项渲染修复** — `src/list.rs`:去进行中双重指示(`" ▍"` 后缀 list.rs:27 与 `Spinner "Generating"` list.rs:684 二择一);`ChatTimestampDivider`(list.rs:708)改用 `UnicodeWidthStr::width`,agent 场景默认弱化逐条时间戳、强调回合边界。
+- [x] **[DONE] P2.6 杂项渲染修复** — `src/list.rs`:去进行中双重指示(`" ▍"` 后缀 list.rs:27 与 `Spinner "Generating"` list.rs:684 二择一);`ChatTimestampDivider`(list.rs:708)改用 `UnicodeWidthStr::width`,agent 场景默认弱化逐条时间戳、强调回合边界。
+  - 完成记录（2026-06-12）：已保留 Text 流式光标后缀，同时让已有 `DisclosureStatus::Running` 的 Thinking block 不再重复追加光标；`ChatTimestampDivider` 分隔线改为基于 `UnicodeWidthStr::width` 的显示宽度计算，并补齐宽度安全截断；agent 默认隐藏逐条时间戳，回合 header 使用弱化加粗样式强调回合边界。新增默认时间戳、光标去重、Unicode 分隔线宽度单测。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 全部通过。
 
 ## 阶段 P3 — 工具语义
 

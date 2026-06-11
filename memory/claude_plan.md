@@ -156,7 +156,7 @@
 - 已检查提交前状态：本次提交将包含 P2.4 相关 Rust/TODO/计划文件；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
 - 下一步创建任务提交并停止。
 
-## 当前任务：P2.5 响应式换行 + 代码横向滚动
+## 历史记录：P2.5 响应式换行 + 代码横向滚动
 
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P2.5 响应式换行 + 代码横向滚动`。
 - 任务目标：在 `crates/atto-ui-chat/src/list.rs` 中让 Text/Markdown 的换行宽度使用布局得到的气泡内容宽度并随 resize 重算，移除固定 `wrap_width=72`；代码、diff、工具输出区域允许水平滚动，移除强制 `horizontal_scrollbar(Never)` 的限制。
@@ -181,3 +181,18 @@
 - 下一步检查 `git status`、`git diff`、最近提交记录，确认本次提交包含 P2.5 相关源码、测试、TODO 和计划文件，并排除既有无关工作区变更。
 - 已检查提交前状态/diff/最近提交：本次提交应包含 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`、`crates/atto-ui-markdown/src/markdown/viewer.rs`。既有无关变更 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P2.5] Add responsive chat wrapping` 提交并停止。
+
+## 当前任务：P2.6 杂项渲染修复
+
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P2.6 杂项渲染修复`。
+- 已查看最近提交：`ea0b02d [P2.5] Add responsive chat wrapping`，未声明与 `P2.6` 直接相关的额外未完成事项。
+- 执行范围限定为 `crates/atto-ui-chat/src/list.rs` 的进行中指示、时间戳分隔线和 agent 场景默认显示策略；不推进 P3 工具语义。
+- 实施计划：保留 Text 流式光标，避免 Thinking 这种已有 running disclosure 状态的 block 再追加光标；将时间戳分隔线改为显示宽度安全计算；默认隐藏逐条时间戳，并用弱化加粗的回合 header 强调回合边界。
+- 已完成实现：`ChatMessageList` 默认 `show_timestamps=false`；Thinking block 渲染不再追加 `" ▍"`，仍通过 `DisclosureStatus::Running` 表示进行中；`ChatTimestampDivider` 使用 `UnicodeWidthStr::width` 和宽度安全截断；回合 header 使用弱化加粗样式。
+- 已补充单测：覆盖默认隐藏时间戳、Text 保留流式光标但 Thinking 不重复光标、Unicode 时间戳分隔线显示宽度和截断。
+- 首次全量测试发现 full-width 回合分隔线方案会影响 chat PTY 滚动夹具；已收敛为 header 样式强化，并单独复测 `chat_auto_follow_pauses_after_user_scrolls_up` 与 `chat_load_more_on_scroll_top` 通过。
+- 验证已完成：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+- 已更新 `TODO.md`：`P2.6` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P2.6 记录。
+- 已检查提交前状态：本次提交将包含 P2.6 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P2.6] Fix miscellaneous chat rendering` 提交并停止。
