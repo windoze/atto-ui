@@ -435,6 +435,26 @@ fn chat_thinking_notice_renders_collapsed_and_level_labels() -> anyhow::Result<(
 }
 
 #[test]
+fn chat_todo_panel_renders_and_updates_state() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--todo-panel"], 100, 28)?;
+
+    host.wait_for_text("[ ] TODO-PLAN", Duration::from_secs(2))?;
+    host.wait_for_text("[~] TODO-IMPLEMENT", Duration::from_secs(2))?;
+    host.wait_for_text("[ ] TODO-VERIFY", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_text("[x] TODO-PLAN", Duration::from_secs(2))?;
+    host.wait_for_text("[x] TODO-IMPLEMENT", Duration::from_secs(2))?;
+    host.wait_for_text("[~] TODO-VERIFY", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "[~] TODO-IMPLEMENT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

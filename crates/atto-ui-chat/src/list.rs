@@ -555,9 +555,7 @@ enum ChatBlockKindTag {
         path: String,
         decision: EditDecision,
     },
-    Todo {
-        items: Vec<TodoItem>,
-    },
+    Todo,
     Notice {
         level: NoticeLevel,
         text: String,
@@ -682,9 +680,9 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
             },
             decision: *decision,
         })),
-        ChatBlockKindTag::Todo { items } => Some(ChatBlock::Todo(TodoBlock {
+        ChatBlockKindTag::Todo => Some(ChatBlock::Todo(TodoBlock {
             id: block_id,
-            items: items.clone(),
+            items: Vec::new(),
         })),
         ChatBlockKindTag::Notice { level, text } => Some(ChatBlock::Notice(NoticeBlock {
             id: block_id,
@@ -845,9 +843,7 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
             path: path.clone(),
             decision: *decision,
         },
-        ChatBlock::Todo(TodoBlock { items, .. }) => ChatBlockKindTag::Todo {
-            items: items.clone(),
-        },
+        ChatBlock::Todo(_) => ChatBlockKindTag::Todo,
         ChatBlock::Notice(NoticeBlock { level, text, .. }) => ChatBlockKindTag::Notice {
             level: *level,
             text: text.clone(),
@@ -871,6 +867,7 @@ struct ChatMessageRowBindings {
     timestamp: Option<Binding<Option<String>>>,
     markdown: Option<Binding<String>>,
     diff: Option<Binding<String>>,
+    todo_items: Option<Binding<Vec<TodoItem>>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
     disclosure_status: Option<Binding<DisclosureStatus>>,
@@ -964,6 +961,12 @@ impl ChatMessageRow {
                 binding.set(diff);
             }
 
+            if let Some(binding) = &self.body_bindings.todo_items
+                && let Some(items) = block_todo_items_for_render(block)
+            {
+                binding.set(items);
+            }
+
             if let Some(binding) = &self.body_bindings.tool_use
                 && let Some(details) = block_tool_use_for_render(block)
             {
@@ -1049,6 +1052,13 @@ fn block_tool_output_for_render(block: &ChatBlock) -> Option<String> {
 fn block_diff_for_render(block: &ChatBlock) -> Option<String> {
     match block {
         ChatBlock::Diff(diff) => Some(diff.diff.unified.clone()),
+        _ => None,
+    }
+}
+
+fn block_todo_items_for_render(block: &ChatBlock) -> Option<Vec<TodoItem>> {
+    match block {
+        ChatBlock::Todo(todo) => Some(todo.items.clone()),
         _ => None,
     }
 }
@@ -2174,10 +2184,16 @@ impl ChatMessageBody {
                     },
                 )
             }
-            Some(ChatBlock::Todo(TodoBlock { items, .. })) => (
-                ChatMessageBody::Todo(TodoListView::new(items.clone())),
-                ChatMessageRowBindings::default(),
-            ),
+            Some(ChatBlock::Todo(TodoBlock { items, .. })) => {
+                let items = Binding::new(items.clone());
+                (
+                    ChatMessageBody::Todo(TodoListView::new(items.clone())),
+                    ChatMessageRowBindings {
+                        todo_items: Some(items),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
             Some(ChatBlock::Notice(NoticeBlock { level, text, .. })) => (
                 ChatMessageBody::Text(
                     Text::new(notice_label(*level, text)).fg(notice_color(*level)),
@@ -2598,23 +2614,30 @@ impl ::atto_ui::composable::Layout for DiffView {
 }
 
 struct TodoListView {
-    items: Vec<TodoItem>,
+    items: Binding<Vec<TodoItem>>,
 }
 
 impl TodoListView {
-    fn new(items: Vec<TodoItem>) -> Self {
-        Self { items }
+    fn new(items: impl Into<Binding<Vec<TodoItem>>>) -> Self {
+        Self {
+            items: items.into(),
+        }
     }
 
     fn display_lines(&self) -> Vec<String> {
-        if self.items.is_empty() {
-            return vec!["(no todo items)".to_string()];
-        }
-        self.items
-            .iter()
-            .map(|item| format!("{} {}", todo_state_marker(item.state), item.text))
-            .collect()
+        self.items.with(|items| todo_display_lines(items))
     }
+}
+
+fn todo_display_lines(items: &[TodoItem]) -> Vec<String> {
+    if items.is_empty() {
+        return vec!["(no todo items)".to_string()];
+    }
+    items.iter().map(todo_display_line).collect()
+}
+
+fn todo_display_line(item: &TodoItem) -> String {
+    format!("{} {}", todo_state_marker(item.state), item.text)
 }
 
 impl Component for TodoListView {
@@ -2622,19 +2645,17 @@ impl Component for TodoListView {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let lines = if self.items.is_empty() {
-            vec![Line::styled("(no todo items)", ctx.theme.widget.dim)]
-        } else {
-            self.items
+        let lines = self.items.with(|items| {
+            if items.is_empty() {
+                return vec![Line::styled("(no todo items)", ctx.theme.widget.dim)];
+            }
+            items
                 .iter()
                 .map(|item| {
-                    Line::styled(
-                        format!("{} {}", todo_state_marker(item.state), item.text),
-                        todo_state_style(item.state, ctx),
-                    )
+                    Line::styled(todo_display_line(item), todo_state_style(item.state, ctx))
                 })
                 .collect()
-        };
+        });
         frame.render_widget(Paragraph::new(lines), area);
     }
 }
@@ -3507,6 +3528,87 @@ mod tests {
     }
 
     #[test]
+    fn todo_body_renders_state_markers_and_binding_updates() {
+        let items = Binding::new(vec![
+            TodoItem {
+                text: "TODO-PENDING".to_string(),
+                state: TodoState::Pending,
+            },
+            TodoItem {
+                text: "TODO-RUNNING".to_string(),
+                state: TodoState::InProgress,
+            },
+            TodoItem {
+                text: "TODO-DONE".to_string(),
+                state: TodoState::Done,
+            },
+        ]);
+        let mut view = TodoListView::new(items.clone());
+
+        let (initial, _) = draw_component_snapshot(&mut view, 40, 3);
+        assert!(initial[0].starts_with("[ ] TODO-PENDING"));
+        assert!(initial[1].starts_with("[~] TODO-RUNNING"));
+        assert!(initial[2].starts_with("[x] TODO-DONE"));
+
+        items.set(vec![TodoItem {
+            text: "TODO-PENDING".to_string(),
+            state: TodoState::Done,
+        }]);
+        let (updated, _) = draw_component_snapshot(&mut view, 40, 2);
+        assert!(updated[0].starts_with("[x] TODO-PENDING"));
+        assert!(!updated.iter().any(|line| line.contains("TODO-RUNNING")));
+    }
+
+    #[test]
+    fn chat_list_syncs_todo_items_from_store_set_todo() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let todo_id = ChatBlockId::new(70_001);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Todo(TodoBlock {
+                id: todo_id,
+                items: vec![
+                    TodoItem {
+                        text: "TODO-ONE".to_string(),
+                        state: TodoState::Pending,
+                    },
+                    TodoItem {
+                        text: "TODO-TWO".to_string(),
+                        state: TodoState::InProgress,
+                    },
+                ],
+            })],
+        ));
+        let mut list = ChatMessageList::new(store.clone())
+            .show_timestamps(false)
+            .auto_scroll(false);
+
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 8);
+        assert!(initial.iter().any(|line| line.contains("[ ] TODO-ONE")));
+        assert!(initial.iter().any(|line| line.contains("[~] TODO-TWO")));
+
+        assert!(store.set_todo(
+            todo_id,
+            vec![
+                TodoItem {
+                    text: "TODO-ONE".to_string(),
+                    state: TodoState::Done,
+                },
+                TodoItem {
+                    text: "TODO-THREE".to_string(),
+                    state: TodoState::Pending,
+                },
+            ],
+        ));
+        let (updated, _) = draw_component_snapshot(&mut list, 80, 8);
+        assert!(updated.iter().any(|line| line.contains("[x] TODO-ONE")));
+        assert!(updated.iter().any(|line| line.contains("[ ] TODO-THREE")));
+        assert!(!updated.iter().any(|line| line.contains("TODO-TWO")));
+    }
+
+    #[test]
     fn labeled_divider_uses_display_width_for_unicode_labels() {
         let centered = labeled_divider_line("时间", 10);
         assert_eq!(UnicodeWidthStr::width(centered.as_str()), 10);
@@ -3846,6 +3948,39 @@ mod tests {
         }
         let renamed_key = row_keys_from_messages(&[first]);
         assert_ne!(updated_key, renamed_key);
+    }
+
+    #[test]
+    fn row_keys_ignore_todo_items_for_state_updates() {
+        let id = ChatMessageId::new(16);
+        let mut message = ChatMessage::new(
+            id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Todo(TodoBlock {
+                id: ChatBlockId::new(16_001),
+                items: vec![TodoItem {
+                    text: "plan".to_string(),
+                    state: TodoState::Pending,
+                }],
+            })],
+        );
+        let first_key = row_keys_from_messages(&[message.clone()]);
+
+        if let ChatBlock::Todo(todo) = &mut message.blocks[0] {
+            todo.items = vec![
+                TodoItem {
+                    text: "plan".to_string(),
+                    state: TodoState::Done,
+                },
+                TodoItem {
+                    text: "verify".to_string(),
+                    state: TodoState::InProgress,
+                },
+            ];
+        }
+        let updated_key = row_keys_from_messages(&[message]);
+
+        assert_eq!(first_key, updated_key);
     }
 
     #[test]

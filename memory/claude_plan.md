@@ -271,7 +271,7 @@
 - 已检查提交前状态：本次提交将包含 P4.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/dynamic.rs`、`crates/atto-ui-chat/src/lib.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
 - 下一步只 stage 本任务相关文件，创建 `[P4.2] Implement inline diff decisions` 提交并停止。
 
-## 当前任务：P5.1 Thinking / Notice 渲染
+## 历史记录：P5.1 Thinking / Notice 渲染
 
 - 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.1 记录。
 - 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.1 Thinking / Notice 渲染`。
@@ -283,3 +283,18 @@
 - 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`：`P5.1` 标题已加 `[DONE]`，完成记录和验证结果已写入。更新后仅变更任务记录文档，无需重跑验证。
 - 已检查提交范围：本次提交包含 P5.1 相关 `TODO.md`、`memory/claude_plan.md`、chat Rust 源码与 PTY 测试；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪脚本不提交。
+
+## 当前任务：P5.2 Todo 面板
+
+- 已在执行任何项目命令前写入本轮初始计划；提交前已恢复既有历史并追加本次 P5.2 记录。
+- 已读取 `TODO.md`：首个标题未带 `[DONE]` 的任务为 `P5.2 Todo 面板`。
+- 已查看最近提交：`f9f2a4a [P5.1] Render thinking and notices`，未声明与 `P5.2` 直接相关的未完成阻塞事项。
+- 执行范围限定为 Todo 面板渲染与 `ChatMessageStore::set_todo` 更新同步；不推进 P5.3 回合 meta 或错误展示。
+- 审查发现 Todo 绘制和 `set_todo` 已有基础实现，但 Todo items 被纳入行 key，状态更新会重建整行；本次改为块级 binding 同步以保持稳定行身份。
+- 已完成实现：Todo 行 key 仅保留类型身份，`TodoListView` 通过 `Binding<Vec<TodoItem>>` 渲染 `[ ]/[~]/[x] text`，`sync_block_bindings` 随 block version 将 `set_todo` 更新同步到既有 Todo 行。
+- 已补充验证：list 单测覆盖 Todo markers、binding 更新、`set_todo` 驱动 ChatMessageList 更新；row key 单测覆盖 Todo items 更新不改变行 key；新增 `snapshot_chat_app --todo-panel` 场景和 PTY 状态更新测试。
+- 验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat --lib todo`、`cargo test -p atto-ui-chat --test pty_chat chat_todo_panel_renders_and_updates_state -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：`P5.2` 标题已加 `[DONE]`，完成记录和验证结果已写入。
+- 提交前检查发现初始计划写入覆盖了历史记录；已恢复既有历史并追加本次 P5.2 记录。
+- 已检查提交前状态：本次提交将包含 P5.2 相关 `TODO.md`、`memory/claude_plan.md`、`crates/atto-ui-chat/src/list.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`；保留未参与本任务的 `crates/atto-ui-node/index.js` 与未跟踪 `notification.sh`、`run_agent.sh` 不提交。
+- 下一步只 stage 本任务相关文件，创建 `[P5.2] Implement todo panel updates` 提交并停止。

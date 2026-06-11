@@ -59,6 +59,7 @@ fn main() -> Result<()> {
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
+    let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
@@ -78,6 +79,7 @@ fn main() -> Result<()> {
         HashMap::new()
     };
     let mut long_tool_result_id = None;
+    let mut todo_block_id = None;
     let tool_block_ids = if responsive_layout {
         seed_responsive_layout_messages(&store);
         None
@@ -89,6 +91,9 @@ fn main() -> Result<()> {
         None
     } else if thinking_notice {
         seed_thinking_notice_messages(&store);
+        None
+    } else if todo_panel {
+        todo_block_id = Some(seed_todo_panel_messages(&store));
         None
     } else if block_mapping {
         seed_block_mapping_messages(&store);
@@ -132,6 +137,7 @@ fn main() -> Result<()> {
         || inline_approval
         || inline_diff
         || thinking_notice
+        || todo_block_id.is_some()
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -331,6 +337,29 @@ fn main() -> Result<()> {
                 && cmd == '1'
             {
                 store.append_tool_output(tool_result_id, "\nTOOL-LONG-STREAMED");
+                continue;
+            }
+
+            if let Some(todo_id) = todo_block_id
+                && cmd == '1'
+            {
+                store.set_todo(
+                    todo_id,
+                    vec![
+                        TodoItem {
+                            text: "TODO-PLAN".to_string(),
+                            state: TodoState::Done,
+                        },
+                        TodoItem {
+                            text: "TODO-IMPLEMENT".to_string(),
+                            state: TodoState::Done,
+                        },
+                        TodoItem {
+                            text: "TODO-VERIFY".to_string(),
+                            state: TodoState::InProgress,
+                        },
+                    ],
+                );
                 continue;
             }
 
@@ -600,6 +629,33 @@ fn seed_thinking_notice_messages(store: &ChatMessageStore) {
             }),
         ],
     ));
+}
+
+fn seed_todo_panel_messages(store: &ChatMessageStore) -> ChatBlockId {
+    let id = store.next_message_id();
+    let todo_id = snapshot_block_id(id, 0);
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Todo(TodoBlock {
+            id: todo_id,
+            items: vec![
+                TodoItem {
+                    text: "TODO-PLAN".to_string(),
+                    state: TodoState::Pending,
+                },
+                TodoItem {
+                    text: "TODO-IMPLEMENT".to_string(),
+                    state: TodoState::InProgress,
+                },
+                TodoItem {
+                    text: "TODO-VERIFY".to_string(),
+                    state: TodoState::Pending,
+                },
+            ],
+        })],
+    ));
+    todo_id
 }
 
 fn edit_decision_event_label(decision: EditDecision) -> &'static str {
