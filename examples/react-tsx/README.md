@@ -15,6 +15,7 @@ build step or `dist/` output.
 | Component gallery | `src/07-component-gallery.tsx` | All core components across several windows; `<Window>` lifecycle (onClose/onMinimize) + menu to re-create/restore windows. |
 | Routing | `src/08-router.tsx` | React Router via DOM-free `MemoryRouter`; navigate from Buttons with `useNavigate`. |
 | Form validation | `src/09-form-validation.tsx` | React Hook Form via `Controller`; required/pattern rules with inline errors. |
+| Global state | `src/10-zustand.tsx` | Zustand store read with selectors; also updated from outside React (background stream). |
 
 ## Setup
 
@@ -42,7 +43,7 @@ npm install --prefix examples/react-tsx --omit=optional
 
 ```sh
 cd examples/react-tsx
-npm run hello      # or: counter | todo | desktop | markdown | theme | gallery | router | form
+npm run hello      # or: counter | todo | desktop | markdown | theme | gallery | router | form | zustand
 ```
 
 Press `Ctrl+Q` to quit the TUI.
@@ -56,7 +57,7 @@ support the native N-API binding. The setup above (native binding + React build
 **Bun** (`bun src/...` reads `tsconfig.json` and resolves the `file:` deps):
 
 ```sh
-npm run gallery:bun     # or hello:bun | counter:bun | todo:bun | desktop:bun | markdown:bun | theme:bun | router:bun | form:bun
+npm run gallery:bun     # or hello:bun | counter:bun | todo:bun | desktop:bun | markdown:bun | theme:bun | router:bun | form:bun | zustand:bun
 # equivalently: bun src/07-component-gallery.tsx
 ```
 

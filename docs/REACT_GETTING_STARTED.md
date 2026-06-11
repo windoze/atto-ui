@@ -342,6 +342,62 @@ Notes:
 - Rules (`required` / `pattern` / `validate`) and zod/yup resolvers all work.
 - Runnable version: [`examples/react-tsx/src/09-form-validation.tsx`](../examples/react-tsx/src/09-form-validation.tsx).
 
+## 8. Global state with Zustand
+
+Zustand has **no DOM dependency** and its React binding is built on React 18's
+`useSyncExternalStore`, so it works in the terminal with no bridging at all —
+`create()` a store, read it with selectors, and call actions from atto-ui
+handlers.
+
+```sh
+npm install zustand
+```
+
+```tsx
+import { create } from 'zustand'
+import { Button, Text, VStack, Window, render } from '@atto-ui/react'
+
+type Store = { count: number; inc: () => void }
+
+const useStore = create<Store>()((set) => ({
+  count: 0,
+  inc: () => set((s) => ({ count: s.count + 1 })),
+}))
+
+function App() {
+  const count = useStore((s) => s.count) // selector: re-renders only on count change
+  const inc = useStore((s) => s.inc)
+  return (
+    <Window title="Zustand" rect={[2, 1, 36, 8]}>
+      <VStack spacing={1} padding={1}>
+        <Text>{`Count: ${count}`}</Text>
+        <Button onClick={inc}>Increment</Button>
+      </VStack>
+    </Window>
+  )
+}
+
+render(<App />, { singleWindow: false })
+```
+
+What makes this especially useful in a terminal app: the store can be driven
+from **outside** React. `useStore.setState(...)` / `getState()` / `subscribe()`
+don't touch the component tree, so a background timer, an LLM token stream, or
+any async task can write state on the non-blocking tick loop and every
+subscribed component re-renders — no prop drilling.
+
+```tsx
+// Anywhere, even outside React:
+setInterval(() => useStore.setState((s) => ({ count: s.count + 1 })), 1000)
+```
+
+Notes:
+
+- Only caveat is the single-React-copy rule (the hook uses `useSyncExternalStore`).
+- Pair selectors with `useShallow` to avoid extra re-renders in large trees.
+- v4 and v5 both work; the curried `create<T>()(...)` form is required by v5.
+- Runnable version: [`examples/react-tsx/src/10-zustand.tsx`](../examples/react-tsx/src/10-zustand.tsx).
+
 ## Testing without a terminal
 
 `render(element, { headless: true, cols, rows })` runs against an in-memory
