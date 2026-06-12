@@ -1,6 +1,9 @@
 import { createElement, type ReactElement, type ReactNode } from 'react'
 import {
+  ChatInputMode as chatInputModeValue,
   fileTreeNodeValue,
+  type ChatInputModeInput,
+  type ChatInputModeOptions,
   type ChatMessageInput,
   type EdgeInsetsSpec,
   type FileTreeIconLike,
@@ -218,10 +221,15 @@ export interface ChatMessageListHostProps {
   readonly padding?: EdgeInsetsSpec
   readonly wrap_width?: number
   readonly show_timestamps?: boolean
+  readonly bubble_width_percent?: number
   readonly auto_scroll?: boolean
   readonly onLoad_more?: AttoUiEventHandler
   readonly onOpen_artifact?: AttoUiEventHandler
+  readonly onApprove?: AttoUiEventHandler
+  readonly onEdit_decision?: AttoUiEventHandler
   readonly onPlan_decision?: AttoUiEventHandler
+  readonly onCancel?: AttoUiEventHandler
+  readonly onMessage_action?: AttoUiEventHandler
 }
 
 export interface ChatMessageListProps extends LayoutProps {
@@ -230,10 +238,22 @@ export interface ChatMessageListProps extends LayoutProps {
   readonly padding?: EdgeInsetsSpec
   readonly wrapWidth?: number
   readonly showTimestamps?: boolean
+  /** Percent (1..=100) of list width a bubble may occupy. Default 75. */
+  readonly bubbleWidthPercent?: number
+  /** Convenience for `bubbleWidthPercent={100}` — messages span the full list width. */
+  readonly fillWidth?: boolean
   readonly autoScroll?: boolean
   readonly onLoadMore?: AttoUiEventHandler
   readonly onOpenArtifact?: AttoUiEventHandler
+  /** Fired when an inline tool-approval option is chosen. Payload is a map. */
+  readonly onApprove?: AttoUiEventHandler
+  /** Fired when an inline diff is accepted/rejected. Payload is a map. */
+  readonly onEditDecision?: AttoUiEventHandler
   readonly onPlanDecision?: AttoUiEventHandler
+  /** Fired when a streaming turn is cancelled. Payload is a map. */
+  readonly onCancel?: AttoUiEventHandler
+  /** Fired for copy/retry/regenerate/edit/copy-block actions. Payload is a map. */
+  readonly onMessageAction?: AttoUiEventHandler
 }
 
 /** Typed FileTree wrapper. Pass `nodes` as plain node inputs or core node maps. */
@@ -256,19 +276,128 @@ export function FileTree(props: FileTreeProps): ReactElement {
 
 /** Chat transcript wrapper using the block-based runtime message shape. */
 export function ChatMessageList(props: ChatMessageListProps): ReactElement {
-  const { messages, spacing, padding, wrapWidth, showTimestamps, autoScroll, onLoadMore, onOpenArtifact, onPlanDecision, layout } = props
+  const {
+    messages,
+    spacing,
+    padding,
+    wrapWidth,
+    showTimestamps,
+    bubbleWidthPercent,
+    fillWidth,
+    autoScroll,
+    onLoadMore,
+    onOpenArtifact,
+    onApprove,
+    onEditDecision,
+    onPlanDecision,
+    onCancel,
+    onMessageAction,
+    layout,
+  } = props
   return hostElement('chatMessageList', {
     messages,
     spacing,
     padding,
     wrap_width: wrapWidth,
     show_timestamps: showTimestamps,
+    bubble_width_percent: fillWidth ? 100 : bubbleWidthPercent,
     auto_scroll: autoScroll,
     onLoad_more: onLoadMore,
     onOpen_artifact: onOpenArtifact,
+    onApprove,
+    onEdit_decision: onEditDecision,
     onPlan_decision: onPlanDecision,
+    onCancel,
+    onMessage_action: onMessageAction,
     layout,
   })
+}
+
+/** Input mode kind for {@link ChatInputPanel}. */
+export type ChatInputKind = 'text' | 'choice' | 'confirm'
+
+/** Friendly input-mode descriptor; converted to the runtime mode map via core's `ChatInputMode`. */
+export interface ChatInputModeSpec extends ChatInputModeOptions {
+  /** Defaults to `'text'`. */
+  readonly kind?: ChatInputKind
+}
+
+export interface ChatInputPanelHostProps {
+  readonly mode?: ChatInputModeInput
+  readonly draft?: string
+  readonly custom?: string
+  readonly history?: readonly string[]
+  readonly selection?: number
+  readonly enabled?: boolean
+  readonly clear_on_submit?: boolean
+  readonly onSubmit?: AttoUiEventHandler
+}
+
+export interface ChatInputPanelProps extends LayoutProps {
+  /**
+   * Either a friendly {@link ChatInputModeSpec} (recommended) or an already-built
+   * runtime mode map produced by core's `ChatInputMode()`.
+   */
+  readonly mode?: ChatInputModeSpec | ChatInputModeInput
+  readonly draft?: string
+  readonly custom?: string
+  readonly history?: readonly string[]
+  readonly selection?: number
+  readonly enabled?: boolean
+  readonly clearOnSubmit?: boolean
+  /** Fired when the user submits. Payload is a map (text / choice / custom). */
+  readonly onSubmit?: AttoUiEventHandler
+}
+
+function resolveInputMode(
+  mode: ChatInputModeSpec | ChatInputModeInput | undefined,
+): ChatInputModeInput | undefined {
+  if (!mode) return undefined
+  // An already-built mode map carries a `type` discriminant; a friendly spec does not.
+  if (typeof (mode as { type?: unknown }).type === 'string') {
+    return mode as ChatInputModeInput
+  }
+  const { kind, ...options } = mode as ChatInputModeSpec
+  return chatInputModeValue(kind ?? 'text', options)
+}
+
+/** Chat input panel wrapper supporting text / choice / confirm modes. */
+export function ChatInputPanel(props: ChatInputPanelProps): ReactElement {
+  const { mode, draft, custom, history, selection, enabled, clearOnSubmit, onSubmit, layout } = props
+  return hostElement('chatInputPanel', {
+    mode: resolveInputMode(mode),
+    draft,
+    custom,
+    history,
+    selection,
+    enabled,
+    clear_on_submit: clearOnSubmit,
+    onSubmit,
+    layout,
+  })
+}
+
+export interface ChatPanelProps extends LayoutProps {
+  /** Transcript props forwarded to {@link ChatMessageList}. */
+  readonly list?: Omit<ChatMessageListProps, 'layout'>
+  /** Input props forwarded to {@link ChatInputPanel}. */
+  readonly input?: Omit<ChatInputPanelProps, 'layout'>
+  /** Vertical spacing between the transcript and the input panel. */
+  readonly spacing?: number
+}
+
+/**
+ * Convenience composite: a {@link ChatMessageList} that fills the available
+ * space stacked above a content-height {@link ChatInputPanel}. Mirrors the
+ * Rust-side `ChatPanel` composition.
+ */
+export function ChatPanel({ list, input, spacing, layout }: ChatPanelProps): ReactElement {
+  return hostElement(
+    'vstack',
+    { spacing, layout },
+    createElement(ChatMessageList, { ...list, layout: { height: 'fill' } }),
+    createElement(ChatInputPanel, { ...input, layout: { height: 'content' } }),
+  )
 }
 
 /** Vertical stack wrapper with camelCase props matching the Rust component schema. */

@@ -16,6 +16,7 @@ build step or `dist/` output.
 | Routing | `src/08-router.tsx` | React Router via DOM-free `MemoryRouter`; navigate from Buttons with `useNavigate`. |
 | Form validation | `src/09-form-validation.tsx` | React Hook Form via `Controller`; required/pattern rules with inline errors. |
 | Global state | `src/10-zustand.tsx` | Zustand store read with selectors; also updated from outside React (background stream). |
+| Chat | `src/11-chat.tsx` | `ChatPanel` + `useChatMessages`: every block kind (thinking / tool / diff / plan / todo / notice), streaming replies, inline approve/diff/plan decisions, and input submit. |
 
 ## Setup
 

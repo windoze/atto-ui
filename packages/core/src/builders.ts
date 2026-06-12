@@ -541,10 +541,16 @@ export interface ChatMessageListOptions extends BuilderBaseOptions {
   readonly padding?: EdgeInsetsSpec
   readonly wrapWidth?: number
   readonly showTimestamps?: boolean
+  /** Percent (1..=100) of list width a bubble may occupy. 100 = full width. Default 75. */
+  readonly bubbleWidthPercent?: number
   readonly autoScroll?: boolean
   readonly onLoadMore?: CallbackHandle
   readonly onOpenArtifact?: CallbackHandle
+  readonly onApprove?: CallbackHandle
+  readonly onEditDecision?: CallbackHandle
   readonly onPlanDecision?: CallbackHandle
+  readonly onCancel?: CallbackHandle
+  readonly onMessageAction?: CallbackHandle
 }
 
 export interface ChatInputModeOptions {
@@ -1134,11 +1140,16 @@ export function ChatMessageList(options: ChatMessageListOptions = {}): Component
     padding: options.padding,
     wrap_width: options.wrapWidth,
     show_timestamps: options.showTimestamps,
+    bubble_width_percent: options.bubbleWidthPercent,
     auto_scroll: options.autoScroll,
   }, events(options.events, {
     load_more: options.onLoadMore,
     open_artifact: options.onOpenArtifact,
+    approve: options.onApprove,
+    edit_decision: options.onEditDecision,
     plan_decision: options.onPlanDecision,
+    cancel: options.onCancel,
+    message_action: options.onMessageAction,
   }))
 }
 

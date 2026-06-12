@@ -15,6 +15,7 @@
     "gallery": "deno run -A src/07-component-gallery.tsx",
     "router": "deno run -A src/08-router.tsx",
     "form": "deno run -A src/09-form-validation.tsx",
-    "zustand": "deno run -A src/10-zustand.tsx"
+    "zustand": "deno run -A src/10-zustand.tsx",
+    "chat": "deno run -A src/11-chat.tsx"
   }
 }

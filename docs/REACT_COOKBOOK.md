@@ -367,6 +367,84 @@ need more than the convenience value:
 }} />
 ```
 
+## Chat (agent transcript)
+
+`ChatMessageList` renders the block-based chat model (a message is an ordered
+list of blocks: text / thinking / tool_use / tool_result / diff / plan / todo /
+task / notice / attachment / artifact). `ChatInputPanel` is the input box, and
+`ChatPanel` stacks the two. `useChatMessages` manages the transcript in React
+state with helpers that mirror the Rust `ChatMessageStore` (streaming, tool
+results, decisions), so you never touch a native store.
+
+```tsx
+import {
+  ChatPanel,
+  useChatMessages,
+} from '@atto-ui/react'
+
+function Chat() {
+  const chat = useChatMessages()
+
+  function send(event) {
+    const payload = event.payload as { kind?: string; text?: string } | null
+    chat.push({
+      id: chat.nextMessageId(),
+      role: 'user',
+      status: 'complete',
+      blocks: [{ type: 'text', block_id: chat.nextBlockId(), markdown: payload?.text ?? '' }],
+    })
+    streamReply(chat, payload?.text ?? '')
+  }
+
+  return (
+    <ChatPanel
+      list={{
+        messages: chat.messages,
+        // bubbles span 75% of the width by default; fillWidth (= bubbleWidthPercent 100)
+        // makes assistant/user messages use the full list width.
+        fillWidth: true,
+        // every runtime event is wired through camelCase props:
+        onApprove: (e) => console.log('approve', e.payload),
+        onEditDecision: (e) => console.log('diff decision', e.payload),
+        onPlanDecision: (e) => console.log('plan decision', e.payload),
+        onCancel: (e) => console.log('cancelled', e.payload),
+        onMessageAction: (e) => console.log('action', e.payload),
+        onOpenArtifact: (e) => console.log('open artifact', e.payload),
+        onLoadMore: () => loadOlder(chat),
+      }}
+      input={{ mode: { kind: 'text', title: 'Message' }, clearOnSubmit: true, onSubmit: send }}
+      spacing={1}
+    />
+  )
+}
+
+// Stream an assistant turn block-by-block.
+function streamReply(chat, prompt) {
+  const { messageId, blockId } = chat.addTextTurn('assistant', '', { status: 'streaming' })
+  let i = 0
+  const text = `You said: ${prompt}`
+  const timer = setInterval(() => {
+    if (i < text.length) chat.appendTextDelta(blockId, text[i++])
+    else { chat.setTurnStatus(messageId, 'complete'); clearInterval(timer) }
+  }, 40)
+}
+```
+
+The input panel supports three modes via the friendly `mode` descriptor:
+
+```tsx
+<ChatInputPanel mode={{ kind: 'text', title: 'Message' }} onSubmit={send} />
+<ChatInputPanel mode={{ kind: 'choice', title: 'Pick', options: ['Yes', 'No'], allowCustom: true }} onSubmit={send} />
+<ChatInputPanel mode={{ kind: 'confirm', prompt: 'Run command?', yesLabel: 'Run', noLabel: 'Skip' }} onSubmit={send} />
+```
+
+`onSubmit` payload is a map: `{ kind: 'text', text }`, `{ kind: 'choice', index, label }`,
+or `{ kind: 'custom', text }`. The list event payloads (`onApprove`,
+`onEditDecision`, `onPlanDecision`, `onCancel`, `onMessageAction`) are maps
+carrying `message_id` / `block_id` and the relevant decision/action; apply them
+back to the transcript with the matching `useChatMessages` helper
+(`resolveApproval`, `setEditDecision`, `setPlanDecision`, `setTurnStatus`, …).
+
 ## Raw host intrinsics (advanced)
 
 Every capitalized wrapper has a matching lowercase JSX intrinsic (e.g.

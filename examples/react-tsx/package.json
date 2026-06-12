@@ -15,6 +15,7 @@
     "router": "tsx src/08-router.tsx",
     "form": "tsx src/09-form-validation.tsx",
     "zustand": "tsx src/10-zustand.tsx",
+    "chat": "tsx src/11-chat.tsx",
     "smoke": "ATTO_UI_EXAMPLE_HEADLESS=1 tsx src/smoke.ts",
     "hello:bun": "bun src/01-hello.tsx",
     "counter:bun": "bun src/02-counter.tsx",
@@ -26,6 +27,7 @@
     "router:bun": "bun src/08-router.tsx",
     "form:bun": "bun src/09-form-validation.tsx",
     "zustand:bun": "bun src/10-zustand.tsx",
+    "chat:bun": "bun src/11-chat.tsx",
     "hello:deno": "deno task hello",
     "counter:deno": "deno task counter",
     "todo:deno": "deno task todo",
@@ -35,7 +37,8 @@
     "gallery:deno": "deno task gallery",
     "router:deno": "deno task router",
     "form:deno": "deno task form",
-    "zustand:deno": "deno task zustand"
+    "zustand:deno": "deno task zustand",
+    "chat:deno": "deno task chat"
   },
   "dependencies": {
     "@atto-ui/react": "file:../../packages/react",

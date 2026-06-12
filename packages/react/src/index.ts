@@ -63,7 +63,9 @@ export {
 export {
   Border,
   Button,
+  ChatInputPanel,
   ChatMessageList,
+  ChatPanel,
   Checkbox,
   Disclosure,
   Divider,
@@ -85,8 +87,13 @@ export {
   type BorderProps,
   type ButtonHostProps,
   type ButtonProps,
+  type ChatInputKind,
+  type ChatInputModeSpec,
+  type ChatInputPanelHostProps,
+  type ChatInputPanelProps,
   type ChatMessageListHostProps,
   type ChatMessageListProps,
+  type ChatPanelProps,
   type CheckboxProps,
   type DisclosureProps,
   type DividerProps,
@@ -115,6 +122,11 @@ export {
   type TextBoxProps,
   type ValueChangeHandler,
 } from './components'
+
+export {
+  useChatMessages,
+  type ChatMessagesStore,
+} from './chat'
 
 export {
   ChatArtifactBlock,

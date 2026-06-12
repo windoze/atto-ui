@@ -32,6 +32,7 @@ impl ComponentPropertySchema for ChatMessageList {
             PropertyMeta::new("padding", ValueType::Map),
             PropertyMeta::new("wrap_width", ValueType::U64),
             PropertyMeta::new("show_timestamps", ValueType::Bool),
+            PropertyMeta::new("bubble_width_percent", ValueType::U64),
             PropertyMeta::new("auto_scroll", ValueType::Bool),
         ]
     }
@@ -1486,6 +1487,10 @@ pub fn register_chat_message_list(
 
         if let Some(show) = prop_bool(spec, "show_timestamps")? {
             view = view.show_timestamps(show);
+        }
+
+        if let Some(percent) = prop_u16(spec, "bubble_width_percent")? {
+            view = view.bubble_width_percent(percent);
         }
 
         if let Some(enabled) = prop_bool(spec, "auto_scroll")? {

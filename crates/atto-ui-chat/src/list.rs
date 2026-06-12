@@ -39,6 +39,9 @@ use crate::store::ChatMessageStore;
 use crate::viewer::diff_line_style;
 
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
+/// Fraction (percent of list width) a message bubble may occupy; the rest is an
+/// alignment spacer. 100 = bubbles fill the whole list width (no spacer).
+const DEFAULT_BUBBLE_WIDTH_PERCENT: u16 = 75;
 const ANSI_OUTPUT_TAIL_LINES: usize = 12;
 const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 
@@ -92,6 +95,7 @@ struct ChatMessageListConfig {
     responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
     show_timestamps: bool,
+    bubble_width_percent: u16,
     spacing: Binding<u16>,
     padding: Binding<EdgeInsets>,
     scroll_config: Binding<ScrollConfig>,
@@ -109,6 +113,7 @@ struct ChatMessageRowConfig {
     responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
     show_timestamps: bool,
+    bubble_width_percent: u16,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
@@ -140,6 +145,7 @@ impl ChatMessageList {
             responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: false,
+            bubble_width_percent: DEFAULT_BUBBLE_WIDTH_PERCENT,
             spacing: 1u16.into(),
             padding: EdgeInsets::symmetric(0, 1).into(),
             scroll_config: ScrollConfig::default().into(),
@@ -214,6 +220,14 @@ impl ChatMessageList {
 
     pub fn show_timestamps(mut self, show: bool) -> Self {
         self.config.show_timestamps = show;
+        self.rebuild_list();
+        self
+    }
+
+    /// Fraction (1..=100 percent of list width) a message bubble may occupy.
+    /// 100 makes bubbles span the full width (no alignment spacer). Default 75.
+    pub fn bubble_width_percent(mut self, percent: u16) -> Self {
+        self.config.bubble_width_percent = percent.clamp(1, 100);
         self.rebuild_list();
         self
     }
@@ -387,6 +401,7 @@ impl ChatMessageList {
             .set(estimated_bubble_content_width(
                 area_width,
                 self.config.padding.get(),
+                self.config.bubble_width_percent,
             ));
     }
 }
@@ -399,6 +414,7 @@ impl ::atto_ui::composable::Component for ChatMessageList {
             "padding",
             "wrap_width",
             "show_timestamps",
+            "bubble_width_percent",
             "auto_scroll",
         ]
     }
@@ -418,6 +434,9 @@ impl ::atto_ui::composable::Component for ChatMessageList {
                     .unwrap_or(0) as u64,
             )),
             "show_timestamps" => Some(ComponentValue::Bool(self.config.show_timestamps)),
+            "bubble_width_percent" => Some(ComponentValue::U64(
+                self.config.bubble_width_percent as u64,
+            )),
             "auto_scroll" => Some(ComponentValue::Bool(self.auto_scroll)),
             _ => None,
         }
@@ -456,6 +475,12 @@ impl ::atto_ui::composable::Component for ChatMessageList {
                 self.rebuild_list();
                 Ok(())
             }
+            "bubble_width_percent" => {
+                let percent = <u16 as ComponentValueCodec>::from_component_value(value, name)?;
+                self.config.bubble_width_percent = percent.clamp(1, 100);
+                self.rebuild_list();
+                Ok(())
+            }
             "auto_scroll" => {
                 let enabled = <bool as ComponentValueCodec>::from_component_value(value, name)?;
                 self.auto_scroll = enabled;
@@ -476,12 +501,21 @@ impl ::atto_ui::composable::Component for ChatMessageList {
     }
 }
 
-fn estimated_bubble_content_width(area_width: u16, padding: EdgeInsets) -> Option<u16> {
+fn estimated_bubble_content_width(
+    area_width: u16,
+    padding: EdgeInsets,
+    bubble_width_percent: u16,
+) -> Option<u16> {
     let list_width = area_width.saturating_sub(padding.sum_horizontal());
     if list_width == 0 {
         return None;
     }
-    Some((((list_width as u32) * 3) / 4).max(1).min(u16::MAX as u32) as u16)
+    let percent = bubble_width_percent.clamp(1, 100) as u32;
+    Some(
+        (((list_width as u32) * percent) / 100)
+            .max(1)
+            .min(u16::MAX as u32) as u16,
+    )
 }
 
 impl ::atto_ui::composable::DragAndDrop for ChatMessageList {}
@@ -576,6 +610,7 @@ fn build_list(
         responsive_wrap_width: config.responsive_wrap_width.clone(),
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
+        bubble_width_percent: config.bubble_width_percent,
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
@@ -702,6 +737,7 @@ impl VirtualChatRowsContent {
             .set(estimated_bubble_content_width(
                 viewport_width,
                 EdgeInsets::ZERO,
+                self.config.bubble_width_percent,
             ));
     }
 
@@ -1138,7 +1174,8 @@ fn estimate_block_row_height(
     viewport_width: u16,
 ) -> u16 {
     let bubble_width =
-        estimated_bubble_content_width(viewport_width, EdgeInsets::ZERO).unwrap_or(1);
+        estimated_bubble_content_width(viewport_width, EdgeInsets::ZERO, config.bubble_width_percent)
+            .unwrap_or(1);
     let mut height = match block {
         Some(ChatBlock::Text(text)) => estimate_markdown_height(
             &markdown_for_render(&text.markdown, text.streaming, config),
@@ -1364,10 +1401,33 @@ fn draw_component_region_local(
         return;
     }
 
+    // Seed the offscreen buffer with the parent's current cells (the window surface
+    // background) so that any area the row does not paint itself preserves that color
+    // instead of copying back transparent/default cells over it.
+    let mut seed = Vec::with_capacity(source.width as usize * source.height as usize);
+    {
+        let frame_buffer = frame.buffer_mut();
+        for dy in 0..source.height.min(dest.height) {
+            for dx in 0..source.width.min(dest.width) {
+                let dst_x = dest.x.saturating_add(dx);
+                let dst_y = dest.y.saturating_add(dy);
+                if let Some(cell) = frame_buffer.cell((dst_x, dst_y)) {
+                    seed.push((source.x.saturating_add(dx), source.y.saturating_add(dy), cell.clone()));
+                }
+            }
+        }
+    }
+
     let backend = VirtualOffscreenBackend::new(component_area.width, component_area.height);
     let mut terminal = ratatui::Terminal::new(backend).expect("create offscreen terminal");
     terminal
         .try_draw(|f| {
+            let buf = f.buffer_mut();
+            for (x, y, cell) in &seed {
+                if let Some(dst) = buf.cell_mut((*x, *y)) {
+                    *dst = cell.clone();
+                }
+            }
             component.draw(f, component_area, ctx);
             Ok::<(), Infallible>(())
         })
@@ -1955,7 +2015,7 @@ fn build_row_view(
             (column, body_bindings)
         }
         ChatRowKey::PendingToolResult { call_id, .. } => {
-            let (bubble, body_bindings) = build_aligned_pending_tool_result(message, call_id);
+            let (bubble, body_bindings) = build_aligned_pending_tool_result(message, call_id, config);
             column = column.child_with_layout(bubble, row_layout);
             (column, body_bindings)
         }
@@ -2095,29 +2155,43 @@ impl ::atto_ui::composable::EventHandling for ChatMessageRow {
     }
 }
 
-fn build_aligned_turn_header(
-    message: &ChatMessage,
-    config: &ChatMessageRowConfig,
-) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, bindings) = build_turn_header(message, config);
+/// Place a bubble within an alignment row. The bubble occupies `percent` of the
+/// width; the remainder is a spacer on the opposite side. At 100 the bubble
+/// fills the whole row (no spacer).
+fn align_bubble<C>(bubble: C, alignment: ChatAlignment, percent: u16) -> HStack
+where
+    C: ::atto_ui::composable::Component + 'static,
+{
+    let percent = percent.clamp(1, 100);
     let bubble_layout = LayoutParams {
-        width: Size::Weight(3),
+        width: Size::Weight(percent),
         height: Size::Content,
         ..LayoutParams::default()
     };
+    let spacer_weight = 100u16.saturating_sub(percent);
+    if spacer_weight == 0 {
+        return HStack::new().child_with_layout(bubble, bubble_layout);
+    }
     let spacer_layout = LayoutParams {
-        width: Size::Weight(1),
+        width: Size::Weight(spacer_weight),
         ..LayoutParams::default()
     };
-
-    let row = match message.role.alignment() {
+    match alignment {
         ChatAlignment::Left => HStack::new()
             .child_with_layout(bubble, bubble_layout)
             .child_with_layout(Spacer::new(), spacer_layout),
         ChatAlignment::Right => HStack::new()
             .child_with_layout(Spacer::new(), spacer_layout)
             .child_with_layout(bubble, bubble_layout),
-    };
+    }
+}
+
+fn build_aligned_turn_header(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+) -> (HStack, ChatMessageRowBindings) {
+    let (bubble, bindings) = build_turn_header(message, config);
+    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
     (row, bindings)
 }
 
@@ -2127,30 +2201,14 @@ fn build_aligned_block(
     config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
     let (bubble, body_bindings) = build_block_bubble(message.id, block, config);
-    let bubble_layout = LayoutParams {
-        width: Size::Weight(3),
-        height: Size::Content,
-        ..LayoutParams::default()
-    };
-    let spacer_layout = LayoutParams {
-        width: Size::Weight(1),
-        ..LayoutParams::default()
-    };
-
-    let row = match message.role.alignment() {
-        ChatAlignment::Left => HStack::new()
-            .child_with_layout(bubble, bubble_layout)
-            .child_with_layout(Spacer::new(), spacer_layout),
-        ChatAlignment::Right => HStack::new()
-            .child_with_layout(Spacer::new(), spacer_layout)
-            .child_with_layout(bubble, bubble_layout),
-    };
+    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
     (row, body_bindings)
 }
 
 fn build_aligned_pending_tool_result(
     message: &ChatMessage,
     call_id: &str,
+    config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
     let body = ChatMessageBody::Disclosure(
         Disclosure::new(pending_tool_result_title(call_id))
@@ -2165,24 +2223,7 @@ fn build_aligned_pending_tool_result(
             ..LayoutParams::default()
         },
     );
-    let bubble_layout = LayoutParams {
-        width: Size::Weight(3),
-        height: Size::Content,
-        ..LayoutParams::default()
-    };
-    let spacer_layout = LayoutParams {
-        width: Size::Weight(1),
-        ..LayoutParams::default()
-    };
-
-    let row = match message.role.alignment() {
-        ChatAlignment::Left => HStack::new()
-            .child_with_layout(bubble, bubble_layout)
-            .child_with_layout(Spacer::new(), spacer_layout),
-        ChatAlignment::Right => HStack::new()
-            .child_with_layout(Spacer::new(), spacer_layout)
-            .child_with_layout(bubble, bubble_layout),
-    };
+    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
     (row, ChatMessageRowBindings::default())
 }
 
@@ -5931,6 +5972,7 @@ mod tests {
             responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: false,
+            bubble_width_percent: DEFAULT_BUBBLE_WIDTH_PERCENT,
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,

@@ -237,7 +237,9 @@ Common wrappers:
 | `Border` | Bordered container around `children`. |
 | `Editor` | Code editor (`value`, `languageId`, `showLineNumbers`, `showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`). |
 | `FileTree` | Tree of `nodes`, controlled `selection`, `onSelect`/`onRename`/`onDelete`, optional `icons`. |
-| `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `onLoadMore`, `onOpenArtifact`, `onPlanDecision`). |
+| `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `bubbleWidthPercent` / `fillWidth`, `onLoadMore`, `onOpenArtifact`, `onApprove`, `onEditDecision`, `onPlanDecision`, `onCancel`, `onMessageAction`). `bubbleWidthPercent` (default 75) caps bubble width as a percent of the list; `fillWidth` is shorthand for 100 (messages span the full width). |
+| `ChatInputPanel` | Chat input box. `mode` is a friendly `{ kind: 'text' \| 'choice' \| 'confirm', … }` descriptor (or a core `ChatInputMode()` map), plus `draft` / `history` / `selection` / `enabled` / `clearOnSubmit` and `onSubmit`. |
+| `ChatPanel` | Convenience composite: `ChatMessageList` (fills) above `ChatInputPanel` (content height). Props: `list`, `input`, `spacing`. |
 | `VStack` / `HStack` / `Grid` | Layout containers. |
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
 | `Markdown` | `MarkdownViewer`. |
@@ -245,7 +247,23 @@ Common wrappers:
 | `MinimizedWindowsMenu` | Runtime-managed list of minimized windows (see below). |
 | `WindowOpMenuItem` | Menu item wired to a built-in window operation (see below). |
 
-`@atto-ui/react` re-exports the chat value builders (`ChatMessage`, `ChatTextMessage`, `ChatToolCallMessage`, block builders, and related types) for use with the `ChatMessageList` component.
+`@atto-ui/react` re-exports the chat value builders (`ChatMessage`, `ChatTextMessage`, `ChatToolCallMessage`, block builders, and related types) for use with the `ChatMessageList` component. It also exports the `useChatMessages(initial?)` hook, which holds the transcript in React state and mirrors the Rust `ChatMessageStore` API (`push` / `prepend` / `prependMany` / `updateMessage` / `addTextTurn` / `appendTextDelta` / `appendToolOutput` / `setTurnStatus` / `setMeta` / `setToolStatus` / `upsertToolResult` / `resolveApproval` / `setEditDecision` / `setPlanItems` / `setPlanDecision` / `setTodo` / `setTaskStatus` / `setTaskSummary` / `setTaskTranscript`), assigning message/block ids automatically.
+
+#### Chat event payloads
+
+The list/input callbacks deliver `ComponentValue` map payloads (`event.payload`),
+matching the Rust `*_to_value` serializers in `crates/atto-ui-chat/src/dynamic.rs`:
+
+| Event | Payload shape |
+|---|---|
+| `onSubmit` (input) | `{ kind: 'text', text }` \| `{ kind: 'choice', index, label }` \| `{ kind: 'custom', text }` |
+| `onApprove` | `{ message_id, block_id, approval_id, option_id }` |
+| `onEditDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
+| `onPlanDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
+| `onCancel` | `{ message_id }` |
+| `onMessageAction` | `{ message_id, kind: 'copy' \| 'retry' \| 'regenerate' \| 'edit_user' \| 'copy_block' }`; `copy_block` also carries `block_id` |
+| `onOpenArtifact` | the artifact anchor `string` |
+| `onLoadMore` | no payload |
 
 `Window` reports lifecycle through `onClose` / `onMinimize` / `onMaximize` /
 `onRestore` (drained from `drainWindowEvents()`); controlled widgets

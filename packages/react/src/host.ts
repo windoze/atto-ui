@@ -1395,6 +1395,8 @@ function toComponentValue(value: unknown): ComponentValue | undefined {
 const HOST_TYPE_NAMES: Readonly<Record<string, string>> = {
   border: 'Border',
   button: 'Button',
+  chatInputPanel: 'ChatInputPanel',
+  chatinputpanel: 'ChatInputPanel',
   chatMessageList: 'ChatMessageList',
   chatmessagelist: 'ChatMessageList',
   checkbox: 'Checkbox',

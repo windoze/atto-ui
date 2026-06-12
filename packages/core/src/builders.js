@@ -485,11 +485,16 @@ function ChatMessageList(options = {}) {
     padding: options.padding,
     wrap_width: options.wrapWidth,
     show_timestamps: options.showTimestamps,
+    bubble_width_percent: options.bubbleWidthPercent,
     auto_scroll: options.autoScroll,
   }, events(options.events, {
     load_more: options.onLoadMore,
     open_artifact: options.onOpenArtifact,
+    approve: options.onApprove,
+    edit_decision: options.onEditDecision,
     plan_decision: options.onPlanDecision,
+    cancel: options.onCancel,
+    message_action: options.onMessageAction,
   }))
 }
 
