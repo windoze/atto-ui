@@ -17,14 +17,13 @@ use atto_ui::wm::{Window, WindowKind};
 use atto_ui_chat::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
-    ChatConfirmInputConfig, ChatError,
-    ChatErrorKind, ChatInputHandle, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageId,
-    ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction, MessageActionKind,
-    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
-    TaskBlock, TaskStatus, TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock,
-    TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
+    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
+    ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
+    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
+    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
+    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 /// 由菜单 / slash 命令触发，注入一段演示用的对话片段。
@@ -66,7 +65,10 @@ fn main() -> Result<()> {
                 store.resolve_approval(decision.block_id, decision.option_id.clone());
                 push_system(
                     &store,
-                    format!("审批结果：{} → {}", decision.approval_id, decision.option_id),
+                    format!(
+                        "审批结果：{} → {}",
+                        decision.approval_id, decision.option_id
+                    ),
                 );
             }
         })
@@ -109,8 +111,9 @@ fn main() -> Result<()> {
                     } else {
                         ChatRole::Assistant
                     };
-                    let message = ChatMessage::text(id, role, format!("历史记录 {page} · 第 {idx} 条"))
-                        .with_timestamp(format!("History {page}"));
+                    let message =
+                        ChatMessage::text(id, role, format!("历史记录 {page} · 第 {idx} 条"))
+                            .with_timestamp(format!("History {page}"));
                     older.push(message);
                 }
                 store.prepend_many(older);
@@ -149,11 +152,13 @@ fn main() -> Result<()> {
     let menu = MenuBar::new(vec![
         MenuSpec::new(
             "File",
-            vec![MenuItem::action("Quit", {
-                let quit = quit.clone();
-                move || quit.push(())
-            })
-            .shortcut("q")],
+            vec![
+                MenuItem::action("Quit", {
+                    let quit = quit.clone();
+                    move || quit.push(())
+                })
+                .shortcut("q"),
+            ],
         ),
         MenuSpec::new(
             "Demo",
@@ -208,11 +213,7 @@ fn main() -> Result<()> {
     )
 }
 
-fn demo_menu_item(
-    label: &str,
-    action: DemoAction,
-    queue: &EventQueue<DemoAction>,
-) -> MenuItem {
+fn demo_menu_item(label: &str, action: DemoAction, queue: &EventQueue<DemoAction>) -> MenuItem {
     let queue = queue.clone();
     MenuItem::action(label, move || queue.push(action))
 }
@@ -442,7 +443,10 @@ fn seed_plan(store: &ChatMessageStore) {
             decision: PlanDecision::Pending,
         })],
     ));
-    push_system(store, "Plan 模式：按 Accept / Reject 做决策（结果会回写）。");
+    push_system(
+        store,
+        "Plan 模式：按 Accept / Reject 做决策（结果会回写）。",
+    );
 }
 
 fn seed_diff(store: &ChatMessageStore) {

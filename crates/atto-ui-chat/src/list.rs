@@ -434,9 +434,9 @@ impl ::atto_ui::composable::Component for ChatMessageList {
                     .unwrap_or(0) as u64,
             )),
             "show_timestamps" => Some(ComponentValue::Bool(self.config.show_timestamps)),
-            "bubble_width_percent" => Some(ComponentValue::U64(
-                self.config.bubble_width_percent as u64,
-            )),
+            "bubble_width_percent" => {
+                Some(ComponentValue::U64(self.config.bubble_width_percent as u64))
+            }
             "auto_scroll" => Some(ComponentValue::Bool(self.auto_scroll)),
             _ => None,
         }
@@ -1173,9 +1173,12 @@ fn estimate_block_row_height(
     config: &ChatMessageRowConfig,
     viewport_width: u16,
 ) -> u16 {
-    let bubble_width =
-        estimated_bubble_content_width(viewport_width, EdgeInsets::ZERO, config.bubble_width_percent)
-            .unwrap_or(1);
+    let bubble_width = estimated_bubble_content_width(
+        viewport_width,
+        EdgeInsets::ZERO,
+        config.bubble_width_percent,
+    )
+    .unwrap_or(1);
     let mut height = match block {
         Some(ChatBlock::Text(text)) => estimate_markdown_height(
             &markdown_for_render(&text.markdown, text.streaming, config),
@@ -1412,7 +1415,11 @@ fn draw_component_region_local(
                 let dst_x = dest.x.saturating_add(dx);
                 let dst_y = dest.y.saturating_add(dy);
                 if let Some(cell) = frame_buffer.cell((dst_x, dst_y)) {
-                    seed.push((source.x.saturating_add(dx), source.y.saturating_add(dy), cell.clone()));
+                    seed.push((
+                        source.x.saturating_add(dx),
+                        source.y.saturating_add(dy),
+                        cell.clone(),
+                    ));
                 }
             }
         }
@@ -2015,7 +2022,8 @@ fn build_row_view(
             (column, body_bindings)
         }
         ChatRowKey::PendingToolResult { call_id, .. } => {
-            let (bubble, body_bindings) = build_aligned_pending_tool_result(message, call_id, config);
+            let (bubble, body_bindings) =
+                build_aligned_pending_tool_result(message, call_id, config);
             column = column.child_with_layout(bubble, row_layout);
             (column, body_bindings)
         }
@@ -2191,7 +2199,11 @@ fn build_aligned_turn_header(
     config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
     let (bubble, bindings) = build_turn_header(message, config);
-    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
+    let row = align_bubble(
+        bubble,
+        message.role.alignment(),
+        config.bubble_width_percent,
+    );
     (row, bindings)
 }
 
@@ -2201,7 +2213,11 @@ fn build_aligned_block(
     config: &ChatMessageRowConfig,
 ) -> (HStack, ChatMessageRowBindings) {
     let (bubble, body_bindings) = build_block_bubble(message.id, block, config);
-    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
+    let row = align_bubble(
+        bubble,
+        message.role.alignment(),
+        config.bubble_width_percent,
+    );
     (row, body_bindings)
 }
 
@@ -2223,7 +2239,11 @@ fn build_aligned_pending_tool_result(
             ..LayoutParams::default()
         },
     );
-    let row = align_bubble(bubble, message.role.alignment(), config.bubble_width_percent);
+    let row = align_bubble(
+        bubble,
+        message.role.alignment(),
+        config.bubble_width_percent,
+    );
     (row, ChatMessageRowBindings::default())
 }
 
