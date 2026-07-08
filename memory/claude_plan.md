@@ -1,29 +1,21 @@
-# 执行计划
+本文件记录本次调用的可审计执行计划与进度。不会记录隐藏推理，只记录决策依据、步骤和结果。
 
-我不能记录私有推理链，但此文件记录本次调用的可执行计划、关键决策和进度更新。
+## 当前目标
 
-## 计划
+1. 先读取 `TODO.md`，按规则找到第一个标题未带 `[DONE]` 的任务。
+2. 读取该任务相关上下文，包括必要的 `PLAN.md`、源码、测试和最近提交信息，只做与当前任务直接相关的调查。
+3. 按当前任务要求完成实现；若发现阻塞当前任务的规格不匹配、未跟踪失败测试或必要前置条件，则优先修复，或在 `TODO.md` 中插入最小必要前置任务并停止。
+4. 运行验证：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，通过后运行完整测试套件 `cargo test --all --all-targets`（除非仅文档变更且已有可复用的绿色结果）。
+5. 在 `TODO.md` 中将完成任务标题加 `[DONE]` 并更新 completion record；仅当阶段计划变化时更新 `PLAN.md`。
+6. 按要求检查 git 状态、diff 和近期提交，提交本次所有相关变更。
+7. 完成一个任务后停止，不继续处理下一个任务。
 
-1. 先读取 `TODO.md`，识别第一个标题未以 `[DONE]` 开头的任务。
-2. 只检查最新提交中是否有与所选任务直接相关的未完成工作。
-3. 只查看该任务所需的代码、测试和文档。
-4. 完整实现所选任务，避免 workaround 或缩小范围。
-5. 按要求顺序验证：`cargo fmt`、`cargo clippy --all-targets -- -D warnings`，代码变更后再运行完整测试套件。
-6. 如发现阻塞性前置任务或未排期失败测试，向 `TODO.md` 添加最小必要任务条目，提交该记录后停止。
-7. 任务完成后，在 `TODO.md` 标题添加 `[DONE]`，更新完成记录，提交相关变更，并停止，不开始下一项任务。
+## 进度记录
 
-## 进度
-
-- 已在读取项目任务文件或运行命令前写入初始执行计划。
-- 已读取 `TODO.md`；选定第一个未完成任务：`P1.1 代码块语法高亮`。
-- 当前范围：基于 P1.0 选型记录，在 `crates/atto-ui-markdown` 实现 fenced code block 语法高亮；缺失或未知语言提示时回退纯文本。
-- 已检查最新提交：`[P1.0] Select syntax highlighting approach`；未发现除 P1.1 外的额外相关未完成事项。
-- 已确认当前代码块渲染只在 `CodeBlockState` 保存规范化纯文本行，并在宽度切片后统一应用 `code_block` 样式；本次实现新增可选逐行语法 spans，同时保留原有纯文本宽度与嵌入式滚动行为。
-- 已新增公共 `atto_ui_markdown::syntax` 模块，提供中立高亮输出类型和 syntect 驱动的 fenced-code 高亮。
-- 已扩展 markdown code block 状态与渲染：已知语言绘制 syntax spans，未知或缺失语言继续走纯文本路径，并保留既有宽度/滚动行为。
-- 已新增单元测试覆盖 hint 提取、fallback 行为和 markdown code block state 高亮。
-- 已运行 `cargo fmt --all`；首次 clippy 发现两个默认值风格警告，已用 `unwrap_or_default()` 修复并重新格式化。
-- `cargo clippy --workspace --all-targets -- -D warnings` 已通过。
-- 首次完整测试发现 Rust `storage.*` scope 应映射为 `SyntaxClass::Keyword`；已调整分类规则，并确认 `cargo test -p atto-ui-markdown --lib` 通过。
-- 分类修复后已重新验证：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- 已在 `TODO.md` 将 `P1.1 代码块语法高亮` 标记为 `[DONE]`，并写入完成记录与验证命令。
+- 已创建初始执行计划。下一步读取 `TODO.md` 确定第一个未完成任务。
+- 已读取 `TODO.md`，第一个未完成任务为 `P1.2 diff 语法高亮`。下一步检查该任务相关上下文、现有 diff 渲染实现、P1.1 高亮接口和最近提交。
+- 已检查最近提交：最新提交为 `[P1.1] Add markdown code block syntax highlighting`，与当前任务相关但未声明需先处理的未完成 issue。继续按 P1.2 执行。
+- 已完成 P1.2 代码改动草案：chat diff 现在按显式 path 或 unified diff header 推断语言，复用 `atto_ui_markdown::syntax::highlight_code_block` 高亮 payload，并在增删行 span 上保留 diff 语义前景/背景。已补充 list 单测覆盖语义色、高亮、header 推断和 hunk 内 `---` 删除行分类。
+- 已运行 `cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo clippy --workspace --all-targets -- -D warnings`，均通过；新增 diff 单测定向运行 `cargo test -p atto-ui-chat diff_display_lines` 通过。下一步运行剩余通用验收命令。
+- 已完成通用验收：`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。已将 `TODO.md` 中 P1.2 标记为 `[DONE]` 并写入完成记录。下一步检查 git diff/status/log 后提交。
+- diff 检查后仅为新增 helper 补充 comments-only 说明，并重新运行 `cargo fmt --all -- --check` 通过；因之后没有编译输出相关代码变更，复用此前完整绿色测试结果。

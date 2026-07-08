@@ -13,9 +13,11 @@ use atto_ui::composable::{
     Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
+use atto_ui::theme::Theme;
 use atto_ui::widgets::{Button, Disclosure, DisclosureStatus};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
+use atto_ui_markdown::syntax::{HighlightedLine, SyntaxClass, highlight_code_block};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -36,7 +38,6 @@ use crate::message::{
     ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
-use crate::viewer::diff_line_style;
 
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
 /// Fraction (percent of list width) a message bubble may occupy; the rest is an
@@ -3076,6 +3077,7 @@ impl ::atto_ui::composable::Layout for ToolUseDetailsView {
 struct DiffDecisionView {
     title: Option<String>,
     diff: Binding<String>,
+    path: Option<String>,
     message_id: ChatMessageId,
     block_id: ChatBlockId,
     decision: EditDecision,
@@ -3090,6 +3092,7 @@ impl DiffDecisionView {
     fn new(
         title: Option<String>,
         diff: impl Into<Binding<String>>,
+        path: Option<String>,
         message_id: ChatMessageId,
         block_id: ChatBlockId,
         decision: EditDecision,
@@ -3098,6 +3101,7 @@ impl DiffDecisionView {
         Self {
             title,
             diff: diff.into(),
+            path,
             message_id,
             block_id,
             decision,
@@ -3109,13 +3113,13 @@ impl DiffDecisionView {
         }
     }
 
-    fn diff_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+    fn diff_lines(&self, base: Style, title_style: Style, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(title) = &self.title {
             lines.push(Line::styled(title.clone(), title_style));
         }
         let diff = self.diff.get();
-        lines.extend(diff_display_lines(&diff, base));
+        lines.extend(diff_display_lines(&diff, base, self.path.as_deref(), theme));
         lines
     }
 
@@ -3225,8 +3229,12 @@ impl Component for DiffDecisionView {
                 ..area
             };
             frame.render_widget(
-                Paragraph::new(self.diff_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
-                    .scroll((0, self.scroll_x)),
+                Paragraph::new(self.diff_lines(
+                    ctx.theme.widget.normal,
+                    ctx.theme.widget.dim,
+                    ctx.theme,
+                ))
+                .scroll((0, self.scroll_x)),
                 diff_area,
             );
         }
@@ -3751,6 +3759,7 @@ impl ChatMessageBody {
                     ChatMessageBody::Diff(DiffDecisionView::new(
                         Some(diff_block_title(diff)),
                         content.clone(),
+                        Some(diff.path.clone()),
                         message_id,
                         diff.id,
                         diff.decision,
@@ -4233,7 +4242,7 @@ fn tool_output_component(
                     .vertical_scrollbar(ScrollbarVisibility::Never)
             }),
         ),
-        ToolOutput::Diff(_) => Box::new(DiffView::new(None, content)),
+        ToolOutput::Diff(_) => Box::new(DiffView::new(None, content, None)),
     }
 }
 
@@ -4323,27 +4332,29 @@ fn component_value_compact(value: &ComponentValue) -> String {
 struct DiffView {
     title: Option<String>,
     diff: Binding<String>,
+    path: Option<String>,
     scroll_x: u16,
     viewport: (u16, u16),
 }
 
 impl DiffView {
-    fn new(title: Option<String>, diff: impl Into<Binding<String>>) -> Self {
+    fn new(title: Option<String>, diff: impl Into<Binding<String>>, path: Option<String>) -> Self {
         Self {
             title,
             diff: diff.into(),
+            path,
             scroll_x: 0,
             viewport: (0, 0),
         }
     }
 
-    fn display_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+    fn display_lines(&self, base: Style, title_style: Style, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(title) = &self.title {
             lines.push(Line::styled(title.clone(), title_style));
         }
         let diff = self.diff.get();
-        lines.extend(diff_display_lines(&diff, base));
+        lines.extend(diff_display_lines(&diff, base, self.path.as_deref(), theme));
         lines
     }
 
@@ -4392,8 +4403,12 @@ impl Component for DiffView {
             return;
         }
         frame.render_widget(
-            Paragraph::new(self.display_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
-                .scroll((0, self.scroll_x)),
+            Paragraph::new(self.display_lines(
+                ctx.theme.widget.normal,
+                ctx.theme.widget.dim,
+                ctx.theme,
+            ))
+            .scroll((0, self.scroll_x)),
             area,
         );
     }
@@ -4733,13 +4748,296 @@ fn add_signed_u16(value: u16, delta: i16) -> u16 {
     }
 }
 
-fn diff_display_lines(diff: &str, base: Style) -> Vec<Line<'static>> {
+fn diff_display_lines(
+    diff: &str,
+    base: Style,
+    explicit_path: Option<&str>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     if diff.is_empty() {
         return vec![Line::styled(String::new(), base)];
     }
-    diff.lines()
-        .map(|line| Line::styled(line.to_string(), diff_line_style(line, base)))
+
+    let metas = classify_diff_lines(diff, explicit_path);
+    let highlighted = highlight_diff_payloads(&metas);
+
+    metas
+        .iter()
+        .enumerate()
+        .map(|(idx, meta)| {
+            diff_render_line(
+                meta,
+                base,
+                theme,
+                highlighted.get(idx).and_then(Option::as_ref),
+            )
+        })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffLineKind {
+    FileHeader,
+    Hunk,
+    Addition,
+    Removal,
+    Context,
+    Other,
+}
+
+struct DiffLineMeta<'a> {
+    text: &'a str,
+    kind: DiffLineKind,
+    payload: Option<&'a str>,
+    hint: Option<String>,
+    section: usize,
+}
+
+fn classify_diff_lines<'a>(diff: &'a str, explicit_path: Option<&str>) -> Vec<DiffLineMeta<'a>> {
+    let explicit_hint = explicit_path.and_then(normalize_diff_path);
+    let mut current_hint = explicit_hint.clone();
+    let mut in_hunk = false;
+    let mut section = 0usize;
+    let mut metas = Vec::new();
+    let raw_lines = diff.lines().collect::<Vec<_>>();
+
+    // Use hunk state plus adjacent ---/+++ pairs so deleted payloads like "--- foo" stay red.
+    for (idx, line) in raw_lines.iter().enumerate() {
+        let line = *line;
+        let prev = idx
+            .checked_sub(1)
+            .and_then(|idx| raw_lines.get(idx))
+            .copied();
+        let next = raw_lines.get(idx + 1).copied();
+        let starts_file_header_pair =
+            line.starts_with("--- ") && next.is_some_and(|next| next.starts_with("+++ "));
+        let follows_file_header_pair =
+            line.starts_with("+++ ") && prev.is_some_and(|prev| prev.starts_with("--- "));
+
+        let (kind, payload) = if line.starts_with("diff --git ") {
+            in_hunk = false;
+            section = section.saturating_add(1);
+            if explicit_hint.is_none()
+                && let Some(path) = diff_git_new_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::Other, None)
+        } else if line.starts_with("@@") {
+            in_hunk = true;
+            (DiffLineKind::Hunk, None)
+        } else if starts_file_header_pair || (!in_hunk && line.starts_with("--- ")) {
+            in_hunk = false;
+            section = section.saturating_add(1);
+            if explicit_hint.is_none()
+                && let Some(path) = diff_header_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::FileHeader, None)
+        } else if follows_file_header_pair || (!in_hunk && line.starts_with("+++ ")) {
+            in_hunk = false;
+            if explicit_hint.is_none()
+                && let Some(path) = diff_header_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::FileHeader, None)
+        } else if let Some(payload) = line.strip_prefix('+') {
+            (DiffLineKind::Addition, Some(payload))
+        } else if let Some(payload) = line.strip_prefix('-') {
+            (DiffLineKind::Removal, Some(payload))
+        } else if let Some(payload) = line.strip_prefix(' ') {
+            (DiffLineKind::Context, Some(payload))
+        } else {
+            (DiffLineKind::Other, None)
+        };
+
+        metas.push(DiffLineMeta {
+            text: line,
+            kind,
+            payload,
+            hint: payload.and_then(|_| current_hint.clone()),
+            section,
+        });
+    }
+
+    metas
+}
+
+fn highlight_diff_payloads(metas: &[DiffLineMeta<'_>]) -> Vec<Option<HighlightedLine>> {
+    let mut highlighted_by_line = vec![None; metas.len()];
+    let mut payload_indices = metas
+        .iter()
+        .enumerate()
+        .filter(|(_, meta)| meta.payload.is_some())
+        .peekable();
+
+    // Highlight per file section/path to avoid carrying parser state across unrelated files.
+    while let Some((start_idx, start_meta)) = payload_indices.next() {
+        let Some(hint) = start_meta.hint.as_deref() else {
+            continue;
+        };
+        let section = start_meta.section;
+        let mut run_indices = vec![start_idx];
+
+        while let Some((_, next_meta)) = payload_indices.peek()
+            && next_meta.section == section
+            && next_meta.hint.as_deref() == Some(hint)
+        {
+            let (idx, _) = payload_indices.next().expect("peeked payload");
+            run_indices.push(idx);
+        }
+
+        let source = run_indices
+            .iter()
+            .filter_map(|idx| metas[*idx].payload)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Some(lines) = highlight_code_block(Some(hint), &source)
+            .filter(|lines| lines.len() == run_indices.len())
+        else {
+            continue;
+        };
+
+        for (idx, line) in run_indices.into_iter().zip(lines) {
+            highlighted_by_line[idx] = Some(line);
+        }
+    }
+
+    highlighted_by_line
+}
+
+fn diff_render_line(
+    meta: &DiffLineMeta<'_>,
+    base: Style,
+    theme: &Theme,
+    highlighted: Option<&HighlightedLine>,
+) -> Line<'static> {
+    let line_style = diff_line_style_for_kind(meta.kind, base);
+    let Some(payload) = meta.payload else {
+        return Line::styled(meta.text.to_string(), line_style);
+    };
+    let Some(highlighted) = highlighted else {
+        return Line::styled(meta.text.to_string(), line_style);
+    };
+
+    let mut spans = vec![Span::styled(diff_prefix_for_kind(meta.kind), line_style)];
+    let preserve_semantic_colors =
+        matches!(meta.kind, DiffLineKind::Addition | DiffLineKind::Removal);
+    if highlighted.spans.is_empty() && !payload.is_empty() {
+        spans.push(Span::styled(payload.to_string(), line_style));
+    } else {
+        spans.extend(highlighted.spans.iter().map(|span| {
+            let syntax = diff_syntax_style(span.class, theme);
+            Span::styled(
+                span.text.clone(),
+                compose_diff_syntax_style(line_style, syntax, preserve_semantic_colors),
+            )
+        }));
+    }
+
+    let mut line = Line::from(spans);
+    line.style = line_style;
+    line
+}
+
+fn diff_line_style_for_kind(kind: DiffLineKind, base: Style) -> Style {
+    match kind {
+        DiffLineKind::Hunk => base.fg(Color::Yellow),
+        DiffLineKind::FileHeader => base.fg(Color::Cyan),
+        DiffLineKind::Addition => base.fg(Color::Green),
+        DiffLineKind::Removal => base.fg(Color::Red),
+        DiffLineKind::Context | DiffLineKind::Other => base,
+    }
+}
+
+fn diff_prefix_for_kind(kind: DiffLineKind) -> &'static str {
+    match kind {
+        DiffLineKind::Addition => "+",
+        DiffLineKind::Removal => "-",
+        DiffLineKind::Context => " ",
+        DiffLineKind::FileHeader | DiffLineKind::Hunk | DiffLineKind::Other => "",
+    }
+}
+
+fn compose_diff_syntax_style(
+    line_style: Style,
+    syntax_style: Style,
+    preserve_semantic_colors: bool,
+) -> Style {
+    let mut style = line_style.patch(syntax_style);
+    if preserve_semantic_colors {
+        // Syntax spans may add modifiers, but +/- foreground/background remain semantic.
+        style.fg = line_style.fg;
+        style.bg = line_style.bg;
+    }
+    style
+}
+
+fn diff_syntax_style(class: SyntaxClass, theme: &Theme) -> Style {
+    match class {
+        SyntaxClass::Text => theme
+            .named_style("markdown-syntax-text")
+            .unwrap_or_default(),
+        SyntaxClass::Comment => theme
+            .named_style("markdown-syntax-comment")
+            .unwrap_or(Style::default().fg(Color::DarkGray)),
+        SyntaxClass::String => theme
+            .named_style("markdown-syntax-string")
+            .unwrap_or(Style::default().fg(Color::LightGreen)),
+        SyntaxClass::Keyword => theme
+            .named_style("markdown-syntax-keyword")
+            .unwrap_or(Style::default().fg(Color::LightMagenta)),
+        SyntaxClass::Function => theme
+            .named_style("markdown-syntax-function")
+            .unwrap_or(Style::default().fg(Color::LightCyan)),
+        SyntaxClass::Type => theme
+            .named_style("markdown-syntax-type")
+            .unwrap_or(Style::default().fg(Color::Yellow)),
+        SyntaxClass::Number => theme
+            .named_style("markdown-syntax-number")
+            .unwrap_or(Style::default().fg(Color::LightYellow)),
+        SyntaxClass::Constant => theme
+            .named_style("markdown-syntax-constant")
+            .unwrap_or(Style::default().fg(Color::LightYellow)),
+        SyntaxClass::Variable => theme
+            .named_style("markdown-syntax-variable")
+            .unwrap_or_default(),
+        SyntaxClass::Operator => theme
+            .named_style("markdown-syntax-operator")
+            .unwrap_or(Style::default().fg(Color::LightBlue)),
+        SyntaxClass::Punctuation => theme
+            .named_style("markdown-syntax-punctuation")
+            .unwrap_or(Style::default().fg(Color::Gray)),
+    }
+}
+
+fn diff_git_new_path(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("diff --git ")?;
+    rest.split_whitespace().nth(1).and_then(normalize_diff_path)
+}
+
+fn diff_header_path(line: &str) -> Option<String> {
+    let raw = line
+        .strip_prefix("--- ")
+        .or_else(|| line.strip_prefix("+++ "))?;
+    normalize_diff_path(raw)
+}
+
+fn normalize_diff_path(raw: &str) -> Option<String> {
+    let path = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .trim_matches('"');
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
+
+    (!path.is_empty() && path != "/dev/null").then(|| path.to_string())
 }
 
 fn line_count(text: &str) -> u16 {
@@ -6860,6 +7158,7 @@ mod tests {
         let mut view = DiffDecisionView::new(
             Some("Diff: src/lib.rs (pending)".to_string()),
             Binding::new("+new".to_string()),
+            Some("src/lib.rs".to_string()),
             message_id,
             block_id,
             EditDecision::Pending,
@@ -6888,6 +7187,7 @@ mod tests {
         let locked_view = DiffDecisionView::new(
             Some("Diff: src/lib.rs (accepted)".to_string()),
             Binding::new("+new".to_string()),
+            Some("src/lib.rs".to_string()),
             message_id,
             block_id,
             EditDecision::Accepted,
@@ -6987,11 +7287,74 @@ mod tests {
 
     #[test]
     fn diff_display_lines_reuses_unified_diff_styles() {
-        let lines = diff_display_lines("+added\n-removed\n@@ hunk", Style::default());
+        let theme = Theme::dark();
+        let lines = diff_display_lines("+added\n-removed\n@@ hunk", Style::default(), None, &theme);
 
         assert_eq!(lines[0].style.fg, Some(Color::Green));
         assert_eq!(lines[1].style.fg, Some(Color::Red));
         assert_eq!(lines[2].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn diff_display_lines_highlights_payload_from_explicit_path() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines(
+            " fn main() {",
+            Style::default(),
+            Some("src/main.rs"),
+            &theme,
+        );
+        let keyword = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "fn")
+            .expect("rust keyword span");
+
+        assert_eq!(line_text(&lines[0]), " fn main() {");
+        assert_eq!(lines[0].spans[0].content.as_ref(), " ");
+        assert_eq!(keyword.style.fg, Some(Color::LightMagenta));
+    }
+
+    #[test]
+    fn diff_display_lines_preserves_addition_semantics_over_syntax() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines(
+            "+fn main() {}",
+            Style::default(),
+            Some("src/main.rs"),
+            &theme,
+        );
+        let keyword = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "fn")
+            .expect("rust keyword span");
+
+        assert_eq!(lines[0].style.fg, Some(Color::Green));
+        assert_eq!(keyword.style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn diff_display_lines_infers_payload_language_from_headers() {
+        let theme = Theme::dark();
+        let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n fn main() {}";
+        let lines = diff_display_lines(diff, Style::default(), None, &theme);
+        let context = lines
+            .iter()
+            .find(|line| line_text(line) == " fn main() {}")
+            .expect("context payload line");
+
+        assert!(context.spans.iter().any(|span| {
+            span.content.as_ref() == "fn" && span.style.fg == Some(Color::LightMagenta)
+        }));
+    }
+
+    #[test]
+    fn diff_display_lines_keeps_dash_payloads_in_hunks_as_removals() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines("@@ -1 +1 @@\n--- payload", Style::default(), None, &theme);
+
+        assert_eq!(lines[1].style.fg, Some(Color::Red));
     }
 
     #[test]
@@ -7019,7 +7382,7 @@ mod tests {
 
     #[test]
     fn diff_view_renders_horizontal_scroll_offset() {
-        let mut view = DiffView::new(None, Binding::new("+0123456789".to_string()));
+        let mut view = DiffView::new(None, Binding::new("+0123456789".to_string()), None);
 
         assert!(draw_component_line(&mut view, 6, 1).starts_with("+0123"));
         view.set_scroll_offset(3, 0);

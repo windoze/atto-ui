@@ -25,7 +25,11 @@
   - 渲染实现：`CodeBlockState` 保留原有纯文本行用于宽度计算和嵌入式水平/垂直滚动，同时保存可选高亮行；已知语言按 syntax span 绘制，缺失或未知语言继续走纯文本 fallback；高亮样式通过 `MarkdownStyles` 映射并 patch 到既有 `markdown-code-block` 样式上。
   - 测试覆盖：新增 syntax hint/fallback/Rust 高亮单测，以及 markdown code block state 已知语言高亮和未知语言 fallback 单测。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。完整测试首次运行发现 Rust `storage.*` scope 分类未映射为 `SyntaxClass::Keyword`，已修复并用 `cargo test -p atto-ui-markdown --lib` 及完整套件复验通过。
-- [ ] **P1.2 diff 语法高亮** — `src/list.rs`（diff 渲染）：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 P1.1 的高亮引擎）；确保 +/- 增删语义的背景/前景不被语法色覆盖。
+- [x] **[DONE] P1.2 diff 语法高亮** — `src/list.rs`（diff 渲染）：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 P1.1 的高亮引擎）；确保 +/- 增删语义的背景/前景不被语法色覆盖。
+  - 完成记录（2026-07-09）：`crates/atto-ui-chat/src/list.rs` 的 `DiffView` 与 `DiffDecisionView` 现在保存可选 path，并通过显式 `DiffBlock.path` 或 unified diff header（`diff --git` / `---` / `+++`）推断语言，复用 `atto_ui_markdown::syntax::highlight_code_block` 高亮 diff payload。
+  - 样式合成：diff 行先分类为文件头、hunk、增删、上下文或其他行；仅对增删/上下文 payload 做语法分段；增删行最后重新应用 diff 语义前景/背景，确保 `+` / `-` 行的绿色/红色语义不被语法色覆盖。
+  - 测试覆盖：新增 list 单测覆盖既有 unified diff 语义色、显式 path 的 Rust payload 高亮、增行语义色压过 syntax fg、无显式 path 时从 header 推断语言，以及 hunk 内 `---` payload 仍按删除行处理。
+  - 验证：`cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat diff_display_lines`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P1.3 快照与测试** — `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；`tests/` 补 PTY 覆盖高亮着色（可通过屏幕内容/样式断言验证）。
 - [ ] **P1.R Review：P1 阶段复核** — 逐条复核 P1.0–P1.3：确认高亮选型无 unsafe、无语言标识回退正确、diff +/- 语义未被破坏、宽字符/中文代码不错位、超长/未闭合代码块不 panic；确认新增场景有 PTY 覆盖；跑通 `cargo build`/`cargo test`/`cargo clippy`/`cargo fmt --check`。发现问题回填对应任务而非放行。
 
