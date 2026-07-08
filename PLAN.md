@@ -1,94 +1,94 @@
-# 执行计划：Agent 会话视图(atto-ui-chat 重构)
+# 执行计划：Chat 控件对齐 Claude Code 能力缺口
 
-本计划是 [`CHAT_UI.md`](CHAT_UI.md) 设计文档的落地步骤。目标:把 `crates/atto-ui-chat`
-从「通用聊天气泡列表」重构为「agent 会话视图」,能力基准对齐 **Claude Code 功能集**(不追求外观一致)。
+本计划是 [`AGENT_GAP.md`](AGENT_GAP.md) 缺口分析的落地步骤。目标：在现有 agent 会话视图
+（`crates/atto-ui-chat`）基础上，补齐与 Claude Code (CLI) 之间的能力差距，使 chat 控件
+能够**完整复刻** Claude Code 的核心交互与渲染能力（不追求外观逐像素一致）。
 
-设计细节、数据结构、`file:line` 现状地图、序列化新格式等以 `CHAT_UI.md` 为准;本文件只给**做什么、按什么顺序、怎么验收**。
+缺口清单、优先级、`file:line` 现状以 `AGENT_GAP.md` 为准；本文件只给**做什么、按什么顺序、怎么验收**。
+
+> **范围说明**：本计划**不包含**图片/多模态内联渲染（`AGENT_GAP.md` 的 B2 项），
+> 该项依赖终端 graphics 协议、工作量大且收益视场景而定，暂缓到独立计划。
 
 ## 原则
 
-- **小步可编译**:每个阶段结束都要 `cargo build` 通过、`cargo test` 全绿、`cargo clippy --workspace --all-targets -- -D warnings` 无告警、`cargo fmt --all -- --check` 通过(CI 同款,见 `.github/workflows/ci.yml`)。
-- **每个可见改动配 PTY 快照测试**:扩展 `crates/atto-ui-chat/src/bin/snapshot_chat_app.rs` + 新增 `tests/`(参考主库 `tests/pty_*.rs` 与 `PtyTestHost`)。
-- **模型先行**:P1/P2 是卡脖子重构,其余功能挂在新模型上;不要在旧 `ChatMessageContent` 四选一模型上加功能。
-- **运行时同步**:任何模型变更同帧更新 `src/dynamic.rs` 序列化与 schema,并在该阶段末同步 Node/React 侧类型(`crates/atto-ui-node`、`packages/core`、`packages/react`,见 `docs/NODE_API.md`)。
-- **过渡兼容**:`parse_message_value` 保留旧形(`content`/`markdown`/`tool_call`/`file`/`artifact`、`sender`、`status:"in_progress"`)解析,包成单 block 的新消息,避免一次性破坏调用方;新代码只产出新形。
+- **小步可编译**：每个阶段结束都要 `cargo build` 通过、`cargo test` 全绿、
+  `cargo clippy --workspace --all-targets -- -D warnings` 无告警、`cargo fmt --all -- --check` 通过（CI 同款，见 `.github/workflows/ci.yml`）。
+- **每个可见改动配 PTY 快照测试**：扩展 `crates/atto-ui-chat/src/bin/snapshot_chat_app.rs` + 新增/补充 `crates/atto-ui-chat/tests/pty_chat.rs`（参考 `PtyTestHost`）。
+- **模型/store 先行**：需要新数据结构的功能（如消息 fork、权限层级），先扩 `message.rs`/`store.rs`，再挂渲染与交互。
+- **运行时同步**：任何模型或输入协议变更，同阶段更新 `src/dynamic.rs` 序列化与 schema，并同步 Node/React 侧类型（`crates/atto-ui-node`、`packages/core`、`packages/react`，见 `docs/NODE_API.md`）。
+- **阶段末 review**：每个阶段最后有一个独立的 review 任务，用来复核本阶段改动的正确性与完整性（见 `TODO.md`）。
 
 ## 阶段划分
 
-### P1 — 模型地基(阻塞项)
-对应 `CHAT_UI.md` §3、§7、§8。把"一条消息一种内容"改成"一条消息含有序 block"。
+阶段顺序遵循 `AGENT_GAP.md` 的投入产出优先级：先渲染保真（收益最大、改动集中），
+再输入补全（交互核心），再会话管理，最后交互增强与细节。
 
-- `src/message.rs`:替换为新模型——`ChatMessage{ id, role, blocks, status, meta }`、`ChatRole`(去掉 `Tool` 角色)、`ChatBlock`(Text/Thinking/ToolUse/ToolResult/Diff/Todo/Attachment/Notice/Artifact)、`ChatBlockId`、`ChatTurnStatus`、`ChatError`、`ChatMessageMeta`、`ApprovalRequest`。
-- `src/store.rs`:加 `next_block_id`、`append_block`、`with_block`(只读不 clone)、按 `ChatBlockId` 的 `append_text_delta`/`append_tool_output`/`set_tool_status`、`upsert_tool_result`(按 `call_id`)、`set_turn_status`、`set_meta`;保留"值未变不发脏"。
-- `src/dynamic.rs`:`message_to_value`/`parse_message_value` 改为新形(§8 的 JSON 形),保留旧形兼容;round-trip 单测。
-- 渲染暂时"每 block 一行",与旧外观大致持平,保证编译与现有 PTY 测试可调整通过。
-- **验收**:模型/store/序列化单测;`snapshot_chat_app` 能渲染含多 block 的回合。
+### P1 — 渲染保真度（B1 + B3）
+对应 `AGENT_GAP.md` B1、B3。改动集中在 `crates/atto-ui-markdown` 与 chat diff 渲染。
 
-### P2 — 回合分组 + 性能 + 滚动
-对应 `CHAT_UI.md` §4、§5(1–6、8–10)。
+- **代码块语法高亮**：为 markdown crate 的 fenced code block 增加语法高亮。选型（syntect / tree-sitter / 轻量自研 tokenizer）需在阶段初评估并记录到 `AGENT_GAP.md`；优先考虑体积与 `#![forbid(unsafe_code)]` 兼容性。按 fence info string（语言标识）着色，无语言标识时回退纯文本。
+- **diff 语法高亮**：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 B1 的高亮引擎），保持 +/- 背景/前景语义不丢失。
+- **验收**：`snapshot_markdown_app` / `snapshot_chat_app` 覆盖多语言代码块与带语法高亮的 diff；PTY 快照比对高亮色。
 
-- `src/list.rs`:行粒度从"消息"改为"回合头 + 各 block";`ChatRowKey`(`Header{message_id}` / `Block{message_id,block_id,kind_tag}`),沿用"易变字段不进 key"。
-- **去全量 clone**:行只持 `ChatBlockId`,经 store `with_block` 读取;加块级脏版本,行仅在自身 block 变化时 re-sync(替换现 `sync_body_bindings` 的 `messages.get()` 深拷贝,list.rs:529)。
-- 滚动修复:构造即滚底(预载会话)、消除一帧延迟(draw 前用上帧尺寸滚动)、prepend 保锚点、`scroll_to_bottom()` 公开方法。
-- 响应式换行(Text 换行宽度=气泡内容宽度,resize 重算)+ 代码/diff 区开水平滚动(去掉强制 `Never`)。
-- 回合 header 只渲一次;去进行中双重指示;`ChatTimestampDivider` 用 `UnicodeWidthStr::width`。
-- **验收**:长会话不卡(无每行全量 clone);PTY 覆盖自动跟随+回看、prepend 锚点、resize 换行。
+### P2 — 输入补全：斜杠命令 + @文件提及（A1 + A2）
+对应 `AGENT_GAP.md` A1、A2。核心是在 `input.rs` 上叠加一个 overlay 补全菜单组件。
 
-### P3 — 工具语义
-对应 `CHAT_UI.md` §3(ToolUse/ToolResult)、§4.2、§5(7)。
+- **补全 overlay 组件**：新增一个可复用的 completion popup（列表 + 高亮匹配 + 键盘上下选择 + Enter 确认 + Esc 关闭），锚定在输入框上方/下方。
+- **斜杠命令**：输入行首 `/` 触发命令菜单；命令集合可由宿主注入（`register` 回调），内置示例若干（如 `/clear`、`/model`）；选中后写回输入或触发命令回调。
+- **@ 文件提及**：输入 `@` 触发文件/资源补全；补全项由宿主提供（文件路径 provider 回调）；确认后在输入中渲染为 mention 芯片或路径文本。
+- **运行时同步**：命令/提及协议与回调需在 `dynamic.rs` 暴露，并同步 Node/React 侧。
+- **验收**：PTY 覆盖 `/` 触发菜单、过滤、选择、确认；`@` 触发文件补全、确认插入。
 
-- ToolUse 行:`Disclosure` 标题=name + 入参渲染(`ToolInput::Text`→单行/代码;`Json`→key/value 列表)+ 状态图标。
-- ToolResult 行:`Ansi`→ANSI SGR 上色解析;`Markdown`→`MarkdownViewer`;`Diff`→复用 `viewer.rs::diff_line_style`;超长默认尾部 N 行 + "展开全部"。
-- 按 `call_id` 把 use+result 相邻配对;result 缺失显示"等待中"。
-- **验收**:PTY 覆盖带入参的工具调用、流式工具输出、超长输出折叠。
+### P3 — 会话管理：消息编辑 / 回退 / 重发（C1）
+对应 `AGENT_GAP.md` C1。核心是 store 的截断-fork 能力。
 
-### P4 — inline 审批 + inline diff
-对应 `CHAT_UI.md` §6。
+- **store 截断-fork API**：新增"截断到某条消息并从该点重新生成"的能力（如 `truncate_from(message_id)` / `fork_at`），保持版本与脏通知约定。
+- **编辑 user 消息**：`ChatMessageList` 支持进入某条 user 消息的编辑态，编辑后从该点截断并触发重发回调（`on_edit_and_resubmit`）。
+- **retry / regenerate**：对 assistant 回合支持重生成（截断该回合后回调）。与现有 `on_message_action` 的 Retry/Regenerate 打通。
+- **验收**：PTY 覆盖编辑 user 消息后截断、retry 后回合截断、fork 后旧消息不再显示。
 
-- 审批:`ToolUseBlock.approval` 在折叠区内渲染可聚焦选项(复用 `RadioGroup`/按钮);`ChatMessageList::on_approve`;store `resolve_approval`。
-- inline diff:`DiffBlock` / `ToolOutput::Diff` inline 着色 + Accept/Reject;`on_edit_decision`;store `set_edit_decision`。
-- **验收**:PTY 覆盖审批选择(含 always)、diff accept/reject 后状态锁定。
+### P4 — 输入交互增强：排队 & Esc 中断 + 多行编辑（A3 + A4）
+对应 `AGENT_GAP.md` A3、A4。
 
-### P5 — agent 工作流类型
-对应 `CHAT_UI.md` §3(Thinking/Todo/Notice/Meta/Error)。
+- **输入排队**：流式进行中允许继续输入并"排队"新消息；流式结束后自动出队/提示。
+- **Esc 中断语义**：完善 Esc 状态机——一次 Esc 中断当前流式（置 `Canceled`），连按/分级 Esc 的语义明确化，与现有取消按钮统一。
+- **多行编辑增强**：多行粘贴规整、（可选）拖入/粘贴文件路径转 `Attachment`。
+- **验收**：PTY 覆盖流式中排队新消息、Esc 中断置 `Canceled`、多行粘贴。
 
-- Thinking(默认折叠 `Disclosure` + dim)、Todo(自绘 `[ ]/[~]/[x]`)、Notice(level 着色)、回合 meta(模型/用量/耗时/停止原因)渲染、`ChatError` 结构化展示。
-- store `set_todo` 等。
-- **验收**:PTY 覆盖 thinking 折叠、todo 状态更新、错误展示。
+### P5 — 会话导航：历史搜索 + Turn 级折叠/引用（C2 + C3）
+对应 `AGENT_GAP.md` C2、C3。
 
-### P6 — 逐条交互
-对应 `CHAT_UI.md` §5(6)、§6.3。
+- **会话内搜索**：类 Ctrl+R 的搜索/跳转——输入关键词高亮匹配行并可在命中间跳转。
+- **Turn 级折叠**：在现有块级折叠之上，支持折叠整个回合（回合 header 上的折叠控件）。
+- **引用回复**：（可选）选中某回合/块作为引用附加到下一条输入。
+- **验收**：PTY 覆盖搜索命中跳转、turn 折叠/展开、引用附加。
 
-- `ChatMessageList::on_message_action`(Copy/Retry/Regenerate/EditUser/CopyBlock)、`on_cancel(message_id)` 中断、回底入口。
-- 目标 block 可聚焦 + 响应复制快捷键；完整文本选择由 P8 补齐。
-- **验收**:PTY 覆盖复制、retry/regenerate 回调、流式中断置 `Canceled`。
+### P6 — 细节层：工具权限层级 + 上下文压缩块（D1 + D2）
+对应 `AGENT_GAP.md` D1、D2。
 
-### P7 — 规模
-对应 `CHAT_UI.md` §5(8)。
-
-- 长会话虚拟化收尾:屏外行不构建重型子视图;超大日志压测。
-- **验收**:数百条(含大量工具调用)会话流畅。
-
-### P8 — 能力矩阵遗留项
-对应 `CHAT_UI.md` §2 收尾审计发现的剩余能力,在最终快照人工比对前补齐。
-
-- Plan 模式:新增独立 plan block 模型、store/dynamic/TS 类型和渲染,支持展示与 Accept/Reject 决策锁定。
-- 子 agent / Task 嵌套:新增显式 task/subagent block,支持折叠的嵌套 transcript/blocks 与状态更新。
-- 文本选择:在 chat 文本/代码/命令目标 block 内支持真实选区和复制所选文本,与现有 CopyBlock 并存。
-- **验收**:`snapshot_chat_app` 增加 plan、nested task、text selection 场景;PTY 覆盖展示、交互、状态锁定和复制行为。
+- **工具权限层级**：`ApprovalRequest`/`ApprovalOption` 扩展为支持 allow-once / always / 项目级等层级语义；决策回调携带层级；渲染对应选项。
+- **上下文压缩块**：新增专门的 compact 块类型（或扩展 `Notice`），展示压缩进度/前后 token/摘要，区别于普通通知。
+- **运行时同步**：模型变更同步 `dynamic.rs` 与 Node/React 侧类型。
+- **验收**：PTY 覆盖多层级审批选择与锁定、压缩块渲染。
 
 ## 依赖关系
 
-- P1 → P2 → P3 → (P4, P5 并行) → P6 → P7 → P8 → 收尾 2。
-- P1/P2 是阻塞项;P3 起的功能均依赖新 block 模型。
-- 每个触及 `src/message.rs`/`src/dynamic.rs` 的阶段都要在该阶段末同步 Node/React 侧。
+- P1 独立（渲染层），可最先做。
+- P2 独立（输入层 overlay）。
+- P3 依赖 store，独立于 P1/P2。
+- P4 建立在 P2（输入层）之上，且与 P3 的中断/取消语义衔接。
+- P5 独立，但 Turn 折叠建立在现有块级折叠之上。
+- P6 涉及模型变更，需同步运行时/JS 侧。
+- 建议顺序：**P1 → P2 → P3 → P4 → P5 → P6**（即 `AGENT_GAP.md` 优先级顺序）。P1/P2/P3 之间无强依赖，可按资源并行。
 
 ## 验证
 
-- 每阶段:`cargo build` / `cargo test`(含 PTY) / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all -- --check`。
-- 关键视觉项用 `snapshot_chat_app` 抓屏人工比对。
-- 涉及 JS 侧的阶段,跑 `npm run smoke --prefix examples/react-tsx` 与 `packages/core` 的 runtime 兼容测试(见 `docs/NODE_API.md`)。
+- 每阶段：`cargo build` / `cargo test`（含 PTY）/ `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all -- --check`。
+- 关键视觉项用 `snapshot_chat_app` / `snapshot_markdown_app` 抓屏人工比对。
+- 涉及 JS 侧的阶段（P2、P6），跑 `npm run smoke --prefix examples/react-tsx` 与 `packages/core` 的 runtime 兼容测试（见 `docs/NODE_API.md`）。
+- **每阶段末的 review 任务**必须过：复核本阶段全部改动的正确性与完整性（含边界、错误路径、测试覆盖），并确认全套 CI 命令通过。
 
 ## 历史
 
-UI 对齐(Turbo Vision)阶段的 PLAN/TODO/UI_GAPS 已归档至 [`docs/archive/2026-06-10-ui-gaps/`](docs/archive/2026-06-10-ui-gaps/)。
+- Chat 从"通用聊天气泡"重构为"agent 会话视图"阶段的 PLAN/TODO 已归档至 [`docs/archive/2026-07-09-chat-refactor/`](docs/archive/2026-07-09-chat-refactor/)（对应设计文档 `CHAT_UI.md`）。
+- 更早的 UI 对齐（Turbo Vision）阶段归档见 [`docs/archive/2026-06-10-ui-gaps/`](docs/archive/2026-06-10-ui-gaps/)。
