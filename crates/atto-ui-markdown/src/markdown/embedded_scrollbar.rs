@@ -1,5 +1,6 @@
 use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
+use crate::syntax::HighlightedLine;
 use atto_ui::composable::{
     ScrollOffset, ScrollbarDrag, ScrollbarHit, ScrollbarVisibility, scroll_offset_from_thumb_start,
     scrollbar_hit_test, scrollbar_layout_1d, should_show_scrollbar,
@@ -13,19 +14,29 @@ use super::{EmbeddedScrollbarDragState, EmbeddedScrollbarTarget};
 #[derive(Clone, Debug)]
 pub(super) struct CodeBlockState {
     pub(super) lines: Vec<String>,
+    pub(super) highlighted_lines: Option<Vec<HighlightedLine>>,
     pub(super) max_width: u16,
     pub(super) scroll: ScrollOffset,
 }
 
 impl CodeBlockState {
-    pub(super) fn new(text: &str) -> Self {
+    pub(super) fn new(info: Option<&str>, text: &str) -> Self {
         let mut lines: Vec<String> = text.split('\n').map(normalize_tabs).collect();
         if lines.is_empty() {
             lines.push(String::new());
         }
         let max_width = lines.iter().map(|s| text_width(s)).max().unwrap_or(0);
+        let highlighted_lines =
+            crate::syntax::highlight_code_block(info, text).filter(|highlighted| {
+                highlighted.len() == lines.len()
+                    && highlighted
+                        .iter()
+                        .zip(lines.iter())
+                        .all(|(highlighted, plain)| highlighted.plain == *plain)
+            });
         Self {
             lines,
+            highlighted_lines,
             max_width,
             scroll: ScrollOffset::ZERO,
         }

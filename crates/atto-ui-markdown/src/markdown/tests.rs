@@ -89,6 +89,30 @@ fn layout_clamps_code_block_height_and_optionally_renders_fences() {
 }
 
 #[test]
+fn code_block_state_highlights_known_fenced_language_only() {
+    let blocks =
+        super::parser::parse_markdown("```rust\nfn main() {\n    let n = 42;\n}\n```\n", false);
+    let (codes, _) = super::parser::build_block_states(&blocks);
+    assert_eq!(codes.len(), 1);
+    let highlighted = codes[0]
+        .highlighted_lines
+        .as_ref()
+        .expect("rust code should have syntax spans");
+    assert_eq!(highlighted[0].plain, codes[0].lines[0]);
+    assert!(
+        highlighted
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .any(|span| span.class == crate::syntax::SyntaxClass::Keyword)
+    );
+
+    let blocks = super::parser::parse_markdown("```unknown-language\nfn main() {}\n```\n", false);
+    let (codes, _) = super::parser::build_block_states(&blocks);
+    assert_eq!(codes.len(), 1);
+    assert!(codes[0].highlighted_lines.is_none());
+}
+
+#[test]
 fn tolerant_parser_renders_unclosed_fence_as_code_block() {
     let blocks = super::parser::parse_markdown_tolerant("```rust\nfn main() {", false);
     assert_eq!(blocks.len(), 1);

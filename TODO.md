@@ -20,7 +20,11 @@
   - 接口草案：记录 `atto-ui-markdown::syntax` 封装、`LanguageHint`、`HighlightedLine`/`HighlightedSpan`/`SyntaxClass` 中立输出、代码块宽度/滚动保留方式，以及 chat diff payload 复用同一高亮器且不覆盖 +/- 语义样式的合成约束。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
   - 测试失败处理：完整测试首次运行时 `tests/pty_rich_text.rs::pty_rich_text_handles_link_click` 曾出现空屏超时；已单独复现调查，保留 raw PTY 输出诊断增强，随后该 exact 用例重复通过，完整 `cargo test --all --all-targets` 复跑通过。
-- [ ] **P1.1 代码块语法高亮** — `crates/atto-ui-markdown`：为 fenced code block 按 fence info string（语言标识）做语法高亮；无语言标识或不识别时回退纯文本。高亮结果落到现有 `Line`/`Span` 渲染路径，保持既有的代码块水平滚动与换行行为。
+- [x] **[DONE] P1.1 代码块语法高亮** — `crates/atto-ui-markdown`：为 fenced code block 按 fence info string（语言标识）做语法高亮；无语言标识或不识别时回退纯文本。高亮结果落到现有 `Line`/`Span` 渲染路径，保持既有的代码块水平滚动与换行行为。
+  - 完成记录（2026-07-09）：新增 `atto_ui_markdown::syntax` 公共封装，使用 `syntect`（关闭默认特性，启用 `default-syntaxes` + `regex-fancy`）将 fence info string 的首词/文件扩展名解析为语言提示，并输出 `HighlightedLine` / `HighlightedSpan` / `SyntaxClass` 中立结构，不向调用方暴露 syntect 类型。
+  - 渲染实现：`CodeBlockState` 保留原有纯文本行用于宽度计算和嵌入式水平/垂直滚动，同时保存可选高亮行；已知语言按 syntax span 绘制，缺失或未知语言继续走纯文本 fallback；高亮样式通过 `MarkdownStyles` 映射并 patch 到既有 `markdown-code-block` 样式上。
+  - 测试覆盖：新增 syntax hint/fallback/Rust 高亮单测，以及 markdown code block state 已知语言高亮和未知语言 fallback 单测。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。完整测试首次运行发现 Rust `storage.*` scope 分类未映射为 `SyntaxClass::Keyword`，已修复并用 `cargo test -p atto-ui-markdown --lib` 及完整套件复验通过。
 - [ ] **P1.2 diff 语法高亮** — `src/list.rs`（diff 渲染）：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 P1.1 的高亮引擎）；确保 +/- 增删语义的背景/前景不被语法色覆盖。
 - [ ] **P1.3 快照与测试** — `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；`tests/` 补 PTY 覆盖高亮着色（可通过屏幕内容/样式断言验证）。
 - [ ] **P1.R Review：P1 阶段复核** — 逐条复核 P1.0–P1.3：确认高亮选型无 unsafe、无语言标识回退正确、diff +/- 语义未被破坏、宽字符/中文代码不错位、超长/未闭合代码块不 panic；确认新增场景有 PTY 覆盖；跑通 `cargo build`/`cargo test`/`cargo clippy`/`cargo fmt --check`。发现问题回填对应任务而非放行。

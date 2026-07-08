@@ -793,8 +793,8 @@ fn collect_block_states(
 ) {
     for block in blocks {
         match block {
-            MdBlock::CodeBlock { text, .. } => {
-                codes.push(CodeBlockState::new(text));
+            MdBlock::CodeBlock { info, text, .. } => {
+                codes.push(CodeBlockState::new(info.as_deref(), text));
             }
             MdBlock::Table { headers, rows, .. } => {
                 tables.push(TableBlockState::new(headers.clone(), rows.clone()));
