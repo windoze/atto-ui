@@ -125,6 +125,7 @@ dependencies = [
  "atto-ui-test-host",
  "crossterm",
  "ratatui",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

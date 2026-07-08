@@ -44,7 +44,11 @@
 
 参考 `AGENT_GAP.md` A1、A2。核心是在 `input.rs` 上叠加 overlay 补全菜单。
 
-- [ ] **P2.1 补全 overlay 组件** — 新增可复用的 completion popup：候选列表 + 匹配高亮 + 键盘上下选择 + Enter 确认 + Esc 关闭，锚定输入框上/下方，处理边界（空候选、超长列表滚动、宽字符）。先独立组件 + 单测/快照。
+- [x] **[DONE] P2.1 补全 overlay 组件** — 新增可复用的 completion popup：候选列表 + 匹配高亮 + 键盘上下选择 + Enter 确认 + Esc 关闭，锚定输入框上/下方，处理边界（空候选、超长列表滚动、宽字符）。先独立组件 + 单测/快照。
+  - 完成记录（2026-07-09）：新增 `crates/atto-ui-chat/src/completion.rs`，提供独立可复用的 `CompletionPopup`、`CompletionItem`、`CompletionAnchor`、`CompletionPlacement`，并从 `atto-ui-chat` 导出。组件通过 `Binding` 管理 `query` / `items` / `open` / `selection` / `accepted`，复用 `atto_ui::fuzzy` 过滤候选并对匹配字素做高亮。
+  - 渲染与交互：popup 根据输入框 `Rect` anchor 在给定边界内自动选择上方或下方绘制；支持空候选提示、超长列表随选择滚动、宽字符/组合字符安全裁剪；打开状态下处理 Up/Down 选择、Enter 确认并写入 accepted binding、Esc 关闭，Release 与 Ctrl+Up/Down 不捕获。
+  - 测试覆盖：新增 completion 单测覆盖键盘选择/确认/关闭、空候选、长列表滚动、自动上方锚定、匹配高亮、宽字符裁剪，以及不应捕获的事件路径。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat completion`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P2.2 斜杠命令** — `input.rs`：输入行首 `/` 触发命令菜单；命令集合由宿主注入（`register`/provider 回调），内置示例若干；输入变化实时过滤；确认后写回输入或触发命令回调。
 - [ ] **P2.3 @ 文件提及** — `input.rs`：输入 `@` 触发文件/资源补全，候选由宿主 provider 回调提供；确认后在输入中渲染为 mention 芯片或路径文本；处理光标位置与多次提及。
 - [ ] **P2.4 运行时/JS 侧同步** — `src/dynamic.rs`：暴露命令/提及协议与回调 + schema；同步 `crates/atto-ui-node`、`packages/core`、`packages/react` 的类型/构造器，更新 `docs/NODE_API.md`；跑 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试。

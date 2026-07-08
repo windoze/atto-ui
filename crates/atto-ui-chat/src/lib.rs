@@ -1,5 +1,6 @@
 //! Chat message list components.
 
+mod completion;
 mod dynamic;
 mod input;
 mod list;
@@ -8,6 +9,7 @@ mod panel;
 mod store;
 mod viewer;
 
+pub use completion::{CompletionAnchor, CompletionItem, CompletionPlacement, CompletionPopup};
 pub use dynamic::{
     chat_input_panel_schema, chat_message_list_schema, register_chat_input_panel,
     register_chat_message_list, register_runtime_components,
