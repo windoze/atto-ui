@@ -34,7 +34,11 @@
   - 完成记录（2026-07-09）：`snapshot_markdown_app` 新增 `--syntax-highlighting` fixture，覆盖 Rust、Python fenced code block 与未知语言 fallback；`snapshot_chat_app` 新增 `--syntax-diff` fixture，覆盖带 Rust path/header 的 unified diff 场景。
   - 测试覆盖：新增 markdown PTY 样式断言，验证 Rust/Python 关键字单元格前景色不同于未知语言 fallback；新增 chat PTY 样式断言，验证 diff context payload 获得语法色，且新增/删除行的前景/背景语义色不被语法色覆盖。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-markdown --test pty_markdown_viewer_blocks pty_markdown_viewer_renders_syntax_highlighted_code_blocks`、`cargo test -p atto-ui-chat --test pty_chat chat_syntax_diff_highlights_context_and_preserves_semantic_lines`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P1.R Review：P1 阶段复核** — 逐条复核 P1.0–P1.3：确认高亮选型无 unsafe、无语言标识回退正确、diff +/- 语义未被破坏、宽字符/中文代码不错位、超长/未闭合代码块不 panic；确认新增场景有 PTY 覆盖；跑通 `cargo build`/`cargo test`/`cargo clippy`/`cargo fmt --check`。发现问题回填对应任务而非放行。
+- [x] **[DONE] P1.R Review：P1 阶段复核** — 逐条复核 P1.0–P1.3：确认高亮选型无 unsafe、无语言标识回退正确、diff +/- 语义未被破坏、宽字符/中文代码不错位、超长/未闭合代码块不 panic；确认新增场景有 PTY 覆盖；跑通 `cargo build`/`cargo test`/`cargo clippy`/`cargo fmt --check`。发现问题回填对应任务而非放行。
+  - 完成记录（2026-07-09）：已逐条复核 P1.0–P1.3。`atto-ui-markdown` 采用 `syntect` 且关闭默认特性，仅启用 `default-syntaxes` + `regex-fancy`；高亮封装隐藏 syntect 类型，未知或缺失语言标识继续回退纯文本；代码块保留 plain lines 用于宽度计算与嵌入式水平/垂直滚动，宽字符/中文渲染继续走 grapheme + Unicode width 切片路径；未闭合 fence 已由 tolerant parser 覆盖，长代码块滚动 PTY 覆盖通过。
+  - diff 复核：chat diff 复用 markdown 高亮器，显式 path 与 unified diff header 均可推断语言；只高亮 diff payload；新增/删除行最后保留语义前景/背景，`+`/`-` 语义未被语法色覆盖。
+  - 覆盖复核：`snapshot_markdown_app --syntax-highlighting` 与 markdown PTY 覆盖 Rust/Python/未知语言 fallback；`snapshot_chat_app --syntax-diff` 与 chat PTY 覆盖 context payload 语法色及增删行语义色保留。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 
 ## 阶段 P2 — 输入补全：斜杠命令 + @文件提及（A1 + A2）
 
