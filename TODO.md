@@ -15,7 +15,11 @@
 
 参考 `AGENT_GAP.md` B1、B3。改动集中在 `crates/atto-ui-markdown` 与 chat diff 渲染。
 
-- [ ] **P1.0 语法高亮方案选型** — 评估 syntect / tree-sitter / 轻量自研 tokenizer 三种路线的体积、编译时间、`#![forbid(unsafe_code)]` 兼容性与语言覆盖；确定选型并记录到 `AGENT_GAP.md`（附理由）。产出：依赖决定 + 高亮接口草案。
+- [x] **[DONE] P1.0 语法高亮方案选型** — 评估 syntect / tree-sitter / 轻量自研 tokenizer 三种路线的体积、编译时间、`#![forbid(unsafe_code)]` 兼容性与语言覆盖；确定选型并记录到 `AGENT_GAP.md`（附理由）。产出：依赖决定 + 高亮接口草案。
+  - 完成记录（2026-07-09）：已在 `AGENT_GAP.md` 增补 P1.0 选型记录，决定 P1.1/P1.2 采用 `syntect`，但显式关闭默认特性并使用 `default-syntaxes` + `regex-fancy`，避免 `default-onig`/oniguruma 路线；同时记录 tree-sitter 与轻量自研 tokenizer 的取舍理由。
+  - 接口草案：记录 `atto-ui-markdown::syntax` 封装、`LanguageHint`、`HighlightedLine`/`HighlightedSpan`/`SyntaxClass` 中立输出、代码块宽度/滚动保留方式，以及 chat diff payload 复用同一高亮器且不覆盖 +/- 语义样式的合成约束。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+  - 测试失败处理：完整测试首次运行时 `tests/pty_rich_text.rs::pty_rich_text_handles_link_click` 曾出现空屏超时；已单独复现调查，保留 raw PTY 输出诊断增强，随后该 exact 用例重复通过，完整 `cargo test --all --all-targets` 复跑通过。
 - [ ] **P1.1 代码块语法高亮** — `crates/atto-ui-markdown`：为 fenced code block 按 fence info string（语言标识）做语法高亮；无语言标识或不识别时回退纯文本。高亮结果落到现有 `Line`/`Span` 渲染路径，保持既有的代码块水平滚动与换行行为。
 - [ ] **P1.2 diff 语法高亮** — `src/list.rs`（diff 渲染）：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 P1.1 的高亮引擎）；确保 +/- 增删语义的背景/前景不被语法色覆盖。
 - [ ] **P1.3 快照与测试** — `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；`tests/` 补 PTY 覆盖高亮着色（可通过屏幕内容/样式断言验证）。

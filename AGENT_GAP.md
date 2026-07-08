@@ -67,6 +67,27 @@
 - [ ] **B2. 图片/多模态** — 无 kitty/sixel/iterm graphics 协议支持，`Attachment` 无法内联显示图片。
 - [ ] **B3. diff 语法高亮** — 目前仅 +/- 行着色，无语法层面着色。
 
+#### P1.0 语法高亮方案选型
+
+结论：P1.1/P1.2 采用 **syntect**，但必须显式关闭默认特性并启用纯 Rust 正则路径，例如在
+`crates/atto-ui-markdown` 中使用 `syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }`。
+不启用 `default-onig`、`regex-onig`、`default-themes` 或 `html`。终端样式由 atto-ui theme 映射，
+不直接使用 syntect 内置 theme。
+
+| 方案 | 体积/编译时间 | `#![forbid(unsafe_code)]` 兼容性 | 语言覆盖 | 结论 |
+| --- | --- | --- | --- | --- |
+| syntect | 中到高：会引入默认 Sublime 语法集与高亮状态机，比自研 tokenizer 重，但只需一个高亮依赖。 | 默认特性是 `default-onig`，会走 oniguruma 路线；必须关闭默认特性并选 `regex-fancy`，避免 C/onig 构建路径，项目自身无需写 unsafe。 | 高：默认语法集覆盖 Rust、JS/TS、Python、Shell、JSON、TOML/YAML、Markdown 等常见 fenced code。 | **选用**：静态代码块不需要增量 AST，syntect 的覆盖面和成熟度最符合 chat 渲染需求。 |
+| tree-sitter | 高：核心依赖外还需要每种语言的 grammar crate 与 highlights query；语言越多依赖和编译时间线性增加。 | 仓库 editor crate 已有 tree-sitter，但新增语言 grammar 通常包含生成的 C parser/FFI 构建路径；不适合作为 markdown/chat 的默认轻量渲染依赖。 | 中：单语言质量高，但只覆盖显式打包的 grammar；要达到 chat 常见语言覆盖需维护多套 grammar/query。 | 不选：适合编辑器增量解析，不适合一次性渲染多语言代码块。 |
+| 轻量自研 tokenizer | 低：可做到零或极少依赖，编译最快。 | 最容易保持项目代码无 unsafe。 | 低到中：只能覆盖手写的少数语言和 token 类，维护成本会随语言增长转嫁到项目内。 | 不选：视觉保真和语言覆盖不足，容易让 P1.1/P1.2 落成窄特例。 |
+
+接口草案：
+
+- 在 `atto-ui-markdown` 增加 `syntax` 模块，封装 syntect，不让 chat 直接依赖 syntect 类型。
+- 入口以 fence info string 的第一个词或文件扩展名作为 `LanguageHint`；未知、空 hint 或 syntect 匹配失败时返回 `None`，调用方继续走纯文本路径。
+- 高亮输出使用项目内中立结构，例如 `HighlightedLine { plain: String, spans: Vec<HighlightedSpan> }` 与 `HighlightedSpan { text: String, class: SyntaxClass }`；渲染阶段再把 `SyntaxClass` 映射到 `ratatui::style::Style`，避免绑定 syntect theme。
+- `CodeBlockState` 保留纯文本 `plain` 用于宽度计算和水平滚动，同时保存同一行的 highlighted spans；渲染时按显示宽度切分 spans，保持现有代码块水平滚动、垂直滚动和中文/宽字符行为。
+- 对 diff，`atto-ui-chat` 通过 markdown crate 暴露的同一高亮器按路径/扩展名推断语言，只高亮 diff payload；`+`/`-`/`@@`/文件头等语义前缀与现有增删行样式由 chat 渲染层最后合成，合成策略必须保证 diff 的语义前景/背景不被语法样式覆盖。
+
 ### C. 会话管理
 
 - [ ] **C1. 消息编辑/重发/回退** — store 只有 append/update，缺"截断到某条并 fork 重生成"。

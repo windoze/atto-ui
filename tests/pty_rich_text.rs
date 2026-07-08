@@ -18,11 +18,16 @@ fn pty_rich_text_handles_link_click() {
     let bin = env!("CARGO_BIN_EXE_snapshot_rich_text_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
-    host.wait_for_text(
+    if let Err(err) = host.wait_for_text(
         "BOLD ITALIC UNDER STRIKE COLOR LINK",
         Duration::from_secs(2),
-    )
-    .expect("rich text visible");
+    ) {
+        let raw = host.raw_output().unwrap_or_default();
+        panic!(
+            "rich text visible: {err}\n--- raw output ---\n{}",
+            String::from_utf8_lossy(&raw)
+        );
+    }
 
     let screen = host.screen_contents().expect("screen");
     assert!(
