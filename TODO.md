@@ -30,7 +30,10 @@
   - 样式合成：diff 行先分类为文件头、hunk、增删、上下文或其他行；仅对增删/上下文 payload 做语法分段；增删行最后重新应用 diff 语义前景/背景，确保 `+` / `-` 行的绿色/红色语义不被语法色覆盖。
   - 测试覆盖：新增 list 单测覆盖既有 unified diff 语义色、显式 path 的 Rust payload 高亮、增行语义色压过 syntax fg、无显式 path 时从 header 推断语言，以及 hunk 内 `---` payload 仍按删除行处理。
   - 验证：`cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat diff_display_lines`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P1.3 快照与测试** — `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；`tests/` 补 PTY 覆盖高亮着色（可通过屏幕内容/样式断言验证）。
+- [x] **[DONE] P1.3 快照与测试** — `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；`tests/` 补 PTY 覆盖高亮着色（可通过屏幕内容/样式断言验证）。
+  - 完成记录（2026-07-09）：`snapshot_markdown_app` 新增 `--syntax-highlighting` fixture，覆盖 Rust、Python fenced code block 与未知语言 fallback；`snapshot_chat_app` 新增 `--syntax-diff` fixture，覆盖带 Rust path/header 的 unified diff 场景。
+  - 测试覆盖：新增 markdown PTY 样式断言，验证 Rust/Python 关键字单元格前景色不同于未知语言 fallback；新增 chat PTY 样式断言，验证 diff context payload 获得语法色，且新增/删除行的前景/背景语义色不被语法色覆盖。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-markdown --test pty_markdown_viewer_blocks pty_markdown_viewer_renders_syntax_highlighted_code_blocks`、`cargo test -p atto-ui-chat --test pty_chat chat_syntax_diff_highlights_context_and_preserves_semantic_lines`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P1.R Review：P1 阶段复核** — 逐条复核 P1.0–P1.3：确认高亮选型无 unsafe、无语言标识回退正确、diff +/- 语义未被破坏、宽字符/中文代码不错位、超长/未闭合代码块不 panic；确认新增场景有 PTY 覆盖；跑通 `cargo build`/`cargo test`/`cargo clippy`/`cargo fmt --check`。发现问题回填对应任务而非放行。
 
 ## 阶段 P2 — 输入补全：斜杠命令 + @文件提及（A1 + A2）

@@ -60,6 +60,7 @@ fn main() -> Result<()> {
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
+    let syntax_diff = args.iter().any(|arg| arg == "--syntax-diff");
     let plan_mode = args.iter().any(|arg| arg == "--plan-mode");
     let nested_task = args.iter().any(|arg| arg == "--nested-task");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
@@ -97,6 +98,9 @@ fn main() -> Result<()> {
         None
     } else if inline_diff {
         seed_inline_diff_messages(&store);
+        None
+    } else if syntax_diff {
+        seed_syntax_diff_messages(&store);
         None
     } else if plan_mode {
         seed_plan_mode_messages(&store);
@@ -163,6 +167,7 @@ fn main() -> Result<()> {
         || block_mapping
         || inline_approval
         || inline_diff
+        || syntax_diff
         || plan_mode
         || nested_task
         || thinking_notice
@@ -271,6 +276,7 @@ fn main() -> Result<()> {
         28
     } else if inline_approval
         || inline_diff
+        || syntax_diff
         || plan_mode
         || message_actions
         || text_selection
@@ -693,6 +699,34 @@ fn seed_inline_diff_messages(store: &ChatMessageStore) {
             path: "src/inline_diff.rs".to_string(),
             diff: DiffData {
                 unified: "@@ inline diff\n-OLD-INLINE-DIFF\n+NEW-INLINE-DIFF".to_string(),
+            },
+            decision: EditDecision::Pending,
+        })],
+    ));
+}
+
+fn seed_syntax_diff_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Diff(DiffBlock {
+            id: snapshot_block_id(id, 0),
+            path: "src/syntax_diff.rs".to_string(),
+            diff: DiffData {
+                unified: concat!(
+                    "diff --git a/src/syntax_diff.rs b/src/syntax_diff.rs\n",
+                    "--- a/src/syntax_diff.rs\n",
+                    "+++ b/src/syntax_diff.rs\n",
+                    "@@ -1,5 +1,6 @@\n",
+                    " fn syntax_diff() {\n",
+                    "     let stable_value = 0;\n",
+                    "-    let old_value = 1;\n",
+                    "+    let new_value = 42;\n",
+                    "+    println!(\"DIFF-SYNTAX\");\n",
+                    " }",
+                )
+                .to_string(),
             },
             decision: EditDecision::Pending,
         })],

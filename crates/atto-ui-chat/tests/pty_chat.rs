@@ -395,6 +395,67 @@ fn chat_inline_diff_buttons_emit_and_lock() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_syntax_diff_highlights_context_and_preserves_semantic_lines() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--syntax-diff"], 100, 28)?;
+
+    host.wait_for_text("Diff: src/syntax_diff.rs (pending)", Duration::from_secs(2))?;
+    host.wait_for_text("fn syntax_diff", Duration::from_secs(2))?;
+    host.wait_for_text("let stable_value = 0;", Duration::from_secs(2))?;
+    host.wait_for_text("-    let old_value = 1;", Duration::from_secs(2))?;
+    host.wait_for_text("+    let new_value = 42;", Duration::from_secs(2))?;
+    host.wait_for_text("+    println!(\"DIFF-SYNTAX\");", Duration::from_secs(2))?;
+
+    let (context_keyword_x, context_keyword_y) =
+        find_text_position(&host, "let stable_value").expect("context keyword position");
+    let (context_value_x, context_value_y) =
+        find_text_position(&host, "stable_value").expect("context variable position");
+    assert_eq!(context_keyword_y, context_value_y);
+    assert_ne!(
+        host.cell_fgcolor(context_keyword_x, context_keyword_y)?,
+        host.cell_fgcolor(context_value_x, context_value_y)?,
+        "context diff payload should receive syntax-level coloring"
+    );
+
+    let (add_prefix_x, add_y) =
+        find_text_position(&host, "+    let new_value").expect("addition prefix position");
+    let (add_keyword_x, add_keyword_y) =
+        find_text_position(&host, "let new_value").expect("addition keyword position");
+    assert_eq!(add_y, add_keyword_y);
+    let addition_fg = host.cell_fgcolor(add_prefix_x, add_y)?;
+    assert_eq!(
+        host.cell_fgcolor(add_keyword_x, add_keyword_y)?,
+        addition_fg,
+        "addition syntax spans should preserve the semantic foreground"
+    );
+    assert_eq!(
+        host.cell_bgcolor(add_keyword_x, add_keyword_y)?,
+        host.cell_bgcolor(add_prefix_x, add_y)?,
+        "addition syntax spans should preserve the semantic background"
+    );
+
+    let (remove_prefix_x, remove_y) =
+        find_text_position(&host, "-    let old_value").expect("removal prefix position");
+    let (remove_keyword_x, remove_keyword_y) =
+        find_text_position(&host, "let old_value").expect("removal keyword position");
+    assert_eq!(remove_y, remove_keyword_y);
+    let removal_fg = host.cell_fgcolor(remove_prefix_x, remove_y)?;
+    assert_eq!(
+        host.cell_fgcolor(remove_keyword_x, remove_keyword_y)?,
+        removal_fg,
+        "removal syntax spans should preserve the semantic foreground"
+    );
+    assert_ne!(
+        addition_fg, removal_fg,
+        "addition and removal lines should keep distinct semantic colors"
+    );
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_plan_mode_buttons_emit_and_lock() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

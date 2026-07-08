@@ -1,21 +1,33 @@
-本文件记录本次调用的可审计执行计划与进度。不会记录隐藏推理，只记录决策依据、步骤和结果。
+# P1.3 执行计划
 
-## 当前目标
+## 当前任务
 
-1. 先读取 `TODO.md`，按规则找到第一个标题未带 `[DONE]` 的任务。
-2. 读取该任务相关上下文，包括必要的 `PLAN.md`、源码、测试和最近提交信息，只做与当前任务直接相关的调查。
-3. 按当前任务要求完成实现；若发现阻塞当前任务的规格不匹配、未跟踪失败测试或必要前置条件，则优先修复，或在 `TODO.md` 中插入最小必要前置任务并停止。
-4. 运行验证：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，通过后运行完整测试套件 `cargo test --all --all-targets`（除非仅文档变更且已有可复用的绿色结果）。
-5. 在 `TODO.md` 中将完成任务标题加 `[DONE]` 并更新 completion record；仅当阶段计划变化时更新 `PLAN.md`。
-6. 按要求检查 git 状态、diff 和近期提交，提交本次所有相关变更。
-7. 完成一个任务后停止，不继续处理下一个任务。
+- TODO 首个未完成任务：`P1.3 快照与测试`。
+- 任务要求：为 `snapshot_markdown_app` / `snapshot_chat_app` 增加多语言代码块与带语法高亮的 diff 场景；在 `tests/` 补充 PTY 覆盖，能够通过屏幕内容或样式断言验证高亮着色。
+- 阶段约束：保持 P1.1 代码块高亮和 P1.2 diff 高亮既有语义；不能破坏代码块水平滚动、纯文本 fallback、diff `+`/`-` 语义色。
+
+## 执行计划
+
+1. 检查最近提交与当前工作树状态，确认是否有与 P1.3 直接相关的未完成改动或冲突；只处理当前任务相关内容。
+2. 定位 `snapshot_markdown_app`、`snapshot_chat_app`、现有 PTY 测试与测试宿主样式断言能力，明确最小可验证改动点。
+3. 扩展 markdown snapshot 场景，加入至少两种语言的 fenced code block，并保留未知或普通文本路径不受影响。
+4. 扩展 chat snapshot 场景，加入带文件路径或 unified header 的 diff，用于触发 diff payload 语法高亮，同时覆盖新增/删除语义色。
+5. 新增或扩展 PTY 测试：验证屏幕内容存在，并通过 vt100 样式/颜色断言确认代码块语法高亮与 diff 语义色/语法色合成按预期生效。
+6. 先运行聚焦测试；修复发现的问题后执行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+7. 更新 `TODO.md`，将 P1.3 标题加 `[DONE]` 并填写完成记录与验证结果；仅当阶段计划确实变化时才更新 `PLAN.md`。
+8. 检查 `git status`、`git diff`、`git log --oneline -10`，提交本任务全部相关改动，提交信息使用 `[P1.3] ...` 格式，然后停止。
 
 ## 进度记录
 
-- 已创建初始执行计划。下一步读取 `TODO.md` 确定第一个未完成任务。
-- 已读取 `TODO.md`，第一个未完成任务为 `P1.2 diff 语法高亮`。下一步检查该任务相关上下文、现有 diff 渲染实现、P1.1 高亮接口和最近提交。
-- 已检查最近提交：最新提交为 `[P1.1] Add markdown code block syntax highlighting`，与当前任务相关但未声明需先处理的未完成 issue。继续按 P1.2 执行。
-- 已完成 P1.2 代码改动草案：chat diff 现在按显式 path 或 unified diff header 推断语言，复用 `atto_ui_markdown::syntax::highlight_code_block` 高亮 payload，并在增删行 span 上保留 diff 语义前景/背景。已补充 list 单测覆盖语义色、高亮、header 推断和 hunk 内 `---` 删除行分类。
-- 已运行 `cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo clippy --workspace --all-targets -- -D warnings`，均通过；新增 diff 单测定向运行 `cargo test -p atto-ui-chat diff_display_lines` 通过。下一步运行剩余通用验收命令。
-- 已完成通用验收：`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。已将 `TODO.md` 中 P1.2 标记为 `[DONE]` 并写入完成记录。下一步检查 git diff/status/log 后提交。
-- diff 检查后仅为新增 helper 补充 comments-only 说明，并重新运行 `cargo fmt --all -- --check` 通过；因之后没有编译输出相关代码变更，复用此前完整绿色测试结果。
+- 已确认 `TODO.md` 中 P1.3 是首个未完成任务。
+- 已读取 `PLAN.md` 中 P1 验收要求；当前无需修改阶段级计划。
+- 已检查工作树与最近提交：最新提交为 P1.2 diff 高亮实现，无显式未完成阻塞项；当前只有本计划文件变更。
+- 已定位实现点：`crates/atto-ui-markdown/src/bin/snapshot_markdown_app.rs`、`crates/atto-ui-chat/src/bin/snapshot_chat_app.rs`、`crates/atto-ui-markdown/tests/pty_markdown_viewer_blocks.rs`、`crates/atto-ui-chat/tests/pty_chat.rs`。
+- 测试策略更新：新增独立 fixture，不修改默认滚动/交互场景；PTY 测试使用 `cell_fgcolor` / `cell_bgcolor` 比较屏幕内颜色关系，避免硬编码具体 ANSI/vt100 映射。
+- 已实现 snapshot 场景：markdown 新增 `--syntax-highlighting`（Rust/Python/未知语言 fallback）；chat 新增 `--syntax-diff`（Rust unified diff）。
+- 已新增 PTY 覆盖：markdown 断言 Rust/Python 关键字与 fallback 前景色不同；chat 断言 context payload 语法色生效，且新增/删除行保留语义前景/背景。
+- 已运行 `cargo fmt --all`。
+- 聚焦验证通过：`cargo test -p atto-ui-markdown --test pty_markdown_viewer_blocks pty_markdown_viewer_renders_syntax_highlighted_code_blocks`、`cargo test -p atto-ui-chat --test pty_chat chat_syntax_diff_highlights_context_and_preserves_semantic_lines`。
+- 完整验证通过：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`：P1.3 标题已加 `[DONE]`，完成记录包含新增 fixture、PTY 样式断言和验证命令。测试后仅更新文档记录，无需重跑完整套件。
+- 已检查最终 `git status` / `git diff` / `git log --oneline -10`；改动均为 P1.3 相关文件，下一步提交。

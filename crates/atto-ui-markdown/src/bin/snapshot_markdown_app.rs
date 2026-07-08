@@ -72,6 +72,27 @@ fn main() {
 | table | ok |
 "#;
 
+const SYNTAX_MARKDOWN: &str = r#"
+# Syntax Highlighting
+
+```rust
+fn syntax_demo() {
+    let answer = 42;
+    println!("RUST-HIGHLIGHT");
+}
+```
+
+```python
+def syntax_demo():
+    value = 7
+    print("PY-HIGHLIGHT")
+```
+
+```not-a-real-language
+UNKNOWN-HIGHLIGHT plain fallback
+```
+"#;
+
 fn build_markdown_view(markdown: &'static str) -> Box<dyn Component> {
     let viewer = MarkdownViewer::new(markdown)
         .wrap_width(32)
@@ -84,7 +105,10 @@ fn build_markdown_view(markdown: &'static str) -> Box<dyn Component> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let blocks_fixture = args.iter().any(|arg| arg == "--blocks");
-    let markdown = if blocks_fixture {
+    let syntax_fixture = args.iter().any(|arg| arg == "--syntax-highlighting");
+    let markdown = if syntax_fixture {
+        SYNTAX_MARKDOWN
+    } else if blocks_fixture {
         BLOCK_MARKDOWN
     } else {
         MARKDOWN
@@ -119,7 +143,11 @@ fn main() -> Result<()> {
     let screen: Rect = terminal.size()?.into();
     let work = Desktop::layout(screen).work_area;
 
-    let window_height = if blocks_fixture { 24 } else { 18 };
+    let window_height = if blocks_fixture || syntax_fixture {
+        24
+    } else {
+        18
+    };
     desktop.add_window(
         Window::new(
             WindowKind::Normal,
