@@ -121,7 +121,10 @@
   - 分级语义：completion/mention popup 的 Esc 仍优先关闭弹层；输入控件或自定义子组件已消费 Esc 时不会触发中断；未消费 Esc 才作为当前流式中断 fallback。当前流式按消息顺序选择最后一个 streaming 回合。
   - 测试覆盖：新增 input 单测覆盖 Esc fallback、popup Esc 优先级和回调拒绝时 ignored；新增 list 单测覆盖 controller 先置 canceled 再回调、取消按钮复用同一入口、列表 Esc 取消并连按幂等；新增 PTY 用例覆盖 `snapshot_chat_app --cancel-action` 下按 Esc 触发取消并显示 canceled。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-chat escape --lib`、`cargo test -p atto-ui-chat streaming_cancel --lib`、`cargo test -p atto-ui-chat list_escape_cancels_latest_streaming_turn_once --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_escape_emits_and_marks_turn_canceled -- --nocapture`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P4.3 多行编辑增强** — `input.rs`：多行粘贴规整；（可选）拖入/粘贴文件路径转 `Attachment` block。
+- [x] **[DONE] P4.3 多行编辑增强** — `input.rs`：多行粘贴规整；（可选）拖入/粘贴文件路径转 `Attachment` block。
+  - 完成记录（2026-07-09）：`ChatInputPanel` 现在在文本模式下拦截 `Event::Paste` 并执行 chat 专用规整：容错剥离 bracketed paste 包裹、统一 CRLF/CR 为 LF、去除粘贴尾部空白行，同时保留正文缩进、内部空行和单行尾随空格；规整后通过 `TextArea::replace_byte_range` 插入，确保 draft binding、内部缓冲和光标位置同步。
+  - 测试覆盖：新增 input 单测覆盖换行规整、尾部空白行裁剪、bracketed paste 容错、规整后继续输入不拼回旧缓冲，以及提交多行粘贴时回调和历史记录均使用规整后的文本。可选的拖入/粘贴文件路径转 `Attachment` block 未启用，本任务未改变 `ChatInputResponse` 模型。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat input --lib`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P4.4 快照与测试** — PTY 覆盖流式中排队新消息、Esc 中断置 `Canceled`、多行粘贴规整。
 - [ ] **P4.R Review：P4 阶段复核** — 逐条复核 P4.1–P4.4：确认排队态与流式状态机无死锁/丢消息、Esc 分级语义在各状态下一致、多行粘贴不破坏 undo/历史、取消入口唯一且幂等；确认 PTY 覆盖；跑通全套 CI。
 

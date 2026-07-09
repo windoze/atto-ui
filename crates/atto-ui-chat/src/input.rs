@@ -403,6 +403,50 @@ fn align_to_char_boundary(text: &str, byte: usize) -> usize {
     aligned
 }
 
+fn normalize_chat_text_paste(raw: &str) -> String {
+    let raw = raw.strip_prefix("\u{1b}[200~").unwrap_or(raw);
+    let raw = raw.strip_suffix("\u{1b}[201~").unwrap_or(raw);
+    let mut normalized = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            normalized.push('\n');
+        } else {
+            normalized.push(ch);
+        }
+    }
+
+    if normalized.contains('\n') {
+        trim_trailing_blank_paste_lines(&normalized)
+    } else {
+        normalized
+    }
+}
+
+fn trim_trailing_blank_paste_lines(text: &str) -> String {
+    let mut end = text.len();
+    while end > 0 {
+        let prefix = &text[..end];
+        let line_start = prefix
+            .rfind('\n')
+            .map(|idx| idx + '\n'.len_utf8())
+            .unwrap_or(0);
+        let line = &text[line_start..end];
+        if !line.chars().all(char::is_whitespace) {
+            break;
+        }
+        if line_start == 0 {
+            end = 0;
+        } else {
+            end = line_start - '\n'.len_utf8();
+        }
+    }
+    text[..end].to_string()
+}
+
 fn normalize_mode_kind(kind: &str) -> String {
     kind.chars()
         .filter(|c| !matches!(c, '_' | '-' | ' '))
@@ -1307,6 +1351,21 @@ impl ChatInputPanel {
         }
     }
 
+    fn handle_text_paste(&mut self, raw: &str) -> EventResult {
+        if raw.is_empty() {
+            return EventResult::ignored();
+        }
+        let text = normalize_chat_text_paste(raw);
+        if text.is_empty() {
+            return EventResult::consumed();
+        }
+        let ChatInputView::Text(view) = &mut self.view else {
+            return EventResult::ignored();
+        };
+        let cursor = view.cursor_byte_index();
+        view.replace_byte_range(cursor..cursor, &text)
+    }
+
     fn set_draft_from_panel(&mut self, draft: String) {
         let cursor = draft.len();
         self.draft.set(draft);
@@ -1960,6 +2019,14 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
             }
         }
 
+        if let Event::Paste(text) = event
+            && matches!(self.mode.get(), ChatInputMode::Text(_))
+        {
+            let res = self.handle_text_paste(text);
+            self.sync_completions(None);
+            return res;
+        }
+
         let res = match &mut self.view {
             ChatInputView::Text(view) => view.handle_event(event, ctx),
             ChatInputView::Choice(view) => view.handle_event(event, ctx),
@@ -2098,6 +2165,10 @@ mod tests {
         for ch in text.chars() {
             panel.handle_event(&key(KeyCode::Char(ch)), context(theme));
         }
+    }
+
+    fn paste_text(panel: &mut ChatInputPanel, theme: &Theme, text: &str) -> EventResult {
+        panel.handle_event(&Event::Paste(text.to_string()), context(theme))
     }
 
     fn draw_panel(panel: &mut ChatInputPanel, width: u16, height: u16) -> Vec<String> {
@@ -2285,6 +2356,64 @@ mod tests {
         let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
 
         assert_eq!(result, EventResult::ignored());
+    }
+
+    #[test]
+    fn multiline_paste_normalization_preserves_body_and_trims_blank_tail() {
+        assert_eq!(
+            normalize_chat_text_paste("first\r\nsecond\rthird\n\n\t \n"),
+            "first\nsecond\nthird"
+        );
+        assert_eq!(
+            normalize_chat_text_paste("first\n\n  indented"),
+            "first\n\n  indented"
+        );
+        assert_eq!(normalize_chat_text_paste("single line  "), "single line  ");
+        assert_eq!(
+            normalize_chat_text_paste("\u{1b}[200~first\r\nsecond\n\u{1b}[201~"),
+            "first\nsecond"
+        );
+    }
+
+    #[test]
+    fn pasting_multiline_text_updates_textarea_buffer_for_next_typing() {
+        let handle = ChatInputHandle::new();
+        let mut panel = handle.panel();
+        let theme = Theme::dark();
+
+        let result = paste_text(
+            &mut panel,
+            &theme,
+            "\u{1b}[200~first\r\nsecond\rthird\n\n\u{1b}[201~",
+        );
+        type_text(&mut panel, &theme, "!");
+
+        assert_eq!(result, EventResult::changed());
+        assert_eq!(handle.draft_binding().get(), "first\nsecond\nthird!");
+    }
+
+    #[test]
+    fn submitting_multiline_paste_emits_normalized_text() {
+        let handle = ChatInputHandle::new();
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        paste_text(&mut panel, &theme, "alpha\r\nbeta\n\n");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(
+            *submitted.lock().unwrap(),
+            vec![ChatInputResponse::Text("alpha\nbeta".to_string())]
+        );
+        assert_eq!(
+            handle.history_binding().get(),
+            vec!["alpha\nbeta".to_string()]
+        );
     }
 
     #[test]
