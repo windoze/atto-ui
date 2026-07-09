@@ -1,36 +1,41 @@
-# Claude Execution Plan
+# 执行计划
 
-## Scope
+## 当前状态
 
-- Follow `TODO.md` as the authoritative task list.
-- Identify the first incomplete task whose heading is not prefixed with `[DONE]`.
-- Complete exactly that task in this invocation, then stop.
-- Do not perform broad historical triage before selecting the current task.
+- 已读取 `TODO.md`，第一个未完成任务是 `P4.2 Esc 中断语义`。
+- 任务范围：完善 `crates/atto-ui-chat` 中 `src/list.rs` 与 `input.rs` 的 Esc 流式中断状态机，使一次 Esc 可中断当前流式并置 `ChatTurnStatus::Canceled`，并与现有取消按钮统一入口。
+- 已完成实现草案：新增共享 streaming cancel controller，取消按钮和未消费 Esc 都复用同一入口；`ChatPanel::new` 自动把列表取消入口接入输入区；新增单测和 PTY Esc 覆盖。
+- 已完成验证并更新 `TODO.md`：P4.2 已标记 `[DONE]`，完成记录包含实现、分级语义、测试覆盖和验证命令。
 
-## Execution Plan
+## 步骤
 
-1. Read `TODO.md` and identify the first incomplete task.
-2. Check the latest commit only for directly relevant unfinished work tied to that task.
-3. Inspect the files and tests relevant to the selected task.
-4. Implement the task completely, using minimal targeted changes.
-5. Run formatting first, then linting with `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
-6. If a blocking prerequisite or unscheduled failing test appears, update `TODO.md` with the minimum required prerequisite task, commit that bookkeeping, and stop.
-7. If the task is completed, update `TODO.md` by prefixing the task title with `[DONE]` and filling its completion record.
-8. Commit all task-related changes with a clear task-specific message.
-9. Stop without starting the next task.
+1. 检查最近提交信息是否明确提到与 P4.2 直接相关的未完成问题。
+2. 读取 `input.rs`、`list.rs`、消息状态模型和现有取消/流式测试，确认当前取消入口与 Esc 键处理路径。
+3. 设计并实现最小统一取消入口：输入区 Esc 在合适状态下触发当前流式取消；按钮取消与 Esc 共享同一 store/status 更新和回调路径；非流式 Esc 继续遵守现有 popup/编辑等优先级。
+4. 补充单测覆盖一次 Esc 取消当前流式、非流式 Esc 不误取消、取消按钮与 Esc 入口一致，以及必要的分级/连按语义。
+5. 如已有 PTY fixture 能覆盖，新增或更新最小 PTY 场景；否则先用单测覆盖 P4.2 并保留 P4.4 的 PTY 总体验收。
+6. 运行 `cargo fmt --all`。
+7. 运行 `cargo clippy --workspace --all-targets -- -D warnings`。
+8. 运行 `cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`，完整测试使用不少于 30 分钟超时。
+9. 若发现未被明确排期的测试失败，修复它或在 `TODO.md` 中按依赖顺序新增最少任务。
+10. 将 P4.2 标题加上 `[DONE]`，并更新完成记录。
+11. 检查 `git status`、`git diff`、最近提交，确认提交范围。
+12. 用描述性提交信息提交变更。
+13. 停止，不继续下一个任务。
 
-## Progress
+## 验证策略
 
-- Initial plan written before reading project task files or running commands.
-- Read `TODO.md`; selected first incomplete task: `P4.1 输入排队`.
-- Next steps are limited to recent-commit relevance check, `input.rs`/store/list related inspection, implementation, validation, TODO update, and commit.
-- Inspection complete: input submission currently dispatches immediately through `ChatInputPanel::emit_response`; streaming status is tracked on chat messages, while input needs an explicit host-controlled streaming binding for queue behavior.
-- Implementation approach: add `ChatInputHandle` streaming and queued response bindings, queue text submissions while streaming, show a one-line queue/status indicator, and let Enter send queued items after streaming completes.
-- Code changes made: input handle/panel now expose streaming and queued-response bindings; text submissions queue while streaming; a status line shows streaming/queue state; empty Enter after streaming sends queued responses; snapshot app has a new `--input-queue` fixture and PTY coverage.
-- First clippy attempt found an ambiguous integer type in `ChatInputPanel::min_height`; fixed by annotating the local height as `u16`.
-- `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` now pass.
-- Targeted input tests exposed stale `TextArea` buffer state after programmatic draft clearing/replacement. Fixed by syncing the text area whenever `ChatInputPanel` writes `draft`, and added a slash replacement regression test.
-- Targeted validation now passes: `cargo test -p atto-ui-chat input --lib` and the new `chat_input_queues_text_while_streaming_and_sends_after_prompt` PTY test.
-- Full validation passes after the final changes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
-- `TODO.md` updated: `P4.1 输入排队` is marked `[DONE]` with implementation, test coverage, and validation records.
-- Pre-commit review complete: `git status`, `git diff`, recent log, and `git diff --check` reviewed; only P4.1-related files are modified.
+- 先格式化，再 lint，最后跑测试。
+- 若本次仅修改文档且自上次绿色全量测试后没有代码变化，可复用上次绿色结果并在完成记录中说明跳过原因。
+
+## 已执行验证
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo fmt --all -- --check`
+- `cargo test -p atto-ui-chat escape --lib`
+- `cargo test -p atto-ui-chat streaming_cancel --lib`
+- `cargo test -p atto-ui-chat list_escape_cancels_latest_streaming_turn_once --lib`
+- `cargo test -p atto-ui-chat --test pty_chat chat_streaming_escape_emits_and_marks_turn_canceled -- --nocapture`
+- `cargo build --workspace --all-targets`
+- `cargo test --all --all-targets`

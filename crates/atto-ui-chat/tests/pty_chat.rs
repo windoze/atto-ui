@@ -992,6 +992,22 @@ fn chat_streaming_cancel_button_emits_and_marks_turn_canceled() -> anyhow::Resul
 }
 
 #[test]
+fn chat_streaming_escape_emits_and_marks_turn_canceled() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--cancel-action"], 100, 28)?;
+
+    host.wait_for_text("CANCEL-STREAMING-MESSAGE", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+
+    host.wait_for_text("CANCELLED: 1", Duration::from_secs(2))?;
+    host.wait_for_text("canceled", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_block_mapping_renders_each_block_with_target_widget() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

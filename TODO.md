@@ -116,7 +116,11 @@
   - 复核修复：定向测试发现面板内部程序化改写 `draft` 后 `TextArea` 缓冲可能滞后，导致排队清空或 slash 替换后继续输入拼接旧文本；已统一通过 `set_draft_from_panel` 同步绑定、缓冲和光标，并增加 slash 替换回归测试。
   - 测试覆盖：新增 input 单测覆盖流式中排队与状态行、流式结束后出队、已有队列时新草稿 FIFO、编辑提交拦截器优先级，以及 slash 命令替换后的缓冲同步；`snapshot_chat_app --input-queue` 与 PTY 用例覆盖真实流式中输入排队、未提前 submit、流式完成后提示发送并按 Enter 发送。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat input --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_input_queues_text_while_streaming_and_sends_after_prompt -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P4.2 Esc 中断语义** — `src/list.rs` + `input.rs`：完善 Esc 状态机——一次 Esc 中断当前流式（置 `ChatTurnStatus::Canceled`），分级/连按语义明确，与现有取消按钮统一入口。
+- [x] **[DONE] P4.2 Esc 中断语义** — `src/list.rs` + `input.rs`：完善 Esc 状态机——一次 Esc 中断当前流式（置 `ChatTurnStatus::Canceled`），分级/连按语义明确，与现有取消按钮统一入口。
+  - 完成记录（2026-07-09）：新增共享 streaming cancel controller，取消按钮、消息列表焦点下未消费 Esc、以及 `ChatPanel` 默认输入焦点下未消费 Esc 都走同一取消入口；入口会先确认目标仍为 streaming，再将回合置为 `ChatTurnStatus::Canceled` 并触发现有 `on_cancel` 回调，连按 Esc 因目标已非 streaming 而 no-op。
+  - 分级语义：completion/mention popup 的 Esc 仍优先关闭弹层；输入控件或自定义子组件已消费 Esc 时不会触发中断；未消费 Esc 才作为当前流式中断 fallback。当前流式按消息顺序选择最后一个 streaming 回合。
+  - 测试覆盖：新增 input 单测覆盖 Esc fallback、popup Esc 优先级和回调拒绝时 ignored；新增 list 单测覆盖 controller 先置 canceled 再回调、取消按钮复用同一入口、列表 Esc 取消并连按幂等；新增 PTY 用例覆盖 `snapshot_chat_app --cancel-action` 下按 Esc 触发取消并显示 canceled。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-chat escape --lib`、`cargo test -p atto-ui-chat streaming_cancel --lib`、`cargo test -p atto-ui-chat list_escape_cancels_latest_streaming_turn_once --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_streaming_escape_emits_and_marks_turn_canceled -- --nocapture`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P4.3 多行编辑增强** — `input.rs`：多行粘贴规整；（可选）拖入/粘贴文件路径转 `Attachment` block。
 - [ ] **P4.4 快照与测试** — PTY 覆盖流式中排队新消息、Esc 中断置 `Canceled`、多行粘贴规整。
 - [ ] **P4.R Review：P4 阶段复核** — 逐条复核 P4.1–P4.4：确认排队态与流式状态机无死锁/丢消息、Esc 分级语义在各状态下一致、多行粘贴不破坏 undo/历史、取消入口唯一且幂等；确认 PTY 覆盖；跑通全套 CI。

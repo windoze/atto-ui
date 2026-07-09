@@ -55,6 +55,40 @@ type PlanDecisionCallback = Arc<dyn Fn(PlanDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
 
+#[derive(Clone)]
+pub(crate) struct StreamingCancelController {
+    store: ChatMessageStore,
+    callback: CancelCallback,
+}
+
+impl StreamingCancelController {
+    fn new(store: ChatMessageStore, callback: CancelCallback) -> Self {
+        Self { store, callback }
+    }
+
+    pub(crate) fn request_current(&self) -> bool {
+        let Some(message_id) = latest_streaming_message_id(&self.store) else {
+            return false;
+        };
+        self.request(message_id)
+    }
+
+    fn request(&self, message_id: ChatMessageId) -> bool {
+        let is_streaming = self
+            .store
+            .with_message(message_id, |message| message.status.is_streaming())
+            .unwrap_or(false);
+        if !is_streaming {
+            return false;
+        }
+        let _ = self
+            .store
+            .set_turn_status(message_id, ChatTurnStatus::Canceled);
+        (self.callback)(message_id);
+        true
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalDecision {
     pub message_id: ChatMessageId,
@@ -393,6 +427,13 @@ impl ChatMessageList {
         self
     }
 
+    pub(crate) fn streaming_cancel_controller(&self) -> Option<StreamingCancelController> {
+        self.config
+            .on_cancel
+            .clone()
+            .map(|callback| StreamingCancelController::new(self.store.clone(), callback))
+    }
+
     pub fn auto_scroll(mut self, enabled: bool) -> Self {
         self.auto_scroll = enabled;
         if !enabled {
@@ -703,6 +744,14 @@ impl ::atto_ui::composable::EventHandling for ChatMessageList {
             self.sync_follow_tail_from_scroll();
             res = EventResult::changed();
         }
+        if !res.is_consumed()
+            && is_escape_press(event)
+            && self
+                .streaming_cancel_controller()
+                .is_some_and(|controller| controller.request_current())
+        {
+            res = EventResult::changed();
+        }
         res
     }
 }
@@ -739,6 +788,26 @@ fn build_list(
         .with_padding(config.padding.clone())
         .with_scroll_config(config.scroll_config.clone());
     (list, control)
+}
+
+fn latest_streaming_message_id(store: &ChatMessageStore) -> Option<ChatMessageId> {
+    store
+        .messages()
+        .iter()
+        .rev()
+        .find(|message| message.status.is_streaming())
+        .map(|message| message.id)
+}
+
+fn is_escape_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind,
+            ..
+        }) if !matches!(kind, KeyEventKind::Release)
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2456,8 +2525,9 @@ fn turn_action_row(
     let mut row = HStack::new().with_spacing(1);
     if show_cancel && let Some(callback) = config.on_cancel.clone() {
         let label = "Cancel";
+        let controller = StreamingCancelController::new(config.store.clone(), callback);
         row = row.child_with_layout(
-            streaming_cancel_button(label, message.id, turn_status, callback),
+            streaming_cancel_button(label, message.id, turn_status, controller),
             LayoutParams {
                 width: Size::Content,
                 height: Size::Content,
@@ -2620,12 +2690,15 @@ fn streaming_cancel_button(
     label: &'static str,
     message_id: ChatMessageId,
     status: Binding<ChatTurnStatus>,
-    callback: CancelCallback,
+    controller: StreamingCancelController,
 ) -> StreamingCancelButton {
+    let button_controller = controller.clone();
     StreamingCancelButton {
         label,
         status,
-        button: Button::new(label).on_click(move || callback(message_id)),
+        button: Button::new(label).on_click(move || {
+            let _ = button_controller.request(message_id);
+        }),
     }
 }
 
@@ -6973,15 +7046,19 @@ mod tests {
     #[test]
     fn streaming_cancel_button_emits_only_while_streaming() {
         let message_id = ChatMessageId::new(60);
+        let store = ChatMessageStore::new();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
         let status = Binding::new(ChatTurnStatus::Streaming);
         let canceled = Arc::new(Mutex::new(Vec::new()));
         let captured = canceled.clone();
-        let mut button = streaming_cancel_button(
-            "Cancel",
-            message_id,
-            status.clone(),
+        let controller = StreamingCancelController::new(
+            store.clone(),
             Arc::new(move |id| captured.lock().expect("cancel lock").push(id)),
         );
+        let mut button = streaming_cancel_button("Cancel", message_id, status.clone(), controller);
         let theme = Theme::dark();
 
         assert!(button.is_focusable());
@@ -6990,6 +7067,7 @@ mod tests {
             component_context(&theme),
         );
         assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+        assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
 
         status.set(ChatTurnStatus::Canceled);
         assert!(!button.is_focusable());
@@ -6998,6 +7076,71 @@ mod tests {
             component_context(&theme),
         );
         assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+    }
+
+    #[test]
+    fn streaming_cancel_controller_marks_canceled_before_callback() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let captured = observations.clone();
+        let store_for_callback = store.clone();
+        let controller = StreamingCancelController::new(
+            store.clone(),
+            Arc::new(move |id| {
+                let status = store_for_callback.messages()[0].status.clone();
+                captured
+                    .lock()
+                    .expect("observations lock")
+                    .push((id, status));
+            }),
+        );
+
+        assert!(controller.request(message_id));
+        assert!(!controller.request(message_id));
+
+        assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
+        assert_eq!(
+            *observations.lock().expect("observations lock"),
+            vec![(message_id, ChatTurnStatus::Canceled)]
+        );
+    }
+
+    #[test]
+    fn list_escape_cancels_latest_streaming_turn_once() {
+        let store = ChatMessageStore::new();
+        let first_id = store.next_message_id();
+        let current_id = store.next_message_id();
+        store.push(ChatMessage::text(first_id, ChatRole::User, "prompt"));
+        store.push(
+            ChatMessage::text(current_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let canceled = Arc::new(Mutex::new(Vec::new()));
+        let captured = canceled.clone();
+        let mut list = ChatMessageList::new(store.clone()).on_cancel(move |id| {
+            captured.lock().expect("cancel lock").push(id);
+        });
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 10);
+
+        let first = list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let second = list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(first, EventResult::changed());
+        assert_eq!(second, EventResult::ignored());
+        assert_eq!(*canceled.lock().expect("cancel lock"), vec![current_id]);
+        assert_eq!(store.messages()[1].status, ChatTurnStatus::Canceled);
     }
 
     #[test]

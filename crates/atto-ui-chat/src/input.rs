@@ -1076,6 +1076,7 @@ pub struct ChatInputPanel {
     mention_candidates_observer: DirtyObserver,
     on_submit: Option<Arc<dyn Fn(ChatInputResponse) + Send + Sync>>,
     on_slash_command: Option<Arc<dyn Fn(ChatSlashCommand) + Send + Sync>>,
+    on_streaming_interrupt: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     mention_provider:
         Option<Arc<dyn Fn(ChatMentionContext) -> Vec<ChatMentionCandidate> + Send + Sync>>,
     custom_view: Option<Arc<Mutex<Box<dyn Component>>>>,
@@ -1160,6 +1161,7 @@ impl ChatInputPanel {
             mention_candidates_observer: mention_candidates.dirty_observer(),
             on_submit: None,
             on_slash_command: None,
+            on_streaming_interrupt: None,
             mention_provider: None,
             custom_view: None,
         };
@@ -1180,6 +1182,15 @@ impl ChatInputPanel {
         F: Fn(ChatSlashCommand) + Send + Sync + 'static,
     {
         self.on_slash_command = Some(Arc::new(callback));
+        self
+    }
+
+    /// Handles an unconsumed Esc as a request to interrupt the active stream.
+    pub fn on_streaming_interrupt<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.on_streaming_interrupt = Some(Arc::new(callback));
         self
     }
 
@@ -1961,6 +1972,16 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
             let _ = self.emit_response();
         }
 
+        if !res.is_consumed()
+            && is_escape_press(event)
+            && self
+                .on_streaming_interrupt
+                .as_ref()
+                .is_some_and(|callback| callback())
+        {
+            return EventResult::changed();
+        }
+
         res
     }
 }
@@ -2024,6 +2045,17 @@ impl ::atto_ui::composable::EventHandling for SharedComponent {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.inner.lock().unwrap().handle_event(event, ctx)
     }
+}
+
+fn is_escape_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind,
+            ..
+        }) if !matches!(kind, KeyEventKind::Release)
+    )
 }
 
 fn button_width(label: &str) -> u16 {
@@ -2203,6 +2235,56 @@ mod tests {
         type_text(&mut panel, &theme, "m");
         assert!(panel.slash_open.get());
         assert_eq!(panel.slash_query.get(), "m");
+    }
+
+    #[test]
+    fn escape_interrupts_streaming_after_input_ignores_it() {
+        let handle = ChatInputHandle::new();
+        let interrupts = Arc::new(Mutex::new(0usize));
+        let interrupts_for_callback = interrupts.clone();
+        let mut panel = handle.panel().on_streaming_interrupt(move || {
+            let mut count = interrupts_for_callback.lock().expect("interrupt lock");
+            *count += 1;
+            true
+        });
+        let theme = Theme::dark();
+
+        let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
+
+        assert_eq!(result, EventResult::changed());
+        assert_eq!(*interrupts.lock().expect("interrupt lock"), 1);
+    }
+
+    #[test]
+    fn popup_escape_takes_priority_over_streaming_interrupt() {
+        let (_handle, mut panel) = panel_with_commands(vec![ChatSlashCommand::new("/model")]);
+        let interrupts = Arc::new(Mutex::new(0usize));
+        let interrupts_for_callback = interrupts.clone();
+        panel = panel.on_streaming_interrupt(move || {
+            let mut count = interrupts_for_callback.lock().expect("interrupt lock");
+            *count += 1;
+            true
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/");
+        assert!(panel.slash_open.get());
+        let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
+
+        assert_eq!(result, EventResult::consumed());
+        assert_eq!(*interrupts.lock().expect("interrupt lock"), 0);
+        assert!(!panel.slash_open.get());
+    }
+
+    #[test]
+    fn escape_is_ignored_when_streaming_interrupt_declines() {
+        let handle = ChatInputHandle::new();
+        let mut panel = handle.panel().on_streaming_interrupt(|| false);
+        let theme = Theme::dark();
+
+        let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
+
+        assert_eq!(result, EventResult::ignored());
     }
 
     #[test]
