@@ -30,11 +30,11 @@ use atto_ui_chat::{
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId, ChatMessageList,
     ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction, MessageActionKind,
-    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
-    TaskBlock, TaskStatus, TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock,
-    TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    DiffBlock, DiffData, EditAndResubmitEvent, EditDecision, EditDecisionEvent, MessageAction,
+    MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent,
+    PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextArtifactViewer, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -68,6 +68,9 @@ fn main() -> Result<()> {
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
     let message_actions = args.iter().any(|arg| arg == "--message-actions");
+    let edit_resubmit = args.iter().any(|arg| arg == "--edit-resubmit");
+    let retry_resubmit = args.iter().any(|arg| arg == "--retry-resubmit");
+    let fork_at = args.iter().any(|arg| arg == "--fork-at");
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
@@ -92,6 +95,7 @@ fn main() -> Result<()> {
     let mut long_tool_result_id = None;
     let mut todo_block_id = None;
     let mut task_block_id = None;
+    let mut fork_anchor_id = None;
     let tool_block_ids = if input_completion {
         seed_input_completion_messages(&store);
         None
@@ -121,6 +125,15 @@ fn main() -> Result<()> {
         None
     } else if turn_meta_error {
         seed_turn_meta_error_messages(&store);
+        None
+    } else if edit_resubmit {
+        seed_edit_resubmit_messages(&store);
+        None
+    } else if retry_resubmit {
+        seed_retry_resubmit_messages(&store);
+        None
+    } else if fork_at {
+        fork_anchor_id = Some(seed_fork_at_messages(&store));
         None
     } else if message_actions {
         seed_message_action_messages(&store);
@@ -178,6 +191,9 @@ fn main() -> Result<()> {
         || thinking_notice
         || todo_block_id.is_some()
         || turn_meta_error
+        || edit_resubmit
+        || retry_resubmit
+        || fork_at
         || message_actions
         || text_selection
         || cancel_action
@@ -207,6 +223,7 @@ fn main() -> Result<()> {
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
+    let edit_resubmit_events: EventQueue<EditAndResubmitEvent> = EventQueue::new();
     let plan_decisions: EventQueue<PlanDecisionEvent> = EventQueue::new();
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
@@ -253,10 +270,16 @@ fn main() -> Result<()> {
             }
         });
     }
-    if message_actions || text_selection {
+    if message_actions || text_selection || retry_resubmit {
         list = list.on_message_action({
             let message_action_events = message_action_events.clone();
             move |action| message_action_events.push(action)
+        });
+    }
+    if edit_resubmit {
+        list = list.on_edit_and_resubmit(&input_handle, {
+            let edit_resubmit_events = edit_resubmit_events.clone();
+            move |event| edit_resubmit_events.push(event)
         });
     }
     if cancel_action {
@@ -306,6 +329,9 @@ fn main() -> Result<()> {
         || syntax_diff
         || plan_mode
         || text_selection
+        || edit_resubmit
+        || retry_resubmit
+        || fork_at
         || cancel_action
         || input_completion
     {
@@ -467,7 +493,19 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            if !input_completion {
+            if let Some(anchor_id) = fork_anchor_id
+                && cmd == '1'
+            {
+                let removed_count = store.fork_at(anchor_id).map_or(0, |removed| removed.len());
+                store.push(ChatMessage::text(
+                    store.next_message_id(),
+                    ChatRole::Assistant,
+                    format!("P3-FORK-ASSISTANT-NEW removed={removed_count}"),
+                ));
+                continue;
+            }
+
+            if !input_completion && !edit_resubmit && !retry_resubmit && !fork_at {
                 match cmd {
                     'a' => {
                         store.push(ChatMessage::text(
@@ -555,6 +593,20 @@ fn main() -> Result<()> {
             ));
         }
 
+        for event in edit_resubmit_events.drain() {
+            let removed_count = event.removed_messages.len();
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::User,
+                format!("P3-EDIT-USER-NEW: {}", event.edited_text),
+            ));
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("P3-EDIT-ASSISTANT-NEW removed={removed_count}"),
+            ));
+        }
+
         for decision in plan_decisions.drain() {
             store.set_plan_decision(decision.block_id, decision.decision);
             store.push(ChatMessage::text(
@@ -569,11 +621,27 @@ fn main() -> Result<()> {
         }
 
         for action in message_action_events.drain() {
-            input_handle.draft_binding().set(format!(
-                "MESSAGE_ACTION: {}/{}",
-                action.message_id.0,
-                message_action_label(&action.kind)
-            ));
+            if retry_resubmit
+                && matches!(
+                    action.kind,
+                    MessageActionKind::Retry | MessageActionKind::Regenerate
+                )
+            {
+                store.push(ChatMessage::text(
+                    store.next_message_id(),
+                    ChatRole::Assistant,
+                    format!(
+                        "P3-RETRY-ASSISTANT-NEW: {}",
+                        message_action_label(&action.kind)
+                    ),
+                ));
+            } else {
+                input_handle.draft_binding().set(format!(
+                    "MESSAGE_ACTION: {}/{}",
+                    action.message_id.0,
+                    message_action_label(&action.kind)
+                ));
+            }
         }
 
         for message_id in cancel_events.drain() {
@@ -973,6 +1041,62 @@ fn seed_turn_meta_error_messages(store: &ChatMessageStore) {
         stop_reason: Some(StopReason::MaxTokens),
     };
     store.push(error_message);
+}
+
+fn seed_edit_resubmit_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::User,
+        "P3-EDIT-USER-OLD",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-EDIT-OLD-ASSISTANT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-EDIT-OLD-TAIL",
+    ));
+}
+
+fn seed_retry_resubmit_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::User,
+        "P3-RETRY-USER-PROMPT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-RETRY-ASSISTANT-OLD",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-RETRY-OLD-TAIL",
+    ));
+}
+
+fn seed_fork_at_messages(store: &ChatMessageStore) -> ChatMessageId {
+    let anchor_id = store.next_message_id();
+    store.push(ChatMessage::text(
+        anchor_id,
+        ChatRole::User,
+        "P3-FORK-ANCHOR",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-FORK-OLD-ASSISTANT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-FORK-OLD-TAIL",
+    ));
+    anchor_id
 }
 
 fn seed_message_action_messages(store: &ChatMessageStore) {

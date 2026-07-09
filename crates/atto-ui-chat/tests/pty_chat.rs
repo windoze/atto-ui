@@ -792,6 +792,125 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 }
 
 #[test]
+fn chat_p3_edit_resubmit_truncates_old_branch() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--edit-resubmit"], 100, 28)?;
+
+    host.wait_for_text("P3-EDIT-USER-OLD", Duration::from_secs(2))?;
+    host.wait_for_text("P3-EDIT-OLD-ASSISTANT", Duration::from_secs(2))?;
+    host.wait_for_text("P3-EDIT-OLD-TAIL", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Edit").expect("edit action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .filter(|line| line.contains("P3-EDIT-USER-OLD"))
+                .count()
+                >= 2
+        },
+        Duration::from_secs(2),
+    )?;
+
+    let (x, y) = find_last_text_position(&host, "P3-EDIT-USER-OLD").expect("edit draft");
+    host.click(x, y)?;
+    host.send_ctrl('u')?;
+    host.send_str("P3-EDIT-USER-NEW")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("P3-EDIT-ASSISTANT-NEW removed=3"))
+                && snapshot
+                    .iter()
+                    .any(|line| line.contains("P3-EDIT-USER-NEW"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-OLD-ASSISTANT"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-OLD-TAIL"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-USER-OLD"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-EDIT-OLD-ASSISTANT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p3_retry_resubmit_truncates_assistant_turn() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--retry-resubmit"], 100, 28)?;
+
+    host.wait_for_text("P3-RETRY-ASSISTANT-OLD", Duration::from_secs(2))?;
+    host.wait_for_text("P3-RETRY-OLD-TAIL", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Retry").expect("retry action");
+    host.click(x, y)?;
+
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("P3-RETRY-ASSISTANT-NEW: retry"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-RETRY-ASSISTANT-OLD"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-RETRY-OLD-TAIL"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-RETRY-OLD-TAIL", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p3_fork_at_hides_old_branch() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--fork-at"], 100, 28)?;
+
+    host.wait_for_text("P3-FORK-ANCHOR", Duration::from_secs(2))?;
+    host.wait_for_text("P3-FORK-OLD-ASSISTANT", Duration::from_secs(2))?;
+    host.wait_for_text("P3-FORK-OLD-TAIL", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("P3-FORK-ANCHOR"))
+                && snapshot
+                    .iter()
+                    .any(|line| line.contains("P3-FORK-ASSISTANT-NEW removed=2"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-FORK-OLD-ASSISTANT"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-FORK-OLD-TAIL"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-FORK-OLD-ASSISTANT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_text_selection_highlights_copies_selection_and_falls_back() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

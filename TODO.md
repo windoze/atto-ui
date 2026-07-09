@@ -95,7 +95,11 @@
   - 完成记录（2026-07-09）：Retry/Regenerate 回合按钮现在复用既有 `on_message_action` 回调入口，但在触发回调前会校验目标消息仍为 assistant 回合并调用 `ChatMessageStore::truncate_from(message_id)`，移除该 assistant 回合及其后的旧分支；Copy/Edit/CopyBlock 仍保持原有回调语义，目标缺失或非 assistant 时 Retry/Regenerate 不触发回调。
   - 测试覆盖：新增 list 单测覆盖 Retry 与 Regenerate 都会在回调前完成截断并只保留前缀消息，以及非 assistant / 缺失目标 no-op；更新 `snapshot_chat_app --message-actions` 与 PTY 用例，避免 retry 截断后同一目标上的 regenerate 按钮消失导致测试误用，并修正 Copy 与 CopyBlock 前缀匹配风险。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P3.4 快照与测试** — `snapshot_chat_app` 增加编辑/重发场景；PTY 覆盖编辑 user 后截断、retry 后回合截断、fork 后旧消息不再显示。
+- [x] **[DONE] P3.4 快照与测试** — `snapshot_chat_app` 增加编辑/重发场景；PTY 覆盖编辑 user 后截断、retry 后回合截断、fork 后旧消息不再显示。
+  - 完成记录（2026-07-09）：`snapshot_chat_app` 新增 `--edit-resubmit`、`--retry-resubmit`、`--fork-at` 三个确定性 fixture，分别覆盖 `on_edit_and_resubmit` 编辑提交后截断旧分支、assistant Retry 触发截断并追加新回复、以及直接 `fork_at` 后保留 anchor 并移除旧分支。
+  - 测试覆盖：新增 chat PTY 用例 `chat_p3_edit_resubmit_truncates_old_branch`、`chat_p3_retry_resubmit_truncates_assistant_turn`、`chat_p3_fork_at_hides_old_branch`，断言新分支显示且旧 user/assistant/tail sentinel 不再出现在屏幕中。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_p3 -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+  - 测试失败处理：新增 PTY retry 用例首轮曾等待已滚出屏幕的 user prompt 导致超时；已改为等待当前验收所需的可见旧 assistant/旧 tail 与 Retry 操作，随后新增 PTY 过滤测试与完整测试套件均通过。
 - [ ] **P3.R Review：P3 阶段复核** — 逐条复核 P3.1–P3.4：确认截断不泄漏悬挂 block_id/版本、fork 后滚动与自动跟随正常、流式进行中编辑/重发的竞态被正确处理、回调契约清晰；确认 PTY 覆盖边界；跑通全套 CI。
 
 ## 阶段 P4 — 输入交互增强：排队 & Esc 中断 + 多行编辑（A3 + A4）
