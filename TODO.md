@@ -91,7 +91,10 @@
   - 截断/回调语义：用户提交编辑后的文本时，输入层先交给编辑控制器；控制器调用 `ChatMessageStore::truncate_from(message_id)` 移除目标 user 消息及其后的旧分支，然后触发 `EditAndResubmitEvent`，payload 包含 `message_id`、`original_text`、`edited_text` 与 `removed_messages`，供宿主重发。
   - 测试覆盖：新增 list/input 单测覆盖 user 文本提取（含多 text block 与非文本 block）、输入回填、提交后截断旧分支、事件 payload，以及配置专用编辑控制器后的 `Edit` 按钮行为。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P3.3 retry / regenerate** — `src/list.rs`：assistant 回合支持重生成（截断该回合后触发回调），与现有 `on_message_action` 的 Retry/Regenerate 打通。
+- [x] **[DONE] P3.3 retry / regenerate** — `src/list.rs`：assistant 回合支持重生成（截断该回合后触发回调），与现有 `on_message_action` 的 Retry/Regenerate 打通。
+  - 完成记录（2026-07-09）：Retry/Regenerate 回合按钮现在复用既有 `on_message_action` 回调入口，但在触发回调前会校验目标消息仍为 assistant 回合并调用 `ChatMessageStore::truncate_from(message_id)`，移除该 assistant 回合及其后的旧分支；Copy/Edit/CopyBlock 仍保持原有回调语义，目标缺失或非 assistant 时 Retry/Regenerate 不触发回调。
+  - 测试覆盖：新增 list 单测覆盖 Retry 与 Regenerate 都会在回调前完成截断并只保留前缀消息，以及非 assistant / 缺失目标 no-op；更新 `snapshot_chat_app --message-actions` 与 PTY 用例，避免 retry 截断后同一目标上的 regenerate 按钮消失导致测试误用，并修正 Copy 与 CopyBlock 前缀匹配风险。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P3.4 快照与测试** — `snapshot_chat_app` 增加编辑/重发场景；PTY 覆盖编辑 user 后截断、retry 后回合截断、fork 后旧消息不再显示。
 - [ ] **P3.R Review：P3 阶段复核** — 逐条复核 P3.1–P3.4：确认截断不泄漏悬挂 block_id/版本、fork 后滚动与自动跟随正常、流式进行中编辑/重发的竞态被正确处理、回调契约清晰；确认 PTY 覆盖边界；跑通全套 CI。
 

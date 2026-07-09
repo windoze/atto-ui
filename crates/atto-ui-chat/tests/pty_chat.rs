@@ -36,6 +36,21 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
     })
 }
 
+fn find_last_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
+    let contents = host.screen_contents().ok()?;
+    let mut found = None;
+    for (y, line) in contents.lines().enumerate() {
+        for (byte_idx, _) in line.match_indices(needle) {
+            let x = UnicodeWidthStr::width(&line[..byte_idx]);
+            found = Some((
+                x.min(u16::MAX as usize) as u16,
+                y.min(u16::MAX as usize) as u16,
+            ));
+        }
+    }
+    found
+}
+
 fn find_close_button_on_title_row(host: &PtyTestHost, title: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
@@ -725,9 +740,15 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 
     host.wait_for_text("ACTION-USER-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("ACTION-ASSISTANT-MESSAGE", Duration::from_secs(2))?;
+    host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("Retry", Duration::from_secs(2))?;
     host.wait_for_text("Regenerate", Duration::from_secs(2))?;
     host.wait_for_text("Copy block", Duration::from_secs(2))?;
+
+    for _ in 0..6 {
+        host.wheel_up(5, 6)?;
+    }
+    host.wait_for_text("Edit", Duration::from_secs(2))?;
 
     let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("copy target body");
     host.click(x, y)?;
@@ -736,15 +757,27 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 
     let (x, y) = find_text_position(&host, "Copy").expect("copy action");
     host.click(x, y)?;
-    host.wait_for_text("MESSAGE_ACTION: 1/copy", Duration::from_secs(2))?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("MESSAGE_ACTION: 1/copy") && !line.contains("copy_block"))
+        },
+        Duration::from_secs(2),
+    )?;
 
     let (x, y) = find_text_position(&host, "Edit").expect("edit user action");
     host.click(x, y)?;
     host.wait_for_text("MESSAGE_ACTION: 1/edit_user", Duration::from_secs(2))?;
 
-    let (x, y) = find_text_position(&host, "Retry").expect("retry action");
+    for _ in 0..6 {
+        host.wheel_down(5, 20)?;
+    }
+    host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
+
+    let (x, y) = find_last_text_position(&host, "Retry").expect("retry action");
     host.click(x, y)?;
-    host.wait_for_text("MESSAGE_ACTION: 2/retry", Duration::from_secs(2))?;
+    host.wait_for_text("MESSAGE_ACTION: 3/retry", Duration::from_secs(2))?;
 
     let (x, y) = find_text_position(&host, "Regenerate").expect("regenerate action");
     host.click(x, y)?;

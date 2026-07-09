@@ -177,6 +177,7 @@ struct ChatMessageListConfig {
 
 #[derive(Clone)]
 struct ChatMessageRowConfig {
+    store: ChatMessageStore,
     wrap_width: Option<u16>,
     responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
@@ -694,6 +695,7 @@ fn build_list(
     config: &ChatMessageListConfig,
 ) -> (ScrollContainer, VirtualChatRowsControl) {
     let row_config = ChatMessageRowConfig {
+        store: store.clone(),
         wrap_width: config.wrap_width,
         responsive_wrap_width: config.responsive_wrap_width.clone(),
         in_progress_suffix: config.in_progress_suffix.clone(),
@@ -2448,7 +2450,7 @@ fn turn_action_row(
                 continue;
             }
             row = row.child_with_layout(
-                message_action_button(label, message.id, kind, callback.clone()),
+                turn_message_action_button(label, message.id, kind, config, callback.clone()),
                 LayoutParams {
                     width: Size::Fixed(button_width_for_label(label)),
                     height: Size::Content,
@@ -2532,6 +2534,43 @@ fn message_action_button(
 ) -> Button {
     let action = MessageAction { message_id, kind };
     Button::new(label).on_click(move || callback(action.clone()))
+}
+
+fn turn_message_action_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    kind: MessageActionKind,
+    config: &ChatMessageRowConfig,
+    callback: MessageActionCallback,
+) -> Button {
+    if matches!(
+        kind,
+        MessageActionKind::Retry | MessageActionKind::Regenerate
+    ) {
+        retry_or_regenerate_button(label, message_id, kind, config.store.clone(), callback)
+    } else {
+        message_action_button(label, message_id, kind, callback)
+    }
+}
+
+fn retry_or_regenerate_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    kind: MessageActionKind,
+    store: ChatMessageStore,
+    callback: MessageActionCallback,
+) -> Button {
+    let action = MessageAction { message_id, kind };
+    Button::new(label).on_click(move || {
+        let is_assistant = store
+            .with_message(message_id, |message| {
+                matches!(message.role, ChatRole::Assistant)
+            })
+            .unwrap_or(false);
+        if is_assistant && store.truncate_from(message_id).is_some() {
+            callback(action.clone());
+        }
+    })
 }
 
 fn edit_and_resubmit_button(
@@ -6429,6 +6468,7 @@ mod tests {
 
     fn row_config_for_tests() -> ChatMessageRowConfig {
         ChatMessageRowConfig {
+            store: ChatMessageStore::new(),
             wrap_width: None,
             responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
@@ -6502,6 +6542,122 @@ mod tests {
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
         );
+    }
+
+    #[test]
+    fn retry_and_regenerate_buttons_truncate_assistant_before_callback() {
+        for (kind, label) in [
+            (MessageActionKind::Retry, "Retry"),
+            (MessageActionKind::Regenerate, "Regenerate"),
+        ] {
+            let store = ChatMessageStore::new();
+            let user_id = store.next_message_id();
+            let assistant_id = store.next_message_id();
+            let later_id = store.next_message_id();
+            store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
+            store.push(ChatMessage::text(
+                assistant_id,
+                ChatRole::Assistant,
+                "old answer",
+            ));
+            store.push(ChatMessage::text(later_id, ChatRole::System, "old suffix"));
+            let mut config = row_config_for_tests();
+            config.store = store.clone();
+            let observations = Arc::new(Mutex::new(Vec::new()));
+            let captured = observations.clone();
+            let store_for_callback = store.clone();
+            let expected_kind = kind.clone();
+            let mut button = turn_message_action_button(
+                label,
+                assistant_id,
+                kind,
+                &config,
+                Arc::new(move |action| {
+                    let visible_ids = store_for_callback
+                        .messages()
+                        .iter()
+                        .map(|message| message.id)
+                        .collect::<Vec<_>>();
+                    captured
+                        .lock()
+                        .expect("observations lock")
+                        .push((action, visible_ids));
+                }),
+            );
+            let theme = Theme::dark();
+
+            button.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+
+            assert_eq!(
+                store
+                    .messages()
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<Vec<_>>(),
+                vec![user_id]
+            );
+            assert_eq!(
+                *observations.lock().expect("observations lock"),
+                vec![(
+                    MessageAction {
+                        message_id: assistant_id,
+                        kind: expected_kind,
+                    },
+                    vec![user_id]
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn retry_and_regenerate_buttons_ignore_non_assistant_or_missing_target() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
+        let mut config = row_config_for_tests();
+        config.store = store.clone();
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let callback: MessageActionCallback = Arc::new(move |action| {
+            captured.lock().expect("actions lock").push(action);
+        });
+        let theme = Theme::dark();
+        let mut user_retry = turn_message_action_button(
+            "Retry",
+            user_id,
+            MessageActionKind::Retry,
+            &config,
+            callback.clone(),
+        );
+        let mut missing_regenerate = turn_message_action_button(
+            "Regenerate",
+            ChatMessageId::new(999),
+            MessageActionKind::Regenerate,
+            &config,
+            callback,
+        );
+
+        user_retry.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        missing_regenerate.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            store
+                .messages()
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![user_id]
+        );
+        assert!(actions.lock().expect("actions lock").is_empty());
     }
 
     #[test]

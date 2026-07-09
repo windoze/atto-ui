@@ -233,8 +233,9 @@ fn main() -> Result<()> {
         .on_plan_decision({
             let plan_decisions = plan_decisions.clone();
             move |decision| plan_decisions.push(decision)
-        })
-        .on_load_more({
+        });
+    if !message_actions {
+        list = list.on_load_more({
             let store = store.clone();
             let counter = load_counter.clone();
             move || {
@@ -251,6 +252,7 @@ fn main() -> Result<()> {
                 store.prepend_many(older);
             }
         });
+    }
     if message_actions || text_selection {
         list = list.on_message_action({
             let message_action_events = message_action_events.clone();
@@ -297,11 +299,12 @@ fn main() -> Result<()> {
         40
     } else if long_tool_output || turn_meta_error {
         28
+    } else if message_actions {
+        30
     } else if inline_approval
         || inline_diff
         || syntax_diff
         || plan_mode
-        || message_actions
         || text_selection
         || cancel_action
         || input_completion
@@ -987,6 +990,17 @@ fn seed_message_action_messages(store: &ChatMessageStore) {
         vec![ChatBlock::Text(TextBlock {
             id: snapshot_block_id(assistant_id, 0),
             markdown: "ACTION-ASSISTANT-MESSAGE".to_string(),
+            streaming: false,
+        })],
+    ));
+
+    let retry_assistant_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        retry_assistant_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Text(TextBlock {
+            id: snapshot_block_id(retry_assistant_id, 0),
+            markdown: "ACTION-ASSISTANT-RETRY-MESSAGE".to_string(),
             streaming: false,
         })],
     ));
