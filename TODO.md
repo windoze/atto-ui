@@ -49,7 +49,12 @@
   - 渲染与交互：popup 根据输入框 `Rect` anchor 在给定边界内自动选择上方或下方绘制；支持空候选提示、超长列表随选择滚动、宽字符/组合字符安全裁剪；打开状态下处理 Up/Down 选择、Enter 确认并写入 accepted binding、Esc 关闭，Release 与 Ctrl+Up/Down 不捕获。
   - 测试覆盖：新增 completion 单测覆盖键盘选择/确认/关闭、空候选、长列表滚动、自动上方锚定、匹配高亮、宽字符裁剪，以及不应捕获的事件路径。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat completion`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P2.2 斜杠命令** — `input.rs`：输入行首 `/` 触发命令菜单；命令集合由宿主注入（`register`/provider 回调），内置示例若干；输入变化实时过滤；确认后写回输入或触发命令回调。
+- [x] **[DONE] P2.2 斜杠命令** — `input.rs`：输入行首 `/` 触发命令菜单；命令集合由宿主注入（`register`/provider 回调），内置示例若干；输入变化实时过滤；确认后写回输入或触发命令回调。
+  - 完成记录（2026-07-09）：新增 `ChatSlashCommand` / `ChatSlashCommandAction` Rust API，`ChatInputHandle` 默认内置 `/help`、`/clear`、`/model`、`/review` 示例命令，并支持 `set_slash_commands`、`slash_commands_binding`、`register_slash_command` 由宿主注入或替换命令。
+  - 输入交互：`ChatInputPanel` 在文本输入模式下检测行首 `/` draft，复用 P2.1 `CompletionPopup` 渲染命令菜单，输入变化实时更新 fuzzy query；Up/Down/Enter/Esc 由 popup 优先处理，其它输入继续传给 `TextArea`；Esc 对当前 draft 关闭直到内容变化。
+  - 确认语义：插入型命令写回 replacement 到 draft；提交型命令在注册 `on_slash_command` 时触发回调并按 `clear_on_submit` 清空 draft，无回调时回退为写回 replacement。
+  - 测试覆盖：新增 input 单测覆盖行首触发规则、实时过滤渲染、插入确认、回调确认、Esc 关闭直到 draft 变化，以及 register 替换同 id 命令。
+  - 验证：`cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui-chat input`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P2.3 @ 文件提及** — `input.rs`：输入 `@` 触发文件/资源补全，候选由宿主 provider 回调提供；确认后在输入中渲染为 mention 芯片或路径文本；处理光标位置与多次提及。
 - [ ] **P2.4 运行时/JS 侧同步** — `src/dynamic.rs`：暴露命令/提及协议与回调 + schema；同步 `crates/atto-ui-node`、`packages/core`、`packages/react` 的类型/构造器，更新 `docs/NODE_API.md`；跑 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试。
 - [ ] **P2.5 快照与测试** — `snapshot_chat_app` 增加 slash/mention 场景；PTY 覆盖 `/` 触发→过滤→选择→确认、`@` 触发→文件补全→确认插入、Esc 关闭。

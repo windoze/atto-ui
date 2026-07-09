@@ -8,10 +8,12 @@ use atto_ui::composable::{
 use atto_ui::reactive::{Binding, DirtyObserver, Property};
 use atto_ui::widgets::{Button, RadioGroup, TextArea, TextBox};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
+
+use crate::completion::{CompletionAnchor, CompletionItem, CompletionPopup};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatTextInputConfig {
@@ -134,6 +136,113 @@ pub enum ChatInputResponse {
     Text(String),
     Choice { index: usize, label: String },
     Custom(String),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ChatSlashCommandAction {
+    #[default]
+    Insert,
+    Submit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatSlashCommand {
+    pub id: String,
+    pub label: String,
+    pub detail: Option<String>,
+    pub replacement: String,
+    pub action: ChatSlashCommandAction,
+}
+
+impl ChatSlashCommand {
+    pub fn new(label: impl Into<String>) -> Self {
+        let label = normalize_slash_command_label(label.into());
+        Self {
+            id: default_slash_command_id(&label),
+            replacement: label.clone(),
+            label,
+            detail: None,
+            action: ChatSlashCommandAction::Insert,
+        }
+    }
+
+    pub fn with_id(id: impl Into<String>, label: impl Into<String>) -> Self {
+        let label = normalize_slash_command_label(label.into());
+        Self {
+            id: id.into(),
+            replacement: label.clone(),
+            label,
+            detail: None,
+            action: ChatSlashCommandAction::Insert,
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn replacement(mut self, replacement: impl Into<String>) -> Self {
+        self.replacement = replacement.into();
+        self
+    }
+
+    pub fn submit_on_accept(mut self) -> Self {
+        self.action = ChatSlashCommandAction::Submit;
+        self
+    }
+}
+
+fn default_slash_commands() -> Vec<ChatSlashCommand> {
+    vec![
+        ChatSlashCommand::new("/help").detail("Show available commands"),
+        ChatSlashCommand::new("/clear").detail("Clear the conversation"),
+        ChatSlashCommand::new("/model")
+            .detail("Switch model")
+            .replacement("/model "),
+        ChatSlashCommand::new("/review")
+            .detail("Start a code review")
+            .replacement("/review "),
+    ]
+}
+
+fn normalize_slash_command_label(label: String) -> String {
+    if label.starts_with('/') {
+        label
+    } else {
+        format!("/{label}")
+    }
+}
+
+fn default_slash_command_id(label: &str) -> String {
+    label
+        .trim()
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn slash_query_from_draft(draft: &str) -> Option<String> {
+    if !draft.starts_with('/') || draft.contains('\n') {
+        return None;
+    }
+    Some(draft[1..].to_string())
+}
+
+fn slash_completion_items(commands: &[ChatSlashCommand]) -> Vec<CompletionItem> {
+    commands
+        .iter()
+        .map(|command| {
+            let mut item =
+                CompletionItem::with_replacement(command.label.clone(), command.id.clone());
+            if let Some(detail) = &command.detail {
+                item = item.detail(detail.clone());
+            }
+            item
+        })
+        .collect()
 }
 
 fn normalize_mode_kind(kind: &str) -> String {
@@ -412,6 +521,7 @@ pub struct ChatInputHandle {
     draft: Property<String>,
     custom: Property<String>,
     history: Property<Vec<String>>,
+    slash_commands: Property<Vec<ChatSlashCommand>>,
     selection: Property<usize>,
     enabled: Property<bool>,
     clear_on_submit: Property<bool>,
@@ -427,6 +537,7 @@ impl ChatInputHandle {
             draft: Property::new(String::new()),
             custom: Property::new(String::new()),
             history: Property::new(Vec::new()),
+            slash_commands: Property::new(default_slash_commands()),
             selection: Property::new(0),
             enabled: Property::new(true),
             clear_on_submit: Property::new(true),
@@ -455,6 +566,28 @@ impl ChatInputHandle {
 
     pub fn history_binding(&self) -> Binding<Vec<String>> {
         self.history.binding()
+    }
+
+    pub fn slash_commands(&self) -> Vec<ChatSlashCommand> {
+        self.slash_commands.get()
+    }
+
+    pub fn slash_commands_binding(&self) -> Binding<Vec<ChatSlashCommand>> {
+        self.slash_commands.binding()
+    }
+
+    pub fn set_slash_commands(&self, commands: Vec<ChatSlashCommand>) {
+        self.slash_commands.set(commands);
+    }
+
+    pub fn register_slash_command(&self, command: ChatSlashCommand) {
+        let mut commands = self.slash_commands.get();
+        if let Some(existing) = commands.iter_mut().find(|item| item.id == command.id) {
+            *existing = command;
+        } else {
+            commands.push(command);
+        }
+        self.slash_commands.set(commands);
     }
 
     pub fn selection_binding(&self) -> Binding<usize> {
@@ -488,12 +621,23 @@ pub struct ChatInputPanel {
     draft: Binding<String>,
     custom: Binding<String>,
     history: Binding<Vec<String>>,
+    slash_commands: Binding<Vec<ChatSlashCommand>>,
+    slash_query: Binding<String>,
+    slash_items: Binding<Vec<CompletionItem>>,
+    slash_open: Binding<bool>,
+    slash_selection: Binding<usize>,
+    slash_accepted: Binding<Option<CompletionItem>>,
+    slash_anchor: Binding<CompletionAnchor>,
+    slash_popup: CompletionPopup,
+    slash_dismissed_for: Option<String>,
     selection: Binding<usize>,
     enabled: Binding<bool>,
     clear_on_submit: Binding<bool>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
+    slash_commands_observer: DirtyObserver,
     on_submit: Option<Arc<dyn Fn(ChatInputResponse) + Send + Sync>>,
+    on_slash_command: Option<Arc<dyn Fn(ChatSlashCommand) + Send + Sync>>,
     custom_view: Option<Arc<Mutex<Box<dyn Component>>>>,
 }
 
@@ -503,14 +647,37 @@ impl ChatInputPanel {
         let draft = handle.draft.binding();
         let custom = handle.custom.binding();
         let history = handle.history.binding();
+        let slash_commands = handle.slash_commands.binding();
         let selection = handle.selection.binding();
         let enabled = handle.enabled.binding();
         let clear_on_submit = handle.clear_on_submit.binding();
+        let slash_query = Binding::new(String::new());
+        let slash_items = Binding::new(slash_completion_items(&slash_commands.get()));
+        let slash_open = Binding::new(false);
+        let slash_selection = Binding::new(0usize);
+        let slash_accepted = Binding::new(None);
+        let slash_anchor = Binding::new(CompletionAnchor::default());
+        let slash_popup = CompletionPopup::new(slash_query.clone(), slash_items.clone())
+            .open(slash_open.clone())
+            .selection(slash_selection.clone())
+            .accepted(slash_accepted.clone())
+            .anchor(slash_anchor.clone())
+            .title("Commands")
+            .empty_label("No commands");
         let mut panel = Self {
             mode: mode.clone(),
             draft: draft.clone(),
             custom: custom.clone(),
             history: history.clone(),
+            slash_commands: slash_commands.clone(),
+            slash_query,
+            slash_items,
+            slash_open,
+            slash_selection,
+            slash_accepted,
+            slash_anchor,
+            slash_popup,
+            slash_dismissed_for: None,
             selection: selection.clone(),
             enabled: enabled.clone(),
             clear_on_submit: clear_on_submit.clone(),
@@ -518,7 +685,9 @@ impl ChatInputPanel {
                 TextArea::new("", draft.clone()).history(history.clone()),
             )),
             mode_observer: mode.dirty_observer(),
+            slash_commands_observer: slash_commands.dirty_observer(),
             on_submit: None,
+            on_slash_command: None,
             custom_view: None,
         };
         panel.view = panel.build_view(&mode.get());
@@ -533,6 +702,14 @@ impl ChatInputPanel {
         self
     }
 
+    pub fn on_slash_command<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ChatSlashCommand) + Send + Sync + 'static,
+    {
+        self.on_slash_command = Some(Arc::new(callback));
+        self
+    }
+
     pub fn set_custom_view(&mut self, view: impl Component + 'static) {
         self.custom_view = Some(Arc::new(Mutex::new(Box::new(view))));
         self.view = self.build_view(&self.mode.get());
@@ -542,6 +719,82 @@ impl ChatInputPanel {
         if self.mode.check_dirty(&mut self.mode_observer) {
             self.view = self.build_view(&self.mode.get());
         }
+    }
+
+    fn sync_slash_completion(&mut self, anchor: Option<Rect>) {
+        if let Some(rect) = anchor {
+            self.slash_anchor.set(CompletionAnchor::new(rect));
+        }
+
+        if self
+            .slash_commands
+            .check_dirty(&mut self.slash_commands_observer)
+        {
+            self.slash_items
+                .set(slash_completion_items(&self.slash_commands.get()));
+        }
+
+        let draft = self.draft.get();
+        let query = if self.enabled.get() && matches!(self.mode.get(), ChatInputMode::Text(_)) {
+            slash_query_from_draft(&draft)
+        } else {
+            None
+        };
+
+        if let Some(query) = query {
+            self.slash_query.set(query);
+            let dismissed = self.slash_dismissed_for.as_deref() == Some(draft.as_str());
+            self.slash_open
+                .set(!dismissed && !self.slash_commands.get().is_empty());
+        } else {
+            self.slash_query.set(String::new());
+            self.slash_open.set(false);
+            self.slash_selection.set(0);
+            self.slash_dismissed_for = None;
+        }
+    }
+
+    fn dismiss_slash_completion_for_current_draft(&mut self) {
+        self.slash_dismissed_for = Some(self.draft.get());
+        self.slash_open.set(false);
+        self.slash_selection.set(0);
+    }
+
+    fn apply_accepted_slash_command(&mut self) -> bool {
+        let Some(accepted) = self.slash_accepted.get() else {
+            return false;
+        };
+        self.slash_accepted.set(None);
+
+        let Some(command) = self
+            .slash_commands
+            .get()
+            .into_iter()
+            .find(|command| command.id == accepted.replacement)
+        else {
+            return false;
+        };
+
+        match command.action {
+            ChatSlashCommandAction::Insert => {
+                self.draft.set(command.replacement.clone());
+                self.slash_dismissed_for = Some(command.replacement);
+            }
+            ChatSlashCommandAction::Submit => {
+                if let Some(callback) = &self.on_slash_command {
+                    callback(command.clone());
+                    if self.clear_on_submit.get() {
+                        self.draft.set(String::new());
+                    }
+                } else {
+                    self.draft.set(command.replacement.clone());
+                    self.slash_dismissed_for = Some(command.replacement);
+                }
+            }
+        }
+        self.slash_open.set(false);
+        self.slash_selection.set(0);
+        true
     }
 
     fn build_view(&self, mode: &ChatInputMode) -> ChatInputView {
@@ -851,6 +1104,8 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             ChatInputView::Confirm(view) => view.draw(frame, area, ctx),
             ChatInputView::Custom(view) => view.draw(frame, area, ctx),
         }
+        self.sync_slash_completion(Some(area));
+        self.slash_popup.draw(frame, frame.area(), ctx);
     }
 }
 
@@ -943,12 +1198,33 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.sync_mode();
+        self.sync_slash_completion(None);
+        if self.slash_open.get() {
+            let popup_res = self.slash_popup.handle_event(event, ctx);
+            if popup_res.is_consumed() {
+                if matches!(
+                    event,
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        kind,
+                        ..
+                    }) if !matches!(kind, KeyEventKind::Release)
+                ) {
+                    self.dismiss_slash_completion_for_current_draft();
+                } else {
+                    let _ = self.apply_accepted_slash_command();
+                }
+                return popup_res;
+            }
+        }
+
         let res = match &mut self.view {
             ChatInputView::Text(view) => view.handle_event(event, ctx),
             ChatInputView::Choice(view) => view.handle_event(event, ctx),
             ChatInputView::Confirm(view) => view.handle_event(event, ctx),
             ChatInputView::Custom(view) => view.handle_event(event, ctx),
         };
+        self.sync_slash_completion(None);
 
         if matches!(res.action, atto_ui::composable::ComponentAction::Submitted) {
             let _ = self.emit_response();
@@ -1022,4 +1298,174 @@ impl ::atto_ui::composable::EventHandling for SharedComponent {
 fn button_width(label: &str) -> u16 {
     let text_w = label.width().min(u16::MAX as usize) as u16;
     text_w.saturating_add(4).max(3)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use atto_ui::composable::{
+        Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    };
+    use atto_ui::theme::Theme;
+    use atto_ui::wm::WindowId;
+    use crossterm::event::KeyModifiers;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        }
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn type_text(panel: &mut ChatInputPanel, theme: &Theme, text: &str) {
+        for ch in text.chars() {
+            panel.handle_event(&key(KeyCode::Char(ch)), context(theme));
+        }
+    }
+
+    fn draw_panel(panel: &mut ChatInputPanel, width: u16, height: u16) -> Vec<String> {
+        let theme = Theme::dark();
+        let ctx = context(&theme);
+        let backend = TestBackend::new(width.max(1), height.max(1));
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let input_height = 5;
+        let input_area = Rect::new(
+            0,
+            height.saturating_sub(input_height),
+            width,
+            input_height.min(height),
+        );
+        terminal
+            .draw(|frame| panel.draw(frame, input_area, ctx))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let mut lines = Vec::new();
+        for y in 0..height {
+            let mut line = String::new();
+            for x in 0..width {
+                line.push_str(buffer.cell((x, y)).expect("cell").symbol());
+            }
+            lines.push(line);
+        }
+        lines
+    }
+
+    fn panel_with_commands(commands: Vec<ChatSlashCommand>) -> (ChatInputHandle, ChatInputPanel) {
+        let handle = ChatInputHandle::new();
+        handle.set_slash_commands(commands);
+        let panel = handle.panel();
+        (handle, panel)
+    }
+
+    #[test]
+    fn slash_query_requires_line_start_command() {
+        assert_eq!(slash_query_from_draft("/"), Some(String::new()));
+        assert_eq!(slash_query_from_draft("/model"), Some("model".to_string()));
+        assert_eq!(slash_query_from_draft("hello /model"), None);
+        assert_eq!(slash_query_from_draft("/model\nnext"), None);
+    }
+
+    #[test]
+    fn slash_popup_opens_and_filters_as_input_changes() {
+        let (_handle, mut panel) = panel_with_commands(vec![
+            ChatSlashCommand::new("/clear"),
+            ChatSlashCommand::new("/model").detail("Switch model"),
+        ]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/m");
+
+        assert!(panel.slash_open.get());
+        assert_eq!(panel.slash_query.get(), "m");
+        let lines = draw_panel(&mut panel, 40, 12);
+        assert!(lines.iter().any(|line| line.contains("/model")));
+        assert!(!lines.iter().any(|line| line.contains("/clear")));
+    }
+
+    #[test]
+    fn accepting_insert_command_writes_replacement_to_draft() {
+        let (handle, mut panel) =
+            panel_with_commands(vec![ChatSlashCommand::new("/model").replacement("/model ")]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/m");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(handle.draft_binding().get(), "/model ");
+        assert!(!panel.slash_open.get());
+        panel.sync_slash_completion(None);
+        assert!(!panel.slash_open.get());
+    }
+
+    #[test]
+    fn accepting_submit_command_triggers_callback_and_clears_draft() {
+        let handle = ChatInputHandle::new();
+        handle.set_slash_commands(vec![ChatSlashCommand::new("/clear").submit_on_accept()]);
+        let accepted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let accepted_for_callback = accepted.clone();
+        let mut panel = handle.panel().on_slash_command(move |command| {
+            accepted_for_callback.lock().unwrap().push(command.id);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/c");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(accepted.lock().unwrap().as_slice(), ["clear"]);
+        assert_eq!(handle.draft_binding().get(), "");
+        assert!(!panel.slash_open.get());
+    }
+
+    #[test]
+    fn escape_dismisses_until_draft_changes() {
+        let (_handle, mut panel) = panel_with_commands(vec![ChatSlashCommand::new("/model")]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/");
+        assert!(panel.slash_open.get());
+
+        let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
+        assert_eq!(result, EventResult::consumed());
+        assert!(!panel.slash_open.get());
+
+        panel.sync_slash_completion(None);
+        assert!(!panel.slash_open.get());
+
+        type_text(&mut panel, &theme, "m");
+        assert!(panel.slash_open.get());
+        assert_eq!(panel.slash_query.get(), "m");
+    }
+
+    #[test]
+    fn register_slash_command_replaces_existing_id() {
+        let handle = ChatInputHandle::new();
+        handle.set_slash_commands(vec![ChatSlashCommand::with_id("model", "/model")]);
+
+        handle.register_slash_command(
+            ChatSlashCommand::with_id("model", "/model")
+                .detail("Choose a model")
+                .replacement("/model "),
+        );
+
+        let commands = handle.slash_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].detail.as_deref(), Some("Choose a model"));
+        assert_eq!(commands[0].replacement, "/model ");
+    }
 }
