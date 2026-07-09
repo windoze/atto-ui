@@ -233,6 +233,9 @@ export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
+export type ChatCompactStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
+export type ChatApprovalAction = 'allow' | 'deny'
+export type ChatApprovalLevel = 'once' | 'always' | 'project'
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'refusal'
 export type ChatSlashCommandAction = 'insert' | 'submit'
 
@@ -256,8 +259,19 @@ export type ChatToolOutput = { readonly ansi: string } | { readonly markdown: st
 export interface ChatApprovalRequest {
   readonly id: string
   readonly prompt: string
-  readonly options: readonly { readonly id: string; readonly label: string }[]
+  readonly options: readonly { readonly id: string; readonly label: string; readonly action?: ChatApprovalAction; readonly level?: ChatApprovalLevel }[]
   readonly resolved?: string
+  readonly resolved_action?: ChatApprovalAction
+  readonly resolved_level?: ChatApprovalLevel
+}
+
+export interface ChatApprovalDecisionValue {
+  readonly message_id: number
+  readonly block_id: number
+  readonly approval_id: string
+  readonly option_id: string
+  readonly action: ChatApprovalAction
+  readonly level: ChatApprovalLevel
 }
 
 export type ChatBlock =
@@ -271,6 +285,7 @@ export type ChatBlock =
   | { readonly type: 'todo'; readonly block_id: number; readonly items: readonly { readonly text: string; readonly state: ChatTodoState }[] }
   | { readonly type: 'attachment'; readonly block_id: number; readonly name: string; readonly url?: string | null; readonly mime?: string | null }
   | { readonly type: 'notice'; readonly block_id: number; readonly level: ChatNoticeLevel; readonly text: string }
+  | { readonly type: 'compact'; readonly block_id: number; readonly status: ChatCompactStatus; readonly before_tokens?: number | null; readonly after_tokens?: number | null; readonly summary: string }
   | { readonly type: 'artifact'; readonly block_id: number; readonly kind: ChatArtifactKind; readonly anchor: string | number; readonly title: string }
 
 export interface ChatMessageValue {

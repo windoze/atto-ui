@@ -1,6 +1,9 @@
 import {
   AppHost,
   Button,
+  ChatApprovalOption,
+  ChatApprovalRequest,
+  ChatCompactBlock,
   ChatInputMode,
   ChatMentionCandidate,
   ChatInputPanel,
@@ -25,7 +28,11 @@ import {
   child,
   tab,
   type CallbackInvocation,
+  type ChatApprovalAction,
+  type ChatApprovalDecisionPayload,
+  type ChatApprovalLevel,
   type ChatMentionContext,
+  type ChatCompactStatus,
   type ComponentSpec,
   type ComponentValue,
   type DesktopSnapshot,
@@ -106,11 +113,27 @@ const chatMessage = ChatMessage(2, [
     transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])],
   }),
   ChatNoticeBlock(2002, 'info', 'ready'),
+  ChatCompactBlock(2005, 'complete', { beforeTokens: 12000, afterTokens: 3500, summary: 'kept edits' }),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 1, output: 2 } } })
+const approvalAction: ChatApprovalAction = 'allow'
+const approvalLevel: ChatApprovalLevel = 'project'
+const compactStatus: ChatCompactStatus = 'running'
+const approval = ChatApprovalRequest('approval-1', 'Run command?', [
+  ChatApprovalOption('allow_project', 'Allow project', { action: approvalAction, level: approvalLevel }),
+], { resolved: 'allow_project', resolvedAction: approvalAction, resolvedLevel: approvalLevel })
+const approvalPayload: ChatApprovalDecisionPayload = {
+  message_id: 1,
+  block_id: 1001,
+  approval_id: 'approval-1',
+  option_id: 'allow_project',
+  action: approvalAction,
+  level: approvalLevel,
+}
 const chatToolMessage = ChatToolCallMessage(3, 'bash', {
   input: ChatToolJsonInput({ command: 'cargo test' }),
   output: 'ok',
   toolStatus: 'done',
+  approval,
 })
 const chatListSpec: ComponentSpec = ChatMessageList({
   messages: [ChatTextMessage(1, 'hello', { role: 'user' }), chatMessage, chatToolMessage],
@@ -159,6 +182,9 @@ void terminalSpec
 void fileTreeSpec
 void chatMode
 void chatMessage
+void compactStatus
+void approval
+void approvalPayload
 void chatToolMessage
 void chatListSpec
 void command

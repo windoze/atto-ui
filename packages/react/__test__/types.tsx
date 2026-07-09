@@ -1,4 +1,7 @@
 import {
+  ChatApprovalOption,
+  ChatApprovalRequest,
+  ChatCompactBlock,
   Button,
   ChatInputPanel,
   ChatMentionCandidate,
@@ -21,6 +24,8 @@ import {
   VStack,
   Window,
   useChatMessages,
+  type ChatApprovalOption as ReactChatApprovalOption,
+  type ChatApprovalRequest as ReactChatApprovalRequest,
 } from '../src'
 
 const button = <Button onClick={() => {}}>Save</Button>
@@ -30,7 +35,12 @@ const textbox = <TextBox value="Ada" onChange={(value, event) => {
 }} />
 const list = <ListBox items={['one', 'two']} selectedIndex={0} onSelect={(index) => index.toFixed()} />
 const table = <Table headers={['name']} rows={[["Ada"], ["Grace"]]} onChange={(index) => index.toFixed()} />
-const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' }), { id: 2, role: 'assistant', status: 'complete', blocks: [ChatPlanBlock(2001, [{ text: 'plan' }]), ChatTaskBlock(2002, 'subagent', { transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])] })] }]} autoScroll onLoadMore={() => {}} onApprove={(event) => event.payload} onEditDecision={(event) => event.payload} onPlanDecision={(event) => event.payload} onCancel={(event) => event.payload} onMessageAction={(event) => event.payload} />
+const approval = ChatApprovalRequest('approval-1', 'Run command?', [
+  ChatApprovalOption('allow_project', 'Allow project', { action: 'allow', level: 'project' }),
+])
+const typedApprovalOption: ReactChatApprovalOption = approval.options[0]
+const typedApprovalRequest: ReactChatApprovalRequest = approval
+const chat = <ChatMessageList messages={[ChatTextMessage(1, 'hello', { role: 'user' }), { id: 2, role: 'assistant', status: 'complete', blocks: [ChatPlanBlock(2001, [{ text: 'plan' }]), ChatTaskBlock(2002, 'subagent', { transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])] }), ChatCompactBlock(2003, 'complete', { beforeTokens: 1000, afterTokens: 500, summary: 'summary' })] }]} autoScroll onLoadMore={() => {}} onApprove={(event) => event.payload} onEditDecision={(event) => event.payload} onPlanDecision={(event) => event.payload} onCancel={(event) => event.payload} onMessageAction={(event) => event.payload} />
 const chatFill = <ChatMessageList messages={[ChatTextMessage(4, 'wide')]} fillWidth />
 const chatRatio = <ChatMessageList messages={[ChatTextMessage(5, 'two thirds')]} bubbleWidthPercent={66} />
 const inputPanel = <ChatInputPanel
@@ -59,12 +69,12 @@ const rawInput = <chatInputPanel slash_commands={[ChatSlashCommand('/model')]} m
 const rawChat = <chatMessageList messages={[ChatTextMessage(2, 'raw')]} onLoad_more={(event) => event.callbackId} onPlan_decision={(event) => event.payload} />
 const menuEvent = <MenuBar><Menu title="File"><MenuItem label="Open" onClick={(event) => event.callbackId.toUpperCase()} /></Menu></MenuBar>
 function ChatHookProbe() {
-  const store = useChatMessages([ChatTextMessage(1, 'seed')])
+  const store = useChatMessages([{ id: 1, role: 'assistant', status: 'complete', blocks: [{ type: 'tool_use', block_id: 1001, call_id: 'call-1', name: 'bash', input: { text: '' }, status: 'pending', approval }] }])
   const { messageId, blockId } = store.addTextTurn('assistant', '', { status: 'streaming' })
   store.appendTextDelta(blockId, 'hi')
   store.setTurnStatus(messageId, 'complete')
   store.upsertToolResult('call-1', { ok: true, output: { ansi: 'done' } })
-  store.resolveApproval(blockId, 'allow')
+  store.resolveApproval(1001, 'allow_project')
   return <ChatMessageList messages={store.messages} />
 }
 
@@ -77,6 +87,8 @@ void rawChat
 void menuEvent
 void inputPanel
 void chatPanel
+void typedApprovalOption
+void typedApprovalRequest
 void chatFill
 void chatRatio
 void ChatHookProbe

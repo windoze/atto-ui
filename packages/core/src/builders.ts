@@ -220,6 +220,9 @@ export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
+export type ChatCompactStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
+export type ChatApprovalAction = 'allow' | 'deny'
+export type ChatApprovalLevel = 'once' | 'always' | 'project'
 export type ChatSlashCommandAction = 'insert' | 'submit'
 
 export interface ChatError {
@@ -276,6 +279,8 @@ export type ChatToolInput = ChatToolTextInput | ChatToolJsonInput
 export interface ChatApprovalOption {
   readonly id: string
   readonly label: string
+  readonly action?: ChatApprovalAction
+  readonly level?: ChatApprovalLevel
 }
 
 export interface ChatApprovalRequest {
@@ -283,6 +288,17 @@ export interface ChatApprovalRequest {
   readonly prompt: string
   readonly options: readonly ChatApprovalOption[]
   readonly resolved?: string
+  readonly resolved_action?: ChatApprovalAction
+  readonly resolved_level?: ChatApprovalLevel
+}
+
+export interface ChatApprovalDecisionPayload {
+  readonly message_id: number
+  readonly block_id: number
+  readonly approval_id: string
+  readonly option_id: string
+  readonly action: ChatApprovalAction
+  readonly level: ChatApprovalLevel
 }
 
 export interface ChatToolUseBlock extends ChatBlockBase {
@@ -372,6 +388,14 @@ export interface ChatNoticeBlock extends ChatBlockBase {
   readonly text: string
 }
 
+export interface ChatCompactBlock extends ChatBlockBase {
+  readonly type: 'compact'
+  readonly status: ChatCompactStatus
+  readonly before_tokens?: number | null
+  readonly after_tokens?: number | null
+  readonly summary: string
+}
+
 export interface ChatArtifactBlock extends ChatBlockBase {
   readonly type: 'artifact'
   readonly kind: ChatArtifactKind
@@ -390,6 +414,7 @@ export type ChatBlockInput =
   | ChatTodoBlock
   | ChatAttachmentBlock
   | ChatNoticeBlock
+  | ChatCompactBlock
   | ChatArtifactBlock
 
 export interface ChatMessageInput {
@@ -505,6 +530,17 @@ export interface ChatToolUseBlockOptions {
   readonly collapsed?: boolean
 }
 
+export interface ChatApprovalOptionOptions {
+  readonly action?: ChatApprovalAction
+  readonly level?: ChatApprovalLevel
+}
+
+export interface ChatApprovalRequestOptions {
+  readonly resolved?: string
+  readonly resolvedAction?: ChatApprovalAction
+  readonly resolvedLevel?: ChatApprovalLevel
+}
+
 export interface ChatToolResultBlockOptions {
   readonly ok?: boolean
   readonly exitCode?: number
@@ -525,6 +561,12 @@ export interface ChatTaskBlockOptions {
   readonly summary?: string
   readonly transcript?: readonly ChatTaskTranscriptItem[]
   readonly collapsed?: boolean
+}
+
+export interface ChatCompactBlockOptions {
+  readonly beforeTokens?: number | null
+  readonly afterTokens?: number | null
+  readonly summary?: string
 }
 
 export interface ChatTextMessageOptions extends ChatMessageBaseOptions, ChatTextBlockOptions {
@@ -998,6 +1040,35 @@ export function ChatToolDiffOutput(diff: string): ChatToolDiffOutput {
   return { diff }
 }
 
+export function ChatApprovalOption(
+  id: string,
+  label: string,
+  options: ChatApprovalOptionOptions = {},
+): ChatApprovalOption {
+  return compactRecord({
+    id,
+    label,
+    action: options.action,
+    level: options.level,
+  }) as unknown as ChatApprovalOption
+}
+
+export function ChatApprovalRequest(
+  id: string,
+  prompt: string,
+  options: readonly ChatApprovalOption[],
+  requestOptions: ChatApprovalRequestOptions = {},
+): ChatApprovalRequest {
+  return compactRecord({
+    id,
+    prompt,
+    options,
+    resolved: requestOptions.resolved,
+    resolved_action: requestOptions.resolvedAction,
+    resolved_level: requestOptions.resolvedLevel,
+  }) as unknown as ChatApprovalRequest
+}
+
 export function ChatToolUseBlock(
   blockId: number,
   callId: string,
@@ -1103,6 +1174,21 @@ export function ChatAttachmentBlock(
 
 export function ChatNoticeBlock(blockId: number, level: ChatNoticeLevel, text: string): ChatNoticeBlock {
   return compactRecord({ type: 'notice', block_id: blockId, level, text }) as unknown as ChatNoticeBlock
+}
+
+export function ChatCompactBlock(
+  blockId: number,
+  status: ChatCompactStatus,
+  options: ChatCompactBlockOptions = {},
+): ChatCompactBlock {
+  return compactRecord({
+    type: 'compact',
+    block_id: blockId,
+    status,
+    before_tokens: options.beforeTokens,
+    after_tokens: options.afterTokens,
+    summary: options.summary ?? '',
+  }) as unknown as ChatCompactBlock
 }
 
 export function ChatArtifactBlock(

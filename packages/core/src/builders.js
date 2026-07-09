@@ -349,6 +349,26 @@ function ChatToolDiffOutput(diff) {
   return { diff }
 }
 
+function ChatApprovalOption(id, label, options = {}) {
+  return compactRecord({
+    id,
+    label,
+    action: options.action,
+    level: options.level,
+  }) ?? {}
+}
+
+function ChatApprovalRequest(id, prompt, options, requestOptions = {}) {
+  return compactRecord({
+    id,
+    prompt,
+    options,
+    resolved: requestOptions.resolved,
+    resolved_action: requestOptions.resolvedAction,
+    resolved_level: requestOptions.resolvedLevel,
+  }) ?? {}
+}
+
 function ChatToolUseBlock(blockId, callId, name, options = {}) {
   return compactRecord({
     type: 'tool_use',
@@ -425,6 +445,17 @@ function ChatAttachmentBlock(blockId, name, options = {}) {
 
 function ChatNoticeBlock(blockId, level, text) {
   return compactRecord({ type: 'notice', block_id: blockId, level, text }) ?? {}
+}
+
+function ChatCompactBlock(blockId, status, options = {}) {
+  return compactRecord({
+    type: 'compact',
+    block_id: blockId,
+    status,
+    before_tokens: options.beforeTokens,
+    after_tokens: options.afterTokens,
+    summary: options.summary ?? '',
+  }) ?? {}
 }
 
 function ChatArtifactBlock(blockId, options) {
@@ -726,6 +757,8 @@ module.exports = {
   ChatToolAnsiOutput,
   ChatToolMarkdownOutput,
   ChatToolDiffOutput,
+  ChatApprovalOption,
+  ChatApprovalRequest,
   ChatToolUseBlock,
   ChatToolResultBlock,
   ChatDiffBlock,
@@ -735,6 +768,7 @@ module.exports = {
   ChatTodoBlock,
   ChatAttachmentBlock,
   ChatNoticeBlock,
+  ChatCompactBlock,
   ChatArtifactBlock,
   ChatTextMessage,
   ChatFileMessage,

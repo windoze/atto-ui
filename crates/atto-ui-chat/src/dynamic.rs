@@ -2003,6 +2003,68 @@ mod tests {
     }
 
     #[test]
+    fn approval_values_serialize_structured_fields_and_parse_legacy_options() {
+        let approval = ApprovalRequest {
+            id: "approval-1".to_string(),
+            prompt: "Run command?".to_string(),
+            options: vec![
+                ApprovalOption::allow_project("allow_project", "Allow project"),
+                ApprovalOption::deny("deny", "Deny"),
+            ],
+            resolved: Some(ApprovalResolution {
+                option_id: "allow_project".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Project,
+            }),
+        };
+
+        let ComponentValue::Map(serialized) = approval_to_value(&approval) else {
+            panic!("approval must serialize to map");
+        };
+        assert_eq!(
+            serialized.get("resolved"),
+            Some(&ComponentValue::String("allow_project".to_string()))
+        );
+        assert_eq!(
+            serialized.get("resolved_action"),
+            Some(&ComponentValue::String("allow".to_string()))
+        );
+        assert_eq!(
+            serialized.get("resolved_level"),
+            Some(&ComponentValue::String("project".to_string()))
+        );
+
+        let legacy = value_map([
+            ("id", ComponentValue::String("approval-legacy".to_string())),
+            ("prompt", ComponentValue::String("Run command?".to_string())),
+            (
+                "options",
+                ComponentValue::List(vec![value_map([
+                    ("id", ComponentValue::String("allow_always".to_string())),
+                    ("label", ComponentValue::String("Allow always".to_string())),
+                ])]),
+            ),
+            (
+                "resolved",
+                ComponentValue::String("allow_always".to_string()),
+            ),
+        ]);
+
+        let parsed = parse_approval_value(&legacy).expect("parse legacy approval");
+
+        assert_eq!(parsed.options[0].action, ApprovalAction::Allow);
+        assert_eq!(parsed.options[0].level, ApprovalLevel::Always);
+        assert_eq!(
+            parsed.resolved,
+            Some(ApprovalResolution {
+                option_id: "allow_always".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Always,
+            })
+        );
+    }
+
+    #[test]
     fn edit_decision_event_serializes_to_runtime_payload() {
         let value = edit_decision_event_to_value(EditDecisionEvent {
             message_id: ChatMessageId::new(11),

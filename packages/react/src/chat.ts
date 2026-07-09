@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type {
+  ChatApprovalAction,
+  ChatApprovalLevel,
   ChatBlockInput,
   ChatEditDecision,
   ChatMessageInput,
@@ -209,12 +211,19 @@ export function useChatMessages(initial: readonly ChatMessageInput[] = []): Chat
         if (block.type !== 'tool_use' || !block.approval) return block
         const option = block.approval.options.find((o) => o.id === optionId)
         if (!option) return block
-        const nextStatus = approvalOptionStatus(option.id, option.label)
+        const action = approvalOptionAction(option)
+        const level = approvalOptionLevel(option)
+        const nextStatus = approvalActionStatus(action)
         const status = canAdvanceTool(block.status, nextStatus) ? nextStatus : block.status
         return {
           ...block,
           status,
-          approval: { ...block.approval, resolved: optionId },
+          approval: {
+            ...block.approval,
+            resolved: optionId,
+            resolved_action: action,
+            resolved_level: level,
+          },
         }
       }),
     )
@@ -354,8 +363,30 @@ function appendOutput(output: ChatToolOutput, delta: string): ChatToolOutput {
   return { diff: output.diff + delta }
 }
 
-function approvalOptionStatus(id: string, label: string): ChatToolStatus {
-  return isDenyOption(id) || isDenyOption(label) ? 'canceled' : 'running'
+function approvalOptionAction(option: {
+  readonly id: string
+  readonly label: string
+  readonly action?: ChatApprovalAction
+}): ChatApprovalAction {
+  return option.action ?? (isDenyOption(option.id) || isDenyOption(option.label) ? 'deny' : 'allow')
+}
+
+function approvalOptionLevel(option: {
+  readonly id: string
+  readonly label: string
+  readonly level?: ChatApprovalLevel
+}): ChatApprovalLevel {
+  if (option.level !== undefined) return option.level
+  const value = `${option.id} ${option.label}`.toLowerCase()
+  if (value.includes('project') || value.includes('workspace')) return 'project'
+  if (value.includes('always') || value.includes("don't ask") || value.includes('dont ask')) {
+    return 'always'
+  }
+  return 'once'
+}
+
+function approvalActionStatus(action: ChatApprovalAction): ChatToolStatus {
+  return action === 'deny' ? 'canceled' : 'running'
 }
 
 function isDenyOption(value: string): boolean {

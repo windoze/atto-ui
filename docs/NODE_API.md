@@ -155,7 +155,7 @@ Block values are discriminated by `type` and carry a stable `block_id`:
 ```ts
 { type: 'text', block_id: 1001, markdown: 'Hello' }
 { type: 'thinking', block_id: 1002, markdown: 'Reasoning', collapsed: true }
-{ type: 'tool_use', block_id: 1003, call_id: 'call-1', name: 'bash', input: { text: 'cargo test' }, status: 'running' }
+{ type: 'tool_use', block_id: 1003, call_id: 'call-1', name: 'bash', input: { text: 'cargo test' }, status: 'running', approval: { id: 'approval-1', prompt: 'Run?', options: [{ id: 'allow_project', label: 'Allow project', action: 'allow', level: 'project' }] } }
 { type: 'tool_result', block_id: 1004, call_id: 'call-1', ok: true, output: { ansi: 'ok' } }
 { type: 'diff', block_id: 1005, path: 'src/lib.rs', diff: '@@ ...', decision: 'pending' }
 { type: 'plan', block_id: 1006, items: [{ text: 'write tests' }], decision: 'pending' }
@@ -163,10 +163,15 @@ Block values are discriminated by `type` and carry a stable `block_id`:
 { type: 'todo', block_id: 1009, items: [{ text: 'write tests', state: 'done' }] }
 { type: 'attachment', block_id: 1010, name: 'report.txt', url: 'file:///tmp/report.txt' }
 { type: 'notice', block_id: 1011, level: 'warning', text: 'context compacted' }
-{ type: 'artifact', block_id: 1012, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
+{ type: 'compact', block_id: 1012, status: 'complete', before_tokens: 12000, after_tokens: 3500, summary: 'Kept current task context.' }
+{ type: 'artifact', block_id: 1013, kind: 'diff', anchor: 'artifact-1', title: 'patch' }
 ```
 
-`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatPlanBlock`, `ChatTaskBlock`, `ChatTaskTranscriptItem`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
+Approval options accept optional structured `action: 'allow' | 'deny'` and `level: 'once' | 'always' | 'project'` fields. Resolved approvals keep the legacy `resolved` option id and may also carry `resolved_action` and `resolved_level`; older id/label-only approval options are still accepted and inferred by the Rust parser.
+
+`compact` blocks represent context-compression progress and summary. They use `status: 'pending' | 'running' | 'complete' | 'failed' | 'canceled'`, optional `before_tokens` / `after_tokens`, and a `summary`, and render separately from plain `notice` blocks.
+
+`@atto-ui/core` exports value builders for the new shape: `ChatMessage`, `ChatTextBlock`, `ChatThinkingBlock`, `ChatApprovalOption`, `ChatApprovalRequest`, `ChatToolUseBlock`, `ChatToolResultBlock`, `ChatDiffBlock`, `ChatPlanBlock`, `ChatTaskBlock`, `ChatTaskTranscriptItem`, `ChatTodoBlock`, `ChatAttachmentBlock`, `ChatNoticeBlock`, `ChatCompactBlock`, and `ChatArtifactBlock`. Convenience message builders such as `ChatTextMessage`, `ChatFileMessage`, `ChatToolCallMessage`, and `ChatArtifactMessage` also emit the new `{ role, status, meta?, blocks }` form.
 
 ```js
 const {
@@ -286,7 +291,7 @@ Common wrappers:
 | `MinimizedWindowsMenu` | Runtime-managed list of minimized windows (see below). |
 | `WindowOpMenuItem` | Menu item wired to a built-in window operation (see below). |
 
-`@atto-ui/react` re-exports the chat value builders (`ChatMessage`, `ChatTextMessage`, `ChatToolCallMessage`, block builders, and related types) for use with the `ChatMessageList` component. It also exports the `useChatMessages(initial?)` hook, which holds the transcript in React state and mirrors the Rust `ChatMessageStore` API (`push` / `prepend` / `prependMany` / `updateMessage` / `addTextTurn` / `appendTextDelta` / `appendToolOutput` / `setTurnStatus` / `setMeta` / `setToolStatus` / `upsertToolResult` / `resolveApproval` / `setEditDecision` / `setPlanItems` / `setPlanDecision` / `setTodo` / `setTaskStatus` / `setTaskSummary` / `setTaskTranscript`), assigning message/block ids automatically.
+`@atto-ui/react` re-exports the chat value builders (`ChatMessage`, `ChatTextMessage`, `ChatToolCallMessage`, approval builders, block builders, and related types) for use with the `ChatMessageList` component. It also exports the `useChatMessages(initial?)` hook, which holds the transcript in React state and mirrors the Rust `ChatMessageStore` API (`push` / `prepend` / `prependMany` / `updateMessage` / `addTextTurn` / `appendTextDelta` / `appendToolOutput` / `setTurnStatus` / `setMeta` / `setToolStatus` / `upsertToolResult` / `resolveApproval` / `setEditDecision` / `setPlanItems` / `setPlanDecision` / `setTodo` / `setTaskStatus` / `setTaskSummary` / `setTaskTranscript`), assigning message/block ids automatically. `resolveApproval` preserves the selected option id and records structured `resolved_action` / `resolved_level` when the option supplies or implies them.
 
 #### Chat event payloads
 
@@ -298,7 +303,7 @@ matching the Rust `*_to_value` serializers in `crates/atto-ui-chat/src/dynamic.r
 | `onSubmit` (input) | `{ type: 'text', text }` \| `{ type: 'choice', index, label }` \| `{ type: 'custom', text }` |
 | `onSlashCommand` (input) | `{ id, label, detail?, replacement, action: 'submit' }` for accepted submit-action slash commands |
 | `onMentionQuery` (input) | `{ draft, query, cursor, replacement_start, replacement_end }`; update `mentionCandidates` / `mention_candidates` in response |
-| `onApprove` | `{ message_id, block_id, approval_id, option_id }` |
+| `onApprove` | `{ message_id, block_id, approval_id, option_id, action: 'allow' \| 'deny', level: 'once' \| 'always' \| 'project' }` |
 | `onEditDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
 | `onPlanDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
 | `onCancel` | `{ message_id }` |
