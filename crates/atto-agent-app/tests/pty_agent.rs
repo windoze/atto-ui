@@ -41,7 +41,8 @@ fn agent_mock_fixture_streams_submitted_input() -> anyhow::Result<()> {
 
     host.wait_for_text("Atto Agent", PTY_WAIT)?;
     host.wait_for_text("provider: mock", PTY_WAIT)?;
-    host.wait_for_text("plan: off", PTY_WAIT)?;
+    host.wait_for_text("model: deepseek-chat", PTY_WAIT)?;
+    host.wait_for_text("plan: auto", PTY_WAIT)?;
 
     submit_text(&mut host, "hello agent")?;
 
@@ -68,8 +69,8 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     host.wait_for_text("/abort: Cancel the active mock turn.", PTY_WAIT)?;
 
     submit_text(&mut host, "/plan")?;
-    host.wait_for_text("Plan mode set to on.", PTY_WAIT)?;
-    host.wait_for_text("plan: on", PTY_WAIT)?;
+    host.wait_for_text("Plan mode set to off.", PTY_WAIT)?;
+    host.wait_for_text("plan: off", PTY_WAIT)?;
 
     submit_text(&mut host, "/skills")?;
     host.wait_for_text("Skills: none registered yet.", PTY_WAIT)?;
@@ -92,7 +93,7 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
         },
         PTY_WAIT,
     )?;
-    host.wait_for_text("plan: on", PTY_WAIT)?;
+    host.wait_for_text("plan: off", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
 
     host.send_ctrl('q')?;

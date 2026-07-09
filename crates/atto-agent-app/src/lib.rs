@@ -25,13 +25,14 @@ use atto_ui_chat::{
 };
 use ratatui::layout::Rect;
 
+pub mod config;
+
+use crate::config::{AgentConfig, PlanMode};
+
 pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
 const STATUS_READY: &str = "ready";
 const STATUS_STREAMING: &str = "streaming";
-const PLAN_MODE_OFF: &str = "plan: off";
-const PLAN_MODE_ON: &str = "plan: on";
-const PLAN_MODE_AUTO: &str = "plan: auto";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
 
@@ -62,12 +63,35 @@ struct ActiveMockTurn {
 
 #[derive(Clone)]
 struct AgentRuntime {
+    config: AgentConfig,
     action_sender: mpsc::Sender<AppAction>,
     mock_turns: MockTurnRegistry,
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
+    model_state: Property<String>,
     plan_mode_state: Property<String>,
+}
+
+impl AgentRuntime {
+    fn new(
+        config: AgentConfig,
+        action_sender: mpsc::Sender<AppAction>,
+        mock_turns: MockTurnRegistry,
+    ) -> Self {
+        let model_state = Property::new(format!("model: {}", config.model));
+        let plan_mode_state = Property::new(config.plan_mode.status());
+        Self {
+            config,
+            action_sender,
+            mock_turns,
+            message_store: ChatMessageStore::new(),
+            input_handle: ChatInputHandle::new(),
+            status_state: Property::new(STATUS_READY.to_string()),
+            model_state,
+            plan_mode_state,
+        }
+    }
 }
 
 impl MockTurnRegistry {
@@ -121,10 +145,12 @@ impl MockTurnRegistry {
 
 /// Runtime state for the single-window agent UI.
 pub struct AgentApp {
+    config: AgentConfig,
     desktop: Desktop,
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
+    model_state: Property<String>,
     plan_mode_state: Property<String>,
     chat_window_id: WindowId,
 }
@@ -133,14 +159,18 @@ impl AgentApp {
     /// Builds the initial desktop, status bar, chat panel, and chat state handles.
     pub fn new(screen: Rect) -> Self {
         let (action_sender, _action_receiver) = EventQueue::<AppAction>::channel();
-        let runtime = AgentRuntime {
+        let runtime = AgentRuntime::new(
+            AgentConfig::defaults("."),
             action_sender,
-            mock_turns: MockTurnRegistry::new(),
-            message_store: ChatMessageStore::new(),
-            input_handle: ChatInputHandle::new(),
-            status_state: Property::new(STATUS_READY.to_string()),
-            plan_mode_state: Property::new(PLAN_MODE_OFF.to_string()),
-        };
+            MockTurnRegistry::new(),
+        );
+        Self::with_runtime_state(screen, EventQueue::new(), runtime)
+    }
+
+    /// Builds the initial app state from a resolved configuration.
+    pub fn with_config(screen: Rect, config: AgentConfig) -> Self {
+        let (action_sender, _action_receiver) = EventQueue::<AppAction>::channel();
+        let runtime = AgentRuntime::new(config, action_sender, MockTurnRegistry::new());
         Self::with_runtime_state(screen, EventQueue::new(), runtime)
     }
 
@@ -160,6 +190,7 @@ impl AgentApp {
 
         let mut desktop = Desktop::new(Theme::dark(), agent_menu(quit_events));
         desktop.status.set_segments(status_segments(
+            runtime.model_state.binding(),
             runtime.status_state.binding(),
             runtime.plan_mode_state.binding(),
         ));
@@ -177,13 +208,19 @@ impl AgentApp {
         );
 
         Self {
+            config: runtime.config,
             desktop,
             message_store: runtime.message_store,
             input_handle: runtime.input_handle,
             status_state: runtime.status_state,
+            model_state: runtime.model_state,
             plan_mode_state: runtime.plan_mode_state,
             chat_window_id,
         }
+    }
+
+    pub fn config(&self) -> &AgentConfig {
+        &self.config
     }
 
     pub fn desktop(&self) -> &Desktop {
@@ -210,6 +247,10 @@ impl AgentApp {
         self.status_state.clone()
     }
 
+    pub fn model_state(&self) -> Property<String> {
+        self.model_state.clone()
+    }
+
     pub fn plan_mode_state(&self) -> Property<String> {
         self.plan_mode_state.clone()
     }
@@ -221,27 +262,27 @@ impl AgentApp {
 
 /// Runs the TUI agent application.
 pub fn run() -> Result<()> {
-    run_with_mock_token_delay(MOCK_TOKEN_DELAY)
+    run_with_config_and_mock_token_delay(AgentConfig::load()?, MOCK_TOKEN_DELAY)
 }
 
 /// Runs the deterministic mock fixture used by PTY snapshot tests.
 pub fn run_snapshot_fixture() -> Result<()> {
-    run_with_mock_token_delay(SNAPSHOT_MOCK_TOKEN_DELAY)
+    run_with_config_and_mock_token_delay(AgentConfig::defaults("."), SNAPSHOT_MOCK_TOKEN_DELAY)
 }
 
-fn run_with_mock_token_delay(mock_token_delay: Duration) -> Result<()> {
+fn run_with_config_and_mock_token_delay(
+    config: AgentConfig,
+    mock_token_delay: Duration,
+) -> Result<()> {
     let quit_events = EventQueue::new();
     let quit_events_for_menu = quit_events.clone();
     let quit_events_for_loop = quit_events.clone();
     let (action_sender, action_receiver) = EventQueue::<AppAction>::channel();
-    let runtime = AgentRuntime {
-        action_sender: action_sender.clone(),
-        mock_turns: MockTurnRegistry::with_token_delay(mock_token_delay),
-        message_store: ChatMessageStore::new(),
-        input_handle: ChatInputHandle::new(),
-        status_state: Property::new(STATUS_READY.to_string()),
-        plan_mode_state: Property::new(PLAN_MODE_OFF.to_string()),
-    };
+    let runtime = AgentRuntime::new(
+        config,
+        action_sender.clone(),
+        MockTurnRegistry::with_token_delay(mock_token_delay),
+    );
     let runtime_for_build = runtime.clone();
     let runtime_for_actions = runtime.clone();
 
@@ -394,52 +435,6 @@ fn input_response_text(response: ChatInputResponse) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PlanMode {
-    Off,
-    On,
-    Auto,
-}
-
-impl PlanMode {
-    fn parse(value: &str) -> Option<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "off" => Some(Self::Off),
-            "on" => Some(Self::On),
-            "auto" => Some(Self::Auto),
-            _ => None,
-        }
-    }
-
-    fn from_status(status: &str) -> Option<Self> {
-        status.strip_prefix("plan: ").and_then(Self::parse)
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Off => Self::On,
-            Self::On => Self::Auto,
-            Self::Auto => Self::Off,
-        }
-    }
-
-    fn status(self) -> &'static str {
-        match self {
-            Self::Off => PLAN_MODE_OFF,
-            Self::On => PLAN_MODE_ON,
-            Self::Auto => PLAN_MODE_AUTO,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::On => "on",
-            Self::Auto => "auto",
-        }
-    }
-}
-
 fn agent_slash_commands() -> Vec<ChatSlashCommand> {
     vec![
         ChatSlashCommand::new("/help")
@@ -525,10 +520,10 @@ fn clear_session(
 }
 
 fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<String>, args: &[&str]) {
-    let current = PlanMode::from_status(&plan_mode_state.get()).unwrap_or(PlanMode::Off);
+    let current = plan_mode_from_status(&plan_mode_state.get()).unwrap_or(PlanMode::Off);
     let next = match args {
         [] => Some(current.next()),
-        [value] => PlanMode::parse(value),
+        [value] => value.parse().ok(),
         _ => None,
     };
     let Some(next) = next else {
@@ -536,8 +531,12 @@ fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<Strin
         return;
     };
 
-    plan_mode_state.set(next.status().to_string());
-    append_system_message(store, format!("Plan mode set to {}.", next.label()));
+    plan_mode_state.set(next.status());
+    append_system_message(store, format!("Plan mode set to {next}."));
+}
+
+fn plan_mode_from_status(status: &str) -> Option<PlanMode> {
+    status.strip_prefix("plan: ")?.parse().ok()
 }
 
 fn apply_abort_command(
@@ -690,8 +689,12 @@ fn agent_menu(quit_events: EventQueue<()>) -> MenuBar {
     )])
 }
 
-fn status_segments(state: Binding<String>, plan_mode: Binding<String>) -> Vec<StatusSegment> {
-    // Keep provider static in M1 while binding runtime state to the mock turn lifecycle.
+fn status_segments(
+    model: Binding<String>,
+    state: Binding<String>,
+    plan_mode: Binding<String>,
+) -> Vec<StatusSegment> {
+    // Keep provider static until DeepSeek streaming lands while surfacing loaded model config.
     vec![
         StatusSegment::new("app", APP_TITLE)
             .priority(100)
@@ -699,6 +702,9 @@ fn status_segments(state: Binding<String>, plan_mode: Binding<String>) -> Vec<St
         StatusSegment::new("provider", "provider: mock")
             .priority(80)
             .min_width(14),
+        StatusSegment::new("model", model)
+            .priority(78)
+            .min_width(18),
         StatusSegment::new("plan", plan_mode)
             .priority(75)
             .min_width(9),
@@ -740,10 +746,11 @@ mod tests {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
+    use crate::config::{AgentConfig, PlanMode};
+
     use super::{
-        APP_TITLE, AgentApp, AppAction, MockTurnRegistry, PLAN_MODE_AUTO, PLAN_MODE_OFF,
-        PLAN_MODE_ON, STATUS_READY, STATUS_STREAMING, apply_app_action, build_chat_panel,
-        submit_input_response, submit_slash_command_text,
+        APP_TITLE, AgentApp, AppAction, MockTurnRegistry, STATUS_READY, STATUS_STREAMING,
+        apply_app_action, build_chat_panel, submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -784,7 +791,8 @@ mod tests {
 
         assert!(app.message_store().messages().is_empty());
         assert_eq!(app.status_state().get(), STATUS_READY);
-        assert_eq!(app.plan_mode_state().get(), PLAN_MODE_OFF);
+        assert_eq!(app.model_state().get(), "model: deepseek-chat");
+        assert_eq!(app.plan_mode_state().get(), PlanMode::Auto.status());
         match app.input_handle().mode() {
             ChatInputMode::Text(config) => {
                 assert_eq!(config.title, "Message");
@@ -792,6 +800,19 @@ mod tests {
             }
             other => panic!("expected text input mode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn applies_configured_model_and_plan_mode_to_runtime_state() {
+        let mut config = AgentConfig::defaults(".");
+        config.model = "deepseek-reasoner".to_string();
+        config.plan_mode = PlanMode::On;
+
+        let app = AgentApp::with_config(Rect::new(0, 0, 80, 24), config);
+
+        assert_eq!(app.config().model, "deepseek-reasoner");
+        assert_eq!(app.model_state().get(), "model: deepseek-reasoner");
+        assert_eq!(app.plan_mode_state().get(), PlanMode::On.status());
     }
 
     #[test]
@@ -820,7 +841,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
 
         assert!(submit_slash_command_text(
             &store,
@@ -846,7 +867,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_ON.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::On.status());
         input_handle.streaming_binding().set(true);
         store.push(ChatMessage::text(
             store.next_message_id(),
@@ -873,7 +894,7 @@ mod tests {
         assert!(cancel.is_cancelled());
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
-        assert_eq!(plan_mode_state.get(), PLAN_MODE_ON);
+        assert_eq!(plan_mode_state.get(), PlanMode::On.status());
     }
 
     #[test]
@@ -882,7 +903,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
 
         assert!(submit_slash_command_text(
             &store,
@@ -892,7 +913,7 @@ mod tests {
             &plan_mode_state,
             "/plan on",
         ));
-        assert_eq!(plan_mode_state.get(), PLAN_MODE_ON);
+        assert_eq!(plan_mode_state.get(), PlanMode::On.status());
 
         assert!(submit_slash_command_text(
             &store,
@@ -902,7 +923,7 @@ mod tests {
             &plan_mode_state,
             "/plan auto",
         ));
-        assert_eq!(plan_mode_state.get(), PLAN_MODE_AUTO);
+        assert_eq!(plan_mode_state.get(), PlanMode::Auto.status());
 
         assert!(submit_slash_command_text(
             &store,
@@ -912,7 +933,7 @@ mod tests {
             &plan_mode_state,
             "/plan",
         ));
-        assert_eq!(plan_mode_state.get(), PLAN_MODE_OFF);
+        assert_eq!(plan_mode_state.get(), PlanMode::Off.status());
 
         let messages = store.messages();
         assert!(message_text(&messages[0]).contains("Plan mode set to on."));
@@ -926,7 +947,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
 
         assert!(submit_slash_command_text(
             &store,
@@ -956,7 +977,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
         input_handle.streaming_binding().set(true);
         let assistant_id = store.next_message_id();
         let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
@@ -1002,7 +1023,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
         let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
         input_handle.streaming_binding().set(true);
         let assistant_id = store.next_message_id();
@@ -1052,7 +1073,7 @@ mod tests {
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
-        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
 
         submit_input_response(
