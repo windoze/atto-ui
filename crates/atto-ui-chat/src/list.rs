@@ -29,6 +29,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
+use crate::input::{ChatInputHandle, ChatTextSubmitInterceptor};
 use crate::message::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
     ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
@@ -49,6 +50,7 @@ const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
 type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
+type EditAndResubmitCallback = Arc<dyn Fn(EditAndResubmitEvent) + Send + Sync>;
 type PlanDecisionCallback = Arc<dyn Fn(PlanDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
@@ -81,6 +83,14 @@ pub struct MessageAction {
     pub kind: MessageActionKind,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditAndResubmitEvent {
+    pub message_id: ChatMessageId,
+    pub original_text: String,
+    pub edited_text: String,
+    pub removed_messages: Vec<ChatMessage>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MessageActionKind {
     Copy,
@@ -88,6 +98,62 @@ pub enum MessageActionKind {
     Regenerate,
     EditUser,
     CopyBlock(ChatBlockId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingUserEdit {
+    message_id: ChatMessageId,
+    original_text: String,
+}
+
+#[derive(Clone)]
+struct EditAndResubmitController {
+    store: ChatMessageStore,
+    pending: Binding<Option<PendingUserEdit>>,
+    input_draft: Binding<String>,
+    callback: EditAndResubmitCallback,
+}
+
+impl EditAndResubmitController {
+    fn new(
+        store: ChatMessageStore,
+        input_draft: Binding<String>,
+        callback: EditAndResubmitCallback,
+    ) -> Self {
+        Self {
+            store,
+            pending: Binding::new(None),
+            input_draft,
+            callback,
+        }
+    }
+
+    fn begin_edit(&self, message_id: ChatMessageId, original_text: String) -> bool {
+        self.pending.set(Some(PendingUserEdit {
+            message_id,
+            original_text: original_text.clone(),
+        }));
+        self.input_draft.set(original_text);
+        true
+    }
+
+    fn submit_edit(&self, edited_text: String) -> bool {
+        let Some(pending) = self.pending.get() else {
+            return false;
+        };
+        let Some(removed_messages) = self.store.truncate_from(pending.message_id) else {
+            self.pending.set(None);
+            return false;
+        };
+        self.pending.set(None);
+        (self.callback)(EditAndResubmitEvent {
+            message_id: pending.message_id,
+            original_text: pending.original_text,
+            edited_text,
+            removed_messages,
+        });
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -103,6 +169,7 @@ struct ChatMessageListConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    edit_and_resubmit: Option<EditAndResubmitController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
@@ -118,6 +185,7 @@ struct ChatMessageRowConfig {
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    edit_and_resubmit: Option<EditAndResubmitController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
@@ -153,6 +221,7 @@ impl ChatMessageList {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            edit_and_resubmit: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
@@ -264,6 +333,24 @@ impl ChatMessageList {
         F: Fn(EditDecisionEvent) + Send + Sync + 'static,
     {
         self.config.on_edit_decision = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    pub fn on_edit_and_resubmit<F>(mut self, input: &ChatInputHandle, callback: F) -> Self
+    where
+        F: Fn(EditAndResubmitEvent) + Send + Sync + 'static,
+    {
+        let controller = EditAndResubmitController::new(
+            self.store.clone(),
+            input.draft_binding(),
+            Arc::new(callback),
+        );
+        let submit_controller = controller.clone();
+        input.set_text_submit_interceptor(ChatTextSubmitInterceptor::new(move |text| {
+            submit_controller.submit_edit(text)
+        }));
+        self.config.edit_and_resubmit = Some(controller);
         self.rebuild_list();
         self
     }
@@ -615,6 +702,7 @@ fn build_list(
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
+        edit_and_resubmit: config.edit_and_resubmit.clone(),
         on_plan_decision: config.on_plan_decision.clone(),
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
@@ -1027,6 +1115,7 @@ impl ScrollContent for VirtualChatRowsContent {
         self.config.on_open_artifact.is_some()
             || self.config.on_approve.is_some()
             || self.config.on_edit_decision.is_some()
+            || self.config.edit_and_resubmit.is_some()
             || self.config.on_message_action.is_some()
             || self.config.on_cancel.is_some()
     }
@@ -1157,8 +1246,7 @@ fn estimate_placeholder_row_height(
 
 fn estimate_header_row_height(message: &ChatMessage, config: &ChatMessageRowConfig) -> u16 {
     let mut bubble_height = line_count(&turn_header_label(message));
-    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
-    if config.on_message_action.is_some() || show_cancel {
+    if has_turn_action_row(message, config) {
         bubble_height = bubble_height.saturating_add(2);
     }
 
@@ -2268,13 +2356,7 @@ fn build_turn_header(
         .with_spacing(1)
         .child_with_layout(header, content_layout);
 
-    if let Some(actions) = turn_action_row(
-        message.id,
-        &message.role,
-        turn_status.clone(),
-        &config.on_message_action,
-        &config.on_cancel,
-    ) {
+    if let Some(actions) = turn_action_row(message, turn_status.clone(), config) {
         bubble = bubble.child_with_layout(actions, content_layout);
     }
 
@@ -2317,22 +2399,31 @@ fn build_block_bubble(
     (bubble, body_bindings)
 }
 
+fn has_turn_action_row(message: &ChatMessage, config: &ChatMessageRowConfig) -> bool {
+    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
+    show_cancel
+        || config.on_message_action.is_some()
+        || (config.edit_and_resubmit.is_some() && editable_user_message_text(message).is_some())
+}
+
 fn turn_action_row(
-    message_id: ChatMessageId,
-    role: &ChatRole,
+    message: &ChatMessage,
     turn_status: Binding<ChatTurnStatus>,
-    on_message_action: &Option<MessageActionCallback>,
-    on_cancel: &Option<CancelCallback>,
+    config: &ChatMessageRowConfig,
 ) -> Option<HStack> {
-    let show_cancel = on_cancel.is_some() && turn_status.get().is_streaming();
-    if on_message_action.is_none() && !show_cancel {
+    let show_cancel = config.on_cancel.is_some() && turn_status.get().is_streaming();
+    let editable_text = config
+        .edit_and_resubmit
+        .as_ref()
+        .and_then(|_| editable_user_message_text(message));
+    if config.on_message_action.is_none() && editable_text.is_none() && !show_cancel {
         return None;
     }
     let mut row = HStack::new().with_spacing(1);
-    if show_cancel && let Some(callback) = on_cancel.clone() {
+    if show_cancel && let Some(callback) = config.on_cancel.clone() {
         let label = "Cancel";
         row = row.child_with_layout(
-            streaming_cancel_button(label, message_id, turn_status, callback),
+            streaming_cancel_button(label, message.id, turn_status, callback),
             LayoutParams {
                 width: Size::Content,
                 height: Size::Content,
@@ -2340,10 +2431,24 @@ fn turn_action_row(
             },
         );
     }
-    if let Some(callback) = on_message_action.clone() {
-        for (label, kind) in turn_action_specs(role) {
+    if let Some(callback) = config.on_message_action.clone() {
+        for (label, kind) in turn_action_specs(&message.role) {
+            if matches!(kind, MessageActionKind::EditUser)
+                && let (Some(controller), Some(original_text)) =
+                    (config.edit_and_resubmit.clone(), editable_text.clone())
+            {
+                row = row.child_with_layout(
+                    edit_and_resubmit_button(label, message.id, original_text, controller),
+                    LayoutParams {
+                        width: Size::Fixed(button_width_for_label(label)),
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                );
+                continue;
+            }
             row = row.child_with_layout(
-                message_action_button(label, message_id, kind, callback.clone()),
+                message_action_button(label, message.id, kind, callback.clone()),
                 LayoutParams {
                     width: Size::Fixed(button_width_for_label(label)),
                     height: Size::Content,
@@ -2351,8 +2456,35 @@ fn turn_action_row(
                 },
             );
         }
+    } else if let (Some(controller), Some(original_text)) =
+        (config.edit_and_resubmit.clone(), editable_text)
+    {
+        let label = "Edit";
+        row = row.child_with_layout(
+            edit_and_resubmit_button(label, message.id, original_text, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
     }
     Some(row)
+}
+
+fn editable_user_message_text(message: &ChatMessage) -> Option<String> {
+    if !matches!(message.role, ChatRole::User) {
+        return None;
+    }
+    let parts = message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ChatBlock::Text(text) => Some(text.markdown.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> {
@@ -2400,6 +2532,17 @@ fn message_action_button(
 ) -> Button {
     let action = MessageAction { message_id, kind };
     Button::new(label).on_click(move || callback(action.clone()))
+}
+
+fn edit_and_resubmit_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    original_text: String,
+    controller: EditAndResubmitController,
+) -> Button {
+    Button::new(label).on_click(move || {
+        let _ = controller.begin_edit(message_id, original_text.clone());
+    })
 }
 
 fn streaming_cancel_button(
@@ -6294,6 +6437,7 @@ mod tests {
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            edit_and_resubmit: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
@@ -6358,6 +6502,134 @@ mod tests {
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
         );
+    }
+
+    #[test]
+    fn editable_user_message_text_extracts_only_user_text_blocks() {
+        let user_id = ChatMessageId::new(60);
+        let user = ChatMessage::new(
+            user_id,
+            ChatRole::User,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(60_001),
+                    markdown: "first".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Attachment(AttachmentBlock {
+                    id: ChatBlockId::new(60_002),
+                    name: "notes.md".to_string(),
+                    url: None,
+                    mime: None,
+                }),
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(60_003),
+                    markdown: "second".to_string(),
+                    streaming: false,
+                }),
+            ],
+        );
+        let assistant = ChatMessage::text(ChatMessageId::new(61), ChatRole::Assistant, "answer");
+        let attachment_only = ChatMessage::new(
+            ChatMessageId::new(62),
+            ChatRole::User,
+            vec![ChatBlock::Attachment(AttachmentBlock {
+                id: ChatBlockId::new(62_001),
+                name: "image.png".to_string(),
+                url: None,
+                mime: None,
+            })],
+        );
+
+        assert_eq!(
+            editable_user_message_text(&user),
+            Some("first\n\nsecond".to_string())
+        );
+        assert_eq!(editable_user_message_text(&assistant), None);
+        assert_eq!(editable_user_message_text(&attachment_only), None);
+    }
+
+    #[test]
+    fn edit_and_resubmit_refills_input_truncates_and_emits_event() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        let assistant_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "old prompt"));
+        store.push(ChatMessage::text(
+            assistant_id,
+            ChatRole::Assistant,
+            "old answer",
+        ));
+        let input = ChatInputHandle::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, move |event| {
+            captured.lock().expect("events lock").push(event);
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let theme = Theme::dark();
+        let mut panel = input.panel();
+
+        assert!(controller.begin_edit(user_id, "old prompt".to_string()));
+        assert_eq!(input.draft_binding().get(), "old prompt");
+        input.draft_binding().set("edited prompt".to_string());
+
+        let result = panel.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(input.draft_binding().get(), "");
+        assert!(store.messages().is_empty());
+        let events = events.lock().expect("events lock");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message_id, user_id);
+        assert_eq!(events[0].original_text, "old prompt");
+        assert_eq!(events[0].edited_text, "edited prompt");
+        assert_eq!(
+            events[0]
+                .removed_messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![user_id, assistant_id]
+        );
+    }
+
+    #[test]
+    fn edit_button_uses_dedicated_resubmit_controller_when_configured() {
+        let store = ChatMessageStore::new();
+        let input = ChatInputHandle::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, {
+            let events = events.clone();
+            move |event| events.lock().expect("events lock").push(event)
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let mut button = edit_and_resubmit_button(
+            "Edit",
+            ChatMessageId::new(70),
+            "draft text".to_string(),
+            controller,
+        );
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(input.draft_binding().get(), "draft text");
+        assert!(events.lock().expect("events lock").is_empty());
     }
 
     #[test]

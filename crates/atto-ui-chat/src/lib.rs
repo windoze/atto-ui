@@ -20,8 +20,8 @@ pub use input::{
     ChatSlashCommandAction, ChatTextInputConfig,
 };
 pub use list::{
-    ApprovalDecision, ChatMessageList, EditDecisionEvent, MessageAction, MessageActionKind,
-    PlanDecisionEvent,
+    ApprovalDecision, ChatMessageList, EditAndResubmitEvent, EditDecisionEvent, MessageAction,
+    MessageActionKind, PlanDecisionEvent,
 };
 pub use message::{
     ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId, ArtifactKind,

@@ -86,7 +86,11 @@
   - 测试覆盖：新增 store 单测覆盖从首条/中间/末条 `truncate_from`、中间/末条 `fork_at`、缺失目标 no-op、流式 turn 截断时移除 streaming text/thinking block 并清理版本。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat store --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
   - 测试失败处理：完整测试首轮曾出现 `chat_artifact_code_link_opens_text_viewer_window` 空屏超时；随后 exact 用例与 `pty_chat` 全文件复跑均通过，完整 `cargo test --all --all-targets` 复跑通过。
-- [ ] **P3.2 编辑 user 消息** — `src/list.rs`：支持进入某条 user 消息编辑态，编辑后从该点截断并触发重发回调（`on_edit_and_resubmit`）；与输入区衔接（把原文回填输入）。
+- [x] **[DONE] P3.2 编辑 user 消息** — `src/list.rs`：支持进入某条 user 消息编辑态，编辑后从该点截断并触发重发回调（`on_edit_and_resubmit`）；与输入区衔接（把原文回填输入）。
+  - 完成记录（2026-07-09）：`ChatMessageList` 新增 `on_edit_and_resubmit(&ChatInputHandle, callback)` 专用 API，注册编辑控制器与输入提交拦截器；配置后 user 消息的 `Edit` 按钮进入 pending 编辑态并把原 text block 内容回填输入 draft，未配置时既有 `MessageActionKind::EditUser` 回调保持可用。
+  - 截断/回调语义：用户提交编辑后的文本时，输入层先交给编辑控制器；控制器调用 `ChatMessageStore::truncate_from(message_id)` 移除目标 user 消息及其后的旧分支，然后触发 `EditAndResubmitEvent`，payload 包含 `message_id`、`original_text`、`edited_text` 与 `removed_messages`，供宿主重发。
+  - 测试覆盖：新增 list/input 单测覆盖 user 文本提取（含多 text block 与非文本 block）、输入回填、提交后截断旧分支、事件 payload，以及配置专用编辑控制器后的 `Edit` 按钮行为。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P3.3 retry / regenerate** — `src/list.rs`：assistant 回合支持重生成（截断该回合后触发回调），与现有 `on_message_action` 的 Retry/Regenerate 打通。
 - [ ] **P3.4 快照与测试** — `snapshot_chat_app` 增加编辑/重发场景；PTY 覆盖编辑 user 后截断、retry 后回合截断、fork 后旧消息不再显示。
 - [ ] **P3.R Review：P3 阶段复核** — 逐条复核 P3.1–P3.4：确认截断不泄漏悬挂 block_id/版本、fork 后滚动与自动跟随正常、流式进行中编辑/重发的竞态被正确处理、回调契约清晰；确认 PTY 覆盖边界；跑通全套 CI。

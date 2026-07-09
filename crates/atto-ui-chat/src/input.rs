@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use atto_ui::composable::{
@@ -240,6 +241,40 @@ pub struct ChatMentionContext {
     pub cursor: usize,
     pub replacement_start: usize,
     pub replacement_end: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct ChatTextSubmitInterceptor {
+    callback: Arc<dyn Fn(String) -> bool + Send + Sync>,
+}
+
+impl ChatTextSubmitInterceptor {
+    pub(crate) fn new<F>(callback: F) -> Self
+    where
+        F: Fn(String) -> bool + Send + Sync + 'static,
+    {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    fn submit(&self, text: String) -> bool {
+        (self.callback)(text)
+    }
+}
+
+impl PartialEq for ChatTextSubmitInterceptor {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.callback, &other.callback)
+    }
+}
+
+impl Eq for ChatTextSubmitInterceptor {}
+
+impl fmt::Debug for ChatTextSubmitInterceptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ChatTextSubmitInterceptor(..)")
+    }
 }
 
 impl ChatMentionContext {
@@ -859,6 +894,7 @@ pub struct ChatInputHandle {
     selection: Property<usize>,
     enabled: Property<bool>,
     clear_on_submit: Property<bool>,
+    text_submit_interceptor: Property<Option<ChatTextSubmitInterceptor>>,
 }
 
 impl ChatInputHandle {
@@ -876,6 +912,7 @@ impl ChatInputHandle {
             selection: Property::new(0),
             enabled: Property::new(true),
             clear_on_submit: Property::new(true),
+            text_submit_interceptor: Property::new(None),
         }
     }
 
@@ -958,6 +995,10 @@ impl ChatInputHandle {
     pub fn clear_on_submit_binding(&self) -> Binding<bool> {
         self.clear_on_submit.binding()
     }
+
+    pub(crate) fn set_text_submit_interceptor(&self, interceptor: ChatTextSubmitInterceptor) {
+        self.text_submit_interceptor.set(Some(interceptor));
+    }
 }
 
 impl Default for ChatInputHandle {
@@ -1001,6 +1042,7 @@ pub struct ChatInputPanel {
     selection: Binding<usize>,
     enabled: Binding<bool>,
     clear_on_submit: Binding<bool>,
+    text_submit_interceptor: Binding<Option<ChatTextSubmitInterceptor>>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
     slash_commands_observer: DirtyObserver,
@@ -1023,6 +1065,7 @@ impl ChatInputPanel {
         let selection = handle.selection.binding();
         let enabled = handle.enabled.binding();
         let clear_on_submit = handle.clear_on_submit.binding();
+        let text_submit_interceptor = handle.text_submit_interceptor.binding();
         let slash_query = Binding::new(String::new());
         let slash_items = Binding::new(slash_completion_items(&slash_commands.get()));
         let slash_open = Binding::new(false);
@@ -1077,6 +1120,7 @@ impl ChatInputPanel {
             selection: selection.clone(),
             enabled: enabled.clone(),
             clear_on_submit: clear_on_submit.clone(),
+            text_submit_interceptor,
             view: ChatInputView::Text(Box::new(
                 TextArea::new("", draft.clone()).history(history.clone()),
             )),
@@ -1426,16 +1470,23 @@ impl ChatInputPanel {
     }
 
     fn emit_response(&mut self) -> bool {
-        let Some(cb) = &self.on_submit else {
-            return false;
-        };
-
         match self.mode.get() {
             ChatInputMode::Text(_) => {
                 let text = self.draft.get();
                 if text.trim().is_empty() {
                     return false;
                 }
+                if let Some(interceptor) = self.text_submit_interceptor.get()
+                    && interceptor.submit(text.clone())
+                {
+                    if self.clear_on_submit.get() {
+                        self.draft.set(String::new());
+                    }
+                    return true;
+                }
+                let Some(cb) = &self.on_submit else {
+                    return false;
+                };
                 cb(ChatInputResponse::Text(text.clone()));
                 if self.clear_on_submit.get() {
                     self.draft.set(String::new());
@@ -1443,6 +1494,9 @@ impl ChatInputPanel {
                 true
             }
             ChatInputMode::Choice(cfg) => {
+                let Some(cb) = &self.on_submit else {
+                    return false;
+                };
                 let custom = self.custom.get();
                 if cfg.allow_custom && !custom.trim().is_empty() {
                     cb(ChatInputResponse::Custom(custom.clone()));
@@ -1466,6 +1520,9 @@ impl ChatInputPanel {
                 true
             }
             ChatInputMode::Confirm(cfg) => {
+                let Some(cb) = &self.on_submit else {
+                    return false;
+                };
                 let custom = self.custom.get();
                 if cfg.allow_custom && !custom.trim().is_empty() {
                     cb(ChatInputResponse::Custom(custom.clone()));
