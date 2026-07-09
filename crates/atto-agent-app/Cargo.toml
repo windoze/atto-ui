@@ -1,0 +1,10 @@
+[package]
+name = "atto-agent-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+atto-ui = { path = "../.." }
+atto-ui-async = { path = "../atto-ui-async", default-features = false, features = ["event-stream", "tokio-runtime"] }
+atto-ui-chat = { path = "../atto-ui-chat" }

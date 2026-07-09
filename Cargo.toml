@@ -81,5 +81,6 @@ members = [
     "crates/atto-ui-python",
     "crates/atto-ui-node",
     "crates/atto-ui-file-tree",
+    "crates/atto-agent-app",
     "crates/atto-editor-app",
 ]

@@ -60,6 +60,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atto-agent-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atto-ui",
+ "atto-ui-async",
+ "atto-ui-chat",
+]
+
+[[package]]
 name = "atto-editor-app"
 version = "0.1.0"
 dependencies = [
