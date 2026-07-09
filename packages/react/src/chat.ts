@@ -393,6 +393,7 @@ function isDenyOption(value: string): boolean {
   const v = value.trim().toLowerCase()
   return (
     v === 'no' ||
+    v.split(/\s+/).some((part) => part === 'no') ||
     v.includes('deny') ||
     v.includes('reject') ||
     v.includes('decline') ||

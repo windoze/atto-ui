@@ -20,6 +20,7 @@
 | `Todo` | 待办列表（Pending/InProgress/Done） |
 | `Attachment` | 附件（名称/URL/mime） |
 | `Notice` | 通知（Info/Warning/Error） |
+| `Compact` | 上下文压缩进度/摘要（状态、前后 token、summary） |
 | `Artifact` | 工件锚点（Code/Diff/File） |
 
 元数据 `ChatMessageMeta`：timestamp / model / token usage / elapsed_ms / stop_reason。
@@ -31,7 +32,7 @@
 - 工具状态机：Pending/Running/Done/Error/Canceled
 
 ### 交互决策
-- 工具审批 `ApprovalRequest` + `ApprovalOption`
+- 工具审批 `ApprovalRequest` + `ApprovalOption`（含 allow/deny action 与 once/always/project level）
 - 编辑决策 Accept/Reject (`EditDecision`)
 - 计划决策 Accept/Reject (`PlanDecision`)
 
@@ -49,6 +50,7 @@
 - 四种输入模式：Text / Choice / Confirm / Custom
 - 输入历史记录 (history)
 - 可绑定的草稿/自定义回复
+- 斜杠命令补全、`@` 文件/资源提及补全、排队状态行、Esc 流式中断、多行粘贴规整
 
 ---
 
@@ -56,16 +58,16 @@
 
 ### A. 输入区交互（缺口最大，最影响"像不像"）
 
-- [ ] **A1. 斜杠命令补全** — `/` 触发命令菜单（`/clear`、`/model`、`/review`…）。当前无任何 slash/command_menu 实现。
-- [ ] **A2. @ 文件/资源提及补全** — 输入 `@` 弹出文件路径补全，mention 芯片渲染。当前无。
-- [ ] **A3. 输入排队 & Esc 中断语义** — 有取消按钮，但缺"流式中排队新消息 / 连按 Esc 打断"的状态机。
-- [ ] **A4. 多行编辑增强** — 粘贴多行、拖入文件路径转 attachment 等。
+- [x] **A1. 斜杠命令补全** — P2 已落地：`/` 触发命令菜单，支持宿主注入、过滤、选择、插入/提交回调，并同步运行时/JS/React。
+- [x] **A2. @ 文件/资源提及补全** — P2 已落地：输入 `@` 弹出文件/资源补全，provider 回调提供候选，确认后替换当前 token。
+- [x] **A3. 输入排队 & Esc 中断语义** — P4 已落地：流式中提交进入 FIFO 队列，流式完成后按 Enter 出队；未消费 Esc 走统一取消入口并置 `Canceled`。
+- [x] **A4. 多行编辑增强** — P4 已落地：多行/bracketed paste 规整为 LF，裁剪尾部空白行，保持正文缩进与光标/草稿同步。
 
 ### B. 渲染保真度
 
-- [ ] **B1. 代码块语法高亮** — markdown crate 无 syntect/tree-sitter 依赖，fenced code 按纯文本渲染。**视觉差距最明显。**
-- [ ] **B2. 图片/多模态** — 无 kitty/sixel/iterm graphics 协议支持，`Attachment` 无法内联显示图片。
-- [ ] **B3. diff 语法高亮** — 目前仅 +/- 行着色，无语法层面着色。
+- [x] **B1. 代码块语法高亮** — P1 已落地：`atto-ui-markdown` 采用 `syntect` 纯 Rust regex 路线，为 fenced code block 提供多语言高亮，未知语言回退纯文本。
+- [ ] **B2. 图片/多模态** — 仍明确不在当前计划范围内；无 kitty/sixel/iterm graphics 协议支持，`Attachment` 暂不内联显示图片。
+- [x] **B3. diff 语法高亮** — P1 已落地：chat diff payload 复用同一高亮器，且 +/- 增删语义色优先保留。
 
 #### P1.0 语法高亮方案选型
 
@@ -90,14 +92,14 @@
 
 ### C. 会话管理
 
-- [ ] **C1. 消息编辑/重发/回退** — store 只有 append/update，缺"截断到某条并 fork 重生成"。
-- [ ] **C2. 历史搜索** — 会话内搜索/跳转（类 Ctrl+R）。
-- [ ] **C3. Turn 级折叠 / 引用回复** — 块级折叠已有，turn 级折叠与引用未见。
+- [x] **C1. 消息编辑/重发/回退** — P3 已落地：store 支持 `truncate_from` / `fork_at`，user 编辑重发与 assistant retry/regenerate 均会截断旧分支。
+- [x] **C2. 历史搜索** — P5 已落地：`Ctrl+R` 会话内搜索、命中高亮、上一处/下一处跳转并支持屏外命中滚入视口。
+- [x] **C3. Turn 级折叠 / 引用回复** — P5 已落地：turn header 支持折叠/展开，占位显示隐藏块数；turn/block 可附加为下一条输入引用并移除。
 
 ### D. 细节层
 
-- [ ] **D1. 工具权限层级** — 只有一次性 `ApprovalOption`，缺 allow-once / always / 项目级权限 UI。
-- [ ] **D2. 上下文压缩块** — `NoticeLevel` 可显示提示，但无专门的 compact 进度/摘要块。
+- [x] **D1. 工具权限层级** — P6 已落地：`ApprovalOption`/`ApprovalResolution` 携带 action/level，渲染区显示一次/始终/项目级/拒绝选项，回调 payload 同步层级。
+- [x] **D2. 上下文压缩块** — P6 已落地：新增独立 `CompactBlock` / `CompactStatus`，渲染压缩状态、前后 token、节省量和摘要，并同步 dynamic/Node/core/React。
 
 ---
 
