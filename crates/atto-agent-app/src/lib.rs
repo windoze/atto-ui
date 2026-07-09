@@ -20,7 +20,7 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
     ChatBlockId, ChatBranchToken, ChatInputHandle, ChatInputResponse, ChatMessage, ChatMessageId,
-    ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus,
+    ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
 };
 use ratatui::layout::Rect;
 
@@ -28,6 +28,9 @@ pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
 const STATUS_READY: &str = "ready";
 const STATUS_STREAMING: &str = "streaming";
+const PLAN_MODE_OFF: &str = "plan: off";
+const PLAN_MODE_ON: &str = "plan: on";
+const PLAN_MODE_AUTO: &str = "plan: auto";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 
 #[derive(Clone, Debug)]
@@ -49,6 +52,7 @@ pub struct AgentApp {
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
+    plan_mode_state: Property<String>,
     chat_window_id: WindowId,
 }
 
@@ -63,6 +67,7 @@ impl AgentApp {
             ChatMessageStore::new(),
             ChatInputHandle::new(),
             Property::new(STATUS_READY.to_string()),
+            Property::new(PLAN_MODE_OFF.to_string()),
         )
     }
 
@@ -73,18 +78,21 @@ impl AgentApp {
         message_store: ChatMessageStore,
         input_handle: ChatInputHandle,
         status_state: Property<String>,
+        plan_mode_state: Property<String>,
     ) -> Self {
         let chat_panel = build_chat_panel(
             &message_store,
             &input_handle,
             status_state.clone(),
+            plan_mode_state.clone(),
             action_sender,
         );
 
         let mut desktop = Desktop::new(Theme::dark(), agent_menu(quit_events));
-        desktop
-            .status
-            .set_segments(status_segments(status_state.binding()));
+        desktop.status.set_segments(status_segments(
+            status_state.binding(),
+            plan_mode_state.binding(),
+        ));
 
         let chat_window_id = desktop.add_window(
             Window::new(
@@ -103,6 +111,7 @@ impl AgentApp {
             message_store,
             input_handle,
             status_state,
+            plan_mode_state,
             chat_window_id,
         }
     }
@@ -131,6 +140,10 @@ impl AgentApp {
         self.status_state.clone()
     }
 
+    pub fn plan_mode_state(&self) -> Property<String> {
+        self.plan_mode_state.clone()
+    }
+
     pub fn chat_window_id(&self) -> WindowId {
         self.chat_window_id
     }
@@ -145,9 +158,11 @@ pub fn run() -> Result<()> {
     let message_store = ChatMessageStore::new();
     let input_handle = ChatInputHandle::new();
     let status_state = Property::new(STATUS_READY.to_string());
+    let plan_mode_state = Property::new(PLAN_MODE_OFF.to_string());
     let message_store_for_build = message_store.clone();
     let input_handle_for_build = input_handle.clone();
     let status_state_for_build = status_state.clone();
+    let plan_mode_state_for_build = plan_mode_state.clone();
     let action_sender_for_build = action_sender.clone();
     let message_store_for_actions = message_store.clone();
     let input_handle_for_actions = input_handle.clone();
@@ -165,6 +180,7 @@ pub fn run() -> Result<()> {
                 message_store_for_build,
                 input_handle_for_build,
                 status_state_for_build,
+                plan_mode_state_for_build,
             )
             .into_desktop())
         },
@@ -193,21 +209,41 @@ fn build_chat_panel(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
     status_state: Property<String>,
+    plan_mode_state: Property<String>,
     action_sender: mpsc::Sender<AppAction>,
 ) -> ChatPanel {
     // Compose the reusable chat list and input controls around shared state handles.
     let list = ChatMessageList::new(store.clone()).show_timestamps(false);
     let store_for_submit = store.clone();
     let input_handle_for_submit = input_handle.clone();
-    let input = input_handle.panel().on_submit(move |response| {
-        submit_input_response(
-            &store_for_submit,
-            &input_handle_for_submit,
-            &status_state,
-            &action_sender,
-            response,
-        );
-    });
+    let status_for_submit = status_state.clone();
+    let plan_mode_for_submit = plan_mode_state.clone();
+    let store_for_slash = store.clone();
+    let input_handle_for_slash = input_handle.clone();
+    let status_for_slash = status_state.clone();
+    let plan_mode_for_slash = plan_mode_state.clone();
+    input_handle.set_slash_commands(agent_slash_commands());
+    let input = input_handle
+        .panel()
+        .on_submit(move |response| {
+            submit_input_response(
+                &store_for_submit,
+                &input_handle_for_submit,
+                &status_for_submit,
+                &plan_mode_for_submit,
+                &action_sender,
+                response,
+            );
+        })
+        .on_slash_command(move |command| {
+            let _ = submit_slash_command_text(
+                &store_for_slash,
+                &input_handle_for_slash,
+                &status_for_slash,
+                &plan_mode_for_slash,
+                &command.replacement,
+            );
+        });
     ChatPanel::new(list, input)
 }
 
@@ -215,11 +251,16 @@ fn submit_input_response(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
     status_state: &Property<String>,
+    plan_mode_state: &Property<String>,
     action_sender: &mpsc::Sender<AppAction>,
     response: ChatInputResponse,
 ) {
     let text = input_response_text(response);
     if text.trim().is_empty() {
+        return;
+    }
+
+    if submit_slash_command_text(store, input_handle, status_state, plan_mode_state, &text) {
         return;
     }
 
@@ -249,6 +290,193 @@ fn input_response_text(response: ChatInputResponse) -> String {
         ChatInputResponse::Text(text) | ChatInputResponse::Custom(text) => text,
         ChatInputResponse::Choice { label, .. } => label,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlanMode {
+    Off,
+    On,
+    Auto,
+}
+
+impl PlanMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "on" => Some(Self::On),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+
+    fn from_status(status: &str) -> Option<Self> {
+        status.strip_prefix("plan: ").and_then(Self::parse)
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Off => Self::On,
+            Self::On => Self::Auto,
+            Self::Auto => Self::Off,
+        }
+    }
+
+    fn status(self) -> &'static str {
+        match self {
+            Self::Off => PLAN_MODE_OFF,
+            Self::On => PLAN_MODE_ON,
+            Self::Auto => PLAN_MODE_AUTO,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+fn agent_slash_commands() -> Vec<ChatSlashCommand> {
+    vec![
+        ChatSlashCommand::new("/help")
+            .detail("Show available commands")
+            .submit_on_accept(),
+        ChatSlashCommand::new("/clear")
+            .detail("Clear the conversation")
+            .submit_on_accept(),
+        ChatSlashCommand::new("/plan")
+            .detail("Cycle plan mode, or type /plan on|off|auto")
+            .submit_on_accept(),
+        ChatSlashCommand::new("/skills")
+            .detail("List available skills")
+            .submit_on_accept(),
+        ChatSlashCommand::new("/tools")
+            .detail("List available tools")
+            .submit_on_accept(),
+        ChatSlashCommand::new("/abort")
+            .detail("Cancel the active mock turn")
+            .submit_on_accept(),
+    ]
+}
+
+fn submit_slash_command_text(
+    store: &ChatMessageStore,
+    input_handle: &ChatInputHandle,
+    status_state: &Property<String>,
+    plan_mode_state: &Property<String>,
+    text: &str,
+) -> bool {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return false;
+    };
+    let mut parts = rest.split_whitespace();
+    let Some(command) = parts.next().filter(|command| !command.is_empty()) else {
+        return false;
+    };
+    let args = parts.collect::<Vec<_>>();
+    let normalized = command.to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "help" => append_system_message(store, help_text()),
+        "clear" => clear_session(store, input_handle, status_state),
+        "plan" => apply_plan_command(store, plan_mode_state, &args),
+        "skills" => append_system_message(store, skills_text()),
+        "tools" => append_system_message(store, tools_text()),
+        "abort" => apply_abort_command(store, input_handle, status_state),
+        _ => append_system_message(
+            store,
+            format!("Unknown slash command `/{command}`. Type `/help` for available commands."),
+        ),
+    }
+    true
+}
+
+fn append_system_message(store: &ChatMessageStore, text: impl Into<String>) {
+    let message_id = store.next_message_id();
+    store.push(ChatMessage::text(message_id, ChatRole::System, text.into()));
+}
+
+fn clear_session(
+    store: &ChatMessageStore,
+    input_handle: &ChatInputHandle,
+    status_state: &Property<String>,
+) {
+    store.replace_all(Vec::new());
+    input_handle.streaming_binding().set(false);
+    input_handle.clear_queued_responses();
+    input_handle.clear_references();
+    status_state.set(STATUS_READY.to_string());
+}
+
+fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<String>, args: &[&str]) {
+    let current = PlanMode::from_status(&plan_mode_state.get()).unwrap_or(PlanMode::Off);
+    let next = match args {
+        [] => Some(current.next()),
+        [value] => PlanMode::parse(value),
+        _ => None,
+    };
+    let Some(next) = next else {
+        append_system_message(store, "Usage: /plan [on|off|auto]");
+        return;
+    };
+
+    plan_mode_state.set(next.status().to_string());
+    append_system_message(store, format!("Plan mode set to {}.", next.label()));
+}
+
+fn apply_abort_command(
+    store: &ChatMessageStore,
+    input_handle: &ChatInputHandle,
+    status_state: &Property<String>,
+) {
+    if cancel_latest_streaming_turn(store, input_handle, status_state) {
+        append_system_message(store, "Aborted active turn.");
+    } else {
+        append_system_message(store, "No active turn to abort.");
+    }
+}
+
+fn cancel_latest_streaming_turn(
+    store: &ChatMessageStore,
+    input_handle: &ChatInputHandle,
+    status_state: &Property<String>,
+) -> bool {
+    let mut messages = store.messages();
+    let Some(message) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| message.status.is_streaming())
+    else {
+        return false;
+    };
+
+    // Replacing the transcript after marking the turn canceled advances the branch token.
+    message.set_turn_status(ChatTurnStatus::Canceled);
+    store.replace_all(messages);
+    input_handle.streaming_binding().set(false);
+    status_state.set(STATUS_READY.to_string());
+    true
+}
+
+fn help_text() -> &'static str {
+    "Available commands:\n\
+- /help: Show this help.\n\
+- /clear: Clear the current conversation and keep app configuration.\n\
+- /plan [on|off|auto]: Cycle or set the basic plan mode state.\n\
+- /skills: List available skills.\n\
+- /tools: List available tools and approval policy.\n\
+- /abort: Cancel the active mock turn."
+}
+
+fn skills_text() -> &'static str {
+    "Skills: none registered yet. Skill registry integration is scheduled for M4."
+}
+
+fn tools_text() -> &'static str {
+    "Tools: none registered in the M1 mock provider. Tool registry and approvals are scheduled for M3."
 }
 
 fn spawn_mock_agent_turn(
@@ -320,7 +548,7 @@ fn agent_menu(quit_events: EventQueue<()>) -> MenuBar {
     )])
 }
 
-fn status_segments(state: Binding<String>) -> Vec<StatusSegment> {
+fn status_segments(state: Binding<String>, plan_mode: Binding<String>) -> Vec<StatusSegment> {
     // Keep provider static in M1 while binding runtime state to the mock turn lifecycle.
     vec![
         StatusSegment::new("app", APP_TITLE)
@@ -329,14 +557,17 @@ fn status_segments(state: Binding<String>) -> Vec<StatusSegment> {
         StatusSegment::new("provider", "provider: mock")
             .priority(80)
             .min_width(14),
+        StatusSegment::new("plan", plan_mode)
+            .priority(75)
+            .min_width(9),
         StatusSegment::new("state", state)
             .align(StatusSegmentAlign::Right)
             .priority(90)
             .min_width(9),
-        StatusSegment::new("keys", "Ctrl+Q quit")
+        StatusSegment::new("keys", "Esc cancel | Ctrl+Q quit | /help")
             .align(StatusSegmentAlign::Right)
             .priority(70)
-            .min_width(11),
+            .min_width(28),
     ]
 }
 
@@ -357,13 +588,13 @@ fn chat_window_rect(screen: Rect) -> Rect {
 mod tests {
     use atto_ui_chat::{
         ChatBlock, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatTurnStatus,
+        ChatSlashCommandAction, ChatTurnStatus,
     };
     use ratatui::layout::Rect;
 
     use super::{
-        APP_TITLE, AgentApp, AppAction, STATUS_READY, STATUS_STREAMING, apply_app_action,
-        submit_input_response,
+        APP_TITLE, AgentApp, AppAction, PLAN_MODE_AUTO, PLAN_MODE_OFF, PLAN_MODE_ON, STATUS_READY,
+        STATUS_STREAMING, apply_app_action, submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -392,6 +623,7 @@ mod tests {
 
         assert!(app.message_store().messages().is_empty());
         assert_eq!(app.status_state().get(), STATUS_READY);
+        assert_eq!(app.plan_mode_state().get(), PLAN_MODE_OFF);
         match app.input_handle().mode() {
             ChatInputMode::Text(config) => {
                 assert_eq!(config.title, "Message");
@@ -402,16 +634,197 @@ mod tests {
     }
 
     #[test]
+    fn injects_submit_slash_commands() {
+        let app = AgentApp::new(Rect::new(0, 0, 80, 24));
+        let commands = app.input_handle().slash_commands();
+        let labels = commands
+            .iter()
+            .map(|command| command.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec!["/help", "/clear", "/plan", "/skills", "/tools", "/abort"]
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|command| command.action == ChatSlashCommandAction::Submit)
+        );
+    }
+
+    #[test]
+    fn help_slash_command_outputs_available_commands_without_starting_turn() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/help",
+        ));
+
+        let messages = store.messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, ChatRole::System);
+        assert!(message_text(&messages[0]).contains("/clear"));
+        assert!(message_text(&messages[0]).contains("/abort"));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn clear_slash_command_removes_messages_and_resets_runtime_state() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_ON.to_string());
+        input_handle.streaming_binding().set(true);
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "seed",
+        ));
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/clear",
+        ));
+
+        assert!(store.messages().is_empty());
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert_eq!(plan_mode_state.get(), PLAN_MODE_ON);
+    }
+
+    #[test]
+    fn plan_slash_command_sets_and_cycles_plan_mode() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/plan on",
+        ));
+        assert_eq!(plan_mode_state.get(), PLAN_MODE_ON);
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/plan auto",
+        ));
+        assert_eq!(plan_mode_state.get(), PLAN_MODE_AUTO);
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/plan",
+        ));
+        assert_eq!(plan_mode_state.get(), PLAN_MODE_OFF);
+
+        let messages = store.messages();
+        assert!(message_text(&messages[0]).contains("Plan mode set to on."));
+        assert!(message_text(&messages[1]).contains("Plan mode set to auto."));
+        assert!(message_text(&messages[2]).contains("Plan mode set to off."));
+    }
+
+    #[test]
+    fn skills_and_tools_slash_commands_report_empty_m1_registries() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/skills",
+        ));
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/tools",
+        ));
+
+        let messages = store.messages();
+        assert!(message_text(&messages[0]).contains("Skills: none registered"));
+        assert!(message_text(&messages[1]).contains("Tools: none registered"));
+    }
+
+    #[test]
+    fn abort_slash_command_cancels_latest_streaming_turn_and_rejects_late_tokens() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let stale_branch = store.branch_token();
+
+        assert!(submit_slash_command_text(
+            &store,
+            &input_handle,
+            &status_state,
+            &plan_mode_state,
+            "/abort",
+        ));
+
+        let messages = store.messages();
+        assert_eq!(messages[0].status, ChatTurnStatus::Canceled);
+        assert_eq!(messages[1].role, ChatRole::System);
+        assert!(message_text(&messages[1]).contains("Aborted active turn."));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert!(!apply_app_action(
+            &store,
+            &input_handle,
+            &status_state,
+            AppAction::AssistantDelta {
+                branch: stale_branch,
+                block_id,
+                delta: "late".to_string(),
+            },
+        ));
+        assert_eq!(message_text(&store.messages()[0]), "");
+    }
+
+    #[test]
     fn text_submit_adds_user_and_streaming_assistant_turn() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
 
         submit_input_response(
             &store,
             &input_handle,
             &status_state,
+            &plan_mode_state,
             &sender,
             ChatInputResponse::Text("hello".to_string()),
         );
