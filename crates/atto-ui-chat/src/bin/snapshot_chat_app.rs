@@ -906,18 +906,9 @@ fn seed_inline_approval_messages(store: &ChatMessageStore) {
                 id: "approval-inline".to_string(),
                 prompt: "Run INLINE-APPROVAL-COMMAND?".to_string(),
                 options: vec![
-                    ApprovalOption {
-                        id: "allow_once".to_string(),
-                        label: "Allow once".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "allow_always".to_string(),
-                        label: "Allow always".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "deny".to_string(),
-                        label: "Deny".to_string(),
-                    },
+                    ApprovalOption::allow_once("allow_once", "Allow once"),
+                    ApprovalOption::allow_always("allow_always", "Allow always"),
+                    ApprovalOption::deny("deny", "Deny"),
                 ],
                 resolved: None,
             }),

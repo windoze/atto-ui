@@ -5,9 +5,9 @@ use std::sync::{Arc, RwLock};
 use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
-    ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta,
-    ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus, TaskTranscriptItem, TodoItem,
-    ToolResultBlock, ToolStatus,
+    ApprovalAction, ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId,
+    ChatMessageMeta, ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus,
+    TaskTranscriptItem, TodoItem, ToolResultBlock, ToolStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -537,18 +537,20 @@ impl ChatMessageStore {
             let Some(approval) = &mut tool.approval else {
                 return false;
             };
-            let Some(next_status) = approval
+            let Some(option) = approval
                 .options
                 .iter()
                 .find(|option| option.id == option_id)
-                .map(approval_option_status)
+                .cloned()
             else {
                 return false;
             };
+            let next_status = approval_option_status(&option);
+            let resolution = option.resolution();
             found_approval = true;
             let mut changed = false;
-            if approval.resolved.as_deref() != Some(option_id.as_str()) {
-                approval.resolved = Some(option_id);
+            if approval.resolved.as_ref() != Some(&resolution) {
+                approval.resolved = Some(resolution);
                 changed = true;
             }
 
@@ -791,22 +793,10 @@ fn bump_counter(counter: &AtomicU64, next: u64) {
 }
 
 fn approval_option_status(option: &ApprovalOption) -> ToolStatus {
-    let id = option.id.trim().to_ascii_lowercase();
-    let label = option.label.trim().to_ascii_lowercase();
-    if is_deny_approval_option(&id) || is_deny_approval_option(&label) {
-        ToolStatus::Canceled
-    } else {
-        ToolStatus::Running
+    match option.action {
+        ApprovalAction::Allow => ToolStatus::Running,
+        ApprovalAction::Deny => ToolStatus::Canceled,
     }
-}
-
-fn is_deny_approval_option(value: &str) -> bool {
-    value == "no"
-        || value.contains("deny")
-        || value.contains("reject")
-        || value.contains("decline")
-        || value.contains("cancel")
-        || value.contains("stop")
 }
 
 fn tool_status_can_advance(current: ToolStatus, next: ToolStatus) -> bool {
@@ -827,9 +817,9 @@ impl Default for ChatMessageStore {
 mod tests {
     use super::*;
     use crate::message::{
-        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock,
-        TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput,
-        ToolOutput, ToolUseBlock,
+        ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
+        ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock, TaskStatus, TaskTranscriptItem,
+        TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
     };
 
     fn block_id_for(
@@ -885,6 +875,21 @@ mod tests {
                 _ => panic!("expected tool result block"),
             })
             .expect("tool result block should exist")
+    }
+
+    fn approval_resolution_for(
+        store: &ChatMessageStore,
+        id: ChatBlockId,
+    ) -> Option<ApprovalResolution> {
+        store
+            .with_block(id, |block| match block {
+                ChatBlock::ToolUse(tool) => tool
+                    .approval
+                    .as_ref()
+                    .and_then(|approval| approval.resolved.clone()),
+                _ => panic!("expected tool use block"),
+            })
+            .expect("tool use block should exist")
     }
 
     fn message_ids(store: &ChatMessageStore) -> Vec<ChatMessageId> {
@@ -1446,14 +1451,8 @@ mod tests {
                         id: "approval-1".to_string(),
                         prompt: "Run command?".to_string(),
                         options: vec![
-                            ApprovalOption {
-                                id: "allow".to_string(),
-                                label: "Allow".to_string(),
-                            },
-                            ApprovalOption {
-                                id: "deny".to_string(),
-                                label: "Deny".to_string(),
-                            },
+                            ApprovalOption::allow_once("allow", "Allow"),
+                            ApprovalOption::deny("deny", "Deny"),
                         ],
                         resolved: None,
                     }),
@@ -1584,10 +1583,7 @@ mod tests {
                 approval: Some(ApprovalRequest {
                     id: "approval-deny".to_string(),
                     prompt: "Run command?".to_string(),
-                    options: vec![ApprovalOption {
-                        id: "deny".to_string(),
-                        label: "Deny".to_string(),
-                    }],
+                    options: vec![ApprovalOption::deny("deny", "Deny")],
                     resolved: None,
                 }),
                 collapsed: false,
@@ -1597,5 +1593,87 @@ mod tests {
         assert!(store.resolve_approval(approval_id, "deny"));
 
         assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Canceled);
+    }
+
+    #[test]
+    fn resolve_approval_records_structured_action_and_level() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let approval_id = ChatBlockId::new(21);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: approval_id,
+                call_id: "call-project".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("cargo test".to_string()),
+                status: ToolStatus::Pending,
+                approval: Some(ApprovalRequest {
+                    id: "approval-project".to_string(),
+                    prompt: "Run project command?".to_string(),
+                    options: vec![ApprovalOption::allow_project(
+                        "allow_project",
+                        "Allow for project",
+                    )],
+                    resolved: None,
+                }),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.resolve_approval(approval_id, "allow_project"));
+
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Running);
+        assert_eq!(
+            approval_resolution_for(&store, approval_id),
+            Some(ApprovalResolution {
+                option_id: "allow_project".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Project,
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_approval_uses_explicit_action_instead_of_label_heuristics() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let approval_id = ChatBlockId::new(22);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: approval_id,
+                call_id: "call-structured".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("cargo clippy".to_string()),
+                status: ToolStatus::Pending,
+                approval: Some(ApprovalRequest {
+                    id: "approval-structured".to_string(),
+                    prompt: "Run structured command?".to_string(),
+                    options: vec![ApprovalOption::new(
+                        "remember",
+                        "Stop asking for this command",
+                        ApprovalAction::Allow,
+                        ApprovalLevel::Always,
+                    )],
+                    resolved: None,
+                }),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.resolve_approval(approval_id, "remember"));
+
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Running);
+        assert_eq!(
+            approval_resolution_for(&store, approval_id),
+            Some(ApprovalResolution {
+                option_id: "remember".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Always,
+            })
+        );
     }
 }

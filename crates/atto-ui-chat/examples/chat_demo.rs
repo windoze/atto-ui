@@ -577,18 +577,9 @@ fn seed_approval(store: &ChatMessageStore) {
                 id: "approval-rm".to_string(),
                 prompt: "是否允许执行 `rm -rf target/`?".to_string(),
                 options: vec![
-                    ApprovalOption {
-                        id: "allow_once".to_string(),
-                        label: "仅此一次".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "allow_always".to_string(),
-                        label: "总是允许".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "deny".to_string(),
-                        label: "拒绝".to_string(),
-                    },
+                    ApprovalOption::allow_once("allow_once", "仅此一次"),
+                    ApprovalOption::allow_always("allow_always", "总是允许"),
+                    ApprovalOption::deny("deny", "拒绝"),
                 ],
                 resolved: None,
             }),

@@ -31,12 +31,13 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
 use crate::input::{ChatInputHandle, ChatInputReference, ChatTextSubmitInterceptor};
 use crate::message::{
-    ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
-    ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
-    ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
-    NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus,
-    TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
-    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
+    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
+    ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole,
+    ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, PlanBlock,
+    PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
+    ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 
@@ -95,6 +96,8 @@ pub struct ApprovalDecision {
     pub block_id: ChatBlockId,
     pub approval_id: String,
     pub option_id: String,
+    pub action: ApprovalAction,
+    pub level: ApprovalLevel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3976,6 +3979,8 @@ fn build_tool_use_details_stack(
                 block_id,
                 approval_id: approval.id.clone(),
                 option_id: option.id.clone(),
+                action: option.action,
+                level: option.level,
             };
             let callback = on_approve.clone();
             button = button.on_click(move || {
@@ -4002,20 +4007,20 @@ fn build_tool_use_details_stack(
 }
 
 fn approval_option_button_label(approval: &ApprovalRequest, option: &ApprovalOption) -> String {
-    match approval.resolved.as_deref() {
-        Some(resolved) if resolved == option.id => format!("[x] {}", option.label),
+    match approval.resolved.as_ref() {
+        Some(resolved) if resolved.option_id == option.id => format!("[x] {}", option.label),
         Some(_) => format!("[ ] {}", option.label),
         None => option.label.clone(),
     }
 }
 
-fn approval_resolved_label(approval: &ApprovalRequest, resolved: &str) -> String {
+fn approval_resolved_label(approval: &ApprovalRequest, resolved: &ApprovalResolution) -> String {
     let label = approval
         .options
         .iter()
-        .find(|option| option.id == resolved)
+        .find(|option| option.id == resolved.option_id)
         .map(|option| option.label.as_str())
-        .unwrap_or(resolved);
+        .unwrap_or(resolved.option_id.as_str());
     format!("[x] {label}")
 }
 
@@ -8943,10 +8948,7 @@ mod tests {
             approval: Some(ApprovalRequest {
                 id: "approval-1".to_string(),
                 prompt: "Run tests?".to_string(),
-                options: vec![ApprovalOption {
-                    id: "allow_always".to_string(),
-                    label: "Allow always".to_string(),
-                }],
+                options: vec![ApprovalOption::allow_always("allow_always", "Allow always")],
                 resolved: None,
             }),
         };
@@ -8974,6 +8976,8 @@ mod tests {
                 block_id,
                 approval_id: "approval-1".to_string(),
                 option_id: "allow_always".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Always,
             }]
         );
 
@@ -8982,11 +8986,12 @@ mod tests {
             approval: Some(ApprovalRequest {
                 id: "approval-1".to_string(),
                 prompt: "Run tests?".to_string(),
-                options: vec![ApprovalOption {
-                    id: "allow_always".to_string(),
-                    label: "Allow always".to_string(),
-                }],
-                resolved: Some("allow_always".to_string()),
+                options: vec![ApprovalOption::allow_always("allow_always", "Allow always")],
+                resolved: Some(ApprovalResolution {
+                    option_id: "allow_always".to_string(),
+                    action: ApprovalAction::Allow,
+                    level: ApprovalLevel::Always,
+                }),
             }),
         };
         let locked_view = ToolUseDetailsView::new(

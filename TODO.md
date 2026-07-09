@@ -169,7 +169,12 @@
 
 参考 `AGENT_GAP.md` D1、D2。涉及模型变更，需同步运行时/JS 侧。
 
-- [ ] **P6.1 工具权限层级模型** — `src/message.rs` + `src/store.rs`：`ApprovalRequest`/`ApprovalOption` 扩展支持 allow-once / always / 项目级等层级语义；决策回调携带层级；`resolve_approval` 相应扩展；补单测。
+- [x] **[DONE] P6.1 工具权限层级模型** — `src/message.rs` + `src/store.rs`：`ApprovalRequest`/`ApprovalOption` 扩展支持 allow-once / always / 项目级等层级语义；决策回调携带层级；`resolve_approval` 相应扩展；补单测。
+  - 完成记录（2026-07-10）：`ApprovalRequest` 现在通过 `ApprovalResolution` 记录已选 option、`ApprovalAction` 与 `ApprovalLevel`；`ApprovalOption` 显式携带 allow/deny action 与 once/always/project level，并提供 allow-once / allow-always / project / deny 构造器和旧 id/label 推断入口。
+  - store 语义：`ChatMessageStore::resolve_approval` 校验 option 后写入结构化 resolution，工具状态推进改为基于显式 action（allow -> `Running`，deny -> `Canceled`），不再依赖 option id/label 字符串启发式；重复选择相同 resolution 继续保持“不发脏”约定。
+  - 回调与适配：Rust `ApprovalDecision` 增加 `action` 与 `level`；动态层做最小 Rust 适配，approval option/decision payload 附加 action/level，旧 `resolved` 字符串和旧 option id/label 输入仍可解析，完整 Node/React/schema 同步留给 P6.4。
+  - 测试覆盖：新增模型单测覆盖旧 option 推断；新增 store 单测覆盖项目级 allow、显式 action/level resolution、以及显式 allow action 优先于旧字符串启发式；更新 list/dynamic approval 单测断言回调携带 action/level。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat approval --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P6.2 权限层级渲染** — `src/list.rs`：审批区渲染分层选项（一次允许/始终允许/项目级/拒绝等），选择后状态锁定并显示已选层级。
 - [ ] **P6.3 上下文压缩块** — `src/message.rs` + `src/list.rs`：新增专门的 compact 块类型（或扩展 `Notice`），展示压缩进度/前后 token/摘要，视觉区别于普通通知。
 - [ ] **P6.4 运行时/JS 侧同步** — `src/dynamic.rs`：模型变更同步序列化 + schema（保留旧形兼容）；同步 `crates/atto-ui-node`、`packages/core`、`packages/react` 类型/构造器，更新 `docs/NODE_API.md`；跑 smoke 与 runtime 兼容测试。

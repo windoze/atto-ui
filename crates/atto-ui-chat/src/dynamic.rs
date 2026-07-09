@@ -16,14 +16,14 @@ use crate::input::{
     parse_chat_mention_candidates_value, parse_chat_slash_commands_value,
 };
 use crate::{
-    ApprovalDecision, ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind,
-    AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
-    ChatInputPanel, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore,
-    ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction,
-    MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent,
-    PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock,
-    TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest,
+    ApprovalResolution, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatBlock,
+    ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle, ChatInputPanel, ChatMessage,
+    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatRole, ChatTurnStatus,
+    DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction, MessageActionKind,
+    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
+    TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
+    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -415,7 +415,24 @@ fn approval_to_value(approval: &ApprovalRequest) -> ComponentValue {
                 .collect(),
         ),
     );
-    insert_optional_string(&mut map, "resolved", approval.resolved.as_deref());
+    insert_optional_string(
+        &mut map,
+        "resolved",
+        approval
+            .resolved
+            .as_ref()
+            .map(|resolved| resolved.option_id.as_str()),
+    );
+    if let Some(resolved) = &approval.resolved {
+        map.insert(
+            "resolved_action".to_string(),
+            ComponentValue::String(resolved.action.as_str().to_string()),
+        );
+        map.insert(
+            "resolved_level".to_string(),
+            ComponentValue::String(resolved.level.as_str().to_string()),
+        );
+    }
     ComponentValue::Map(map)
 }
 
@@ -425,6 +442,14 @@ fn approval_option_to_value(option: &ApprovalOption) -> ComponentValue {
     map.insert(
         "label".to_string(),
         ComponentValue::String(option.label.clone()),
+    );
+    map.insert(
+        "action".to_string(),
+        ComponentValue::String(option.action.as_str().to_string()),
+    );
+    map.insert(
+        "level".to_string(),
+        ComponentValue::String(option.level.as_str().to_string()),
     );
     ComponentValue::Map(map)
 }
@@ -446,6 +471,14 @@ fn approval_decision_to_value(decision: ApprovalDecision) -> ComponentValue {
     map.insert(
         "option_id".to_string(),
         ComponentValue::String(decision.option_id),
+    );
+    map.insert(
+        "action".to_string(),
+        ComponentValue::String(decision.action.as_str().to_string()),
+    );
+    map.insert(
+        "level".to_string(),
+        ComponentValue::String(decision.level.as_str().to_string()),
     );
     ComponentValue::Map(map)
 }
@@ -1122,15 +1155,36 @@ fn parse_tool_output_value(value: &ComponentValue) -> Result<ToolOutput, String>
 
 fn parse_approval_value(value: &ComponentValue) -> Result<ApprovalRequest, String> {
     let map = expect_map(value, "approval")?;
+    let options = map
+        .get("options")
+        .map(parse_approval_options_value)
+        .transpose()?
+        .unwrap_or_default();
+    let resolved_action = map
+        .get("resolved_action")
+        .map(parse_approval_action_value)
+        .transpose()?;
+    let resolved_level = map
+        .get("resolved_level")
+        .map(parse_approval_level_value)
+        .transpose()?;
+    let resolved = optional_string_field(map, "resolved", "approval")?.map(|option_id| {
+        let option = options.iter().find(|option| option.id == option_id);
+        ApprovalResolution {
+            option_id,
+            action: resolved_action
+                .or_else(|| option.map(|option| option.action))
+                .unwrap_or_default(),
+            level: resolved_level
+                .or_else(|| option.map(|option| option.level))
+                .unwrap_or_default(),
+        }
+    });
     Ok(ApprovalRequest {
         id: required_string_field(map, "id", "approval")?,
         prompt: required_string_field(map, "prompt", "approval")?,
-        options: map
-            .get("options")
-            .map(parse_approval_options_value)
-            .transpose()?
-            .unwrap_or_default(),
-        resolved: optional_string_field(map, "resolved", "approval")?,
+        options,
+        resolved,
     })
 }
 
@@ -1143,10 +1197,43 @@ fn parse_approval_options_value(value: &ComponentValue) -> Result<Vec<ApprovalOp
 
 fn parse_approval_option_value(value: &ComponentValue) -> Result<ApprovalOption, String> {
     let map = expect_map(value, "approval option")?;
-    Ok(ApprovalOption {
-        id: required_string_field(map, "id", "approval option")?,
-        label: required_string_field(map, "label", "approval option")?,
-    })
+    let id = required_string_field(map, "id", "approval option")?;
+    let label = required_string_field(map, "label", "approval option")?;
+    let legacy = ApprovalOption::from_legacy(id.clone(), label.clone());
+    let action = map
+        .get("action")
+        .map(parse_approval_action_value)
+        .transpose()?
+        .unwrap_or(legacy.action);
+    let level = map
+        .get("level")
+        .map(parse_approval_level_value)
+        .transpose()?
+        .unwrap_or(legacy.level);
+    Ok(ApprovalOption::new(id, label, action, level))
+}
+
+fn parse_approval_action_value(value: &ComponentValue) -> Result<ApprovalAction, String> {
+    let ComponentValue::String(raw) = value else {
+        return Err(format!("approval action must be string, got {value:?}"));
+    };
+    match raw.as_str() {
+        "allow" => Ok(ApprovalAction::Allow),
+        "deny" => Ok(ApprovalAction::Deny),
+        _ => Err(format!("unknown approval action: {raw}")),
+    }
+}
+
+fn parse_approval_level_value(value: &ComponentValue) -> Result<ApprovalLevel, String> {
+    let ComponentValue::String(raw) = value else {
+        return Err(format!("approval level must be string, got {value:?}"));
+    };
+    match raw.as_str() {
+        "once" => Ok(ApprovalLevel::Once),
+        "always" => Ok(ApprovalLevel::Always),
+        "project" => Ok(ApprovalLevel::Project),
+        _ => Err(format!("unknown approval level: {raw}")),
+    }
 }
 
 fn parse_todo_items_value(value: &ComponentValue) -> Result<Vec<TodoItem>, String> {
@@ -1832,6 +1919,8 @@ mod tests {
             block_id: ChatBlockId::new(20),
             approval_id: "approval-1".to_string(),
             option_id: "allow_always".to_string(),
+            action: ApprovalAction::Allow,
+            level: ApprovalLevel::Always,
         });
 
         assert_eq!(
@@ -1847,6 +1936,8 @@ mod tests {
                     "option_id",
                     ComponentValue::String("allow_always".to_string())
                 ),
+                ("action", ComponentValue::String("allow".to_string())),
+                ("level", ComponentValue::String("always".to_string())),
             ])
         );
     }
@@ -1975,11 +2066,12 @@ mod tests {
                     approval: Some(ApprovalRequest {
                         id: "approval-1".to_string(),
                         prompt: "Run command?".to_string(),
-                        options: vec![ApprovalOption {
-                            id: "allow".to_string(),
-                            label: "Allow".to_string(),
-                        }],
-                        resolved: Some("allow".to_string()),
+                        options: vec![ApprovalOption::allow_once("allow", "Allow")],
+                        resolved: Some(ApprovalResolution {
+                            option_id: "allow".to_string(),
+                            action: ApprovalAction::Allow,
+                            level: ApprovalLevel::Once,
+                        }),
                     }),
                     collapsed: true,
                 }),
