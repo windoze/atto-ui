@@ -9,7 +9,9 @@
 - [x] **[DONE] M1.1 新建 `crates/atto-agent-app`** - 创建 crate、加入 workspace、配置依赖 `atto-ui` / `atto-ui-chat` / `atto-ui-async`，保持 `atto-ui` 和 `atto-ui-chat` 不新增网络依赖。
   - 完成记录（2026-07-10）：新增 `crates/atto-agent-app` workspace 成员，添加最小 library/binary 入口和 skeleton 单测；依赖仅配置在 app crate，未修改 `atto-ui` / `atto-ui-chat` 的依赖。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M1.2 组装基础 TUI** - 创建 `Desktop`、状态栏、单窗口 `ChatPanel`，初始化 `ChatMessageStore` 和 `ChatInputHandle`。
+- [x] **[DONE] M1.2 组装基础 TUI** - 创建 `Desktop`、状态栏、单窗口 `ChatPanel`，初始化 `ChatMessageStore` 和 `ChatInputHandle`。
+  - 完成记录（2026-07-10）：新增 `AgentApp` 构建器，组装 `Desktop`、File/Quit 菜单、自定义状态栏、单个 `ChatPanel` 窗口，并保留 `ChatMessageStore` / `ChatInputHandle` 句柄供后续 turn loop 使用；`run()` 现在启动 crossterm TUI。
+  - 验证：`cargo fmt --all`；`cargo clippy --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 - [ ] **M1.3 输入提交闭环** - `on_submit` 写入 user message，启动后台 mock agent turn，通过 `AppAction` 在主线程追加 assistant 流式文本。
 - [ ] **M1.4 Slash 命令** - 注入 `/help`、`/clear`、`/plan`、`/skills`、`/tools`、`/abort`，实现基础状态变更和帮助输出。
 - [ ] **M1.5 取消语义** - 接入 `on_cancel` 和 Esc，取消 mock turn，assistant turn 显示 `Canceled`，迟到 token 不污染新分支。
