@@ -4007,10 +4007,11 @@ fn build_tool_use_details_stack(
 }
 
 fn approval_option_button_label(approval: &ApprovalRequest, option: &ApprovalOption) -> String {
+    let label = approval_option_display_label(option);
     match approval.resolved.as_ref() {
-        Some(resolved) if resolved.option_id == option.id => format!("[x] {}", option.label),
-        Some(_) => format!("[ ] {}", option.label),
-        None => option.label.clone(),
+        Some(resolved) if resolved.option_id == option.id => format!("[x] {label}"),
+        Some(_) => format!("[ ] {label}"),
+        None => label,
     }
 }
 
@@ -4021,7 +4022,60 @@ fn approval_resolved_label(approval: &ApprovalRequest, resolved: &ApprovalResolu
         .find(|option| option.id == resolved.option_id)
         .map(|option| option.label.as_str())
         .unwrap_or(resolved.option_id.as_str());
+    let label = approval_label_with_scope(label, resolved.action, resolved.level);
     format!("[x] {label}")
+}
+
+fn approval_option_display_label(option: &ApprovalOption) -> String {
+    approval_label_with_scope(&option.label, option.action, option.level)
+}
+
+fn approval_label_with_scope(label: &str, action: ApprovalAction, level: ApprovalLevel) -> String {
+    if approval_label_mentions_scope(label, action, level) {
+        label.to_string()
+    } else {
+        format!("{label} · {}", approval_scope_label(action, level))
+    }
+}
+
+fn approval_scope_label(action: ApprovalAction, level: ApprovalLevel) -> &'static str {
+    match (action, level) {
+        (ApprovalAction::Allow, ApprovalLevel::Once) => "once",
+        (ApprovalAction::Allow, ApprovalLevel::Always) => "always",
+        (ApprovalAction::Allow, ApprovalLevel::Project) => "project",
+        (ApprovalAction::Deny, ApprovalLevel::Once) => "deny",
+        (ApprovalAction::Deny, ApprovalLevel::Always) => "deny always",
+        (ApprovalAction::Deny, ApprovalLevel::Project) => "deny project",
+    }
+}
+
+fn approval_label_mentions_scope(
+    label: &str,
+    action: ApprovalAction,
+    level: ApprovalLevel,
+) -> bool {
+    let normalized = label.to_ascii_lowercase();
+    match action {
+        ApprovalAction::Allow => match level {
+            ApprovalLevel::Once => {
+                normalized.contains("once")
+                    || normalized.contains("one-time")
+                    || normalized.contains("one time")
+            }
+            ApprovalLevel::Always => normalized.contains("always"),
+            ApprovalLevel::Project => {
+                normalized.contains("project") || normalized.contains("workspace")
+            }
+        },
+        ApprovalAction::Deny => {
+            normalized.split_whitespace().any(|part| part == "no")
+                || normalized.contains("deny")
+                || normalized.contains("reject")
+                || normalized.contains("decline")
+                || normalized.contains("cancel")
+                || normalized.contains("stop")
+        }
+    }
 }
 
 fn button_width_for_label(label: &str) -> u16 {
@@ -8994,7 +9048,7 @@ mod tests {
                 }),
             }),
         };
-        let locked_view = ToolUseDetailsView::new(
+        let mut locked_view = ToolUseDetailsView::new(
             Binding::new(locked),
             message_id,
             block_id,
@@ -9002,6 +9056,57 @@ mod tests {
         );
 
         assert!(!locked_view.is_focusable());
+        let (lines, _) = draw_component_snapshot(&mut locked_view, 80, 6);
+        assert!(lines.iter().any(|line| line.contains("[x] Allow always")));
+    }
+
+    #[test]
+    fn approval_options_render_structured_permission_levels() {
+        let approval = ApprovalRequest {
+            id: "approval-levels".to_string(),
+            prompt: "Run command?".to_string(),
+            options: vec![
+                ApprovalOption::allow_once("once", "Grant"),
+                ApprovalOption::allow_always("always", "Remember"),
+                ApprovalOption::allow_project("project", "Trust repo"),
+                ApprovalOption::deny("deny", "Block"),
+            ],
+            resolved: None,
+        };
+
+        assert_eq!(
+            approval
+                .options
+                .iter()
+                .map(|option| approval_option_button_label(&approval, option))
+                .collect::<Vec<_>>(),
+            vec![
+                "Grant · once",
+                "Remember · always",
+                "Trust repo · project",
+                "Block · deny",
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_approval_renders_selected_structured_level() {
+        let approval = ApprovalRequest {
+            id: "approval-levels".to_string(),
+            prompt: "Run command?".to_string(),
+            options: vec![ApprovalOption::allow_project("project", "Trust repo")],
+            resolved: Some(ApprovalResolution {
+                option_id: "project".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Project,
+            }),
+        };
+        let resolved = approval.resolved.as_ref().expect("resolved approval");
+
+        assert_eq!(
+            approval_resolved_label(&approval, resolved),
+            "[x] Trust repo · project"
+        );
     }
 
     #[test]

@@ -1,30 +1,31 @@
-# Execution Plan
+# Claude Execution Plan
 
 ## Scope
 
 - Follow `TODO.md` as the authoritative task list.
-- Select the first task whose title is not prefixed with `[DONE]`.
-- Complete exactly that task, then stop after committing.
+- Complete exactly the first incomplete task whose heading is not prefixed with `[DONE]`.
+- Stop after committing that task, or after committing any required prerequisite/blocker update.
 
 ## Steps
 
-1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
-2. Check the latest commit only for directly relevant unfinished work tied to the selected task.
-3. Inspect the code and tests needed for that task, avoiding unrelated historical triage.
-4. Implement the smallest correct change that satisfies the task requirements.
+1. Read `TODO.md` and identify the first incomplete task.
+2. Check the latest commit message only for unfinished work directly relevant to that task.
+3. Inspect the code and tests needed for the selected task.
+4. Implement the task without narrowing scope or introducing workarounds.
 5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full tests required by the task.
-6. Fix any observed unscheduled failures or add the minimum prerequisite task in `TODO.md` if the failure blocks completion.
+6. If tests fail and the failure is not already explicitly scheduled, fix it or add the minimum prerequisite task before marking the task done.
 7. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling its completion record.
-8. Update this plan file whenever a key step completes or the plan changes.
-9. Inspect git status, diff, and recent log, then commit all intended changes with a task-specific message.
+8. Update `PLAN.md` only if phase-level sequencing or completion criteria changed.
+9. Commit all intended changes with a clear task-specific commit message.
 10. Stop without starting the next task.
 
-## Current Status
+## Progress Log
 
-- `TODO.md` has been read.
-- First incomplete task selected: `P6.1 工具权限层级模型`.
-- Latest commit checked: `[P5.R] Complete chat navigation review`; no directly relevant unfinished P6.1 work was found.
-- Implemented structured approval model changes: `ApprovalAction`, `ApprovalLevel`, `ApprovalResolution`, structured `ApprovalOption`, list callback payload action/level, store resolution state, and focused model/store tests.
-- Validation completed successfully: `cargo fmt --all`, `cargo test -p atto-ui-chat approval --lib`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
-- `TODO.md` has been updated to mark `P6.1` as `[DONE]` with a completion record.
-- Next step: inspect git status/diff/log and commit the P6.1 changes.
+- Planned execution workflow before reading project task details.
+- Identified first incomplete task: `P6.2 权限层级渲染` in `TODO.md`.
+- Current task goal: update `crates/atto-ui-chat/src/list.rs` approval rendering so hierarchical options such as allow once, always allow, project allow, and deny are visible; after selection the approval area must be locked and show the selected level.
+- Next steps: inspect latest commit for directly relevant unfinished notes, inspect approval model/store/list tests, implement minimal rendering changes, add/update tests, run formatting/lint/tests, update `TODO.md`, then commit and stop.
+- Implemented `list.rs` approval label helpers so unresolved buttons and resolved labels render structured action/level scope. Added unit coverage for once/always/project/deny labels and the locked view rendering path.
+- Full test run exposed a regression in `chat_inline_approval_buttons_emit_and_lock`: appending scope to already descriptive labels made the horizontal approval row too wide for the existing snapshot viewport, so no buttons were visible. Adjusting the helper to avoid duplicate scope when the label already names the selected level/action.
+- Final validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p atto-ui-chat approval --lib`, exact inline approval PTY test, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
+- Marked `P6.2` as `[DONE]` in `TODO.md` with completion notes and the resolved test-failure note. Next step is to commit only this task's changes.
