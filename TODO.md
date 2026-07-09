@@ -24,7 +24,9 @@
 - [x] **[DONE] M1.6 快照与 PTY** - 新增 deterministic mock fixture，覆盖输入、流式输出、slash 命令、Esc 取消。
   - 完成记录（2026-07-10）：新增 `snapshot_agent_app` deterministic mock fixture，并让 mock turn delay 可由 fixture 配置以稳定覆盖取消路径；新增 app crate PTY 测试，覆盖普通输入提交、assistant 流式输出、slash 命令输出与状态更新、Esc 取消 active mock turn 且迟到完成文本不出现。
   - 验证：`cargo test -p atto-agent-app --test pty_agent`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M1.R Review** - 复核 M1 所有改动，确认 app skeleton 独立、mock 不依赖网络、全套验证通过。
+- [x] **[DONE] M1.R Review** - 复核 M1 所有改动，确认 app skeleton 独立、mock 不依赖网络、全套验证通过。
+  - 完成记录（2026-07-10）：复核 M1 app crate、deterministic mock fixture、slash/取消路径和 PTY 覆盖；确认 `atto-agent-app` 作为独立 workspace app 组合 `atto-ui` / `atto-ui-chat` / `atto-ui-async`，M1 mock provider 未引入 DeepSeek/API key/网络调用，`atto-ui` 与 `atto-ui-chat` 未新增网络依赖。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 
 ## 阶段 M2 - DeepSeek Text Streaming
 
