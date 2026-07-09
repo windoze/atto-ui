@@ -28,12 +28,13 @@ use atto_ui_chat::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
-    ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
-    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
-    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
-    TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
-    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId, ChatMessageList,
+    ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
+    DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction, MessageActionKind,
+    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
+    TaskBlock, TaskStatus, TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock,
+    TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -70,6 +71,7 @@ fn main() -> Result<()> {
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
+    let input_completion = args.iter().any(|arg| arg == "--input-completion");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -90,7 +92,10 @@ fn main() -> Result<()> {
     let mut long_tool_result_id = None;
     let mut todo_block_id = None;
     let mut task_block_id = None;
-    let tool_block_ids = if responsive_layout {
+    let tool_block_ids = if input_completion {
+        seed_input_completion_messages(&store);
+        None
+    } else if responsive_layout {
         seed_responsive_layout_messages(&store);
         None
     } else if inline_approval {
@@ -176,6 +181,7 @@ fn main() -> Result<()> {
         || message_actions
         || text_selection
         || cancel_action
+        || input_completion
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -194,6 +200,9 @@ fn main() -> Result<()> {
     };
 
     let input_handle = ChatInputHandle::new();
+    if input_completion {
+        input_handle.set_slash_commands(input_completion_slash_commands());
+    }
     let load_counter = Arc::new(AtomicU64::new(0));
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
@@ -254,7 +263,7 @@ fn main() -> Result<()> {
             move |message_id| cancel_events.push(message_id)
         });
     }
-    let input_panel = input_handle.panel().on_submit({
+    let mut input_panel = input_handle.panel().on_submit({
         let store = store.clone();
         move |response| {
             let text = submit_response_text(response);
@@ -265,6 +274,20 @@ fn main() -> Result<()> {
             ));
         }
     });
+    if input_completion {
+        input_panel = input_panel
+            .on_slash_command({
+                let store = store.clone();
+                move |command| {
+                    store.push(ChatMessage::text(
+                        store.next_message_id(),
+                        ChatRole::System,
+                        format!("SLASH_COMMAND: id={} label={}", command.id, command.label),
+                    ));
+                }
+            })
+            .mention_provider(|_| input_completion_mention_candidates());
+    }
     let panel = ChatPanel::new(list, input_panel);
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -281,6 +304,7 @@ fn main() -> Result<()> {
         || message_actions
         || text_selection
         || cancel_action
+        || input_completion
     {
         24
     } else if nested_task {
@@ -440,57 +464,59 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            match cmd {
-                'a' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-1",
-                    ));
-                    continue;
+            if !input_completion {
+                match cmd {
+                    'a' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-1",
+                        ));
+                        continue;
+                    }
+                    'b' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-2",
+                        ));
+                        continue;
+                    }
+                    'd' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-3",
+                        ));
+                        continue;
+                    }
+                    'c' => {
+                        input_handle.selection_binding().set(0);
+                        input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
+                            "请选择一种回应方式",
+                            vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
+                        )));
+                        continue;
+                    }
+                    'f' => {
+                        input_handle.selection_binding().set(0);
+                        input_handle.set_mode(ChatInputMode::Confirm(
+                            ChatConfirmInputConfig::new("是否继续执行?")
+                                .yes_label("继续")
+                                .no_label("停止"),
+                        ));
+                        continue;
+                    }
+                    't' => {
+                        input_handle.draft_binding().set(String::new());
+                        input_handle.set_mode(ChatInputMode::text(
+                            "Message",
+                            Some("Type a message...".into()),
+                        ));
+                        continue;
+                    }
+                    _ => {}
                 }
-                'b' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-2",
-                    ));
-                    continue;
-                }
-                'd' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-3",
-                    ));
-                    continue;
-                }
-                'c' => {
-                    input_handle.selection_binding().set(0);
-                    input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
-                        "请选择一种回应方式",
-                        vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
-                    )));
-                    continue;
-                }
-                'f' => {
-                    input_handle.selection_binding().set(0);
-                    input_handle.set_mode(ChatInputMode::Confirm(
-                        ChatConfirmInputConfig::new("是否继续执行?")
-                            .yes_label("继续")
-                            .no_label("停止"),
-                    ));
-                    continue;
-                }
-                't' => {
-                    input_handle.draft_binding().set(String::new());
-                    input_handle.set_mode(ChatInputMode::text(
-                        "Message",
-                        Some("Type a message...".into()),
-                    ));
-                    continue;
-                }
-                _ => {}
             }
         }
 
@@ -617,6 +643,36 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_input_completion_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "COMPLETION-READY",
+    ));
+}
+
+fn input_completion_slash_commands() -> Vec<ChatSlashCommand> {
+    vec![
+        ChatSlashCommand::new("/model")
+            .detail("COMMAND-MODEL")
+            .replacement("/model claude-sonnet"),
+        ChatSlashCommand::new("/merge")
+            .detail("COMMAND-MERGE")
+            .replacement("/merge ready"),
+        ChatSlashCommand::new("/clear")
+            .detail("COMMAND-CLEAR")
+            .submit_on_accept(),
+    ]
+}
+
+fn input_completion_mention_candidates() -> Vec<ChatMentionCandidate> {
+    vec![
+        ChatMentionCandidate::new("Cargo.toml").detail("FILE-CARGO"),
+        ChatMentionCandidate::new("src/lib.rs").detail("FILE-LIB"),
+        ChatMentionCandidate::new("src/main.rs").detail("FILE-MAIN"),
+    ]
 }
 
 fn seed_responsive_layout_messages(store: &ChatMessageStore) {

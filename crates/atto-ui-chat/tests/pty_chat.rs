@@ -103,6 +103,120 @@ fn chat_input_modes_submit_callbacks() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_slash_completion_filters_selects_accepts_and_closes() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--input-completion"], 100, 30)?;
+
+    host.wait_for_text("COMPLETION-READY", Duration::from_secs(2))?;
+
+    host.send_str("/")?;
+    host.wait_for_text("COMMAND-MODEL", Duration::from_secs(2))?;
+    host.wait_for_text("COMMAND-MERGE", Duration::from_secs(2))?;
+    host.wait_for_text("COMMAND-CLEAR", Duration::from_secs(2))?;
+    host.send_str("m")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("/m"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-CLEAR"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("/merge ready"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MERGE"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=/merge ready", Duration::from_secs(2))?;
+
+    host.send_str("/")?;
+    host.send_str("cl")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("COMMAND-CLEAR"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MODEL"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MERGE"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text(
+        "SLASH_COMMAND: id=clear label=/clear",
+        Duration::from_secs(2),
+    )?;
+
+    host.send_str("/")?;
+    host.wait_for_text("COMMAND-MODEL", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| snapshot.iter().all(|line| !line.contains("COMMAND-MODEL")),
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_mention_completion_inserts_file_and_closes() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--input-completion"], 100, 30)?;
+
+    host.wait_for_text("COMPLETION-READY", Duration::from_secs(2))?;
+
+    host.send_str("open @")?;
+    host.wait_for_text("FILE-CARGO", Duration::from_secs(2))?;
+    host.send_str("ca")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("open @ca"))
+                && snapshot.iter().any(|line| line.contains("FILE-CARGO"))
+                && snapshot.iter().all(|line| !line.contains("FILE-LIB"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("open @Cargo.toml"))
+                && snapshot.iter().all(|line| !line.contains("FILE-CARGO"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=open @Cargo.toml", Duration::from_secs(2))?;
+
+    host.send_str("inspect @")?;
+    host.wait_for_text("FILE-LIB", Duration::from_secs(2))?;
+    host.send_str("sr")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("inspect @sr"))
+                && snapshot.iter().any(|line| line.contains("FILE-LIB"))
+                && snapshot.iter().any(|line| line.contains("FILE-MAIN"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| snapshot.iter().all(|line| !line.contains("FILE-LIB")),
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_textarea_multiline_history_and_kill_ring() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

@@ -66,7 +66,10 @@
   - JS 同步：`crates/atto-ui-node/index.d.ts`、`packages/core` builder/types、`packages/react` wrapper/raw JSX/types 已新增 `ChatSlashCommand`、`ChatMentionCandidate`、`slashCommands`、`mentionCandidates`、`onSlashCommand`、`onMentionQuery`；`docs/NODE_API.md` 已记录协议与事件 payload。为避免 Bun 本地测试加载全局缓存旧 native，`packages/core/native.js` 现在在 optional platform 包前优先尝试 workspace `crates/atto-ui-node` fallback，并同步 README/API 文档加载顺序。
   - 测试覆盖：新增 Rust dynamic schema/属性测试、core builder/type/runtime schema 断言、React 类型覆盖。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`npm run build --prefix packages/react`、`npm run typecheck --prefix packages/core`、`npm run typecheck --prefix packages/react`、`node packages/core/__test__/builders.cjs`、`npm run smoke --prefix examples/react-tsx`、`npm run test:runtime --prefix packages/core`、`npm test --prefix packages/react`、`npm test --prefix packages/core`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P2.5 快照与测试** — `snapshot_chat_app` 增加 slash/mention 场景；PTY 覆盖 `/` 触发→过滤→选择→确认、`@` 触发→文件补全→确认插入、Esc 关闭。
+- [x] **[DONE] P2.5 快照与测试** — `snapshot_chat_app` 增加 slash/mention 场景；PTY 覆盖 `/` 触发→过滤→选择→确认、`@` 触发→文件补全→确认插入、Esc 关闭。
+  - 完成记录（2026-07-09）：`snapshot_chat_app` 新增 `--input-completion` fixture，提供确定性的 slash 命令、mention provider 文件候选和 slash submit 回调输出；该 fixture 下普通输入字符不再被 snapshot 演示快捷键拦截，确保 PTY 能真实输入 `/` 与 `@` 查询。
+  - 测试覆盖：新增 chat PTY 用例覆盖 `/` 打开命令菜单、按 query 过滤、键盘 Down 选择、Enter 确认插入、submit-action slash 命令回调，以及 Esc 关闭；新增 mention PTY 用例覆盖 `@` 打开文件补全、过滤到文件候选、Enter 插入 mention 文本、提交后回显，以及 Esc 关闭文件 popup。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat completion -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P2.R Review：P2 阶段复核** — 逐条复核 P2.1–P2.5：确认 overlay 焦点/键盘语义与既有输入不冲突、Esc/Enter 行为一致、空候选与无 provider 时优雅降级、mention 芯片光标编辑正确、JS 侧类型与 Rust 协议一致；确认 PTY + smoke 全过；跑通全套 CI。
 
 ## 阶段 P3 — 会话管理：消息编辑 / 回退 / 重发（C1）
