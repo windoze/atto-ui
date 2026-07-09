@@ -245,6 +245,7 @@ pub enum ChatBlock {
     Todo(TodoBlock),
     Attachment(AttachmentBlock),
     Notice(NoticeBlock),
+    Compact(CompactBlock),
     Artifact(ArtifactBlock),
 }
 
@@ -261,6 +262,7 @@ impl ChatBlock {
             ChatBlock::Todo(block) => block.id,
             ChatBlock::Attachment(block) => block.id,
             ChatBlock::Notice(block) => block.id,
+            ChatBlock::Compact(block) => block.id,
             ChatBlock::Artifact(block) => block.id,
         }
     }
@@ -581,6 +583,36 @@ pub enum NoticeLevel {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactBlock {
+    pub id: ChatBlockId,
+    pub status: CompactStatus,
+    pub before_tokens: Option<u64>,
+    pub after_tokens: Option<u64>,
+    pub summary: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactStatus {
+    Pending,
+    Running,
+    Complete,
+    Failed,
+    Canceled,
+}
+
+impl CompactStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CompactStatus::Pending => "pending",
+            CompactStatus::Running => "running",
+            CompactStatus::Complete => "complete",
+            CompactStatus::Failed => "failed",
+            CompactStatus::Canceled => "canceled",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactBlock {
     pub id: ChatBlockId,
     pub kind: ArtifactKind,
@@ -839,8 +871,15 @@ mod tests {
                 level: NoticeLevel::Warning,
                 text: "context compacted".to_string(),
             }),
-            ChatBlock::Artifact(ArtifactBlock {
+            ChatBlock::Compact(CompactBlock {
                 id: ChatBlockId::new(11),
+                status: CompactStatus::Complete,
+                before_tokens: Some(12_000),
+                after_tokens: Some(3_500),
+                summary: "kept recent edits".to_string(),
+            }),
+            ChatBlock::Artifact(ArtifactBlock {
+                id: ChatBlockId::new(12),
                 kind: ArtifactKind::Diff,
                 anchor: ArtifactId::new("artifact-1"),
                 title: "patch".to_string(),
@@ -849,7 +888,22 @@ mod tests {
 
         let ids = blocks.iter().map(ChatBlock::id).collect::<Vec<_>>();
 
-        assert_eq!(ids, (1..=11).map(ChatBlockId::new).collect::<Vec<_>>());
+        assert_eq!(ids, (1..=12).map(ChatBlockId::new).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn compact_status_strings_are_stable() {
+        let cases = [
+            (CompactStatus::Pending, "pending"),
+            (CompactStatus::Running, "running"),
+            (CompactStatus::Complete, "complete"),
+            (CompactStatus::Failed, "failed"),
+            (CompactStatus::Canceled, "canceled"),
+        ];
+
+        for (status, expected) in cases {
+            assert_eq!(status.as_str(), expected);
+        }
     }
 
     #[test]

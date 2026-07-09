@@ -181,7 +181,11 @@
   - 测试覆盖：新增 list 单测覆盖一次允许、始终允许、项目级允许、拒绝的结构化标签，以及 resolved 状态显示所选层级；既有 approval 决策单测补充实际绘制路径断言。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat approval --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_inline_approval_buttons_emit_and_lock -- --exact`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
   - 测试失败处理：完整测试首轮曾发现 `chat_inline_approval_buttons_emit_and_lock` 中审批按钮因重复追加层级文案过宽而不可见；已改为只在标签缺少结构化层级时追加短范围标记，并复跑 exact PTY 与完整套件通过。
-- [ ] **P6.3 上下文压缩块** — `src/message.rs` + `src/list.rs`：新增专门的 compact 块类型（或扩展 `Notice`），展示压缩进度/前后 token/摘要，视觉区别于普通通知。
+- [x] **[DONE] P6.3 上下文压缩块** — `src/message.rs` + `src/list.rs`：新增专门的 compact 块类型（或扩展 `Notice`），展示压缩进度/前后 token/摘要，视觉区别于普通通知。
+  - 完成记录（2026-07-10）：新增独立 `CompactBlock` / `CompactStatus` 模型并从 `atto-ui-chat` 导出，支持 pending/running/complete/failed/canceled 进度状态，以及 `before_tokens`、`after_tokens`、`summary` 字段；store 追加块时会正确重写 compact block id，Rust 动态值转换已支持 `type: "compact"` 的最小读写以保持现有消息转换编译与 round-trip 覆盖。
+  - 渲染实现：`ChatMessageList` 新增独立 `CompactBlockView`，首行以状态颜色和粗体显示 `Context compact: ...`，次行显示压缩前后 token 与节省量，后续行显示摘要；该视图为多行 dim 详情样式，区别于普通 `Notice` 的单行 `Info/Warning/Error` 通知。搜索、引用预览、任务 transcript 展示、虚拟 row key 与 binding 同步均已补齐 compact 分支。
+  - 测试覆盖：新增 message 单测覆盖 compact status 稳定字符串与所有 block id 获取；新增 dynamic round-trip fixture 覆盖 compact block；新增 list 单测覆盖显示文案、状态颜色、binding 更新和搜索文本。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P6.4 运行时/JS 侧同步** — `src/dynamic.rs`：模型变更同步序列化 + schema（保留旧形兼容）；同步 `crates/atto-ui-node`、`packages/core`、`packages/react` 类型/构造器，更新 `docs/NODE_API.md`；跑 smoke 与 runtime 兼容测试。
 - [ ] **P6.5 快照与测试** — `snapshot_chat_app` 增加多层级审批与压缩块场景；PTY 覆盖层级审批选择/锁定、压缩块渲染。
 - [ ] **P6.R Review：P6 阶段复核** — 逐条复核 P6.1–P6.5：确认权限层级语义与回调契约一致、旧形序列化仍可解析、压缩块与 Notice 区分清晰、JS 侧类型同步无遗漏；确认 PTY + smoke 全过；跑通全套 CI。做一次整体收尾比对，确认 `AGENT_GAP.md` 中除 B2（图片）外的缺口均已落地。

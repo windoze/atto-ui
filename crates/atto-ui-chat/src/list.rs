@@ -34,10 +34,10 @@ use crate::message::{
     ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
     ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
     ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole,
-    ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock, NoticeLevel, PlanBlock,
-    PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput, ToolOutput, ToolResultBlock,
-    ToolStatus, ToolUseBlock,
+    ChatTurnStatus, CompactBlock, CompactStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
+    NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
+    ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
 
@@ -1806,6 +1806,10 @@ fn estimate_block_row_height(
         | Some(ChatBlock::Notice(_))
         | Some(ChatBlock::Artifact(_))
         | None => 1,
+        Some(ChatBlock::Compact(compact)) => compact_display_lines(compact)
+            .len()
+            .max(1)
+            .min(u16::MAX as usize) as u16,
         Some(ChatBlock::ToolUse(tool)) => estimate_disclosure_height(
             !tool.collapsed,
             tool_use_details_desired_height(&ToolUseDetails::from(tool)),
@@ -2144,6 +2148,12 @@ enum ChatBlockKindTag {
         level: NoticeLevel,
         text: String,
     },
+    Compact {
+        status: CompactStatus,
+        before_tokens: Option<u64>,
+        after_tokens: Option<u64>,
+        summary: String,
+    },
     Artifact {
         kind: ArtifactKind,
         anchor: ArtifactId,
@@ -2291,6 +2301,18 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
             id: block_id,
             level: *level,
             text: text.clone(),
+        })),
+        ChatBlockKindTag::Compact {
+            status,
+            before_tokens,
+            after_tokens,
+            summary,
+        } => Some(ChatBlock::Compact(CompactBlock {
+            id: block_id,
+            status: *status,
+            before_tokens: *before_tokens,
+            after_tokens: *after_tokens,
+            summary: summary.clone(),
         })),
         ChatBlockKindTag::Artifact {
             kind,
@@ -2508,6 +2530,18 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
             level: *level,
             text: text.clone(),
         },
+        ChatBlock::Compact(CompactBlock {
+            status,
+            before_tokens,
+            after_tokens,
+            summary,
+            ..
+        }) => ChatBlockKindTag::Compact {
+            status: *status,
+            before_tokens: *before_tokens,
+            after_tokens: *after_tokens,
+            summary: summary.clone(),
+        },
         ChatBlock::Artifact(ArtifactBlock {
             kind,
             anchor,
@@ -2591,6 +2625,7 @@ fn searchable_text_for_block(block: &ChatBlock, config: &ChatMessageListConfig) 
         }
         ChatBlock::Todo(todo) => todo_display_lines(&todo.items).join("\n"),
         ChatBlock::Notice(notice) => notice_label(notice.level, &notice.text),
+        ChatBlock::Compact(compact) => compact_display_lines(compact).join("\n"),
         ChatBlock::Artifact(artifact) => {
             format!("Artifact {}: {}", artifact.kind.label(), artifact.title)
         }
@@ -2647,6 +2682,7 @@ struct ChatMessageRowBindings {
     plan_items: Option<Binding<Vec<PlanItem>>>,
     task_details: Option<Binding<TaskDetails>>,
     todo_items: Option<Binding<Vec<TodoItem>>>,
+    compact: Option<Binding<CompactBlock>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
     disclosure_status: Option<Binding<DisclosureStatus>>,
@@ -2764,6 +2800,12 @@ impl ChatMessageRow {
                 binding.set(items);
             }
 
+            if let Some(binding) = &self.body_bindings.compact
+                && let Some(compact) = block_compact_for_render(block)
+            {
+                binding.set(compact);
+            }
+
             if let Some(binding) = &self.body_bindings.tool_use
                 && let Some(details) = block_tool_use_for_render(block)
             {
@@ -2871,6 +2913,13 @@ fn block_task_details_for_render(block: &ChatBlock) -> Option<TaskDetails> {
 fn block_todo_items_for_render(block: &ChatBlock) -> Option<Vec<TodoItem>> {
     match block {
         ChatBlock::Todo(todo) => Some(todo.items.clone()),
+        _ => None,
+    }
+}
+
+fn block_compact_for_render(block: &ChatBlock) -> Option<CompactBlock> {
+    match block {
+        ChatBlock::Compact(compact) => Some(compact.clone()),
         _ => None,
     }
 }
@@ -3362,6 +3411,7 @@ fn quote_block_preview(block: &ChatBlock) -> String {
             .join("; "),
         ChatBlock::Attachment(block) => format!("Attachment {}", block.name),
         ChatBlock::Notice(block) => block.text.clone(),
+        ChatBlock::Compact(block) => compact_display_lines(block).join(" "),
         ChatBlock::Artifact(block) => format!("Artifact {}", block.title),
     };
     compact_quote_preview(&raw)
@@ -4770,6 +4820,7 @@ enum ChatMessageBody {
     Diff(DiffDecisionView),
     Plan(PlanDecisionView),
     Todo(TodoListView),
+    Compact(CompactBlockView),
     Artifact(ArtifactLink),
     CopyTarget(BlockCopyTarget),
 }
@@ -4943,6 +4994,16 @@ impl ChatMessageBody {
                 ),
                 ChatMessageRowBindings::default(),
             ),
+            Some(ChatBlock::Compact(compact)) => {
+                let compact = Binding::new(compact.clone());
+                (
+                    ChatMessageBody::Compact(CompactBlockView::new(compact.clone())),
+                    ChatMessageRowBindings {
+                        compact: Some(compact),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
             Some(ChatBlock::Artifact(ArtifactBlock {
                 kind,
                 anchor,
@@ -5008,6 +5069,64 @@ fn notice_color(level: NoticeLevel) -> Color {
         NoticeLevel::Info => Color::Cyan,
         NoticeLevel::Warning => Color::Yellow,
         NoticeLevel::Error => Color::Red,
+    }
+}
+
+fn compact_display_lines(block: &CompactBlock) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Context compact: {}",
+        compact_status_label(block.status)
+    )];
+    if let Some(tokens) = compact_token_label(block.before_tokens, block.after_tokens) {
+        lines.push(format!("Tokens: {tokens}"));
+    }
+    append_compact_summary_lines(&mut lines, &block.summary);
+    lines
+}
+
+fn compact_token_label(before_tokens: Option<u64>, after_tokens: Option<u64>) -> Option<String> {
+    match (before_tokens, after_tokens) {
+        (Some(before), Some(after)) => {
+            let saved = before.saturating_sub(after);
+            Some(format!("{before} -> {after} ({saved} saved)"))
+        }
+        (Some(before), None) => Some(format!("before {before}")),
+        (None, Some(after)) => Some(format!("after {after}")),
+        (None, None) => None,
+    }
+}
+
+fn append_compact_summary_lines(lines: &mut Vec<String>, summary: &str) {
+    let summary = summary.trim_end();
+    if summary.trim().is_empty() {
+        return;
+    }
+    for (idx, line) in summary.lines().enumerate() {
+        if idx == 0 {
+            lines.push(format!("Summary: {line}"));
+        } else {
+            lines.push(format!("  {line}"));
+        }
+    }
+}
+
+fn compact_status_label(status: CompactStatus) -> &'static str {
+    match status {
+        CompactStatus::Pending => "Pending",
+        CompactStatus::Running => "Running",
+        CompactStatus::Complete => "Complete",
+        CompactStatus::Failed => "Failed",
+        CompactStatus::Canceled => "Canceled",
+    }
+}
+
+fn compact_status_color(status: CompactStatus) -> Color {
+    match status {
+        CompactStatus::Pending => Color::Cyan,
+        CompactStatus::Running => Color::Yellow,
+        CompactStatus::Complete => Color::Green,
+        CompactStatus::Failed => Color::Red,
+        CompactStatus::Canceled => Color::DarkGray,
     }
 }
 
@@ -5330,6 +5449,11 @@ fn append_task_block_lines(lines: &mut Vec<String>, block: &ChatBlock, indent: u
                 notice_label(notice.level, &notice.text)
             ));
         }
+        ChatBlock::Compact(compact) => {
+            for line in compact_display_lines(compact) {
+                lines.push(format!("{prefix}{line}"));
+            }
+        }
         ChatBlock::Artifact(artifact) => lines.push(format!(
             "{prefix}Artifact {}: {}",
             artifact.kind.label(),
@@ -5643,6 +5767,72 @@ impl ::atto_ui::composable::DynamicTree for TodoListView {}
 impl ::atto_ui::composable::EventHandling for TodoListView {}
 
 impl ::atto_ui::composable::Layout for TodoListView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(max_line_width(&self.display_lines()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_lines().len().min(u16::MAX as usize) as u16)
+    }
+}
+
+struct CompactBlockView {
+    block: Binding<CompactBlock>,
+}
+
+impl CompactBlockView {
+    fn new(block: impl Into<Binding<CompactBlock>>) -> Self {
+        Self {
+            block: block.into(),
+        }
+    }
+
+    fn display_lines(&self) -> Vec<String> {
+        self.block.with(compact_display_lines)
+    }
+}
+
+impl Component for CompactBlockView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let block = self.block.get();
+        let lines = compact_display_lines(&block)
+            .into_iter()
+            .enumerate()
+            .map(|(idx, line)| {
+                if idx == 0 {
+                    Line::styled(
+                        line,
+                        Style::default()
+                            .fg(compact_status_color(block.status))
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Line::styled(line, ctx.theme.widget.dim)
+                }
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for CompactBlockView {}
+impl ::atto_ui::composable::Scrollable for CompactBlockView {}
+impl ::atto_ui::composable::FocusNav for CompactBlockView {}
+impl ::atto_ui::composable::DynamicTree for CompactBlockView {}
+impl ::atto_ui::composable::EventHandling for CompactBlockView {}
+
+impl ::atto_ui::composable::Layout for CompactBlockView {
     fn min_width(&self) -> u16 {
         1
     }
@@ -6344,6 +6534,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Plan(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Todo(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Compact(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
             ChatMessageBody::CopyTarget(view) => view.draw(frame, area, ctx),
         }
@@ -6361,6 +6552,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_width(),
             ChatMessageBody::Plan(view) => view.min_width(),
             ChatMessageBody::Todo(view) => view.min_width(),
+            ChatMessageBody::Compact(view) => view.min_width(),
             ChatMessageBody::Artifact(view) => view.min_width(),
             ChatMessageBody::CopyTarget(view) => view.min_width(),
         }
@@ -6374,6 +6566,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_height(),
             ChatMessageBody::Plan(view) => view.min_height(),
             ChatMessageBody::Todo(view) => view.min_height(),
+            ChatMessageBody::Compact(view) => view.min_height(),
             ChatMessageBody::Artifact(view) => view.min_height(),
             ChatMessageBody::CopyTarget(view) => view.min_height(),
         }
@@ -6387,6 +6580,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_width(),
             ChatMessageBody::Plan(view) => view.desired_width(),
             ChatMessageBody::Todo(view) => view.desired_width(),
+            ChatMessageBody::Compact(view) => view.desired_width(),
             ChatMessageBody::Artifact(view) => view.desired_width(),
             ChatMessageBody::CopyTarget(view) => view.desired_width(),
         }
@@ -6400,6 +6594,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_height(),
             ChatMessageBody::Plan(view) => view.desired_height(),
             ChatMessageBody::Todo(view) => view.desired_height(),
+            ChatMessageBody::Compact(view) => view.desired_height(),
             ChatMessageBody::Artifact(view) => view.desired_height(),
             ChatMessageBody::CopyTarget(view) => view.desired_height(),
         }
@@ -6415,6 +6610,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.is_scrollable(),
             ChatMessageBody::Plan(view) => view.is_scrollable(),
             ChatMessageBody::Todo(view) => view.is_scrollable(),
+            ChatMessageBody::Compact(view) => view.is_scrollable(),
             ChatMessageBody::Artifact(view) => view.is_scrollable(),
             ChatMessageBody::CopyTarget(view) => view.is_scrollable(),
         }
@@ -6428,6 +6624,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.content_size(),
             ChatMessageBody::Plan(view) => view.content_size(),
             ChatMessageBody::Todo(view) => view.content_size(),
+            ChatMessageBody::Compact(view) => view.content_size(),
             ChatMessageBody::Artifact(view) => view.content_size(),
             ChatMessageBody::CopyTarget(view) => view.content_size(),
         }
@@ -6441,6 +6638,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.viewport_size(),
             ChatMessageBody::Plan(view) => view.viewport_size(),
             ChatMessageBody::Todo(view) => view.viewport_size(),
+            ChatMessageBody::Compact(view) => view.viewport_size(),
             ChatMessageBody::Artifact(view) => view.viewport_size(),
             ChatMessageBody::CopyTarget(view) => view.viewport_size(),
         }
@@ -6454,6 +6652,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.scroll_config(),
             ChatMessageBody::Plan(view) => view.scroll_config(),
             ChatMessageBody::Todo(view) => view.scroll_config(),
+            ChatMessageBody::Compact(view) => view.scroll_config(),
             ChatMessageBody::Artifact(view) => view.scroll_config(),
             ChatMessageBody::CopyTarget(view) => view.scroll_config(),
         }
@@ -6467,6 +6666,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.scroll_offset(),
             ChatMessageBody::Plan(view) => view.scroll_offset(),
             ChatMessageBody::Todo(view) => view.scroll_offset(),
+            ChatMessageBody::Compact(view) => view.scroll_offset(),
             ChatMessageBody::Artifact(view) => view.scroll_offset(),
             ChatMessageBody::CopyTarget(view) => view.scroll_offset(),
         }
@@ -6480,6 +6680,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Plan(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Todo(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Compact(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Artifact(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::CopyTarget(view) => view.set_scroll_offset(x, y),
         }
@@ -6495,6 +6696,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.is_focusable(),
             ChatMessageBody::Plan(view) => view.is_focusable(),
             ChatMessageBody::Todo(view) => view.is_focusable(),
+            ChatMessageBody::Compact(view) => view.is_focusable(),
             ChatMessageBody::Artifact(view) => view.is_focusable(),
             ChatMessageBody::CopyTarget(view) => view.is_focusable(),
         }
@@ -6508,6 +6710,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.focus_first(),
             ChatMessageBody::Plan(view) => view.focus_first(),
             ChatMessageBody::Todo(view) => view.focus_first(),
+            ChatMessageBody::Compact(view) => view.focus_first(),
             ChatMessageBody::Artifact(view) => view.focus_first(),
             ChatMessageBody::CopyTarget(view) => view.focus_first(),
         }
@@ -6521,6 +6724,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.focus_last(),
             ChatMessageBody::Plan(view) => view.focus_last(),
             ChatMessageBody::Todo(view) => view.focus_last(),
+            ChatMessageBody::Compact(view) => view.focus_last(),
             ChatMessageBody::Artifact(view) => view.focus_last(),
             ChatMessageBody::CopyTarget(view) => view.focus_last(),
         }
@@ -6538,6 +6742,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_capture(event, ctx),
         }
@@ -6551,6 +6756,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_bubble(event, ctx),
         }
@@ -6564,6 +6770,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event(event, ctx),
         }
@@ -8522,6 +8729,96 @@ mod tests {
             assert!(lines[0].starts_with(expected));
             assert_eq!(colors[0][0], color);
         }
+    }
+
+    #[test]
+    fn compact_display_lines_include_status_tokens_and_summary() {
+        let block = CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "kept task details\nremoved stale tool output".to_string(),
+        };
+
+        assert_eq!(
+            compact_display_lines(&block),
+            vec![
+                "Context compact: Complete".to_string(),
+                "Tokens: 12000 -> 3500 (8500 saved)".to_string(),
+                "Summary: kept task details".to_string(),
+                "  removed stale tool output".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compact_body_renders_progress_tokens_summary_with_distinct_style() {
+        let config = row_config_for_tests();
+        let block = ChatBlock::Compact(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "COMPACT-SUMMARY".to_string(),
+        });
+        let (mut body, _) =
+            ChatMessageBody::from_block(ChatMessageId::new(1), Some(&block), &config);
+
+        let (lines, colors) = draw_component_snapshot(&mut body, 60, 3);
+
+        assert!(lines[0].starts_with("Context compact: Complete"));
+        assert!(lines[1].starts_with("Tokens: 12000 -> 3500 (8500 saved)"));
+        assert!(lines[2].starts_with("Summary: COMPACT-SUMMARY"));
+        assert_eq!(colors[0][0], Color::Green);
+        assert_ne!(lines[0].trim_start(), "Info: COMPACT-SUMMARY");
+    }
+
+    #[test]
+    fn compact_view_updates_from_binding() {
+        let binding = Binding::new(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Running,
+            before_tokens: Some(9_000),
+            after_tokens: None,
+            summary: "STARTING".to_string(),
+        });
+        let mut view = CompactBlockView::new(binding.clone());
+
+        let (initial, _) = draw_component_snapshot(&mut view, 60, 3);
+        assert!(initial[0].starts_with("Context compact: Running"));
+        assert!(initial[1].starts_with("Tokens: before 9000"));
+
+        binding.set(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(9_000),
+            after_tokens: Some(4_000),
+            summary: "DONE".to_string(),
+        });
+
+        let (updated, _) = draw_component_snapshot(&mut view, 60, 3);
+        assert!(updated[0].starts_with("Context compact: Complete"));
+        assert!(updated[1].starts_with("Tokens: 9000 -> 4000 (5000 saved)"));
+        assert!(updated[2].starts_with("Summary: DONE"));
+    }
+
+    #[test]
+    fn compact_block_is_searchable() {
+        let list = ChatMessageList::new(ChatMessageStore::new());
+        let block = ChatBlock::Compact(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "SEARCHABLE-COMPACT-SUMMARY".to_string(),
+        });
+
+        let text = searchable_text_for_block(&block, &list.config);
+
+        assert!(text.contains("Context compact: Complete"));
+        assert!(text.contains("Tokens: 12000 -> 3500"));
+        assert!(text.contains("SEARCHABLE-COMPACT-SUMMARY"));
     }
 
     #[test]

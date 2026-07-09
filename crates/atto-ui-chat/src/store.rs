@@ -782,6 +782,7 @@ fn set_block_id(block: &mut ChatBlock, id: ChatBlockId) {
         ChatBlock::Todo(block) => block.id = id,
         ChatBlock::Attachment(block) => block.id = id,
         ChatBlock::Notice(block) => block.id = id,
+        ChatBlock::Compact(block) => block.id = id,
         ChatBlock::Artifact(block) => block.id = id,
     }
 }

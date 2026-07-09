@@ -20,10 +20,11 @@ use crate::{
     ApprovalResolution, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatBlock,
     ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle, ChatInputPanel, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatRole, ChatTurnStatus,
-    DiffBlock, DiffData, EditDecision, EditDecisionEvent, MessageAction, MessageActionKind,
-    NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
-    TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
-    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    CompactBlock, CompactStatus, DiffBlock, DiffData, EditDecision, EditDecisionEvent,
+    MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision,
+    PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextBlock,
+    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 type ValueMap = BTreeMap<String, ComponentValue>;
@@ -334,6 +335,20 @@ fn block_to_value(block: &ChatBlock) -> ComponentValue {
             );
             ComponentValue::Map(map)
         }
+        ChatBlock::Compact(block) => {
+            let mut map = block_base("compact", block.id);
+            map.insert(
+                "status".to_string(),
+                ComponentValue::String(block.status.as_str().to_string()),
+            );
+            insert_optional_u64(&mut map, "before_tokens", block.before_tokens);
+            insert_optional_u64(&mut map, "after_tokens", block.after_tokens);
+            map.insert(
+                "summary".to_string(),
+                ComponentValue::String(block.summary.clone()),
+            );
+            ComponentValue::Map(map)
+        }
         ChatBlock::Artifact(block) => {
             let mut map = block_base("artifact", block.id);
             map.insert(
@@ -612,6 +627,12 @@ fn insert_optional_string(map: &mut ValueMap, key: &str, value: Option<&str>) {
     }
 }
 
+fn insert_optional_u64(map: &mut ValueMap, key: &str, value: Option<u64>) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), ComponentValue::U64(value));
+    }
+}
+
 fn error_kind_to_string(kind: &ChatErrorKind) -> &'static str {
     match kind {
         ChatErrorKind::Api => "api",
@@ -887,6 +908,17 @@ fn parse_block_value(value: &ComponentValue) -> Result<ChatBlock, String> {
                 .transpose()?
                 .unwrap_or(NoticeLevel::Info),
             text: required_string_field(map, "text", "notice block")?,
+        })),
+        "compact" => Ok(ChatBlock::Compact(CompactBlock {
+            id,
+            status: map
+                .get("status")
+                .map(parse_compact_status_value)
+                .transpose()?
+                .unwrap_or(CompactStatus::Complete),
+            before_tokens: optional_u64_field(map, "before_tokens", "compact block")?,
+            after_tokens: optional_u64_field(map, "after_tokens", "compact block")?,
+            summary: optional_string_field(map, "summary", "compact block")?.unwrap_or_default(),
         })),
         "artifact" => Ok(ChatBlock::Artifact(ArtifactBlock {
             id,
@@ -1418,6 +1450,25 @@ fn parse_notice_level_string(raw: &str) -> Result<NoticeLevel, String> {
     }
 }
 
+fn parse_compact_status_value(value: &ComponentValue) -> Result<CompactStatus, String> {
+    match value {
+        ComponentValue::String(raw) => parse_compact_status_string(raw),
+        other => Err(format!("compact status must be string, got {other:?}")),
+    }
+}
+
+fn parse_compact_status_string(raw: &str) -> Result<CompactStatus, String> {
+    let lower = raw.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "pending" => Ok(CompactStatus::Pending),
+        "running" | "in_progress" | "inprogress" => Ok(CompactStatus::Running),
+        "complete" | "completed" | "done" => Ok(CompactStatus::Complete),
+        "failed" | "error" => Ok(CompactStatus::Failed),
+        "canceled" | "cancelled" => Ok(CompactStatus::Canceled),
+        _ => Err(format!("unknown compact status '{raw}'")),
+    }
+}
+
 fn parse_i32_value(value: &ComponentValue) -> Result<i32, String> {
     let raw = value
         .as_i64()
@@ -1467,6 +1518,15 @@ fn required_u64_value(value: &ComponentValue) -> Result<u64, String> {
     value
         .as_u64()
         .ok_or_else(|| format!("expected u64-compatible value, got {value:?}"))
+}
+
+fn optional_u64_field(map: &ValueMap, key: &str, context: &str) -> Result<Option<u64>, String> {
+    match map.get(key) {
+        Some(ComponentValue::Null) | None => Ok(None),
+        Some(value) => required_u64_value(value)
+            .map(Some)
+            .map_err(|err| format!("{context} field '{key}' must be u64-compatible: {err}")),
+    }
 }
 
 fn required_bool_field(map: &ValueMap, key: &str, context: &str) -> Result<bool, String> {
@@ -2143,6 +2203,13 @@ mod tests {
                     id: ChatBlockId::new(79),
                     level: NoticeLevel::Warning,
                     text: "context compacted".to_string(),
+                }),
+                ChatBlock::Compact(CompactBlock {
+                    id: ChatBlockId::new(83),
+                    status: CompactStatus::Complete,
+                    before_tokens: Some(12_000),
+                    after_tokens: Some(3_500),
+                    summary: "kept current task context".to_string(),
                 }),
                 ChatBlock::Artifact(ArtifactBlock {
                     id: ChatBlockId::new(80),
