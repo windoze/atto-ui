@@ -4,7 +4,7 @@
 
 - 目标：只完成 `TODO.md` 中第一个未完成任务，然后停止。
 - 当前任务：`M2.3 SSE parser`。
-- 计划状态：实现、验证和 `TODO.md` 完成记录均已完成，下一步提交本任务变更。
+- 计划状态：`M2.3` 已实现、验证、更新 `TODO.md` 并提交。
 
 ## 执行计划
 
@@ -30,3 +30,4 @@
 - 已运行 `cargo test --workspace --all-targets`，通过。
 - 已运行 `cargo fmt --all -- --check`，通过。
 - 已在 `TODO.md` 将 `M2.3 SSE parser` 标记为 `[DONE]` 并填写完成记录。
+- 已提交任务变更，提交为 `a552749 [M2.3] Add DeepSeek SSE parser`。
