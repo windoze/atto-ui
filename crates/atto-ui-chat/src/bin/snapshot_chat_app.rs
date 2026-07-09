@@ -43,6 +43,7 @@ fn main() -> Result<()> {
     execute!(
         stdout,
         EnterAlternateScreen,
+        event::EnableBracketedPaste,
         event::EnableMouseCapture,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
         cursor::Show
@@ -73,6 +74,7 @@ fn main() -> Result<()> {
     let fork_at = args.iter().any(|arg| arg == "--fork-at");
     let input_queue = args.iter().any(|arg| arg == "--input-queue");
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
+    let multiline_paste = args.iter().any(|arg| arg == "--multiline-paste");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
     let input_completion = args.iter().any(|arg| arg == "--input-completion");
@@ -100,6 +102,9 @@ fn main() -> Result<()> {
     let mut input_queue_stream_id = None;
     let tool_block_ids = if input_completion {
         seed_input_completion_messages(&store);
+        None
+    } else if multiline_paste {
+        seed_multiline_paste_messages(&store);
         None
     } else if input_queue {
         input_queue_stream_id = Some(seed_input_queue_messages(&store));
@@ -202,6 +207,7 @@ fn main() -> Result<()> {
         || message_actions
         || text_selection
         || cancel_action
+        || multiline_paste
         || input_queue
         || input_completion
         || long_tool_result_id.is_some()
@@ -300,7 +306,11 @@ fn main() -> Result<()> {
     let mut input_panel = input_handle.panel().on_submit({
         let store = store.clone();
         move |response| {
-            let text = submit_response_text(response);
+            let text = if multiline_paste {
+                multiline_paste_response_text(response)
+            } else {
+                submit_response_text(response)
+            };
             store.push(ChatMessage::text(
                 store.next_message_id(),
                 ChatRole::System,
@@ -342,6 +352,7 @@ fn main() -> Result<()> {
         || retry_resubmit
         || fork_at
         || cancel_action
+        || multiline_paste
         || input_queue
         || input_completion
     {
@@ -523,7 +534,13 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            if !input_completion && !input_queue && !edit_resubmit && !retry_resubmit && !fork_at {
+            if !input_completion
+                && !multiline_paste
+                && !input_queue
+                && !edit_resubmit
+                && !retry_resubmit
+                && !fork_at
+            {
                 match cmd {
                     'a' => {
                         store.push(ChatMessage::text(
@@ -689,6 +706,7 @@ fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         PopKeyboardEnhancementFlags,
+        event::DisableBracketedPaste,
         LeaveAlternateScreen,
         event::DisableMouseCapture
     )?;
@@ -739,6 +757,14 @@ fn seed_input_completion_messages(store: &ChatMessageStore) {
         store.next_message_id(),
         ChatRole::Assistant,
         "COMPLETION-READY",
+    ));
+}
+
+fn seed_multiline_paste_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "MULTILINE-PASTE-READY",
     ));
 }
 
@@ -1445,5 +1471,12 @@ fn submit_response_text(response: ChatInputResponse) -> String {
             format!("SUBMIT: choice index={index} label={label}")
         }
         ChatInputResponse::Custom(text) => format!("SUBMIT: custom={text}"),
+    }
+}
+
+fn multiline_paste_response_text(response: ChatInputResponse) -> String {
+    match response {
+        ChatInputResponse::Text(text) => format!("PASTE_SUBMIT: {text:?}"),
+        other => submit_response_text(other),
     }
 }

@@ -312,6 +312,29 @@ fn chat_textarea_multiline_history_and_kill_ring() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_multiline_paste_normalizes_and_submits() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--multiline-paste"], 100, 28)?;
+
+    host.wait_for_text("MULTILINE-PASTE-READY", Duration::from_secs(2))?;
+    host.send_paste("ML-A\r\n  ML-B  \n\n\t \n")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("ML-A"))
+                && snapshot.iter().any(|line| line.contains("ML-B"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text(r#"PASTE_SUBMIT: "ML-A\n  ML-B  ""#, Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_auto_follow_pauses_after_user_scrolls_up() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
