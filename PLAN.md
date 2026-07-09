@@ -1,94 +1,166 @@
-# 执行计划：Chat 控件对齐 Claude Code 能力缺口
+# 执行计划：TUI Agent 对接 DeepSeek / Tool / Skill / Plan Mode
 
-本计划是 [`AGENT_GAP.md`](AGENT_GAP.md) 缺口分析的落地步骤。目标：在现有 agent 会话视图
-（`crates/atto-ui-chat`）基础上，补齐与 Claude Code (CLI) 之间的能力差距，使 chat 控件
-能够**完整复刻** Claude Code 的核心交互与渲染能力（不追求外观逐像素一致）。
+本计划对应 [`TUI_AGENT.md`](TUI_AGENT.md)。目标是在现有 `atto-ui-chat` 能力已经齐备的基础上，新增一个应用层 TUI agent：复用 `ChatPanel` / `ChatMessageStore` / `ChatInputHandle`，对接 DeepSeek API，支持本地 tool、skill 注入和 plan mode。
 
-缺口清单、优先级、`file:line` 现状以 `AGENT_GAP.md` 为准；本文件只给**做什么、按什么顺序、怎么验收**。
+旧的 chat 控件能力补齐计划已归档至 [`docs/archive/2026-07-10-chat-capabilities/`](docs/archive/2026-07-10-chat-capabilities/)。
 
-> **范围说明**：本计划**不包含**图片/多模态内联渲染（`AGENT_GAP.md` 的 B2 项），
-> 该项依赖终端 graphics 协议、工作量大且收益视场景而定，暂缓到独立计划。
+## 范围
+
+| 范围 | 说明 |
+|---|---|
+| 新应用 crate | 新增 `crates/atto-agent-app`，作为 Rust TUI agent 应用。 |
+| UI 复用 | 不重做 chat 控件；直接使用 `atto-ui-chat` 的块模型、输入补全、审批、plan、取消、编辑重发等能力。 |
+| DeepSeek | 使用 OpenAI-compatible Chat Completions 和 SSE streaming。 |
+| Tool | 建立本地 `ToolRegistry`，MVP 包含读文件、列文件、搜索、apply patch、run command。 |
+| Skill | 建立本地 `SkillRegistry`，解析 `SKILL.md`，支持手动和简单自动加载。 |
+| Plan mode | app 层执行门控：计划未接受前禁止副作用工具。 |
+
+## 非范围
+
+| 非范围 | 说明 |
+|---|---|
+| 扩展 `atto-ui-chat` 数据模型 | 当前已有 `PlanBlock`、`ToolUseBlock`、`TaskBlock`、审批、compact 等能力，除非发现阻塞 bug，否则不改。 |
+| MCP | MVP 先做本地 tool registry，MCP adapter 后续单独计划。 |
+| 多 agent 调度 | MVP 只做单 agent loop。 |
+| 图片/多模态 | 继续不纳入本计划。 |
+| 强沙箱 | MVP 做 workspace 路径约束、审批和命令 argv 化，不承诺系统级隔离。 |
 
 ## 原则
 
-- **小步可编译**：每个阶段结束都要 `cargo build` 通过、`cargo test` 全绿、
-  `cargo clippy --workspace --all-targets -- -D warnings` 无告警、`cargo fmt --all -- --check` 通过（CI 同款，见 `.github/workflows/ci.yml`）。
-- **每个可见改动配 PTY 快照测试**：扩展 `crates/atto-ui-chat/src/bin/snapshot_chat_app.rs` + 新增/补充 `crates/atto-ui-chat/tests/pty_chat.rs`（参考 `PtyTestHost`）。
-- **模型/store 先行**：需要新数据结构的功能（如消息 fork、权限层级），先扩 `message.rs`/`store.rs`，再挂渲染与交互。
-- **运行时同步**：任何模型或输入协议变更，同阶段更新 `src/dynamic.rs` 序列化与 schema，并同步 Node/React 侧类型（`crates/atto-ui-node`、`packages/core`、`packages/react`，见 `docs/NODE_API.md`）。
-- **阶段末 review**：每个阶段最后有一个独立的 review 任务，用来复核本阶段改动的正确性与完整性（见 `TODO.md`）。
+| 原则 | 要求 |
+|---|---|
+| 应用层隔离 | `reqwest`、`tokio`、DeepSeek 协议只进入 `crates/atto-agent-app`。 |
+| 核心依赖干净 | `atto-ui` 和 `atto-ui-chat` 不新增网络依赖。 |
+| UI 主线程更新 | 后台任务只发 `AppAction`，主线程更新 `ChatMessageStore` 和 bindings。 |
+| 可测试优先 | DeepSeek client trait/enum 化，MVP 全部关键路径可用 mock provider 测。 |
+| 安全默认 | 写文件、apply patch、run command 默认需要审批；plan mode 接受前始终拦截副作用工具。 |
+| 小步可编译 | 每阶段结束必须能 build/test/clippy/fmt。 |
 
 ## 阶段划分
 
-阶段顺序遵循 `AGENT_GAP.md` 的投入产出优先级：先渲染保真（收益最大、改动集中），
-再输入补全（交互核心），再会话管理，最后交互增强与细节。
+### M1 - App Skeleton + Mock Provider
 
-### P1 — 渲染保真度（B1 + B3）
-对应 `AGENT_GAP.md` B1、B3。改动集中在 `crates/atto-ui-markdown` 与 chat diff 渲染。
+建立 `crates/atto-agent-app`，完成可运行的 TUI shell。
 
-- **代码块语法高亮**：为 markdown crate 的 fenced code block 增加语法高亮。选型（syntect / tree-sitter / 轻量自研 tokenizer）需在阶段初评估并记录到 `AGENT_GAP.md`；优先考虑体积与 `#![forbid(unsafe_code)]` 兼容性。按 fence info string（语言标识）着色，无语言标识时回退纯文本。
-- **diff 语法高亮**：在现有 +/- 行着色基础上，对 diff 内容按语言做语法层着色（复用 B1 的高亮引擎），保持 +/- 背景/前景语义不丢失。
-- **验收**：`snapshot_markdown_app` / `snapshot_chat_app` 覆盖多语言代码块与带语法高亮的 diff；PTY 快照比对高亮色。
+| 产出 | 说明 |
+|---|---|
+| crate 注册 | workspace 加入 `crates/atto-agent-app`。 |
+| UI 组装 | `Desktop` + `MenuBar`/`StatusBar` + 单窗口 `ChatPanel`。 |
+| 输入提交 | `ChatInputPanel::on_submit` push user message，并启动 mock agent turn。 |
+| Slash 命令 | 注入 `/help`、`/clear`、`/plan`、`/skills`、`/tools`。 |
+| Mock stream | 不依赖网络，按 token 流式写入 assistant `TextBlock`。 |
+| 取消 | Esc / cancel 回调取消 mock turn 并置 `Canceled`。 |
 
-### P2 — 输入补全：斜杠命令 + @文件提及（A1 + A2）
-对应 `AGENT_GAP.md` A1、A2。核心是在 `input.rs` 上叠加一个 overlay 补全菜单组件。
+验收：`cargo run -p atto-agent-app -- --mock` 可本地交互；PTY 覆盖 mock stream、slash command、Esc cancel。
 
-- **补全 overlay 组件**：新增一个可复用的 completion popup（列表 + 高亮匹配 + 键盘上下选择 + Enter 确认 + Esc 关闭），锚定在输入框上方/下方。
-- **斜杠命令**：输入行首 `/` 触发命令菜单；命令集合可由宿主注入（`register` 回调），内置示例若干（如 `/clear`、`/model`）；选中后写回输入或触发命令回调。
-- **@ 文件提及**：输入 `@` 触发文件/资源补全；补全项由宿主提供（文件路径 provider 回调）；确认后在输入中渲染为 mention 芯片或路径文本。
-- **运行时同步**：命令/提及协议与回调需在 `dynamic.rs` 暴露，并同步 Node/React 侧。
-- **验收**：PTY 覆盖 `/` 触发菜单、过滤、选择、确认；`@` 触发文件补全、确认插入。
+### M2 - DeepSeek Text Streaming
 
-### P3 — 会话管理：消息编辑 / 回退 / 重发（C1）
-对应 `AGENT_GAP.md` C1。核心是 store 的截断-fork 能力。
+接入 DeepSeek Chat Completions 的基础文本流。
 
-- **store 截断-fork API**：新增"截断到某条消息并从该点重新生成"的能力（如 `truncate_from(message_id)` / `fork_at`），保持版本与脏通知约定。
-- **编辑 user 消息**：`ChatMessageList` 支持进入某条 user 消息的编辑态，编辑后从该点截断并触发重发回调（`on_edit_and_resubmit`）。
-- **retry / regenerate**：对 assistant 回合支持重生成（截断该回合后回调）。与现有 `on_message_action` 的 Retry/Regenerate 打通。
-- **验收**：PTY 覆盖编辑 user 消息后截断、retry 后回合截断、fork 后旧消息不再显示。
+| 产出 | 说明 |
+|---|---|
+| 配置加载 | CLI/env/TOML：`DEEPSEEK_API_KEY`、base URL、model、temperature、max tokens。 |
+| DeepSeekClient | `POST /chat/completions`，`stream: true`。 |
+| SSE parser | 解析 `data:`、`[DONE]`、content、reasoning_content、finish_reason。 |
+| UI 映射 | content -> `TextBlock`，reasoning_content -> `ThinkingBlock`。 |
+| 错误映射 | 401/403、429、5xx、网络、JSON 错误映射到 `ChatError`。 |
+| real API smoke | 提供 `#[ignore]` 或手动命令，不进默认 CI。 |
 
-### P4 — 输入交互增强：排队 & Esc 中断 + 多行编辑（A3 + A4）
-对应 `AGENT_GAP.md` A3、A4。
+验收：mock PTY 稳定；设置 `DEEPSEEK_API_KEY` 后可手动跑真实 streaming；失败时 UI 显示清晰错误。
 
-- **输入排队**：流式进行中允许继续输入并"排队"新消息；流式结束后自动出队/提示。
-- **Esc 中断语义**：完善 Esc 状态机——一次 Esc 中断当前流式（置 `Canceled`），连按/分级 Esc 的语义明确化，与现有取消按钮统一。
-- **多行编辑增强**：多行粘贴规整、（可选）拖入/粘贴文件路径转 `Attachment`。
-- **验收**：PTY 覆盖流式中排队新消息、Esc 中断置 `Canceled`、多行粘贴。
+### M3 - Tool Loop + Approval
 
-### P5 — 会话导航：历史搜索 + Turn 级折叠/引用（C2 + C3）
-对应 `AGENT_GAP.md` C2、C3。
+实现 DeepSeek function calling 到本地 tool 的闭环。
 
-- **会话内搜索**：类 Ctrl+R 的搜索/跳转——输入关键词高亮匹配行并可在命中间跳转。
-- **Turn 级折叠**：在现有块级折叠之上，支持折叠整个回合（回合 header 上的折叠控件）。
-- **引用回复**：（可选）选中某回合/块作为引用附加到下一条输入。
-- **验收**：PTY 覆盖搜索命中跳转、turn 折叠/展开、引用附加。
+| 产出 | 说明 |
+|---|---|
+| Tool schema | `ToolSpec` 转 OpenAI-compatible `tools`。 |
+| Tool call 聚合 | 按 SSE `tool_calls[].index` 聚合 name 和 arguments。 |
+| ToolRegistry | 注册、查找、参数校验、权限策略。 |
+| 内置只读工具 | `read_file`、`list_files`、`search_text`。 |
+| 内置副作用工具 | `apply_patch`、`run_command`，默认审批。 |
+| Approval UI | `ToolUseBlock.approval` + `ChatMessageList::on_approve`。 |
+| Tool result | `ToolResultBlock` 写 UI，并作为 role=`tool` 继续请求模型。 |
+| 限制 | 每 turn 最大模型请求数、tool call 数、工具超时。 |
 
-### P6 — 细节层：工具权限层级 + 上下文压缩块（D1 + D2）
-对应 `AGENT_GAP.md` D1、D2。
+验收：PTY 覆盖 tool 请求、allow once、deny、tool result 回灌；单测覆盖路径越界、非法参数、无限循环限制。
 
-- **工具权限层级**：`ApprovalRequest`/`ApprovalOption` 扩展为支持 allow-once / always / 项目级等层级语义；决策回调携带层级；渲染对应选项。
-- **上下文压缩块**：新增专门的 compact 块类型（或扩展 `Notice`），展示压缩进度/前后 token/摘要，区别于普通通知。
-- **运行时同步**：模型变更同步 `dynamic.rs` 与 Node/React 侧类型。
-- **验收**：PTY 覆盖多层级审批选择与锁定、压缩块渲染。
+### M4 - Skill Registry
+
+实现 skill 文件格式、索引、选择和 prompt 注入。
+
+| 产出 | 说明 |
+|---|---|
+| Skill parser | 解析 `SKILL.md` frontmatter + body。 |
+| 搜索路径 | `.atto/skills` 和 `~/.config/atto-agent/skills`。 |
+| 手动加载 | `/skills` 列表，`/skill <name>` 激活。 |
+| 自动加载 | 按 prompt 与 name/description/triggers 的简单词匹配。 |
+| Prompt 注入 | system prompt 增加 `<skills>` 块。 |
+| 安全约束 | skill 只影响提示词和工具偏好，不授予额外工具权限。 |
+| 预算 | 单 skill、总 skill prompt 大小限制。 |
+
+验收：单测覆盖解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill` 生效。
+
+### M5 - Plan Mode
+
+实现 app 层计划门控。
+
+| 产出 | 说明 |
+|---|---|
+| 模式 | `off`、`on`、`auto`，支持 `/plan` 切换。 |
+| auto 判定 | 根据用户意图和工具需求粗判是否可能有副作用。 |
+| 计划生成 | 优先使用虚拟 tool `submit_plan({ items })`；兜底解析 markdown 列表。 |
+| Plan UI | 渲染 `PlanBlock { decision: Pending }`。 |
+| 接受 | `PlanDecision::Accepted` 后追加内部执行指令并继续 agent loop。 |
+| 拒绝 | `PlanDecision::Rejected` 后停止当前 turn，等待用户补充。 |
+| 副作用拦截 | 计划接受前拒绝 `apply_patch`、`run_command` 等 mutating tool。 |
+
+验收：PTY 覆盖 plan 生成、Accept 后执行、Reject 后停止、未接受计划时副作用工具被拦截。
+
+### M6 - Context / Session Polish
+
+补齐上下文、mention、compact、编辑重发和稳定性。
+
+| 产出 | 说明 |
+|---|---|
+| ContextBuilder | UI transcript -> DeepSeek messages。 |
+| 文件 mention | `@path` 转只读文件摘要。 |
+| 工具输出预算 | 回传模型的 tool output 截断，UI 保留完整或尾部窗口。 |
+| Compact | 超预算时生成 `CompactBlock`，后续请求使用摘要。 |
+| Retry/Edit | `on_edit_and_resubmit`、retry/regenerate 触发截断并重跑。 |
+| Transcript | 可选 JSONL 保存和恢复。 |
+| 状态栏 | 展示 model、plan、tools、skills、streaming、token 估算。 |
+
+验收：PTY 覆盖 mention、compact、retry/edit 重跑；长会话不阻塞 UI；取消后无迟到 token 污染新分支。
 
 ## 依赖关系
 
-- P1 独立（渲染层），可最先做。
-- P2 独立（输入层 overlay）。
-- P3 依赖 store，独立于 P1/P2。
-- P4 建立在 P2（输入层）之上，且与 P3 的中断/取消语义衔接。
-- P5 独立，但 Turn 折叠建立在现有块级折叠之上。
-- P6 涉及模型变更，需同步运行时/JS 侧。
-- 建议顺序：**P1 → P2 → P3 → P4 → P5 → P6**（即 `AGENT_GAP.md` 优先级顺序）。P1/P2/P3 之间无强依赖，可按资源并行。
+| 阶段 | 依赖 |
+|---|---|
+| M1 | 无，先搭应用骨架和 mock。 |
+| M2 | 依赖 M1 的 action loop 和 UI 映射。 |
+| M3 | 依赖 M2 的 DeepSeek request/stream 基础。 |
+| M4 | 依赖 M1/M2 的 prompt 构建入口，可与 M3 部分并行。 |
+| M5 | 依赖 M3 的 tool gate 和 `PlanBlock` 回调。 |
+| M6 | 依赖 M2-M5，作为收尾和体验完善。 |
+
+建议顺序：M1 -> M2 -> M3 -> M4 -> M5 -> M6。
 
 ## 验证
 
-- 每阶段：`cargo build` / `cargo test`（含 PTY）/ `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all -- --check`。
-- 关键视觉项用 `snapshot_chat_app` / `snapshot_markdown_app` 抓屏人工比对。
-- 涉及 JS 侧的阶段（P2、P6），跑 `npm run smoke --prefix examples/react-tsx` 与 `packages/core` 的 runtime 兼容测试（见 `docs/NODE_API.md`）。
-- **每阶段末的 review 任务**必须过：复核本阶段全部改动的正确性与完整性（含边界、错误路径、测试覆盖），并确认全套 CI 命令通过。
+每阶段至少运行：
 
-## 历史
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+```
 
-- Chat 从"通用聊天气泡"重构为"agent 会话视图"阶段的 PLAN/TODO 已归档至 [`docs/archive/2026-07-09-chat-refactor/`](docs/archive/2026-07-09-chat-refactor/)（对应设计文档 `CHAT_UI.md`）。
-- 更早的 UI 对齐（Turbo Vision）阶段归档见 [`docs/archive/2026-06-10-ui-gaps/`](docs/archive/2026-06-10-ui-gaps/)。
+涉及真实 DeepSeek 的测试默认忽略或手动执行：
+
+```sh
+DEEPSEEK_API_KEY=... cargo run -p atto-agent-app
+DEEPSEEK_API_KEY=... cargo test -p atto-agent-app -- --ignored
+```
+
+PTY 覆盖应优先走 mock client，不依赖网络和外部 API。
