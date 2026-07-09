@@ -67,6 +67,7 @@ dependencies = [
  "atto-ui",
  "atto-ui-async",
  "atto-ui-chat",
+ "atto-ui-test-host",
  "crossterm",
  "ratatui",
 ]

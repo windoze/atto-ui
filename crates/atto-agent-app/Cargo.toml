@@ -11,4 +11,5 @@ atto-ui-chat = { path = "../atto-ui-chat" }
 ratatui = "0.30.0"
 
 [dev-dependencies]
+atto-ui-test-host = { path = "../atto-ui-test-host" }
 crossterm = "0.29.0"

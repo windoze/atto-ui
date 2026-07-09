@@ -33,6 +33,7 @@ const PLAN_MODE_OFF: &str = "plan: off";
 const PLAN_MODE_ON: &str = "plan: on";
 const PLAN_MODE_AUTO: &str = "plan: auto";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
+const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -50,6 +51,7 @@ enum AppAction {
 #[derive(Clone, Debug)]
 struct MockTurnRegistry {
     current: Arc<Mutex<Option<ActiveMockTurn>>>,
+    token_delay: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -70,9 +72,18 @@ struct AgentRuntime {
 
 impl MockTurnRegistry {
     fn new() -> Self {
+        Self::with_token_delay(MOCK_TOKEN_DELAY)
+    }
+
+    fn with_token_delay(token_delay: Duration) -> Self {
         Self {
             current: Arc::new(Mutex::new(None)),
+            token_delay,
         }
+    }
+
+    fn token_delay(&self) -> Duration {
+        self.token_delay
     }
 
     fn start(&self, message_id: ChatMessageId) -> CancellationToken {
@@ -210,13 +221,22 @@ impl AgentApp {
 
 /// Runs the TUI agent application.
 pub fn run() -> Result<()> {
+    run_with_mock_token_delay(MOCK_TOKEN_DELAY)
+}
+
+/// Runs the deterministic mock fixture used by PTY snapshot tests.
+pub fn run_snapshot_fixture() -> Result<()> {
+    run_with_mock_token_delay(SNAPSHOT_MOCK_TOKEN_DELAY)
+}
+
+fn run_with_mock_token_delay(mock_token_delay: Duration) -> Result<()> {
     let quit_events = EventQueue::new();
     let quit_events_for_menu = quit_events.clone();
     let quit_events_for_loop = quit_events.clone();
     let (action_sender, action_receiver) = EventQueue::<AppAction>::channel();
     let runtime = AgentRuntime {
         action_sender: action_sender.clone(),
-        mock_turns: MockTurnRegistry::new(),
+        mock_turns: MockTurnRegistry::with_token_delay(mock_token_delay),
         message_store: ChatMessageStore::new(),
         input_handle: ChatInputHandle::new(),
         status_state: Property::new(STATUS_READY.to_string()),
@@ -362,6 +382,7 @@ fn submit_input_response(
         assistant_id,
         text_block_id,
         cancel,
+        mock_turns.token_delay(),
         text,
     );
 }
@@ -590,6 +611,7 @@ fn spawn_mock_agent_turn(
     message_id: ChatMessageId,
     block_id: ChatBlockId,
     cancel: CancellationToken,
+    mock_token_delay: Duration,
     prompt: String,
 ) {
     thread::spawn(move || {
@@ -597,7 +619,7 @@ fn spawn_mock_agent_turn(
             if cancel.is_cancelled() {
                 return;
             }
-            thread::sleep(MOCK_TOKEN_DELAY);
+            thread::sleep(mock_token_delay);
             if cancel.is_cancelled() {
                 return;
             }
@@ -615,7 +637,7 @@ fn spawn_mock_agent_turn(
         if cancel.is_cancelled() {
             return;
         }
-        thread::sleep(MOCK_TOKEN_DELAY);
+        thread::sleep(mock_token_delay);
         if cancel.is_cancelled() {
             return;
         }
