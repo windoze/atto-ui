@@ -80,7 +80,12 @@
 
 参考 `AGENT_GAP.md` C1。核心是 store 的截断-fork 能力。
 
-- [ ] **P3.1 store 截断-fork API** — `src/store.rs`：新增"截断到某条消息并从该点重生成"的能力（如 `truncate_from(message_id)` / `fork_at`）；保持版本跟踪与"值未变不发脏"约定；补单测覆盖截断边界（首条/末条/中间/流式中）。
+- [x] **[DONE] P3.1 store 截断-fork API** — `src/store.rs`：新增"截断到某条消息并从该点重生成"的能力（如 `truncate_from(message_id)` / `fork_at`）；保持版本跟踪与"值未变不发脏"约定；补单测覆盖截断边界（首条/末条/中间/流式中）。
+  - 完成记录（2026-07-09）：`ChatMessageStore` 新增 `truncate_from(message_id)` 与 `fork_at(message_id)`。`truncate_from` 移除目标消息及其后的旧分支，`fork_at` 保留目标消息作为 fork 点并移除其后的旧分支，二者均返回被移除的消息 suffix；目标不存在时不变更，`fork_at` 位于末条消息时返回空 suffix 且不标脏。
+  - 版本/脏追踪：截断后清理被移除 message/block 的版本记录，保留未变前缀及 fork anchor 的既有版本；不回退 `next_message_id` / `next_block_id`，避免重生成时复用旧 ID；无实际值变更不触发 dirty observer。
+  - 测试覆盖：新增 store 单测覆盖从首条/中间/末条 `truncate_from`、中间/末条 `fork_at`、缺失目标 no-op、流式 turn 截断时移除 streaming text/thinking block 并清理版本。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat store --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
+  - 测试失败处理：完整测试首轮曾出现 `chat_artifact_code_link_opens_text_viewer_window` 空屏超时；随后 exact 用例与 `pty_chat` 全文件复跑均通过，完整 `cargo test --all --all-targets` 复跑通过。
 - [ ] **P3.2 编辑 user 消息** — `src/list.rs`：支持进入某条 user 消息编辑态，编辑后从该点截断并触发重发回调（`on_edit_and_resubmit`）；与输入区衔接（把原文回填输入）。
 - [ ] **P3.3 retry / regenerate** — `src/list.rs`：assistant 回合支持重生成（截断该回合后触发回调），与现有 `on_message_action` 的 Retry/Regenerate 打通。
 - [ ] **P3.4 快照与测试** — `snapshot_chat_app` 增加编辑/重发场景；PTY 覆盖编辑 user 后截断、retry 后回合截断、fork 后旧消息不再显示。
