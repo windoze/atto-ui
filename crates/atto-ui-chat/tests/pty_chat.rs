@@ -591,6 +591,61 @@ fn chat_inline_approval_buttons_emit_and_lock() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_p6_approval_levels_emit_and_lock_project_scope() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p6-approval-compact"], 100, 30)?;
+
+    host.wait_for_text("Approval: Run P6-APPROVAL-COMMAND?", Duration::from_secs(2))?;
+    host.wait_for_text("Once", Duration::from_secs(2))?;
+    host.wait_for_text("Always", Duration::from_secs(2))?;
+    host.wait_for_text("Project", Duration::from_secs(2))?;
+    host.wait_for_text("Deny", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Project").expect("project approval button");
+    host.click(x, y)?;
+
+    host.wait_for_text(
+        "APPROVED: approval-p6/project action=allow",
+        Duration::from_secs(2),
+    )?;
+    host.wait_for_text("level=project", Duration::from_secs(2))?;
+
+    for _ in 0..6 {
+        host.wheel_up(8, 10)?;
+        thread::sleep(Duration::from_millis(25));
+        if host.screen_contents()?.contains("[x] Project") {
+            break;
+        }
+    }
+    host.wait_for_text("[x] Project", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "Deny", Duration::from_millis(250));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p6_compact_block_renders_tokens_and_summary() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p6-approval-compact"], 100, 30)?;
+
+    host.wait_for_text("Context compact: Complete", Duration::from_secs(2))?;
+    host.wait_for_text("Tokens: 12000 -> 3500 (8500 saved)", Duration::from_secs(2))?;
+    host.wait_for_text("Summary: P6-COMPACT-SUMMARY", Duration::from_secs(2))?;
+    host.wait_for_text("P6-COMPACT-DETAIL", Duration::from_secs(2))?;
+    assert_text_absent_for(
+        &host,
+        "Info: P6-COMPACT-SUMMARY",
+        Duration::from_millis(250),
+    );
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_inline_diff_buttons_emit_and_lock() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

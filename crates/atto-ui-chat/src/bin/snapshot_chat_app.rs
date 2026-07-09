@@ -30,11 +30,11 @@ use atto_ui_chat::{
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
     ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId, ChatMessageList,
     ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
-    DiffBlock, DiffData, EditAndResubmitEvent, EditDecision, EditDecisionEvent, MessageAction,
-    MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock, PlanDecision, PlanDecisionEvent,
-    PlanItem, StopReason, TaskBlock, TaskStatus, TaskTranscriptItem, TextArtifactViewer, TextBlock,
-    ThinkingBlock, TodoBlock, TodoItem, TodoState, TokenUsage, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    CompactBlock, CompactStatus, DiffBlock, DiffData, EditAndResubmitEvent, EditDecision,
+    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
+    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
+    TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
+    TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 
 fn main() -> Result<()> {
@@ -80,6 +80,7 @@ fn main() -> Result<()> {
     let input_completion = args.iter().any(|arg| arg == "--input-completion");
     let p5_search = args.iter().any(|arg| arg == "--p5-search");
     let p5_fold_quote = args.iter().any(|arg| arg == "--p5-fold-quote");
+    let p6_approval_compact = args.iter().any(|arg| arg == "--p6-approval-compact");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -119,6 +120,9 @@ fn main() -> Result<()> {
         None
     } else if responsive_layout {
         seed_responsive_layout_messages(&store);
+        None
+    } else if p6_approval_compact {
+        seed_p6_approval_compact_messages(&store);
         None
     } else if inline_approval {
         seed_inline_approval_messages(&store);
@@ -220,6 +224,7 @@ fn main() -> Result<()> {
         || input_completion
         || p5_search
         || p5_fold_quote
+        || p6_approval_compact
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -374,6 +379,7 @@ fn main() -> Result<()> {
         || input_completion
         || p5_search
         || p5_fold_quote
+        || p6_approval_compact
     {
         24
     } else if nested_task {
@@ -561,6 +567,7 @@ fn main() -> Result<()> {
                 && !fork_at
                 && !p5_search
                 && !p5_fold_quote
+                && !p6_approval_compact
             {
                 match cmd {
                     'a' => {
@@ -632,7 +639,13 @@ fn main() -> Result<()> {
             store.push(ChatMessage::text(
                 store.next_message_id(),
                 ChatRole::System,
-                format!("APPROVED: {}/{}", decision.approval_id, decision.option_id),
+                format!(
+                    "APPROVED: {}/{} action={} level={}",
+                    decision.approval_id,
+                    decision.option_id,
+                    decision.action.as_str(),
+                    decision.level.as_str()
+                ),
             ));
         }
 
@@ -913,6 +926,46 @@ fn seed_inline_approval_messages(store: &ChatMessageStore) {
                 resolved: None,
             }),
             collapsed: false,
+        })],
+    ));
+}
+
+fn seed_p6_approval_compact_messages(store: &ChatMessageStore) {
+    let approval_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        approval_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::ToolUse(ToolUseBlock {
+            id: snapshot_block_id(approval_id, 0),
+            call_id: "call-p6-approval".to_string(),
+            name: "p6_approval".to_string(),
+            input: ToolInput::Text("P6-APPROVAL-COMMAND".to_string()),
+            status: ToolStatus::Pending,
+            approval: Some(ApprovalRequest {
+                id: "approval-p6".to_string(),
+                prompt: "Run P6-APPROVAL-COMMAND?".to_string(),
+                options: vec![
+                    ApprovalOption::allow_once("once", "Once"),
+                    ApprovalOption::allow_always("always", "Always"),
+                    ApprovalOption::allow_project("project", "Project"),
+                    ApprovalOption::deny("deny", "Deny"),
+                ],
+                resolved: None,
+            }),
+            collapsed: false,
+        })],
+    ));
+
+    let compact_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        compact_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Compact(CompactBlock {
+            id: snapshot_block_id(compact_id, 0),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "P6-COMPACT-SUMMARY\nP6-COMPACT-DETAIL".to_string(),
         })],
     ));
 }
