@@ -9,3 +9,6 @@ atto-ui = { path = "../.." }
 atto-ui-async = { path = "../atto-ui-async", default-features = false, features = ["event-stream", "tokio-runtime"] }
 atto-ui-chat = { path = "../atto-ui-chat" }
 ratatui = "0.30.0"
+
+[dev-dependencies]
+crossterm = "0.29.0"

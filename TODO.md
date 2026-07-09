@@ -18,7 +18,9 @@
 - [x] **[DONE] M1.4 Slash 命令** - 注入 `/help`、`/clear`、`/plan`、`/skills`、`/tools`、`/abort`，实现基础状态变更和帮助输出。
   - 完成记录（2026-07-10）：app crate 现在注入提交型 slash 命令，并在直接输入 `/cmd` 时走同一命令分派；`/help` 输出命令说明，`/clear` 清空 transcript 并复位 streaming 状态，`/plan` 支持基础 on/off/auto 状态切换并显示在状态栏，`/skills` 和 `/tools` 输出当前 M1 mock 下的空注册表说明，`/abort` 将当前 streaming assistant turn 置为 `Canceled` 并通过 transcript replace 推进 branch token，避免迟到 mock token 污染已取消分支。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [ ] **M1.5 取消语义** - 接入 `on_cancel` 和 Esc，取消 mock turn，assistant turn 显示 `Canceled`，迟到 token 不污染新分支。
+- [x] **[DONE] M1.5 取消语义** - 接入 `on_cancel` 和 Esc，取消 mock turn，assistant turn 显示 `Canceled`，迟到 token 不污染新分支。
+  - 完成记录（2026-07-10）：`ChatMessageStore::cancel_streaming_turn` 现在会在取消 streaming turn 时推进 branch token；agent app 维护当前 mock turn 的取消令牌，并将 `ChatMessageList::on_cancel`、输入 Esc、`/abort` 和 streaming `/clear` 接到同一取消路径，取消后 assistant turn 显示 `Canceled`，迟到 action 因旧 branch token 被拒绝。
+  - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M1.6 快照与 PTY** - 新增 deterministic mock fixture，覆盖输入、流式输出、slash 命令、Esc 取消。
 - [ ] **M1.R Review** - 复核 M1 所有改动，确认 app skeleton 独立、mock 不依赖网络、全套验证通过。
 

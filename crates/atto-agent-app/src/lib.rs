@@ -6,11 +6,12 @@
 //! `atto-ui`, `atto-ui-chat`, and `atto-ui-async` here without adding network
 //! dependencies to the reusable UI crates.
 
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
+use atto_ui::CancellationToken;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     StatusSegment, StatusSegmentAlign, run_crossterm_desktop_with_actions,
@@ -46,6 +47,67 @@ enum AppAction {
     },
 }
 
+#[derive(Clone, Debug)]
+struct MockTurnRegistry {
+    current: Arc<Mutex<Option<ActiveMockTurn>>>,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveMockTurn {
+    message_id: ChatMessageId,
+    cancel: CancellationToken,
+}
+
+#[derive(Clone)]
+struct AgentRuntime {
+    action_sender: mpsc::Sender<AppAction>,
+    mock_turns: MockTurnRegistry,
+    message_store: ChatMessageStore,
+    input_handle: ChatInputHandle,
+    status_state: Property<String>,
+    plan_mode_state: Property<String>,
+}
+
+impl MockTurnRegistry {
+    fn new() -> Self {
+        Self {
+            current: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn start(&self, message_id: ChatMessageId) -> CancellationToken {
+        let cancel = CancellationToken::new();
+        *self.current.lock().expect("mock turn lock poisoned") = Some(ActiveMockTurn {
+            message_id,
+            cancel: cancel.clone(),
+        });
+        cancel
+    }
+
+    fn cancel(&self, message_id: ChatMessageId) -> bool {
+        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        let Some(turn) = current
+            .as_ref()
+            .filter(|turn| turn.message_id == message_id)
+        else {
+            return false;
+        };
+        turn.cancel.cancel();
+        *current = None;
+        true
+    }
+
+    fn clear(&self, message_id: ChatMessageId) {
+        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        if current
+            .as_ref()
+            .is_some_and(|turn| turn.message_id == message_id)
+        {
+            *current = None;
+        }
+    }
+}
+
 /// Runtime state for the single-window agent UI.
 pub struct AgentApp {
     desktop: Desktop,
@@ -60,38 +122,35 @@ impl AgentApp {
     /// Builds the initial desktop, status bar, chat panel, and chat state handles.
     pub fn new(screen: Rect) -> Self {
         let (action_sender, _action_receiver) = EventQueue::<AppAction>::channel();
-        Self::with_runtime_state(
-            screen,
-            EventQueue::new(),
+        let runtime = AgentRuntime {
             action_sender,
-            ChatMessageStore::new(),
-            ChatInputHandle::new(),
-            Property::new(STATUS_READY.to_string()),
-            Property::new(PLAN_MODE_OFF.to_string()),
-        )
+            mock_turns: MockTurnRegistry::new(),
+            message_store: ChatMessageStore::new(),
+            input_handle: ChatInputHandle::new(),
+            status_state: Property::new(STATUS_READY.to_string()),
+            plan_mode_state: Property::new(PLAN_MODE_OFF.to_string()),
+        };
+        Self::with_runtime_state(screen, EventQueue::new(), runtime)
     }
 
     fn with_runtime_state(
         screen: Rect,
         quit_events: EventQueue<()>,
-        action_sender: mpsc::Sender<AppAction>,
-        message_store: ChatMessageStore,
-        input_handle: ChatInputHandle,
-        status_state: Property<String>,
-        plan_mode_state: Property<String>,
+        runtime: AgentRuntime,
     ) -> Self {
         let chat_panel = build_chat_panel(
-            &message_store,
-            &input_handle,
-            status_state.clone(),
-            plan_mode_state.clone(),
-            action_sender,
+            &runtime.message_store,
+            &runtime.input_handle,
+            runtime.status_state.clone(),
+            runtime.plan_mode_state.clone(),
+            runtime.action_sender.clone(),
+            runtime.mock_turns.clone(),
         );
 
         let mut desktop = Desktop::new(Theme::dark(), agent_menu(quit_events));
         desktop.status.set_segments(status_segments(
-            status_state.binding(),
-            plan_mode_state.binding(),
+            runtime.status_state.binding(),
+            runtime.plan_mode_state.binding(),
         ));
 
         let chat_window_id = desktop.add_window(
@@ -108,10 +167,10 @@ impl AgentApp {
 
         Self {
             desktop,
-            message_store,
-            input_handle,
-            status_state,
-            plan_mode_state,
+            message_store: runtime.message_store,
+            input_handle: runtime.input_handle,
+            status_state: runtime.status_state,
+            plan_mode_state: runtime.plan_mode_state,
             chat_window_id,
         }
     }
@@ -155,18 +214,16 @@ pub fn run() -> Result<()> {
     let quit_events_for_menu = quit_events.clone();
     let quit_events_for_loop = quit_events.clone();
     let (action_sender, action_receiver) = EventQueue::<AppAction>::channel();
-    let message_store = ChatMessageStore::new();
-    let input_handle = ChatInputHandle::new();
-    let status_state = Property::new(STATUS_READY.to_string());
-    let plan_mode_state = Property::new(PLAN_MODE_OFF.to_string());
-    let message_store_for_build = message_store.clone();
-    let input_handle_for_build = input_handle.clone();
-    let status_state_for_build = status_state.clone();
-    let plan_mode_state_for_build = plan_mode_state.clone();
-    let action_sender_for_build = action_sender.clone();
-    let message_store_for_actions = message_store.clone();
-    let input_handle_for_actions = input_handle.clone();
-    let status_state_for_actions = status_state.clone();
+    let runtime = AgentRuntime {
+        action_sender: action_sender.clone(),
+        mock_turns: MockTurnRegistry::new(),
+        message_store: ChatMessageStore::new(),
+        input_handle: ChatInputHandle::new(),
+        status_state: Property::new(STATUS_READY.to_string()),
+        plan_mode_state: Property::new(PLAN_MODE_OFF.to_string()),
+    };
+    let runtime_for_build = runtime.clone();
+    let runtime_for_actions = runtime.clone();
 
     run_crossterm_desktop_with_actions(
         CrosstermAppConfig::default()
@@ -176,20 +233,17 @@ pub fn run() -> Result<()> {
             Ok(AgentApp::with_runtime_state(
                 screen,
                 quit_events_for_menu,
-                action_sender_for_build,
-                message_store_for_build,
-                input_handle_for_build,
-                status_state_for_build,
-                plan_mode_state_for_build,
+                runtime_for_build.clone(),
             )
             .into_desktop())
         },
         action_receiver,
         move |_desktop, action, _screen| {
             apply_app_action(
-                &message_store_for_actions,
-                &input_handle_for_actions,
-                &status_state_for_actions,
+                &runtime_for_actions.message_store,
+                &runtime_for_actions.input_handle,
+                &runtime_for_actions.mock_turns,
+                &runtime_for_actions.status_state,
                 action,
             );
             Ok(AppControl::Continue)
@@ -211,15 +265,30 @@ fn build_chat_panel(
     status_state: Property<String>,
     plan_mode_state: Property<String>,
     action_sender: mpsc::Sender<AppAction>,
+    mock_turns: MockTurnRegistry,
 ) -> ChatPanel {
     // Compose the reusable chat list and input controls around shared state handles.
-    let list = ChatMessageList::new(store.clone()).show_timestamps(false);
+    let input_handle_for_cancel = input_handle.clone();
+    let status_for_cancel = status_state.clone();
+    let mock_turns_for_cancel = mock_turns.clone();
+    let list = ChatMessageList::new(store.clone())
+        .show_timestamps(false)
+        .on_cancel(move |message_id| {
+            finish_canceled_turn(
+                &input_handle_for_cancel,
+                &mock_turns_for_cancel,
+                &status_for_cancel,
+                message_id,
+            );
+        });
     let store_for_submit = store.clone();
     let input_handle_for_submit = input_handle.clone();
+    let mock_turns_for_submit = mock_turns.clone();
     let status_for_submit = status_state.clone();
     let plan_mode_for_submit = plan_mode_state.clone();
     let store_for_slash = store.clone();
     let input_handle_for_slash = input_handle.clone();
+    let mock_turns_for_slash = mock_turns.clone();
     let status_for_slash = status_state.clone();
     let plan_mode_for_slash = plan_mode_state.clone();
     input_handle.set_slash_commands(agent_slash_commands());
@@ -229,6 +298,7 @@ fn build_chat_panel(
             submit_input_response(
                 &store_for_submit,
                 &input_handle_for_submit,
+                &mock_turns_for_submit,
                 &status_for_submit,
                 &plan_mode_for_submit,
                 &action_sender,
@@ -239,6 +309,7 @@ fn build_chat_panel(
             let _ = submit_slash_command_text(
                 &store_for_slash,
                 &input_handle_for_slash,
+                &mock_turns_for_slash,
                 &status_for_slash,
                 &plan_mode_for_slash,
                 &command.replacement,
@@ -250,6 +321,7 @@ fn build_chat_panel(
 fn submit_input_response(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     plan_mode_state: &Property<String>,
     action_sender: &mpsc::Sender<AppAction>,
@@ -260,7 +332,14 @@ fn submit_input_response(
         return;
     }
 
-    if submit_slash_command_text(store, input_handle, status_state, plan_mode_state, &text) {
+    if submit_slash_command_text(
+        store,
+        input_handle,
+        mock_turns,
+        status_state,
+        plan_mode_state,
+        &text,
+    ) {
         return;
     }
 
@@ -273,6 +352,7 @@ fn submit_input_response(
     let text_block_id = assistant.blocks[0].id();
     store.push(assistant);
     let branch = store.branch_token();
+    let cancel = mock_turns.start(assistant_id);
 
     input_handle.streaming_binding().set(true);
     status_state.set(STATUS_STREAMING.to_string());
@@ -281,6 +361,7 @@ fn submit_input_response(
         branch,
         assistant_id,
         text_block_id,
+        cancel,
         text,
     );
 }
@@ -364,6 +445,7 @@ fn agent_slash_commands() -> Vec<ChatSlashCommand> {
 fn submit_slash_command_text(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     plan_mode_state: &Property<String>,
     text: &str,
@@ -381,11 +463,11 @@ fn submit_slash_command_text(
 
     match normalized.as_str() {
         "help" => append_system_message(store, help_text()),
-        "clear" => clear_session(store, input_handle, status_state),
+        "clear" => clear_session(store, input_handle, mock_turns, status_state),
         "plan" => apply_plan_command(store, plan_mode_state, &args),
         "skills" => append_system_message(store, skills_text()),
         "tools" => append_system_message(store, tools_text()),
-        "abort" => apply_abort_command(store, input_handle, status_state),
+        "abort" => apply_abort_command(store, input_handle, mock_turns, status_state),
         _ => append_system_message(
             store,
             format!("Unknown slash command `/{command}`. Type `/help` for available commands."),
@@ -402,8 +484,18 @@ fn append_system_message(store: &ChatMessageStore, text: impl Into<String>) {
 fn clear_session(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
 ) {
+    if let Some(message_id) = store
+        .messages()
+        .iter()
+        .rev()
+        .find(|message| message.status.is_streaming())
+        .map(|message| message.id)
+    {
+        let _ = mock_turns.cancel(message_id);
+    }
     store.replace_all(Vec::new());
     input_handle.streaming_binding().set(false);
     input_handle.clear_queued_responses();
@@ -430,9 +522,10 @@ fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<Strin
 fn apply_abort_command(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
 ) {
-    if cancel_latest_streaming_turn(store, input_handle, status_state) {
+    if cancel_latest_streaming_turn(store, input_handle, mock_turns, status_state) {
         append_system_message(store, "Aborted active turn.");
     } else {
         append_system_message(store, "No active turn to abort.");
@@ -442,23 +535,35 @@ fn apply_abort_command(
 fn cancel_latest_streaming_turn(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
 ) -> bool {
-    let mut messages = store.messages();
-    let Some(message) = messages
-        .iter_mut()
+    let Some(message_id) = store
+        .messages()
+        .iter()
         .rev()
         .find(|message| message.status.is_streaming())
+        .map(|message| message.id)
     else {
         return false;
     };
 
-    // Replacing the transcript after marking the turn canceled advances the branch token.
-    message.set_turn_status(ChatTurnStatus::Canceled);
-    store.replace_all(messages);
+    if !store.cancel_streaming_turn(message_id) {
+        return false;
+    }
+    finish_canceled_turn(input_handle, mock_turns, status_state, message_id);
+    true
+}
+
+fn finish_canceled_turn(
+    input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
+    status_state: &Property<String>,
+    message_id: ChatMessageId,
+) {
+    let _ = mock_turns.cancel(message_id);
     input_handle.streaming_binding().set(false);
     status_state.set(STATUS_READY.to_string());
-    true
 }
 
 fn help_text() -> &'static str {
@@ -484,11 +589,18 @@ fn spawn_mock_agent_turn(
     branch: ChatBranchToken,
     message_id: ChatMessageId,
     block_id: ChatBlockId,
+    cancel: CancellationToken,
     prompt: String,
 ) {
     thread::spawn(move || {
         for delta in mock_agent_deltas(&prompt) {
+            if cancel.is_cancelled() {
+                return;
+            }
             thread::sleep(MOCK_TOKEN_DELAY);
+            if cancel.is_cancelled() {
+                return;
+            }
             if action_sender
                 .send(AppAction::AssistantDelta {
                     branch,
@@ -500,7 +612,13 @@ fn spawn_mock_agent_turn(
                 return;
             }
         }
+        if cancel.is_cancelled() {
+            return;
+        }
         thread::sleep(MOCK_TOKEN_DELAY);
+        if cancel.is_cancelled() {
+            return;
+        }
         let _ = action_sender.send(AppAction::AssistantDone { branch, message_id });
     });
 }
@@ -517,6 +635,7 @@ fn mock_agent_deltas(prompt: &str) -> Vec<String> {
 fn apply_app_action(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     action: AppAction,
 ) -> bool {
@@ -532,6 +651,7 @@ fn apply_app_action(
             }
             let found = store.set_turn_status(message_id, ChatTurnStatus::Complete);
             if found {
+                mock_turns.clear(message_id);
                 input_handle.streaming_binding().set(false);
                 status_state.set(STATUS_READY.to_string());
             }
@@ -586,21 +706,40 @@ fn chat_window_rect(screen: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use atto_ui::composable::{
+        ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    };
+    use atto_ui::theme::Theme;
+    use atto_ui::wm::WindowId;
     use atto_ui_chat::{
         ChatBlock, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
         ChatSlashCommandAction, ChatTurnStatus,
     };
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
     use super::{
-        APP_TITLE, AgentApp, AppAction, PLAN_MODE_AUTO, PLAN_MODE_OFF, PLAN_MODE_ON, STATUS_READY,
-        STATUS_STREAMING, apply_app_action, submit_input_response, submit_slash_command_text,
+        APP_TITLE, AgentApp, AppAction, MockTurnRegistry, PLAN_MODE_AUTO, PLAN_MODE_OFF,
+        PLAN_MODE_ON, STATUS_READY, STATUS_STREAMING, apply_app_action, build_chat_panel,
+        submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
         match &message.blocks[0] {
             ChatBlock::Text(block) => &block.markdown,
             other => panic!("expected text block, got {other:?}"),
+        }
+    }
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
         }
     }
 
@@ -657,12 +796,14 @@ mod tests {
     fn help_slash_command_outputs_available_commands_without_starting_turn() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
 
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/help",
@@ -681,6 +822,7 @@ mod tests {
     fn clear_slash_command_removes_messages_and_resets_runtime_state() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_ON.to_string());
         input_handle.streaming_binding().set(true);
@@ -689,16 +831,24 @@ mod tests {
             ChatRole::User,
             "seed",
         ));
+        let assistant_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(assistant_id, ChatRole::Assistant, "partial")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let cancel = mock_turns.start(assistant_id);
 
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/clear",
         ));
 
         assert!(store.messages().is_empty());
+        assert!(cancel.is_cancelled());
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
         assert_eq!(plan_mode_state.get(), PLAN_MODE_ON);
@@ -708,12 +858,14 @@ mod tests {
     fn plan_slash_command_sets_and_cycles_plan_mode() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
 
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/plan on",
@@ -723,6 +875,7 @@ mod tests {
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/plan auto",
@@ -732,6 +885,7 @@ mod tests {
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/plan",
@@ -748,12 +902,14 @@ mod tests {
     fn skills_and_tools_slash_commands_report_empty_m1_registries() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
 
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/skills",
@@ -761,6 +917,7 @@ mod tests {
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/tools",
@@ -775,6 +932,7 @@ mod tests {
     fn abort_slash_command_cancels_latest_streaming_turn_and_rejects_late_tokens() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
         input_handle.streaming_binding().set(true);
@@ -784,10 +942,12 @@ mod tests {
         let block_id = assistant.blocks[0].id();
         store.push(assistant);
         let stale_branch = store.branch_token();
+        let cancel = mock_turns.start(assistant_id);
 
         assert!(submit_slash_command_text(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             "/abort",
@@ -797,11 +957,63 @@ mod tests {
         assert_eq!(messages[0].status, ChatTurnStatus::Canceled);
         assert_eq!(messages[1].role, ChatRole::System);
         assert!(message_text(&messages[1]).contains("Aborted active turn."));
+        assert!(cancel.is_cancelled());
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
         assert!(!apply_app_action(
             &store,
             &input_handle,
+            &mock_turns,
+            &status_state,
+            AppAction::AssistantDelta {
+                branch: stale_branch,
+                block_id,
+                delta: "late".to_string(),
+            },
+        ));
+        assert_eq!(message_text(&store.messages()[0]), "");
+    }
+
+    #[test]
+    fn esc_cancel_through_chat_panel_cancels_mock_turn_and_rejects_late_tokens() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let stale_branch = store.branch_token();
+        let cancel = mock_turns.start(assistant_id);
+        let mut panel = build_chat_panel(
+            &store,
+            &input_handle,
+            status_state.clone(),
+            plan_mode_state,
+            sender,
+            mock_turns.clone(),
+        );
+        let theme = Theme::dark();
+
+        let result = panel.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            context(&theme),
+        );
+
+        assert!(result.is_consumed());
+        assert!(cancel.is_cancelled());
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
+        assert!(!apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
             &status_state,
             AppAction::AssistantDelta {
                 branch: stale_branch,
@@ -816,6 +1028,7 @@ mod tests {
     fn text_submit_adds_user_and_streaming_assistant_turn() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PLAN_MODE_OFF.to_string());
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
@@ -823,6 +1036,7 @@ mod tests {
         submit_input_response(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             &plan_mode_state,
             &sender,
@@ -845,6 +1059,7 @@ mod tests {
     fn app_actions_append_streaming_text_and_complete_turn() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         input_handle.streaming_binding().set(true);
         let assistant_id = store.next_message_id();
@@ -853,10 +1068,12 @@ mod tests {
         let block_id = assistant.blocks[0].id();
         store.push(assistant);
         let branch = store.branch_token();
+        let cancel = mock_turns.start(assistant_id);
 
         assert!(apply_app_action(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             AppAction::AssistantDelta {
                 branch,
@@ -867,6 +1084,7 @@ mod tests {
         assert!(apply_app_action(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             AppAction::AssistantDelta {
                 branch,
@@ -877,6 +1095,7 @@ mod tests {
         assert!(apply_app_action(
             &store,
             &input_handle,
+            &mock_turns,
             &status_state,
             AppAction::AssistantDone {
                 branch,
@@ -887,6 +1106,8 @@ mod tests {
         let messages = store.messages();
         assert_eq!(message_text(&messages[0]), "Mock done");
         assert_eq!(messages[0].status, ChatTurnStatus::Complete);
+        assert!(!cancel.is_cancelled());
+        assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
     }

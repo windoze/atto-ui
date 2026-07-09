@@ -75,16 +75,9 @@ impl StreamingCancelController {
     }
 
     fn request(&self, message_id: ChatMessageId) -> bool {
-        let is_streaming = self
-            .store
-            .with_message(message_id, |message| message.status.is_streaming())
-            .unwrap_or(false);
-        if !is_streaming {
+        if !self.store.cancel_streaming_turn(message_id) {
             return false;
         }
-        let _ = self
-            .store
-            .set_turn_status(message_id, ChatTurnStatus::Canceled);
         (self.callback)(message_id);
         true
     }
