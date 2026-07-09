@@ -110,7 +110,12 @@
 
 参考 `AGENT_GAP.md` A3、A4。建立在 P2 输入层之上，衔接 P3 的中断语义。
 
-- [ ] **P4.1 输入排队** — `input.rs`：流式进行中允许继续输入并排队新消息；流式结束后自动出队或提示用户发送；排队态有可见指示。
+- [x] **[DONE] P4.1 输入排队** — `input.rs`：流式进行中允许继续输入并排队新消息；流式结束后自动出队或提示用户发送；排队态有可见指示。
+  - 完成记录（2026-07-09）：`ChatInputHandle` 新增 host-controlled `streaming_binding` 与 FIFO `queued_responses_binding`；文本模式下流式进行中提交不会触发 `on_submit`，而是排入队列并按 `clear_on_submit` 清空草稿；流式结束后空 Enter 会发送队首，若用户已输入新草稿则先追加到队尾再发送旧队首，保持消息顺序。
+  - 可见状态：`ChatInputPanel` 在输入区底部显示 streaming/queued 状态行，覆盖“流式中可排队”“已排队 N 条”“流式结束后按 Enter 发送下一条”三种状态。
+  - 复核修复：定向测试发现面板内部程序化改写 `draft` 后 `TextArea` 缓冲可能滞后，导致排队清空或 slash 替换后继续输入拼接旧文本；已统一通过 `set_draft_from_panel` 同步绑定、缓冲和光标，并增加 slash 替换回归测试。
+  - 测试覆盖：新增 input 单测覆盖流式中排队与状态行、流式结束后出队、已有队列时新草稿 FIFO、编辑提交拦截器优先级，以及 slash 命令替换后的缓冲同步；`snapshot_chat_app --input-queue` 与 PTY 用例覆盖真实流式中输入排队、未提前 submit、流式完成后提示发送并按 Enter 发送。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat input --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_input_queues_text_while_streaming_and_sends_after_prompt -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P4.2 Esc 中断语义** — `src/list.rs` + `input.rs`：完善 Esc 状态机——一次 Esc 中断当前流式（置 `ChatTurnStatus::Canceled`），分级/连按语义明确，与现有取消按钮统一入口。
 - [ ] **P4.3 多行编辑增强** — `input.rs`：多行粘贴规整；（可选）拖入/粘贴文件路径转 `Attachment` block。
 - [ ] **P4.4 快照与测试** — PTY 覆盖流式中排队新消息、Esc 中断置 `Canceled`、多行粘贴规整。

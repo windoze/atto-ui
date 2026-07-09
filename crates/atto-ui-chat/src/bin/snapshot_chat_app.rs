@@ -71,6 +71,7 @@ fn main() -> Result<()> {
     let edit_resubmit = args.iter().any(|arg| arg == "--edit-resubmit");
     let retry_resubmit = args.iter().any(|arg| arg == "--retry-resubmit");
     let fork_at = args.iter().any(|arg| arg == "--fork-at");
+    let input_queue = args.iter().any(|arg| arg == "--input-queue");
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
@@ -96,8 +97,12 @@ fn main() -> Result<()> {
     let mut todo_block_id = None;
     let mut task_block_id = None;
     let mut fork_anchor_id = None;
+    let mut input_queue_stream_id = None;
     let tool_block_ids = if input_completion {
         seed_input_completion_messages(&store);
+        None
+    } else if input_queue {
+        input_queue_stream_id = Some(seed_input_queue_messages(&store));
         None
     } else if responsive_layout {
         seed_responsive_layout_messages(&store);
@@ -197,6 +202,7 @@ fn main() -> Result<()> {
         || message_actions
         || text_selection
         || cancel_action
+        || input_queue
         || input_completion
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
@@ -216,6 +222,9 @@ fn main() -> Result<()> {
     };
 
     let input_handle = ChatInputHandle::new();
+    if input_queue {
+        input_handle.streaming_binding().set(true);
+    }
     if input_completion {
         input_handle.set_slash_commands(input_completion_slash_commands());
     }
@@ -333,6 +342,7 @@ fn main() -> Result<()> {
         || retry_resubmit
         || fork_at
         || cancel_action
+        || input_queue
         || input_completion
     {
         24
@@ -505,7 +515,15 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            if !input_completion && !edit_resubmit && !retry_resubmit && !fork_at {
+            if let Some(message_id) = input_queue_stream_id
+                && cmd == '1'
+            {
+                store.set_turn_status(message_id, ChatTurnStatus::Complete);
+                input_handle.streaming_binding().set(false);
+                continue;
+            }
+
+            if !input_completion && !input_queue && !edit_resubmit && !retry_resubmit && !fork_at {
                 match cmd {
                     'a' => {
                         store.push(ChatMessage::text(
@@ -722,6 +740,15 @@ fn seed_input_completion_messages(store: &ChatMessageStore) {
         ChatRole::Assistant,
         "COMPLETION-READY",
     ));
+}
+
+fn seed_input_queue_messages(store: &ChatMessageStore) -> ChatMessageId {
+    let id = store.next_message_id();
+    store.push(
+        ChatMessage::text(id, ChatRole::Assistant, "QUEUE-STREAMING-START")
+            .with_status(ChatTurnStatus::Streaming),
+    );
+    id
 }
 
 fn input_completion_slash_commands() -> Vec<ChatSlashCommand> {

@@ -12,6 +12,9 @@ use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use crate::completion::{CompletionAnchor, CompletionItem, CompletionPopup};
@@ -894,6 +897,8 @@ pub struct ChatInputHandle {
     selection: Property<usize>,
     enabled: Property<bool>,
     clear_on_submit: Property<bool>,
+    streaming: Property<bool>,
+    queued_responses: Property<Vec<ChatInputResponse>>,
     text_submit_interceptor: Property<Option<ChatTextSubmitInterceptor>>,
 }
 
@@ -912,6 +917,8 @@ impl ChatInputHandle {
             selection: Property::new(0),
             enabled: Property::new(true),
             clear_on_submit: Property::new(true),
+            streaming: Property::new(false),
+            queued_responses: Property::new(Vec::new()),
             text_submit_interceptor: Property::new(None),
         }
     }
@@ -996,6 +1003,24 @@ impl ChatInputHandle {
         self.clear_on_submit.binding()
     }
 
+    /// Controls whether text submissions are queued instead of emitted.
+    pub fn streaming_binding(&self) -> Binding<bool> {
+        self.streaming.binding()
+    }
+
+    /// Returns the FIFO queue of text responses waiting for the next turn.
+    pub fn queued_responses_binding(&self) -> Binding<Vec<ChatInputResponse>> {
+        self.queued_responses.binding()
+    }
+
+    pub fn queued_responses(&self) -> Vec<ChatInputResponse> {
+        self.queued_responses.get()
+    }
+
+    pub fn clear_queued_responses(&self) {
+        self.queued_responses.set(Vec::new());
+    }
+
     pub(crate) fn set_text_submit_interceptor(&self, interceptor: ChatTextSubmitInterceptor) {
         self.text_submit_interceptor.set(Some(interceptor));
     }
@@ -1042,6 +1067,8 @@ pub struct ChatInputPanel {
     selection: Binding<usize>,
     enabled: Binding<bool>,
     clear_on_submit: Binding<bool>,
+    streaming: Binding<bool>,
+    queued_responses: Binding<Vec<ChatInputResponse>>,
     text_submit_interceptor: Binding<Option<ChatTextSubmitInterceptor>>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
@@ -1065,6 +1092,8 @@ impl ChatInputPanel {
         let selection = handle.selection.binding();
         let enabled = handle.enabled.binding();
         let clear_on_submit = handle.clear_on_submit.binding();
+        let streaming = handle.streaming.binding();
+        let queued_responses = handle.queued_responses.binding();
         let text_submit_interceptor = handle.text_submit_interceptor.binding();
         let slash_query = Binding::new(String::new());
         let slash_items = Binding::new(slash_completion_items(&slash_commands.get()));
@@ -1120,6 +1149,8 @@ impl ChatInputPanel {
             selection: selection.clone(),
             enabled: enabled.clone(),
             clear_on_submit: clear_on_submit.clone(),
+            streaming,
+            queued_responses,
             text_submit_interceptor,
             view: ChatInputView::Text(Box::new(
                 TextArea::new("", draft.clone()).history(history.clone()),
@@ -1265,6 +1296,14 @@ impl ChatInputPanel {
         }
     }
 
+    fn set_draft_from_panel(&mut self, draft: String) {
+        let cursor = draft.len();
+        self.draft.set(draft);
+        if let ChatInputView::Text(view) = &mut self.view {
+            view.set_cursor_byte_index(cursor);
+        }
+    }
+
     fn dismiss_slash_completion_for_current_draft(&mut self) {
         self.slash_dismissed_for = Some(self.draft.get());
         self.slash_open.set(false);
@@ -1294,17 +1333,17 @@ impl ChatInputPanel {
 
         match command.action {
             ChatSlashCommandAction::Insert => {
-                self.draft.set(command.replacement.clone());
+                self.set_draft_from_panel(command.replacement.clone());
                 self.slash_dismissed_for = Some(command.replacement);
             }
             ChatSlashCommandAction::Submit => {
                 if let Some(callback) = &self.on_slash_command {
                     callback(command.clone());
                     if self.clear_on_submit.get() {
-                        self.draft.set(String::new());
+                        self.set_draft_from_panel(String::new());
                     }
                 } else {
-                    self.draft.set(command.replacement.clone());
+                    self.set_draft_from_panel(command.replacement.clone());
                     self.slash_dismissed_for = Some(command.replacement);
                 }
             }
@@ -1469,27 +1508,86 @@ impl ChatInputPanel {
         }
     }
 
+    fn queue_response(&self, response: ChatInputResponse) {
+        self.queued_responses.update(|items| items.push(response));
+    }
+
+    fn pop_queued_response(&self) -> Option<ChatInputResponse> {
+        let mut next = None;
+        self.queued_responses.update_if(|items| {
+            if items.is_empty() {
+                false
+            } else {
+                next = Some(items.remove(0));
+                true
+            }
+        });
+        next
+    }
+
+    fn dispatch_response(&self, response: ChatInputResponse) -> bool {
+        let Some(cb) = self.on_submit.clone() else {
+            return false;
+        };
+        cb(response);
+        true
+    }
+
+    fn emit_next_queued_response(&self) -> bool {
+        if self.streaming.get() || self.on_submit.is_none() {
+            return false;
+        }
+        let Some(response) = self.pop_queued_response() else {
+            return false;
+        };
+        self.dispatch_response(response)
+    }
+
+    fn queue_indicator_text(&self) -> Option<String> {
+        let queued = self.queued_responses.with(Vec::len);
+        match (self.streaming.get(), queued) {
+            (true, 0) => Some("Streaming... Enter queues new messages".to_string()),
+            (true, 1) => Some("Queued 1 message while streaming".to_string()),
+            (true, count) => Some(format!("Queued {count} messages while streaming")),
+            (false, 1) => Some("Queued 1 message; press Enter to send next".to_string()),
+            (false, count) if count > 1 => {
+                Some(format!("Queued {count} messages; press Enter to send next"))
+            }
+            (false, _) => None,
+        }
+    }
+
     fn emit_response(&mut self) -> bool {
         match self.mode.get() {
             ChatInputMode::Text(_) => {
                 let text = self.draft.get();
                 if text.trim().is_empty() {
-                    return false;
+                    return self.emit_next_queued_response();
                 }
                 if let Some(interceptor) = self.text_submit_interceptor.get()
                     && interceptor.submit(text.clone())
                 {
                     if self.clear_on_submit.get() {
-                        self.draft.set(String::new());
+                        self.set_draft_from_panel(String::new());
                     }
                     return true;
                 }
-                let Some(cb) = &self.on_submit else {
+                if self.on_submit.is_none() {
                     return false;
-                };
-                cb(ChatInputResponse::Text(text.clone()));
+                }
+                if self.streaming.get() || !self.queued_responses.get().is_empty() {
+                    self.queue_response(ChatInputResponse::Text(text.clone()));
+                    if self.clear_on_submit.get() {
+                        self.set_draft_from_panel(String::new());
+                    }
+                    if self.streaming.get() {
+                        return true;
+                    }
+                    return self.emit_next_queued_response();
+                }
+                self.dispatch_response(ChatInputResponse::Text(text.clone()));
                 if self.clear_on_submit.get() {
-                    self.draft.set(String::new());
+                    self.set_draft_from_panel(String::new());
                 }
                 true
             }
@@ -1628,7 +1726,7 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             }
             "draft" => {
                 let draft = <String as ComponentValueCodec>::from_component_value(value, name)?;
-                self.draft.set(draft);
+                self.set_draft_from_panel(draft);
                 Ok(())
             }
             "custom" => {
@@ -1682,13 +1780,39 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.sync_mode();
+        let indicator = self.queue_indicator_text();
+        let indicator_height = u16::from(indicator.is_some() && area.height > 0);
+        let input_area = Rect {
+            height: area.height.saturating_sub(indicator_height),
+            ..area
+        };
         match &mut self.view {
-            ChatInputView::Text(view) => view.draw(frame, area, ctx),
-            ChatInputView::Choice(view) => view.draw(frame, area, ctx),
-            ChatInputView::Confirm(view) => view.draw(frame, area, ctx),
-            ChatInputView::Custom(view) => view.draw(frame, area, ctx),
+            ChatInputView::Text(view) if input_area.height > 0 => view.draw(frame, input_area, ctx),
+            ChatInputView::Choice(view) if input_area.height > 0 => {
+                view.draw(frame, input_area, ctx)
+            }
+            ChatInputView::Confirm(view) if input_area.height > 0 => {
+                view.draw(frame, input_area, ctx)
+            }
+            ChatInputView::Custom(view) if input_area.height > 0 => {
+                view.draw(frame, input_area, ctx)
+            }
+            _ => {}
         }
-        self.sync_completions(Some(area));
+        if let Some(indicator) = indicator {
+            let status_area = Rect {
+                y: area.y.saturating_add(input_area.height),
+                height: indicator_height,
+                ..area
+            };
+            if status_area.height > 0 {
+                frame.render_widget(
+                    Paragraph::new(Line::from(indicator)).style(Style::default().fg(Color::Yellow)),
+                    status_area,
+                );
+            }
+        }
+        self.sync_completions(Some(input_area));
         self.slash_popup.draw(frame, frame.area(), ctx);
         self.mention_popup.draw(frame, frame.area(), ctx);
     }
@@ -1707,10 +1831,11 @@ impl ::atto_ui::composable::Layout for ChatInputPanel {
     }
 
     fn min_height(&self) -> u16 {
-        match self.mode.get() {
+        let input_height: u16 = match self.mode.get() {
             ChatInputMode::Text(_) => 3,
             _ => 3,
-        }
+        };
+        input_height.saturating_add(u16::from(self.queue_indicator_text().is_some()))
     }
 
     fn desired_width(&self) -> Option<u16> {
@@ -1723,7 +1848,10 @@ impl ::atto_ui::composable::Layout for ChatInputPanel {
     }
 
     fn desired_height(&self) -> Option<u16> {
-        Some(self.estimated_height_for_mode(&self.mode.get()))
+        Some(
+            self.estimated_height_for_mode(&self.mode.get())
+                .saturating_add(u16::from(self.queue_indicator_text().is_some())),
+        )
     }
 }
 
@@ -2025,6 +2153,19 @@ mod tests {
     }
 
     #[test]
+    fn accepting_insert_command_syncs_textarea_buffer_for_next_typing() {
+        let (handle, mut panel) =
+            panel_with_commands(vec![ChatSlashCommand::new("/model").replacement("/model ")]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/m");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        type_text(&mut panel, &theme, "x");
+
+        assert_eq!(handle.draft_binding().get(), "/model x");
+    }
+
+    #[test]
     fn accepting_submit_command_triggers_callback_and_clears_draft() {
         let handle = ChatInputHandle::new();
         handle.set_slash_commands(vec![ChatSlashCommand::new("/clear").submit_on_accept()]);
@@ -2199,5 +2340,137 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].detail.as_deref(), Some("manifest"));
         assert_eq!(candidates[0].replacement, "@Cargo.toml ");
+    }
+
+    #[test]
+    fn streaming_text_submit_queues_and_shows_status() {
+        let handle = ChatInputHandle::new();
+        handle.streaming_binding().set(true);
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "queued one");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert!(submitted.lock().unwrap().is_empty());
+        assert_eq!(handle.draft_binding().get(), "");
+        assert_eq!(
+            handle.queued_responses(),
+            vec![ChatInputResponse::Text("queued one".to_string())]
+        );
+        let lines = draw_panel(&mut panel, 64, 8);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Queued 1 message while streaming"))
+        );
+    }
+
+    #[test]
+    fn queued_text_sends_after_streaming_finishes() {
+        let handle = ChatInputHandle::new();
+        handle.streaming_binding().set(true);
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "first");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        type_text(&mut panel, &theme, "second");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        handle.streaming_binding().set(false);
+
+        assert!(submitted.lock().unwrap().is_empty());
+        let lines = draw_panel(&mut panel, 64, 8);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Queued 2 messages; press Enter to send next"))
+        );
+
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        assert_eq!(
+            *submitted.lock().unwrap(),
+            vec![ChatInputResponse::Text("first".to_string())]
+        );
+        assert_eq!(
+            handle.queued_responses(),
+            vec![ChatInputResponse::Text("second".to_string())]
+        );
+
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        assert_eq!(
+            *submitted.lock().unwrap(),
+            vec![
+                ChatInputResponse::Text("first".to_string()),
+                ChatInputResponse::Text("second".to_string())
+            ]
+        );
+        assert!(handle.queued_responses().is_empty());
+    }
+
+    #[test]
+    fn new_draft_after_streaming_preserves_queued_fifo_order() {
+        let handle = ChatInputHandle::new();
+        handle.streaming_binding().set(true);
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "first");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+        handle.streaming_binding().set(false);
+        type_text(&mut panel, &theme, "second");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(
+            *submitted.lock().unwrap(),
+            vec![ChatInputResponse::Text("first".to_string())]
+        );
+        assert_eq!(
+            handle.queued_responses(),
+            vec![ChatInputResponse::Text("second".to_string())]
+        );
+        assert_eq!(handle.draft_binding().get(), "");
+    }
+
+    #[test]
+    fn text_submit_interceptor_runs_before_streaming_queue() {
+        let handle = ChatInputHandle::new();
+        handle.streaming_binding().set(true);
+        let intercepted = Arc::new(Mutex::new(Vec::new()));
+        let intercepted_for_callback = intercepted.clone();
+        handle.set_text_submit_interceptor(ChatTextSubmitInterceptor::new(move |text| {
+            intercepted_for_callback.lock().unwrap().push(text);
+            true
+        }));
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "edited prompt");
+        panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(
+            *intercepted.lock().unwrap(),
+            vec!["edited prompt".to_string()]
+        );
+        assert!(submitted.lock().unwrap().is_empty());
+        assert!(handle.queued_responses().is_empty());
+        assert_eq!(handle.draft_binding().get(), "");
     }
 }
