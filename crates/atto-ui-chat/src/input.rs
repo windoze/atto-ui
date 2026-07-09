@@ -635,6 +635,219 @@ pub(crate) fn chat_input_response_to_component_value(resp: ChatInputResponse) ->
     ComponentValue::Map(out)
 }
 
+pub(crate) fn chat_slash_command_to_component_value(command: &ChatSlashCommand) -> ComponentValue {
+    let mut out = BTreeMap::<String, ComponentValue>::new();
+    out.insert("id".to_string(), ComponentValue::String(command.id.clone()));
+    out.insert(
+        "label".to_string(),
+        ComponentValue::String(command.label.clone()),
+    );
+    if let Some(detail) = &command.detail {
+        out.insert("detail".to_string(), ComponentValue::String(detail.clone()));
+    }
+    out.insert(
+        "replacement".to_string(),
+        ComponentValue::String(command.replacement.clone()),
+    );
+    out.insert(
+        "action".to_string(),
+        ComponentValue::String(slash_command_action_to_string(command.action).to_string()),
+    );
+    ComponentValue::Map(out)
+}
+
+pub(crate) fn chat_slash_commands_to_component_value(
+    commands: &[ChatSlashCommand],
+) -> ComponentValue {
+    ComponentValue::List(
+        commands
+            .iter()
+            .map(chat_slash_command_to_component_value)
+            .collect(),
+    )
+}
+
+pub(crate) fn parse_chat_slash_commands_value(
+    value: &ComponentValue,
+) -> Result<Vec<ChatSlashCommand>, String> {
+    let ComponentValue::List(items) = value else {
+        if matches!(value, ComponentValue::Null) {
+            return Ok(Vec::new());
+        }
+        return Err(format!("slash_commands must be list, got {value:?}"));
+    };
+    items.iter().map(parse_chat_slash_command_value).collect()
+}
+
+pub(crate) fn chat_mention_candidate_to_component_value(
+    candidate: &ChatMentionCandidate,
+) -> ComponentValue {
+    let mut out = BTreeMap::<String, ComponentValue>::new();
+    out.insert(
+        "id".to_string(),
+        ComponentValue::String(candidate.id.clone()),
+    );
+    out.insert(
+        "label".to_string(),
+        ComponentValue::String(candidate.label.clone()),
+    );
+    if let Some(detail) = &candidate.detail {
+        out.insert("detail".to_string(), ComponentValue::String(detail.clone()));
+    }
+    out.insert(
+        "replacement".to_string(),
+        ComponentValue::String(candidate.replacement.clone()),
+    );
+    ComponentValue::Map(out)
+}
+
+pub(crate) fn chat_mention_candidates_to_component_value(
+    candidates: &[ChatMentionCandidate],
+) -> ComponentValue {
+    ComponentValue::List(
+        candidates
+            .iter()
+            .map(chat_mention_candidate_to_component_value)
+            .collect(),
+    )
+}
+
+pub(crate) fn parse_chat_mention_candidates_value(
+    value: &ComponentValue,
+) -> Result<Vec<ChatMentionCandidate>, String> {
+    let ComponentValue::List(items) = value else {
+        if matches!(value, ComponentValue::Null) {
+            return Ok(Vec::new());
+        }
+        return Err(format!("mention_candidates must be list, got {value:?}"));
+    };
+    items
+        .iter()
+        .map(parse_chat_mention_candidate_value)
+        .collect()
+}
+
+pub(crate) fn chat_mention_context_to_component_value(
+    context: &ChatMentionContext,
+) -> ComponentValue {
+    let mut out = BTreeMap::<String, ComponentValue>::new();
+    out.insert(
+        "draft".to_string(),
+        ComponentValue::String(context.draft.clone()),
+    );
+    out.insert(
+        "query".to_string(),
+        ComponentValue::String(context.query.clone()),
+    );
+    out.insert(
+        "cursor".to_string(),
+        ComponentValue::U64(context.cursor as u64),
+    );
+    out.insert(
+        "replacement_start".to_string(),
+        ComponentValue::U64(context.replacement_start as u64),
+    );
+    out.insert(
+        "replacement_end".to_string(),
+        ComponentValue::U64(context.replacement_end as u64),
+    );
+    ComponentValue::Map(out)
+}
+
+fn parse_chat_slash_command_value(value: &ComponentValue) -> Result<ChatSlashCommand, String> {
+    let map = expect_input_map(value, "slash command")?;
+    let label = required_input_string_field(map, "label", "slash command")?;
+    let mut command = if let Some(id) = optional_input_string_field(map, "id", "slash command")? {
+        ChatSlashCommand::with_id(id, label)
+    } else {
+        ChatSlashCommand::new(label)
+    };
+    if let Some(detail) = optional_input_string_field(map, "detail", "slash command")? {
+        command = command.detail(detail);
+    }
+    if let Some(replacement) = optional_input_string_field(map, "replacement", "slash command")? {
+        command = command.replacement(replacement);
+    }
+    if let Some(action) = optional_input_string_field(map, "action", "slash command")? {
+        command.action = parse_slash_command_action_string(&action)?;
+    }
+    Ok(command)
+}
+
+fn parse_chat_mention_candidate_value(
+    value: &ComponentValue,
+) -> Result<ChatMentionCandidate, String> {
+    let map = expect_input_map(value, "mention candidate")?;
+    let label = required_input_string_field(map, "label", "mention candidate")?;
+    let mut candidate =
+        if let Some(id) = optional_input_string_field(map, "id", "mention candidate")? {
+            ChatMentionCandidate::with_id(id, label)
+        } else {
+            ChatMentionCandidate::new(label)
+        };
+    if let Some(detail) = optional_input_string_field(map, "detail", "mention candidate")? {
+        candidate = candidate.detail(detail);
+    }
+    if let Some(replacement) = optional_input_string_field(map, "replacement", "mention candidate")?
+    {
+        candidate = candidate.replacement(replacement);
+    }
+    Ok(candidate)
+}
+
+fn slash_command_action_to_string(action: ChatSlashCommandAction) -> &'static str {
+    match action {
+        ChatSlashCommandAction::Insert => "insert",
+        ChatSlashCommandAction::Submit => "submit",
+    }
+}
+
+fn parse_slash_command_action_string(raw: &str) -> Result<ChatSlashCommandAction, String> {
+    match normalize_mode_kind(raw).as_str() {
+        "insert" => Ok(ChatSlashCommandAction::Insert),
+        "submit" => Ok(ChatSlashCommandAction::Submit),
+        _ => Err(format!("unknown slash command action '{raw}'")),
+    }
+}
+
+fn expect_input_map<'a>(
+    value: &'a ComponentValue,
+    context: &str,
+) -> Result<&'a BTreeMap<String, ComponentValue>, String> {
+    match value {
+        ComponentValue::Map(map) => Ok(map),
+        other => Err(format!("{context} must be map, got {other:?}")),
+    }
+}
+
+fn required_input_string_field(
+    map: &BTreeMap<String, ComponentValue>,
+    key: &str,
+    context: &str,
+) -> Result<String, String> {
+    match map.get(key) {
+        Some(ComponentValue::String(value)) => Ok(value.clone()),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be string, got {other:?}"
+        )),
+        None => Err(format!("{context} missing {key}")),
+    }
+}
+
+fn optional_input_string_field(
+    map: &BTreeMap<String, ComponentValue>,
+    key: &str,
+    context: &str,
+) -> Result<Option<String>, String> {
+    match map.get(key) {
+        Some(ComponentValue::String(value)) => Ok(Some(value.clone())),
+        Some(ComponentValue::Null) | None => Ok(None),
+        Some(other) => Err(format!(
+            "{context} field '{key}' must be string, got {other:?}"
+        )),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ChatInputHandle {
     mode: Property<ChatInputMode>,
@@ -956,7 +1169,6 @@ impl ChatInputPanel {
         if self
             .mention_candidates
             .check_dirty(&mut self.mention_candidates_observer)
-            && self.mention_provider.is_none()
         {
             self.mention_items
                 .set(mention_completion_items(&self.mention_candidates.get()));
@@ -1321,6 +1533,8 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             "draft",
             "custom",
             "history",
+            "slash_commands",
+            "mention_candidates",
             "selection",
             "enabled",
             "clear_on_submit",
@@ -1333,6 +1547,12 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             "draft" => Some(ComponentValue::String(self.draft.get())),
             "custom" => Some(ComponentValue::String(self.custom.get())),
             "history" => Some(ComponentValue::StringList(self.history.get())),
+            "slash_commands" => Some(chat_slash_commands_to_component_value(
+                &self.slash_commands.get(),
+            )),
+            "mention_candidates" => Some(chat_mention_candidates_to_component_value(
+                &self.mention_candidates.get(),
+            )),
             "selection" => Some(ComponentValue::U64(self.selection.get() as u64)),
             "enabled" => Some(ComponentValue::Bool(self.enabled.get())),
             "clear_on_submit" => Some(ComponentValue::Bool(self.clear_on_submit.get())),
@@ -1363,6 +1583,18 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
                 let history =
                     <Vec<String> as ComponentValueCodec>::from_component_value(value, name)?;
                 self.history.set(history);
+                Ok(())
+            }
+            "slash_commands" => {
+                let commands = parse_chat_slash_commands_value(&value)
+                    .map_err(|_| ComponentError::invalid_value(name, "slash command list"))?;
+                self.slash_commands.set(commands);
+                Ok(())
+            }
+            "mention_candidates" => {
+                let candidates = parse_chat_mention_candidates_value(&value)
+                    .map_err(|_| ComponentError::invalid_value(name, "mention candidate list"))?;
+                self.mention_candidates.set(candidates);
                 Ok(())
             }
             "selection" => {

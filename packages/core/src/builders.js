@@ -515,16 +515,41 @@ function ChatInputMode(mode = 'text', options = {}) {
   }) ?? {}
 }
 
+function ChatSlashCommand(label, options = {}) {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+    action: options.action,
+  }) ?? {}
+}
+
+function ChatMentionCandidate(label, options = {}) {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+  }) ?? {}
+}
+
 function ChatInputPanel(options = {}) {
   return makeSpec('ChatInputPanel', options.id, {
     mode: options.mode ?? ChatInputMode(),
     draft: options.draft,
     custom: options.custom,
     history: options.history,
+    slash_commands: options.slashCommands,
+    mention_candidates: options.mentionCandidates,
     selection: options.selection,
     enabled: enabledValue(options),
     clear_on_submit: options.clearOnSubmit,
-  }, events(options.events, { submit: options.onSubmit }))
+  }, events(options.events, {
+    submit: options.onSubmit,
+    slash_command: options.onSlashCommand,
+    mention_query: options.onMentionQuery,
+  }))
 }
 
 function makeSpec(type, id, props, eventInput, children) {
@@ -717,5 +742,7 @@ module.exports = {
   ChatArtifactMessage,
   ChatMessageList,
   ChatInputMode,
+  ChatSlashCommand,
+  ChatMentionCandidate,
   ChatInputPanel,
 }

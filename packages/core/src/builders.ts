@@ -220,6 +220,7 @@ export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
+export type ChatSlashCommandAction = 'insert' | 'submit'
 
 export interface ChatError {
   readonly kind: ChatErrorKind
@@ -399,6 +400,29 @@ export interface ChatMessageInput {
   readonly blocks: readonly ChatBlockInput[]
 }
 
+export interface ChatSlashCommandInput {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+  readonly action?: ChatSlashCommandAction
+}
+
+export interface ChatMentionCandidateInput {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+}
+
+export interface ChatMentionContext {
+  readonly draft: string
+  readonly query: string
+  readonly cursor: number
+  readonly replacement_start: number
+  readonly replacement_end: number
+}
+
 export interface MarkdownViewerOptions extends BuilderBaseOptions {
   readonly markdown?: string
   readonly text?: string
@@ -567,14 +591,31 @@ export interface ChatInputModeOptions {
 
 export type ChatInputModeInput = ComponentValueMap
 
+export interface ChatSlashCommandOptions {
+  readonly id?: string
+  readonly detail?: string | null
+  readonly replacement?: string
+  readonly action?: ChatSlashCommandAction
+}
+
+export interface ChatMentionCandidateOptions {
+  readonly id?: string
+  readonly detail?: string | null
+  readonly replacement?: string
+}
+
 export interface ChatInputPanelOptions extends BuilderBaseOptions, EnabledOptions {
   readonly mode?: ChatInputModeInput
   readonly draft?: string
   readonly custom?: string
   readonly history?: readonly string[]
+  readonly slashCommands?: readonly ChatSlashCommandInput[]
+  readonly mentionCandidates?: readonly ChatMentionCandidateInput[]
   readonly selection?: number
   readonly clearOnSubmit?: boolean
   readonly onSubmit?: CallbackHandle
+  readonly onSlashCommand?: CallbackHandle
+  readonly onMentionQuery?: CallbackHandle
 }
 
 /** Build a raw runtime component spec for custom or less common component types. */
@@ -1170,16 +1211,47 @@ export function ChatInputMode(mode = 'text', options: ChatInputModeOptions = {})
   }) ?? {}
 }
 
+export function ChatSlashCommand(
+  label: string,
+  options: ChatSlashCommandOptions = {},
+): ChatSlashCommandInput {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+    action: options.action,
+  }) as unknown as ChatSlashCommandInput
+}
+
+export function ChatMentionCandidate(
+  label: string,
+  options: ChatMentionCandidateOptions = {},
+): ChatMentionCandidateInput {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+  }) as unknown as ChatMentionCandidateInput
+}
+
 export function ChatInputPanel(options: ChatInputPanelOptions = {}): ComponentSpec {
   return makeSpec('ChatInputPanel', options.id, {
     mode: options.mode ?? ChatInputMode(),
     draft: options.draft,
     custom: options.custom,
     history: options.history,
+    slash_commands: options.slashCommands,
+    mention_candidates: options.mentionCandidates,
     selection: options.selection,
     enabled: enabledValue(options),
     clear_on_submit: options.clearOnSubmit,
-  }, events(options.events, { submit: options.onSubmit }))
+  }, events(options.events, {
+    submit: options.onSubmit,
+    slash_command: options.onSlashCommand,
+    mention_query: options.onMentionQuery,
+  }))
 }
 
 function makeSpec(

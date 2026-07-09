@@ -141,6 +141,7 @@ export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'ca
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
 export type StopReason = 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'refusal'
+export type ChatSlashCommandAction = 'insert' | 'submit'
 
 export interface ChatError {
   readonly kind: ChatErrorKind
@@ -185,6 +186,29 @@ export interface ChatMessageValue {
   readonly status: ChatTurnStatus
   readonly meta?: ChatMessageMeta
   readonly blocks: readonly ChatBlock[]
+}
+
+export interface ChatSlashCommandValue {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+  readonly action?: ChatSlashCommandAction
+}
+
+export interface ChatMentionCandidateValue {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+}
+
+export interface ChatMentionContextValue {
+  readonly draft: string
+  readonly query: string
+  readonly cursor: number
+  readonly replacement_start: number
+  readonly replacement_end: number
 }
 
 /** Register optional runtime components from workspace companion crates. */

@@ -26,9 +26,9 @@ and Windows x64 (MSVC). macOS x64 is not published; build it locally from
 1. `ATTO_UI_NATIVE_LIBRARY_PATH`.
 2. `NAPI_RS_NATIVE_LIBRARY_PATH`.
 3. A local `atto_ui_node.<platform>.node` next to `@atto-ui/core`.
-4. `@atto-ui/core-<platform>` or `@atto-ui/node-<platform>` optional packages.
-5. `@atto-ui/node`.
-6. The workspace fallback at `crates/atto-ui-node` for local development.
+4. The workspace fallback at `crates/atto-ui-node` for local development.
+5. `@atto-ui/core-<platform>` or `@atto-ui/node-<platform>` optional packages.
+6. `@atto-ui/node`.
 
 ## `AppHost`
 
@@ -199,6 +199,45 @@ const root = ChatMessageList({
 
 The runtime still accepts the previous `sender/content` message form for parsing compatibility, but new JavaScript builders always produce the block-based form.
 
+### Chat Input Completion
+
+`ChatInputPanel` accepts slash command and file mention completion data from JS:
+
+```ts
+ChatInputPanel({
+  slashCommands: [
+    ChatSlashCommand('/clear', { id: 'clear', detail: 'Clear chat', action: 'submit' }),
+    ChatSlashCommand('/model', { replacement: '/model ' }),
+  ],
+  mentionCandidates: [ChatMentionCandidate('src/lib.rs', { detail: 'file' })],
+  onSlashCommand: 'atto:callback:clear',
+  onMentionQuery: 'atto:callback:mentions',
+})
+```
+
+Runtime property names are `slash_commands` and `mention_candidates`. Values are lists of maps:
+
+```ts
+type ChatSlashCommandValue = {
+  id?: string
+  label: string
+  detail?: string | null
+  replacement?: string
+  action?: 'insert' | 'submit'
+}
+
+type ChatMentionCandidateValue = {
+  id?: string
+  label: string
+  detail?: string | null
+  replacement?: string
+}
+```
+
+Slash commands open when the text draft starts with `/`. `action: 'insert'` writes `replacement` (or the label) back into the draft. `action: 'submit'` emits `slash_command` / `onSlashCommand` with `{ id, label, detail?, replacement, action }`; if no handler is bound, it falls back to insertion.
+
+Mentions open when the cursor is inside a token that starts with `@`. Static `mentionCandidates` are filtered locally. Dynamic providers bind `mention_query` / `onMentionQuery`, which receives `{ draft, query, cursor, replacement_start, replacement_end }`; update `mentionCandidates` or set the runtime `mention_candidates` property with matching candidates for that query.
+
 ## React API
 
 `@atto-ui/react` exposes a React reconciler and component wrappers.
@@ -238,7 +277,7 @@ Common wrappers:
 | `Editor` | Code editor (`value`, `languageId`, `showLineNumbers`, `showFoldingMarkers`, `readOnly`, `tabWidth`, `insertSpaces`). |
 | `FileTree` | Tree of `nodes`, controlled `selection`, `onSelect`/`onRename`/`onDelete`, optional `icons`. |
 | `ChatMessageList` | Block-based chat transcript (`messages`, `autoScroll`, `bubbleWidthPercent` / `fillWidth`, `onLoadMore`, `onOpenArtifact`, `onApprove`, `onEditDecision`, `onPlanDecision`, `onCancel`, `onMessageAction`). `bubbleWidthPercent` (default 75) caps bubble width as a percent of the list; `fillWidth` is shorthand for 100 (messages span the full width). |
-| `ChatInputPanel` | Chat input box. `mode` is a friendly `{ kind: 'text' \| 'choice' \| 'confirm', … }` descriptor (or a core `ChatInputMode()` map), plus `draft` / `history` / `selection` / `enabled` / `clearOnSubmit` and `onSubmit`. |
+| `ChatInputPanel` | Chat input box. `mode` is a friendly `{ kind: 'text' \| 'choice' \| 'confirm', … }` descriptor (or a core `ChatInputMode()` map), plus `draft` / `history` / `selection` / `enabled` / `clearOnSubmit`, slash `slashCommands` / `onSlashCommand`, mention `mentionCandidates` / `onMentionQuery`, and `onSubmit`. |
 | `ChatPanel` | Convenience composite: `ChatMessageList` (fills) above `ChatInputPanel` (content height). Props: `list`, `input`, `spacing`. |
 | `VStack` / `HStack` / `Grid` | Layout containers. |
 | `Text`, `B`, `I`, `U`, `S`, `Link` | Structured `RichText` + `TextSpan`. |
@@ -256,7 +295,9 @@ matching the Rust `*_to_value` serializers in `crates/atto-ui-chat/src/dynamic.r
 
 | Event | Payload shape |
 |---|---|
-| `onSubmit` (input) | `{ kind: 'text', text }` \| `{ kind: 'choice', index, label }` \| `{ kind: 'custom', text }` |
+| `onSubmit` (input) | `{ type: 'text', text }` \| `{ type: 'choice', index, label }` \| `{ type: 'custom', text }` |
+| `onSlashCommand` (input) | `{ id, label, detail?, replacement, action: 'submit' }` for accepted submit-action slash commands |
+| `onMentionQuery` (input) | `{ draft, query, cursor, replacement_start, replacement_end }`; update `mentionCandidates` / `mention_candidates` in response |
 | `onApprove` | `{ message_id, block_id, approval_id, option_id }` |
 | `onEditDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
 | `onPlanDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |

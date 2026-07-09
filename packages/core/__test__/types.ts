@@ -2,11 +2,13 @@ import {
   AppHost,
   Button,
   ChatInputMode,
+  ChatMentionCandidate,
   ChatInputPanel,
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatSlashCommand,
   ChatTaskBlock,
   ChatTaskTranscriptItem,
   ChatTextMessage,
@@ -23,6 +25,7 @@ import {
   child,
   tab,
   type CallbackInvocation,
+  type ChatMentionContext,
   type ComponentSpec,
   type ComponentValue,
   type DesktopSnapshot,
@@ -114,7 +117,23 @@ const chatListSpec: ComponentSpec = ChatMessageList({
   onLoadMore: 'atto:callback:7',
   onPlanDecision: 'atto:callback:9',
 })
-const chatInputSpec: ComponentSpec = ChatInputPanel({ mode: ChatInputMode(), onSubmit: 'atto:callback:8' })
+const command = ChatSlashCommand('/clear', { id: 'clear', action: 'submit' })
+const mention = ChatMentionCandidate('src/lib.rs', { replacement: '@src/lib.rs ' })
+const mentionContext: ChatMentionContext = {
+  draft: 'open @sr',
+  query: 'sr',
+  cursor: 8,
+  replacement_start: 5,
+  replacement_end: 8,
+}
+const chatInputSpec: ComponentSpec = ChatInputPanel({
+  mode: ChatInputMode(),
+  slashCommands: [command],
+  mentionCandidates: [mention],
+  onSubmit: 'atto:callback:8',
+  onSlashCommand: 'atto:callback:10',
+  onMentionQuery: 'atto:callback:11',
+})
 
 // @ts-expect-error callback handles must be strings from AppHost.allocCallback().
 Button({ label: 'Bad', onClick: 1 })
@@ -142,4 +161,7 @@ void chatMode
 void chatMessage
 void chatToolMessage
 void chatListSpec
+void command
+void mention
+void mentionContext
 void chatInputSpec

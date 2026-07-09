@@ -10,7 +10,11 @@ use atto_ui::{
     ComponentValueCodec, EventMeta, PropertyMeta, ValueType,
 };
 
-use crate::input::{chat_input_response_to_component_value, parse_chat_input_mode_value};
+use crate::input::{
+    chat_input_response_to_component_value, chat_mention_context_to_component_value,
+    chat_slash_command_to_component_value, parse_chat_input_mode_value,
+    parse_chat_mention_candidates_value, parse_chat_slash_commands_value,
+};
 use crate::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind,
     AttachmentBlock, ChatBlock, ChatBlockId, ChatError, ChatErrorKind, ChatInputHandle,
@@ -45,6 +49,8 @@ impl ComponentPropertySchema for ChatInputPanel {
             PropertyMeta::new("draft", ValueType::String),
             PropertyMeta::new("custom", ValueType::String),
             PropertyMeta::new("history", ValueType::StringList),
+            PropertyMeta::new("slash_commands", ValueType::List),
+            PropertyMeta::new("mention_candidates", ValueType::List),
             PropertyMeta::new("selection", ValueType::U64),
             PropertyMeta::new("enabled", ValueType::Bool),
             PropertyMeta::new("clear_on_submit", ValueType::Bool),
@@ -67,6 +73,8 @@ pub fn chat_message_list_schema() -> ComponentSchema {
 pub fn chat_input_panel_schema() -> ComponentSchema {
     component_schema::<ChatInputPanel>("ChatInputPanel")
         .with_event(EventMeta::new("submit").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("slash_command").with_payload(ValueType::Map))
+        .with_event(EventMeta::new("mention_query").with_payload(ValueType::Map))
         .allow_children(false)
 }
 
@@ -1569,6 +1577,24 @@ pub fn register_chat_input_panel(
             handle.history_binding().set(history);
         }
 
+        if let Some(value) = spec.props.get("slash_commands") {
+            let commands = parse_chat_slash_commands_value(value).map_err(|reason| {
+                invalid_prop_reason(spec, "slash_commands", format!("{reason}; got {value:?}"))
+            })?;
+            handle.set_slash_commands(commands);
+        }
+
+        if let Some(value) = spec.props.get("mention_candidates") {
+            let candidates = parse_chat_mention_candidates_value(value).map_err(|reason| {
+                invalid_prop_reason(
+                    spec,
+                    "mention_candidates",
+                    format!("{reason}; got {value:?}"),
+                )
+            })?;
+            handle.set_mention_candidates(candidates);
+        }
+
         if let Some(selection) = prop_usize(spec, "selection")? {
             handle.selection_binding().set(selection);
         }
@@ -1585,6 +1611,20 @@ pub fn register_chat_input_panel(
         if let Some(cb) = event_handle(spec, "submit", callbacks.clone()) {
             panel = panel.on_submit(move |resp| {
                 cb.emit_with(Some(chat_input_response_to_component_value(resp)));
+            });
+        }
+
+        if let Some(cb) = event_handle(spec, "slash_command", callbacks.clone()) {
+            panel = panel.on_slash_command(move |command| {
+                cb.emit_with(Some(chat_slash_command_to_component_value(&command)));
+            });
+        }
+
+        if let Some(cb) = event_handle(spec, "mention_query", callbacks.clone()) {
+            let candidates = handle.mention_candidates_binding();
+            panel = panel.mention_provider(move |context| {
+                cb.emit_with(Some(chat_mention_context_to_component_value(&context)));
+                candidates.get()
             });
         }
 
@@ -1704,6 +1744,84 @@ mod tests {
                 .events
                 .iter()
                 .any(|event| event.name == "cancel" && event.payload == Some(ValueType::Map))
+        );
+    }
+
+    #[test]
+    fn chat_input_panel_schema_exposes_completion_protocol() {
+        let schema = chat_input_panel_schema();
+
+        assert!(schema.properties.iter().any(|property| {
+            property.name == "slash_commands" && property.value_type == ValueType::List
+        }));
+        assert!(schema.properties.iter().any(|property| {
+            property.name == "mention_candidates" && property.value_type == ValueType::List
+        }));
+        assert!(schema.events.iter().any(|event| {
+            event.name == "slash_command" && event.payload == Some(ValueType::Map)
+        }));
+        assert!(schema.events.iter().any(|event| {
+            event.name == "mention_query" && event.payload == Some(ValueType::Map)
+        }));
+    }
+
+    #[test]
+    fn chat_input_panel_dynamic_builds_completion_properties() {
+        let callbacks = CallbackRegistry::new();
+        let mut registry = ComponentRegistry::<Box<dyn Component>>::new();
+        register_chat_input_panel(&mut registry, callbacks);
+
+        let slash_command = value_map([
+            ("id", ComponentValue::String("clear".to_string())),
+            ("label", ComponentValue::String("/clear".to_string())),
+            (
+                "detail",
+                ComponentValue::String("Clear the conversation".to_string()),
+            ),
+            ("action", ComponentValue::String("submit".to_string())),
+        ]);
+        let mention_candidate = value_map([
+            ("id", ComponentValue::String("cargo".to_string())),
+            ("label", ComponentValue::String("Cargo.toml".to_string())),
+            ("detail", ComponentValue::String("file".to_string())),
+            (
+                "replacement",
+                ComponentValue::String("@Cargo.toml ".to_string()),
+            ),
+        ]);
+
+        let spec = ComponentSpec::new("ChatInputPanel")
+            .with_prop("slash_commands", ComponentValue::List(vec![slash_command]))
+            .with_prop(
+                "mention_candidates",
+                ComponentValue::List(vec![mention_candidate]),
+            );
+
+        let view = registry.build(&spec).expect("build ChatInputPanel");
+        let Some(ComponentValue::List(commands)) = view.get_property("slash_commands") else {
+            panic!("slash_commands property must be a list");
+        };
+        let ComponentValue::Map(command) = &commands[0] else {
+            panic!("slash command must be a map");
+        };
+        assert_eq!(
+            command.get("action"),
+            Some(&ComponentValue::String("submit".to_string()))
+        );
+        assert_eq!(
+            command.get("replacement"),
+            Some(&ComponentValue::String("/clear".to_string()))
+        );
+
+        let Some(ComponentValue::List(candidates)) = view.get_property("mention_candidates") else {
+            panic!("mention_candidates property must be a list");
+        };
+        let ComponentValue::Map(candidate) = &candidates[0] else {
+            panic!("mention candidate must be a map");
+        };
+        assert_eq!(
+            candidate.get("replacement"),
+            Some(&ComponentValue::String("@Cargo.toml ".to_string()))
         );
     }
 

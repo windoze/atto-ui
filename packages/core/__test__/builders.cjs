@@ -4,11 +4,13 @@ const assert = require('node:assert/strict')
 const {
   Button,
   ChatInputMode,
+  ChatMentionCandidate,
   ChatInputPanel,
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatSlashCommand,
   ChatTaskBlock,
   ChatTaskTranscriptItem,
   ChatTextMessage,
@@ -220,8 +222,49 @@ assert.deepStrictEqual(choiceMode, {
   options: ['A', 'B'],
 })
 
-assert.deepStrictEqual(ChatInputPanel({ mode: choiceMode, draft: 'A', onSubmit: 'atto:callback:9' }), {
+const slashCommand = ChatSlashCommand('/clear', {
+  id: 'clear',
+  detail: 'Clear the conversation',
+  action: 'submit',
+})
+assert.deepStrictEqual(slashCommand, {
+  id: 'clear',
+  label: '/clear',
+  detail: 'Clear the conversation',
+  action: 'submit',
+})
+
+const mentionCandidate = ChatMentionCandidate('src/lib.rs', {
+  id: 'src-lib',
+  detail: 'file',
+  replacement: '@src/lib.rs ',
+})
+assert.deepStrictEqual(mentionCandidate, {
+  id: 'src-lib',
+  label: 'src/lib.rs',
+  detail: 'file',
+  replacement: '@src/lib.rs ',
+})
+
+assert.deepStrictEqual(ChatInputPanel({
+  mode: choiceMode,
+  draft: 'A',
+  slashCommands: [slashCommand],
+  mentionCandidates: [mentionCandidate],
+  onSubmit: 'atto:callback:9',
+  onSlashCommand: 'atto:callback:11',
+  onMentionQuery: 'atto:callback:12',
+}), {
   type: 'ChatInputPanel',
-  props: { mode: choiceMode, draft: 'A' },
-  events: { submit: 'atto:callback:9' },
+  props: {
+    mode: choiceMode,
+    draft: 'A',
+    slash_commands: [slashCommand],
+    mention_candidates: [mentionCandidate],
+  },
+  events: {
+    submit: 'atto:callback:9',
+    slash_command: 'atto:callback:11',
+    mention_query: 'atto:callback:12',
+  },
 })
