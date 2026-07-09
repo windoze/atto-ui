@@ -129,7 +129,11 @@
   - 完成记录（2026-07-09）：`snapshot_chat_app` 新增 `--multiline-paste` fixture，并在 snapshot app raw 模式下启用 bracketed paste；该 fixture 使用 `PASTE_SUBMIT: {text:?}` 回显提交文本，便于 PTY 精确断言 CRLF 归一化与尾部空白行裁剪后的值。
   - 测试覆盖：保留并复验 P4.1/P4.2 的 `chat_input_queues_text_while_streaming_and_sends_after_prompt` 与 `chat_streaming_escape_emits_and_marks_turn_canceled`；新增 `chat_multiline_paste_normalizes_and_submits`，覆盖 bracketed paste 输入 `ML-A\r\n  ML-B  \n\n\t \n` 后输入区显示多行，提交回显为 `"ML-A\n  ML-B  "`。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_multiline_paste_normalizes_and_submits -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P4.R Review：P4 阶段复核** — 逐条复核 P4.1–P4.4：确认排队态与流式状态机无死锁/丢消息、Esc 分级语义在各状态下一致、多行粘贴不破坏 undo/历史、取消入口唯一且幂等；确认 PTY 覆盖；跑通全套 CI。
+- [x] **[DONE] P4.R Review：P4 阶段复核** — 逐条复核 P4.1–P4.4：确认排队态与流式状态机无死锁/丢消息、Esc 分级语义在各状态下一致、多行粘贴不破坏 undo/历史、取消入口唯一且幂等；确认 PTY 覆盖；跑通全套 CI。
+  - 完成记录（2026-07-09）：已逐条复核 P4.1–P4.4。输入排队由 host-controlled `streaming_binding` 与 FIFO `queued_responses` 驱动，流式中提交只入队不触发 `on_submit`，流式结束后通过空 Enter/有草稿 Enter 维持先旧队列、后新草稿的顺序；编辑重发拦截器优先于排队，状态行覆盖 streaming、queued、ready-to-send 三类可见提示。
+  - Esc/取消复核：`StreamingCancelController` 是取消按钮、消息列表未消费 Esc、`ChatPanel` 输入 fallback 的共享入口；入口先确认目标仍为最新 streaming 回合，再置 `ChatTurnStatus::Canceled` 并触发 `on_cancel`，连按 Esc 或按钮重复触发均幂等 no-op。completion/slash/mention popup 已在输入层优先消费 Esc，不会透传为流式中断；本次补充 `mention_popup_escape_takes_priority_over_streaming_interrupt` 单测固定 mention popup 的同类优先级。
+  - 多行粘贴与覆盖复核：paste 规整会剥离 bracketed paste 包裹、统一 CRLF/CR 为 LF、裁剪尾部空白行，同时保留正文缩进、内部空行和单行尾随空格；插入走 `TextArea::replace_byte_range`，同步 draft binding、内部 buffer、光标与提交历史。当前 `TextArea` 无独立 undo 栈，本阶段未新增会破坏 undo 的状态。PTY 已覆盖流式中排队且不提前提交、Esc 中断并显示 canceled、bracketed multiline paste 规整后提交。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-chat mention_popup_escape_takes_priority_over_streaming_interrupt --lib`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`、`git diff --check` 均通过。
 
 ## 阶段 P5 — 会话导航：历史搜索 + Turn 级折叠/引用（C2 + C3）
 

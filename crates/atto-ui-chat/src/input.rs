@@ -2348,6 +2348,28 @@ mod tests {
     }
 
     #[test]
+    fn mention_popup_escape_takes_priority_over_streaming_interrupt() {
+        let (_handle, mut panel) =
+            panel_with_mentions(vec![ChatMentionCandidate::new("Cargo.toml")]);
+        let interrupts = Arc::new(Mutex::new(0usize));
+        let interrupts_for_callback = interrupts.clone();
+        panel = panel.on_streaming_interrupt(move || {
+            let mut count = interrupts_for_callback.lock().expect("interrupt lock");
+            *count += 1;
+            true
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "please @ca");
+        assert!(panel.mention_open.get());
+        let result = panel.handle_event(&key(KeyCode::Esc), context(&theme));
+
+        assert_eq!(result, EventResult::consumed());
+        assert_eq!(*interrupts.lock().expect("interrupt lock"), 0);
+        assert!(!panel.mention_open.get());
+    }
+
+    #[test]
     fn escape_is_ignored_when_streaming_interrupt_declines() {
         let handle = ChatInputHandle::new();
         let mut panel = handle.panel().on_streaming_interrupt(|| false);
