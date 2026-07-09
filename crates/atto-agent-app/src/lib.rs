@@ -26,6 +26,7 @@ use atto_ui_chat::{
 use ratatui::layout::Rect;
 
 pub mod config;
+pub mod deepseek;
 
 use crate::config::{AgentConfig, PlanMode};
 

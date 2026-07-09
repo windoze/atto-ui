@@ -33,7 +33,9 @@
 - [x] **[DONE] M2.1 配置加载** - 支持 CLI/env/TOML，读取 `DEEPSEEK_API_KEY`、base URL、model、temperature、max tokens、workspace、plan mode。
   - 完成记录（2026-07-10）：新增 `atto-agent-app::config`，按默认值、用户级 `~/.config/atto-agent/config.toml`、工作区 `.atto-agent.toml`、环境变量、CLI 参数的优先级合并配置；支持 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_TEMPERATURE`、`DEEPSEEK_MAX_TOKENS`、`ATTO_AGENT_WORKSPACE`、`ATTO_AGENT_PLAN_MODE`，以及 `--api-key`/`--deepseek-api-key`、`--base-url`、`--model`、`--temperature`、`--max-tokens`、`--workspace`、`--plan-mode`、`--config`、兼容 `--mock`。运行入口加载配置，snapshot fixture 不读取用户环境；状态栏显示配置 model，初始 plan mode 来自配置默认 `auto`。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M2.2 DeepSeek 请求模型** - 定义 request/response/SSE 数据结构，构造 OpenAI-compatible `/chat/completions` 请求。
+- [x] **[DONE] M2.2 DeepSeek 请求模型** - 定义 request/response/SSE 数据结构，构造 OpenAI-compatible `/chat/completions` 请求。
+  - 完成记录（2026-07-10）：新增 `atto_agent_app::deepseek` 协议模块，定义 OpenAI-compatible chat completions request、message、tool schema/tool choice、non-stream response、SSE chunk/delta、tool call delta、usage、finish reason 和 API error 数据结构；新增 `/chat/completions` endpoint 拼接与基于 `AgentConfig` 的 streaming request 构造，保持网络 client/SSE parser/UI 映射留给后续 M2 任务。
+  - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M2.3 SSE parser** - 解析 `data:` 行、`[DONE]`、`choices[].delta.content`、`reasoning_content`、finish_reason 和错误片段。
 - [ ] **M2.4 流式 UI 映射** - content 追加到 `TextBlock`，reasoning_content 追加到 `ThinkingBlock`，结束时设置 turn status 和 meta。
 - [ ] **M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。

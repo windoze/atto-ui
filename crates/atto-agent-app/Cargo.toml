@@ -10,6 +10,7 @@ atto-ui-async = { path = "../atto-ui-async", default-features = false, features 
 atto-ui-chat = { path = "../atto-ui-chat" }
 ratatui = "0.30.0"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 toml = "0.8"
 
 [dev-dependencies]
