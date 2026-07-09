@@ -24,4 +24,5 @@
 - 定向测试已通过：引用栏渲染/移除、文本提交携带引用并清理、turn 引用按钮、block 引用按钮。
 - 完整验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
 - 已更新 `TODO.md`，将 `P5.3 引用回复（可选）` 标记为 `[DONE]` 并写入完成记录。
-- 下一步提交本次 P5.3 相关变更后停止。
+- 已提交本次 P5.3 实现：`b061710 [P5.3] Add chat quote replies`。
+- 本次调用到此停止，不继续处理 P5.4。
