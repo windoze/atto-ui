@@ -78,6 +78,8 @@ fn main() -> Result<()> {
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
     let input_completion = args.iter().any(|arg| arg == "--input-completion");
+    let p5_search = args.iter().any(|arg| arg == "--p5-search");
+    let p5_fold_quote = args.iter().any(|arg| arg == "--p5-fold-quote");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -100,7 +102,13 @@ fn main() -> Result<()> {
     let mut task_block_id = None;
     let mut fork_anchor_id = None;
     let mut input_queue_stream_id = None;
-    let tool_block_ids = if input_completion {
+    let tool_block_ids = if p5_search {
+        seed_p5_search_messages(&store);
+        None
+    } else if p5_fold_quote {
+        seed_p5_fold_quote_messages(&store);
+        None
+    } else if input_completion {
         seed_input_completion_messages(&store);
         None
     } else if multiline_paste {
@@ -210,6 +218,8 @@ fn main() -> Result<()> {
         || multiline_paste
         || input_queue
         || input_completion
+        || p5_search
+        || p5_fold_quote
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -266,7 +276,7 @@ fn main() -> Result<()> {
             let plan_decisions = plan_decisions.clone();
             move |decision| plan_decisions.push(decision)
         });
-    if !message_actions {
+    if !message_actions && !p5_search && !p5_fold_quote {
         list = list.on_load_more({
             let store = store.clone();
             let counter = load_counter.clone();
@@ -302,6 +312,9 @@ fn main() -> Result<()> {
             let cancel_events = cancel_events.clone();
             move |message_id| cancel_events.push(message_id)
         });
+    }
+    if p5_fold_quote {
+        list = list.with_quote_replies(&input_handle);
     }
     let mut input_panel = input_handle.panel().on_submit({
         let store = store.clone();
@@ -359,6 +372,8 @@ fn main() -> Result<()> {
         || multiline_paste
         || input_queue
         || input_completion
+        || p5_search
+        || p5_fold_quote
     {
         24
     } else if nested_task {
@@ -544,6 +559,8 @@ fn main() -> Result<()> {
                 && !edit_resubmit
                 && !retry_resubmit
                 && !fork_at
+                && !p5_search
+                && !p5_fold_quote
             {
                 match cmd {
                     'a' => {
@@ -754,6 +771,42 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_p5_search_messages(store: &ChatMessageStore) {
+    for idx in 0..34u64 {
+        let text = match idx {
+            2 => "P5-SEARCH-TARGET-FIRST".to_string(),
+            27 => "P5-SEARCH-TARGET-SECOND".to_string(),
+            33 => "P5-SEARCH-TAIL".to_string(),
+            _ => format!("P5-SEARCH-FILLER-{idx:02}"),
+        };
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            text,
+        ));
+    }
+}
+
+fn seed_p5_fold_quote_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "P5-FOLD-QUOTE-BODY".to_string(),
+                streaming: false,
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 1),
+                level: NoticeLevel::Info,
+                text: "P5-FOLD-QUOTE-NOTICE".to_string(),
+            }),
+        ],
+    ));
 }
 
 fn seed_input_completion_messages(store: &ChatMessageStore) {

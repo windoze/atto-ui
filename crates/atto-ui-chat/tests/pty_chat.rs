@@ -1004,6 +1004,104 @@ fn chat_p3_fork_at_hides_old_branch() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_p5_search_jumps_between_offscreen_matches() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-search"], 100, 30)?;
+
+    host.wait_for_text("P5-SEARCH-TAIL", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-FIRST", Duration::from_millis(120));
+
+    let (x, y) = find_text_position(&host, "P5-SEARCH-TAIL").expect("search list focus target");
+    host.click(x, y)?;
+    host.send_ctrl('r')?;
+    host.send_str("target")?;
+    host.wait_for_text("Search: target (1/2)", Duration::from_secs(2))?;
+    host.wait_for_text("P5-SEARCH-TARGET-FIRST", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-SECOND", Duration::from_millis(120));
+
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
+    host.wait_for_text("Search: target (2/2)", Duration::from_secs(2))?;
+    host.wait_for_text("P5-SEARCH-TARGET-SECOND", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-FIRST", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p5_turn_fold_collapses_and_expands() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-fold-quote"], 100, 28)?;
+
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Info: P5-FOLD-QUOTE-NOTICE", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Collapse").expect("collapse action");
+    host.click(x, y)?;
+    host.wait_for_text("Collapsed · 2 blocks hidden", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-FOLD-QUOTE-BODY", Duration::from_millis(120));
+    assert_text_absent_for(
+        &host,
+        "Info: P5-FOLD-QUOTE-NOTICE",
+        Duration::from_millis(120),
+    );
+
+    let (x, y) = find_text_position(&host, "Expand").expect("expand action");
+    host.click(x, y)?;
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Info: P5-FOLD-QUOTE-NOTICE", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p5_quote_reply_attaches_and_removes_references() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-fold-quote"], 100, 28)?;
+
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Quote", Duration::from_secs(2))?;
+    host.wait_for_text("Quote block", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Quote").expect("turn quote action");
+    host.click(x, y)?;
+    host.wait_for_text("Quote: Assistant #1", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "[Remove]").expect("turn reference remove action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .all(|line| !line.contains("Quote: Assistant #1"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    let (x, y) = find_text_position(&host, "Quote block").expect("block quote action");
+    host.click(x, y)?;
+    host.wait_for_text("Quote: Block #1001", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "[Remove]").expect("block reference remove action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .all(|line| !line.contains("Quote: Block #1001"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_text_selection_highlights_copies_selection_and_falls_back() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");

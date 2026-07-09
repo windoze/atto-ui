@@ -154,7 +154,11 @@
   - 列表交互：`ChatMessageList::with_quote_replies(&ChatInputHandle)` 启用引用回复；turn action row 新增 `Quote`，block action row 新增 `Quote block`，重复引用同一 turn/block 时替换既有引用而非堆叠重复项；引用摘要会压缩空白并截断过长内容。
   - 测试覆盖：新增 input 单测覆盖引用栏渲染、点击移除、提交携带引用并清理；新增 list 单测覆盖 turn/block 引用按钮写入输入引用。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat reference_bar_renders_and_remove_click_clears_reference`、`cargo test -p atto-ui-chat quote_message_button_attaches_turn_reference`、`cargo test -p atto-ui-chat quote_block_button_attaches_block_reference`、`cargo test -p atto-ui-chat text_submit_includes_references_and_clears_them`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P5.4 快照与测试** — PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。
+- [x] **[DONE] P5.4 快照与测试** — PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。
+  - 完成记录（2026-07-09）：`snapshot_chat_app` 新增 `--p5-search` 与 `--p5-fold-quote` 两个确定性 fixture；前者提供底部初始视图和两个屏外/屏内搜索命中，后者启用 `with_quote_replies` 并提供可折叠、可引用的多 block 回合。
+  - 测试覆盖：新增 `chat_p5_search_jumps_between_offscreen_matches`、`chat_p5_turn_fold_collapses_and_expands`、`chat_p5_quote_reply_attaches_and_removes_references` 三个 PTY 用例，分别覆盖 Ctrl+R 搜索跳到屏外首个命中并切换到下个命中、turn Collapse/Expand 隐藏和恢复块内容、turn/block 引用附加后通过 `[Remove]` 移除。
+  - 复核修复：PTY 覆盖发现引用栏保存绝对绘制区域，而父布局会把鼠标事件转为本地坐标，导致真实 UI 点击 `[Remove]` 不能移除引用；已在 `ChatInputPanel` 中记录最后绘制区域并将本地鼠标坐标转换回绝对坐标再命中，同时新增本地坐标单测。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat reference_remove_click_handles_local_mouse_coordinates --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_p5 -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P5.R Review：P5 阶段复核** — 逐条复核 P5.1–P5.4：确认搜索跳转与自动跟随/虚拟化不冲突、turn 折叠不破坏块级折叠状态、引用附加的生命周期清晰、宽字符高亮不错位；确认 PTY 覆盖；跑通全套 CI。
 
 ## 阶段 P6 — 细节层：工具权限层级 + 上下文压缩块（D1 + D2）

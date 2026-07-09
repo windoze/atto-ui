@@ -1242,6 +1242,7 @@ pub struct ChatInputPanel {
     queued_responses: Binding<Vec<ChatInputResponse>>,
     references: Binding<Vec<ChatInputReference>>,
     reference_remove_areas: Vec<(usize, Rect)>,
+    last_area: Option<Rect>,
     text_submit_interceptor: Binding<Option<ChatTextSubmitInterceptor>>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
@@ -1328,6 +1329,7 @@ impl ChatInputPanel {
             queued_responses,
             references,
             reference_remove_areas: Vec::new(),
+            last_area: None,
             text_submit_interceptor,
             view: ChatInputView::Text(Box::new(
                 TextArea::new("", draft.clone()).history(history.clone()),
@@ -1802,10 +1804,13 @@ impl ChatInputPanel {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return EventResult::ignored();
         }
+        let Some((column, row)) = self.mouse_position_for_reference_hit(mouse, ctx) else {
+            return EventResult::ignored();
+        };
         let Some((index, _)) = self
             .reference_remove_areas
             .iter()
-            .find(|(_, area)| mouse_in_rect(*area, mouse, ctx.mouse_coordinate_space))
+            .find(|(_, area)| point_in_rect(column, row, *area))
             .copied()
         else {
             return EventResult::ignored();
@@ -1816,6 +1821,22 @@ impl ChatInputPanel {
             }
         });
         EventResult::changed()
+    }
+
+    fn mouse_position_for_reference_hit(
+        &self,
+        mouse: &crossterm::event::MouseEvent,
+        ctx: ComponentContext<'_>,
+    ) -> Option<(u16, u16)> {
+        match ctx.mouse_coordinate_space {
+            MouseCoordinateSpace::Absolute => Some((mouse.column, mouse.row)),
+            MouseCoordinateSpace::Local => self.last_area.map(|area| {
+                (
+                    area.x.saturating_add(mouse.column),
+                    area.y.saturating_add(mouse.row),
+                )
+            }),
+        }
     }
 
     fn text_response_for_submit(&self, text: &str) -> ChatInputResponse {
@@ -2053,6 +2074,7 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
     }
 
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
         self.sync_mode();
         let indicator = self.queue_indicator_text();
         let indicator_height = u16::from(indicator.is_some() && area.height > 0);
@@ -2347,20 +2369,11 @@ fn is_escape_press(event: &Event) -> bool {
     )
 }
 
-fn mouse_in_rect(
-    area: Rect,
-    mouse: &crossterm::event::MouseEvent,
-    space: MouseCoordinateSpace,
-) -> bool {
-    match space {
-        MouseCoordinateSpace::Absolute => {
-            mouse.column >= area.x
-                && mouse.column < area.x.saturating_add(area.width)
-                && mouse.row >= area.y
-                && mouse.row < area.y.saturating_add(area.height)
-        }
-        MouseCoordinateSpace::Local => mouse.column < area.width && mouse.row < area.height,
-    }
+fn point_in_rect(column: u16, row: u16, area: Rect) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 fn button_width(label: &str) -> u16 {
@@ -2707,6 +2720,39 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("[Remove]")));
         let remove = panel.reference_remove_areas[0].1;
         let result = panel.handle_event(&mouse_down(remove.x, remove.y), context(&theme));
+
+        assert_eq!(result, EventResult::changed());
+        assert!(handle.references().is_empty());
+    }
+
+    #[test]
+    fn reference_remove_click_handles_local_mouse_coordinates() {
+        let handle = ChatInputHandle::new();
+        handle.add_reference(ChatInputReference::new(
+            ChatMessageId::new(7),
+            "Assistant #7",
+            "quoted answer",
+        ));
+        let mut panel = handle.panel();
+        let theme = Theme::dark();
+        let ctx = context(&theme);
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let area = Rect::new(5, 4, 64, 10);
+        terminal
+            .draw(|frame| panel.draw(frame, area, ctx))
+            .expect("draw");
+        let remove = panel.reference_remove_areas[0].1;
+        let mut local_ctx = context(&theme);
+        local_ctx.mouse_coordinate_space = MouseCoordinateSpace::Local;
+
+        let result = panel.handle_event(
+            &mouse_down(
+                remove.x.saturating_sub(area.x),
+                remove.y.saturating_sub(area.y),
+            ),
+            local_ctx,
+        );
 
         assert_eq!(result, EventResult::changed());
         assert!(handle.references().is_empty());
