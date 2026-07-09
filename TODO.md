@@ -139,7 +139,11 @@
 
 参考 `AGENT_GAP.md` C2、C3。
 
-- [ ] **P5.1 会话内搜索** — `src/list.rs`：类 Ctrl+R 搜索/跳转——输入关键词高亮匹配、在命中间上一处/下一处跳转、退出搜索恢复；与虚拟滚动协同（跳转到屏外命中）。
+- [x] **[DONE] P5.1 会话内搜索** — `src/list.rs`：类 Ctrl+R 搜索/跳转——输入关键词高亮匹配、在命中间上一处/下一处跳转、退出搜索恢复；与虚拟滚动协同（跳转到屏外命中）。
+  - 完成记录（2026-07-09）：`ChatMessageList` 新增会话内搜索状态机，`Ctrl+R` 进入搜索并聚焦查询输入；输入字符实时重算命中并高亮当前可见内容；Enter/Down/PageDown/Tab/Ctrl+R 跳到下一处，Up/PageUp/BackTab 跳到上一处，Esc 退出搜索并恢复进入搜索前的滚动位置。
+  - 滚动/虚拟化：搜索命中按现有 `ChatRowKey` 顺序从 header、文本、thinking/tool/diff/plan/task/todo/notice/artifact 等行的可搜索文本收集；新增虚拟行滚动调整 `ToRow`，命中在屏外时下一次布局会把目标行滚入视口并暂停 tail follow，不破坏现有自动跟随和加载更多路径。
+  - 测试覆盖：新增 list 单测覆盖搜索打开与可见命中高亮、上一处/下一处在屏外命中间跳转、Esc 关闭后恢复原滚动并清除 overlay/高亮。
+  - 验证：`cargo test -p atto-ui-chat chat_search --lib`、`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P5.2 Turn 级折叠** — `src/list.rs`：在块级折叠之上支持折叠整个回合（回合 header 折叠控件），折叠态占位与展开还原滚动位置。
 - [ ] **P5.3 引用回复（可选）** — `src/list.rs` + `input.rs`：选中某回合/块作为引用附加到下一条输入；引用在输入区可见、可移除。
 - [ ] **P5.4 快照与测试** — PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。

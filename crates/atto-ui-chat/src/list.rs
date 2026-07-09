@@ -228,6 +228,42 @@ struct ChatMessageRowConfig {
     on_cancel: Option<CancelCallback>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SearchMatch {
+    row_id: ChatRowId,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SearchState {
+    active: bool,
+    query: String,
+    matches: Vec<SearchMatch>,
+    active_index: Option<usize>,
+    restore_scroll: Option<(u16, u16)>,
+}
+
+impl SearchState {
+    fn active_match(&self) -> Option<&SearchMatch> {
+        self.active_index.and_then(|idx| self.matches.get(idx))
+    }
+
+    fn status_label(&self) -> String {
+        let count = self.matches.len();
+        let position = self.active_index.map_or(0, |idx| idx.saturating_add(1));
+        let suffix = if self.query.is_empty() {
+            "type to search".to_string()
+        } else if count == 0 {
+            "no matches".to_string()
+        } else {
+            format!("{position}/{count}")
+        };
+        format!(
+            "Search: {} ({suffix})  Enter/Down next  Up prev  Esc close",
+            self.query
+        )
+    }
+}
+
 pub struct ChatMessageList {
     store: ChatMessageStore,
     messages: Binding<Vec<ChatMessage>>,
@@ -242,6 +278,7 @@ pub struct ChatMessageList {
     follow_tail: bool,
     suppress_auto_scroll_once: bool,
     pending_scroll_to_bottom: bool,
+    search: SearchState,
     messages_observer: DirtyObserver,
 }
 
@@ -284,6 +321,7 @@ impl ChatMessageList {
             follow_tail: true,
             suppress_auto_scroll_once: false,
             pending_scroll_to_bottom: has_initial_messages,
+            search: SearchState::default(),
             messages_observer,
         }
     }
@@ -507,6 +545,12 @@ impl ChatMessageList {
         let branch_rewritten = message_ids_rewrite_branch(&self.message_ids, &next_message_ids);
         self.message_ids = next_message_ids;
         self.row_keys.set(next_row_keys);
+        if self.search.active {
+            self.suppress_auto_scroll_once = false;
+            self.refresh_search_matches();
+            self.queue_active_search_match_scroll();
+            return;
+        }
         if self.suppress_auto_scroll_once {
             self.suppress_auto_scroll_once = false;
             return;
@@ -551,6 +595,150 @@ impl ChatMessageList {
                 self.config.padding.get(),
                 self.config.bubble_width_percent,
             ));
+    }
+
+    fn start_search(&mut self) -> EventResult {
+        self.search.active = true;
+        self.search.query.clear();
+        self.search.restore_scroll = Some(self.list.scroll_offset());
+        self.refresh_search_matches();
+        EventResult::changed()
+    }
+
+    fn exit_search(&mut self) -> EventResult {
+        if !self.search.active {
+            return EventResult::ignored();
+        }
+        let restore = self.search.restore_scroll.take();
+        self.search = SearchState::default();
+        if let Some((x, y)) = restore {
+            self.list.set_scroll_offset(x, y);
+            self.sync_follow_tail_from_scroll();
+        }
+        EventResult::changed()
+    }
+
+    fn refresh_search_matches(&mut self) {
+        let row_keys = self.row_keys.get();
+        let query = self.search.query.clone();
+        self.search.matches = self
+            .messages
+            .with(|messages| collect_search_matches(messages, &row_keys, &query, &self.config));
+        self.search.active_index = (!self.search.matches.is_empty()).then_some(0);
+    }
+
+    fn update_search_query(&mut self, query: String) -> EventResult {
+        if self.search.query == query {
+            return EventResult::consumed();
+        }
+        self.search.query = query;
+        self.refresh_search_matches();
+        self.queue_active_search_match_scroll();
+        EventResult::changed()
+    }
+
+    fn move_search_match(&mut self, forward: bool) -> EventResult {
+        let len = self.search.matches.len();
+        if len == 0 {
+            return EventResult::consumed();
+        }
+        let current = self
+            .search
+            .active_index
+            .unwrap_or(0)
+            .min(len.saturating_sub(1));
+        let next = if forward {
+            current.saturating_add(1) % len
+        } else if current == 0 {
+            len.saturating_sub(1)
+        } else {
+            current.saturating_sub(1)
+        };
+        self.search.active_index = Some(next);
+        self.queue_active_search_match_scroll();
+        EventResult::changed()
+    }
+
+    fn queue_active_search_match_scroll(&mut self) {
+        let Some(row_id) = self
+            .search
+            .active_match()
+            .map(|search_match| search_match.row_id)
+        else {
+            return;
+        };
+        self.virtual_control.scroll_to_row_on_next_layout(row_id);
+        self.pending_scroll_to_bottom = false;
+        self.follow_tail = false;
+        self.load_more_armed = true;
+    }
+
+    fn handle_search_event(&mut self, event: &Event) -> Option<EventResult> {
+        if is_search_shortcut(event) {
+            if self.search.active {
+                return Some(self.move_search_match(true));
+            }
+            return Some(self.start_search());
+        }
+
+        if !self.search.active {
+            return None;
+        }
+
+        let Event::Key(key) = event else {
+            return None;
+        };
+        if matches!(key.kind, KeyEventKind::Release) {
+            return Some(EventResult::ignored());
+        }
+
+        match key.code {
+            KeyCode::Esc => Some(self.exit_search()),
+            KeyCode::Enter | KeyCode::Down | KeyCode::Tab | KeyCode::PageDown => {
+                Some(self.move_search_match(true))
+            }
+            KeyCode::Up | KeyCode::BackTab | KeyCode::PageUp => Some(self.move_search_match(false)),
+            KeyCode::Backspace => {
+                let mut query = self.search.query.clone();
+                query.pop();
+                Some(self.update_search_query(query))
+            }
+            KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(self.update_search_query(String::new()))
+            }
+            KeyCode::Char(ch) if search_input_modifiers_allow_text(key.modifiers) => {
+                let mut query = self.search.query.clone();
+                query.push(ch);
+                Some(self.update_search_query(query))
+            }
+            _ => Some(EventResult::consumed()),
+        }
+    }
+
+    fn draw_search_state(&self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if !self.search.active || area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if !self.search.query.is_empty() {
+            apply_search_highlights(
+                frame.buffer_mut(),
+                area,
+                &self.search.query,
+                search_match_style(),
+            );
+        }
+
+        let label = fit_to_display_width(&self.search.status_label(), area.width as usize);
+        let status_area = Rect {
+            y: area.y.saturating_add(area.height.saturating_sub(1)),
+            height: 1,
+            ..area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(label, ctx.theme.widget.focused)),
+            status_area,
+        );
     }
 }
 
@@ -646,6 +834,7 @@ impl ::atto_ui::composable::Component for ChatMessageList {
         self.track_message_changes();
         self.queue_pending_scroll_to_bottom();
         self.list.draw(frame, area, ctx);
+        self.draw_search_state(frame, area, ctx);
     }
 }
 
@@ -735,6 +924,9 @@ impl ::atto_ui::composable::DynamicTree for ChatMessageList {}
 impl ::atto_ui::composable::EventHandling for ChatMessageList {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.track_message_changes();
+        if let Some(res) = self.handle_search_event(event) {
+            return res;
+        }
         let before_scroll_y = self.list.scroll_offset().1;
         let mut res = self.list.handle_event(event, ctx);
         if self.list.scroll_offset().1 != before_scroll_y {
@@ -810,9 +1002,106 @@ fn is_escape_press(event: &Event) -> bool {
     )
 }
 
+fn is_search_shortcut(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('r' | 'R'),
+            modifiers,
+            kind,
+            ..
+        }) if modifiers.contains(KeyModifiers::CONTROL) && !matches!(kind, KeyEventKind::Release)
+    )
+}
+
+fn search_input_modifiers_allow_text(modifiers: KeyModifiers) -> bool {
+    !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
+fn search_match_style() -> Style {
+    Style::default().fg(Color::Black).bg(Color::Yellow)
+}
+
+fn apply_search_highlights(buf: &mut Buffer, area: Rect, query: &str, style: Style) {
+    if query.is_empty() || area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    for dy in 0..area.height {
+        let row = rendered_row_from_buffer(buf, area, dy);
+        for (start, end) in search_match_display_ranges(&row.text, query) {
+            for (start, end) in selected_cell_ranges_for_line(&row.text, start, end) {
+                for dx in start..end.min(area.width) {
+                    let x = area.x.saturating_add(dx);
+                    let y = area.y.saturating_add(dy);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(style);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn search_match_display_ranges(text: &str, query: &str) -> Vec<(u16, u16)> {
+    find_case_insensitive_byte_ranges(text, query)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let start_col = UnicodeWidthStr::width(&text[..start]).min(u16::MAX as usize) as u16;
+            let end_col = UnicodeWidthStr::width(&text[..end]).min(u16::MAX as usize) as u16;
+            (start_col < end_col).then_some((start_col, end_col))
+        })
+        .collect()
+}
+
+fn find_case_insensitive_byte_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+    let mut byte_idx = 0usize;
+    while byte_idx < text.len() {
+        if !text.is_char_boundary(byte_idx) {
+            byte_idx = byte_idx.saturating_add(1);
+            continue;
+        }
+        if let Some(end) = case_insensitive_match_end(text, byte_idx, query) {
+            ranges.push((byte_idx, end));
+            byte_idx = end.max(byte_idx.saturating_add(1));
+        } else {
+            byte_idx = next_char_boundary(text, byte_idx);
+        }
+    }
+    ranges
+}
+
+fn case_insensitive_match_end(text: &str, start: usize, query: &str) -> Option<usize> {
+    let mut text_chars = text[start..].chars();
+    let mut end = start;
+    for query_ch in query.chars() {
+        let text_ch = text_chars.next()?;
+        if text_ch != query_ch && !text_ch.eq_ignore_ascii_case(&query_ch) {
+            return None;
+        }
+        end = end.saturating_add(text_ch.len_utf8());
+    }
+    Some(end)
+}
+
+fn next_char_boundary(text: &str, start: usize) -> usize {
+    text[start..]
+        .chars()
+        .next()
+        .map_or(text.len(), |ch| start.saturating_add(ch.len_utf8()))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VirtualScrollAdjustment {
     ToBottom,
+    ToRow {
+        row_id: ChatRowId,
+    },
     PreserveYAfterContentHeightChange {
         previous_content_height: u16,
         previous_scroll_y: u16,
@@ -836,6 +1125,11 @@ impl VirtualChatRowsControl {
     fn scroll_to_bottom_on_next_layout(&self) {
         self.pending_scroll_adjustment
             .set(Some(VirtualScrollAdjustment::ToBottom));
+    }
+
+    fn scroll_to_row_on_next_layout(&self, row_id: ChatRowId) {
+        self.pending_scroll_adjustment
+            .set(Some(VirtualScrollAdjustment::ToRow { row_id }));
     }
 
     fn preserve_scroll_y_after_next_layout(
@@ -983,6 +1277,13 @@ impl VirtualChatRowsContent {
         let content = host.content_size();
         let target_y = match adjustment {
             VirtualScrollAdjustment::ToBottom => content.1.saturating_sub(viewport.1),
+            VirtualScrollAdjustment::ToRow { row_id } => {
+                let Some(row) = self.row_layout_by_id(row_id) else {
+                    self.control.pending_scroll_adjustment.set(None);
+                    return;
+                };
+                centered_scroll_y_for_row(&row, viewport.1)
+            }
             VirtualScrollAdjustment::PreserveYAfterContentHeightChange {
                 previous_content_height,
                 previous_scroll_y,
@@ -1298,6 +1599,14 @@ fn row_fully_visible(row: &VirtualRowLayout, scroll_y: u16, viewport_h: u16) -> 
 
 fn row_intersects(row_y: u16, row_h: u16, visible_start: u16, visible_end: u16) -> bool {
     row_y < visible_end && row_y.saturating_add(row_h) > visible_start
+}
+
+fn centered_scroll_y_for_row(row: &VirtualRowLayout, viewport_h: u16) -> u16 {
+    if viewport_h == 0 || row.height >= viewport_h {
+        return row.y;
+    }
+    row.y
+        .saturating_sub(viewport_h.saturating_sub(row.height) / 2)
 }
 
 fn estimate_row_height(
@@ -2041,6 +2350,122 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
             title: title.clone(),
         },
     }
+}
+
+fn collect_search_matches(
+    messages: &[ChatMessage],
+    row_keys: &[ChatRowKey],
+    query: &str,
+    config: &ChatMessageListConfig,
+) -> Vec<SearchMatch> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    for key in row_keys {
+        let text = searchable_text_for_row(messages, key, config);
+        let count = find_case_insensitive_byte_ranges(&text, query).len();
+        matches.extend((0..count).map(|_| SearchMatch { row_id: key.id() }));
+    }
+    matches
+}
+
+fn searchable_text_for_row(
+    messages: &[ChatMessage],
+    key: &ChatRowKey,
+    config: &ChatMessageListConfig,
+) -> String {
+    let Some(message) = messages
+        .iter()
+        .find(|message| message.id == key.message_id())
+    else {
+        return String::new();
+    };
+
+    match key {
+        ChatRowKey::Header { .. } => turn_header_label(message),
+        ChatRowKey::Block { block_id, .. } => find_block(message, *block_id)
+            .map(|block| searchable_text_for_block(block, config))
+            .unwrap_or_default(),
+        ChatRowKey::PendingToolResult { call_id, .. } => pending_tool_result_title(call_id),
+    }
+}
+
+fn searchable_text_for_block(block: &ChatBlock, config: &ChatMessageListConfig) -> String {
+    match block {
+        ChatBlock::Text(text) => searchable_markdown(&text.markdown, text.streaming, config),
+        ChatBlock::Thinking(thinking) => {
+            let mut lines = vec!["Thinking".to_string()];
+            if !thinking.collapsed {
+                lines.push(searchable_markdown(&thinking.markdown, false, config));
+            }
+            lines.join("\n")
+        }
+        ChatBlock::Attachment(attachment) => {
+            attachment_label(&attachment.name, attachment.url.as_deref())
+        }
+        ChatBlock::ToolUse(tool) => searchable_tool_use(tool),
+        ChatBlock::ToolResult(result) => searchable_tool_result(result),
+        ChatBlock::Diff(diff) => format!("{}\n{}", diff_block_title(diff), diff.diff.unified),
+        ChatBlock::Plan(plan) => {
+            let mut lines = vec![plan_block_title(plan.decision)];
+            lines.extend(plan_display_lines(&plan.items));
+            lines.join("\n")
+        }
+        ChatBlock::Task(task) => {
+            if task.collapsed {
+                task_block_title(task)
+            } else {
+                task_display_lines(&TaskDetails::from(task)).join("\n")
+            }
+        }
+        ChatBlock::Todo(todo) => todo_display_lines(&todo.items).join("\n"),
+        ChatBlock::Notice(notice) => notice_label(notice.level, &notice.text),
+        ChatBlock::Artifact(artifact) => {
+            format!("Artifact {}: {}", artifact.kind.label(), artifact.title)
+        }
+    }
+}
+
+fn searchable_markdown(markdown: &str, streaming: bool, config: &ChatMessageListConfig) -> String {
+    let mut content = markdown.to_string();
+    if streaming && !config.in_progress_suffix.is_empty() {
+        content.push_str(&config.in_progress_suffix);
+    }
+    content
+}
+
+fn searchable_tool_use(tool: &ToolUseBlock) -> String {
+    let mut lines = vec![tool.name.clone()];
+    if tool.collapsed {
+        return lines.join("\n");
+    }
+    lines.extend(tool_input_detail_lines(&tool.input));
+    if let Some(approval) = &tool.approval {
+        lines.push(format!("Approval: {}", approval.prompt));
+        if let Some(resolved) = &approval.resolved {
+            lines.push(approval_resolved_label(approval, resolved));
+        } else if approval.options.is_empty() {
+            lines.push("No approval options".to_string());
+        } else {
+            lines.extend(
+                approval
+                    .options
+                    .iter()
+                    .map(|option| approval_option_button_label(approval, option)),
+            );
+        }
+    }
+    lines.join("\n")
+}
+
+fn searchable_tool_result(result: &ToolResultBlock) -> String {
+    let mut lines = vec![tool_result_title(result)];
+    if !result.collapsed {
+        lines.push(result.output.as_text().to_string());
+    }
+    lines.join("\n")
 }
 
 #[derive(Default)]
@@ -7141,6 +7566,143 @@ mod tests {
         assert_eq!(second, EventResult::ignored());
         assert_eq!(*canceled.lock().expect("cancel lock"), vec![current_id]);
         assert_eq!(store.messages()[1].status, ChatTurnStatus::Canceled);
+    }
+
+    #[test]
+    fn chat_search_opens_filters_and_highlights_visible_matches() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "alpha needle 你",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "needle".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 60, 6);
+        let (row, col) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| line.find("needle").map(|col| (row, col)))
+            .expect("search match should be visible");
+
+        assert!(list.search.active);
+        assert_eq!(list.search.query, "needle");
+        assert_eq!(list.search.matches.len(), 1);
+        assert_eq!(bgs[row][col], Color::Yellow);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Search: needle (1/1)"))
+        );
+    }
+
+    #[test]
+    fn chat_search_next_previous_jump_to_offscreen_matches() {
+        let store = ChatMessageStore::new();
+        for idx in 0..32 {
+            let text = match idx {
+                1 => "TARGET-FIRST".to_string(),
+                28 => "TARGET-SECOND".to_string(),
+                _ => format!("message-{idx:02}"),
+            };
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                text,
+            ));
+        }
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 50, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "target".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+        let (first, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(first.iter().any(|line| line.contains("TARGET-FIRST")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (second, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(second.iter().any(|line| line.contains("TARGET-SECOND")));
+        assert!(!second.iter().any(|line| line.contains("TARGET-FIRST")));
+        assert!(list.scroll_offset().1 > 0);
+        assert!(!list.is_following_tail());
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (previous, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(previous.iter().any(|line| line.contains("TARGET-FIRST")));
+    }
+
+    #[test]
+    fn chat_search_escape_restores_scroll_and_clears_overlay() {
+        let store = store_with_text_messages(30);
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "RESTORE-TARGET",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 50, 6);
+        list.set_scroll_offset(0, 4);
+        list.sync_follow_tail_from_scroll();
+        let restore_y = list.scroll_offset().1;
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "restore-target".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+        draw_chat_list(&mut list, 50, 6);
+        assert!(list.scroll_offset().1 > restore_y);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 50, 6);
+
+        assert!(!list.search.active);
+        assert_eq!(list.scroll_offset().1, restore_y);
+        assert!(!lines.iter().any(|line| line.contains("Search:")));
+        assert!(bgs.iter().flatten().all(|bg| *bg != Color::Yellow));
     }
 
     #[test]
