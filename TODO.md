@@ -159,7 +159,11 @@
   - 测试覆盖：新增 `chat_p5_search_jumps_between_offscreen_matches`、`chat_p5_turn_fold_collapses_and_expands`、`chat_p5_quote_reply_attaches_and_removes_references` 三个 PTY 用例，分别覆盖 Ctrl+R 搜索跳到屏外首个命中并切换到下个命中、turn Collapse/Expand 隐藏和恢复块内容、turn/block 引用附加后通过 `[Remove]` 移除。
   - 复核修复：PTY 覆盖发现引用栏保存绝对绘制区域，而父布局会把鼠标事件转为本地坐标，导致真实 UI 点击 `[Remove]` 不能移除引用；已在 `ChatInputPanel` 中记录最后绘制区域并将本地鼠标坐标转换回绝对坐标再命中，同时新增本地坐标单测。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat reference_remove_click_handles_local_mouse_coordinates --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_p5 -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P5.R Review：P5 阶段复核** — 逐条复核 P5.1–P5.4：确认搜索跳转与自动跟随/虚拟化不冲突、turn 折叠不破坏块级折叠状态、引用附加的生命周期清晰、宽字符高亮不错位；确认 PTY 覆盖；跑通全套 CI。
+- [x] **[DONE] P5.R Review：P5 阶段复核** — 逐条复核 P5.1–P5.4：确认搜索跳转与自动跟随/虚拟化不冲突、turn 折叠不破坏块级折叠状态、引用附加的生命周期清晰、宽字符高亮不错位；确认 PTY 覆盖；跑通全套 CI。
+  - 完成记录（2026-07-09）：已逐条复核 P5.1–P5.4。会话内搜索在 `Ctrl+R` 后进入专用状态机，按当前虚拟 row key 收集 header/block/pending tool result 可搜索文本，跳转命中时通过 `ToRow` 虚拟滚动调整滚到屏外目标，并暂停 tail follow；Esc 退出会恢复进入搜索前的滚动位置。搜索高亮按 Unicode display width 计算命中列，本次补充 `chat_search_highlights_wide_character_match_cells` 单测，固定中文宽字符命中不偏移。
+  - 折叠/引用复核：turn 折叠状态独立于块级折叠，折叠后 row keys 仅保留 header 并显示 `Collapsed · N blocks hidden` 占位；header 高度版本包含 collapsed bit，折叠时保持 header 可见，展开时恢复折叠前 scroll offset。引用回复通过 `ChatInputReference` 绑定附加到输入区，turn/block 引用去重替换，提交或排队时合成为 Markdown blockquote 并在本次提交后清理；引用栏 `[Remove]` 同时覆盖绝对与本地鼠标坐标。
+  - 覆盖复核：`snapshot_chat_app --p5-search` 与 `--p5-fold-quote` 覆盖 P5 确定性场景；PTY 用例覆盖屏外搜索跳转、turn 折叠/展开、引用附加/移除；单测覆盖搜索打开/高亮/上一处下一处跳转/Esc 恢复、turn row key/placeholder/滚动恢复、引用按钮与输入引用生命周期。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat chat_search_highlights_wide_character_match_cells --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 
 ## 阶段 P6 — 细节层：工具权限层级 + 上下文压缩块（D1 + D2）
 

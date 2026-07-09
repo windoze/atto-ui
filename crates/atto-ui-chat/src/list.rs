@@ -8167,6 +8167,50 @@ mod tests {
     }
 
     #[test]
+    fn chat_search_highlights_wide_character_match_cells() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "prefix 你 suffix",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 60, 6);
+        let (row, byte_col) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.contains("prefix")
+                    .then(|| line.find('你').map(|col| (row, col)))
+                    .flatten()
+            })
+            .expect("wide search match should be visible");
+        let col = UnicodeWidthStr::width(&lines[row][..byte_col]);
+
+        assert_eq!(
+            search_match_display_ranges("prefix 你 suffix", "你"),
+            vec![(7, 9)]
+        );
+        assert_ne!(bgs[row][col.saturating_sub(1)], Color::Yellow);
+        assert_eq!(bgs[row][col], Color::Yellow);
+        assert_ne!(bgs[row][col.saturating_add(2)], Color::Yellow);
+    }
+
+    #[test]
     fn chat_search_next_previous_jump_to_offscreen_matches() {
         let store = ChatMessageStore::new();
         for idx in 0..32 {

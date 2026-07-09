@@ -1,34 +1,35 @@
-# 当前执行计划
+本文件记录本轮执行的可审计计划与进度摘要。为避免泄露不可见的内部推理，这里只记录可执行步骤、依据和状态。
 
-1. 读取 `TODO.md`，严格按文件顺序识别第一个标题未带 `[DONE]` 的任务。
-2. 查看该任务的要求、依赖、验证方式和完成记录；只在与当前任务直接相关时检查最新提交或相邻上下文。
-3. 检查工作区状态，避免覆盖用户或其他代理的未提交改动。
-4. 基于当前任务定位相关代码和测试，实施最小且完整的修复或功能实现。
-5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后在需要时运行完整测试套件。
-6. 若遇到阻塞当前任务且无法直接修复的前置问题，更新 `TODO.md` 加入最小必要前置任务并停止；否则完成当前任务。
-7. 将当前任务标题标记为 `[DONE]`，更新其完成记录；仅在阶段计划变化时更新 `PLAN.md`。
-8. 检查变更，提交包含本次任务相关文件的 Git commit，然后停止，不继续下一项任务。
+## 当前目标
 
-当前任务：`P5.4 快照与测试`。
+- 严格以 `TODO.md` 为任务来源，识别并完成第一个标题未带 `[DONE]` 的任务。
+- 完成后更新 `TODO.md` 的任务标题与完成记录，按要求验证，并提交一个清晰的 Git commit。
+- 本轮只完成一个任务，完成后停止。
 
-任务要求：补充 PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。只完成这一项任务，完成后更新 `TODO.md` 并提交。
+## 初始执行计划
 
-进度：已确认第一个未完成任务为 P5.4；工作区除本计划文件外无其它未提交改动；最近提交为 P5.3 完成记录，未显示与 P5.4 直接相关的未完成前置问题。
+1. 读取 `TODO.md`，找出第一个未完成任务；必要时查看最新提交信息，确认是否存在与该任务直接相关的未完成事项。
+2. 阅读该任务涉及的说明、依赖、验收条件，以及必要的 `PLAN.md` 上下文；不进行无关的历史问题扫查。
+3. 检查当前工作区状态，识别已有未提交变更，避免覆盖或回退非本轮修改。
+4. 根据任务要求定位相关源码和测试，做最小但完整的实现修改；若发现阻塞当前任务的规格不匹配或必需前置项，则更新 `TODO.md` 并提交后停止。
+5. 运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件；若存在未调度的失败测试，修复或在 `TODO.md` 中加入正确顺序的前置任务。
+6. 更新 `TODO.md`：在已完成任务标题前加 `[DONE]`，填写完成记录；仅在阶段级计划发生变化时更新 `PLAN.md`。
+7. 提交本轮所有相关变更，提交信息包含任务编号和简短说明。
 
-进度：已定位 `snapshot_chat_app.rs` 与 `pty_chat.rs`。现有列表组件已有 Ctrl+R 搜索、turn header 的 `Collapse`/`Expand` 控件，以及启用 `with_quote_replies` 后的 `Quote` / `Quote block` 操作和输入区引用栏。
+## 进度
 
-进度：已在 `snapshot_chat_app` 增加 `--p5-search` 与 `--p5-fold-quote` fixture，并让它们避开默认演示快捷键和加载更多回调。`--p5-fold-quote` 已启用 `with_quote_replies`。
+- 2026-07-09：已写入初始计划，下一步读取 `TODO.md` 识别第一个未完成任务。
+- 2026-07-09：已确认第一个未完成任务为 `P5.R Review：P5 阶段复核`。本轮将只复核 P5.1-P5.4，不推进 P6。
+- 2026-07-09：复核 P5 实现时确认搜索、turn 折叠、引用回复主路径与 PTY fixture 已存在；为覆盖 P5.R 明确要求的宽字符搜索高亮，已新增 `chat_search_highlights_wide_character_match_cells` 单测。
+- 2026-07-09：已运行 `cargo fmt --all`；新增宽字符搜索定向测试 `cargo test -p atto-ui-chat chat_search_highlights_wide_character_match_cells --lib` 已通过。
+- 2026-07-09：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均已通过。下一步更新 `TODO.md` 并提交。
+- 2026-07-09：已将 `TODO.md` 中 P5.R 标记为 `[DONE]` 并补充完成记录；准备检查 diff 并提交。
 
-进度：已在 `pty_chat.rs` 增加 P5.4 PTY 用例，覆盖搜索从底部跳到屏外首个命中并切到下一个命中、turn 折叠/展开隐藏和恢复块内容、turn/block 引用 attach 后从输入引用栏移除。
+## P5.R 具体执行步骤
 
-进度：`cargo fmt --all` 通过。新增 PTY 首轮发现测试交互需要调整：默认焦点在输入框，`Ctrl+R` 被输入层处理而没有进入列表搜索；引用栏点击 `Remove` 文本没有命中实际移除区域。
-
-进度：搜索 PTY 在先聚焦消息列表后通过；引用移除仍失败，定位为组件真实问题：引用栏记录绝对绘制区域，而父布局传给 `ChatInputPanel` 的鼠标事件是本地坐标。已修复 `ChatInputPanel` 将本地坐标转换回绝对坐标后再命中引用移除区域，并新增本地坐标单测。
-
-进度：`cargo fmt --all`、`cargo test -p atto-ui-chat reference_remove_click_handles_local_mouse_coordinates --lib`、`cargo test -p atto-ui-chat --test pty_chat chat_p5 -- --nocapture` 均通过。
-
-进度：通用验收命令已全部通过：`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
-
-进度：`TODO.md` 已将 P5.4 标记为 `[DONE]`，并写入 fixture、PTY 覆盖、引用栏坐标修复和验证命令的完成记录。
-
-当前步骤：检查 `git status`、`git diff`、`git log --oneline -10`，确认只提交本次任务相关变更，然后创建提交并停止。
+1. 查看当前工作区状态和 P5 相关文档上下文，避免覆盖既有未提交变更。
+2. 复核 `crates/atto-ui-chat/src/list.rs` 与 `input.rs` 中 P5 搜索、turn 折叠、引用回复的实现边界。
+3. 复核 P5 单元测试、snapshot fixture 与 PTY 测试，确认覆盖 `TODO.md` 要求的屏外搜索、折叠/展开、引用附加/移除、宽字符高亮等关键路径。
+4. 如发现阻塞 P5.R 的缺陷，直接修复并补测试；如出现必须前置的规格缺口，则按要求更新 `TODO.md` 并停止。
+5. 验证顺序：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+6. 验证通过后，将 `TODO.md` 中 P5.R 标记 `[DONE]` 并填写完成记录，提交本轮相关变更。
