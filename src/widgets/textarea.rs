@@ -1,6 +1,7 @@
 //! Multi-line text input widget with history navigation and a small kill-ring.
 
 use std::cmp::Ordering;
+use std::ops::Range;
 
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -118,6 +119,42 @@ impl TextArea {
     pub fn on_submit_callback(mut self, callback: CallbackHandle) -> Self {
         self.on_submit_callback = Some(callback);
         self
+    }
+
+    /// Returns the current cursor byte index in the underlying UTF-8 text.
+    pub fn cursor_byte_index(&self) -> usize {
+        self.buffer.cursor_byte_index()
+    }
+
+    /// Moves the cursor to the closest grapheme boundary at or before the given byte index.
+    pub fn set_cursor_byte_index(&mut self, byte_index: usize) {
+        self.sync_external_binding();
+        self.buffer.set_cursor_byte_index(byte_index);
+        self.preferred_col = None;
+    }
+
+    /// Replaces a UTF-8 byte range and places the cursor after the inserted text.
+    pub fn replace_byte_range(&mut self, range: Range<usize>, replacement: &str) -> EventResult {
+        self.sync_external_binding();
+        let text = self.buffer.text().to_string();
+        let start = self.buffer.align_to_grapheme_boundary(range.start);
+        let end = self
+            .buffer
+            .align_to_grapheme_boundary(range.end)
+            .min(text.len());
+
+        if start > end {
+            return EventResult::ignored();
+        }
+
+        let mut next = text;
+        next.replace_range(start..end, replacement);
+        let cursor = start.saturating_add(replacement.len());
+        self.buffer.set_text(next);
+        self.buffer.set_cursor_byte_index(cursor);
+        self.after_edit();
+        self.sync_binding_from_buffer();
+        EventResult::changed()
     }
 
     fn emit_change(&self) {
@@ -728,5 +765,17 @@ mod tests {
         let killed = area.kill_ring.get();
         let _ = area.insert_text(&killed);
         assert_eq!(draft.get(), "killme");
+    }
+
+    #[test]
+    fn replace_byte_range_updates_binding_and_cursor() {
+        let draft = Binding::new("hello @ca world".to_string());
+        let mut area = TextArea::new("Message", draft.clone());
+
+        let result = area.replace_byte_range("hello ".len().."hello @ca".len(), "@Cargo.toml");
+
+        assert_eq!(result, EventResult::changed());
+        assert_eq!(draft.get(), "hello @Cargo.toml world");
+        assert_eq!(area.cursor_byte_index(), "hello @Cargo.toml".len());
     }
 }

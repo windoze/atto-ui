@@ -193,6 +193,61 @@ impl ChatSlashCommand {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatMentionCandidate {
+    pub id: String,
+    pub label: String,
+    pub detail: Option<String>,
+    pub replacement: String,
+}
+
+impl ChatMentionCandidate {
+    pub fn new(label: impl Into<String>) -> Self {
+        let label = label.into();
+        Self {
+            id: default_mention_candidate_id(&label),
+            replacement: format!("@{label}"),
+            label,
+            detail: None,
+        }
+    }
+
+    pub fn with_id(id: impl Into<String>, label: impl Into<String>) -> Self {
+        let label = label.into();
+        Self {
+            id: id.into(),
+            replacement: format!("@{label}"),
+            label,
+            detail: None,
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn replacement(mut self, replacement: impl Into<String>) -> Self {
+        self.replacement = replacement.into();
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatMentionContext {
+    pub draft: String,
+    pub query: String,
+    pub cursor: usize,
+    pub replacement_start: usize,
+    pub replacement_end: usize,
+}
+
+impl ChatMentionContext {
+    pub fn replacement_range(&self) -> std::ops::Range<usize> {
+        self.replacement_start..self.replacement_end
+    }
+}
+
 fn default_slash_commands() -> Vec<ChatSlashCommand> {
     vec![
         ChatSlashCommand::new("/help").detail("Show available commands"),
@@ -243,6 +298,71 @@ fn slash_completion_items(commands: &[ChatSlashCommand]) -> Vec<CompletionItem> 
             item
         })
         .collect()
+}
+
+fn default_mention_candidate_id(label: &str) -> String {
+    label.trim().to_string()
+}
+
+fn mention_completion_items(candidates: &[ChatMentionCandidate]) -> Vec<CompletionItem> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let mut item = CompletionItem::with_replacement(
+                candidate.label.clone(),
+                candidate.replacement.clone(),
+            );
+            if let Some(detail) = &candidate.detail {
+                item = item.detail(detail.clone());
+            }
+            item
+        })
+        .collect()
+}
+
+fn mention_query_from_draft_at(draft: &str, cursor: usize) -> Option<ChatMentionContext> {
+    let cursor = align_to_char_boundary(draft, cursor);
+    let prefix = &draft[..cursor];
+    let token_start = prefix
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(idx, ch)| idx.saturating_add(ch.len_utf8()))
+        .unwrap_or(0);
+    let suffix = &draft[cursor..];
+    let token_end = suffix
+        .char_indices()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(idx, _)| cursor.saturating_add(idx))
+        .unwrap_or_else(|| draft.len());
+    let token = &draft[token_start..token_end];
+    let query_start = token_start.saturating_add('@'.len_utf8());
+
+    if !token.starts_with('@') || cursor < query_start {
+        return None;
+    }
+
+    Some(ChatMentionContext {
+        draft: draft.to_string(),
+        query: draft[query_start..cursor].to_string(),
+        cursor,
+        replacement_start: token_start,
+        replacement_end: token_end,
+    })
+}
+
+fn align_to_char_boundary(text: &str, byte: usize) -> usize {
+    if byte >= text.len() {
+        return text.len();
+    }
+    let mut aligned = 0;
+    for (idx, _) in text.char_indices() {
+        if idx > byte {
+            break;
+        }
+        aligned = idx;
+    }
+    aligned
 }
 
 fn normalize_mode_kind(kind: &str) -> String {
@@ -522,6 +642,7 @@ pub struct ChatInputHandle {
     custom: Property<String>,
     history: Property<Vec<String>>,
     slash_commands: Property<Vec<ChatSlashCommand>>,
+    mention_candidates: Property<Vec<ChatMentionCandidate>>,
     selection: Property<usize>,
     enabled: Property<bool>,
     clear_on_submit: Property<bool>,
@@ -538,6 +659,7 @@ impl ChatInputHandle {
             custom: Property::new(String::new()),
             history: Property::new(Vec::new()),
             slash_commands: Property::new(default_slash_commands()),
+            mention_candidates: Property::new(Vec::new()),
             selection: Property::new(0),
             enabled: Property::new(true),
             clear_on_submit: Property::new(true),
@@ -590,6 +712,28 @@ impl ChatInputHandle {
         self.slash_commands.set(commands);
     }
 
+    pub fn mention_candidates(&self) -> Vec<ChatMentionCandidate> {
+        self.mention_candidates.get()
+    }
+
+    pub fn mention_candidates_binding(&self) -> Binding<Vec<ChatMentionCandidate>> {
+        self.mention_candidates.binding()
+    }
+
+    pub fn set_mention_candidates(&self, candidates: Vec<ChatMentionCandidate>) {
+        self.mention_candidates.set(candidates);
+    }
+
+    pub fn register_mention_candidate(&self, candidate: ChatMentionCandidate) {
+        let mut candidates = self.mention_candidates.get();
+        if let Some(existing) = candidates.iter_mut().find(|item| item.id == candidate.id) {
+            *existing = candidate;
+        } else {
+            candidates.push(candidate);
+        }
+        self.mention_candidates.set(candidates);
+    }
+
     pub fn selection_binding(&self) -> Binding<usize> {
         self.selection.binding()
     }
@@ -622,6 +766,7 @@ pub struct ChatInputPanel {
     custom: Binding<String>,
     history: Binding<Vec<String>>,
     slash_commands: Binding<Vec<ChatSlashCommand>>,
+    mention_candidates: Binding<Vec<ChatMentionCandidate>>,
     slash_query: Binding<String>,
     slash_items: Binding<Vec<CompletionItem>>,
     slash_open: Binding<bool>,
@@ -630,14 +775,27 @@ pub struct ChatInputPanel {
     slash_anchor: Binding<CompletionAnchor>,
     slash_popup: CompletionPopup,
     slash_dismissed_for: Option<String>,
+    mention_query: Binding<String>,
+    mention_items: Binding<Vec<CompletionItem>>,
+    mention_open: Binding<bool>,
+    mention_selection: Binding<usize>,
+    mention_accepted: Binding<Option<CompletionItem>>,
+    mention_anchor: Binding<CompletionAnchor>,
+    mention_popup: CompletionPopup,
+    mention_active: Option<ChatMentionContext>,
+    mention_dismissed_for: Option<ChatMentionContext>,
+    mention_provider_key: Option<ChatMentionContext>,
     selection: Binding<usize>,
     enabled: Binding<bool>,
     clear_on_submit: Binding<bool>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
     slash_commands_observer: DirtyObserver,
+    mention_candidates_observer: DirtyObserver,
     on_submit: Option<Arc<dyn Fn(ChatInputResponse) + Send + Sync>>,
     on_slash_command: Option<Arc<dyn Fn(ChatSlashCommand) + Send + Sync>>,
+    mention_provider:
+        Option<Arc<dyn Fn(ChatMentionContext) -> Vec<ChatMentionCandidate> + Send + Sync>>,
     custom_view: Option<Arc<Mutex<Box<dyn Component>>>>,
 }
 
@@ -648,6 +806,7 @@ impl ChatInputPanel {
         let custom = handle.custom.binding();
         let history = handle.history.binding();
         let slash_commands = handle.slash_commands.binding();
+        let mention_candidates = handle.mention_candidates.binding();
         let selection = handle.selection.binding();
         let enabled = handle.enabled.binding();
         let clear_on_submit = handle.clear_on_submit.binding();
@@ -664,12 +823,26 @@ impl ChatInputPanel {
             .anchor(slash_anchor.clone())
             .title("Commands")
             .empty_label("No commands");
+        let mention_query = Binding::new(String::new());
+        let mention_items = Binding::new(mention_completion_items(&mention_candidates.get()));
+        let mention_open = Binding::new(false);
+        let mention_selection = Binding::new(0usize);
+        let mention_accepted = Binding::new(None);
+        let mention_anchor = Binding::new(CompletionAnchor::default());
+        let mention_popup = CompletionPopup::new(mention_query.clone(), mention_items.clone())
+            .open(mention_open.clone())
+            .selection(mention_selection.clone())
+            .accepted(mention_accepted.clone())
+            .anchor(mention_anchor.clone())
+            .title("Files")
+            .empty_label("No files");
         let mut panel = Self {
             mode: mode.clone(),
             draft: draft.clone(),
             custom: custom.clone(),
             history: history.clone(),
             slash_commands: slash_commands.clone(),
+            mention_candidates: mention_candidates.clone(),
             slash_query,
             slash_items,
             slash_open,
@@ -678,6 +851,16 @@ impl ChatInputPanel {
             slash_anchor,
             slash_popup,
             slash_dismissed_for: None,
+            mention_query,
+            mention_items,
+            mention_open,
+            mention_selection,
+            mention_accepted,
+            mention_anchor,
+            mention_popup,
+            mention_active: None,
+            mention_dismissed_for: None,
+            mention_provider_key: None,
             selection: selection.clone(),
             enabled: enabled.clone(),
             clear_on_submit: clear_on_submit.clone(),
@@ -686,8 +869,10 @@ impl ChatInputPanel {
             )),
             mode_observer: mode.dirty_observer(),
             slash_commands_observer: slash_commands.dirty_observer(),
+            mention_candidates_observer: mention_candidates.dirty_observer(),
             on_submit: None,
             on_slash_command: None,
+            mention_provider: None,
             custom_view: None,
         };
         panel.view = panel.build_view(&mode.get());
@@ -707,6 +892,15 @@ impl ChatInputPanel {
         F: Fn(ChatSlashCommand) + Send + Sync + 'static,
     {
         self.on_slash_command = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn mention_provider<F>(mut self, provider: F) -> Self
+    where
+        F: Fn(ChatMentionContext) -> Vec<ChatMentionCandidate> + Send + Sync + 'static,
+    {
+        self.mention_provider = Some(Arc::new(provider));
+        self.mention_provider_key = None;
         self
     }
 
@@ -754,10 +948,77 @@ impl ChatInputPanel {
         }
     }
 
+    fn sync_mention_completion(&mut self, anchor: Option<Rect>) {
+        if let Some(rect) = anchor {
+            self.mention_anchor.set(CompletionAnchor::new(rect));
+        }
+
+        if self
+            .mention_candidates
+            .check_dirty(&mut self.mention_candidates_observer)
+            && self.mention_provider.is_none()
+        {
+            self.mention_items
+                .set(mention_completion_items(&self.mention_candidates.get()));
+        }
+
+        let draft = self.draft.get();
+        let context = if self.enabled.get() && matches!(self.mode.get(), ChatInputMode::Text(_)) {
+            mention_query_from_draft_at(&draft, self.text_cursor_byte_index())
+        } else {
+            None
+        };
+
+        if let Some(context) = context {
+            self.mention_query.set(context.query.clone());
+            if let Some(provider) = &self.mention_provider
+                && self.mention_provider_key.as_ref() != Some(&context)
+            {
+                self.mention_items
+                    .set(mention_completion_items(&provider(context.clone())));
+                self.mention_provider_key = Some(context.clone());
+            }
+
+            let has_source =
+                self.mention_provider.is_some() || !self.mention_candidates.get().is_empty();
+            let dismissed = self.mention_dismissed_for.as_ref() == Some(&context);
+            self.mention_active = Some(context);
+            self.mention_open.set(has_source && !dismissed);
+        } else {
+            self.mention_query.set(String::new());
+            self.mention_open.set(false);
+            self.mention_selection.set(0);
+            self.mention_active = None;
+            self.mention_dismissed_for = None;
+            self.mention_provider_key = None;
+        }
+    }
+
+    fn sync_completions(&mut self, anchor: Option<Rect>) {
+        self.sync_slash_completion(anchor);
+        self.sync_mention_completion(anchor);
+        if self.mention_open.get() {
+            self.slash_open.set(false);
+        }
+    }
+
+    fn text_cursor_byte_index(&self) -> usize {
+        match &self.view {
+            ChatInputView::Text(view) => view.cursor_byte_index(),
+            _ => self.draft.get().len(),
+        }
+    }
+
     fn dismiss_slash_completion_for_current_draft(&mut self) {
         self.slash_dismissed_for = Some(self.draft.get());
         self.slash_open.set(false);
         self.slash_selection.set(0);
+    }
+
+    fn dismiss_mention_completion_for_current_context(&mut self) {
+        self.mention_dismissed_for = self.mention_active.clone();
+        self.mention_open.set(false);
+        self.mention_selection.set(0);
     }
 
     fn apply_accepted_slash_command(&mut self) -> bool {
@@ -794,6 +1055,40 @@ impl ChatInputPanel {
         }
         self.slash_open.set(false);
         self.slash_selection.set(0);
+        true
+    }
+
+    fn apply_accepted_mention(&mut self) -> bool {
+        let Some(accepted) = self.mention_accepted.get() else {
+            return false;
+        };
+        self.mention_accepted.set(None);
+        let Some(context) = self.mention_active.clone() else {
+            return false;
+        };
+
+        let replacement = accepted.replacement;
+        match &mut self.view {
+            ChatInputView::Text(view) => {
+                let _ = view.replace_byte_range(context.replacement_range(), &replacement);
+            }
+            _ => {
+                let mut draft = self.draft.get();
+                if context.replacement_start <= context.replacement_end
+                    && context.replacement_end <= draft.len()
+                {
+                    draft.replace_range(context.replacement_range(), &replacement);
+                    self.draft.set(draft);
+                }
+            }
+        }
+
+        let draft = self.draft.get();
+        let cursor = context.replacement_start.saturating_add(replacement.len());
+        self.mention_dismissed_for = mention_query_from_draft_at(&draft, cursor);
+        self.mention_open.set(false);
+        self.mention_selection.set(0);
+        self.mention_provider_key = None;
         true
     }
 
@@ -1104,8 +1399,9 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
             ChatInputView::Confirm(view) => view.draw(frame, area, ctx),
             ChatInputView::Custom(view) => view.draw(frame, area, ctx),
         }
-        self.sync_slash_completion(Some(area));
+        self.sync_completions(Some(area));
         self.slash_popup.draw(frame, frame.area(), ctx);
+        self.mention_popup.draw(frame, frame.area(), ctx);
     }
 }
 
@@ -1198,7 +1494,25 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
 
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.sync_mode();
-        self.sync_slash_completion(None);
+        self.sync_completions(None);
+        if self.mention_open.get() {
+            let popup_res = self.mention_popup.handle_event(event, ctx);
+            if popup_res.is_consumed() {
+                if matches!(
+                    event,
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Esc,
+                        kind,
+                        ..
+                    }) if !matches!(kind, KeyEventKind::Release)
+                ) {
+                    self.dismiss_mention_completion_for_current_context();
+                } else {
+                    let _ = self.apply_accepted_mention();
+                }
+                return popup_res;
+            }
+        }
         if self.slash_open.get() {
             let popup_res = self.slash_popup.handle_event(event, ctx);
             if popup_res.is_consumed() {
@@ -1224,7 +1538,7 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
             ChatInputView::Confirm(view) => view.handle_event(event, ctx),
             ChatInputView::Custom(view) => view.handle_event(event, ctx),
         };
-        self.sync_slash_completion(None);
+        self.sync_completions(None);
 
         if matches!(res.action, atto_ui::composable::ComponentAction::Submitted) {
             let _ = self.emit_response();
@@ -1371,6 +1685,15 @@ mod tests {
         (handle, panel)
     }
 
+    fn panel_with_mentions(
+        candidates: Vec<ChatMentionCandidate>,
+    ) -> (ChatInputHandle, ChatInputPanel) {
+        let handle = ChatInputHandle::new();
+        handle.set_mention_candidates(candidates);
+        let panel = handle.panel();
+        (handle, panel)
+    }
+
     #[test]
     fn slash_query_requires_line_start_command() {
         assert_eq!(slash_query_from_draft("/"), Some(String::new()));
@@ -1467,5 +1790,125 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].detail.as_deref(), Some("Choose a model"));
         assert_eq!(commands[0].replacement, "/model ");
+    }
+
+    #[test]
+    fn mention_query_uses_token_at_cursor() {
+        let draft = "open @src/lib.rs and @Cargo.toml";
+        let first_cursor = "open @sr".len();
+        let first = mention_query_from_draft_at(draft, first_cursor).expect("first mention");
+        assert_eq!(first.query, "sr");
+        assert_eq!(first.replacement_start, "open ".len());
+        assert_eq!(first.replacement_end, "open @src/lib.rs".len());
+
+        let second = mention_query_from_draft_at(draft, draft.len()).expect("second mention");
+        assert_eq!(second.query, "Cargo.toml");
+        assert_eq!(
+            second.replacement_start,
+            draft.rfind('@').expect("second @")
+        );
+        assert_eq!(second.replacement_end, draft.len());
+
+        assert!(
+            mention_query_from_draft_at("mail me@example.com", "mail me@example.com".len())
+                .is_none()
+        );
+        assert!(mention_query_from_draft_at("@wide/你好", "@wide/你".len()).is_some());
+    }
+
+    #[test]
+    fn mention_popup_uses_provider_context_and_filters() {
+        let handle = ChatInputHandle::new();
+        let seen = Arc::new(Mutex::new(Vec::<ChatMentionContext>::new()));
+        let seen_for_provider = seen.clone();
+        let mut panel = handle.panel().mention_provider(move |context| {
+            seen_for_provider.lock().unwrap().push(context);
+            vec![
+                ChatMentionCandidate::new("Cargo.toml").detail("file"),
+                ChatMentionCandidate::new("src/lib.rs").detail("file"),
+            ]
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "please @ca");
+
+        assert!(panel.mention_open.get());
+        assert_eq!(panel.mention_query.get(), "ca");
+        assert_eq!(seen.lock().unwrap().last().expect("context").query, "ca");
+        let lines = draw_panel(&mut panel, 48, 12);
+        assert!(lines.iter().any(|line| line.contains("Cargo.toml")));
+        assert!(!lines.iter().any(|line| line.contains("src/lib.rs")));
+    }
+
+    #[test]
+    fn accepting_mention_replaces_current_token() {
+        let (handle, mut panel) =
+            panel_with_mentions(vec![ChatMentionCandidate::new("Cargo.toml")]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "please @ca");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(handle.draft_binding().get(), "please @Cargo.toml");
+        assert!(!panel.mention_open.get());
+        panel.sync_mention_completion(None);
+        assert!(!panel.mention_open.get());
+    }
+
+    #[test]
+    fn accepting_mention_replaces_token_at_cursor_without_touching_later_mentions() {
+        let (handle, mut panel) = panel_with_mentions(vec![
+            ChatMentionCandidate::new("src/lib.rs"),
+            ChatMentionCandidate::new("Cargo.toml"),
+        ]);
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "@sr and @ca");
+        match &mut panel.view {
+            ChatInputView::Text(view) => view.set_cursor_byte_index("@sr".len()),
+            _ => panic!("expected text view"),
+        }
+        panel.sync_completions(None);
+
+        assert!(panel.mention_open.get());
+        assert_eq!(panel.mention_query.get(), "sr");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(handle.draft_binding().get(), "@src/lib.rs and @ca");
+    }
+
+    #[test]
+    fn mention_does_not_open_without_source_or_inside_email() {
+        let (_handle, mut panel) = panel_with_mentions(Vec::new());
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "hello @");
+
+        assert!(!panel.mention_open.get());
+
+        let (_handle, mut panel) = panel_with_mentions(vec![ChatMentionCandidate::new("example")]);
+        type_text(&mut panel, &theme, "me@example.com");
+
+        assert!(!panel.mention_open.get());
+        assert!(panel.mention_active.is_none());
+    }
+
+    #[test]
+    fn register_mention_candidate_replaces_existing_id() {
+        let handle = ChatInputHandle::new();
+        handle.set_mention_candidates(vec![ChatMentionCandidate::with_id("cargo", "Cargo.toml")]);
+
+        handle.register_mention_candidate(
+            ChatMentionCandidate::with_id("cargo", "Cargo.toml")
+                .detail("manifest")
+                .replacement("@Cargo.toml "),
+        );
+
+        let candidates = handle.mention_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].detail.as_deref(), Some("manifest"));
+        assert_eq!(candidates[0].replacement, "@Cargo.toml ");
     }
 }

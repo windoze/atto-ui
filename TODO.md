@@ -55,7 +55,12 @@
   - 确认语义：插入型命令写回 replacement 到 draft；提交型命令在注册 `on_slash_command` 时触发回调并按 `clear_on_submit` 清空 draft，无回调时回退为写回 replacement。
   - 测试覆盖：新增 input 单测覆盖行首触发规则、实时过滤渲染、插入确认、回调确认、Esc 关闭直到 draft 变化，以及 register 替换同 id 命令。
   - 验证：`cargo fmt --all`、`cargo clippy --all-targets -- -D warnings`、`cargo test -p atto-ui-chat input`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P2.3 @ 文件提及** — `input.rs`：输入 `@` 触发文件/资源补全，候选由宿主 provider 回调提供；确认后在输入中渲染为 mention 芯片或路径文本；处理光标位置与多次提及。
+- [x] **[DONE] P2.3 @ 文件提及** — `input.rs`：输入 `@` 触发文件/资源补全，候选由宿主 provider 回调提供；确认后在输入中渲染为 mention 芯片或路径文本；处理光标位置与多次提及。
+  - 完成记录（2026-07-09）：新增 `ChatMentionCandidate` / `ChatMentionContext` Rust API，并从 `atto-ui-chat` re-export；`ChatInputHandle` 支持静态 mention 候选绑定、设置和按 id 注册替换；`ChatInputPanel::mention_provider` 支持宿主按当前 draft/query/cursor/range 同步返回文件或资源候选。
+  - 输入交互：文本模式下光标位于以 `@` 开头的 token 内时触发 mention popup，复用 P2.1 `CompletionPopup` 做 fuzzy 过滤、选择、Enter 确认和 Esc 关闭；mention popup 优先于 slash popup；无 provider/候选时静默降级；email/非 token 起始 `@` 不误触发。
+  - 确认语义：新增 `TextArea` 公开光标与 byte range 替换 API；接受候选时只替换当前光标所在 `@query` token，默认插入 `@path` 路径文本，支持自定义 replacement，且不会影响同一 draft 中的其它 mention。
+  - 测试覆盖：新增 input 单测覆盖 query/range 识别、provider context、popup 过滤、接受插入、光标处替换、多次提及、无 provider 降级、email 不误触发、register 替换同 id 候选；新增 TextArea 单测覆盖区间替换后的绑定与光标位置。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-chat input`、`cargo test -p atto-ui --lib textarea`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P2.4 运行时/JS 侧同步** — `src/dynamic.rs`：暴露命令/提及协议与回调 + schema；同步 `crates/atto-ui-node`、`packages/core`、`packages/react` 的类型/构造器，更新 `docs/NODE_API.md`；跑 `npm run smoke --prefix examples/react-tsx` 与 core runtime 兼容测试。
 - [ ] **P2.5 快照与测试** — `snapshot_chat_app` 增加 slash/mention 场景；PTY 覆盖 `/` 触发→过滤→选择→确认、`@` 触发→文件补全→确认插入、Esc 关闭。
 - [ ] **P2.R Review：P2 阶段复核** — 逐条复核 P2.1–P2.5：确认 overlay 焦点/键盘语义与既有输入不冲突、Esc/Enter 行为一致、空候选与无 provider 时优雅降级、mention 芯片光标编辑正确、JS 侧类型与 Rust 协议一致；确认 PTY + smoke 全过；跑通全套 CI。
