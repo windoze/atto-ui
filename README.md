@@ -86,7 +86,7 @@ LSP support is opt-in. Set `ATTO_EDITOR_LSP_CMD_<LANGID>` (for example `ATTO_EDI
 Build the local native binding before running JS examples or tests from a checkout:
 
 ```sh
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform
+npm run build --prefix crates/atto-ui-node
 ```
 
 Low-level `@atto-ui/core` usage:

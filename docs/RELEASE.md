@@ -11,7 +11,7 @@ Coverage:
 | Rust formatting | `cargo fmt --all -- --check` |
 | Rust lint | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Rust tests | `cargo test --all --all-targets` |
-| Native binding | `npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform` |
+| Native binding | `npm run build --prefix crates/atto-ui-node` |
 | Node binding tests | `npm test --prefix crates/atto-ui-node` |
 | Core package | `tsc` typecheck and `npm test --prefix packages/core` |
 | React package | `npm run typecheck --prefix packages/react` and `npm test --prefix packages/react` |
@@ -29,7 +29,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --all --all-targets
 npm ci --prefix packages/react --ignore-scripts
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --cwd crates/atto-ui-node --platform
+npm run build --prefix crates/atto-ui-node
 npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit
 npm test --prefix crates/atto-ui-node
 npm test --prefix packages/core
@@ -65,7 +65,7 @@ Publish order:
 3. `@atto-ui/core`.
 4. `@atto-ui/react`.
 
-The release workflow first runs the Rust/JS/runtime compatibility gate, then builds native artifacts, downloads them, runs `napi artifacts --npm-dir npm --output-dir .`, verifies every package with `npm pack --dry-run --json`, then publishes.
+The release workflow first runs the Rust/JS/runtime compatibility gate, then builds native artifacts, downloads them, runs `npm run npm:artifacts --prefix crates/atto-ui-node`, verifies every package with `npm pack --dry-run --json`, then publishes.
 
 ## Creating A Release
 

@@ -14,9 +14,7 @@ From the repository root, install the JS dependencies and build the native bindi
 ```sh
 npm install --prefix packages/react
 npm install --prefix examples/node --omit=optional
-cd crates/atto-ui-node
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
-cd ../..
+npm run build --prefix crates/atto-ui-node
 npm run build --prefix packages/react
 ```
 
