@@ -42,7 +42,9 @@
 - [x] **[DONE] M2.4 流式 UI 映射** - content 追加到 `TextBlock`，reasoning_content 追加到 `ThinkingBlock`，结束时设置 turn status 和 meta。
   - 完成记录（2026-07-10）：新增 DeepSeek stream UI mapper，将 `choices[].delta.content` 转成 text delta action 写入 `TextBlock`，将 `reasoning_content` 转成 reasoning delta action 并在 assistant turn 中惰性插入默认折叠的 `ThinkingBlock`；`[DONE]` 完成时写入 `ChatMessageMeta`（model、usage、stop_reason）并将 turn 置为 `Complete`。现有 mock turn 也通过 DeepSeek-style content/done event 进入同一映射路径，避免只在测试中覆盖。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。
+- [x] **[DONE] M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。
+  - 完成记录（2026-07-10）：新增 DeepSeek HTTP/API/network/断流/JSON 错误到 `ChatError` 的结构化映射；SSE error event 现在通过 `TurnFailed` action 将 assistant turn 标为 `Failed(ChatError)`，UI header 显示 kind/message/detail；失败 streaming turn 会推进 branch token，避免迟到 token 污染已失败回合。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M2.6 Mock + ignored real 测试** - 单测覆盖 SSE parser；PTY 走 mock client；真实 DeepSeek smoke 标记 ignored。
 - [ ] **M2.R Review** - 复核网络依赖只在 app crate，默认测试无外网，取消和错误路径稳定。
 

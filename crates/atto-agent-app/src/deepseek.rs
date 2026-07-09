@@ -1,10 +1,13 @@
 //! DeepSeek OpenAI-compatible Chat Completions protocol models.
 //!
 //! This module defines request/response shapes, deterministic request
-//! construction, and line-level SSE parsing. The network client and UI mapping
-//! land in later M2 tasks.
+//! construction, line-level SSE parsing, and DeepSeek error mapping. The
+//! network client lands in later M2 tasks.
+
+use std::fmt::Display;
 
 use anyhow::{Context, Result, bail};
+use atto_ui_chat::{ChatError, ChatErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -357,6 +360,136 @@ pub struct DeepSeekErrorBody {
     pub kind: Option<String>,
     pub code: Option<Value>,
     pub param: Option<String>,
+}
+
+/// Maps a non-success DeepSeek HTTP response to the structured chat error shown in the UI.
+pub fn chat_error_from_http_status(status: u16, response_body: &str) -> ChatError {
+    let body = response_body.trim();
+    let parsed = serde_json::from_str::<DeepSeekErrorResponse>(body).ok();
+    let kind = if status == 429 {
+        ChatErrorKind::RateLimit
+    } else {
+        ChatErrorKind::Api
+    };
+    let message = match status {
+        401 | 403 => "DeepSeek API authentication failed; check DEEPSEEK_API_KEY.".to_string(),
+        429 => "DeepSeek rate limit exceeded (HTTP 429).".to_string(),
+        500..=599 => format!("DeepSeek service error (HTTP {status})."),
+        _ => format!("DeepSeek API request failed (HTTP {status})."),
+    };
+    let mut detail = format!("HTTP status: {status}");
+    if let Some(response) = parsed.as_ref() {
+        append_api_error_detail(&mut detail, &response.error);
+    }
+    if !body.is_empty() {
+        detail.push_str("; response body: ");
+        detail.push_str(&detail_preview(body));
+    }
+    ChatError::new(kind, message).with_detail(detail)
+}
+
+/// Maps a typed DeepSeek API error payload to the structured chat error shown in the UI.
+pub fn chat_error_from_api_error(response: DeepSeekErrorResponse) -> ChatError {
+    let kind = if api_error_contains(&response.error, "rate") {
+        ChatErrorKind::RateLimit
+    } else {
+        ChatErrorKind::Api
+    };
+    let message = if api_error_contains(&response.error, "invalid_api_key")
+        || api_error_contains(&response.error, "authentication")
+        || api_error_contains(&response.error, "unauthorized")
+    {
+        "DeepSeek API authentication failed; check DEEPSEEK_API_KEY.".to_string()
+    } else if kind == ChatErrorKind::RateLimit {
+        "DeepSeek rate limit exceeded.".to_string()
+    } else if response.error.message.trim().is_empty() {
+        "DeepSeek API error.".to_string()
+    } else {
+        format!("DeepSeek API error: {}", response.error.message.trim())
+    };
+    let mut detail = "DeepSeek SSE error".to_string();
+    append_api_error_detail(&mut detail, &response.error);
+    ChatError::new(kind, message).with_detail(detail)
+}
+
+/// Maps a network or timeout failure to the structured chat error shown in the UI.
+pub fn chat_error_from_network_failure(detail: impl Into<String>) -> ChatError {
+    let detail = detail.into();
+    let detail = detail.trim();
+    let detail = if detail.is_empty() {
+        "network error without additional detail"
+    } else {
+        detail
+    };
+    ChatError::new(ChatErrorKind::Network, "DeepSeek network stream failed.").with_detail(detail)
+}
+
+/// Maps an end-of-stream before `[DONE]` to a network failure.
+pub fn chat_error_from_stream_disconnect() -> ChatError {
+    chat_error_from_network_failure("DeepSeek stream ended before the [DONE] sentinel.")
+}
+
+/// Maps a malformed stream JSON fragment to the structured chat error shown in the UI.
+pub fn chat_error_from_json_error(error: impl Display, raw_fragment: &str) -> ChatError {
+    let raw_fragment = raw_fragment.trim();
+    let mut detail = error.to_string();
+    if !raw_fragment.is_empty() {
+        detail.push_str("; raw fragment: ");
+        detail.push_str(&detail_preview(raw_fragment));
+    }
+    ChatError::new(ChatErrorKind::Api, "Failed to parse DeepSeek stream JSON.").with_detail(detail)
+}
+
+fn append_api_error_detail(detail: &mut String, error: &DeepSeekErrorBody) {
+    if !error.message.trim().is_empty() {
+        detail.push_str("; message: ");
+        detail.push_str(error.message.trim());
+    }
+    if let Some(kind) = error.kind.as_deref().filter(|kind| !kind.trim().is_empty()) {
+        detail.push_str("; type: ");
+        detail.push_str(kind.trim());
+    }
+    if let Some(code) = error.code.as_ref().map(api_error_code_label) {
+        detail.push_str("; code: ");
+        detail.push_str(&code);
+    }
+    if let Some(param) = error
+        .param
+        .as_deref()
+        .filter(|param| !param.trim().is_empty())
+    {
+        detail.push_str("; param: ");
+        detail.push_str(param.trim());
+    }
+}
+
+fn api_error_contains(error: &DeepSeekErrorBody, needle: &str) -> bool {
+    let needle = needle.to_ascii_lowercase();
+    error.message.to_ascii_lowercase().contains(&needle)
+        || error
+            .kind
+            .as_deref()
+            .is_some_and(|kind| kind.to_ascii_lowercase().contains(&needle))
+        || error.code.as_ref().is_some_and(|code| {
+            api_error_code_label(code)
+                .to_ascii_lowercase()
+                .contains(&needle)
+        })
+}
+
+fn api_error_code_label(code: &Value) -> String {
+    code.as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| code.to_string())
+}
+
+fn detail_preview(raw: &str) -> String {
+    const MAX_CHARS: usize = 240;
+    let mut preview = raw.chars().take(MAX_CHARS).collect::<String>();
+    if raw.chars().count() > MAX_CHARS {
+        preview.push_str("...");
+    }
+    preview
 }
 
 /// Data events emitted by the SSE stream after line-level parsing.

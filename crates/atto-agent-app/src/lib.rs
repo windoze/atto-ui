@@ -20,9 +20,9 @@ use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
-    ChatBlock, ChatBlockId, ChatBranchToken, ChatInputHandle, ChatInputResponse, ChatMessage,
-    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, ThinkingBlock,
+    ChatBlock, ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse,
+    ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
+    ChatRole, ChatSlashCommand, ChatTurnStatus, ThinkingBlock,
 };
 use ratatui::layout::Rect;
 
@@ -60,6 +60,11 @@ enum AppAction {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         meta: Option<ChatMessageMeta>,
+    },
+    TurnFailed {
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        error: ChatError,
     },
 }
 
@@ -772,6 +777,22 @@ fn apply_app_action(
             }
             found
         }
+        AppAction::TurnFailed {
+            branch,
+            message_id,
+            error,
+        } => {
+            if !store.is_branch_current(branch) {
+                return false;
+            }
+            let found = store.fail_streaming_turn(message_id, error);
+            if found {
+                mock_turns.clear(message_id);
+                input_handle.streaming_binding().set(false);
+                status_state.set(STATUS_READY.to_string());
+            }
+            found
+        }
     }
 }
 
@@ -892,14 +913,18 @@ mod tests {
     use atto_ui::theme::Theme;
     use atto_ui::wm::WindowId;
     use atto_ui_chat::{
-        ChatBlock, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage,
+        ChatBlock, ChatError, ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage,
+        ChatMessageStore, ChatRole, ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
     use crate::config::{AgentConfig, PlanMode};
-    use crate::deepseek::parse_chat_completion_sse;
+    use crate::deepseek::{
+        chat_error_from_http_status, chat_error_from_json_error, chat_error_from_network_failure,
+        chat_error_from_stream_disconnect, parse_chat_completion_sse,
+        parse_chat_completion_sse_data,
+    };
     use crate::stream_ui::DeepSeekUiStream;
 
     use super::{
@@ -912,6 +937,28 @@ mod tests {
         match &message.blocks[0] {
             ChatBlock::Text(block) => &block.markdown,
             other => panic!("expected text block, got {other:?}"),
+        }
+    }
+
+    fn new_test_stream() -> DeepSeekUiStream {
+        let store = ChatMessageStore::new();
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        DeepSeekUiStream::new(
+            store.branch_token(),
+            assistant_id,
+            text_block_id,
+            "deepseek-chat",
+        )
+    }
+
+    fn single_failed_error(actions: Vec<AppAction>) -> ChatError {
+        match actions.as_slice() {
+            [AppAction::TurnFailed { error, .. }] => error.clone(),
+            other => panic!("expected one failed action, got {other:?}"),
         }
     }
 
@@ -1314,6 +1361,141 @@ mod tests {
         assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn deepseek_error_mapping_covers_http_network_disconnect_and_json_failures() {
+        let mut stream = new_test_stream();
+        let error = single_failed_error(stream.map_error(chat_error_from_http_status(
+            401,
+            r#"{"error":{"message":"bad api key","type":"invalid_request_error","code":"invalid_api_key","param":null}}"#,
+        )));
+        assert_eq!(error.kind, ChatErrorKind::Api);
+        assert!(error.message.contains("DEEPSEEK_API_KEY"));
+        let detail = error.detail.as_deref().expect("detail should be present");
+        assert!(detail.contains("HTTP status: 401"));
+        assert!(detail.contains("invalid_api_key"));
+
+        let mut stream = new_test_stream();
+        let error = single_failed_error(
+            stream.map_error(chat_error_from_http_status(429, "rate limit body")),
+        );
+        assert_eq!(error.kind, ChatErrorKind::RateLimit);
+        assert!(error.message.contains("429"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("rate limit body"))
+        );
+
+        let mut stream = new_test_stream();
+        let error =
+            single_failed_error(stream.map_error(chat_error_from_http_status(502, "gateway down")));
+        assert_eq!(error.kind, ChatErrorKind::Api);
+        assert!(error.message.contains("502"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("gateway down"))
+        );
+
+        let mut stream = new_test_stream();
+        let error = single_failed_error(
+            stream.map_error(chat_error_from_network_failure("request timed out")),
+        );
+        assert_eq!(error.kind, ChatErrorKind::Network);
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("request timed out"))
+        );
+
+        let mut stream = new_test_stream();
+        let error = single_failed_error(stream.map_error(chat_error_from_stream_disconnect()));
+        assert_eq!(error.kind, ChatErrorKind::Network);
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("[DONE]"))
+        );
+
+        let json_error = parse_chat_completion_sse_data("{not json").unwrap_err();
+        let mut stream = new_test_stream();
+        let error = single_failed_error(
+            stream.map_error(chat_error_from_json_error(json_error, "{not json")),
+        );
+        assert_eq!(error.kind, ChatErrorKind::Api);
+        assert!(error.message.contains("parse DeepSeek stream JSON"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("{not json"))
+        );
+    }
+
+    #[test]
+    fn deepseek_stream_error_event_fails_turn_with_structured_detail() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream =
+            DeepSeekUiStream::new(branch, assistant_id, text_block_id, "deepseek-chat");
+        let events = parse_chat_completion_sse(
+            "data: {\"error\":{\"message\":\"bad api key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\",\"param\":null}}\n\n",
+        )
+        .unwrap();
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let ChatTurnStatus::Failed(error) = &messages[0].status else {
+            panic!("expected failed turn, got {:?}", messages[0].status);
+        };
+        assert_eq!(error.kind, ChatErrorKind::Api);
+        assert!(error.message.contains("DEEPSEEK_API_KEY"));
+        let detail = error.detail.as_deref().expect("detail should be present");
+        assert!(detail.contains("bad api key"));
+        assert!(detail.contains("invalid_request_error"));
+        assert!(detail.contains("invalid_api_key"));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert!(!mock_turns.cancel(assistant_id));
+        assert!(!apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            AppAction::TextDelta {
+                branch,
+                block_id: text_block_id,
+                delta: "late".to_string(),
+            },
+        ));
+        assert_eq!(message_text(&store.messages()[0]), "");
     }
 
     #[test]

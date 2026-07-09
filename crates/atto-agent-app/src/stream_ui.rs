@@ -1,11 +1,14 @@
 //! Maps typed DeepSeek stream events into main-thread UI actions.
 
 use atto_ui_chat::{
-    ChatBlockId, ChatBranchToken, ChatMessageId, ChatMessageMeta, StopReason, TokenUsage,
+    ChatBlockId, ChatBranchToken, ChatError, ChatMessageId, ChatMessageMeta, StopReason, TokenUsage,
 };
 
 use crate::AppAction;
-use crate::deepseek::{ChatCompletionChunk, ChatCompletionSseEvent, CompletionUsage, FinishReason};
+use crate::deepseek::{
+    ChatCompletionChunk, ChatCompletionSseEvent, CompletionUsage, FinishReason,
+    chat_error_from_api_error,
+};
 
 /// Stateful mapper for one assistant turn's DeepSeek stream.
 #[derive(Clone, Debug)]
@@ -53,8 +56,18 @@ impl DeepSeekUiStream {
                     meta: Some(self.meta.clone()),
                 }]
             }
-            ChatCompletionSseEvent::Error(_) => Vec::new(),
+            ChatCompletionSseEvent::Error(error) => {
+                self.map_error(chat_error_from_api_error(error))
+            }
         }
+    }
+
+    /// Converts a prepared chat error into a failed assistant turn.
+    pub(crate) fn map_error(&mut self, error: ChatError) -> Vec<AppAction> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.fail(error)
     }
 
     fn map_chunk(&mut self, chunk: ChatCompletionChunk) -> Vec<AppAction> {
@@ -90,6 +103,15 @@ impl DeepSeekUiStream {
             }
         }
         actions
+    }
+
+    fn fail(&mut self, error: ChatError) -> Vec<AppAction> {
+        self.finished = true;
+        vec![AppAction::TurnFailed {
+            branch: self.branch,
+            message_id: self.message_id,
+            error,
+        }]
     }
 }
 

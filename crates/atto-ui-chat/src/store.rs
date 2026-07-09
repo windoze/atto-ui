@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
-    ApprovalAction, ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId,
+    ApprovalAction, ApprovalOption, ChatBlock, ChatBlockId, ChatError, ChatMessage, ChatMessageId,
     ChatMessageMeta, ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus,
     TaskTranscriptItem, TodoItem, ToolResultBlock, ToolStatus,
 };
@@ -404,6 +404,34 @@ impl ChatMessageStore {
                 return false;
             };
             item.set_turn_status(ChatTurnStatus::Canceled);
+            block_ids = item
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ChatBlock::Text(_) | ChatBlock::Thinking(_) => Some(block.id()),
+                    _ => None,
+                })
+                .collect();
+            true
+        });
+        if changed {
+            self.bump_branch_generation();
+            self.versions.bump_message_and_blocks(id, &block_ids);
+        }
+        changed
+    }
+
+    /// Fails a currently streaming turn and invalidates branch tokens captured before the failure.
+    pub fn fail_streaming_turn(&self, id: ChatMessageId, error: ChatError) -> bool {
+        let mut block_ids = Vec::new();
+        let changed = self.messages.update_if(|items| {
+            let Some(item) = items
+                .iter_mut()
+                .find(|item| item.id == id && item.status.is_streaming())
+            else {
+                return false;
+            };
+            item.set_turn_status(ChatTurnStatus::Failed(error));
             block_ids = item
                 .blocks
                 .iter()
@@ -847,8 +875,9 @@ mod tests {
     use super::*;
     use crate::message::{
         ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
-        ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock, TaskStatus, TaskTranscriptItem,
-        TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput, ToolUseBlock,
+        ChatErrorKind, ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock, TaskStatus,
+        TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput,
+        ToolUseBlock,
     };
 
     fn block_id_for(
@@ -1413,6 +1442,48 @@ mod tests {
         assert!(binding.check_dirty(&mut observer));
         let messages = store.messages();
         assert_eq!(messages[0].status, ChatTurnStatus::Canceled);
+        assert!(matches!(&messages[0].blocks[0], ChatBlock::Text(block) if !block.streaming));
+        assert!(!store.push_if_branch_current(
+            token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late")
+        ));
+        assert_eq!(store.messages().len(), 1);
+    }
+
+    #[test]
+    fn fail_streaming_turn_marks_failed_and_invalidates_branch() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "partial")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(
+            store.fail_streaming_turn(
+                message_id,
+                ChatError::new(ChatErrorKind::Network, "stream disconnected")
+                    .with_detail("connection closed before [DONE]")
+            )
+        );
+        assert!(!store.fail_streaming_turn(
+            message_id,
+            ChatError::new(ChatErrorKind::Network, "duplicate")
+        ));
+
+        assert!(!store.is_branch_current(token));
+        assert!(binding.check_dirty(&mut observer));
+        let messages = store.messages();
+        assert_eq!(
+            messages[0].status,
+            ChatTurnStatus::Failed(
+                ChatError::new(ChatErrorKind::Network, "stream disconnected")
+                    .with_detail("connection closed before [DONE]")
+            )
+        );
         assert!(matches!(&messages[0].blocks[0], ChatBlock::Text(block) if !block.streaming));
         assert!(!store.push_if_branch_current(
             token,
