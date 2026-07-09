@@ -302,7 +302,7 @@ matching the Rust `*_to_value` serializers in `crates/atto-ui-chat/src/dynamic.r
 | `onEditDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
 | `onPlanDecision` | `{ message_id, block_id, decision: 'accepted' \| 'rejected' \| 'pending' }` |
 | `onCancel` | `{ message_id }` |
-| `onMessageAction` | `{ message_id, kind: 'copy' \| 'retry' \| 'regenerate' \| 'edit_user' \| 'copy_block' }`; `copy_block` also carries `block_id` |
+| `onMessageAction` | `{ message_id, kind: 'copy' \| 'retry' \| 'regenerate' \| 'edit_user' \| 'copy_block' }`; `copy_block` also carries `block_id`. For `retry` / `regenerate`, the target assistant turn and following suffix have already been truncated before the event is emitted. |
 | `onOpenArtifact` | the artifact anchor `string` |
 | `onLoadMore` | no payload |
 

@@ -100,7 +100,11 @@
   - 测试覆盖：新增 chat PTY 用例 `chat_p3_edit_resubmit_truncates_old_branch`、`chat_p3_retry_resubmit_truncates_assistant_turn`、`chat_p3_fork_at_hides_old_branch`，断言新分支显示且旧 user/assistant/tail sentinel 不再出现在屏幕中。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --test pty_chat chat_p3 -- --nocapture`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
   - 测试失败处理：新增 PTY retry 用例首轮曾等待已滚出屏幕的 user prompt 导致超时；已改为等待当前验收所需的可见旧 assistant/旧 tail 与 Retry 操作，随后新增 PTY 过滤测试与完整测试套件均通过。
-- [ ] **P3.R Review：P3 阶段复核** — 逐条复核 P3.1–P3.4：确认截断不泄漏悬挂 block_id/版本、fork 后滚动与自动跟随正常、流式进行中编辑/重发的竞态被正确处理、回调契约清晰；确认 PTY 覆盖边界；跑通全套 CI。
+- [x] **[DONE] P3.R Review：P3 阶段复核** — 逐条复核 P3.1–P3.4：确认截断不泄漏悬挂 block_id/版本、fork 后滚动与自动跟随正常、流式进行中编辑/重发的竞态被正确处理、回调契约清晰；确认 PTY 覆盖边界；跑通全套 CI。
+  - 完成记录（2026-07-09）：已逐条复核 P3.1–P3.4。`truncate_from` / `fork_at` 会清理被移除 message/block 的版本记录，保留前缀和 fork anchor 的版本，旧 block_id 的流式 delta/status 在截断后 no-op 且不触发 dirty；新增 `ChatBranchToken`、`branch_token`、`is_branch_current` 与 `push_if_branch_current`，并在 `replace_all`、实际 `truncate_from`、实际 `fork_at` 后让旧 token 失效，供宿主阻止旧流式任务迟到追加新消息。
+  - 复核修复：pending user edit 的目标若在提交前被其它截断/fork 删除，输入提交现在会被编辑拦截器消费并清空编辑态，不再退化为普通消息发送；`ChatMessageList` 通过消息 ID 序列识别截断、fork 和尾部重写，在 `auto_scroll` 开启时恢复尾部跟随，同时不影响普通追加和历史前置；`MessageAction` / `on_message_action` 与 Node/API 文档已说明 Retry/Regenerate 回调触发前会先截断目标 assistant 回合及其后的旧分支。
+  - 测试覆盖：新增 store 单测覆盖缺失 truncate no-op、分支 token 对 truncate/fork/replace 的失效、当前 token 条件 push、流式截断后旧 delta/status/push 不复活旧分支；新增 list 单测覆盖 pending edit 目标消失时不触发普通 submit，以及非 tail 截断/fork 尾部重写后恢复自动跟随。既有 P3 PTY 覆盖编辑、retry、fork 后旧分支不再显示。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat --lib`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 
 ## 阶段 P4 — 输入交互增强：排队 & Esc 中断 + 多行编辑（A3 + A4）
 

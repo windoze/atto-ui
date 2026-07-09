@@ -79,6 +79,8 @@ pub struct PlanDecisionEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageAction {
+    /// For Retry/Regenerate, the target assistant turn has already been
+    /// truncated when this action is emitted.
     pub message_id: ChatMessageId,
     pub kind: MessageActionKind,
 }
@@ -143,7 +145,7 @@ impl EditAndResubmitController {
         };
         let Some(removed_messages) = self.store.truncate_from(pending.message_id) else {
             self.pending.set(None);
-            return false;
+            return true;
         };
         self.pending.set(None);
         (self.callback)(EditAndResubmitEvent {
@@ -195,6 +197,7 @@ struct ChatMessageRowConfig {
 pub struct ChatMessageList {
     store: ChatMessageStore,
     messages: Binding<Vec<ChatMessage>>,
+    message_ids: Vec<ChatMessageId>,
     row_keys: Binding<Vec<ChatRowKey>>,
     list: ScrollContainer,
     virtual_control: VirtualChatRowsControl,
@@ -229,12 +232,14 @@ impl ChatMessageList {
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
+        let message_ids = messages.with(|messages| message_ids_from_messages(messages));
         let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
         let (list, virtual_control) = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
             store,
             messages,
+            message_ids,
             row_keys,
             list,
             virtual_control,
@@ -365,6 +370,11 @@ impl ChatMessageList {
         self
     }
 
+    /// Register per-message action callbacks.
+    ///
+    /// Retry/Regenerate callbacks run after the target assistant turn and its
+    /// suffix have been truncated, so hosts should use the action as a signal
+    /// to start a fresh generation from the retained prefix.
     pub fn on_message_action<F>(mut self, callback: F) -> Self
     where
         F: Fn(MessageAction) + Send + Sync + 'static,
@@ -447,15 +457,23 @@ impl ChatMessageList {
         if !self.messages.check_dirty(&mut self.messages_observer) {
             return;
         }
-        self.row_keys.set(
-            self.messages
-                .with(|messages| row_keys_from_messages(messages)),
-        );
+        let (next_message_ids, next_row_keys) = self.messages.with(|messages| {
+            (
+                message_ids_from_messages(messages),
+                row_keys_from_messages(messages),
+            )
+        });
+        let branch_rewritten = message_ids_rewrite_branch(&self.message_ids, &next_message_ids);
+        self.message_ids = next_message_ids;
+        self.row_keys.set(next_row_keys);
         if self.suppress_auto_scroll_once {
             self.suppress_auto_scroll_once = false;
             return;
         }
-        if self.auto_scroll && self.follow_tail {
+        if self.auto_scroll && (self.follow_tail || branch_rewritten) {
+            if branch_rewritten {
+                self.follow_tail = true;
+            }
             self.pending_scroll_to_bottom = true;
         }
     }
@@ -1780,6 +1798,20 @@ struct ToolResultRowCandidate {
     block_id: ChatBlockId,
     order: usize,
     kind_tag: ChatBlockKindTag,
+}
+
+fn message_ids_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageId> {
+    messages.iter().map(|message| message.id).collect()
+}
+
+fn message_ids_rewrite_branch(previous: &[ChatMessageId], next: &[ChatMessageId]) -> bool {
+    if previous.is_empty() || previous == next {
+        return false;
+    }
+    if next.starts_with(previous) || next.ends_with(previous) {
+        return false;
+    }
+    true
 }
 
 fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
@@ -6758,6 +6790,53 @@ mod tests {
     }
 
     #[test]
+    fn edit_submit_consumes_pending_edit_when_target_was_removed() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        let assistant_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "old prompt"));
+        store.push(ChatMessage::text(
+            assistant_id,
+            ChatRole::Assistant,
+            "old answer",
+        ));
+        let input = ChatInputHandle::new();
+        let edit_events = Arc::new(Mutex::new(Vec::new()));
+        let ordinary_submits = Arc::new(Mutex::new(0usize));
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, {
+            let edit_events = edit_events.clone();
+            move |event| edit_events.lock().expect("events lock").push(event)
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let mut panel = input.panel().on_submit({
+            let ordinary_submits = ordinary_submits.clone();
+            move |_| {
+                *ordinary_submits.lock().expect("ordinary submits lock") += 1;
+            }
+        });
+        let theme = Theme::dark();
+
+        assert!(controller.begin_edit(user_id, "old prompt".to_string()));
+        assert!(store.truncate_from(user_id).is_some());
+        input.draft_binding().set("edited prompt".to_string());
+
+        let result = panel.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(input.draft_binding().get(), "");
+        assert!(store.messages().is_empty());
+        assert!(edit_events.lock().expect("events lock").is_empty());
+        assert_eq!(*ordinary_submits.lock().expect("ordinary submits lock"), 0);
+    }
+
+    #[test]
     fn edit_button_uses_dedicated_resubmit_controller_when_configured() {
         let store = ChatMessageStore::new();
         let input = ChatInputHandle::new();
@@ -6935,6 +7014,45 @@ mod tests {
 
         list.scroll_to_bottom();
         draw_chat_list(&mut list, 40, 6);
+        assert!(list.is_following_tail());
+        assert_eq!(list.scroll_offset().1, list.max_scroll_y());
+    }
+
+    #[test]
+    fn branch_truncate_restores_tail_following_after_user_scrolled_up() {
+        let store = store_with_text_messages(40);
+        let mut list = ChatMessageList::new(store.clone()).show_timestamps(false);
+        draw_chat_list(&mut list, 40, 6);
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+        assert!(!list.is_following_tail());
+
+        assert!(store.truncate_from(ChatMessageId::new(30)).is_some());
+        draw_chat_list(&mut list, 40, 6);
+
+        assert!(list.is_following_tail());
+        assert_eq!(list.scroll_offset().1, list.max_scroll_y());
+    }
+
+    #[test]
+    fn branch_tail_rewrite_restores_tail_following_even_when_row_count_matches() {
+        let store = store_with_text_messages(40);
+        let mut list = ChatMessageList::new(store.clone()).show_timestamps(false);
+        draw_chat_list(&mut list, 40, 6);
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+        assert!(!list.is_following_tail());
+
+        assert!(store.fork_at(ChatMessageId::new(25)).is_some());
+        for idx in 0..15 {
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("NEW-{idx:02}"),
+            ));
+        }
+        draw_chat_list(&mut list, 40, 6);
+
         assert!(list.is_following_tail());
         assert_eq!(list.scroll_offset().1, list.max_scroll_y());
     }

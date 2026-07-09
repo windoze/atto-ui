@@ -15,8 +15,17 @@ pub struct ChatMessageStore {
     messages: Property<Vec<ChatMessage>>,
     next_id: Arc<AtomicU64>,
     next_block_id: Arc<AtomicU64>,
+    branch_generation: Arc<AtomicU64>,
     versions: Arc<ChatMessageVersions>,
 }
+
+/// Opaque marker for the current chat branch.
+///
+/// Hosts can capture a token before starting a streaming generation and use
+/// `push_if_branch_current` to avoid appending late messages after an edit,
+/// retry, or fork has moved the transcript to a new branch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChatBranchToken(u64);
 
 #[derive(Debug)]
 struct ChatMessageVersions {
@@ -151,6 +160,7 @@ impl ChatMessageStore {
             messages: Property::new(Vec::new()),
             next_id: Arc::new(AtomicU64::new(1)),
             next_block_id: Arc::new(AtomicU64::new(1)),
+            branch_generation: Arc::new(AtomicU64::new(1)),
             versions: Arc::new(ChatMessageVersions::new()),
         }
     }
@@ -168,6 +178,7 @@ impl ChatMessageStore {
         if self.messages.with(|items| items == &messages) {
             return;
         }
+        self.bump_branch_generation();
         self.versions.replace_all(&messages);
         self.messages.set(messages);
     }
@@ -181,6 +192,7 @@ impl ChatMessageStore {
             let Some(index) = items.iter().position(|message| message.id == message_id) else {
                 return false;
             };
+            self.bump_branch_generation();
             removed = Some(items.split_off(index));
             (retained_message_ids, retained_block_ids) = registered_ids(items);
             true
@@ -206,6 +218,7 @@ impl ChatMessageStore {
                 removed = Some(Vec::new());
                 return false;
             }
+            self.bump_branch_generation();
             removed = Some(items.split_off(start));
             (retained_message_ids, retained_block_ids) = registered_ids(items);
             true
@@ -227,11 +240,44 @@ impl ChatMessageStore {
         ChatBlockId::new(id)
     }
 
+    /// Returns a token representing the current transcript branch.
+    pub fn branch_token(&self) -> ChatBranchToken {
+        ChatBranchToken(self.branch_generation.load(Ordering::Acquire))
+    }
+
+    /// Returns whether a previously captured branch token is still current.
+    pub fn is_branch_current(&self, token: ChatBranchToken) -> bool {
+        self.branch_generation.load(Ordering::Acquire) == token.0
+    }
+
     pub fn push(&self, message: ChatMessage) {
         self.bump_next_ids(std::slice::from_ref(&message));
         self.versions
             .register_messages(std::slice::from_ref(&message));
         self.messages.update(|items| items.push(message));
+    }
+
+    /// Appends a message only if no edit/retry/fork has changed branches since
+    /// the caller captured `token`.
+    pub fn push_if_branch_current(&self, token: ChatBranchToken, message: ChatMessage) -> bool {
+        let registered = message.clone();
+        let changed = self.messages.update_if(|items| {
+            if self.branch_generation.load(Ordering::Acquire) != token.0 {
+                return false;
+            }
+            items.push(message);
+            true
+        });
+        if changed {
+            self.bump_next_ids(std::slice::from_ref(&registered));
+            self.versions
+                .register_messages(std::slice::from_ref(&registered));
+            if self.with_message(registered.id, |_| ()).is_none() {
+                let (message_ids, block_ids) = self.messages.with(|items| registered_ids(items));
+                self.versions.retain_registered(&message_ids, &block_ids);
+            }
+        }
+        changed
     }
 
     pub fn prepend(&self, message: ChatMessage) {
@@ -687,6 +733,10 @@ impl ChatMessageStore {
         bump_counter(&self.next_id, next_message_id);
         bump_counter(&self.next_block_id, next_block_id);
     }
+
+    fn bump_branch_generation(&self) {
+        self.branch_generation.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 fn max_nested_block_id(block: &ChatBlock) -> u64 {
@@ -1115,6 +1165,80 @@ mod tests {
     }
 
     #[test]
+    fn truncate_from_missing_message_noops_without_dirty_or_branch_change() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(ChatMessage::text(message_id, ChatRole::Assistant, "seed"));
+        let token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store.truncate_from(ChatMessageId::new(999));
+
+        assert!(removed.is_none());
+        assert_eq!(message_ids(&store), vec![message_id]);
+        assert!(!binding.check_dirty(&mut observer));
+        assert!(store.is_branch_current(token));
+    }
+
+    #[test]
+    fn branch_token_blocks_late_pushes_after_truncate_fork_or_replace() {
+        let store = ChatMessageStore::new();
+        let first_id = store.next_message_id();
+        let second_id = store.next_message_id();
+        store.push(ChatMessage::text(first_id, ChatRole::User, "prompt"));
+        store.push(ChatMessage::text(second_id, ChatRole::Assistant, "old"));
+        let initial = store.branch_token();
+
+        assert!(store.truncate_from(second_id).is_some());
+        assert!(!store.is_branch_current(initial));
+        assert!(!store.push_if_branch_current(
+            initial,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "stale")
+        ));
+        assert_eq!(message_ids(&store), vec![first_id]);
+
+        let fork_token = store.branch_token();
+        let third_id = store.next_message_id();
+        store.push(ChatMessage::text(third_id, ChatRole::Assistant, "branch"));
+        assert!(store.fork_at(first_id).is_some());
+        assert!(!store.is_branch_current(fork_token));
+        assert!(!store.push_if_branch_current(
+            fork_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late fork")
+        ));
+        assert_eq!(message_ids(&store), vec![first_id]);
+
+        let replace_token = store.branch_token();
+        store.replace_all(vec![ChatMessage::text(
+            ChatMessageId::new(100),
+            ChatRole::System,
+            "replacement",
+        )]);
+        assert!(!store.is_branch_current(replace_token));
+        assert!(!store.push_if_branch_current(
+            replace_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late replace")
+        ));
+        assert_eq!(message_ids(&store), vec![ChatMessageId::new(100)]);
+    }
+
+    #[test]
+    fn current_branch_token_allows_pushes_before_branch_changes() {
+        let store = ChatMessageStore::new();
+        let token = store.branch_token();
+        let message_id = store.next_message_id();
+
+        assert!(store.push_if_branch_current(
+            token,
+            ChatMessage::text(message_id, ChatRole::Assistant, "fresh")
+        ));
+
+        assert_eq!(message_ids(&store), vec![message_id]);
+        assert!(store.is_branch_current(token));
+    }
+
+    #[test]
     fn truncate_from_streaming_turn_removes_streaming_blocks_and_versions() {
         let store = ChatMessageStore::new();
         let user_id = ChatMessageId::new(40);
@@ -1144,6 +1268,7 @@ mod tests {
             .with_status(ChatTurnStatus::Streaming),
         );
         store.push(ChatMessage::text(later_id, ChatRole::Assistant, "stale"));
+        let branch_token = store.branch_token();
         let binding = store.binding();
         let mut observer = binding.dirty_observer();
 
@@ -1165,6 +1290,14 @@ mod tests {
         assert_eq!(store.message_version(streaming_id), 0);
         assert_eq!(store.block_version(text_id), 0);
         assert_eq!(store.block_version(thinking_id), 0);
+        assert!(!store.append_text_delta(text_id, " late"));
+        assert!(!store.set_turn_status(streaming_id, ChatTurnStatus::Complete));
+        assert!(!store.push_if_branch_current(
+            branch_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late push")
+        ));
+        assert_eq!(message_ids(&store), vec![user_id]);
+        assert!(!binding.check_dirty(&mut observer));
     }
 
     #[test]

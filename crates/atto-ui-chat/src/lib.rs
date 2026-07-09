@@ -32,5 +32,5 @@ pub use message::{
     ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 pub use panel::ChatPanel;
-pub use store::ChatMessageStore;
+pub use store::{ChatBranchToken, ChatMessageStore};
 pub use viewer::{ArtifactViewer, TextArtifactViewer};

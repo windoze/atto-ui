@@ -363,6 +363,7 @@ pub struct ApprovalOption { pub id: String, pub label: String }
 ### 6.3 逐条/回合操作
 - `ChatMessageList::on_message_action(impl Fn(MessageAction))`,`MessageAction { message_id, kind }`,
   `kind ∈ { Copy, Retry, Regenerate, EditUser, CopyBlock(block_id) }`。
+- `Retry`/`Regenerate` 回调触发前已截断目标 assistant 回合及其后的旧分支;`message_id` 指向被移除的目标回合,宿主应基于保留前缀启动新生成。
 - 复制:需让目标 block(代码/命令/正文)可聚焦并响应复制快捷键;完整文本选择由 P8 补齐。
 
 ---
@@ -374,6 +375,8 @@ pub struct ApprovalOption { pub id: String, pub label: String }
 ```rust
 // 回合
 fn push_message(&self, msg: ChatMessage) -> ChatMessageId;
+fn branch_token(&self) -> ChatBranchToken;
+fn push_if_branch_current(&self, token: ChatBranchToken, msg: ChatMessage) -> bool;
 fn set_turn_status(&self, id: ChatMessageId, status: ChatTurnStatus) -> bool;
 fn set_meta(&self, id: ChatMessageId, meta: ChatMessageMeta) -> bool;
 
