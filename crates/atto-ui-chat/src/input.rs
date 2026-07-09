@@ -3,21 +3,22 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use atto_ui::composable::{
-    Component, ComponentContext, Divider, EventResult, HStack, LayoutParams, Size, Spacer, Text,
-    VStack,
+    Component, ComponentContext, Divider, EventResult, HStack, LayoutParams, MouseCoordinateSpace,
+    Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver, Property};
 use atto_ui::widgets::{Button, RadioGroup, TextArea, TextBox};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::completion::{CompletionAnchor, CompletionItem, CompletionPopup};
+use crate::message::{ChatBlockId, ChatMessageId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatTextInputConfig {
@@ -140,6 +141,34 @@ pub enum ChatInputResponse {
     Text(String),
     Choice { index: usize, label: String },
     Custom(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatInputReference {
+    pub message_id: ChatMessageId,
+    pub block_id: Option<ChatBlockId>,
+    pub label: String,
+    pub preview: String,
+}
+
+impl ChatInputReference {
+    pub fn new(
+        message_id: impl Into<ChatMessageId>,
+        label: impl Into<String>,
+        preview: impl Into<String>,
+    ) -> Self {
+        Self {
+            message_id: message_id.into(),
+            block_id: None,
+            label: label.into(),
+            preview: preview.into(),
+        }
+    }
+
+    pub fn block_id(mut self, block_id: impl Into<ChatBlockId>) -> Self {
+        self.block_id = Some(block_id.into());
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -401,6 +430,74 @@ fn align_to_char_boundary(text: &str, byte: usize) -> usize {
         aligned = idx;
     }
     aligned
+}
+
+fn reference_key(reference: &ChatInputReference) -> (ChatMessageId, Option<ChatBlockId>) {
+    (reference.message_id, reference.block_id)
+}
+
+fn normalize_reference_preview(preview: &str) -> String {
+    preview
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+fn reference_line(reference: &ChatInputReference) -> String {
+    let preview = normalize_reference_preview(&reference.preview);
+    if preview.is_empty() {
+        format!("> [{}]", reference.label)
+    } else {
+        format!("> [{}] {preview}", reference.label)
+    }
+}
+
+fn text_with_references(text: &str, references: &[ChatInputReference]) -> String {
+    if references.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    for reference in references {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&reference_line(reference));
+    }
+    out.push_str("\n\n");
+    out.push_str(text);
+    out
+}
+
+fn reference_status_line(reference: &ChatInputReference, width: u16) -> String {
+    let prefix = format!("Quote: {} - ", reference.label);
+    let remove = " [Remove]";
+    let available = width
+        .saturating_sub(prefix.width().saturating_add(remove.width()) as u16)
+        .max(8) as usize;
+    let preview = clip_reference_text(&normalize_reference_preview(&reference.preview), available);
+    format!("{prefix}{preview}{remove}")
+}
+
+fn clip_reference_text(text: &str, max_width: usize) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    let suffix = "...";
+    let target = max_width.saturating_sub(suffix.width());
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let width = ch.width().unwrap_or(0);
+        if used.saturating_add(width) > target {
+            break;
+        }
+        used = used.saturating_add(width);
+        out.push(ch);
+    }
+    out.push_str(suffix);
+    out
 }
 
 fn normalize_chat_text_paste(raw: &str) -> String {
@@ -943,6 +1040,7 @@ pub struct ChatInputHandle {
     clear_on_submit: Property<bool>,
     streaming: Property<bool>,
     queued_responses: Property<Vec<ChatInputResponse>>,
+    references: Property<Vec<ChatInputReference>>,
     text_submit_interceptor: Property<Option<ChatTextSubmitInterceptor>>,
 }
 
@@ -963,6 +1061,7 @@ impl ChatInputHandle {
             clear_on_submit: Property::new(true),
             streaming: Property::new(false),
             queued_responses: Property::new(Vec::new()),
+            references: Property::new(Vec::new()),
             text_submit_interceptor: Property::new(None),
         }
     }
@@ -1065,6 +1164,34 @@ impl ChatInputHandle {
         self.queued_responses.set(Vec::new());
     }
 
+    pub fn references_binding(&self) -> Binding<Vec<ChatInputReference>> {
+        self.references.binding()
+    }
+
+    pub fn references(&self) -> Vec<ChatInputReference> {
+        self.references.get()
+    }
+
+    pub fn add_reference(&self, reference: ChatInputReference) {
+        self.references.update(|items| {
+            let key = reference_key(&reference);
+            if let Some(existing) = items.iter_mut().find(|item| reference_key(item) == key) {
+                *existing = reference;
+            } else {
+                items.push(reference);
+            }
+        });
+    }
+
+    pub fn remove_reference(&self, message_id: ChatMessageId, block_id: Option<ChatBlockId>) {
+        self.references
+            .update(|items| items.retain(|item| reference_key(item) != (message_id, block_id)));
+    }
+
+    pub fn clear_references(&self) {
+        self.references.set(Vec::new());
+    }
+
     pub(crate) fn set_text_submit_interceptor(&self, interceptor: ChatTextSubmitInterceptor) {
         self.text_submit_interceptor.set(Some(interceptor));
     }
@@ -1113,6 +1240,8 @@ pub struct ChatInputPanel {
     clear_on_submit: Binding<bool>,
     streaming: Binding<bool>,
     queued_responses: Binding<Vec<ChatInputResponse>>,
+    references: Binding<Vec<ChatInputReference>>,
+    reference_remove_areas: Vec<(usize, Rect)>,
     text_submit_interceptor: Binding<Option<ChatTextSubmitInterceptor>>,
     view: ChatInputView,
     mode_observer: DirtyObserver,
@@ -1139,6 +1268,7 @@ impl ChatInputPanel {
         let clear_on_submit = handle.clear_on_submit.binding();
         let streaming = handle.streaming.binding();
         let queued_responses = handle.queued_responses.binding();
+        let references = handle.references.binding();
         let text_submit_interceptor = handle.text_submit_interceptor.binding();
         let slash_query = Binding::new(String::new());
         let slash_items = Binding::new(slash_completion_items(&slash_commands.get()));
@@ -1196,6 +1326,8 @@ impl ChatInputPanel {
             clear_on_submit: clear_on_submit.clone(),
             streaming,
             queued_responses,
+            references,
+            reference_remove_areas: Vec::new(),
             text_submit_interceptor,
             view: ChatInputView::Text(Box::new(
                 TextArea::new("", draft.clone()).history(history.clone()),
@@ -1627,6 +1759,75 @@ impl ChatInputPanel {
         }
     }
 
+    fn visible_reference_count(&self, available_height: u16) -> u16 {
+        if !matches!(self.mode.get(), ChatInputMode::Text(_)) {
+            return 0;
+        }
+        self.references
+            .with(Vec::len)
+            .min(available_height as usize) as u16
+    }
+
+    fn draw_references(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        self.reference_remove_areas.clear();
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+        let references = self.references.get();
+        for (visible_index, reference) in references.iter().take(area.height as usize).enumerate() {
+            let y = area.y.saturating_add(visible_index as u16);
+            let line = reference_status_line(reference, area.width);
+            frame.render_widget(
+                Paragraph::new(Line::from(line.clone())).style(Style::default().fg(Color::Cyan)),
+                Rect {
+                    y,
+                    height: 1,
+                    ..area
+                },
+            );
+            let remove_width = "[Remove]".width().min(area.width as usize) as u16;
+            let line_width = line.width().min(area.width as usize) as u16;
+            let remove_x = area
+                .x
+                .saturating_add(line_width.saturating_sub(remove_width));
+            self.reference_remove_areas
+                .push((visible_index, Rect::new(remove_x, y, remove_width, 1)));
+        }
+    }
+
+    fn handle_reference_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Event::Mouse(mouse) = event else {
+            return EventResult::ignored();
+        };
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return EventResult::ignored();
+        }
+        let Some((index, _)) = self
+            .reference_remove_areas
+            .iter()
+            .find(|(_, area)| mouse_in_rect(*area, mouse, ctx.mouse_coordinate_space))
+            .copied()
+        else {
+            return EventResult::ignored();
+        };
+        self.references.update(|items| {
+            if index < items.len() {
+                items.remove(index);
+            }
+        });
+        EventResult::changed()
+    }
+
+    fn text_response_for_submit(&self, text: &str) -> ChatInputResponse {
+        ChatInputResponse::Text(text_with_references(text, &self.references.get()))
+    }
+
+    fn clear_submit_references(&self) {
+        if !self.references.get().is_empty() {
+            self.references.set(Vec::new());
+        }
+    }
+
     fn emit_response(&mut self) -> bool {
         match self.mode.get() {
             ChatInputMode::Text(_) => {
@@ -1640,25 +1841,28 @@ impl ChatInputPanel {
                     if self.clear_on_submit.get() {
                         self.set_draft_from_panel(String::new());
                     }
+                    self.clear_submit_references();
                     return true;
                 }
                 if self.on_submit.is_none() {
                     return false;
                 }
                 if self.streaming.get() || !self.queued_responses.get().is_empty() {
-                    self.queue_response(ChatInputResponse::Text(text.clone()));
+                    self.queue_response(self.text_response_for_submit(&text));
                     if self.clear_on_submit.get() {
                         self.set_draft_from_panel(String::new());
                     }
+                    self.clear_submit_references();
                     if self.streaming.get() {
                         return true;
                     }
                     return self.emit_next_queued_response();
                 }
-                self.dispatch_response(ChatInputResponse::Text(text.clone()));
+                self.dispatch_response(self.text_response_for_submit(&text));
                 if self.clear_on_submit.get() {
                     self.set_draft_from_panel(String::new());
                 }
+                self.clear_submit_references();
                 true
             }
             ChatInputMode::Choice(cfg) => {
@@ -1852,10 +2056,21 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
         self.sync_mode();
         let indicator = self.queue_indicator_text();
         let indicator_height = u16::from(indicator.is_some() && area.height > 0);
-        let input_area = Rect {
-            height: area.height.saturating_sub(indicator_height),
+        let reference_height =
+            self.visible_reference_count(area.height.saturating_sub(indicator_height));
+        let references_area = Rect {
+            height: reference_height,
             ..area
         };
+        let input_area = Rect {
+            y: area.y.saturating_add(reference_height),
+            height: area
+                .height
+                .saturating_sub(reference_height)
+                .saturating_sub(indicator_height),
+            ..area
+        };
+        self.draw_references(frame, references_area);
         match &mut self.view {
             ChatInputView::Text(view) if input_area.height > 0 => view.draw(frame, input_area, ctx),
             ChatInputView::Choice(view) if input_area.height > 0 => {
@@ -1871,7 +2086,7 @@ impl ::atto_ui::composable::Component for ChatInputPanel {
         }
         if let Some(indicator) = indicator {
             let status_area = Rect {
-                y: area.y.saturating_add(input_area.height),
+                y: input_area.y.saturating_add(input_area.height),
                 height: indicator_height,
                 ..area
             };
@@ -1905,7 +2120,9 @@ impl ::atto_ui::composable::Layout for ChatInputPanel {
             ChatInputMode::Text(_) => 3,
             _ => 3,
         };
-        input_height.saturating_add(u16::from(self.queue_indicator_text().is_some()))
+        input_height
+            .saturating_add(self.visible_reference_count(u16::MAX))
+            .saturating_add(u16::from(self.queue_indicator_text().is_some()))
     }
 
     fn desired_width(&self) -> Option<u16> {
@@ -1920,6 +2137,7 @@ impl ::atto_ui::composable::Layout for ChatInputPanel {
     fn desired_height(&self) -> Option<u16> {
         Some(
             self.estimated_height_for_mode(&self.mode.get())
+                .saturating_add(self.visible_reference_count(u16::MAX))
                 .saturating_add(u16::from(self.queue_indicator_text().is_some())),
         )
     }
@@ -1982,6 +2200,10 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.sync_mode();
         self.sync_completions(None);
+        let reference_res = self.handle_reference_event(event, ctx);
+        if reference_res.is_consumed() {
+            return reference_res;
+        }
         if self.mention_open.get() {
             let popup_res = self.mention_popup.handle_event(event, ctx);
             if popup_res.is_consumed() {
@@ -2125,6 +2347,22 @@ fn is_escape_press(event: &Event) -> bool {
     )
 }
 
+fn mouse_in_rect(
+    area: Rect,
+    mouse: &crossterm::event::MouseEvent,
+    space: MouseCoordinateSpace,
+) -> bool {
+    match space {
+        MouseCoordinateSpace::Absolute => {
+            mouse.column >= area.x
+                && mouse.column < area.x.saturating_add(area.width)
+                && mouse.row >= area.y
+                && mouse.row < area.y.saturating_add(area.height)
+        }
+        MouseCoordinateSpace::Local => mouse.column < area.width && mouse.row < area.height,
+    }
+}
+
 fn button_width(label: &str) -> u16 {
     let text_w = label.width().min(u16::MAX as usize) as u16;
     text_w.saturating_add(4).max(3)
@@ -2139,11 +2377,12 @@ mod tests {
     };
     use atto_ui::theme::Theme;
     use atto_ui::wm::WindowId;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     use super::*;
+    use crate::message::ChatMessageId;
 
     fn context(theme: &Theme) -> ComponentContext<'_> {
         ComponentContext {
@@ -2159,6 +2398,15 @@ mod tests {
 
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn mouse_down(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
     }
 
     fn type_text(panel: &mut ChatInputPanel, theme: &Theme, text: &str) {
@@ -2436,6 +2684,60 @@ mod tests {
             handle.history_binding().get(),
             vec!["alpha\nbeta".to_string()]
         );
+    }
+
+    #[test]
+    fn reference_bar_renders_and_remove_click_clears_reference() {
+        let handle = ChatInputHandle::new();
+        handle.add_reference(ChatInputReference::new(
+            ChatMessageId::new(7),
+            "Assistant #7",
+            "quoted answer",
+        ));
+        let mut panel = handle.panel();
+        let theme = Theme::dark();
+
+        let lines = draw_panel(&mut panel, 64, 10);
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Quote: Assistant #7"))
+        );
+        assert!(lines.iter().any(|line| line.contains("[Remove]")));
+        let remove = panel.reference_remove_areas[0].1;
+        let result = panel.handle_event(&mouse_down(remove.x, remove.y), context(&theme));
+
+        assert_eq!(result, EventResult::changed());
+        assert!(handle.references().is_empty());
+    }
+
+    #[test]
+    fn text_submit_includes_references_and_clears_them() {
+        let handle = ChatInputHandle::new();
+        handle.add_reference(ChatInputReference::new(
+            ChatMessageId::new(7),
+            "Assistant #7",
+            "quoted\nanswer",
+        ));
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            submitted_for_callback.lock().unwrap().push(response);
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "reply");
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(
+            *submitted.lock().unwrap(),
+            vec![ChatInputResponse::Text(
+                "> [Assistant #7] quoted answer\n\nreply".to_string()
+            )]
+        );
+        assert!(handle.references().is_empty());
     }
 
     #[test]

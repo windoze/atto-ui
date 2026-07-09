@@ -16,8 +16,8 @@ pub use dynamic::{
 };
 pub use input::{
     ChatChoiceInputConfig, ChatConfirmInputConfig, ChatInputHandle, ChatInputMode, ChatInputPanel,
-    ChatInputResponse, ChatMentionCandidate, ChatMentionContext, ChatSlashCommand,
-    ChatSlashCommandAction, ChatTextInputConfig,
+    ChatInputReference, ChatInputResponse, ChatMentionCandidate, ChatMentionContext,
+    ChatSlashCommand, ChatSlashCommandAction, ChatTextInputConfig,
 };
 pub use list::{
     ApprovalDecision, ChatMessageList, EditAndResubmitEvent, EditDecisionEvent, MessageAction,

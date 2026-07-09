@@ -1,26 +1,27 @@
-# Execution Plan
+# 当前执行计划
 
-Status: selected task `P5.2 Turn 级折叠`.
+说明：本文件记录可审计的执行计划、关键决策和进度更新，不记录私有推理细节。
 
-Plan:
-1. Read `TODO.md` and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Review only the task-relevant context, including `PLAN.md` and recent Git history if it directly affects the selected task.
-3. Implement the selected task completely, unless a concrete prerequisite blocker must be inserted into `TODO.md`.
-4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
-5. Update `TODO.md` with the `[DONE]` prefix and a completion record, or record a blocker/prerequisite if the task cannot be completed.
-6. Commit the resulting changes with a task-specific message and stop without starting the next task.
+## 步骤
 
-Progress log:
-- Initialized this plan before reading task details.
-- Read `TODO.md`; the first heading without `[DONE]` is `P5.2 Turn 级折叠`.
-- Next step is to inspect only P5.2-relevant plan/source context and recent Git state.
-- Confirmed latest commit is `[P5.1] Add chat session search` with no unfinished issue in the subject.
-- Implementation approach: keep turn collapse as local `ChatMessageList` UI state, filter virtual `row_keys` so collapsed turns keep only their header row, add a header action button for `Collapse`/`Expand`, show a collapsed placeholder line in the header, and queue a virtual scroll adjustment when expanding to restore the pre-collapse offset.
-- Initial `cargo test -p atto-ui-chat --lib` exposed one directly affected unit test whose viewport was too short after adding the header fold control; update that test fixture rather than changing behavior.
-- Implemented P5.2 unit coverage and confirmed `cargo test -p atto-ui-chat --lib` passes.
-- Next validation sequence: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, then `cargo test --all --all-targets`.
-- `cargo clippy --workspace --all-targets -- -D warnings` first run found the old no-arg row-key helper is now test-only; marked it `#[cfg(test)]` and will rerun validation from formatting.
-- Full `cargo test --all --all-targets` reached PTY chat and found two existing PTY cases that depended on old vertical layout. The added header fold control makes their target text offscreen, so update those tests to drive scrolling/visibility explicitly.
-- Updated the affected PTY fixtures/tests: `--tool-call` and `--turn-meta-error` now allocate enough window height for the new fold row, and the tool-call test uses explicit key events plus disclosure-aware waiting. Both exact PTY cases now pass.
-- Final validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
-- Updated `TODO.md` to mark `P5.2 Turn 级折叠` as `[DONE]` with completion notes.
+1. 阅读 `TODO.md`，按文件顺序识别第一个标题未带 `[DONE]` 的任务。
+2. 如最新提交明确提到与该任务直接相关的未完成事项，检查是否属于当前任务范围或需要作为前置任务写入 `TODO.md`。
+3. 阅读当前任务涉及的源码、测试和文档，确认验收要求、依赖和禁止事项。
+4. 完整实现该任务；如果发现阻塞当前任务的规格缺口或测试失败，优先修复，或在 `TODO.md` 中插入最小必要前置任务后停止。
+5. 按要求运行验证：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件（如需）。
+6. 更新 `TODO.md`：任务完成时在标题前加 `[DONE]` 并填写完成记录；仅在阶段计划确实变化时更新 `PLAN.md`。
+7. 检查 git 状态和差异，提交本次任务相关全部变更。
+8. 完成一个任务后停止，不继续处理下一个任务。
+
+## 进度
+
+- 已写入初始计划。
+- 已读取 `TODO.md`，第一个未完成任务为 `P5.3 引用回复（可选）`。
+- 最新提交为 `[P5.2] Add chat turn folding`，与当前 P5 阶段连续，未发现需要先插入的显式未完成事项。
+- 下一步阅读 `crates/atto-ui-chat/src/list.rs`、`input.rs` 及相关模型/测试，确认现有 action row、输入状态和测试模式。
+- 已确认实现边界：复用现有 action row/button 和 `ChatInputHandle` binding 模式，为 turn/block 添加引用附加入口；输入区显示引用摘要和移除控件；提交或手动移除后清理引用。
+- 已完成初版代码改动：`ChatInputReference`、输入引用栏、提交时 Markdown 引用前缀合成、列表 `Quote` / `Quote block` 按钮和相关单测。
+- 定向测试已通过：引用栏渲染/移除、文本提交携带引用并清理、turn 引用按钮、block 引用按钮。
+- 完整验证已通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets`。
+- 已更新 `TODO.md`，将 `P5.3 引用回复（可选）` 标记为 `[DONE]` 并写入完成记录。
+- 下一步提交本次 P5.3 相关变更后停止。

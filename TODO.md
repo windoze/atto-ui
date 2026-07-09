@@ -149,7 +149,11 @@
   - 滚动/虚拟化：折叠状态纳入 header 行键和高度版本，避免复用展开态缓存；折叠/展开后虚拟列表重算 row keys，折叠时将 header 保持可见，展开时恢复折叠前的 scroll offset，且不破坏搜索、自动跟随、加载更多和既有块级 disclosure 行为。
   - 测试覆盖：新增 list 单测覆盖折叠按钮状态切换、折叠 row keys 只保留 header、折叠后隐藏正文并显示占位、展开恢复折叠前滚动位置；同步更新受新增 header 控件高度影响的任务详情单测与 `snapshot_chat_app` / `pty_chat` fixture 视口。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。完整测试首轮曾发现 `chat_tool_call_disclosure_streams_status_and_toggles` 与 `chat_turn_header_renders_meta_and_structured_error` 依赖旧垂直高度；已调整 fixture 高度和 disclosure-aware 等待后 exact 用例及完整套件复跑通过。
-- [ ] **P5.3 引用回复（可选）** — `src/list.rs` + `input.rs`：选中某回合/块作为引用附加到下一条输入；引用在输入区可见、可移除。
+- [x] **[DONE] P5.3 引用回复（可选）** — `src/list.rs` + `input.rs`：选中某回合/块作为引用附加到下一条输入；引用在输入区可见、可移除。
+  - 完成记录（2026-07-09）：新增 `ChatInputReference` 与 `ChatInputHandle` 引用绑定/API；`ChatInputPanel` 在文本输入框上方显示引用栏，支持点击 `[Remove]` 移除引用；文本提交或排队时将引用合成为标准 Markdown blockquote 前缀并在本次提交消费后清理引用，避免泄漏到下一条输入。
+  - 列表交互：`ChatMessageList::with_quote_replies(&ChatInputHandle)` 启用引用回复；turn action row 新增 `Quote`，block action row 新增 `Quote block`，重复引用同一 turn/block 时替换既有引用而非堆叠重复项；引用摘要会压缩空白并截断过长内容。
+  - 测试覆盖：新增 input 单测覆盖引用栏渲染、点击移除、提交携带引用并清理；新增 list 单测覆盖 turn/block 引用按钮写入输入引用。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-chat reference_bar_renders_and_remove_click_clears_reference`、`cargo test -p atto-ui-chat quote_message_button_attaches_turn_reference`、`cargo test -p atto-ui-chat quote_block_button_attaches_block_reference`、`cargo test -p atto-ui-chat text_submit_includes_references_and_clears_them`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
 - [ ] **P5.4 快照与测试** — PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。
 - [ ] **P5.R Review：P5 阶段复核** — 逐条复核 P5.1–P5.4：确认搜索跳转与自动跟随/虚拟化不冲突、turn 折叠不破坏块级折叠状态、引用附加的生命周期清晰、宽字符高亮不错位；确认 PTY 覆盖；跑通全套 CI。
 

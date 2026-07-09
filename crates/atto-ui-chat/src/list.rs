@@ -29,7 +29,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
-use crate::input::{ChatInputHandle, ChatTextSubmitInterceptor};
+use crate::input::{ChatInputHandle, ChatInputReference, ChatTextSubmitInterceptor};
 use crate::message::{
     ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
     ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
@@ -193,6 +193,31 @@ impl EditAndResubmitController {
 }
 
 #[derive(Clone)]
+struct QuoteReplyController {
+    references: Binding<Vec<ChatInputReference>>,
+}
+
+impl QuoteReplyController {
+    fn new(references: Binding<Vec<ChatInputReference>>) -> Self {
+        Self { references }
+    }
+
+    fn attach(&self, reference: ChatInputReference) {
+        self.references.update(|items| {
+            let key = (reference.message_id, reference.block_id);
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item| (item.message_id, item.block_id) == key)
+            {
+                *existing = reference;
+            } else {
+                items.push(reference);
+            }
+        });
+    }
+}
+
+#[derive(Clone)]
 struct ChatMessageListConfig {
     wrap_width: Option<u16>,
     responsive_wrap_width: Binding<Option<u16>>,
@@ -207,6 +232,7 @@ struct ChatMessageListConfig {
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
     edit_and_resubmit: Option<EditAndResubmitController>,
+    quote_replies: Option<QuoteReplyController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
@@ -225,6 +251,7 @@ struct ChatMessageRowConfig {
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
     edit_and_resubmit: Option<EditAndResubmitController>,
+    quote_replies: Option<QuoteReplyController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
@@ -301,6 +328,7 @@ impl ChatMessageList {
             on_approve: None,
             on_edit_decision: None,
             edit_and_resubmit: None,
+            quote_replies: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
@@ -436,6 +464,12 @@ impl ChatMessageList {
             submit_controller.submit_edit(text)
         }));
         self.config.edit_and_resubmit = Some(controller);
+        self.rebuild_list();
+        self
+    }
+
+    pub fn with_quote_replies(mut self, input: &ChatInputHandle) -> Self {
+        self.config.quote_replies = Some(QuoteReplyController::new(input.references_binding()));
         self.rebuild_list();
         self
     }
@@ -984,6 +1018,7 @@ fn build_list(
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
         edit_and_resubmit: config.edit_and_resubmit.clone(),
+        quote_replies: config.quote_replies.clone(),
         on_plan_decision: config.on_plan_decision.clone(),
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
@@ -1578,6 +1613,7 @@ impl ScrollContent for VirtualChatRowsContent {
             || self.config.on_approve.is_some()
             || self.config.on_edit_decision.is_some()
             || self.config.edit_and_resubmit.is_some()
+            || self.config.quote_replies.is_some()
             || self.config.on_message_action.is_some()
             || self.config.on_cancel.is_some()
     }
@@ -3053,8 +3089,7 @@ fn build_block_bubble(
         .child_with_layout(body, content_layout);
 
     if let Some(block) = block
-        && let Some(actions) =
-            block_copy_action_row(message_id, block.id(), &config.on_message_action)
+        && let Some(actions) = block_action_row(message_id, block, config)
     {
         bubble = bubble.child_with_layout(actions, content_layout);
     }
@@ -3066,6 +3101,7 @@ fn has_turn_action_row(message: &ChatMessage, config: &ChatMessageRowConfig) -> 
     let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
     has_turn_collapse_control(message)
         || show_cancel
+        || config.quote_replies.is_some()
         || config.on_message_action.is_some()
         || (config.edit_and_resubmit.is_some() && editable_user_message_text(message).is_some())
 }
@@ -3087,6 +3123,7 @@ fn turn_action_row(
     if config.on_message_action.is_none()
         && editable_text.is_none()
         && !show_cancel
+        && config.quote_replies.is_none()
         && !has_turn_collapse_control(message)
     {
         return None;
@@ -3111,6 +3148,17 @@ fn turn_action_row(
             streaming_cancel_button(label, message.id, turn_status, controller),
             LayoutParams {
                 width: Size::Content,
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    if let Some(controller) = config.quote_replies.clone() {
+        let label = "Quote";
+        row = row.child_with_layout(
+            quote_message_button(label, message, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
                 height: Size::Content,
                 ..LayoutParams::default()
             },
@@ -3187,26 +3235,43 @@ fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> 
     }
 }
 
-fn block_copy_action_row(
+fn block_action_row(
     message_id: ChatMessageId,
-    block_id: ChatBlockId,
-    on_message_action: &Option<MessageActionCallback>,
+    block: &ChatBlock,
+    config: &ChatMessageRowConfig,
 ) -> Option<HStack> {
-    let callback = on_message_action.clone()?;
-    let label = "Copy block";
-    Some(HStack::new().child_with_layout(
-        message_action_button(
-            label,
-            message_id,
-            MessageActionKind::CopyBlock(block_id),
-            callback,
-        ),
-        LayoutParams {
-            width: Size::Fixed(button_width_for_label(label)),
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    ))
+    if config.on_message_action.is_none() && config.quote_replies.is_none() {
+        return None;
+    }
+    let mut row = HStack::new().with_spacing(1);
+    if let Some(callback) = config.on_message_action.clone() {
+        let label = "Copy block";
+        row = row.child_with_layout(
+            message_action_button(
+                label,
+                message_id,
+                MessageActionKind::CopyBlock(block.id()),
+                callback,
+            ),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    if let Some(controller) = config.quote_replies.clone() {
+        let label = "Quote block";
+        row = row.child_with_layout(
+            quote_block_button(label, message_id, block, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    Some(row)
 }
 
 fn message_action_button(
@@ -3217,6 +3282,96 @@ fn message_action_button(
 ) -> Button {
     let action = MessageAction { message_id, kind };
     Button::new(label).on_click(move || callback(action.clone()))
+}
+
+fn quote_message_button(
+    label: &'static str,
+    message: &ChatMessage,
+    controller: QuoteReplyController,
+) -> Button {
+    let reference = quote_message_reference(message);
+    Button::new(label).on_click(move || controller.attach(reference.clone()))
+}
+
+fn quote_block_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    block: &ChatBlock,
+    controller: QuoteReplyController,
+) -> Button {
+    let reference = quote_block_reference(message_id, block);
+    Button::new(label).on_click(move || controller.attach(reference.clone()))
+}
+
+fn quote_message_reference(message: &ChatMessage) -> ChatInputReference {
+    ChatInputReference::new(
+        message.id,
+        format!("{} #{}", message.role.label(), message.id.0),
+        quote_message_preview(message),
+    )
+}
+
+fn quote_block_reference(message_id: ChatMessageId, block: &ChatBlock) -> ChatInputReference {
+    ChatInputReference::new(
+        message_id,
+        format!("Block #{}", block.id().0),
+        quote_block_preview(block),
+    )
+    .block_id(block.id())
+}
+
+fn quote_message_preview(message: &ChatMessage) -> String {
+    let preview = message
+        .blocks
+        .iter()
+        .map(quote_block_preview)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    compact_quote_preview(&preview)
+}
+
+fn quote_block_preview(block: &ChatBlock) -> String {
+    let raw = match block {
+        ChatBlock::Text(block) => block.markdown.clone(),
+        ChatBlock::Thinking(block) => block.markdown.clone(),
+        ChatBlock::ToolUse(block) => format!("Tool {} ({:?})", block.name, block.status),
+        ChatBlock::ToolResult(block) => block.output.as_text().to_string(),
+        ChatBlock::Diff(block) => block.diff.unified.clone(),
+        ChatBlock::Plan(block) => block
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+        ChatBlock::Task(block) => {
+            if block.summary.trim().is_empty() {
+                block.title.clone()
+            } else {
+                format!("{} - {}", block.title, block.summary)
+            }
+        }
+        ChatBlock::Todo(block) => block
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+        ChatBlock::Attachment(block) => format!("Attachment {}", block.name),
+        ChatBlock::Notice(block) => block.text.clone(),
+        ChatBlock::Artifact(block) => format!("Artifact {}", block.title),
+    };
+    compact_quote_preview(&raw)
+}
+
+fn compact_quote_preview(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 160;
+    let mut compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > MAX_PREVIEW_CHARS {
+        compact = compact.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        compact.push_str("...");
+    }
+    compact
 }
 
 fn turn_collapse_button(
@@ -7207,6 +7362,7 @@ mod tests {
             on_approve: None,
             on_edit_decision: None,
             edit_and_resubmit: None,
+            quote_replies: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
@@ -7270,6 +7426,59 @@ mod tests {
                 message_id,
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
+        );
+    }
+
+    #[test]
+    fn quote_message_button_attaches_turn_reference() {
+        let input = ChatInputHandle::new();
+        let controller = QuoteReplyController::new(input.references_binding());
+        let message =
+            ChatMessage::text(ChatMessageId::new(70), ChatRole::Assistant, "hello\nthere");
+        let mut button = quote_message_button("Quote", &message, controller);
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            input.references(),
+            vec![ChatInputReference::new(
+                ChatMessageId::new(70),
+                "Assistant #70",
+                "hello there",
+            )]
+        );
+    }
+
+    #[test]
+    fn quote_block_button_attaches_block_reference() {
+        let input = ChatInputHandle::new();
+        let controller = QuoteReplyController::new(input.references_binding());
+        let block = ChatBlock::Text(TextBlock {
+            id: ChatBlockId::new(71_001),
+            markdown: "block quote body".to_string(),
+            streaming: false,
+        });
+        let mut button =
+            quote_block_button("Quote block", ChatMessageId::new(71), &block, controller);
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            input.references(),
+            vec![ChatInputReference::new(
+                ChatMessageId::new(71),
+                "Block #71001",
+                "block quote body",
+            )
+            .block_id(ChatBlockId::new(71_001))]
         );
     }
 
