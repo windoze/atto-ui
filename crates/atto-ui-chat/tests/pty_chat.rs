@@ -51,6 +51,33 @@ fn find_last_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16
     found
 }
 
+fn wait_for_disclosure_text(
+    host: &mut PtyTestHost,
+    title: &str,
+    needle: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if screen.contains(needle) {
+            return Ok(());
+        }
+        if screen
+            .lines()
+            .any(|line| line.contains('▶') && line.contains(title))
+            && let Some((x, y)) = find_text_position(host, title)
+        {
+            host.click(x, y)?;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(anyhow::anyhow!(
+        "timed out waiting for text {needle:?} in disclosure {title:?}.\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    ))
+}
+
 fn find_close_button_on_title_row(host: &PtyTestHost, title: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
@@ -459,13 +486,22 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     host.wait_for_text("[~]", Duration::from_secs(2))?;
     host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
 
-    host.send_str("1")?;
-    host.wait_for_text("TOOL-OUTPUT-1", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Char('1'), KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Char('2'), KeyModifiers::NONE)?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-1",
+        Duration::from_secs(2),
+    )?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-2",
+        Duration::from_secs(2),
+    )?;
 
-    host.send_str("2")?;
-    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
-
-    host.send_str("3")?;
+    host.key_with_mods(KeyCode::Char('3'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -483,9 +519,14 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     )?;
 
     host.click(x, y)?;
-    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-2",
+        Duration::from_secs(2),
+    )?;
 
-    host.send_str("4")?;
+    host.key_with_mods(KeyCode::Char('4'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -495,7 +536,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         Duration::from_secs(2),
     )?;
 
-    host.send_str("5")?;
+    host.key_with_mods(KeyCode::Char('5'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -769,7 +810,7 @@ fn chat_todo_panel_renders_and_updates_state() -> anyhow::Result<()> {
 fn chat_turn_header_renders_meta_and_structured_error() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
-    let mut host = PtyTestHost::spawn(bin, &["--turn-meta-error"], 110, 34)?;
+    let mut host = PtyTestHost::spawn(bin, &["--turn-meta-error"], 110, 40)?;
 
     host.wait_for_text("model: claude-sonnet-test", Duration::from_secs(2))?;
     host.wait_for_text("usage: 1234 input/56 output", Duration::from_secs(2))?;

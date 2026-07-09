@@ -144,7 +144,11 @@
   - 滚动/虚拟化：搜索命中按现有 `ChatRowKey` 顺序从 header、文本、thinking/tool/diff/plan/task/todo/notice/artifact 等行的可搜索文本收集；新增虚拟行滚动调整 `ToRow`，命中在屏外时下一次布局会把目标行滚入视口并暂停 tail follow，不破坏现有自动跟随和加载更多路径。
   - 测试覆盖：新增 list 单测覆盖搜索打开与可见命中高亮、上一处/下一处在屏外命中间跳转、Esc 关闭后恢复原滚动并清除 overlay/高亮。
   - 验证：`cargo test -p atto-ui-chat chat_search --lib`、`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。
-- [ ] **P5.2 Turn 级折叠** — `src/list.rs`：在块级折叠之上支持折叠整个回合（回合 header 折叠控件），折叠态占位与展开还原滚动位置。
+- [x] **[DONE] P5.2 Turn 级折叠** — `src/list.rs`：在块级折叠之上支持折叠整个回合（回合 header 折叠控件），折叠态占位与展开还原滚动位置。
+  - 完成记录（2026-07-09）：`ChatMessageList` 新增本地 turn 折叠状态，回合 header action row 现在显示 `Collapse` / `Expand` 控件；折叠时虚拟行键只保留该回合 header，隐藏该回合的 block 行和 pending/paired tool result 行，并在 header 中显示 `Collapsed · N blocks hidden` 占位，不修改 store 中既有块级折叠状态。
+  - 滚动/虚拟化：折叠状态纳入 header 行键和高度版本，避免复用展开态缓存；折叠/展开后虚拟列表重算 row keys，折叠时将 header 保持可见，展开时恢复折叠前的 scroll offset，且不破坏搜索、自动跟随、加载更多和既有块级 disclosure 行为。
+  - 测试覆盖：新增 list 单测覆盖折叠按钮状态切换、折叠 row keys 只保留 header、折叠后隐藏正文并显示占位、展开恢复折叠前滚动位置；同步更新受新增 header 控件高度影响的任务详情单测与 `snapshot_chat_app` / `pty_chat` fixture 视口。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo build --workspace --all-targets`、`cargo test --all --all-targets` 均通过。完整测试首轮曾发现 `chat_tool_call_disclosure_streams_status_and_toggles` 与 `chat_turn_header_renders_meta_and_structured_error` 依赖旧垂直高度；已调整 fixture 高度和 disclosure-aware 等待后 exact 用例及完整套件复跑通过。
 - [ ] **P5.3 引用回复（可选）** — `src/list.rs` + `input.rs`：选中某回合/块作为引用附加到下一条输入；引用在输入区可见、可移除。
 - [ ] **P5.4 快照与测试** — PTY 覆盖搜索命中跳转（含屏外）、turn 折叠/展开、引用附加与移除。
 - [ ] **P5.R Review：P5 阶段复核** — 逐条复核 P5.1–P5.4：确认搜索跳转与自动跟随/虚拟化不冲突、turn 折叠不破坏块级折叠状态、引用附加的生命周期清晰、宽字符高亮不错位；确认 PTY 覆盖；跑通全套 CI。

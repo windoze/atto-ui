@@ -1,33 +1,26 @@
-# Claude Execution Plan
+# Execution Plan
 
-## Scope
-- Follow `TODO.md` as the authoritative source.
-- Identify and complete exactly the first incomplete task, defined as the first task whose heading is not prefixed with `[DONE]`.
-- Stop after committing that task or, if blocked, after recording the minimum prerequisite task and committing the bookkeeping change.
+Status: selected task `P5.2 Turn 级折叠`.
 
-## Step-by-Step Plan
-1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
-2. Inspect the latest commit only for directly relevant unfinished work tied to that task.
-3. Read the relevant source and test files for the selected task.
-4. Implement the smallest correct change that satisfies the task without workarounds or scope narrowing.
-5. Add or update focused tests required by the task.
-6. Run `cargo fmt`.
-7. Run `cargo clippy --all-targets -- -D warnings`.
-8. Run the relevant test suite, and run the full suite when required by the task or by code changes.
-9. Fix any observed unscheduled failures before marking the task complete, or add the minimum prerequisite task before the blocked task in `TODO.md` and stop.
-10. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling its completion record.
-11. Update this plan file with progress notes for key milestones.
-12. Inspect git status, diff, and recent log, then commit all intended changes with a descriptive message.
-13. Stop without starting the next task.
+Plan:
+1. Read `TODO.md` and identify the first task whose heading is not prefixed with `[DONE]`.
+2. Review only the task-relevant context, including `PLAN.md` and recent Git history if it directly affects the selected task.
+3. Implement the selected task completely, unless a concrete prerequisite blocker must be inserted into `TODO.md`.
+4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
+5. Update `TODO.md` with the `[DONE]` prefix and a completion record, or record a blocker/prerequisite if the task cannot be completed.
+6. Commit the resulting changes with a task-specific message and stop without starting the next task.
 
-## Progress
-- Initial execution plan created before project inspection.
-- Selected first incomplete task from `TODO.md`: `P5.1 会话内搜索`.
-- Current scope: implement in-chat search in `crates/atto-ui-chat/src/list.rs`, including keyword highlighting, previous/next navigation, exit behavior, and off-screen hit jumps coordinated with list scrolling/virtualization.
-- Implementation approach chosen: keep search state in `ChatMessageList`, intercept `Ctrl+R`/search keys before row dispatch, compute matches from chat row text, use virtual row scroll adjustments for off-screen jumps, and apply final cell-level highlighting so Markdown/diff/ANSI styling paths do not need invasive rewrites.
-- Implemented initial P5.1 code and added three unit tests covering visible highlighting, next/previous off-screen jumps, and Esc scroll restoration.
-- Verification so far: `cargo test -p atto-ui-chat chat_search --lib` passed.
-- Full validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
-- `TODO.md` now marks `P5.1 会话内搜索` as `[DONE]` with completion notes.
-- Post-diff review tightened search interaction details: search-active message updates clear stale one-shot auto-scroll suppression, and non-key events continue through normal list handling.
-- Final revalidation after the follow-up patch passed with the same formatting, clippy, build, and full test commands.
+Progress log:
+- Initialized this plan before reading task details.
+- Read `TODO.md`; the first heading without `[DONE]` is `P5.2 Turn 级折叠`.
+- Next step is to inspect only P5.2-relevant plan/source context and recent Git state.
+- Confirmed latest commit is `[P5.1] Add chat session search` with no unfinished issue in the subject.
+- Implementation approach: keep turn collapse as local `ChatMessageList` UI state, filter virtual `row_keys` so collapsed turns keep only their header row, add a header action button for `Collapse`/`Expand`, show a collapsed placeholder line in the header, and queue a virtual scroll adjustment when expanding to restore the pre-collapse offset.
+- Initial `cargo test -p atto-ui-chat --lib` exposed one directly affected unit test whose viewport was too short after adding the header fold control; update that test fixture rather than changing behavior.
+- Implemented P5.2 unit coverage and confirmed `cargo test -p atto-ui-chat --lib` passes.
+- Next validation sequence: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, then `cargo test --all --all-targets`.
+- `cargo clippy --workspace --all-targets -- -D warnings` first run found the old no-arg row-key helper is now test-only; marked it `#[cfg(test)]` and will rerun validation from formatting.
+- Full `cargo test --all --all-targets` reached PTY chat and found two existing PTY cases that depended on old vertical layout. The added header fold control makes their target text offscreen, so update those tests to drive scrolling/visibility explicitly.
+- Updated the affected PTY fixtures/tests: `--tool-call` and `--turn-meta-error` now allocate enough window height for the new fold row, and the tool-call test uses explicit key events plus disclosure-aware waiting. Both exact PTY cases now pass.
+- Final validation passed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
+- Updated `TODO.md` to mark `P5.2 Turn 级折叠` as `[DONE]` with completion notes.

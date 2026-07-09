@@ -202,6 +202,7 @@ struct ChatMessageListConfig {
     spacing: Binding<u16>,
     padding: Binding<EdgeInsets>,
     scroll_config: Binding<ScrollConfig>,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
@@ -219,6 +220,7 @@ struct ChatMessageRowConfig {
     in_progress_suffix: String,
     show_timestamps: bool,
     bubble_width_percent: u16,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
@@ -284,6 +286,7 @@ pub struct ChatMessageList {
 
 impl ChatMessageList {
     pub fn new(store: ChatMessageStore) -> Self {
+        let collapsed_turns = Binding::new(HashSet::new());
         let config = ChatMessageListConfig {
             wrap_width: None,
             responsive_wrap_width: Binding::new(None),
@@ -293,6 +296,7 @@ impl ChatMessageList {
             spacing: 1u16.into(),
             padding: EdgeInsets::symmetric(0, 1).into(),
             scroll_config: ScrollConfig::default().into(),
+            collapsed_turns: collapsed_turns.clone(),
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
@@ -304,7 +308,10 @@ impl ChatMessageList {
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
         let message_ids = messages.with(|messages| message_ids_from_messages(messages));
-        let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
+        let collapsed = collapsed_turns.get();
+        let row_keys = Binding::new(
+            messages.with(|messages| row_keys_from_messages_with_collapsed(messages, &collapsed)),
+        );
         let (list, virtual_control) = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
@@ -495,14 +502,17 @@ impl ChatMessageList {
     }
 
     fn rebuild_list(&mut self) {
-        self.row_keys.set(
-            self.messages
-                .with(|messages| row_keys_from_messages(messages)),
-        );
+        self.row_keys.set(self.current_row_keys());
         let (list, virtual_control) =
             build_list(self.row_keys.clone(), self.store.clone(), &self.config);
         self.list = list;
         self.virtual_control = virtual_control;
+    }
+
+    fn current_row_keys(&self) -> Vec<ChatRowKey> {
+        let collapsed = self.config.collapsed_turns.get();
+        self.messages
+            .with(|messages| row_keys_from_messages_with_collapsed(messages, &collapsed))
     }
 
     fn maybe_trigger_load_more(&mut self) -> bool {
@@ -536,12 +546,11 @@ impl ChatMessageList {
         if !self.messages.check_dirty(&mut self.messages_observer) {
             return;
         }
-        let (next_message_ids, next_row_keys) = self.messages.with(|messages| {
-            (
-                message_ids_from_messages(messages),
-                row_keys_from_messages(messages),
-            )
-        });
+        let next_message_ids = self
+            .messages
+            .with(|messages| message_ids_from_messages(messages));
+        self.prune_collapsed_turns(&next_message_ids);
+        let next_row_keys = self.current_row_keys();
         let branch_rewritten = message_ids_rewrite_branch(&self.message_ids, &next_message_ids);
         self.message_ids = next_message_ids;
         self.row_keys.set(next_row_keys);
@@ -560,6 +569,16 @@ impl ChatMessageList {
                 self.follow_tail = true;
             }
             self.pending_scroll_to_bottom = true;
+        }
+    }
+
+    fn prune_collapsed_turns(&self, live_message_ids: &[ChatMessageId]) {
+        let live = live_message_ids.iter().copied().collect::<HashSet<_>>();
+        let mut collapsed = self.config.collapsed_turns.get();
+        let before = collapsed.len();
+        collapsed.retain(|message_id| live.contains(message_id));
+        if collapsed.len() != before {
+            self.config.collapsed_turns.set(collapsed);
         }
     }
 
@@ -960,6 +979,7 @@ fn build_list(
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
         bubble_width_percent: config.bubble_width_percent,
+        collapsed_turns: config.collapsed_turns.clone(),
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
@@ -1102,6 +1122,10 @@ enum VirtualScrollAdjustment {
     ToRow {
         row_id: ChatRowId,
     },
+    ToOffset {
+        x: u16,
+        y: u16,
+    },
     PreserveYAfterContentHeightChange {
         previous_content_height: u16,
         previous_scroll_y: u16,
@@ -1130,6 +1154,11 @@ impl VirtualChatRowsControl {
     fn scroll_to_row_on_next_layout(&self, row_id: ChatRowId) {
         self.pending_scroll_adjustment
             .set(Some(VirtualScrollAdjustment::ToRow { row_id }));
+    }
+
+    fn scroll_to_offset_on_next_layout(&self, x: u16, y: u16) {
+        self.pending_scroll_adjustment
+            .set(Some(VirtualScrollAdjustment::ToOffset { x, y }));
     }
 
     fn preserve_scroll_y_after_next_layout(
@@ -1177,6 +1206,7 @@ struct VirtualChatRowsContent {
     last_layout: Vec<VirtualRowLayout>,
     focused_row: Option<ChatRowId>,
     captured_row: Option<ChatRowId>,
+    turn_restore_offsets: HashMap<ChatMessageId, (u16, u16)>,
     last_area: Option<Rect>,
 }
 
@@ -1199,6 +1229,7 @@ impl VirtualChatRowsContent {
             last_layout: Vec::new(),
             focused_row: None,
             captured_row: None,
+            turn_restore_offsets: HashMap::new(),
             last_area: None,
         }
     }
@@ -1211,6 +1242,34 @@ impl VirtualChatRowsContent {
                 EdgeInsets::ZERO,
                 self.config.bubble_width_percent,
             ));
+    }
+
+    fn sync_turn_collapse_change(
+        &mut self,
+        previous: &HashSet<ChatMessageId>,
+        scroll_offset: (u16, u16),
+    ) {
+        let current = self.config.collapsed_turns.get();
+        if &current == previous {
+            return;
+        }
+
+        let messages = self.store.messages();
+        self.row_keys
+            .set(row_keys_from_messages_with_collapsed(&messages, &current));
+        if let Some(message_id) = changed_turn_id(previous, &current) {
+            if current.contains(&message_id) {
+                self.turn_restore_offsets.insert(message_id, scroll_offset);
+                self.control
+                    .scroll_to_row_on_next_layout(ChatRowId::Header(message_id));
+            } else if let Some((x, y)) = self.turn_restore_offsets.remove(&message_id) {
+                self.control.scroll_to_offset_on_next_layout(x, y);
+            } else {
+                self.control
+                    .scroll_to_row_on_next_layout(ChatRowId::Header(message_id));
+            }
+            self.focused_row = Some(ChatRowId::Header(message_id));
+        }
     }
 
     fn rebuild_layout(&mut self, viewport_width: u16) -> (u16, u16) {
@@ -1251,7 +1310,14 @@ impl VirtualChatRowsContent {
 
     fn row_version(&self, key: &ChatRowKey) -> u64 {
         match key.row_ref() {
-            ChatRowRef::Header(message_id) => self.store.message_version(message_id),
+            ChatRowRef::Header {
+                message_id,
+                collapsed,
+            } => self
+                .store
+                .message_version(message_id)
+                .saturating_mul(2)
+                .saturating_add(u64::from(collapsed)),
             ChatRowRef::Block(block_id) | ChatRowRef::PendingToolResult(block_id) => {
                 self.store.block_version(block_id)
             }
@@ -1275,24 +1341,29 @@ impl VirtualChatRowsContent {
         let scroll = host.scroll_offset();
         let viewport = host.viewport_size();
         let content = host.content_size();
-        let target_y = match adjustment {
-            VirtualScrollAdjustment::ToBottom => content.1.saturating_sub(viewport.1),
+        let (target_x, target_y) = match adjustment {
+            VirtualScrollAdjustment::ToBottom => (scroll.x, content.1.saturating_sub(viewport.1)),
             VirtualScrollAdjustment::ToRow { row_id } => {
                 let Some(row) = self.row_layout_by_id(row_id) else {
                     self.control.pending_scroll_adjustment.set(None);
                     return;
                 };
-                centered_scroll_y_for_row(&row, viewport.1)
+                (scroll.x, centered_scroll_y_for_row(&row, viewport.1))
+            }
+            VirtualScrollAdjustment::ToOffset { x, y } => {
+                let max_x = content.0.saturating_sub(viewport.0);
+                let max_y = content.1.saturating_sub(viewport.1);
+                (x.min(max_x), y.min(max_y))
             }
             VirtualScrollAdjustment::PreserveYAfterContentHeightChange {
                 previous_content_height,
                 previous_scroll_y,
             } => {
                 let inserted_height = content.1.saturating_sub(previous_content_height);
-                previous_scroll_y.saturating_add(inserted_height)
+                (scroll.x, previous_scroll_y.saturating_add(inserted_height))
             }
         };
-        host.set_scroll_offset(scroll.x, target_y);
+        host.set_scroll_offset(target_x, target_y);
         self.control.pending_scroll_adjustment.set(None);
     }
 
@@ -1502,7 +1573,8 @@ impl VirtualChatRowsContent {
 
 impl ScrollContent for VirtualChatRowsContent {
     fn is_focusable(&self) -> bool {
-        self.config.on_open_artifact.is_some()
+        self.store.messages().iter().any(has_turn_collapse_control)
+            || self.config.on_open_artifact.is_some()
             || self.config.on_approve.is_some()
             || self.config.on_edit_decision.is_some()
             || self.config.edit_and_resubmit.is_some()
@@ -1526,10 +1598,16 @@ impl ScrollContent for VirtualChatRowsContent {
     ) -> EventResult {
         self.rebuild_layout(ctx.info.viewport_size.0);
         let _ = self.realize_visible_rows(ctx.info.scroll_offset.y, ctx.info.viewport_size.1);
-        match event {
+        let previous_collapsed = self.config.collapsed_turns.get();
+        let result = match event {
             Event::Mouse(mouse) => self.handle_mouse_event(mouse, ctx),
             _ => self.handle_keyboard_event(event, ctx),
-        }
+        };
+        self.sync_turn_collapse_change(
+            &previous_collapsed,
+            (ctx.info.scroll_offset.x, ctx.info.scroll_offset.y),
+        );
+        result
     }
 
     fn draw(
@@ -1617,7 +1695,9 @@ fn estimate_row_height(
 ) -> u16 {
     store
         .with_message(key.message_id(), |message| match key {
-            ChatRowKey::Header { .. } => estimate_header_row_height(message, config),
+            ChatRowKey::Header { collapsed, .. } => {
+                estimate_header_row_height(message, config, *collapsed)
+            }
             ChatRowKey::Block { block_id, .. } => {
                 let block = find_block(message, *block_id);
                 estimate_block_row_height(block, config, viewport_width)
@@ -1634,7 +1714,9 @@ fn estimate_placeholder_row_height(
 ) -> u16 {
     let message = key.placeholder();
     match key {
-        ChatRowKey::Header { .. } => estimate_header_row_height(&message, config),
+        ChatRowKey::Header { collapsed, .. } => {
+            estimate_header_row_height(&message, config, *collapsed)
+        }
         ChatRowKey::Block { block_id, .. } => {
             estimate_block_row_height(find_block(&message, *block_id), config, viewport_width)
         }
@@ -1642,8 +1724,12 @@ fn estimate_placeholder_row_height(
     }
 }
 
-fn estimate_header_row_height(message: &ChatMessage, config: &ChatMessageRowConfig) -> u16 {
-    let mut bubble_height = line_count(&turn_header_label(message));
+fn estimate_header_row_height(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+    collapsed: bool,
+) -> u16 {
+    let mut bubble_height = line_count(&turn_header_label_for_row(message, collapsed));
     if has_turn_action_row(message, config) {
         bubble_height = bubble_height.saturating_add(2);
     }
@@ -1945,6 +2031,7 @@ fn draw_component_region_local(
 enum ChatRowKey {
     Header {
         message_id: ChatMessageId,
+        collapsed: bool,
     },
     Block {
         message_id: ChatMessageId,
@@ -1973,7 +2060,10 @@ enum ChatRowId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChatRowRef {
-    Header(ChatMessageId),
+    Header {
+        message_id: ChatMessageId,
+        collapsed: bool,
+    },
     Block(ChatBlockId),
     PendingToolResult(ChatBlockId),
 }
@@ -2027,7 +2117,7 @@ impl Identifiable for ChatRowKey {
 
     fn id(&self) -> Self::Id {
         match self {
-            ChatRowKey::Header { message_id } => ChatRowId::Header(*message_id),
+            ChatRowKey::Header { message_id, .. } => ChatRowId::Header(*message_id),
             ChatRowKey::Block {
                 message_id,
                 block_id,
@@ -2051,7 +2141,7 @@ impl Identifiable for ChatRowKey {
 impl ChatRowKey {
     fn message_id(&self) -> ChatMessageId {
         match self {
-            ChatRowKey::Header { message_id }
+            ChatRowKey::Header { message_id, .. }
             | ChatRowKey::Block { message_id, .. }
             | ChatRowKey::PendingToolResult { message_id, .. } => *message_id,
         }
@@ -2059,7 +2149,13 @@ impl ChatRowKey {
 
     fn row_ref(&self) -> ChatRowRef {
         match self {
-            ChatRowKey::Header { message_id } => ChatRowRef::Header(*message_id),
+            ChatRowKey::Header {
+                message_id,
+                collapsed,
+            } => ChatRowRef::Header {
+                message_id: *message_id,
+                collapsed: *collapsed,
+            },
             ChatRowKey::Block { block_id, .. } => ChatRowRef::Block(*block_id),
             ChatRowKey::PendingToolResult { tool_use_id, .. } => {
                 ChatRowRef::PendingToolResult(*tool_use_id)
@@ -2192,7 +2288,22 @@ fn message_ids_rewrite_branch(previous: &[ChatMessageId], next: &[ChatMessageId]
     true
 }
 
+fn changed_turn_id(
+    previous: &HashSet<ChatMessageId>,
+    current: &HashSet<ChatMessageId>,
+) -> Option<ChatMessageId> {
+    previous.symmetric_difference(current).copied().next()
+}
+
+#[cfg(test)]
 fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
+    row_keys_from_messages_with_collapsed(messages, &HashSet::new())
+}
+
+fn row_keys_from_messages_with_collapsed(
+    messages: &[ChatMessage],
+    collapsed_turns: &HashSet<ChatMessageId>,
+) -> Vec<ChatRowKey> {
     let result_candidates = collect_tool_result_candidates(messages);
     let mut paired_results = HashSet::new();
     let mut rows = Vec::new();
@@ -2200,6 +2311,7 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
 
     for message in messages {
         let mut header_inserted = false;
+        let turn_collapsed = collapsed_turns.contains(&message.id);
         for block in &message.blocks {
             let block_order = order;
             order = order.saturating_add(1);
@@ -2208,7 +2320,21 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
                 continue;
             }
 
-            ensure_message_header(&mut rows, &mut header_inserted, message.id);
+            ensure_message_header(&mut rows, &mut header_inserted, message.id, turn_collapsed);
+            if turn_collapsed {
+                if let ChatBlock::ToolUse(tool) = block
+                    && let Some(result) = matching_tool_result_candidate(
+                        &result_candidates,
+                        &paired_results,
+                        &tool.call_id,
+                        block_order,
+                    )
+                {
+                    paired_results.insert(result.block_id);
+                }
+                continue;
+            }
+
             rows.push(block_row_key(message.id, block));
 
             if let ChatBlock::ToolUse(tool) = block {
@@ -2276,11 +2402,15 @@ fn ensure_message_header(
     rows: &mut Vec<ChatRowKey>,
     header_inserted: &mut bool,
     message_id: ChatMessageId,
+    collapsed: bool,
 ) {
     if *header_inserted {
         return;
     }
-    rows.push(ChatRowKey::Header { message_id });
+    rows.push(ChatRowKey::Header {
+        message_id,
+        collapsed,
+    });
     *header_inserted = true;
 }
 
@@ -2384,7 +2514,7 @@ fn searchable_text_for_row(
     };
 
     match key {
-        ChatRowKey::Header { .. } => turn_header_label(message),
+        ChatRowKey::Header { collapsed, .. } => turn_header_label_for_row(message, *collapsed),
         ChatRowKey::Block { block_id, .. } => find_block(message, *block_id)
             .map(|block| searchable_text_for_block(block, config))
             .unwrap_or_default(),
@@ -2504,11 +2634,11 @@ impl ChatMessageRow {
                 build_row_view(&message, &key, &config)
             });
         let last_message_version = match row_ref {
-            ChatRowRef::Header(message_id) => store.message_version(message_id),
+            ChatRowRef::Header { message_id, .. } => store.message_version(message_id),
             ChatRowRef::Block(_) | ChatRowRef::PendingToolResult(_) => 0,
         };
         let last_block_version = match row_ref {
-            ChatRowRef::Header(_) => 0,
+            ChatRowRef::Header { .. } => 0,
             ChatRowRef::Block(block_id) => store.block_version(block_id),
             ChatRowRef::PendingToolResult(tool_use_id) => store.block_version(tool_use_id),
         };
@@ -2525,20 +2655,23 @@ impl ChatMessageRow {
 
     fn sync_body_bindings(&self) {
         match self.row_ref {
-            ChatRowRef::Header(message_id) => self.sync_header_bindings(message_id),
+            ChatRowRef::Header {
+                message_id,
+                collapsed,
+            } => self.sync_header_bindings(message_id, collapsed),
             ChatRowRef::Block(block_id) => self.sync_block_bindings(block_id),
             ChatRowRef::PendingToolResult(tool_use_id) => self.sync_block_bindings(tool_use_id),
         }
     }
 
-    fn sync_header_bindings(&self, message_id: ChatMessageId) {
+    fn sync_header_bindings(&self, message_id: ChatMessageId, collapsed: bool) {
         let version = self.store.message_version(message_id);
         if version == self.last_message_version.get() {
             return;
         }
         self.store.with_message(message_id, |message| {
             if let Some(binding) = &self.body_bindings.header {
-                binding.set(turn_header_label(message));
+                binding.set(turn_header_label_for_row(message, collapsed));
             }
             if let Some(binding) = &self.body_bindings.turn_status {
                 binding.set(message.status.clone());
@@ -2620,8 +2753,8 @@ fn build_row_view(
     };
 
     match key {
-        ChatRowKey::Header { .. } => {
-            let (bubble, mut bindings) = build_aligned_turn_header(message, config);
+        ChatRowKey::Header { collapsed, .. } => {
+            let (bubble, mut bindings) = build_aligned_turn_header(message, config, *collapsed);
             if config.show_timestamps
                 && let Some(ts) = &message.meta.timestamp
             {
@@ -2814,8 +2947,9 @@ where
 fn build_aligned_turn_header(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
+    collapsed: bool,
 ) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, bindings) = build_turn_header(message, config);
+    let (bubble, bindings) = build_turn_header(message, config, collapsed);
     let row = align_bubble(
         bubble,
         message.role.alignment(),
@@ -2867,8 +3001,9 @@ fn build_aligned_pending_tool_result(
 fn build_turn_header(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
+    collapsed: bool,
 ) -> (VStack, ChatMessageRowBindings) {
-    let header_label = Binding::new(turn_header_label(message));
+    let header_label = Binding::new(turn_header_label_for_row(message, collapsed));
     let turn_status = Binding::new(message.status.clone());
     let header = Text::new(String::new()).text(header_label.clone()).style(
         Style::default()
@@ -2929,9 +3064,14 @@ fn build_block_bubble(
 
 fn has_turn_action_row(message: &ChatMessage, config: &ChatMessageRowConfig) -> bool {
     let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
-    show_cancel
+    has_turn_collapse_control(message)
+        || show_cancel
         || config.on_message_action.is_some()
         || (config.edit_and_resubmit.is_some() && editable_user_message_text(message).is_some())
+}
+
+fn has_turn_collapse_control(message: &ChatMessage) -> bool {
+    !message.blocks.is_empty()
 }
 
 fn turn_action_row(
@@ -2944,10 +3084,26 @@ fn turn_action_row(
         .edit_and_resubmit
         .as_ref()
         .and_then(|_| editable_user_message_text(message));
-    if config.on_message_action.is_none() && editable_text.is_none() && !show_cancel {
+    if config.on_message_action.is_none()
+        && editable_text.is_none()
+        && !show_cancel
+        && !has_turn_collapse_control(message)
+    {
         return None;
     }
     let mut row = HStack::new().with_spacing(1);
+    if has_turn_collapse_control(message) {
+        let collapsed = config.collapsed_turns.get().contains(&message.id);
+        let label = if collapsed { "Expand" } else { "Collapse" };
+        row = row.child_with_layout(
+            turn_collapse_button(label, message.id, collapsed, config.collapsed_turns.clone()),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
     if show_cancel && let Some(callback) = config.on_cancel.clone() {
         let label = "Cancel";
         let controller = StreamingCancelController::new(config.store.clone(), callback);
@@ -3061,6 +3217,33 @@ fn message_action_button(
 ) -> Button {
     let action = MessageAction { message_id, kind };
     Button::new(label).on_click(move || callback(action.clone()))
+}
+
+fn turn_collapse_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    collapsed: bool,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
+) -> Button {
+    Button::new(label).on_click(move || {
+        set_turn_collapsed(&collapsed_turns, message_id, !collapsed);
+    })
+}
+
+fn set_turn_collapsed(
+    collapsed_turns: &Binding<HashSet<ChatMessageId>>,
+    message_id: ChatMessageId,
+    collapsed: bool,
+) {
+    let mut next = collapsed_turns.get();
+    let changed = if collapsed {
+        next.insert(message_id)
+    } else {
+        next.remove(&message_id)
+    };
+    if changed {
+        collapsed_turns.set(next);
+    }
 }
 
 fn turn_message_action_button(
@@ -3207,6 +3390,21 @@ fn turn_header_label(message: &ChatMessage) -> String {
 
     append_turn_meta_lines(&mut label, &message.meta);
     label
+}
+
+fn turn_header_label_for_row(message: &ChatMessage, collapsed: bool) -> String {
+    let mut label = turn_header_label(message);
+    if collapsed {
+        label.push('\n');
+        label.push_str(&collapsed_turn_placeholder(message));
+    }
+    label
+}
+
+fn collapsed_turn_placeholder(message: &ChatMessage) -> String {
+    let count = message.blocks.len();
+    let noun = if count == 1 { "block" } else { "blocks" };
+    format!("Collapsed · {count} {noun} hidden")
 }
 
 fn append_turn_meta_lines(label: &mut String, meta: &ChatMessageMeta) {
@@ -6850,7 +7048,7 @@ fn mouse_row_in_area(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::sync::{Arc, Mutex};
 
     use atto_ui::composable::{
@@ -7004,6 +7202,7 @@ mod tests {
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: false,
             bubble_width_percent: DEFAULT_BUBBLE_WIDTH_PERCENT,
+            collapsed_turns: Binding::new(HashSet::new()),
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
@@ -7569,6 +7768,153 @@ mod tests {
     }
 
     #[test]
+    fn turn_collapse_button_toggles_collapsed_state() {
+        let message_id = ChatMessageId::new(90);
+        let collapsed_turns = Binding::new(HashSet::new());
+        let theme = Theme::dark();
+
+        let mut collapse =
+            turn_collapse_button("Collapse", message_id, false, collapsed_turns.clone());
+        collapse.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert!(collapsed_turns.get().contains(&message_id));
+
+        let mut expand = turn_collapse_button("Expand", message_id, true, collapsed_turns.clone());
+        expand.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert!(!collapsed_turns.get().contains(&message_id));
+    }
+
+    #[test]
+    fn row_keys_for_collapsed_turn_keep_only_header() {
+        let message_id = ChatMessageId::new(91);
+        let message = ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(91_001),
+                    markdown: "TURN-BODY".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Notice(NoticeBlock {
+                    id: ChatBlockId::new(91_002),
+                    level: NoticeLevel::Info,
+                    text: "TURN-NOTICE".to_string(),
+                }),
+            ],
+        );
+        let collapsed = HashSet::from([message_id]);
+
+        let keys = row_keys_from_messages_with_collapsed(&[message], &collapsed);
+
+        assert_eq!(keys.len(), 1);
+        assert!(matches!(
+            keys[0],
+            ChatRowKey::Header {
+                message_id: id,
+                collapsed: true,
+            } if id == message_id
+        ));
+    }
+
+    #[test]
+    fn chat_turn_fold_hides_blocks_and_shows_placeholder() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(ChatMessage::text(
+            message_id,
+            ChatRole::Assistant,
+            "TURN-FOLD-BODY",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 8);
+        assert!(initial.iter().any(|line| line.contains("Collapse")));
+        assert!(initial.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (collapsed, _) = draw_component_snapshot(&mut list, 80, 8);
+
+        assert!(list.config.collapsed_turns.get().contains(&message_id));
+        assert!(collapsed.iter().any(|line| line.contains("Expand")));
+        assert!(
+            collapsed
+                .iter()
+                .any(|line| line.contains("Collapsed · 1 block hidden"))
+        );
+        assert!(!collapsed.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (expanded, _) = draw_component_snapshot(&mut list, 80, 8);
+
+        assert!(!list.config.collapsed_turns.get().contains(&message_id));
+        assert!(expanded.iter().any(|line| line.contains("Collapse")));
+        assert!(expanded.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+    }
+
+    #[test]
+    fn expanding_turn_restores_pre_collapse_scroll_offset() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let blocks = (0..8)
+            .map(|idx| {
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(92_000 + idx),
+                    markdown: format!("RESTORE-BODY-{idx}"),
+                    streaming: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        store.push(ChatMessage::new(message_id, ChatRole::Assistant, blocks));
+        for idx in 0..10 {
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("TAIL-{idx}"),
+            ));
+        }
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 80, 6);
+        list.set_scroll_offset(0, 2);
+        list.sync_follow_tail_from_scroll();
+        let restore_y = list.scroll_offset().1;
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        draw_chat_list(&mut list, 80, 6);
+        assert!(list.config.collapsed_turns.get().contains(&message_id));
+
+        list.set_scroll_offset(0, 0);
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        draw_chat_list(&mut list, 80, 6);
+
+        assert!(!list.config.collapsed_turns.get().contains(&message_id));
+        assert_eq!(list.scroll_offset().1, restore_y);
+    }
+
+    #[test]
     fn chat_search_opens_filters_and_highlights_visible_matches() {
         let store = ChatMessageStore::new();
         store.push(ChatMessage::text(
@@ -8060,7 +8406,7 @@ mod tests {
             .show_timestamps(false)
             .auto_scroll(false);
 
-        let (initial, _) = draw_component_snapshot(&mut list, 80, 10);
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 12);
         assert!(initial.iter().any(|line| line.contains("Status: running")));
         assert!(initial.iter().any(|line| line.contains("NESTED-SEARCH")));
 
@@ -8077,7 +8423,7 @@ mod tests {
                 })],
             }]
         ));
-        let (updated, _) = draw_component_snapshot(&mut list, 80, 10);
+        let (updated, _) = draw_component_snapshot(&mut list, 80, 12);
         assert!(updated.iter().any(|line| line.contains("Status: complete")));
         assert!(updated.iter().any(|line| line.contains("SUBAGENT-DONE")));
         assert!(updated.iter().any(|line| line.contains("NESTED-FINAL")));
@@ -8832,7 +9178,7 @@ mod tests {
         assert_eq!(keys.len(), 3);
         assert!(matches!(
             &keys[0],
-            ChatRowKey::Header { message_id } if *message_id == id
+            ChatRowKey::Header { message_id, .. } if *message_id == id
         ));
         assert!(matches!(
             &keys[1],
@@ -8942,7 +9288,7 @@ mod tests {
         ));
         assert!(!keys
             .iter()
-            .any(|key| matches!(key, ChatRowKey::Header { message_id } if *message_id == result_message_id)));
+            .any(|key| matches!(key, ChatRowKey::Header { message_id, .. } if *message_id == result_message_id)));
     }
 
     #[test]

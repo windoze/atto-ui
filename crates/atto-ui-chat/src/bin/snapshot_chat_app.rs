@@ -339,8 +339,12 @@ fn main() -> Result<()> {
     let work = Desktop::layout(screen).work_area;
     let window_height = if block_mapping {
         40
-    } else if long_tool_output || turn_meta_error {
+    } else if turn_meta_error {
+        34
+    } else if long_tool_output {
         28
+    } else if tool_call {
+        22
     } else if message_actions {
         30
     } else if inline_approval
