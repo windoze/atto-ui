@@ -27,4 +27,5 @@
 - Added unit tests for trigger/query behavior, filtered rendering, insert acceptance, callback acceptance, Esc dismissal, and command registration replacement.
 - Validation passed: `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p atto-ui-chat input`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build --workspace --all-targets`, and `cargo test --all --all-targets`.
 - `TODO.md` now marks `P2.2` as `[DONE]` with a completion record.
-- Next step: inspect git status/diff/log, then commit the completed task.
+- Implementation commit created: `8692389 [P2.2] Add slash command completion`.
+- Final status update only changes this progress file; validation is reused because no compiled code changed after the full green run.
