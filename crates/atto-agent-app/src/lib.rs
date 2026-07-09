@@ -20,15 +20,22 @@ use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
-    ChatBlockId, ChatBranchToken, ChatInputHandle, ChatInputResponse, ChatMessage, ChatMessageId,
-    ChatMessageList, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
+    ChatBlock, ChatBlockId, ChatBranchToken, ChatInputHandle, ChatInputResponse, ChatMessage,
+    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
+    ChatSlashCommand, ChatTurnStatus, ThinkingBlock,
 };
 use ratatui::layout::Rect;
 
 pub mod config;
 pub mod deepseek;
+mod stream_ui;
 
 use crate::config::{AgentConfig, PlanMode};
+use crate::deepseek::{
+    ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionSseEvent,
+    FinishReason,
+};
+use crate::stream_ui::DeepSeekUiStream;
 
 pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
@@ -39,15 +46,38 @@ const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
 
 #[derive(Clone, Debug)]
 enum AppAction {
-    AssistantDelta {
+    TextDelta {
         branch: ChatBranchToken,
         block_id: ChatBlockId,
         delta: String,
     },
-    AssistantDone {
+    ThinkingDelta {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
+        delta: String,
     },
+    TurnDone {
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        meta: Option<ChatMessageMeta>,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct MockAgentTurnRequest {
+    branch: ChatBranchToken,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    cancel: CancellationToken,
+    token_delay: Duration,
+    model: String,
+    prompt: String,
+}
+
+#[derive(Clone, Debug)]
+struct AgentTurnLauncher {
+    model: String,
+    action_sender: mpsc::Sender<AppAction>,
 }
 
 #[derive(Clone, Debug)]
@@ -183,6 +213,7 @@ impl AgentApp {
         let chat_panel = build_chat_panel(
             &runtime.message_store,
             &runtime.input_handle,
+            runtime.config.model.clone(),
             runtime.status_state.clone(),
             runtime.plan_mode_state.clone(),
             runtime.action_sender.clone(),
@@ -324,6 +355,7 @@ fn run_with_config_and_mock_token_delay(
 fn build_chat_panel(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
+    model: String,
     status_state: Property<String>,
     plan_mode_state: Property<String>,
     action_sender: mpsc::Sender<AppAction>,
@@ -348,6 +380,10 @@ fn build_chat_panel(
     let mock_turns_for_submit = mock_turns.clone();
     let status_for_submit = status_state.clone();
     let plan_mode_for_submit = plan_mode_state.clone();
+    let turn_launcher_for_submit = AgentTurnLauncher {
+        model,
+        action_sender,
+    };
     let store_for_slash = store.clone();
     let input_handle_for_slash = input_handle.clone();
     let mock_turns_for_slash = mock_turns.clone();
@@ -363,7 +399,7 @@ fn build_chat_panel(
                 &mock_turns_for_submit,
                 &status_for_submit,
                 &plan_mode_for_submit,
-                &action_sender,
+                &turn_launcher_for_submit,
                 response,
             );
         })
@@ -386,7 +422,7 @@ fn submit_input_response(
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     plan_mode_state: &Property<String>,
-    action_sender: &mpsc::Sender<AppAction>,
+    turn_launcher: &AgentTurnLauncher,
     response: ChatInputResponse,
 ) {
     let text = input_response_text(response);
@@ -419,13 +455,16 @@ fn submit_input_response(
     input_handle.streaming_binding().set(true);
     status_state.set(STATUS_STREAMING.to_string());
     spawn_mock_agent_turn(
-        action_sender.clone(),
-        branch,
-        assistant_id,
-        text_block_id,
-        cancel,
-        mock_turns.token_delay(),
-        text,
+        turn_launcher.action_sender.clone(),
+        MockAgentTurnRequest {
+            branch,
+            message_id: assistant_id,
+            block_id: text_block_id,
+            cancel,
+            token_delay: mock_turns.token_delay(),
+            model: turn_launcher.model.clone(),
+            prompt: text,
+        },
     );
 }
 
@@ -605,44 +644,86 @@ fn tools_text() -> &'static str {
     "Tools: none registered in the M1 mock provider. Tool registry and approvals are scheduled for M3."
 }
 
-fn spawn_mock_agent_turn(
-    action_sender: mpsc::Sender<AppAction>,
-    branch: ChatBranchToken,
-    message_id: ChatMessageId,
-    block_id: ChatBlockId,
-    cancel: CancellationToken,
-    mock_token_delay: Duration,
-    prompt: String,
-) {
+fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
     thread::spawn(move || {
-        for delta in mock_agent_deltas(&prompt) {
-            if cancel.is_cancelled() {
+        let mut stream = DeepSeekUiStream::new(
+            request.branch,
+            request.message_id,
+            request.block_id,
+            request.model,
+        );
+        for delta in mock_agent_deltas(&request.prompt) {
+            if request.cancel.is_cancelled() {
                 return;
             }
-            thread::sleep(mock_token_delay);
-            if cancel.is_cancelled() {
+            thread::sleep(request.token_delay);
+            if request.cancel.is_cancelled() {
                 return;
             }
-            if action_sender
-                .send(AppAction::AssistantDelta {
-                    branch,
-                    block_id,
-                    delta,
-                })
-                .is_err()
-            {
+            if !send_stream_actions(
+                &action_sender,
+                stream.map_event(mock_stream_content_event(delta)),
+            ) {
                 return;
             }
         }
-        if cancel.is_cancelled() {
+        if request.cancel.is_cancelled() {
             return;
         }
-        thread::sleep(mock_token_delay);
-        if cancel.is_cancelled() {
+        thread::sleep(request.token_delay);
+        if request.cancel.is_cancelled() {
             return;
         }
-        let _ = action_sender.send(AppAction::AssistantDone { branch, message_id });
+        if !send_stream_actions(&action_sender, stream.map_event(mock_stream_finish_event())) {
+            return;
+        }
+        let _ = send_stream_actions(
+            &action_sender,
+            stream.map_event(ChatCompletionSseEvent::Done),
+        );
     });
+}
+
+fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<AppAction>) -> bool {
+    for action in actions {
+        if action_sender.send(action).is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+fn mock_stream_content_event(delta: String) -> ChatCompletionSseEvent {
+    ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+        id: None,
+        object: None,
+        created: None,
+        model: None,
+        choices: vec![ChatCompletionChunkChoice {
+            index: 0,
+            delta: ChatCompletionDelta {
+                content: Some(delta),
+                ..ChatCompletionDelta::default()
+            },
+            finish_reason: None,
+        }],
+        usage: None,
+    })
+}
+
+fn mock_stream_finish_event() -> ChatCompletionSseEvent {
+    ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+        id: None,
+        object: None,
+        created: None,
+        model: None,
+        choices: vec![ChatCompletionChunkChoice {
+            index: 0,
+            delta: ChatCompletionDelta::default(),
+            finish_reason: Some(FinishReason::Stop),
+        }],
+        usage: None,
+    })
 }
 
 fn mock_agent_deltas(prompt: &str) -> Vec<String> {
@@ -662,17 +743,29 @@ fn apply_app_action(
     action: AppAction,
 ) -> bool {
     match action {
-        AppAction::AssistantDelta {
+        AppAction::TextDelta {
             branch,
             block_id,
             delta,
         } => store.is_branch_current(branch) && store.append_text_delta(block_id, &delta),
-        AppAction::AssistantDone { branch, message_id } => {
+        AppAction::ThinkingDelta {
+            branch,
+            message_id,
+            delta,
+        } => store.is_branch_current(branch) && append_thinking_delta(store, message_id, &delta),
+        AppAction::TurnDone {
+            branch,
+            message_id,
+            meta,
+        } => {
             if !store.is_branch_current(branch) {
                 return false;
             }
             let found = store.set_turn_status(message_id, ChatTurnStatus::Complete);
             if found {
+                if let Some(meta) = meta {
+                    store.set_meta(message_id, meta);
+                }
                 mock_turns.clear(message_id);
                 input_handle.streaming_binding().set(false);
                 status_state.set(STATUS_READY.to_string());
@@ -680,6 +773,64 @@ fn apply_app_action(
             found
         }
     }
+}
+
+fn append_thinking_delta(store: &ChatMessageStore, message_id: ChatMessageId, delta: &str) -> bool {
+    if let Some(block_id) = thinking_block_id(store, message_id) {
+        return store.append_text_delta(block_id, delta);
+    }
+    if delta.is_empty() {
+        return store
+            .messages()
+            .iter()
+            .any(|message| message.id == message_id);
+    }
+
+    let block_id = store.next_block_id();
+    let mut inserted = false;
+    store.update_message(message_id, |message| {
+        if message
+            .blocks
+            .iter()
+            .any(|block| matches!(block, ChatBlock::Thinking(_)))
+        {
+            return;
+        }
+        let insert_at = message
+            .blocks
+            .iter()
+            .position(|block| matches!(block, ChatBlock::Text(_)))
+            .unwrap_or(message.blocks.len());
+        message.blocks.insert(
+            insert_at,
+            ChatBlock::Thinking(ThinkingBlock {
+                id: block_id,
+                markdown: delta.to_string(),
+                streaming: message.status.is_streaming(),
+                collapsed: true,
+            }),
+        );
+        inserted = true;
+    });
+    if inserted {
+        true
+    } else {
+        thinking_block_id(store, message_id)
+            .is_some_and(|block_id| store.append_text_delta(block_id, delta))
+    }
+}
+
+fn thinking_block_id(store: &ChatMessageStore, message_id: ChatMessageId) -> Option<ChatBlockId> {
+    store
+        .messages()
+        .iter()
+        .find(|message| message.id == message_id)
+        .and_then(|message| {
+            message.blocks.iter().find_map(|block| match block {
+                ChatBlock::Thinking(thinking) => Some(thinking.id),
+                _ => None,
+            })
+        })
 }
 
 fn agent_menu(quit_events: EventQueue<()>) -> MenuBar {
@@ -742,16 +893,19 @@ mod tests {
     use atto_ui::wm::WindowId;
     use atto_ui_chat::{
         ChatBlock, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus,
+        ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
     use crate::config::{AgentConfig, PlanMode};
+    use crate::deepseek::parse_chat_completion_sse;
+    use crate::stream_ui::DeepSeekUiStream;
 
     use super::{
-        APP_TITLE, AgentApp, AppAction, MockTurnRegistry, STATUS_READY, STATUS_STREAMING,
-        apply_app_action, build_chat_panel, submit_input_response, submit_slash_command_text,
+        APP_TITLE, AgentApp, AgentTurnLauncher, AppAction, MockTurnRegistry, STATUS_READY,
+        STATUS_STREAMING, apply_app_action, build_chat_panel, submit_input_response,
+        submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -1009,7 +1163,7 @@ mod tests {
             &input_handle,
             &mock_turns,
             &status_state,
-            AppAction::AssistantDelta {
+            AppAction::TextDelta {
                 branch: stale_branch,
                 block_id,
                 delta: "late".to_string(),
@@ -1037,6 +1191,7 @@ mod tests {
         let mut panel = build_chat_panel(
             &store,
             &input_handle,
+            "deepseek-chat".to_string(),
             status_state.clone(),
             plan_mode_state,
             sender,
@@ -1059,7 +1214,7 @@ mod tests {
             &input_handle,
             &mock_turns,
             &status_state,
-            AppAction::AssistantDelta {
+            AppAction::TextDelta {
                 branch: stale_branch,
                 block_id,
                 delta: "late".to_string(),
@@ -1076,6 +1231,10 @@ mod tests {
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_launcher = AgentTurnLauncher {
+            model: "deepseek-chat".to_string(),
+            action_sender: sender,
+        };
 
         submit_input_response(
             &store,
@@ -1083,7 +1242,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
-            &sender,
+            &turn_launcher,
             ChatInputResponse::Text("hello".to_string()),
         );
 
@@ -1119,7 +1278,7 @@ mod tests {
             &input_handle,
             &mock_turns,
             &status_state,
-            AppAction::AssistantDelta {
+            AppAction::TextDelta {
                 branch,
                 block_id,
                 delta: "Mock ".to_string(),
@@ -1130,7 +1289,7 @@ mod tests {
             &input_handle,
             &mock_turns,
             &status_state,
-            AppAction::AssistantDelta {
+            AppAction::TextDelta {
                 branch,
                 block_id,
                 delta: "done".to_string(),
@@ -1141,9 +1300,10 @@ mod tests {
             &input_handle,
             &mock_turns,
             &status_state,
-            AppAction::AssistantDone {
+            AppAction::TurnDone {
                 branch,
                 message_id: assistant_id,
+                meta: None,
             },
         ));
 
@@ -1151,6 +1311,75 @@ mod tests {
         assert_eq!(message_text(&messages[0]), "Mock done");
         assert_eq!(messages[0].status, ChatTurnStatus::Complete);
         assert!(!cancel.is_cancelled());
+        assert!(!mock_turns.cancel(assistant_id));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn deepseek_stream_events_map_reasoning_content_and_completion_meta() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream =
+            DeepSeekUiStream::new(branch, assistant_id, text_block_id, "deepseek-chat");
+        let events = parse_chat_completion_sse(concat!(
+            "data: {\"model\":\"deepseek-reasoner\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"think \"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"more\",\"content\":\"hel\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":5,\"total_tokens\":12}}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .unwrap();
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let assistant = &messages[0];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert_eq!(assistant.meta.model.as_deref(), Some("deepseek-reasoner"));
+        assert_eq!(
+            assistant.meta.usage,
+            Some(TokenUsage {
+                input: 7,
+                output: 5,
+            })
+        );
+        assert_eq!(assistant.meta.stop_reason, Some(StopReason::EndTurn));
+        assert_eq!(assistant.blocks.len(), 2);
+        match &assistant.blocks[0] {
+            ChatBlock::Thinking(block) => {
+                assert_eq!(block.markdown, "think more");
+                assert!(block.collapsed);
+                assert!(!block.streaming);
+            }
+            other => panic!("expected thinking block, got {other:?}"),
+        }
+        match &assistant.blocks[1] {
+            ChatBlock::Text(block) => {
+                assert_eq!(block.markdown, "hello");
+                assert!(!block.streaming);
+            }
+            other => panic!("expected text block, got {other:?}"),
+        }
         assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
