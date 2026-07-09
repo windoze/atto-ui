@@ -1,10 +1,10 @@
 //! DeepSeek OpenAI-compatible Chat Completions protocol models.
 //!
-//! This module only defines request/response shapes and deterministic request
-//! construction. The network client, SSE byte parser, and UI mapping land in
-//! later M2 tasks.
+//! This module defines request/response shapes, deterministic request
+//! construction, and line-level SSE parsing. The network client and UI mapping
+//! land in later M2 tasks.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -367,6 +367,118 @@ pub enum ChatCompletionSseEvent {
     Error(DeepSeekErrorResponse),
 }
 
+/// Incrementally parses DeepSeek/OpenAI-compatible SSE text into typed events.
+#[derive(Debug, Default)]
+pub struct ChatCompletionSseParser {
+    buffer: String,
+    data_lines: Vec<String>,
+}
+
+impl ChatCompletionSseParser {
+    /// Creates an empty parser ready to receive UTF-8 SSE text chunks.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feeds a UTF-8 text fragment and returns every complete SSE event found.
+    pub fn push_str(&mut self, input: &str) -> Result<Vec<ChatCompletionSseEvent>> {
+        self.buffer.push_str(input);
+        let mut events = Vec::new();
+
+        while let Some(newline_index) = self.buffer.find('\n') {
+            let mut line = self.buffer.drain(..=newline_index).collect::<String>();
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+            self.process_line(&line, &mut events)?;
+        }
+
+        Ok(events)
+    }
+
+    /// Flushes any final unterminated line or event at end-of-stream.
+    pub fn finish(&mut self) -> Result<Vec<ChatCompletionSseEvent>> {
+        let mut events = Vec::new();
+
+        if !self.buffer.is_empty() {
+            let mut line = std::mem::take(&mut self.buffer);
+            if line.ends_with('\r') {
+                line.pop();
+            }
+            self.process_line(&line, &mut events)?;
+        }
+        self.flush_event(&mut events)?;
+
+        Ok(events)
+    }
+
+    fn process_line(&mut self, line: &str, events: &mut Vec<ChatCompletionSseEvent>) -> Result<()> {
+        if line.is_empty() {
+            self.flush_event(events)?;
+            return Ok(());
+        }
+        if line.starts_with(':') {
+            return Ok(());
+        }
+
+        let (field, value) = line.split_once(':').unwrap_or((line, ""));
+        if field == "data" {
+            self.data_lines
+                .push(value.strip_prefix(' ').unwrap_or(value).to_string());
+        }
+        Ok(())
+    }
+
+    fn flush_event(&mut self, events: &mut Vec<ChatCompletionSseEvent>) -> Result<()> {
+        if self.data_lines.is_empty() {
+            return Ok(());
+        }
+
+        let data = self.data_lines.join("\n");
+        self.data_lines.clear();
+        events.push(parse_chat_completion_sse_data(&data)?);
+        Ok(())
+    }
+}
+
+/// Parses a full SSE payload string into typed DeepSeek stream events.
+pub fn parse_chat_completion_sse(input: &str) -> Result<Vec<ChatCompletionSseEvent>> {
+    let mut parser = ChatCompletionSseParser::new();
+    let mut events = parser.push_str(input)?;
+    events.extend(parser.finish()?);
+    Ok(events)
+}
+
+/// Parses one completed SSE `data:` payload.
+pub fn parse_chat_completion_sse_data(data: &str) -> Result<ChatCompletionSseEvent> {
+    let data = data.trim();
+    if data == STREAM_DONE_SENTINEL {
+        return Ok(ChatCompletionSseEvent::Done);
+    }
+
+    let value = serde_json::from_str::<Value>(data)
+        .with_context(|| format!("invalid DeepSeek SSE data: {}", sse_data_preview(data)))?;
+    if value.get("error").is_some() {
+        return serde_json::from_value(value)
+            .map(ChatCompletionSseEvent::Error)
+            .context("invalid DeepSeek SSE error payload");
+    }
+
+    serde_json::from_value(value)
+        .map(ChatCompletionSseEvent::Chunk)
+        .context("invalid DeepSeek SSE chunk payload")
+}
+
+fn sse_data_preview(data: &str) -> String {
+    const MAX_CHARS: usize = 160;
+    let mut preview = data.chars().take(MAX_CHARS).collect::<String>();
+    if data.chars().count() > MAX_CHARS {
+        preview.push_str("...");
+    }
+    preview
+}
+
 /// Builds deterministic request parts for `POST /chat/completions`.
 pub fn build_chat_completions_request(
     config: &AgentConfig,
@@ -511,6 +623,104 @@ mod tests {
         assert_eq!(choice.delta.reasoning_content.as_deref(), Some("thinking"));
         assert_eq!(choice.delta.content.as_deref(), Some("answer"));
         assert_eq!(choice.finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn parses_sse_content_reasoning_finish_reason_and_done() {
+        let events = parse_chat_completion_sse(concat!(
+            "id: ignored\n",
+            "event: message\n",
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\",\"content\":\"hel\"},\"finish_reason\":null}]}\r\n",
+            "\r\n",
+            ": keepalive\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n",
+            "\n",
+            "data: [DONE]\n\n",
+        ))
+        .unwrap();
+
+        assert_eq!(events.len(), 3);
+        let ChatCompletionSseEvent::Chunk(first) = &events[0] else {
+            panic!("expected first SSE event to be a chunk");
+        };
+        let first_choice = &first.choices[0];
+        assert_eq!(
+            first_choice.delta.reasoning_content.as_deref(),
+            Some("thinking")
+        );
+        assert_eq!(first_choice.delta.content.as_deref(), Some("hel"));
+        assert_eq!(first_choice.finish_reason, None);
+
+        let ChatCompletionSseEvent::Chunk(second) = &events[1] else {
+            panic!("expected second SSE event to be a chunk");
+        };
+        assert_eq!(second.choices[0].delta.content.as_deref(), Some("lo"));
+        assert_eq!(second.choices[0].finish_reason, Some(FinishReason::Stop));
+        assert_eq!(events[2], ChatCompletionSseEvent::Done);
+    }
+
+    #[test]
+    fn parses_multiline_sse_data_payload() {
+        let events = parse_chat_completion_sse(concat!(
+            "data: {\"choices\":[\n",
+            "data: {\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}\n",
+            "data: ]}\n",
+            "\n",
+        ))
+        .unwrap();
+
+        let [ChatCompletionSseEvent::Chunk(chunk)] = events.as_slice() else {
+            panic!("expected one chunk SSE event, got {events:?}");
+        };
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn parses_fragmented_sse_input() {
+        let mut parser = ChatCompletionSseParser::new();
+
+        assert!(
+            parser
+                .push_str("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parser
+                .push_str("lo\"},\"finish_reason\":null}]}\n")
+                .unwrap()
+                .is_empty()
+        );
+        let events = parser.push_str("\n").unwrap();
+
+        let [ChatCompletionSseEvent::Chunk(chunk)] = events.as_slice() else {
+            panic!("expected one chunk SSE event, got {events:?}");
+        };
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hello"));
+        assert!(parser.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_sse_error_fragments() {
+        let event = parse_chat_completion_sse_data(
+            r#"{"error":{"message":"bad api key","type":"invalid_request_error","code":"invalid_api_key","param":null}}"#,
+        )
+        .unwrap();
+
+        let ChatCompletionSseEvent::Error(error) = event else {
+            panic!("expected SSE error event");
+        };
+        assert_eq!(error.error.message, "bad api key");
+        assert_eq!(error.error.kind.as_deref(), Some("invalid_request_error"));
+        assert_eq!(error.error.code, Some(json!("invalid_api_key")));
+    }
+
+    #[test]
+    fn reports_malformed_sse_json() {
+        let error = parse_chat_completion_sse_data("{not json").unwrap_err();
+
+        assert!(error.to_string().contains("invalid DeepSeek SSE data"));
+        assert!(error.to_string().contains("{not json"));
     }
 
     #[test]

@@ -36,7 +36,9 @@
 - [x] **[DONE] M2.2 DeepSeek 请求模型** - 定义 request/response/SSE 数据结构，构造 OpenAI-compatible `/chat/completions` 请求。
   - 完成记录（2026-07-10）：新增 `atto_agent_app::deepseek` 协议模块，定义 OpenAI-compatible chat completions request、message、tool schema/tool choice、non-stream response、SSE chunk/delta、tool call delta、usage、finish reason 和 API error 数据结构；新增 `/chat/completions` endpoint 拼接与基于 `AgentConfig` 的 streaming request 构造，保持网络 client/SSE parser/UI 映射留给后续 M2 任务。
   - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M2.3 SSE parser** - 解析 `data:` 行、`[DONE]`、`choices[].delta.content`、`reasoning_content`、finish_reason 和错误片段。
+- [x] **[DONE] M2.3 SSE parser** - 解析 `data:` 行、`[DONE]`、`choices[].delta.content`、`reasoning_content`、finish_reason 和错误片段。
+  - 完成记录（2026-07-10）：在 `deepseek.rs` 新增状态化 `ChatCompletionSseParser`、完整缓冲解析入口和单个 `data:` payload 解析入口；支持分片输入、空行事件分隔、CRLF、注释/非 data 字段忽略、多行 `data:` 聚合、`[DONE]` sentinel、stream chunk JSON、DeepSeek error JSON，并为 malformed JSON 返回带原始片段摘要的错误上下文。
+  - 验证：`cargo test -p atto-agent-app deepseek`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M2.4 流式 UI 映射** - content 追加到 `TextBlock`，reasoning_content 追加到 `ThinkingBlock`，结束时设置 turn status 和 meta。
 - [ ] **M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。
 - [ ] **M2.6 Mock + ignored real 测试** - 单测覆盖 SSE parser；PTY 走 mock client；真实 DeepSeek smoke 标记 ignored。
