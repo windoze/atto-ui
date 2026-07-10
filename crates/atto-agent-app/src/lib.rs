@@ -7,7 +7,11 @@
 //! dependencies to the reusable UI crates.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -70,11 +74,20 @@ const STATUS_READY: &str = "ready";
 const STATUS_STREAMING: &str = "streaming";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
+const SNAPSHOT_COMPACT_POLICY: CompactPolicy = CompactPolicy {
+    threshold_tokens: 40,
+    recent_message_limit: 2,
+    summary_max_bytes: 2048,
+};
 const MOCK_READ_FILE_PROMPT: &str = "agent-pty-read-file";
 const MOCK_RUN_COMMAND_PROMPT: &str = "agent-pty-run-command";
+const MOCK_CONTEXT_PROBE_PREFIX: &str = "agent-pty-context-probe";
+const MOCK_RETRY_EDIT_PROMPT: &str = "agent-pty-retry-edit-seed";
 const ACCEPTED_PLAN_EXECUTION_INSTRUCTION: &str = "The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.";
 const PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT: &str =
     "Plan mode blocks mutating tools until the plan is accepted.";
+
+static MOCK_RETRY_EDIT_TURN_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -424,20 +437,21 @@ impl AgentApp {
             action_sender,
             MockTurnRegistry::new(),
         );
-        Self::with_runtime_state(screen, EventQueue::new(), runtime)
+        Self::with_runtime_state(screen, EventQueue::new(), runtime, CompactPolicy::default())
     }
 
     /// Builds the initial app state from a resolved configuration.
     pub fn with_config(screen: Rect, config: AgentConfig) -> Self {
         let (action_sender, _action_receiver) = EventQueue::<AppAction>::channel();
         let runtime = AgentRuntime::new(config, action_sender, MockTurnRegistry::new());
-        Self::with_runtime_state(screen, EventQueue::new(), runtime)
+        Self::with_runtime_state(screen, EventQueue::new(), runtime, CompactPolicy::default())
     }
 
     fn with_runtime_state(
         screen: Rect,
         quit_events: EventQueue<()>,
         runtime: AgentRuntime,
+        compact_policy: CompactPolicy,
     ) -> Self {
         runtime.transcript_status.sync(&runtime.message_store);
         let chat_panel = build_chat_panel(
@@ -448,7 +462,7 @@ impl AgentApp {
                 tool_registry: runtime.tool_registry.clone(),
                 turn_budgets: runtime.turn_budgets.clone(),
                 limits: runtime.limits,
-                compact_policy: CompactPolicy::default(),
+                compact_policy,
             },
             runtime.slash_runtime(),
             runtime.tool_runtime(),
@@ -566,15 +580,28 @@ pub fn run() -> Result<()> {
 
 /// Runs the deterministic mock fixture used by PTY snapshot tests.
 pub fn run_snapshot_fixture() -> Result<()> {
-    run_with_config_and_mock_token_delay(
+    run_with_config_mock_token_delay_and_compact_policy(
         AgentConfig::defaults(env!("CARGO_MANIFEST_DIR")),
         SNAPSHOT_MOCK_TOKEN_DELAY,
+        SNAPSHOT_COMPACT_POLICY,
     )
 }
 
 fn run_with_config_and_mock_token_delay(
     config: AgentConfig,
     mock_token_delay: Duration,
+) -> Result<()> {
+    run_with_config_mock_token_delay_and_compact_policy(
+        config,
+        mock_token_delay,
+        CompactPolicy::default(),
+    )
+}
+
+fn run_with_config_mock_token_delay_and_compact_policy(
+    config: AgentConfig,
+    mock_token_delay: Duration,
+    compact_policy: CompactPolicy,
 ) -> Result<()> {
     let quit_events = EventQueue::new();
     let quit_events_for_menu = quit_events.clone();
@@ -607,6 +634,7 @@ fn run_with_config_and_mock_token_delay(
                 screen,
                 quit_events_for_menu,
                 runtime_for_build.clone(),
+                compact_policy,
             )
             .into_desktop())
         },
@@ -1360,6 +1388,9 @@ fn mock_agent_events(
             ),
             ChatCompletionSseEvent::Done,
         ],
+        prompt if prompt.starts_with(MOCK_CONTEXT_PROBE_PREFIX) => {
+            mock_context_probe_events(prompt)
+        }
         _ if plan_decision.requires_plan() => vec![
             mock_stream_tool_call_event(
                 "call_submit_plan",
@@ -1384,6 +1415,38 @@ fn mock_agent_events(
             events
         }
     }
+}
+
+fn mock_context_probe_events(prompt: &str) -> Vec<ChatCompletionSseEvent> {
+    vec![
+        mock_stream_content_event("Mock context probe:\n".to_string()),
+        mock_stream_content_event(mock_context_probe_text(prompt)),
+        mock_stream_finish_event(),
+        ChatCompletionSseEvent::Done,
+    ]
+}
+
+fn mock_context_probe_text(prompt: &str) -> String {
+    let config = AgentConfig::defaults(env!("CARGO_MANIFEST_DIR"));
+    let registry = crate::tool::builtin_tool_registry().expect("built-in tool registry is valid");
+    let transcript = vec![ChatMessage::text(
+        ChatMessageId::new(1),
+        ChatRole::User,
+        prompt.to_string(),
+    )];
+    let request = deepseek_request_from_transcript(&config, &registry, &transcript);
+    let context = request
+        .messages
+        .iter()
+        .filter_map(|message| message.content.as_deref())
+        .find_map(|content| {
+            content
+                .find("<context_files>")
+                .map(|start| &content[start..])
+        });
+    context
+        .unwrap_or("No context files were injected into the model request.")
+        .to_string()
 }
 
 fn mock_stream_content_event(delta: String) -> ChatCompletionSseEvent {
@@ -1450,9 +1513,20 @@ fn mock_stream_finish_event() -> ChatCompletionSseEvent {
 }
 
 fn mock_agent_deltas(prompt: &str) -> Vec<String> {
+    let prompt = prompt.trim();
+    if prompt.starts_with(MOCK_RETRY_EDIT_PROMPT) {
+        let turn = MOCK_RETRY_EDIT_TURN_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+        return vec![
+            format!("Mock retry/edit turn {turn}: "),
+            prompt.to_string(),
+            "\n".to_string(),
+            "Done.".to_string(),
+        ];
+    }
+
     vec![
         "Mock assistant: ".to_string(),
-        prompt.trim().to_string(),
+        prompt.to_string(),
         "\n".to_string(),
         "Done.".to_string(),
     ]

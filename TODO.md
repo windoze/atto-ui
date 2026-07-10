@@ -159,7 +159,9 @@
 - [x] **[DONE] M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
   - 完成记录（2026-07-10）：agent app 状态栏现在包含 model、plan、tools、skills、streaming、`tokens~N` transcript token 估算和 `err:*` 最新错误摘要；新增 `TranscriptStatusState` 聚合 token/error 状态，并在用户提交、slash 命令、取消、plan 决策、tool 审批和后台 action 变更后同步状态。复用 compact transcript token 估算逻辑，错误摘要覆盖 failed turn 和失败 tool result，并修复 tool-call budget 失败分支早退导致状态不同步的问题。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --lib tool_call_budget_fails_turn_before_appending_over_limit`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
+- [x] **[DONE] M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
+  - 完成记录（2026-07-10）：扩展 deterministic `snapshot_agent_app` fixture，新增 snapshot 专用小 compact 阈值和 context probe mock prompt，context probe 通过 `deepseek_request_from_transcript` 走真实 file mention 展开路径；新增 PTY 覆盖 `@.atto/skills/pty-fixture/SKILL.md` mention 注入、长会话触发 `CompactBlock` 并滚动查看摘要、Retry 重启 assistant turn、Edit 修改用户 prompt 后重跑，以及保留既有 Esc 取消后迟到 token 不显示的 PTY 覆盖。Retry/Edit PTY 使用可见递增 mock turn 序号验证按钮实际触发重跑。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。
 
 ## 收尾

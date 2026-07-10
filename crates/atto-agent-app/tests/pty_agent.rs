@@ -54,6 +54,33 @@ fn click_text(host: &mut PtyTestHost, needle: &str) -> anyhow::Result<()> {
     host.click(x, y)
 }
 
+fn click_text_center(host: &mut PtyTestHost, needle: &str) -> anyhow::Result<()> {
+    let (x, y) = find_text_position(host, needle)
+        .unwrap_or_else(|| panic!("expected clickable text {needle:?} to be visible"));
+    let offset = UnicodeWidthStr::width(needle) / 2;
+    host.click(x.saturating_add(offset.min(u16::MAX as usize) as u16), y)
+}
+
+fn focus_message_input(host: &mut PtyTestHost) -> anyhow::Result<()> {
+    let (x, y) = find_text_position(host, "Message")
+        .unwrap_or_else(|| panic!("expected message input to be visible"));
+    host.click(x.saturating_add(2), y.saturating_add(1))
+}
+
+fn scroll_chat_up(host: &mut PtyTestHost) -> anyhow::Result<()> {
+    for _ in 0..8 {
+        host.wheel_up(50, 15)?;
+        thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
+}
+
+fn activate_message_action(host: &mut PtyTestHost, label: &str) -> anyhow::Result<()> {
+    click_text_center(host, label)?;
+    thread::sleep(Duration::from_millis(80));
+    click_text_center(host, label)
+}
+
 #[test]
 fn agent_mock_fixture_streams_submitted_input() -> anyhow::Result<()> {
     let _guard = agent_pty_lock();
@@ -148,6 +175,99 @@ fn agent_skill_commands_list_and_load_fixture_skill() -> anyhow::Result<()> {
     submit_text(&mut host, "/skills")?;
     host.wait_for_text("Skills: 1 discovered, 1 loaded.", PTY_WAIT)?;
     host.wait_for_text("- [loaded] pty-fixture", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_file_mention_context_probe_injects_workspace_file() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(
+        &mut host,
+        "agent-pty-context-probe @.atto/skills/pty-fixture/SKILL.md",
+    )?;
+
+    host.wait_for_text("Mock context probe:", PTY_WAIT)?;
+    host.wait_for_text("<context_files>", PTY_WAIT)?;
+    host.wait_for_text("name: pty-fixture", PTY_WAIT)?;
+    host.wait_for_text(
+        "Use this fixture to verify PTY skill slash commands.",
+        PTY_WAIT,
+    )?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_snapshot_fixture_compacts_older_transcript() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(
+        &mut host,
+        "agent compact seed alpha beta gamma delta epsilon zeta eta theta iota kappa",
+    )?;
+    host.wait_for_text("Mock assistant: agent compact seed", PTY_WAIT)?;
+    host.wait_for_text("Done.", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent compact followup")?;
+
+    host.wait_for_text("Mock assistant: agent compact followup", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+    scroll_chat_up(&mut host)?;
+    host.wait_for_text("Context compact: Complete", PTY_WAIT)?;
+    host.wait_for_text("Local summary of 1 earlier transcript message", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_retry_and_edit_resubmit_restart_turns_from_pty() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "/plan off")?;
+    host.wait_for_text("plan: off", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent-pty-retry-edit-seed")?;
+    host.wait_for_text("Mock retry/edit turn 1:", PTY_WAIT)?;
+    host.wait_for_text("agent-pty-retry-edit-seed", PTY_WAIT)?;
+    host.wait_for_text("Done.", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+    host.wait_for_text("Retry", PTY_WAIT)?;
+    host.wait_for_text("Edit", PTY_WAIT)?;
+
+    activate_message_action(&mut host, "Retry")?;
+    host.wait_for_text("Mock retry/edit turn 2:", PTY_WAIT)?;
+    host.wait_for_text("agent-pty-retry-edit-seed", PTY_WAIT)?;
+    host.wait_for_text("Done.", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    activate_message_action(&mut host, "Edit")?;
+    focus_message_input(&mut host)?;
+    host.key_with_mods(KeyCode::End, KeyModifiers::NONE)?;
+    host.send_str(" edited")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+
+    host.wait_for_text("agent-pty-retry-edit-seed edited", PTY_WAIT)?;
+    host.wait_for_text("Mock retry/edit turn 3:", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
 
     host.send_ctrl('q')?;
     host.wait_for_exit(Duration::from_secs(2))?;
