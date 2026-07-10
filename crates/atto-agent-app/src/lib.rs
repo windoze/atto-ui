@@ -22,7 +22,7 @@ use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
     ChatBlock, ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse,
     ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
-    ChatRole, ChatSlashCommand, ChatTurnStatus, ThinkingBlock,
+    ChatRole, ChatSlashCommand, ChatTurnStatus, ThinkingBlock, ToolUseBlock,
 };
 use ratatui::layout::Rect;
 
@@ -57,6 +57,11 @@ enum AppAction {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         delta: String,
+    },
+    ToolCallsReady {
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        tool_calls: Vec<ToolUseBlock>,
     },
     TurnDone {
         branch: ChatBranchToken,
@@ -760,6 +765,24 @@ fn apply_app_action(
             message_id,
             delta,
         } => store.is_branch_current(branch) && append_thinking_delta(store, message_id, &delta),
+        AppAction::ToolCallsReady {
+            branch,
+            message_id,
+            tool_calls,
+        } => {
+            if !store.is_branch_current(branch) || tool_calls.is_empty() {
+                return false;
+            }
+            for tool_call in tool_calls {
+                if store
+                    .append_block(message_id, ChatBlock::ToolUse(tool_call))
+                    .is_none()
+                {
+                    return false;
+                }
+            }
+            true
+        }
         AppAction::TurnDone {
             branch,
             message_id,
@@ -909,6 +932,7 @@ fn chat_window_rect(screen: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use atto_ui::ComponentValue;
     use atto_ui::composable::{
         ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
     };
@@ -917,12 +941,15 @@ mod tests {
     use atto_ui_chat::{
         ChatBlock, ChatError, ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage,
         ChatMessageStore, ChatRole, ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage,
+        ToolInput, ToolStatus,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
     use crate::config::{AgentConfig, PlanMode};
     use crate::deepseek::{
+        ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta,
+        ChatCompletionSseEvent, ChatFunctionCallDelta, ChatToolCallDelta, ChatToolKind,
         chat_error_from_http_status, chat_error_from_json_error, chat_error_from_network_failure,
         chat_error_from_stream_disconnect, parse_chat_completion_sse,
         parse_chat_completion_sse_data,
@@ -955,6 +982,23 @@ mod tests {
             text_block_id,
             "deepseek-chat",
         )
+    }
+
+    fn tool_call_delta(
+        index: u32,
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+    ) -> ChatToolCallDelta {
+        ChatToolCallDelta {
+            index,
+            id: id.map(str::to_string),
+            kind: id.map(|_| ChatToolKind::Function),
+            function: Some(ChatFunctionCallDelta {
+                name: name.map(str::to_string),
+                arguments: arguments.map(str::to_string),
+            }),
+        }
     }
 
     fn single_failed_error(actions: Vec<AppAction>) -> ChatError {
@@ -1498,6 +1542,160 @@ mod tests {
             },
         ));
         assert_eq!(message_text(&store.messages()[0]), "");
+    }
+
+    #[test]
+    fn deepseek_stream_events_aggregate_tool_calls_by_index() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream =
+            DeepSeekUiStream::new(branch, assistant_id, text_block_id, "deepseek-chat");
+        let events = vec![
+            ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+                id: None,
+                object: None,
+                created: None,
+                model: Some("deepseek-chat".to_string()),
+                choices: vec![ChatCompletionChunkChoice {
+                    index: 0,
+                    delta: ChatCompletionDelta {
+                        tool_calls: vec![
+                            tool_call_delta(
+                                1,
+                                Some("call_2"),
+                                Some("search_text"),
+                                Some(r#"{"query":"hel"#),
+                            ),
+                            tool_call_delta(0, Some("call_1"), Some("read_"), Some(r#"{"path":"#)),
+                        ],
+                        ..ChatCompletionDelta::default()
+                    },
+                    finish_reason: None,
+                }],
+                usage: None,
+            }),
+            ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+                id: None,
+                object: None,
+                created: None,
+                model: None,
+                choices: vec![ChatCompletionChunkChoice {
+                    index: 0,
+                    delta: ChatCompletionDelta {
+                        tool_calls: vec![
+                            tool_call_delta(0, None, Some("file"), Some(r#""src/lib.rs"}"#)),
+                            tool_call_delta(1, None, None, Some(r#"lo"}"#)),
+                        ],
+                        ..ChatCompletionDelta::default()
+                    },
+                    finish_reason: Some(crate::deepseek::FinishReason::ToolCalls),
+                }],
+                usage: None,
+            }),
+            ChatCompletionSseEvent::Done,
+        ];
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let assistant = &messages[0];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert_eq!(assistant.meta.stop_reason, Some(StopReason::ToolUse));
+        assert_eq!(assistant.blocks.len(), 3);
+        assert!(
+            matches!(&assistant.blocks[0], ChatBlock::Text(block) if block.markdown.is_empty() && !block.streaming)
+        );
+        match &assistant.blocks[1] {
+            ChatBlock::ToolUse(block) => {
+                assert_eq!(block.call_id, "call_1");
+                assert_eq!(block.name, "read_file");
+                assert_eq!(block.status, ToolStatus::Pending);
+                assert!(block.approval.is_none());
+                match &block.input {
+                    ToolInput::Json(ComponentValue::Map(input)) => assert_eq!(
+                        input.get("path"),
+                        Some(&ComponentValue::String("src/lib.rs".to_string()))
+                    ),
+                    other => panic!("expected JSON object tool input, got {other:?}"),
+                }
+            }
+            other => panic!("expected first tool call block, got {other:?}"),
+        }
+        match &assistant.blocks[2] {
+            ChatBlock::ToolUse(block) => {
+                assert_eq!(block.call_id, "call_2");
+                assert_eq!(block.name, "search_text");
+                assert_eq!(block.status, ToolStatus::Pending);
+                match &block.input {
+                    ToolInput::Json(ComponentValue::Map(input)) => assert_eq!(
+                        input.get("query"),
+                        Some(&ComponentValue::String("hello".to_string()))
+                    ),
+                    other => panic!("expected JSON object tool input, got {other:?}"),
+                }
+            }
+            other => panic!("expected second tool call block, got {other:?}"),
+        }
+        assert!(!mock_turns.cancel(assistant_id));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn deepseek_stream_tool_call_invalid_arguments_fails_turn() {
+        let mut stream = new_test_stream();
+        let actions = stream.map_event(ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+            id: None,
+            object: None,
+            created: None,
+            model: None,
+            choices: vec![ChatCompletionChunkChoice {
+                index: 0,
+                delta: ChatCompletionDelta {
+                    tool_calls: vec![tool_call_delta(
+                        0,
+                        Some("call_1"),
+                        Some("read_file"),
+                        Some("{not json"),
+                    )],
+                    ..ChatCompletionDelta::default()
+                },
+                finish_reason: Some(crate::deepseek::FinishReason::ToolCalls),
+            }],
+            usage: None,
+        }));
+
+        let error = single_failed_error(actions);
+
+        assert_eq!(error.kind, ChatErrorKind::Tool);
+        assert!(error.message.contains("invalid tool call arguments"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("{not json"))
+        );
+        assert!(stream.map_event(ChatCompletionSseEvent::Done).is_empty());
     }
 
     #[test]

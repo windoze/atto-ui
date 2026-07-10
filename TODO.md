@@ -57,7 +57,9 @@
 - [x] **[DONE] M3.1 Tool 抽象** - 定义 `ToolSpec`、`ToolExecutor`、`ToolRegistry`、权限策略、OpenAI tools schema 转换。
   - 完成记录（2026-07-10）：新增 app crate `tool` 模块，定义 `ToolSpec`、`ToolExecutor`、`ToolRegistry`、`ToolContext`、`ToolResult`、`ToolOutputKind`、`ToolPermission`、`ToolPermissionPolicy` 和 `ToolPermissionDecision`；注册表按工具名确定性排序，支持重复注册拒绝、未知工具错误、执行分派，并能将本地工具规格转换为 OpenAI-compatible function tools schema。`/tools` 输出更新为反映抽象层已存在但内置工具尚未注册。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.2 Tool call 聚合** - 按 SSE `tool_calls[].index` 聚合 name/arguments，finish_reason 为 `tool_calls` 时进入工具执行阶段。
+- [x] **[DONE] M3.2 Tool call 聚合** - 按 SSE `tool_calls[].index` 聚合 name/arguments，finish_reason 为 `tool_calls` 时进入工具执行阶段。
+  - 完成记录（2026-07-10）：DeepSeek UI stream mapper 现在按 `(choice.index, tool_calls[].index)` 确定性聚合 tool call delta，拼接 streamed function name 和 arguments；`finish_reason = tool_calls` 时解析 arguments JSON，生成 `ToolUseBlock { status: Pending }` 并通过主线程 action 插入当前 assistant turn，同时在 `[DONE]` 后以 `StopReason::ToolUse` 完成该 turn。非法或不完整 tool call 会映射为 `ChatErrorKind::Tool`，避免以无效参数进入后续工具阶段。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.3 只读工具** - 实现 `read_file`、`list_files`、`search_text`，路径必须限制在 workspace 内。
 - [ ] **M3.4 副作用工具** - 实现 `apply_patch`、`run_command`，默认需要审批；命令使用 argv，不做 shell 字符串拼接。
 - [ ] **M3.5 Approval UI** - 渲染 `ToolUseBlock.approval`，处理 allow once / allow project / deny，deny 时写入失败 tool result。
