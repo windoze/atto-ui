@@ -2025,11 +2025,36 @@ mod tests {
         mode: SkillMode,
         triggers: &[&str],
     ) {
+        write_test_skill_with_mode_and_tools(
+            workspace,
+            dir_name,
+            name,
+            description,
+            mode,
+            triggers,
+            &[],
+        );
+    }
+
+    fn write_test_skill_with_mode_and_tools(
+        workspace: &Path,
+        dir_name: &str,
+        name: &str,
+        description: &str,
+        mode: SkillMode,
+        triggers: &[&str],
+        tools: &[&str],
+    ) {
         let dir = workspace.join(".atto/skills").join(dir_name);
         fs::create_dir_all(&dir).expect("test skill directory should be created");
         let triggers = triggers
             .iter()
             .map(|trigger| format!("\"{trigger}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tools = tools
+            .iter()
+            .map(|tool| format!("\"{tool}\""))
             .collect::<Vec<_>>()
             .join(", ");
         fs::write(
@@ -2039,7 +2064,7 @@ mod tests {
 name: {name}
 description: {description}
 triggers: [{triggers}]
-tools: []
+tools: [{tools}]
 mode: {mode}
 ---
 Use this skill for {name} tasks.
@@ -3445,6 +3470,74 @@ Use this skill for {name} tasks.
         assert!(skill_prompt.ends_with("</skills>"));
         assert_eq!(request.messages[1].role, ChatMessageRole::User);
         assert_eq!(request.tools.len(), registry.len());
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn skill_tool_preferences_do_not_grant_mutating_tool_approval() {
+        let workspace = unique_temp_dir("skill-tool-permissions");
+        write_test_skill_with_mode_and_tools(
+            &workspace,
+            "shell",
+            "shell-helper",
+            "Prefer shell diagnostics.",
+            SkillMode::Manual,
+            &[],
+            &["run_command"],
+        );
+        let skill_registry =
+            SkillRegistry::discover_from_paths(&[SkillSearchPath::workspace(&workspace)]);
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("shell-helper"));
+        let registry = test_tool_registry();
+
+        let request = deepseek_request_from_transcript_with_skills(
+            &AgentConfig::defaults("."),
+            &registry,
+            &skill_registry,
+            &loaded,
+            &[ChatMessage::text(1, ChatRole::User, "Run diagnostics.")],
+        );
+
+        let skill_prompt = request.messages[0]
+            .content
+            .as_deref()
+            .expect("skill prompt should be injected");
+        assert!(skill_prompt.contains("tools=\"run_command\""));
+        assert_eq!(request.tools.len(), registry.len());
+        assert_eq!(
+            registry
+                .spec("run_command")
+                .expect("run_command tool should be registered")
+                .permission,
+            ToolPermission::ApproveForProject
+        );
+
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let permissions = test_tool_permissions();
+        let block_id = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_skill_run"),
+        );
+
+        let tool = tool_use_for_block(&store, block_id);
+        assert_eq!(tool.status, ToolStatus::Pending);
+        assert!(tool.approval.is_some());
+        assert!(
+            !permissions
+                .lock()
+                .expect("tool permission policy lock poisoned")
+                .is_project_allowed("run_command")
+        );
 
         let _ = fs::remove_dir_all(workspace);
     }

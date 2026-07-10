@@ -392,10 +392,19 @@ fn build_skill_prompt_entry(
     max_body_bytes: usize,
     max_entry_bytes: usize,
 ) -> Option<String> {
+    let tool_preferences = if skill.definition.tools.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " tools=\"{}\"",
+            xml_attr_escape(&skill.definition.tools.join(","))
+        )
+    };
     let open = format!(
-        "<skill name=\"{}\" source=\"{}\">\n",
+        "<skill name=\"{}\" source=\"{}\"{}>\n",
         xml_attr_escape(&skill.definition.name),
-        xml_attr_escape(&skill.path.to_string_lossy())
+        xml_attr_escape(&skill.path.to_string_lossy()),
+        tool_preferences
     );
     let close = "\n</skill>\n";
     let overhead = open.len() + close.len();
@@ -722,12 +731,21 @@ Use this skill for {name} tasks.
     }
 
     fn discovered_skill(name: &str, path: &str, body: &str) -> DiscoveredSkill {
+        discovered_skill_with_tools(name, path, body, &[])
+    }
+
+    fn discovered_skill_with_tools(
+        name: &str,
+        path: &str,
+        body: &str,
+        tools: &[&str],
+    ) -> DiscoveredSkill {
         DiscoveredSkill {
             definition: SkillDefinition {
                 name: name.to_string(),
                 description: format!("Description for {name}."),
                 triggers: Vec::new(),
-                tools: Vec::new(),
+                tools: tools.iter().map(|tool| tool.to_string()).collect(),
                 mode: SkillMode::Manual,
                 body: body.to_string(),
             },
@@ -1099,6 +1117,26 @@ Body.
         ));
         assert!(prompt.contains("Inspect Rust changes first."));
         assert!(!prompt.contains("Write clear docs."));
+    }
+
+    #[test]
+    fn skill_prompt_block_renders_tool_preferences_as_metadata() {
+        let mut registry = SkillRegistry::default();
+        registry.insert(discovered_skill_with_tools(
+            "shell-helper",
+            ".atto/skills/shell-helper/SKILL.md",
+            "Prefer command-line diagnostics when useful.\n",
+            &["read_file", "run_command"],
+        ));
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("shell-helper"));
+
+        let prompt = build_skill_prompt_block(&registry, &loaded).unwrap();
+
+        assert!(prompt.contains(
+            "<skill name=\"shell-helper\" source=\".atto/skills/shell-helper/SKILL.md\" tools=\"read_file,run_command\">"
+        ));
+        assert!(prompt.contains("Prefer command-line diagnostics"));
     }
 
     #[test]

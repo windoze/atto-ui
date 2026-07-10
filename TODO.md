@@ -99,7 +99,9 @@
 - [x] **[DONE] M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
   - 完成记录（2026-07-10）：新增 skill prompt 注入构建器，按设计将已加载 skill 渲染为 `<skills><skill name="..." source="...">...</skill></skills>` system prompt 块；默认限制单个 skill body 最多 6 KiB、完整 skill prompt 最多 20 KiB，并按 UTF-8 边界安全截断。新增带 skill 注入的 DeepSeek transcript request/messages 构建入口，保持无 skill 请求构建入口可用于既有场景；补充单测覆盖 prompt 格式、未加载 skill 忽略、单 skill 与总 prompt 大小限制、UTF-8 截断和 request 注入位置。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app skill_prompt`；`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_loaded_skills`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- [ ] **M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。
+- [x] **[DONE] M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。
+  - 完成记录（2026-07-10）：loaded skill 的 `tools` frontmatter 现在作为 `<skill ... tools="...">` 元数据注入 system prompt，仅表达模型可见工具偏好；DeepSeek request 仍使用 `ToolRegistry` 中的完整注册工具 schema，权限判断仍只由 `ToolSpec.permission` 和 `ToolPermissionPolicy` 决定。新增回归测试覆盖声明 `run_command` 偏好的 skill 不会授予项目级权限，`run_command` tool call 仍渲染 approval 并保持 pending。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app tool_preferences`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M4.7 测试** - 单测解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill`。
 - [ ] **M4.R Review** - 复核 skill 注入不会泄漏权限、不会破坏 prompt 预算，验证通过。
 
