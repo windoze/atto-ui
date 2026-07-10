@@ -129,7 +129,9 @@
 - [x] **[DONE] M5.6 副作用工具门控** - 计划接受前拦截 `apply_patch`、`run_command` 等 mutating tool，并写入明确 tool result。
   - 完成记录（2026-07-10）：新增 per-turn mutating-tool gate，`plan: on` / `plan: auto` 下未接受计划前会在 app 层优先拦截 `apply_patch`、`run_command` 等非 `AlwaysAllow` 工具，写入失败 `ToolResultBlock`：`Plan mode blocks mutating tools until the plan is accepted.`；项目级 allow grant 不能绕过该 gate，接受计划后的执行 turn 和 `plan: off` 仍走既有审批/执行路径。plan stream 中模型误发非 `submit_plan` tool call 时现在交由同一 gate 处理，旧 PTY approval 用例已显式切换 `/plan off` 以继续验证审批 UI。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app plan_gate_blocks_mutating_tool_even_with_project_grant`；`cargo test -p atto-agent-app deepseek_stream_plan_turn_mutating_tool_call_writes_blocked_tool_result`；`cargo test -p atto-agent-app --test pty_agent`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [ ] **M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
+- [x] **[DONE] M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
+  - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` PTY 覆盖 plan mode：auto plan prompt 会渲染 pending `PlanBlock` 和 Accept/Reject 操作；点击 Accept 后锁定为 accepted 并启动后续 mock execution turn；点击 Reject 后锁定为 rejected 且不追加执行 turn；默认 `plan: auto` 下 `run_command` tool call 会在计划接受前被拦截并写入失败 tool result，不渲染审批 UI 或成功结果。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M5.R Review** - 复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。
 
 ## 阶段 M6 - Context / Session Polish

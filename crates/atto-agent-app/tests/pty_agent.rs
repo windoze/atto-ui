@@ -48,6 +48,12 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
     })
 }
 
+fn click_text(host: &mut PtyTestHost, needle: &str) -> anyhow::Result<()> {
+    let (x, y) = find_text_position(host, needle)
+        .unwrap_or_else(|| panic!("expected clickable text {needle:?} to be visible"));
+    host.click(x, y)
+}
+
 #[test]
 fn agent_mock_fixture_streams_submitted_input() -> anyhow::Result<()> {
     let _guard = agent_pty_lock();
@@ -244,6 +250,97 @@ fn agent_mock_tool_approval_deny_writes_failed_result() -> anyhow::Result<()> {
         "User denied tool call run_command. The tool was not executed.",
         PTY_WAIT,
     )?;
+    assert_text_absent_for(
+        &host,
+        "Tool result: call_run_echo (exit 0)",
+        Duration::from_millis(300),
+    );
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_plan_mode_generates_plan_and_accept_continues_execution() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+    host.wait_for_text("plan: auto", PTY_WAIT)?;
+
+    submit_text(&mut host, "Please update README.md with setup docs")?;
+
+    host.wait_for_text("Plan: pending", PTY_WAIT)?;
+    host.wait_for_text("Review the request and relevant context.", PTY_WAIT)?;
+    host.wait_for_text(
+        "Implement the requested change in the appropriate files.",
+        PTY_WAIT,
+    )?;
+    host.wait_for_text("[ Accept ]", PTY_WAIT)?;
+    host.wait_for_text("[ Reject ]", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    click_text(&mut host, "[ Accept ]")?;
+
+    host.wait_for_text("[x] Accepted", PTY_WAIT)?;
+    host.wait_for_text("streaming", PTY_WAIT)?;
+    host.wait_for_text("Mock assistant:", PTY_WAIT)?;
+    host.wait_for_text("Done.", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_plan_mode_reject_stops_without_execution() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "Please update README.md with rejection docs")?;
+
+    host.wait_for_text("Plan: pending", PTY_WAIT)?;
+    host.wait_for_text("[ Reject ]", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    click_text(&mut host, "[ Reject ]")?;
+
+    host.wait_for_text("[x] Rejected", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+    assert_text_absent_for(&host, "Mock assistant:", Duration::from_millis(700));
+    assert_text_absent_for(
+        &host,
+        "The user accepted the plan.",
+        Duration::from_millis(700),
+    );
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_plan_mode_blocks_mutating_tool_before_acceptance() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+    host.wait_for_text("plan: auto", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent-pty-run-command")?;
+
+    host.wait_for_text("run_command", PTY_WAIT)?;
+    host.wait_for_text("Tool result: call_run_echo", PTY_WAIT)?;
+    host.wait_for_text(
+        "Plan mode blocks mutating tools until the plan is accepted.",
+        PTY_WAIT,
+    )?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+    assert_text_absent_for(&host, "Approval: Allow tool", Duration::from_millis(300));
     assert_text_absent_for(
         &host,
         "Tool result: call_run_echo (exit 0)",
