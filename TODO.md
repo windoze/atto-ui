@@ -69,7 +69,9 @@
 - [x] **[DONE] M3.5 Approval UI** - 渲染 `ToolUseBlock.approval`，处理 allow once / allow project / deny，deny 时写入失败 tool result。
   - 完成记录（2026-07-10）：agent app 现在在 `ToolCallsReady` 入库前依据内置 `ToolRegistry` 与进程内 `ToolPermissionPolicy` 为需审批工具补充 `ApprovalRequest`；`ChatMessageList::on_approve` 接入 allow once / allow project / deny，项目级允许会记录进程内授权并让后续同工具调用跳过审批，deny 会将 tool use 置为 `Canceled` 并写入失败 `ToolResultBlock`。`AlwaysAllow` 工具直接进入 `Running`，未注册或策略拒绝的工具会生成失败结果。
   - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [ ] **M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
+- [x] **[DONE] M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
+  - 完成记录（2026-07-10）：agent app 新增后台工具执行回写路径，`AlwaysAllow` 或审批 allow 后的 tool call 会通过 action 在主线程将 `ToolUseBlock` 状态更新为 `Done`/`Error` 并 upsert 对应 `ToolResultBlock`；新增最小 transcript 到 DeepSeek request 的转换入口，assistant `ToolUseBlock` 转 OpenAI-compatible `tool_calls`，`ToolResultBlock` 转 role=`tool` 且携带 `tool_call_id` 的消息，并附带当前内置 tool schema 和 `tool_choice=auto`。补充单测覆盖实际 `read_file` 工具执行写 UI，以及下一次 DeepSeek request 中的 `role=tool` 回灌消息。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。
 - [ ] **M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
 - [ ] **M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。

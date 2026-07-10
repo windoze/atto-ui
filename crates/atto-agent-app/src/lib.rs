@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use atto_ui::CancellationToken;
+use atto_ui::ComponentValue;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     StatusSegment, StatusSegmentAlign, run_crossterm_desktop_with_actions,
@@ -23,10 +24,11 @@ use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
     ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, ThinkingBlock, ToolOutput, ToolResultBlock, ToolStatus,
-    ToolUseBlock,
+    ChatSlashCommand, ChatTurnStatus, DiffData, ThinkingBlock, ToolInput, ToolOutput,
+    ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
+use serde_json::{Map, Number, Value};
 
 pub mod config;
 pub mod deepseek;
@@ -36,11 +38,15 @@ pub mod tool;
 
 use crate::config::{AgentConfig, PlanMode};
 use crate::deepseek::{
-    ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionSseEvent,
-    FinishReason,
+    ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionMessage,
+    ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCall, ChatToolCall, ChatToolKind,
+    FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::stream_ui::DeepSeekUiStream;
-use crate::tool::{ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry};
+use crate::tool::{
+    ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
+    ToolResult,
+};
 
 pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
@@ -66,6 +72,12 @@ enum AppAction {
         message_id: ChatMessageId,
         tool_calls: Vec<ToolUseBlock>,
     },
+    ToolResultReady {
+        branch: ChatBranchToken,
+        tool_block_id: ChatBlockId,
+        call_id: String,
+        result: ToolResultBlock,
+    },
     TurnDone {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
@@ -87,6 +99,15 @@ struct MockAgentTurnRequest {
     token_delay: Duration,
     model: String,
     prompt: String,
+}
+
+#[derive(Clone)]
+struct ToolExecutionRequest {
+    branch: ChatBranchToken,
+    tool_use: ToolUseBlock,
+    config: AgentConfig,
+    registry: ToolRegistry,
+    action_sender: mpsc::Sender<AppAction>,
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +142,14 @@ struct AgentRuntime {
     plan_mode_state: Property<String>,
 }
 
+#[derive(Clone)]
+struct ToolRuntime {
+    config: AgentConfig,
+    action_sender: mpsc::Sender<AppAction>,
+    registry: ToolRegistry,
+    permissions: Arc<Mutex<ToolPermissionPolicy>>,
+}
+
 impl AgentRuntime {
     fn new(
         config: AgentConfig,
@@ -142,6 +171,15 @@ impl AgentRuntime {
             status_state: Property::new(STATUS_READY.to_string()),
             model_state,
             plan_mode_state,
+        }
+    }
+
+    fn tool_runtime(&self) -> ToolRuntime {
+        ToolRuntime {
+            config: self.config.clone(),
+            action_sender: self.action_sender.clone(),
+            registry: self.tool_registry.clone(),
+            permissions: self.tool_permissions.clone(),
         }
     }
 }
@@ -240,7 +278,7 @@ impl AgentApp {
             },
             runtime.status_state.clone(),
             runtime.plan_mode_state.clone(),
-            runtime.tool_permissions.clone(),
+            runtime.tool_runtime(),
             runtime.mock_turns.clone(),
         );
 
@@ -356,13 +394,13 @@ fn run_with_config_and_mock_token_delay(
         },
         action_receiver,
         move |_desktop, action, _screen| {
+            let tool_runtime = runtime_for_actions.tool_runtime();
             apply_app_action(
                 &runtime_for_actions.message_store,
                 &runtime_for_actions.input_handle,
                 &runtime_for_actions.mock_turns,
                 &runtime_for_actions.status_state,
-                &runtime_for_actions.tool_registry,
-                &runtime_for_actions.tool_permissions,
+                &tool_runtime,
                 action,
             );
             Ok(AppControl::Continue)
@@ -384,7 +422,7 @@ fn build_chat_panel(
     turn_launcher: AgentTurnLauncher,
     status_state: Property<String>,
     plan_mode_state: Property<String>,
-    tool_permissions: Arc<Mutex<ToolPermissionPolicy>>,
+    tool_runtime: ToolRuntime,
     mock_turns: MockTurnRegistry,
 ) -> ChatPanel {
     // Compose the reusable chat list and input controls around shared state handles.
@@ -392,15 +430,11 @@ fn build_chat_panel(
     let status_for_cancel = status_state.clone();
     let mock_turns_for_cancel = mock_turns.clone();
     let store_for_approval = store.clone();
-    let tool_permissions_for_approval = tool_permissions.clone();
+    let tool_runtime_for_approval = tool_runtime.clone();
     let list = ChatMessageList::new(store.clone())
         .show_timestamps(false)
         .on_approve(move |decision| {
-            handle_tool_approval(
-                &store_for_approval,
-                &tool_permissions_for_approval,
-                decision,
-            );
+            handle_tool_approval(&store_for_approval, &tool_runtime_for_approval, decision);
         })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
@@ -802,8 +836,7 @@ fn apply_app_action(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
-    tool_registry: &ToolRegistry,
-    tool_permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+    tool_runtime: &ToolRuntime,
     action: AppAction,
 ) -> bool {
     match action {
@@ -826,21 +859,53 @@ fn apply_app_action(
                 return false;
             }
             for tool_call in tool_calls {
-                let prepared = prepare_tool_call(tool_call, tool_registry, tool_permissions);
-                let call_id = prepared.tool_use.call_id.clone();
-                if store
-                    .append_block(message_id, ChatBlock::ToolUse(prepared.tool_use))
-                    .is_none()
-                {
+                let PreparedToolCall { tool_use, result } =
+                    prepare_tool_call(tool_call, &tool_runtime.registry, &tool_runtime.permissions);
+                let mut tool_use = tool_use;
+                let call_id = tool_use.call_id.clone();
+                let Some(block_id) =
+                    store.append_block(message_id, ChatBlock::ToolUse(tool_use.clone()))
+                else {
                     return false;
-                }
-                if let Some(result) = prepared.result
-                    && store.upsert_tool_result(call_id, result).is_none()
-                {
-                    return false;
+                };
+                tool_use.id = block_id;
+                match result {
+                    Some(result) => {
+                        if store.upsert_tool_result(call_id, result).is_none() {
+                            return false;
+                        }
+                    }
+                    None if tool_use.status == ToolStatus::Running => {
+                        spawn_tool_execution(ToolExecutionRequest {
+                            branch,
+                            tool_use,
+                            config: tool_runtime.config.clone(),
+                            registry: tool_runtime.registry.clone(),
+                            action_sender: tool_runtime.action_sender.clone(),
+                        });
+                    }
+                    None => {}
                 }
             }
             true
+        }
+        AppAction::ToolResultReady {
+            branch,
+            tool_block_id,
+            call_id,
+            result,
+        } => {
+            if !store.is_branch_current(branch) {
+                return false;
+            }
+            let status = if result.ok {
+                ToolStatus::Done
+            } else {
+                ToolStatus::Error
+            };
+            let found_tool = store.set_tool_status(tool_block_id, status);
+            let found_result = store.upsert_tool_result(call_id, result).is_some();
+            found_tool && found_result
         }
         AppAction::TurnDone {
             branch,
@@ -956,24 +1021,49 @@ fn tool_approval_request(tool_use: &ToolUseBlock, allow_project: bool) -> Approv
 
 fn handle_tool_approval(
     store: &ChatMessageStore,
-    permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+    tool_runtime: &ToolRuntime,
     decision: ApprovalDecision,
 ) {
     let Some(tool_use) = tool_use_for_approval(store, &decision) else {
         return;
     };
+    if tool_use.status != ToolStatus::Pending
+        || tool_use
+            .approval
+            .as_ref()
+            .and_then(|approval| approval.resolved.as_ref())
+            .is_some()
+    {
+        return;
+    }
     if !store.resolve_approval(decision.block_id, decision.option_id) {
         return;
     }
 
     match decision.action {
         ApprovalAction::Allow if decision.level == ApprovalLevel::Project => {
-            permissions
+            tool_runtime
+                .permissions
                 .lock()
                 .expect("tool permission policy lock poisoned")
-                .allow_for_project(tool_use.name);
+                .allow_for_project(tool_use.name.clone());
+            spawn_tool_execution(ToolExecutionRequest {
+                branch: store.branch_token(),
+                tool_use,
+                config: tool_runtime.config.clone(),
+                registry: tool_runtime.registry.clone(),
+                action_sender: tool_runtime.action_sender.clone(),
+            });
         }
-        ApprovalAction::Allow => {}
+        ApprovalAction::Allow => {
+            spawn_tool_execution(ToolExecutionRequest {
+                branch: store.branch_token(),
+                tool_use,
+                config: tool_runtime.config.clone(),
+                registry: tool_runtime.registry.clone(),
+                action_sender: tool_runtime.action_sender.clone(),
+            });
+        }
         ApprovalAction::Deny => {
             let call_id = tool_use.call_id.clone();
             store.upsert_tool_result(
@@ -1017,6 +1107,270 @@ fn failed_tool_result(call_id: &str, output: impl Into<String>) -> ToolResultBlo
         exit_code: None,
         output: ToolOutput::Markdown(output.into()),
         collapsed: false,
+    }
+}
+
+fn spawn_tool_execution(request: ToolExecutionRequest) {
+    thread::spawn(move || {
+        let call_id = request.tool_use.call_id.clone();
+        let tool_block_id = request.tool_use.id;
+        let result =
+            execute_tool_use_to_result_block(&request.registry, &request.config, &request.tool_use);
+        let _ = request.action_sender.send(AppAction::ToolResultReady {
+            branch: request.branch,
+            tool_block_id,
+            call_id,
+            result,
+        });
+    });
+}
+
+fn execute_tool_use_to_result_block(
+    registry: &ToolRegistry,
+    config: &AgentConfig,
+    tool_use: &ToolUseBlock,
+) -> ToolResultBlock {
+    let result = tool_input_to_json(&tool_use.input).and_then(|args| {
+        registry.execute(
+            &tool_use.name,
+            ToolContext::new(config.workspace.clone()),
+            args,
+        )
+    });
+    match result {
+        Ok(result) => tool_result_block(&tool_use.call_id, result),
+        Err(error) => failed_tool_result(
+            &tool_use.call_id,
+            format!("Tool `{}` failed: {error:#}", tool_use.name),
+        ),
+    }
+}
+
+fn tool_input_to_json(input: &ToolInput) -> Result<Value> {
+    match input {
+        ToolInput::Text(text) => match serde_json::from_str(text) {
+            Ok(value) => Ok(value),
+            Err(_) => Ok(Value::String(text.clone())),
+        },
+        ToolInput::Json(value) => Ok(component_value_to_json(value)),
+    }
+}
+
+fn tool_result_block(call_id: &str, result: ToolResult) -> ToolResultBlock {
+    ToolResultBlock {
+        id: ChatBlockId::new(0),
+        call_id: call_id.to_string(),
+        ok: result.ok,
+        exit_code: result.exit_code,
+        output: tool_output_from_result(result.output_kind, result.output),
+        collapsed: false,
+    }
+}
+
+fn tool_output_from_result(kind: ToolOutputKind, output: String) -> ToolOutput {
+    match kind {
+        ToolOutputKind::Ansi => ToolOutput::Ansi(output),
+        ToolOutputKind::Markdown => ToolOutput::Markdown(output),
+        ToolOutputKind::Diff => ToolOutput::Diff(DiffData { unified: output }),
+    }
+}
+
+/// Builds the OpenAI-compatible request body for the current transcript.
+pub fn deepseek_request_from_transcript(
+    config: &AgentConfig,
+    registry: &ToolRegistry,
+    messages: &[ChatMessage],
+) -> ChatCompletionRequest {
+    ChatCompletionRequest::from_config(config, deepseek_messages_from_transcript(messages))
+        .with_tools(registry.chat_tools())
+        .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
+}
+
+/// Converts the UI transcript into DeepSeek/OpenAI-compatible chat messages.
+pub fn deepseek_messages_from_transcript(messages: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
+    let mut result = Vec::new();
+    for message in messages {
+        match &message.role {
+            ChatRole::User => push_text_message(
+                &mut result,
+                ChatCompletionMessage::user,
+                text_content_for_message(message),
+            ),
+            ChatRole::System | ChatRole::Custom(_) => push_text_message(
+                &mut result,
+                ChatCompletionMessage::system,
+                text_content_for_message(message),
+            ),
+            ChatRole::Assistant => push_assistant_messages(&mut result, message),
+        }
+    }
+    result
+}
+
+fn push_text_message(
+    result: &mut Vec<ChatCompletionMessage>,
+    build: impl FnOnce(String) -> ChatCompletionMessage,
+    content: String,
+) {
+    if !content.is_empty() {
+        result.push(build(content));
+    }
+}
+
+fn push_assistant_messages(result: &mut Vec<ChatCompletionMessage>, message: &ChatMessage) {
+    let content = text_content_for_message(message);
+    let tool_calls = message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ChatBlock::ToolUse(tool_use) => Some(chat_tool_call_from_tool_use(tool_use)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if !content.is_empty() || !tool_calls.is_empty() {
+        result.push(ChatCompletionMessage {
+            role: crate::deepseek::ChatMessageRole::Assistant,
+            content: (!content.is_empty()).then_some(content),
+            reasoning_content: None,
+            tool_calls,
+            tool_call_id: None,
+        });
+    }
+
+    for block in &message.blocks {
+        if let ChatBlock::ToolResult(tool_result) = block {
+            result.push(ChatCompletionMessage::tool(
+                tool_result.call_id.clone(),
+                tool_result_content(tool_result),
+            ));
+        }
+    }
+}
+
+fn text_content_for_message(message: &ChatMessage) -> String {
+    let mut content = String::new();
+    for block in &message.blocks {
+        match block {
+            ChatBlock::Text(text) if !text.markdown.is_empty() => {
+                push_section(&mut content, &text.markdown);
+            }
+            ChatBlock::Notice(notice) if !notice.text.is_empty() => {
+                push_section(&mut content, &notice.text);
+            }
+            ChatBlock::Compact(compact) if !compact.summary.is_empty() => {
+                push_section(&mut content, &compact.summary);
+            }
+            _ => {}
+        }
+    }
+    content
+}
+
+fn push_section(content: &mut String, section: &str) {
+    if !content.is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str(section);
+}
+
+fn chat_tool_call_from_tool_use(tool_use: &ToolUseBlock) -> ChatToolCall {
+    ChatToolCall {
+        id: tool_use.call_id.clone(),
+        kind: ChatToolKind::Function,
+        function: ChatFunctionCall {
+            name: tool_use.name.clone(),
+            arguments: tool_arguments_from_input(&tool_use.input),
+        },
+    }
+}
+
+fn tool_arguments_from_input(input: &ToolInput) -> String {
+    match input {
+        ToolInput::Text(text) if text.trim().is_empty() => "{}".to_string(),
+        ToolInput::Text(text) => text.clone(),
+        ToolInput::Json(value) => serde_json::to_string(&component_value_to_json(value))
+            .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+fn tool_result_content(result: &ToolResultBlock) -> String {
+    let mut content = format!("ok: {}", result.ok);
+    if let Some(exit_code) = result.exit_code {
+        content.push_str(&format!("\nexit_code: {exit_code}"));
+    }
+    let output = result.output.as_text();
+    if !output.is_empty() {
+        content.push_str("\n\n");
+        content.push_str(output);
+    }
+    content
+}
+
+fn component_value_to_json(value: &ComponentValue) -> Value {
+    match value {
+        ComponentValue::Null => Value::Null,
+        ComponentValue::Bool(value) => Value::Bool(*value),
+        ComponentValue::I64(value) => Value::Number(Number::from(*value)),
+        ComponentValue::U64(value) => Value::Number(Number::from(*value)),
+        ComponentValue::F64(value) => Number::from_f64(*value)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        ComponentValue::String(value) => Value::String(value.clone()),
+        ComponentValue::StringList(values) => Value::Array(
+            values
+                .iter()
+                .map(|value| Value::String(value.clone()))
+                .collect(),
+        ),
+        ComponentValue::Table(rows) => Value::Array(
+            rows.iter()
+                .map(|row| {
+                    Value::Array(
+                        row.iter()
+                            .map(|value| Value::String(value.clone()))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ),
+        ComponentValue::Rect(rect) => Value::Object(
+            [
+                (
+                    "x".to_string(),
+                    Value::Number(Number::from(u64::from(rect.x))),
+                ),
+                (
+                    "y".to_string(),
+                    Value::Number(Number::from(u64::from(rect.y))),
+                ),
+                (
+                    "width".to_string(),
+                    Value::Number(Number::from(u64::from(rect.width))),
+                ),
+                (
+                    "height".to_string(),
+                    Value::Number(Number::from(u64::from(rect.height))),
+                ),
+            ]
+            .into_iter()
+            .collect::<Map<_, _>>(),
+        ),
+        ComponentValue::Bytes(bytes) => Value::Array(
+            bytes
+                .iter()
+                .map(|byte| Value::Number(Number::from(u64::from(*byte))))
+                .collect(),
+        ),
+        ComponentValue::List(values) => {
+            Value::Array(values.iter().map(component_value_to_json).collect())
+        }
+        ComponentValue::Map(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), component_value_to_json(value)))
+                .collect(),
+        ),
     }
 }
 
@@ -1132,6 +1486,7 @@ fn chat_window_rect(screen: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
     use std::sync::{Arc, Mutex};
 
     use atto_ui::ComponentValue;
@@ -1152,8 +1507,9 @@ mod tests {
     use crate::config::{AgentConfig, PlanMode};
     use crate::deepseek::{
         ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta,
-        ChatCompletionSseEvent, ChatFunctionCallDelta, ChatToolCallDelta, ChatToolKind,
-        chat_error_from_http_status, chat_error_from_json_error, chat_error_from_network_failure,
+        ChatCompletionSseEvent, ChatFunctionCallDelta, ChatMessageRole, ChatToolCallDelta,
+        ChatToolKind, ToolChoice, ToolChoiceMode, chat_error_from_http_status,
+        chat_error_from_json_error, chat_error_from_network_failure,
         chat_error_from_stream_disconnect, parse_chat_completion_sse,
         parse_chat_completion_sse_data,
     };
@@ -1162,8 +1518,9 @@ mod tests {
 
     use super::{
         APP_TITLE, AgentApp, AgentTurnLauncher, AppAction, MockTurnRegistry, STATUS_READY,
-        STATUS_STREAMING, apply_app_action, build_chat_panel, handle_tool_approval,
-        submit_input_response, submit_slash_command_text,
+        STATUS_STREAMING, ToolRuntime, apply_app_action, build_chat_panel,
+        deepseek_request_from_transcript, handle_tool_approval, submit_input_response,
+        submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -1232,6 +1589,20 @@ mod tests {
         Arc::new(Mutex::new(ToolPermissionPolicy::default()))
     }
 
+    fn test_tool_runtime(
+        config: AgentConfig,
+        action_sender: std::sync::mpsc::Sender<AppAction>,
+        registry: ToolRegistry,
+        permissions: Arc<Mutex<ToolPermissionPolicy>>,
+    ) -> ToolRuntime {
+        ToolRuntime {
+            config,
+            action_sender,
+            registry,
+            permissions,
+        }
+    }
+
     fn apply_test_app_action(
         store: &ChatMessageStore,
         input_handle: &atto_ui_chat::ChatInputHandle,
@@ -1241,13 +1612,15 @@ mod tests {
     ) -> bool {
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime =
+            test_tool_runtime(AgentConfig::defaults("."), sender, registry, permissions);
         apply_app_action(
             store,
             input_handle,
             mock_turns,
             status_state,
-            &registry,
-            &permissions,
+            &tool_runtime,
             action,
         )
     }
@@ -1267,6 +1640,34 @@ mod tests {
         }
     }
 
+    fn read_file_tool_call(call_id: &str, path: &str) -> ToolUseBlock {
+        ToolUseBlock {
+            id: atto_ui_chat::ChatBlockId::new(0),
+            call_id: call_id.to_string(),
+            name: "read_file".to_string(),
+            input: ToolInput::Json(ComponentValue::Map(BTreeMap::from([(
+                "path".to_string(),
+                ComponentValue::String(path.to_string()),
+            )]))),
+            status: ToolStatus::Pending,
+            approval: None,
+            collapsed: false,
+        }
+    }
+
+    fn test_workspace(name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "atto-agent-app-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create fixture workspace");
+        path
+    }
+
     fn append_tool_call_with_runtime(
         store: &ChatMessageStore,
         input_handle: &atto_ui_chat::ChatInputHandle,
@@ -1276,6 +1677,13 @@ mod tests {
         permissions: &Arc<Mutex<ToolPermissionPolicy>>,
         tool_call: ToolUseBlock,
     ) -> atto_ui_chat::ChatBlockId {
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            AgentConfig::defaults("."),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
         let expected_call_id = tool_call.call_id.clone();
         let assistant_id = store.next_message_id();
         let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
@@ -1288,8 +1696,7 @@ mod tests {
             input_handle,
             mock_turns,
             status_state,
-            registry,
-            permissions,
+            &tool_runtime,
             AppAction::ToolCallsReady {
                 branch,
                 message_id: assistant_id,
@@ -1622,11 +2029,16 @@ mod tests {
             &input_handle,
             AgentTurnLauncher {
                 model: "deepseek-chat".to_string(),
-                action_sender: sender,
+                action_sender: sender.clone(),
             },
             status_state.clone(),
             plan_mode_state,
-            test_tool_permissions(),
+            test_tool_runtime(
+                AgentConfig::defaults("."),
+                sender,
+                test_tool_registry(),
+                test_tool_permissions(),
+            ),
             mock_turns.clone(),
         );
         let theme = Theme::dark();
@@ -1813,6 +2225,13 @@ mod tests {
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            AgentConfig::defaults("."),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
         let block_id = append_tool_call_with_runtime(
             &store,
             &input_handle,
@@ -1829,7 +2248,7 @@ mod tests {
 
         handle_tool_approval(
             &store,
-            &permissions,
+            &tool_runtime,
             approval_decision(
                 &store,
                 block_id,
@@ -1866,6 +2285,13 @@ mod tests {
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            AgentConfig::defaults("."),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
         let first_block = append_tool_call_with_runtime(
             &store,
             &input_handle,
@@ -1882,7 +2308,7 @@ mod tests {
 
         handle_tool_approval(
             &store,
-            &permissions,
+            &tool_runtime,
             approval_decision(
                 &store,
                 first_block,
@@ -1921,6 +2347,13 @@ mod tests {
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            AgentConfig::defaults("."),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
         let block_id = append_tool_call_with_runtime(
             &store,
             &input_handle,
@@ -1937,7 +2370,7 @@ mod tests {
 
         handle_tool_approval(
             &store,
-            &permissions,
+            &tool_runtime,
             approval_decision(
                 &store,
                 block_id,
@@ -1967,6 +2400,142 @@ mod tests {
             }
             other => panic!("expected markdown denial result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn allowed_tool_execution_writes_tool_result_block() {
+        let workspace = test_workspace("allowed-tool-result");
+        fs::write(workspace.join("fixture.txt"), "tool output\n").expect("write fixture file");
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.workspace = workspace.clone();
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            config.clone(),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
+        let assistant_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let branch = store.branch_token();
+
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &tool_runtime,
+            AppAction::ToolCallsReady {
+                branch,
+                message_id: assistant_id,
+                tool_calls: vec![read_file_tool_call("call_read", "fixture.txt")],
+            },
+        ));
+        let tool_block_id = store
+            .messages()
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) if tool.call_id == "call_read" => Some(tool.id),
+                _ => None,
+            })
+            .expect("tool use should be appended");
+        assert_eq!(
+            tool_use_for_block(&store, tool_block_id).status,
+            ToolStatus::Running
+        );
+
+        let action = receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("tool execution should send result action");
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &tool_runtime,
+            action,
+        ));
+
+        let tool = tool_use_for_block(&store, tool_block_id);
+        let result = tool_result_for_call(&store, "call_read");
+        assert_eq!(tool.status, ToolStatus::Done);
+        assert!(result.ok);
+        assert_eq!(result.exit_code, None);
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert!(output.contains("Path: `fixture.txt`"));
+                assert!(output.contains("tool output"));
+            }
+            other => panic!("expected markdown tool result, got {other:?}"),
+        }
+
+        fs::remove_dir_all(&workspace).expect("remove fixture workspace");
+    }
+
+    #[test]
+    fn deepseek_request_from_transcript_includes_tool_result_role_message() {
+        let registry = test_tool_registry();
+        let request = deepseek_request_from_transcript(
+            &AgentConfig::defaults("."),
+            &registry,
+            &[
+                ChatMessage::text(1, ChatRole::User, "Read the fixture."),
+                ChatMessage::new(
+                    2,
+                    ChatRole::Assistant,
+                    vec![
+                        ChatBlock::ToolUse(read_file_tool_call("call_read", "fixture.txt")),
+                        ChatBlock::ToolResult(ToolResultBlock {
+                            id: atto_ui_chat::ChatBlockId::new(22),
+                            call_id: "call_read".to_string(),
+                            ok: true,
+                            exit_code: None,
+                            output: ToolOutput::Markdown("Path: `fixture.txt`\n\nbody".to_string()),
+                            collapsed: false,
+                        }),
+                    ],
+                ),
+            ],
+        );
+
+        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages[0].role, ChatMessageRole::User);
+        assert_eq!(
+            request.messages[0].content.as_deref(),
+            Some("Read the fixture.")
+        );
+        assert_eq!(request.messages[1].role, ChatMessageRole::Assistant);
+        assert_eq!(request.messages[1].tool_calls.len(), 1);
+        let tool_call = &request.messages[1].tool_calls[0];
+        assert_eq!(tool_call.id, "call_read");
+        assert_eq!(tool_call.function.name, "read_file");
+        assert_eq!(tool_call.function.arguments, r#"{"path":"fixture.txt"}"#);
+        assert_eq!(request.messages[2].role, ChatMessageRole::Tool);
+        assert_eq!(
+            request.messages[2].tool_call_id.as_deref(),
+            Some("call_read")
+        );
+        assert!(
+            request.messages[2]
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("ok: true") && content.contains("body"))
+        );
+        assert_eq!(request.tools.len(), registry.len());
+        assert_eq!(
+            request.tool_choice,
+            Some(ToolChoice::Mode(ToolChoiceMode::Auto))
+        );
     }
 
     #[test]
