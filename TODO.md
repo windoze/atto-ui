@@ -78,7 +78,9 @@
 - [x] **[DONE] M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
   - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` deterministic mock fixture，固定 snapshot workspace 到 app crate 根目录，并为 `agent-pty-read-file` / `agent-pty-run-command` 注入 DeepSeek-style tool call 事件；新增 app PTY 覆盖自动 `read_file` tool result、`run_command` allow once 后执行并渲染结果、deny 后写入失败 tool result；新增 app 层未注册工具单测，结合既有只读/副作用工具单测覆盖非法参数和 workspace 越界路径。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app unknown_tool_call_writes_failed_tool_result_without_execution`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。
+- [x] **[DONE] M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。
+  - 完成记录（2026-07-10）：复核 M3 工具抽象、内置只读/副作用工具、审批 UI 接入、tool result 回灌、turn budget/timeout 和 PTY 覆盖；确认只读工具做 workspace/symlink 边界校验，`apply_patch` 在执行前校验 patch 路径、文本性和 workspace 归属，`run_command` 使用 argv 并限制 cwd 在 workspace 内，副作用工具默认需要审批；tool call 聚合、未知工具、拒绝、allow once/allow project、tool result 写回、模型/tool call 限制和工具超时均有单测或 PTY 覆盖。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 阶段 M4 - Skill Registry
 
