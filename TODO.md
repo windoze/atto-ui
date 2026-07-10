@@ -72,7 +72,9 @@
 - [x] **[DONE] M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
   - 完成记录（2026-07-10）：agent app 新增后台工具执行回写路径，`AlwaysAllow` 或审批 allow 后的 tool call 会通过 action 在主线程将 `ToolUseBlock` 状态更新为 `Done`/`Error` 并 upsert 对应 `ToolResultBlock`；新增最小 transcript 到 DeepSeek request 的转换入口，assistant `ToolUseBlock` 转 OpenAI-compatible `tool_calls`，`ToolResultBlock` 转 role=`tool` 且携带 `tool_call_id` 的消息，并附带当前内置 tool schema 和 `tool_choice=auto`。补充单测覆盖实际 `read_file` 工具执行写 UI，以及下一次 DeepSeek request 中的 `role=tool` 回灌消息。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。
+- [x] **[DONE] M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。
+  - 完成记录（2026-07-10）：新增 turn budget tracker，默认限制每个 user turn 最多 8 次模型请求、16 次 tool call、单工具 30 秒超时；提交 turn 时登记首个模型请求，`ToolCallsReady` 按 assistant turn 扣减 tool call 预算并在超限时失败当前 turn，完成、失败、取消和清空会释放预算。工具执行现在带 timeout 上下文，app 层对任意工具等待超时后写入失败 `ToolResultBlock`，`run_command` 和 `apply_patch` 内部子进程也按 timeout 终止，避免长时间卡住。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
 - [ ] **M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。
 

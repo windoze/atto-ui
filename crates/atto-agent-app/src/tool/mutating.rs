@@ -2,9 +2,12 @@
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -16,6 +19,7 @@ use super::{
 };
 
 const COMMAND_OUTPUT_MAX_BYTES: usize = 256 * 1024;
+const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Registers the built-in tools that can mutate the workspace or run processes.
 pub fn register_mutating_tools(registry: &mut ToolRegistry) -> Result<()> {
@@ -65,7 +69,7 @@ impl ToolExecutor for ApplyPatchTool {
 
         let workspace_root = canonical_workspace_root(&ctx)?;
         let touched_paths = validate_patch_paths(&workspace_root, patch)?;
-        let check = git_apply(&workspace_root, patch, true)?;
+        let check = git_apply(&workspace_root, patch, true, ctx.timeout)?;
         if !check.status.success() {
             return Ok(ToolResult::failure(
                 format_process_output("git apply --check", &check),
@@ -74,7 +78,7 @@ impl ToolExecutor for ApplyPatchTool {
             .with_exit_code(exit_code(&check)));
         }
 
-        let applied = git_apply(&workspace_root, patch, false)?;
+        let applied = git_apply(&workspace_root, patch, false, ctx.timeout)?;
         if !applied.status.success() {
             return Ok(ToolResult::failure(
                 format_process_output("git apply", &applied),
@@ -134,11 +138,10 @@ impl ToolExecutor for RunCommandTool {
             );
         }
 
-        let output = match Command::new(&argv[0])
-            .args(&argv[1..])
-            .current_dir(&cwd)
-            .output()
-        {
+        let timed_output = match command_output_with_timeout(
+            Command::new(&argv[0]).args(&argv[1..]).current_dir(&cwd),
+            ctx.timeout,
+        ) {
             Ok(output) => output,
             Err(error) => {
                 return Ok(ToolResult::failure(
@@ -147,14 +150,27 @@ impl ToolExecutor for RunCommandTool {
                 ));
             }
         };
+        if timed_output.timed_out {
+            return Ok(ToolResult::failure(
+                format_command_timeout_output(
+                    &workspace_root,
+                    &cwd,
+                    &argv,
+                    ctx.timeout,
+                    &timed_output.output,
+                ),
+                ToolOutputKind::Ansi,
+            )
+            .with_exit_code(exit_code(&timed_output.output)));
+        }
 
-        let rendered = format_command_output(&workspace_root, &cwd, &argv, &output);
-        let result = if output.status.success() {
+        let rendered = format_command_output(&workspace_root, &cwd, &argv, &timed_output.output);
+        let result = if timed_output.output.status.success() {
             ToolResult::success(rendered, ToolOutputKind::Ansi)
         } else {
             ToolResult::failure(rendered, ToolOutputKind::Ansi)
         };
-        Ok(result.with_exit_code(exit_code(&output)))
+        Ok(result.with_exit_code(exit_code(&timed_output.output)))
     }
 }
 
@@ -327,7 +343,12 @@ fn ensure_utf8_text_file(path: &Path, display_path: &str, line_number: usize) ->
     Ok(())
 }
 
-fn git_apply(workspace_root: &Path, patch: &str, check_only: bool) -> Result<Output> {
+fn git_apply(
+    workspace_root: &Path,
+    patch: &str,
+    check_only: bool,
+    timeout: Duration,
+) -> Result<Output> {
     let mut command = Command::new("git");
     command.arg("apply");
     if check_only {
@@ -351,9 +372,115 @@ fn git_apply(workspace_root: &Path, patch: &str, check_only: bool) -> Result<Out
         Err(error) => return Err(error).context("failed to write patch to `git apply`"),
     }
     drop(stdin);
-    child
-        .wait_with_output()
-        .context("failed to wait for `git apply`")
+    let timed_output =
+        wait_child_with_output_timeout(child, timeout).context("failed to wait for `git apply`")?;
+    if timed_output.timed_out {
+        bail!(
+            "`git apply{}` timed out after {}",
+            if check_only { " --check" } else { "" },
+            format_timeout_duration(timeout)
+        );
+    }
+    Ok(timed_output.output)
+}
+
+struct TimedOutput {
+    output: Output,
+    timed_out: bool,
+}
+
+fn command_output_with_timeout(command: &mut Command, timeout: Duration) -> Result<TimedOutput> {
+    let child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    wait_child_with_output_timeout(child, timeout)
+}
+
+fn wait_child_with_output_timeout(mut child: Child, timeout: Duration) -> Result<TimedOutput> {
+    let stdout = child.stdout.take().map(read_pipe_to_end);
+    let stderr = child.stderr.take().map(read_pipe_to_end);
+    let start = Instant::now();
+    let mut timed_out = false;
+
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if start.elapsed() >= timeout {
+            timed_out = true;
+            if let Err(error) = child.kill()
+                && child.try_wait()?.is_none()
+            {
+                return Err(error).context("failed to kill timed-out process");
+            }
+            break;
+        }
+        let remaining = timeout.saturating_sub(start.elapsed());
+        thread::sleep(remaining.min(Duration::from_millis(10)));
+    }
+
+    let status = child.wait()?;
+    let stdout = recv_pipe_reader(stdout)?;
+    let stderr = recv_pipe_reader(stderr)?;
+    Ok(TimedOutput {
+        output: Output {
+            status,
+            stdout,
+            stderr,
+        },
+        timed_out,
+    })
+}
+
+fn read_pipe_to_end<R>(mut pipe: R) -> mpsc::Receiver<io::Result<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(read_limited_pipe(&mut pipe));
+    });
+    receiver
+}
+
+fn read_limited_pipe(pipe: &mut dyn Read) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut truncated = false;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = pipe.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = COMMAND_OUTPUT_MAX_BYTES.saturating_sub(bytes.len());
+        if remaining == 0 {
+            truncated = true;
+            continue;
+        }
+        let visible = remaining.min(read);
+        bytes.extend_from_slice(&buffer[..visible]);
+        if visible < read {
+            truncated = true;
+        }
+    }
+    if truncated {
+        bytes.extend_from_slice(b"\n[output truncated]");
+    }
+    Ok(bytes)
+}
+
+fn recv_pipe_reader(receiver: Option<mpsc::Receiver<io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
+    let Some(receiver) = receiver else {
+        return Ok(Vec::new());
+    };
+    match receiver.recv_timeout(PIPE_DRAIN_TIMEOUT) {
+        Ok(output) => output.context("failed to read process output"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Ok(b"[process output pipe did not close after timeout]".to_vec())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Ok(Vec::new()),
+    }
 }
 
 fn format_applied_patch_output(paths: &[String], patch: &str) -> String {
@@ -384,6 +511,20 @@ fn format_command_output(
     )
 }
 
+fn format_command_timeout_output(
+    workspace_root: &Path,
+    cwd: &Path,
+    argv: &[String],
+    timeout: Duration,
+    output: &Output,
+) -> String {
+    format!(
+        "command timed out after {} and was terminated.\n\n{}",
+        format_timeout_duration(timeout),
+        format_command_output(workspace_root, cwd, argv, output)
+    )
+}
+
 fn format_process_output(label: &str, output: &Output) -> String {
     format!(
         "{label} failed with exit code {}.\n\n[stdout]\n{}\n\n[stderr]\n{}",
@@ -409,6 +550,14 @@ fn limited_output(bytes: &[u8]) -> String {
         text.push_str("\n[output truncated]");
     }
     text
+}
+
+fn format_timeout_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 && duration.subsec_millis() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
 }
 
 fn exit_code(output: &Output) -> i32 {

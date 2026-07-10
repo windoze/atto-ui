@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
@@ -17,6 +18,9 @@ mod readonly;
 
 pub use mutating::{mutating_tool_registry, register_mutating_tools};
 pub use readonly::{readonly_tool_registry, register_readonly_tools};
+
+/// Default wall-clock limit for a single local tool execution.
+pub const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Registers every built-in local tool currently available to the agent.
 pub fn register_builtin_tools(registry: &mut ToolRegistry) -> Result<()> {
@@ -151,6 +155,7 @@ impl ToolPermissionPolicy {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolContext {
     pub workspace_root: PathBuf,
+    pub timeout: Duration,
 }
 
 impl ToolContext {
@@ -158,7 +163,18 @@ impl ToolContext {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             workspace_root: workspace_root.into(),
+            timeout: DEFAULT_TOOL_TIMEOUT,
         }
+    }
+
+    /// Overrides the default single-tool timeout for this execution.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = if timeout.is_zero() {
+            Duration::from_millis(1)
+        } else {
+            timeout
+        };
+        self
     }
 }
 

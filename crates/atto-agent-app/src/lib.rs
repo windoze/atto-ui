@@ -33,6 +33,7 @@ use serde_json::{Map, Number, Value};
 pub mod config;
 pub mod deepseek;
 pub mod deepseek_client;
+mod limits;
 mod stream_ui;
 pub mod tool;
 
@@ -42,6 +43,7 @@ use crate::deepseek::{
     ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCall, ChatToolCall, ChatToolKind,
     FinishReason, ToolChoice, ToolChoiceMode,
 };
+use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
 use crate::stream_ui::DeepSeekUiStream;
 use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
@@ -107,6 +109,7 @@ struct ToolExecutionRequest {
     tool_use: ToolUseBlock,
     config: AgentConfig,
     registry: ToolRegistry,
+    limits: AgentTurnLimits,
     action_sender: mpsc::Sender<AppAction>,
 }
 
@@ -114,6 +117,8 @@ struct ToolExecutionRequest {
 struct AgentTurnLauncher {
     model: String,
     action_sender: mpsc::Sender<AppAction>,
+    turn_budgets: TurnBudgetTracker,
+    limits: AgentTurnLimits,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +140,8 @@ struct AgentRuntime {
     mock_turns: MockTurnRegistry,
     tool_registry: ToolRegistry,
     tool_permissions: Arc<Mutex<ToolPermissionPolicy>>,
+    turn_budgets: TurnBudgetTracker,
+    limits: AgentTurnLimits,
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
@@ -148,6 +155,8 @@ struct ToolRuntime {
     action_sender: mpsc::Sender<AppAction>,
     registry: ToolRegistry,
     permissions: Arc<Mutex<ToolPermissionPolicy>>,
+    turn_budgets: TurnBudgetTracker,
+    limits: AgentTurnLimits,
 }
 
 impl AgentRuntime {
@@ -160,12 +169,16 @@ impl AgentRuntime {
         let plan_mode_state = Property::new(config.plan_mode.status());
         let tool_registry =
             crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
+        let limits = AgentTurnLimits::default();
+        let turn_budgets = TurnBudgetTracker::default();
         Self {
             config,
             action_sender,
             mock_turns,
             tool_registry,
             tool_permissions: Arc::new(Mutex::new(ToolPermissionPolicy::default())),
+            turn_budgets,
+            limits,
             message_store: ChatMessageStore::new(),
             input_handle: ChatInputHandle::new(),
             status_state: Property::new(STATUS_READY.to_string()),
@@ -180,6 +193,8 @@ impl AgentRuntime {
             action_sender: self.action_sender.clone(),
             registry: self.tool_registry.clone(),
             permissions: self.tool_permissions.clone(),
+            turn_budgets: self.turn_budgets.clone(),
+            limits: self.limits,
         }
     }
 }
@@ -275,6 +290,8 @@ impl AgentApp {
             AgentTurnLauncher {
                 model: runtime.config.model.clone(),
                 action_sender: runtime.action_sender.clone(),
+                turn_budgets: runtime.turn_budgets.clone(),
+                limits: runtime.limits,
             },
             runtime.status_state.clone(),
             runtime.plan_mode_state.clone(),
@@ -429,6 +446,7 @@ fn build_chat_panel(
     let input_handle_for_cancel = input_handle.clone();
     let status_for_cancel = status_state.clone();
     let mock_turns_for_cancel = mock_turns.clone();
+    let turn_budgets_for_cancel = turn_launcher.turn_budgets.clone();
     let store_for_approval = store.clone();
     let tool_runtime_for_approval = tool_runtime.clone();
     let list = ChatMessageList::new(store.clone())
@@ -441,6 +459,7 @@ fn build_chat_panel(
                 &input_handle_for_cancel,
                 &mock_turns_for_cancel,
                 &status_for_cancel,
+                &turn_budgets_for_cancel,
                 message_id,
             );
         });
@@ -449,12 +468,13 @@ fn build_chat_panel(
     let mock_turns_for_submit = mock_turns.clone();
     let status_for_submit = status_state.clone();
     let plan_mode_for_submit = plan_mode_state.clone();
-    let turn_launcher_for_submit = turn_launcher;
+    let turn_launcher_for_submit = turn_launcher.clone();
     let store_for_slash = store.clone();
     let input_handle_for_slash = input_handle.clone();
     let mock_turns_for_slash = mock_turns.clone();
     let status_for_slash = status_state.clone();
     let plan_mode_for_slash = plan_mode_state.clone();
+    let turn_budgets_for_slash = turn_launcher.turn_budgets.clone();
     input_handle.set_slash_commands(agent_slash_commands());
     let input = input_handle
         .panel()
@@ -476,6 +496,7 @@ fn build_chat_panel(
                 &mock_turns_for_slash,
                 &status_for_slash,
                 &plan_mode_for_slash,
+                &turn_budgets_for_slash,
                 &command.replacement,
             );
         });
@@ -502,6 +523,7 @@ fn submit_input_response(
         mock_turns,
         status_state,
         plan_mode_state,
+        &turn_launcher.turn_budgets,
         &text,
     ) {
         return;
@@ -516,6 +538,17 @@ fn submit_input_response(
     let text_block_id = assistant.blocks[0].id();
     store.push(assistant);
     let branch = store.branch_token();
+    turn_launcher
+        .turn_budgets
+        .start_turn(assistant_id, turn_launcher.limits);
+    if let Err(error) = turn_launcher
+        .turn_budgets
+        .consume_model_request(assistant_id, turn_launcher.limits)
+    {
+        store.fail_streaming_turn(assistant_id, error);
+        turn_launcher.turn_budgets.finish_turn(assistant_id);
+        return;
+    }
     let cancel = mock_turns.start(assistant_id);
 
     input_handle.streaming_binding().set(true);
@@ -570,6 +603,7 @@ fn submit_slash_command_text(
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     plan_mode_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
     text: &str,
 ) -> bool {
     let trimmed = text.trim();
@@ -585,11 +619,11 @@ fn submit_slash_command_text(
 
     match normalized.as_str() {
         "help" => append_system_message(store, help_text()),
-        "clear" => clear_session(store, input_handle, mock_turns, status_state),
+        "clear" => clear_session(store, input_handle, mock_turns, status_state, turn_budgets),
         "plan" => apply_plan_command(store, plan_mode_state, &args),
         "skills" => append_system_message(store, skills_text()),
         "tools" => append_system_message(store, tools_text()),
-        "abort" => apply_abort_command(store, input_handle, mock_turns, status_state),
+        "abort" => apply_abort_command(store, input_handle, mock_turns, status_state, turn_budgets),
         _ => append_system_message(
             store,
             format!("Unknown slash command `/{command}`. Type `/help` for available commands."),
@@ -608,6 +642,7 @@ fn clear_session(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
 ) {
     if let Some(message_id) = store
         .messages()
@@ -623,6 +658,7 @@ fn clear_session(
     input_handle.clear_queued_responses();
     input_handle.clear_references();
     status_state.set(STATUS_READY.to_string());
+    turn_budgets.clear();
 }
 
 fn apply_plan_command(store: &ChatMessageStore, plan_mode_state: &Property<String>, args: &[&str]) {
@@ -650,8 +686,9 @@ fn apply_abort_command(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
 ) {
-    if cancel_latest_streaming_turn(store, input_handle, mock_turns, status_state) {
+    if cancel_latest_streaming_turn(store, input_handle, mock_turns, status_state, turn_budgets) {
         append_system_message(store, "Aborted active turn.");
     } else {
         append_system_message(store, "No active turn to abort.");
@@ -663,6 +700,7 @@ fn cancel_latest_streaming_turn(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
 ) -> bool {
     let Some(message_id) = store
         .messages()
@@ -677,7 +715,13 @@ fn cancel_latest_streaming_turn(
     if !store.cancel_streaming_turn(message_id) {
         return false;
     }
-    finish_canceled_turn(input_handle, mock_turns, status_state, message_id);
+    finish_canceled_turn(
+        input_handle,
+        mock_turns,
+        status_state,
+        turn_budgets,
+        message_id,
+    );
     true
 }
 
@@ -685,9 +729,11 @@ fn finish_canceled_turn(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
     message_id: ChatMessageId,
 ) {
     let _ = mock_turns.cancel(message_id);
+    turn_budgets.finish_turn(message_id);
     input_handle.streaming_binding().set(false);
     status_state.set(STATUS_READY.to_string());
 }
@@ -858,6 +904,20 @@ fn apply_app_action(
             if !store.is_branch_current(branch) || tool_calls.is_empty() {
                 return false;
             }
+            if let Err(error) = tool_runtime.turn_budgets.consume_tool_calls(
+                message_id,
+                tool_calls.len(),
+                tool_runtime.limits,
+            ) {
+                let found = store.fail_streaming_turn(message_id, error);
+                if found {
+                    mock_turns.clear(message_id);
+                    input_handle.streaming_binding().set(false);
+                    status_state.set(STATUS_READY.to_string());
+                    tool_runtime.turn_budgets.finish_turn(message_id);
+                }
+                return found;
+            }
             for tool_call in tool_calls {
                 let PreparedToolCall { tool_use, result } =
                     prepare_tool_call(tool_call, &tool_runtime.registry, &tool_runtime.permissions);
@@ -881,6 +941,7 @@ fn apply_app_action(
                             tool_use,
                             config: tool_runtime.config.clone(),
                             registry: tool_runtime.registry.clone(),
+                            limits: tool_runtime.limits,
                             action_sender: tool_runtime.action_sender.clone(),
                         });
                     }
@@ -921,6 +982,7 @@ fn apply_app_action(
                     store.set_meta(message_id, meta);
                 }
                 mock_turns.clear(message_id);
+                tool_runtime.turn_budgets.finish_turn(message_id);
                 input_handle.streaming_binding().set(false);
                 status_state.set(STATUS_READY.to_string());
             }
@@ -937,6 +999,7 @@ fn apply_app_action(
             let found = store.fail_streaming_turn(message_id, error);
             if found {
                 mock_turns.clear(message_id);
+                tool_runtime.turn_budgets.finish_turn(message_id);
                 input_handle.streaming_binding().set(false);
                 status_state.set(STATUS_READY.to_string());
             }
@@ -1052,6 +1115,7 @@ fn handle_tool_approval(
                 tool_use,
                 config: tool_runtime.config.clone(),
                 registry: tool_runtime.registry.clone(),
+                limits: tool_runtime.limits,
                 action_sender: tool_runtime.action_sender.clone(),
             });
         }
@@ -1061,6 +1125,7 @@ fn handle_tool_approval(
                 tool_use,
                 config: tool_runtime.config.clone(),
                 registry: tool_runtime.registry.clone(),
+                limits: tool_runtime.limits,
                 action_sender: tool_runtime.action_sender.clone(),
             });
         }
@@ -1114,8 +1179,12 @@ fn spawn_tool_execution(request: ToolExecutionRequest) {
     thread::spawn(move || {
         let call_id = request.tool_use.call_id.clone();
         let tool_block_id = request.tool_use.id;
-        let result =
-            execute_tool_use_to_result_block(&request.registry, &request.config, &request.tool_use);
+        let result = execute_tool_use_to_result_block(
+            &request.registry,
+            &request.config,
+            &request.tool_use,
+            request.limits,
+        );
         let _ = request.action_sender.send(AppAction::ToolResultReady {
             branch: request.branch,
             tool_block_id,
@@ -1129,20 +1198,57 @@ fn execute_tool_use_to_result_block(
     registry: &ToolRegistry,
     config: &AgentConfig,
     tool_use: &ToolUseBlock,
+    limits: AgentTurnLimits,
 ) -> ToolResultBlock {
-    let result = tool_input_to_json(&tool_use.input).and_then(|args| {
-        registry.execute(
-            &tool_use.name,
-            ToolContext::new(config.workspace.clone()),
-            args,
-        )
-    });
+    let result = execute_tool_use_with_timeout(registry, config, tool_use, limits);
     match result {
         Ok(result) => tool_result_block(&tool_use.call_id, result),
         Err(error) => failed_tool_result(
             &tool_use.call_id,
             format!("Tool `{}` failed: {error:#}", tool_use.name),
         ),
+    }
+}
+
+fn execute_tool_use_with_timeout(
+    registry: &ToolRegistry,
+    config: &AgentConfig,
+    tool_use: &ToolUseBlock,
+    limits: AgentTurnLimits,
+) -> Result<ToolResult> {
+    let args = tool_input_to_json(&tool_use.input)?;
+    let tool_name = tool_use.name.clone();
+    let timeout = limits.tool_timeout;
+    let registry = registry.clone();
+    let ctx = ToolContext::new(config.workspace.clone()).with_timeout(timeout);
+    let (sender, receiver) = mpsc::channel();
+
+    let worker_tool_name = tool_name.clone();
+    thread::spawn(move || {
+        let result = registry.execute(&worker_tool_name, ctx, args);
+        let _ = sender.send(result);
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(ToolResult::failure(
+            format!(
+                "Tool `{tool_name}` timed out after {}.",
+                format_duration(timeout)
+            ),
+            ToolOutputKind::Markdown,
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
+            "tool `{tool_name}` execution ended without returning a result"
+        )),
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 && duration.subsec_millis() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
     }
 }
 
@@ -1514,13 +1620,16 @@ mod tests {
         parse_chat_completion_sse_data,
     };
     use crate::stream_ui::DeepSeekUiStream;
-    use crate::tool::{ToolPermissionPolicy, ToolRegistry};
+    use crate::tool::{
+        ToolContext, ToolExecutor, ToolOutputKind, ToolPermission, ToolPermissionPolicy,
+        ToolRegistry, ToolResult, ToolSpec,
+    };
 
     use super::{
-        APP_TITLE, AgentApp, AgentTurnLauncher, AppAction, MockTurnRegistry, STATUS_READY,
-        STATUS_STREAMING, ToolRuntime, apply_app_action, build_chat_panel,
-        deepseek_request_from_transcript, handle_tool_approval, submit_input_response,
-        submit_slash_command_text,
+        APP_TITLE, AgentApp, AgentTurnLauncher, AgentTurnLimits, AppAction, MockTurnRegistry,
+        STATUS_READY, STATUS_STREAMING, ToolRuntime, TurnBudgetTracker, apply_app_action,
+        build_chat_panel, deepseek_request_from_transcript, execute_tool_use_to_result_block,
+        handle_tool_approval, submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -1595,11 +1704,29 @@ mod tests {
         registry: ToolRegistry,
         permissions: Arc<Mutex<ToolPermissionPolicy>>,
     ) -> ToolRuntime {
+        test_tool_runtime_with_limits(
+            config,
+            action_sender,
+            registry,
+            permissions,
+            AgentTurnLimits::default(),
+        )
+    }
+
+    fn test_tool_runtime_with_limits(
+        config: AgentConfig,
+        action_sender: std::sync::mpsc::Sender<AppAction>,
+        registry: ToolRegistry,
+        permissions: Arc<Mutex<ToolPermissionPolicy>>,
+        limits: AgentTurnLimits,
+    ) -> ToolRuntime {
         ToolRuntime {
             config,
             action_sender,
             registry,
             permissions,
+            turn_budgets: TurnBudgetTracker::default(),
+            limits,
         }
     }
 
@@ -1649,6 +1776,52 @@ mod tests {
                 "path".to_string(),
                 ComponentValue::String(path.to_string()),
             )]))),
+            status: ToolStatus::Pending,
+            approval: None,
+            collapsed: false,
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct SlowTool {
+        delay: std::time::Duration,
+    }
+
+    impl ToolExecutor for SlowTool {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec::new(
+                "slow_tool",
+                "Sleep long enough to exercise app-level tool timeout handling.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+                ToolPermission::AlwaysAllow,
+                ToolOutputKind::Markdown,
+            )
+            .expect("slow test tool spec should be valid")
+        }
+
+        fn execute(
+            &self,
+            _ctx: ToolContext,
+            _args: serde_json::Value,
+        ) -> anyhow::Result<ToolResult> {
+            std::thread::sleep(self.delay);
+            Ok(ToolResult::success(
+                "slow tool finished",
+                ToolOutputKind::Markdown,
+            ))
+        }
+    }
+
+    fn slow_tool_call(call_id: &str) -> ToolUseBlock {
+        ToolUseBlock {
+            id: atto_ui_chat::ChatBlockId::new(0),
+            call_id: call_id.to_string(),
+            name: "slow_tool".to_string(),
+            input: ToolInput::Json(ComponentValue::Map(BTreeMap::new())),
             status: ToolStatus::Pending,
             approval: None,
             collapsed: false,
@@ -1828,6 +2001,7 @@ mod tests {
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let turn_budgets = TurnBudgetTracker::default();
 
         assert!(submit_slash_command_text(
             &store,
@@ -1835,6 +2009,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/help",
         ));
 
@@ -1854,6 +2029,7 @@ mod tests {
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::On.status());
+        let turn_budgets = TurnBudgetTracker::default();
         input_handle.streaming_binding().set(true);
         store.push(ChatMessage::text(
             store.next_message_id(),
@@ -1873,6 +2049,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/clear",
         ));
 
@@ -1890,6 +2067,7 @@ mod tests {
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let turn_budgets = TurnBudgetTracker::default();
 
         assert!(submit_slash_command_text(
             &store,
@@ -1897,6 +2075,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/plan on",
         ));
         assert_eq!(plan_mode_state.get(), PlanMode::On.status());
@@ -1907,6 +2086,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/plan auto",
         ));
         assert_eq!(plan_mode_state.get(), PlanMode::Auto.status());
@@ -1917,6 +2097,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/plan",
         ));
         assert_eq!(plan_mode_state.get(), PlanMode::Off.status());
@@ -1934,6 +2115,7 @@ mod tests {
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let turn_budgets = TurnBudgetTracker::default();
 
         assert!(submit_slash_command_text(
             &store,
@@ -1941,6 +2123,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/skills",
         ));
         assert!(submit_slash_command_text(
@@ -1949,6 +2132,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/tools",
         ));
 
@@ -1969,6 +2153,7 @@ mod tests {
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
         let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let turn_budgets = TurnBudgetTracker::default();
         input_handle.streaming_binding().set(true);
         let assistant_id = store.next_message_id();
         let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
@@ -1984,6 +2169,7 @@ mod tests {
             &mock_turns,
             &status_state,
             &plan_mode_state,
+            &turn_budgets,
             "/abort",
         ));
 
@@ -2030,6 +2216,8 @@ mod tests {
             AgentTurnLauncher {
                 model: "deepseek-chat".to_string(),
                 action_sender: sender.clone(),
+                turn_budgets: TurnBudgetTracker::default(),
+                limits: AgentTurnLimits::default(),
             },
             status_state.clone(),
             plan_mode_state,
@@ -2078,6 +2266,8 @@ mod tests {
         let turn_launcher = AgentTurnLauncher {
             model: "deepseek-chat".to_string(),
             action_sender: sender,
+            turn_budgets: TurnBudgetTracker::default(),
+            limits: AgentTurnLimits::default(),
         };
 
         submit_input_response(
@@ -2158,6 +2348,107 @@ mod tests {
         assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn turn_budget_limits_model_requests() {
+        let budgets = TurnBudgetTracker::default();
+        let limits = AgentTurnLimits::new(2, 16, std::time::Duration::from_secs(30));
+        let message_id = atto_ui_chat::ChatMessageId::new(42);
+        budgets.start_turn(message_id, limits);
+
+        assert!(budgets.consume_model_request(message_id, limits).is_ok());
+        assert!(budgets.consume_model_request(message_id, limits).is_ok());
+        let error = budgets
+            .consume_model_request(message_id, limits)
+            .expect_err("third model request should exceed the per-turn limit");
+
+        assert_eq!(error.kind, ChatErrorKind::Other);
+        assert!(error.message.contains("model request limit"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("per-turn limit is 2"))
+        );
+    }
+
+    #[test]
+    fn tool_call_budget_fails_turn_before_appending_over_limit() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let limits = AgentTurnLimits::new(8, 1, std::time::Duration::from_secs(30));
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime_with_limits(
+            AgentConfig::defaults("."),
+            sender,
+            test_tool_registry(),
+            test_tool_permissions(),
+            limits,
+        );
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &tool_runtime,
+            AppAction::ToolCallsReady {
+                branch,
+                message_id: assistant_id,
+                tool_calls: vec![
+                    read_file_tool_call("call_1", "a.txt"),
+                    read_file_tool_call("call_2", "b.txt"),
+                ],
+            },
+        ));
+
+        let messages = store.messages();
+        let ChatTurnStatus::Failed(error) = &messages[0].status else {
+            panic!("expected failed turn, got {:?}", messages[0].status);
+        };
+        assert_eq!(error.kind, ChatErrorKind::Tool);
+        assert!(error.message.contains("tool call limit"));
+        assert_eq!(messages[0].blocks.len(), 1);
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert!(!mock_turns.cancel(assistant_id));
+    }
+
+    #[test]
+    fn tool_execution_timeout_writes_failed_result() {
+        let mut registry = ToolRegistry::new();
+        registry
+            .register(SlowTool {
+                delay: std::time::Duration::from_millis(80),
+            })
+            .expect("register slow tool");
+        let limits = AgentTurnLimits::new(8, 16, std::time::Duration::from_millis(10));
+
+        let result = execute_tool_use_to_result_block(
+            &registry,
+            &AgentConfig::defaults("."),
+            &slow_tool_call("call_slow"),
+            limits,
+        );
+
+        assert!(!result.ok);
+        assert_eq!(result.call_id, "call_slow");
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert!(output.contains("Tool `slow_tool` timed out after 10ms"));
+            }
+            other => panic!("expected markdown timeout result, got {other:?}"),
+        }
     }
 
     #[test]
