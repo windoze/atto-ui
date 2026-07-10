@@ -37,11 +37,48 @@ impl DeepSeekClient {
     }
 
     /// Posts a streaming chat completion request and collects parsed SSE events.
+    ///
+    /// This compatibility API is implemented on top of the incremental event
+    /// callback so callers that need UI responsiveness can avoid waiting for a
+    /// full `[DONE]`-terminated stream.
     pub async fn stream_chat_completions(
         &self,
         config: &AgentConfig,
         messages: Vec<ChatCompletionMessage>,
     ) -> DeepSeekClientResult<Vec<ChatCompletionSseEvent>> {
+        let mut events = Vec::new();
+        self.stream_chat_completion_events(config, messages, |event| {
+            events.push(event);
+            Ok(())
+        })
+        .await?;
+        Ok(events)
+    }
+
+    /// Posts a streaming chat completion request and emits each parsed SSE event
+    /// as soon as it arrives.
+    ///
+    /// The callback is invoked in stream order for every completed
+    /// `ChatCompletionSseEvent`. Receiving `[DONE]` completes the request without
+    /// waiting for the server to close the TCP connection.
+    pub async fn stream_chat_completion_events<F>(
+        &self,
+        config: &AgentConfig,
+        messages: Vec<ChatCompletionMessage>,
+        on_event: F,
+    ) -> DeepSeekClientResult<()>
+    where
+        F: FnMut(ChatCompletionSseEvent) -> DeepSeekClientResult<()>,
+    {
+        let response = self.send_chat_completion_request(config, messages).await?;
+        stream_sse_events(response, on_event).await
+    }
+
+    async fn send_chat_completion_request(
+        &self,
+        config: &AgentConfig,
+        messages: Vec<ChatCompletionMessage>,
+    ) -> DeepSeekClientResult<reqwest::Response> {
         let api_key = config.deepseek_api_key().map_err(|error| {
             ChatError::new(ChatErrorKind::Api, "DeepSeek API key is required.")
                 .with_detail(error.to_string())
@@ -69,7 +106,7 @@ impl DeepSeekClient {
             return Err(chat_error_from_http_status(status.as_u16(), &body));
         }
 
-        collect_sse_events(response).await
+        Ok(response)
     }
 }
 
@@ -79,11 +116,14 @@ impl Default for DeepSeekClient {
     }
 }
 
-async fn collect_sse_events(
+async fn stream_sse_events<F>(
     response: reqwest::Response,
-) -> DeepSeekClientResult<Vec<ChatCompletionSseEvent>> {
+    mut on_event: F,
+) -> DeepSeekClientResult<()>
+where
+    F: FnMut(ChatCompletionSseEvent) -> DeepSeekClientResult<()>,
+{
     let mut parser = ChatCompletionSseParser::new();
-    let mut events = Vec::new();
     let mut pending_bytes = Vec::new();
     let mut saw_done = false;
     let mut stream = response.bytes_stream();
@@ -92,7 +132,10 @@ async fn collect_sse_events(
         let chunk = chunk.map_err(|error| chat_error_from_network_failure(error.to_string()))?;
         pending_bytes.extend_from_slice(&chunk);
         while let Some(text) = drain_valid_utf8(&mut pending_bytes)? {
-            push_parser_text(&mut parser, &mut events, &mut saw_done, &text)?;
+            push_parser_text(&mut parser, &mut saw_done, &text, &mut on_event)?;
+            if saw_done {
+                return Ok(());
+            }
         }
     }
 
@@ -105,13 +148,10 @@ async fn collect_sse_events(
     let remaining = parser
         .finish()
         .map_err(|error| chat_error_from_json_error(error, ""))?;
-    for event in remaining {
-        saw_done |= matches!(event, ChatCompletionSseEvent::Done);
-        events.push(event);
-    }
+    emit_events(remaining, &mut saw_done, &mut on_event)?;
 
     if saw_done {
-        Ok(events)
+        Ok(())
     } else {
         Err(chat_error_from_stream_disconnect())
     }
@@ -146,16 +186,28 @@ fn drain_valid_utf8(pending_bytes: &mut Vec<u8>) -> DeepSeekClientResult<Option<
 
 fn push_parser_text(
     parser: &mut ChatCompletionSseParser,
-    events: &mut Vec<ChatCompletionSseEvent>,
     saw_done: &mut bool,
     text: &str,
+    on_event: &mut impl FnMut(ChatCompletionSseEvent) -> DeepSeekClientResult<()>,
 ) -> DeepSeekClientResult<()> {
     let parsed = parser
         .push_str(text)
         .map_err(|error| chat_error_from_json_error(error, text))?;
-    for event in parsed {
-        *saw_done |= matches!(event, ChatCompletionSseEvent::Done);
-        events.push(event);
+    emit_events(parsed, saw_done, on_event)
+}
+
+fn emit_events(
+    events: Vec<ChatCompletionSseEvent>,
+    saw_done: &mut bool,
+    on_event: &mut impl FnMut(ChatCompletionSseEvent) -> DeepSeekClientResult<()>,
+) -> DeepSeekClientResult<()> {
+    for event in events {
+        let is_done = matches!(event, ChatCompletionSseEvent::Done);
+        on_event(event)?;
+        *saw_done |= is_done;
+        if is_done {
+            break;
+        }
     }
     Ok(())
 }
@@ -216,6 +268,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emits_events_incrementally_before_done_arrives() {
+        let server = MockSseServer::spawn_streaming_chunks(vec![
+            (
+                "data: {\"model\":\"mock-deepseek\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n",
+                Duration::from_millis(350),
+            ),
+            (
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                Duration::from_millis(0),
+            ),
+            ("data: [DONE]\n\n", Duration::from_millis(0)),
+        ]);
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.base_url = server.base_url();
+        config.model = "deepseek-chat".to_string();
+
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
+        let stream_task = tokio::spawn(async move {
+            DeepSeekClient::new()
+                .stream_chat_completion_events(
+                    &config,
+                    vec![ChatCompletionMessage::user("hi")],
+                    move |event| {
+                        events_tx
+                            .send(event)
+                            .expect("test receiver should stay open");
+                        Ok(())
+                    },
+                )
+                .await
+        });
+
+        let first = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("first event should arrive before the full stream completes")
+            .expect("event stream should remain open");
+        let ChatCompletionSseEvent::Chunk(first_chunk) = first else {
+            panic!("expected first incremental event to be a chunk");
+        };
+        assert_eq!(
+            first_chunk.choices[0].delta.content.as_deref(),
+            Some("hello")
+        );
+
+        let early_second = tokio::time::timeout(Duration::from_millis(100), events_rx.recv()).await;
+        assert!(
+            early_second.is_err(),
+            "first callback should be observable before later SSE events arrive"
+        );
+
+        let second = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("second event should arrive after the server delay")
+            .expect("event stream should remain open");
+        let ChatCompletionSseEvent::Chunk(second_chunk) = second else {
+            panic!("expected second incremental event to be a chunk");
+        };
+        assert_eq!(
+            second_chunk.choices[0].finish_reason,
+            Some(FinishReason::Stop)
+        );
+
+        let done = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
+            .await
+            .expect("done event should arrive")
+            .expect("event stream should remain open until done");
+        assert_eq!(done, ChatCompletionSseEvent::Done);
+
+        stream_task
+            .await
+            .expect("stream task should not panic")
+            .unwrap_or_else(|error| panic!("incremental mock stream failed: {error:?}"));
+        let request = server.join();
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+    }
+
+    #[tokio::test]
     async fn maps_mock_http_status_to_chat_error() {
         let server = MockSseServer::spawn_response(
             401,
@@ -262,6 +392,27 @@ mod tests {
                     .expect("set mock server read timeout");
                 let request = read_http_request(&mut stream);
                 write_http_response(&mut stream, status, content_type, body);
+                request
+            });
+            Self {
+                address: format!("http://{address}/v1"),
+                handle,
+            }
+        }
+
+        fn spawn_streaming_chunks(chunks: Vec<(&'static str, Duration)>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock SSE server");
+            let address = listener.local_addr().expect("mock SSE server address");
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept mock DeepSeek request");
+                stream
+                    .set_nodelay(true)
+                    .expect("disable Nagle for mock streaming response");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("set mock server read timeout");
+                let request = read_http_request(&mut stream);
+                write_streaming_http_response(&mut stream, "text/event-stream", chunks);
                 request
             });
             Self {
@@ -323,5 +474,29 @@ mod tests {
         stream
             .write_all(response.as_bytes())
             .expect("write mock HTTP response");
+    }
+
+    fn write_streaming_http_response(
+        stream: &mut TcpStream,
+        content_type: &str,
+        chunks: Vec<(&'static str, Duration)>,
+    ) {
+        let response_head =
+            format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n");
+        stream
+            .write_all(response_head.as_bytes())
+            .expect("write mock streaming HTTP response head");
+        stream
+            .flush()
+            .expect("flush mock streaming HTTP response head");
+        for (chunk, delay_after) in chunks {
+            stream
+                .write_all(chunk.as_bytes())
+                .expect("write mock SSE chunk");
+            stream.flush().expect("flush mock SSE chunk");
+            if !delay_after.is_zero() {
+                thread::sleep(delay_after);
+            }
+        }
     }
 }

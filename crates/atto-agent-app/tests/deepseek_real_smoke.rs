@@ -17,37 +17,37 @@ async fn deepseek_real_streaming_smoke() {
     config.temperature = 0.0;
     config.max_tokens = 64;
 
-    let events = DeepSeekClient::new()
-        .stream_chat_completions(
+    let mut saw_done = false;
+    let mut streamed_text = String::new();
+    DeepSeekClient::new()
+        .stream_chat_completion_events(
             &config,
             vec![
                 ChatCompletionMessage::system("Reply briefly for a smoke test."),
                 ChatCompletionMessage::user("Say: atto smoke ok"),
             ],
+            |event| {
+                match event {
+                    ChatCompletionSseEvent::Chunk(chunk) => {
+                        for choice in chunk.choices {
+                            if let Some(reasoning) = choice.delta.reasoning_content {
+                                streamed_text.push_str(&reasoning);
+                            }
+                            if let Some(content) = choice.delta.content {
+                                streamed_text.push_str(&content);
+                            }
+                        }
+                    }
+                    ChatCompletionSseEvent::Done => saw_done = true,
+                    ChatCompletionSseEvent::Error(error) => {
+                        panic!("DeepSeek returned an SSE error event: {error:?}");
+                    }
+                }
+                Ok(())
+            },
         )
         .await
         .unwrap_or_else(|error| panic!("real DeepSeek streaming smoke failed: {error:?}"));
-
-    let mut saw_done = false;
-    let mut streamed_text = String::new();
-    for event in events {
-        match event {
-            ChatCompletionSseEvent::Chunk(chunk) => {
-                for choice in chunk.choices {
-                    if let Some(reasoning) = choice.delta.reasoning_content {
-                        streamed_text.push_str(&reasoning);
-                    }
-                    if let Some(content) = choice.delta.content {
-                        streamed_text.push_str(&content);
-                    }
-                }
-            }
-            ChatCompletionSseEvent::Done => saw_done = true,
-            ChatCompletionSseEvent::Error(error) => {
-                panic!("DeepSeek returned an SSE error event: {error:?}");
-            }
-        }
-    }
 
     assert!(saw_done, "real stream must end with [DONE]");
     assert!(
