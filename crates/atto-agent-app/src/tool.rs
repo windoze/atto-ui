@@ -1,8 +1,7 @@
 //! Local tool abstractions for the agent runtime.
 //!
 //! This module defines the registry, permission policy, and OpenAI-compatible
-//! tool schema conversion used by later M3 tasks. It intentionally does not
-//! implement built-in tools or the execution loop yet.
+//! tool schema conversion. Built-in tool executors live in focused submodules.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -12,6 +11,10 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::deepseek::ChatTool;
+
+mod readonly;
+
+pub use readonly::{readonly_tool_registry, register_readonly_tools};
 
 /// Public metadata and policy for one local tool.
 #[derive(Clone, Debug, PartialEq)]

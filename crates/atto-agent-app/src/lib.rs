@@ -652,8 +652,38 @@ fn skills_text() -> &'static str {
     "Skills: none registered yet. Skill registry integration is scheduled for M4."
 }
 
-fn tools_text() -> &'static str {
-    "Tools: none registered yet. Tool registry abstractions are available; built-in tools and approvals are scheduled for M3.3-M3.5."
+fn tools_text() -> String {
+    let registry = crate::tool::readonly_tool_registry()
+        .expect("built-in read-only tool registry must be valid");
+    let mut text = format!("Tools: {} registered.\n", registry.len());
+    for spec in registry.specs() {
+        text.push_str(&format!(
+            "- {}: {} (permission: {}, output: {})\n",
+            spec.name,
+            spec.description,
+            tool_permission_label(spec.permission),
+            tool_output_label(spec.output)
+        ));
+    }
+    text.push_str("Mutating tools and approvals are scheduled for M3.4-M3.5.");
+    text
+}
+
+fn tool_permission_label(permission: crate::tool::ToolPermission) -> &'static str {
+    match permission {
+        crate::tool::ToolPermission::AlwaysAllow => "allow",
+        crate::tool::ToolPermission::ApproveOnce => "approve once",
+        crate::tool::ToolPermission::ApproveForProject => "approve for project",
+        crate::tool::ToolPermission::NeverAllow => "deny",
+    }
+}
+
+fn tool_output_label(output: crate::tool::ToolOutputKind) -> &'static str {
+    match output {
+        crate::tool::ToolOutputKind::Ansi => "ansi",
+        crate::tool::ToolOutputKind::Markdown => "markdown",
+        crate::tool::ToolOutputKind::Diff => "diff",
+    }
 }
 
 fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
@@ -1190,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn skills_and_tools_slash_commands_report_empty_m1_registries() {
+    fn skills_and_tools_slash_commands_report_current_registries() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
@@ -1216,7 +1246,10 @@ mod tests {
 
         let messages = store.messages();
         assert!(message_text(&messages[0]).contains("Skills: none registered"));
-        assert!(message_text(&messages[1]).contains("Tools: none registered"));
+        assert!(message_text(&messages[1]).contains("Tools: 3 registered"));
+        assert!(message_text(&messages[1]).contains("read_file"));
+        assert!(message_text(&messages[1]).contains("list_files"));
+        assert!(message_text(&messages[1]).contains("search_text"));
     }
 
     #[test]

@@ -60,7 +60,9 @@
 - [x] **[DONE] M3.2 Tool call 聚合** - 按 SSE `tool_calls[].index` 聚合 name/arguments，finish_reason 为 `tool_calls` 时进入工具执行阶段。
   - 完成记录（2026-07-10）：DeepSeek UI stream mapper 现在按 `(choice.index, tool_calls[].index)` 确定性聚合 tool call delta，拼接 streamed function name 和 arguments；`finish_reason = tool_calls` 时解析 arguments JSON，生成 `ToolUseBlock { status: Pending }` 并通过主线程 action 插入当前 assistant turn，同时在 `[DONE]` 后以 `StopReason::ToolUse` 完成该 turn。非法或不完整 tool call 会映射为 `ChatErrorKind::Tool`，避免以无效参数进入后续工具阶段。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.3 只读工具** - 实现 `read_file`、`list_files`、`search_text`，路径必须限制在 workspace 内。
+- [x] **[DONE] M3.3 只读工具** - 实现 `read_file`、`list_files`、`search_text`，路径必须限制在 workspace 内。
+  - 完成记录（2026-07-10）：新增 app crate 内置只读工具注册入口，`read_file` 支持 workspace 内 UTF-8 文件读取并限制 256 KiB，`list_files` 使用受控 workspace 遍历和 glob 匹配返回相对路径，`search_text` 使用 Rust 实现搜索 UTF-8 文件并返回匹配行摘要；所有工具参数均做 JSON 类型/未知字段校验，输入路径和 symlink 解析后必须仍位于 workspace 内；`/tools` 现在展示 3 个已注册只读工具。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.4 副作用工具** - 实现 `apply_patch`、`run_command`，默认需要审批；命令使用 argv，不做 shell 字符串拼接。
 - [ ] **M3.5 Approval UI** - 渲染 `ToolUseBlock.approval`，处理 allow once / allow project / deny，deny 时写入失败 tool result。
 - [ ] **M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
