@@ -32,6 +32,7 @@ use atto_ui_chat::{
     MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, TextBlock,
     ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
+use futures_util::future::{AbortHandle, AbortRegistration, Abortable};
 use ratatui::layout::Rect;
 use serde_json::Value;
 
@@ -257,6 +258,7 @@ struct MockTurnRegistry {
 struct ActiveMockTurn {
     message_id: ChatMessageId,
     cancel: CancellationToken,
+    abort_handle: Option<AbortHandle>,
 }
 
 #[derive(Clone)]
@@ -440,32 +442,44 @@ impl MockTurnRegistry {
     }
 
     fn start(&self, message_id: ChatMessageId) -> CancellationToken {
+        self.start_with_abort_handle(message_id, None)
+    }
+
+    fn start_with_abort_handle(
+        &self,
+        message_id: ChatMessageId,
+        abort_handle: Option<AbortHandle>,
+    ) -> CancellationToken {
         let cancel = CancellationToken::new();
         *self.current.lock().expect("active turn lock poisoned") = Some(ActiveMockTurn {
             message_id,
             cancel: cancel.clone(),
+            abort_handle,
         });
         cancel
     }
 
     fn cancel(&self, message_id: ChatMessageId) -> bool {
         let mut current = self.current.lock().expect("active turn lock poisoned");
-        let Some(turn) = current
+        if !current
             .as_ref()
-            .filter(|turn| turn.message_id == message_id)
-        else {
+            .is_some_and(|turn| turn.message_id == message_id)
+        {
+            return false;
+        }
+        let Some(turn) = current.take() else {
             return false;
         };
-        turn.cancel.cancel();
-        *current = None;
+        Self::cancel_active_turn(turn);
         true
     }
 
     fn cancel_current(&self) -> Option<ChatMessageId> {
         let mut current = self.current.lock().expect("active turn lock poisoned");
         let turn = current.take()?;
-        turn.cancel.cancel();
-        Some(turn.message_id)
+        let message_id = turn.message_id;
+        Self::cancel_active_turn(turn);
+        Some(message_id)
     }
 
     fn clear(&self, message_id: ChatMessageId) {
@@ -475,6 +489,13 @@ impl MockTurnRegistry {
             .is_some_and(|turn| turn.message_id == message_id)
         {
             *current = None;
+        }
+    }
+
+    fn cancel_active_turn(turn: ActiveMockTurn) {
+        turn.cancel.cancel();
+        if let Some(abort_handle) = turn.abort_handle {
+            abort_handle.abort();
         }
     }
 }
@@ -1047,45 +1068,51 @@ fn start_agent_turn_for_request(
         turn_launcher.turn_budgets.finish_turn(assistant_id);
         return None;
     }
-    let cancel = mock_turns.start(assistant_id);
-
     input_handle.streaming_binding().set(true);
     status_state.set(STATUS_STREAMING.to_string());
     match turn_launcher.config.provider {
-        AgentProvider::Mock => spawn_mock_agent_turn(
-            turn_launcher.action_sender.clone(),
-            MockAgentTurnRequest {
-                branch,
-                message_id: assistant_id,
-                block_id: text_block_id,
-                cancel,
-                token_delay: mock_turns.token_delay(),
-                model: turn_launcher.config.model.clone(),
-                prompt,
-                plan_decision,
-                mutating_tools_allowed,
-            },
-        ),
-        AgentProvider::DeepSeek => spawn_deepseek_agent_turn(
-            turn_launcher.action_sender.clone(),
-            DeepSeekAgentTurnRequest {
-                branch,
-                message_id: assistant_id,
-                block_id: text_block_id,
-                cancel,
-                config: turn_launcher.config.clone(),
-                request: deepseek_live_request_for_turn(
-                    &turn_launcher.config,
-                    &turn_launcher.tool_registry,
-                    &skill_registry,
-                    &loaded_skills,
-                    &store.messages(),
-                    &plan_decision,
-                ),
-                plan_decision,
-                mutating_tools_allowed,
-            },
-        ),
+        AgentProvider::Mock => {
+            let cancel = mock_turns.start(assistant_id);
+            spawn_mock_agent_turn(
+                turn_launcher.action_sender.clone(),
+                MockAgentTurnRequest {
+                    branch,
+                    message_id: assistant_id,
+                    block_id: text_block_id,
+                    cancel,
+                    token_delay: mock_turns.token_delay(),
+                    model: turn_launcher.config.model.clone(),
+                    prompt,
+                    plan_decision,
+                    mutating_tools_allowed,
+                },
+            );
+        }
+        AgentProvider::DeepSeek => {
+            let (abort_handle, abort_registration) = AbortHandle::new_pair();
+            let cancel = mock_turns.start_with_abort_handle(assistant_id, Some(abort_handle));
+            spawn_deepseek_agent_turn(
+                turn_launcher.action_sender.clone(),
+                DeepSeekAgentTurnRequest {
+                    branch,
+                    message_id: assistant_id,
+                    block_id: text_block_id,
+                    cancel,
+                    config: turn_launcher.config.clone(),
+                    request: deepseek_live_request_for_turn(
+                        &turn_launcher.config,
+                        &turn_launcher.tool_registry,
+                        &skill_registry,
+                        &loaded_skills,
+                        &store.messages(),
+                        &plan_decision,
+                    ),
+                    plan_decision,
+                    mutating_tools_allowed,
+                },
+                abort_registration,
+            );
+        }
     }
     Some(assistant_id)
 }
@@ -1494,6 +1521,7 @@ fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAg
 fn spawn_deepseek_agent_turn(
     action_sender: mpsc::Sender<AppAction>,
     request: DeepSeekAgentTurnRequest,
+    abort_registration: AbortRegistration,
 ) {
     thread::spawn(move || {
         let runtime = match atto_ui_async::build_current_thread_runtime() {
@@ -1507,13 +1535,18 @@ fn spawn_deepseek_agent_turn(
                 return;
             }
         };
-        runtime.block_on(run_deepseek_agent_turn(action_sender, request));
+        runtime.block_on(run_deepseek_agent_turn(
+            action_sender,
+            request,
+            abort_registration,
+        ));
     });
 }
 
 async fn run_deepseek_agent_turn(
     action_sender: mpsc::Sender<AppAction>,
     request: DeepSeekAgentTurnRequest,
+    abort_registration: AbortRegistration,
 ) {
     if request.cancel.is_cancelled() {
         return;
@@ -1529,20 +1562,27 @@ async fn run_deepseek_agent_turn(
         !request.plan_decision.requires_plan(),
     );
     let cancel = request.cancel.clone();
-    let result = DeepSeekClient::new()
-        .stream_prepared_chat_completion_events(&request.config, request.request, |event| {
-            if cancel.is_cancelled() {
-                return Err(deepseek_turn_cancelled_error());
-            }
-            if !send_stream_actions(&action_sender, stream.map_event(event)) {
-                return Err(ui_action_channel_closed_error());
-            }
-            if cancel.is_cancelled() {
-                return Err(deepseek_turn_cancelled_error());
-            }
-            Ok(())
-        })
-        .await;
+    let result = Abortable::new(
+        DeepSeekClient::new().stream_prepared_chat_completion_events(
+            &request.config,
+            request.request,
+            |event| {
+                if cancel.is_cancelled() {
+                    return Err(deepseek_turn_cancelled_error());
+                }
+                if !send_stream_actions(&action_sender, stream.map_event(event)) {
+                    return Err(ui_action_channel_closed_error());
+                }
+                if cancel.is_cancelled() {
+                    return Err(deepseek_turn_cancelled_error());
+                }
+                Ok(())
+            },
+        ),
+        abort_registration,
+    )
+    .await
+    .unwrap_or_else(|_| Err(deepseek_turn_cancelled_error()));
 
     if let Err(error) = result
         && !request.cancel.is_cancelled()
@@ -1977,7 +2017,10 @@ fn maybe_continue_deepseek_tool_loop(
         return false;
     };
     let branch = store.branch_token();
-    let cancel = tool_runtime.mock_turns.start(message_id);
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let cancel = tool_runtime
+        .mock_turns
+        .start_with_abort_handle(message_id, Some(abort_handle));
     tool_runtime.input_handle.streaming_binding().set(true);
     tool_runtime.status_state.set(STATUS_STREAMING.to_string());
     spawn_deepseek_agent_turn(
@@ -1992,6 +2035,7 @@ fn maybe_continue_deepseek_tool_loop(
             plan_decision: PlanTurnDecision::Direct,
             mutating_tools_allowed,
         },
+        abort_registration,
     );
     true
 }
@@ -2690,7 +2734,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
     use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -3234,11 +3278,16 @@ Use this skill for {name} tasks.
         handle: thread::JoinHandle<Vec<String>>,
     }
 
+    struct TestAbortableSseServer {
+        address: String,
+        first_event_sent: mpsc::Receiver<()>,
+        handle: thread::JoinHandle<(String, bool)>,
+    }
+
     impl TestSseServer {
         fn spawn(body: impl Into<String>) -> Self {
             Self::spawn_response(200, "OK", "text/event-stream", body)
         }
-
         fn spawn_response(
             status: u16,
             reason: &'static str,
@@ -3280,6 +3329,61 @@ Use this skill for {name} tasks.
         }
 
         fn join(self) -> String {
+            self.handle.join().expect("mock SSE server should join")
+        }
+    }
+
+    impl TestAbortableSseServer {
+        fn spawn(first_event: impl Into<String>) -> Self {
+            let first_event = first_event.into();
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock SSE server");
+            listener
+                .set_nonblocking(true)
+                .expect("configure mock SSE listener");
+            let address = listener
+                .local_addr()
+                .expect("mock SSE server address")
+                .to_string();
+            let (sent_tx, first_event_sent) = mpsc::channel();
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(5));
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("configure mock SSE read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("configure mock SSE write timeout");
+                let request = read_http_request(&mut stream);
+                let response_headers = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+                stream
+                    .write_all(response_headers.as_bytes())
+                    .expect("write mock SSE response headers");
+                stream
+                    .write_all(first_event.as_bytes())
+                    .expect("write first mock SSE event");
+                stream.flush().expect("flush first mock SSE event");
+                sent_tx.send(()).ok();
+                let closed = wait_for_client_close(&mut stream, Duration::from_secs(3));
+                (request, closed)
+            });
+            Self {
+                address,
+                first_event_sent,
+                handle,
+            }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}/v1", self.address)
+        }
+
+        fn wait_for_first_event(&self) {
+            self.first_event_sent
+                .recv_timeout(Duration::from_secs(2))
+                .expect("mock SSE server should send the first event");
+        }
+
+        fn join(self) -> (String, bool) {
             self.handle.join().expect("mock SSE server should join")
         }
     }
@@ -3387,12 +3491,48 @@ Use this skill for {name} tasks.
             if read == 0 {
                 break;
             }
+
             bytes.extend_from_slice(&buffer[..read]);
             if http_request_body_complete(&bytes) {
                 break;
             }
         }
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn wait_for_client_close(stream: &mut TcpStream, timeout: Duration) -> bool {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .expect("configure mock SSE close probe timeout");
+        let start = Instant::now();
+        let mut buffer = [0_u8; 1];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => return true,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    if start.elapsed() >= timeout {
+                        return false;
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    return true;
+                }
+                Err(error) => panic!("probe mock SSE client close: {error}"),
+            }
+        }
     }
 
     fn http_request_body_complete(bytes: &[u8]) -> bool {
@@ -4206,6 +4346,114 @@ Use this skill for {name} tasks.
         assert_eq!(messages[1].meta.model.as_deref(), Some("mock-deepseek"));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn deepseek_provider_abort_slash_cancels_in_flight_http_request_and_rejects_late_events() {
+        let server = TestAbortableSseServer::spawn(
+            "data: {\"model\":\"mock-deepseek\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"first live token\"},\"finish_reason\":null}]}\n\n",
+        );
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: test_tool_registry(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
+        };
+        let tool_runtime = test_tool_runtime(
+            config,
+            sender,
+            test_tool_registry(),
+            test_tool_permissions(),
+        );
+        let transcript_status = TranscriptStatusState::new();
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("live cancel prompt".to_string()),
+        );
+        server.wait_for_first_event();
+
+        let action = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("live DeepSeek turn should emit the first token");
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+            action,
+        ));
+        let messages = store.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(message_text(&messages[1]), "first live token");
+        assert_eq!(messages[1].status, ChatTurnStatus::Streaming);
+        let assistant_id = messages[1].id;
+        let block_id = messages[1].blocks[0].id();
+        let stale_branch = store.branch_token();
+
+        assert!(submit_slash_command_text(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            "/abort",
+        ));
+
+        let messages = store.messages();
+        assert_eq!(messages[1].id, assistant_id);
+        assert_eq!(messages[1].status, ChatTurnStatus::Canceled);
+        assert_eq!(messages[2].role, ChatRole::System);
+        assert!(message_text(&messages[2]).contains("Aborted active turn."));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+
+        let (request, client_closed) = server.join();
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(
+            client_closed,
+            "aborting a live turn should close the in-flight SSE connection"
+        );
+        assert!(!apply_test_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            AppAction::TextDelta {
+                branch: stale_branch,
+                block_id,
+                delta: "late".to_string(),
+            },
+        ));
+        assert_eq!(message_text(&store.messages()[1]), "first live token");
     }
 
     #[test]
