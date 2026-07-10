@@ -24,8 +24,8 @@ use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
     ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, DiffData, PlanBlock, PlanDecision, PlanItem, ThinkingBlock,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatSlashCommand, ChatTurnStatus, DiffData, PlanBlock, PlanDecision, PlanDecisionEvent,
+    PlanItem, ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
 use serde_json::{Map, Number, Value};
@@ -518,10 +518,14 @@ fn build_chat_panel(
     let turn_budgets_for_cancel = slash_runtime.turn_budgets.clone();
     let store_for_approval = store.clone();
     let tool_runtime_for_approval = tool_runtime.clone();
+    let store_for_plan_decision = store.clone();
     let list = ChatMessageList::new(store.clone())
         .show_timestamps(false)
         .on_approve(move |decision| {
             handle_tool_approval(&store_for_approval, &tool_runtime_for_approval, decision);
+        })
+        .on_plan_decision(move |event| {
+            handle_plan_decision(&store_for_plan_decision, event);
         })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
@@ -1347,6 +1351,20 @@ fn tool_approval_request(tool_use: &ToolUseBlock, allow_project: bool) -> Approv
     }
 }
 
+fn handle_plan_decision(store: &ChatMessageStore, event: PlanDecisionEvent) {
+    if event.decision == PlanDecision::Pending {
+        return;
+    }
+    let is_pending_plan = store
+        .with_block(event.block_id, |block| {
+            matches!(block, ChatBlock::Plan(plan) if plan.decision == PlanDecision::Pending)
+        })
+        .unwrap_or(false);
+    if is_pending_plan {
+        let _ = store.set_plan_decision(event.block_id, event.decision);
+    }
+}
+
 fn handle_tool_approval(
     store: &ChatMessageStore,
     tool_runtime: &ToolRuntime,
@@ -1933,10 +1951,11 @@ mod tests {
     use atto_ui::theme::Theme;
     use atto_ui::wm::WindowId;
     use atto_ui_chat::{
-        ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatError, ChatErrorKind,
-        ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, PlanDecision, StopReason, TokenUsage, ToolInput,
-        ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+        ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatBlockId, ChatError,
+        ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
+        ChatSlashCommandAction, ChatTurnStatus, PlanBlock, PlanDecision, PlanDecisionEvent,
+        PlanItem, StopReason, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
+        ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -1962,8 +1981,8 @@ mod tests {
         STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker,
         apply_app_action, build_chat_panel, deepseek_plan_request_from_transcript,
         deepseek_request_from_transcript, deepseek_request_from_transcript_with_skills,
-        execute_tool_use_to_result_block, handle_tool_approval, submit_input_response,
-        submit_slash_command_text,
+        execute_tool_use_to_result_block, handle_plan_decision, handle_tool_approval,
+        submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -1971,6 +1990,15 @@ mod tests {
             ChatBlock::Text(block) => &block.markdown,
             other => panic!("expected text block, got {other:?}"),
         }
+    }
+
+    fn plan_decision(store: &ChatMessageStore, block_id: ChatBlockId) -> PlanDecision {
+        store
+            .with_block(block_id, |block| match block {
+                ChatBlock::Plan(plan) => plan.decision,
+                other => panic!("expected plan block, got {other:?}"),
+            })
+            .expect("plan block should exist")
     }
 
     fn new_test_stream() -> DeepSeekUiStream {
@@ -3024,6 +3052,46 @@ Use this skill for {name} tasks.
         assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn plan_decision_callback_updates_pending_plan_block() {
+        let store = ChatMessageStore::new();
+        let assistant_id = store.next_message_id();
+        let plan_block_id = ChatBlockId::new(30_001);
+        store.push(ChatMessage::new(
+            assistant_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Plan(PlanBlock {
+                id: plan_block_id,
+                items: vec![PlanItem {
+                    text: "Inspect current implementation.".to_string(),
+                }],
+                decision: PlanDecision::Pending,
+            })],
+        ));
+
+        handle_plan_decision(
+            &store,
+            PlanDecisionEvent {
+                message_id: assistant_id,
+                block_id: plan_block_id,
+                decision: PlanDecision::Accepted,
+            },
+        );
+
+        assert_eq!(plan_decision(&store, plan_block_id), PlanDecision::Accepted);
+
+        handle_plan_decision(
+            &store,
+            PlanDecisionEvent {
+                message_id: assistant_id,
+                block_id: plan_block_id,
+                decision: PlanDecision::Rejected,
+            },
+        );
+
+        assert_eq!(plan_decision(&store, plan_block_id), PlanDecision::Accepted);
     }
 
     #[test]

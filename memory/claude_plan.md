@@ -4,28 +4,28 @@
 
 ## 当前目标
 
-- 已从 `TODO.md` 识别第一个未完成任务：`M5.3 计划生成`。
-- 任务要求：实现虚拟 tool `submit_plan({ items })`，并兜底解析 markdown 列表为 `PlanItem`。
+- 已从 `TODO.md` 识别第一个未完成任务：`M5.4 PlanBlock UI`。
+- 任务要求：渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
 - 本次只完成该任务，完成后提交并停止。
 
 ## 执行步骤
 
-1. 检查最新提交是否声明与 `M5.3` 直接相关的未完成事项。
-2. 定位现有 plan mode 判定、DeepSeek tool call 聚合、tool registry、Chat/Plan block 数据模型与测试。
-3. 实现 `submit_plan` 虚拟工具的请求/聚合/解析路径，确保不会作为本地可执行工具绕过权限模型。
-4. 实现 markdown 列表兜底解析为 `PlanItem`，覆盖常见有序/无序/checkbox 列表输入。
-5. 增加或更新相关单元测试，必要时补充确定性 fixture 覆盖。
-6. 按要求运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、再运行相关或完整测试。
-7. 更新 `TODO.md`，给 `M5.3` 标记 `[DONE]` 并写入完成记录。
+1. 检查最新提交是否声明与 `M5.4` 直接相关的未完成事项。
+2. 定位 `PlanBlock` 数据模型、当前 chat block 渲染代码、输入/列表事件回调和已有测试。
+3. 设计并实现 pending plan 的可见 UI，包括计划条目、待决状态和可操作提示，保持现有视觉风格。
+4. 将 UI 决策事件接到现有 `on_plan_decision`/事件分发路径，确保 accept/reject 操作能到达 app 层；实际 accept/reject 流程若属于 `M5.5`，本任务只完成事件接入和状态传递。
+5. 增加或更新相关单元测试或 PTY/snapshot 覆盖，验证 pending `PlanBlock` 可渲染且决策回调可触发。
+6. 按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、再运行相关或完整测试。
+7. 更新 `TODO.md`，给 `M5.4` 标记 `[DONE]` 并写入完成记录。
 8. 提交本次任务相关变更，停止。
 
 ## 进度记录
 
 - 已记录初始计划。
-- 已读取 `TODO.md`，确认当前任务为 `M5.3 计划生成`。
-- 已检查最新提交 `[M5.2] Add auto plan detection`，未发现与 `M5.3` 直接相关的未完成事项。
-- 已定位实现点：`plan.rs` 放置虚拟 `submit_plan` schema 与计划解析，`stream_ui.rs` 把流式结果映射为 plan action，`lib.rs` 负责把 `PlanBlock` 写入 store 并构建 plan draft request。
-- 已完成核心实现：新增 `submit_plan` 虚拟工具 schema/forced tool choice、markdown fallback 解析、`PlanReady` action、plan draft request builder，以及 plan-mode mock stream。
+- 已读取 `TODO.md`，确认当前任务为 `M5.4 PlanBlock UI`。
+- 已检查最新提交 `[M5.3] Add plan generation`，未发现与 `M5.4` 直接相关的未完成事项。
+- 已定位现有 `atto-ui-chat` 的 `PlanDecisionView`、`PlanBlock` 渲染和事件发射实现；缺口在 app 构建 `ChatMessageList` 时未绑定 `on_plan_decision`。
+- 已完成 app 层接入初稿：新增 `handle_plan_decision`，在 `build_chat_panel` 绑定 `.on_plan_decision`，将 pending `PlanBlock` 锁定为 accepted/rejected，并拒绝已决 plan 的旧事件覆盖。
+- 已补充 app 单测 `plan_decision_callback_updates_pending_plan_block`，覆盖决策状态更新和重复旧事件忽略。
 - 已完成验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check` 均通过。
-- 已更新 `TODO.md`，将 `M5.3 计划生成` 标记为 `[DONE]` 并写入完成记录。
-- 已检查 `git diff --check`，未发现空白错误。
+- 已更新 `TODO.md`，将 `M5.4 PlanBlock UI` 标记为 `[DONE]` 并写入完成记录。

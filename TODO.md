@@ -120,7 +120,9 @@
 - [x] **[DONE] M5.3 计划生成** - 实现虚拟 tool `submit_plan({ items })`，兜底解析 markdown 列表为 `PlanItem`。
   - 完成记录（2026-07-10）：新增 plan-mode 虚拟 `submit_plan` tool schema、forced tool choice 和 plan draft system prompt；`DeepSeekUiStream` 现在可在需要计划时把 `submit_plan({ items })` 参数直接映射为 pending `PlanBlock`，并在模型未调用虚拟 tool 时解析 markdown 有序/无序/checklist 列表作为 fallback。`submit_plan` 未注册进本地 `ToolRegistry`，不会作为本地工具执行或授予额外权限；mock plan turn 现在通过 DeepSeek-style `tool_calls` 走同一映射路径。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
+- [x] **[DONE] M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
+  - 完成记录（2026-07-10）：复核 `atto-ui-chat` 已有 `PlanDecisionView` 可渲染 pending plan、展示 Accept/Reject 操作并发出 `PlanDecisionEvent`；agent app 现在在构建 `ChatMessageList` 时绑定 `on_plan_decision`，通过 `handle_plan_decision` 将 pending `PlanBlock` 锁定为 accepted/rejected，并忽略对已决 plan 的旧事件覆盖。新增 app 层回归测试覆盖 plan 决策状态更新。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M5.5 Accept/Reject 流程** - Accept 后追加内部执行指令并继续 agent loop；Reject 后停止当前 turn。
 - [ ] **M5.6 副作用工具门控** - 计划接受前拦截 `apply_patch`、`run_command` 等 mutating tool，并写入明确 tool result。
 - [ ] **M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
