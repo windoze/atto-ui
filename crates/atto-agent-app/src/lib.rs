@@ -29,8 +29,8 @@ use atto_ui_chat::{
     ChatBlockId, ChatBranchToken, ChatError, ChatErrorKind, ChatInputHandle, ChatInputResponse,
     ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
     ChatRole, ChatSlashCommand, ChatTurnStatus, DiffData, EditAndResubmitEvent, MessageAction,
-    MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, ThinkingBlock,
-    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, TextBlock,
+    ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
 use serde_json::Value;
@@ -108,6 +108,7 @@ enum AppAction {
         message_id: ChatMessageId,
         tool_calls: Vec<ToolUseBlock>,
         mutating_tools_allowed: bool,
+        continue_after_tools: bool,
     },
     PlanReady {
         branch: ChatBranchToken,
@@ -116,9 +117,12 @@ enum AppAction {
     },
     ToolResultReady {
         branch: ChatBranchToken,
+        message_id: ChatMessageId,
         tool_block_id: ChatBlockId,
         call_id: String,
         result: ToolResultBlock,
+        mutating_tools_allowed: bool,
+        continue_after_tools: bool,
     },
     TurnDone {
         branch: ChatBranchToken,
@@ -169,11 +173,14 @@ struct AgentTurnStartRequest {
 #[derive(Clone)]
 struct ToolExecutionRequest {
     branch: ChatBranchToken,
+    message_id: ChatMessageId,
     tool_use: ToolUseBlock,
     config: AgentConfig,
     registry: ToolRegistry,
     limits: AgentTurnLimits,
     action_sender: mpsc::Sender<AppAction>,
+    mutating_tools_allowed: bool,
+    continue_after_tools: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -282,6 +289,11 @@ struct ToolRuntime {
     permissions: Arc<Mutex<ToolPermissionPolicy>>,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
+    input_handle: ChatInputHandle,
+    mock_turns: MockTurnRegistry,
+    status_state: Property<String>,
+    skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
     transcript_status: TranscriptStatusState,
 }
 
@@ -387,6 +399,11 @@ impl AgentRuntime {
             permissions: self.tool_permissions.clone(),
             turn_budgets: self.turn_budgets.clone(),
             limits: self.limits,
+            input_handle: self.input_handle.clone(),
+            mock_turns: self.mock_turns.clone(),
+            status_state: self.status_state.clone(),
+            skill_registry: self.skill_registry.clone(),
+            loaded_skills: self.loaded_skills.clone(),
             transcript_status: self.transcript_status.clone(),
         }
     }
@@ -1502,13 +1519,14 @@ async fn run_deepseek_agent_turn(
         return;
     }
 
-    let mut stream = DeepSeekUiStream::new_with_plan_gate(
+    let mut stream = DeepSeekUiStream::new_with_plan_gate_and_tool_loop(
         request.branch,
         request.message_id,
         request.block_id,
         request.config.model.clone(),
         request.plan_decision.requires_plan(),
         request.mutating_tools_allowed,
+        !request.plan_decision.requires_plan(),
     );
     let cancel = request.cancel.clone();
     let result = DeepSeekClient::new()
@@ -1754,6 +1772,7 @@ fn apply_app_action(
             message_id,
             tool_calls,
             mutating_tools_allowed,
+            continue_after_tools,
         } => {
             if !store.is_branch_current(branch) || tool_calls.is_empty() {
                 return false;
@@ -1796,16 +1815,26 @@ fn apply_app_action(
                         None if tool_use.status == ToolStatus::Running => {
                             spawn_tool_execution(ToolExecutionRequest {
                                 branch,
+                                message_id,
                                 tool_use,
                                 config: tool_runtime.config.clone(),
                                 registry: tool_runtime.registry.clone(),
                                 limits: tool_runtime.limits,
                                 action_sender: tool_runtime.action_sender.clone(),
+                                mutating_tools_allowed,
+                                continue_after_tools,
                             });
                         }
                         None => {}
                     }
                 }
+                let _ = maybe_continue_deepseek_tool_loop(
+                    store,
+                    tool_runtime,
+                    message_id,
+                    mutating_tools_allowed,
+                    continue_after_tools,
+                );
                 true
             }
         }
@@ -1830,9 +1859,12 @@ fn apply_app_action(
         }
         AppAction::ToolResultReady {
             branch,
+            message_id,
             tool_block_id,
             call_id,
             result,
+            mutating_tools_allowed,
+            continue_after_tools,
         } => {
             if !store.is_branch_current(branch) {
                 return false;
@@ -1844,6 +1876,15 @@ fn apply_app_action(
             };
             let found_tool = store.set_tool_status(tool_block_id, status);
             let found_result = store.upsert_tool_result(call_id, result).is_some();
+            if found_tool && found_result {
+                let _ = maybe_continue_deepseek_tool_loop(
+                    store,
+                    tool_runtime,
+                    message_id,
+                    mutating_tools_allowed,
+                    continue_after_tools,
+                );
+            }
             found_tool && found_result
         }
         AppAction::TurnDone {
@@ -1888,6 +1929,104 @@ fn apply_app_action(
         transcript_status.sync(store);
     }
     changed
+}
+
+fn maybe_continue_deepseek_tool_loop(
+    store: &ChatMessageStore,
+    tool_runtime: &ToolRuntime,
+    message_id: ChatMessageId,
+    mutating_tools_allowed: bool,
+    continue_after_tools: bool,
+) -> bool {
+    if !continue_after_tools || tool_runtime.config.provider != AgentProvider::DeepSeek {
+        return false;
+    }
+    if !tool_loop_ready_for_continuation(&store.messages(), message_id) {
+        return false;
+    }
+
+    if let Err(error) = tool_runtime
+        .turn_budgets
+        .consume_model_request(message_id, tool_runtime.limits)
+    {
+        let found = store.fail_streaming_turn(message_id, error);
+        if found {
+            tool_runtime.mock_turns.clear(message_id);
+            tool_runtime.turn_budgets.finish_turn(message_id);
+            tool_runtime.input_handle.streaming_binding().set(false);
+            tool_runtime.status_state.set(STATUS_READY.to_string());
+        }
+        return found;
+    }
+
+    let request = deepseek_request_from_transcript_with_skills(
+        &tool_runtime.config,
+        &tool_runtime.registry,
+        &tool_runtime.skill_registry,
+        &tool_runtime.loaded_skills,
+        &store.messages(),
+    );
+    let Some(block_id) = store.append_block(
+        message_id,
+        ChatBlock::Text(TextBlock {
+            id: ChatBlockId::new(0),
+            markdown: String::new(),
+            streaming: true,
+        }),
+    ) else {
+        return false;
+    };
+    let branch = store.branch_token();
+    let cancel = tool_runtime.mock_turns.start(message_id);
+    tool_runtime.input_handle.streaming_binding().set(true);
+    tool_runtime.status_state.set(STATUS_STREAMING.to_string());
+    spawn_deepseek_agent_turn(
+        tool_runtime.action_sender.clone(),
+        DeepSeekAgentTurnRequest {
+            branch,
+            message_id,
+            block_id,
+            cancel,
+            config: tool_runtime.config.clone(),
+            request,
+            plan_decision: PlanTurnDecision::Direct,
+            mutating_tools_allowed,
+        },
+    );
+    true
+}
+
+fn tool_loop_ready_for_continuation(messages: &[ChatMessage], message_id: ChatMessageId) -> bool {
+    let Some(message) = messages.iter().find(|message| message.id == message_id) else {
+        return false;
+    };
+    if !message.status.is_streaming() {
+        return false;
+    }
+
+    let result_call_ids = message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ChatBlock::ToolResult(result) => Some(result.call_id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut saw_tool_call = false;
+    for block in &message.blocks {
+        let ChatBlock::ToolUse(tool_use) = block else {
+            continue;
+        };
+        saw_tool_call = true;
+        if matches!(tool_use.status, ToolStatus::Pending | ToolStatus::Running) {
+            return false;
+        }
+        if !result_call_ids.contains(&tool_use.call_id.as_str()) {
+            return false;
+        }
+    }
+
+    saw_tool_call
 }
 
 #[derive(Clone, Debug)]
@@ -2076,21 +2215,27 @@ fn handle_tool_approval(
                 .allow_for_project(tool_use.name.clone());
             spawn_tool_execution(ToolExecutionRequest {
                 branch: store.branch_token(),
+                message_id: decision.message_id,
                 tool_use,
                 config: tool_runtime.config.clone(),
                 registry: tool_runtime.registry.clone(),
                 limits: tool_runtime.limits,
                 action_sender: tool_runtime.action_sender.clone(),
+                mutating_tools_allowed: true,
+                continue_after_tools: true,
             });
         }
         ApprovalAction::Allow => {
             spawn_tool_execution(ToolExecutionRequest {
                 branch: store.branch_token(),
+                message_id: decision.message_id,
                 tool_use,
                 config: tool_runtime.config.clone(),
                 registry: tool_runtime.registry.clone(),
                 limits: tool_runtime.limits,
                 action_sender: tool_runtime.action_sender.clone(),
+                mutating_tools_allowed: true,
+                continue_after_tools: true,
             });
         }
         ApprovalAction::Deny => {
@@ -2098,6 +2243,13 @@ fn handle_tool_approval(
             store.upsert_tool_result(
                 call_id.clone(),
                 denied_tool_result(&call_id, &tool_use.name),
+            );
+            let _ = maybe_continue_deepseek_tool_loop(
+                store,
+                tool_runtime,
+                decision.message_id,
+                true,
+                true,
             );
         }
     }
@@ -2152,9 +2304,12 @@ fn spawn_tool_execution(request: ToolExecutionRequest) {
         );
         let _ = request.action_sender.send(AppAction::ToolResultReady {
             branch: request.branch,
+            message_id: request.message_id,
             tool_block_id,
             call_id,
             result,
+            mutating_tools_allowed: request.mutating_tools_allowed,
+            continue_after_tools: request.continue_after_tools,
         });
     });
 }
@@ -2834,15 +2989,96 @@ Use this skill for {name} tasks.
         permissions: Arc<Mutex<ToolPermissionPolicy>>,
         limits: AgentTurnLimits,
     ) -> ToolRuntime {
+        test_tool_runtime_with_limits_and_budgets(
+            config,
+            action_sender,
+            registry,
+            permissions,
+            limits,
+            TurnBudgetTracker::default(),
+        )
+    }
+
+    fn test_tool_runtime_with_limits_and_budgets(
+        config: AgentConfig,
+        action_sender: std::sync::mpsc::Sender<AppAction>,
+        registry: ToolRegistry,
+        permissions: Arc<Mutex<ToolPermissionPolicy>>,
+        limits: AgentTurnLimits,
+        turn_budgets: TurnBudgetTracker,
+    ) -> ToolRuntime {
         ToolRuntime {
             config,
             action_sender,
             registry,
             permissions,
-            turn_budgets: TurnBudgetTracker::default(),
+            turn_budgets,
             limits,
+            input_handle: atto_ui_chat::ChatInputHandle::new(),
+            mock_turns: MockTurnRegistry::new(),
+            status_state: atto_ui::reactive::Property::new(STATUS_READY.to_string()),
+            skill_registry: SkillRegistry::default(),
+            loaded_skills: LoadedSkillSet::default(),
             transcript_status: TranscriptStatusState::new(),
         }
+    }
+
+    struct LiveToolRuntimeParts<'a> {
+        config: AgentConfig,
+        action_sender: std::sync::mpsc::Sender<AppAction>,
+        registry: ToolRegistry,
+        turn_budgets: TurnBudgetTracker,
+        limits: AgentTurnLimits,
+        input_handle: &'a atto_ui_chat::ChatInputHandle,
+        mock_turns: &'a MockTurnRegistry,
+        status_state: &'a atto_ui::reactive::Property<String>,
+        transcript_status: &'a TranscriptStatusState,
+    }
+
+    fn live_tool_runtime(parts: LiveToolRuntimeParts<'_>) -> ToolRuntime {
+        ToolRuntime {
+            config: parts.config,
+            action_sender: parts.action_sender,
+            registry: parts.registry,
+            permissions: test_tool_permissions(),
+            turn_budgets: parts.turn_budgets,
+            limits: parts.limits,
+            input_handle: parts.input_handle.clone(),
+            mock_turns: parts.mock_turns.clone(),
+            status_state: parts.status_state.clone(),
+            skill_registry: SkillRegistry::default(),
+            loaded_skills: LoadedSkillSet::default(),
+            transcript_status: parts.transcript_status.clone(),
+        }
+    }
+
+    fn apply_live_actions_until_idle(
+        receiver: &std::sync::mpsc::Receiver<AppAction>,
+        store: &ChatMessageStore,
+        input_handle: &atto_ui_chat::ChatInputHandle,
+        mock_turns: &MockTurnRegistry,
+        status_state: &atto_ui::reactive::Property<String>,
+        transcript_status: &TranscriptStatusState,
+        tool_runtime: &ToolRuntime,
+    ) {
+        for _ in 0..16 {
+            let action = receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("live DeepSeek tool loop should emit an app action");
+            apply_app_action(
+                store,
+                input_handle,
+                mock_turns,
+                status_state,
+                transcript_status,
+                tool_runtime,
+                action,
+            );
+            if !input_handle.streaming_binding().get() {
+                return;
+            }
+        }
+        panic!("live DeepSeek tool loop did not become idle");
     }
 
     fn test_plan_decision_runtime(
@@ -2993,6 +3229,11 @@ Use this skill for {name} tasks.
         handle: thread::JoinHandle<String>,
     }
 
+    struct TestSseSequenceServer {
+        address: String,
+        handle: thread::JoinHandle<Vec<String>>,
+    }
+
     impl TestSseServer {
         fn spawn(body: impl Into<String>) -> Self {
             Self::spawn_response(200, "OK", "text/event-stream", body)
@@ -3041,6 +3282,82 @@ Use this skill for {name} tasks.
         fn join(self) -> String {
             self.handle.join().expect("mock SSE server should join")
         }
+    }
+
+    impl TestSseSequenceServer {
+        fn spawn(bodies: Vec<String>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock SSE server");
+            listener
+                .set_nonblocking(true)
+                .expect("configure mock SSE listener");
+            let address = listener
+                .local_addr()
+                .expect("mock SSE server address")
+                .to_string();
+            let handle = thread::spawn(move || {
+                let mut requests = Vec::new();
+                for body in bodies {
+                    let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(5));
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .expect("configure mock SSE read timeout");
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(5)))
+                        .expect("configure mock SSE write timeout");
+                    requests.push(read_http_request(&mut stream));
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("write mock SSE response");
+                }
+                requests
+            });
+            Self { address, handle }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}/v1", self.address)
+        }
+
+        fn join(self) -> Vec<String> {
+            self.handle.join().expect("mock SSE server should join")
+        }
+    }
+
+    fn sse_tool_call_body(call_id: &str, name: &str, arguments: serde_json::Value) -> String {
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": arguments.to_string()
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        format!("data: {chunk}\n\ndata: [DONE]\n\n")
+    }
+
+    fn sse_final_text_body(text: &str) -> String {
+        let chunk = serde_json::json!({
+            "model": "mock-deepseek",
+            "choices": [{
+                "index": 0,
+                "delta": { "content": text },
+                "finish_reason": "stop"
+            }]
+        });
+        format!("data: {chunk}\n\ndata: [DONE]\n\n")
     }
 
     fn accept_with_timeout(
@@ -3161,6 +3478,7 @@ Use this skill for {name} tasks.
                 message_id: assistant_id,
                 tool_calls: vec![tool_call],
                 mutating_tools_allowed: true,
+                continue_after_tools: false,
             },
         ));
 
@@ -4033,6 +4351,338 @@ Use this skill for {name} tasks.
     }
 
     #[test]
+    fn deepseek_provider_continues_after_live_tool_result() {
+        let workspace = unique_temp_dir("live-tool-loop");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("note.txt"), "tool loop file context\n").expect("write note");
+        let server = TestSseSequenceServer::spawn(vec![
+            sse_tool_call_body(
+                "call_read_note",
+                "read_file",
+                serde_json::json!({ "path": "note.txt" }),
+            ),
+            sse_final_text_body("Final answer after reading the file."),
+        ]);
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+        let registry = test_tool_registry();
+        let limits = AgentTurnLimits::default();
+        let turn_budgets = TurnBudgetTracker::default();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let transcript_status = TranscriptStatusState::new();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: registry.clone(),
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            compact_policy: CompactPolicy::default(),
+        };
+        let tool_runtime = live_tool_runtime(LiveToolRuntimeParts {
+            config,
+            action_sender: sender,
+            registry,
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            input_handle: &input_handle,
+            mock_turns: &mock_turns,
+            status_state: &status_state,
+            transcript_status: &transcript_status,
+        });
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("Read the note before answering.".to_string()),
+        );
+        apply_live_actions_until_idle(
+            &receiver,
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+        );
+
+        let requests = server.join();
+        assert_eq!(requests.len(), 2);
+        let second_request = http_request_json(&requests[1]);
+        let second_messages = second_request["messages"]
+            .as_array()
+            .expect("follow-up request should contain messages");
+        assert!(second_messages.iter().any(|message| {
+            message["role"].as_str() == Some("assistant")
+                && message["tool_calls"]
+                    .as_array()
+                    .is_some_and(|calls| calls[0]["id"].as_str() == Some("call_read_note"))
+        }));
+        assert!(second_messages.iter().any(|message| {
+            message["role"].as_str() == Some("tool")
+                && message["tool_call_id"].as_str() == Some("call_read_note")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("tool loop file context"))
+        }));
+
+        let messages = store.messages();
+        assert_eq!(messages.len(), 2);
+        let assistant = &messages[1];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert!(assistant.blocks.iter().any(|block| {
+            matches!(block, ChatBlock::Text(text) if text.markdown.contains("Final answer after reading the file."))
+        }));
+        let tool = assistant
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) if tool.call_id == "call_read_note" => Some(tool),
+                _ => None,
+            })
+            .expect("tool use should remain in the transcript");
+        assert_eq!(tool.status, ToolStatus::Done);
+        assert!(tool_result_for_call(&store, "call_read_note").ok);
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn deepseek_provider_continues_after_denied_live_tool_call() {
+        let workspace = unique_temp_dir("live-tool-loop-deny");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        let server = TestSseSequenceServer::spawn(vec![
+            sse_tool_call_body(
+                "call_denied_command",
+                "run_command",
+                serde_json::json!({ "argv": ["/bin/echo", "should-not-run"], "cwd": "." }),
+            ),
+            sse_final_text_body("Final answer after the denied tool."),
+        ]);
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+        let registry = test_tool_registry();
+        let limits = AgentTurnLimits::default();
+        let turn_budgets = TurnBudgetTracker::default();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let transcript_status = TranscriptStatusState::new();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: registry.clone(),
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            compact_policy: CompactPolicy::default(),
+        };
+        let tool_runtime = live_tool_runtime(LiveToolRuntimeParts {
+            config,
+            action_sender: sender,
+            registry,
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            input_handle: &input_handle,
+            mock_turns: &mock_turns,
+            status_state: &status_state,
+            transcript_status: &transcript_status,
+        });
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("Try a command, but wait for approval.".to_string()),
+        );
+        let action = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("tool call should be streamed before approval");
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+            action,
+        ));
+        assert!(input_handle.streaming_binding().get());
+        let assistant_id = store.messages()[1].id;
+        let tool = store
+            .messages()
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) if tool.call_id == "call_denied_command" => {
+                    Some(tool.clone())
+                }
+                _ => None,
+            })
+            .expect("tool approval should be pending");
+        assert_eq!(tool.status, ToolStatus::Pending);
+        let approval_id = tool
+            .approval
+            .as_ref()
+            .expect("run_command should request approval")
+            .id
+            .clone();
+
+        handle_tool_approval(
+            &store,
+            &tool_runtime,
+            ApprovalDecision {
+                message_id: assistant_id,
+                block_id: tool.id,
+                approval_id,
+                option_id: "deny".to_string(),
+                action: ApprovalAction::Deny,
+                level: ApprovalLevel::Once,
+            },
+        );
+        apply_live_actions_until_idle(
+            &receiver,
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+        );
+
+        let requests = server.join();
+        assert_eq!(requests.len(), 2);
+        let second_request = http_request_json(&requests[1]);
+        let second_messages = second_request["messages"]
+            .as_array()
+            .expect("follow-up request should contain messages");
+        assert!(second_messages.iter().any(|message| {
+            message["role"].as_str() == Some("tool")
+                && message["tool_call_id"].as_str() == Some("call_denied_command")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("User denied tool call"))
+        }));
+        let result = tool_result_for_call(&store, "call_denied_command");
+        assert!(!result.ok);
+        let messages = store.messages();
+        let assistant = &messages[1];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert!(assistant.blocks.iter().any(|block| {
+            matches!(block, ChatBlock::Text(text) if text.markdown.contains("Final answer after the denied tool."))
+        }));
+        fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn deepseek_provider_stops_tool_loop_at_model_request_budget() {
+        let workspace = unique_temp_dir("live-tool-loop-budget");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("note.txt"), "budget file context\n").expect("write note");
+        let server = TestSseServer::spawn(sse_tool_call_body(
+            "call_read_budget",
+            "read_file",
+            serde_json::json!({ "path": "note.txt" }),
+        ));
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+        let registry = test_tool_registry();
+        let limits = AgentTurnLimits::new(1, 16, Duration::from_secs(30));
+        let turn_budgets = TurnBudgetTracker::default();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let transcript_status = TranscriptStatusState::new();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: registry.clone(),
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            compact_policy: CompactPolicy::default(),
+        };
+        let tool_runtime = live_tool_runtime(LiveToolRuntimeParts {
+            config,
+            action_sender: sender,
+            registry,
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            input_handle: &input_handle,
+            mock_turns: &mock_turns,
+            status_state: &status_state,
+            transcript_status: &transcript_status,
+        });
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("Read the note within a tiny budget.".to_string()),
+        );
+        apply_live_actions_until_idle(
+            &receiver,
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+        );
+
+        let first_request = server.join();
+        assert!(first_request.contains("Read the note within a tiny budget."));
+        let messages = store.messages();
+        let assistant = &messages[1];
+        let ChatTurnStatus::Failed(error) = &assistant.status else {
+            panic!("expected failed assistant turn, got {:?}", assistant.status);
+        };
+        assert_eq!(error.kind, ChatErrorKind::Other);
+        assert!(error.message.contains("model request limit"));
+        assert!(tool_result_for_call(&store, "call_read_budget").ok);
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
     fn deepseek_provider_plan_turn_posts_submit_plan_context_request() {
         let workspace = unique_temp_dir("live-plan-request");
         fs::create_dir_all(&workspace).expect("create workspace");
@@ -4778,6 +5428,7 @@ Use this skill for {name} tasks.
                     read_file_tool_call("call_2", "b.txt"),
                 ],
                 mutating_tools_allowed: true,
+                continue_after_tools: false,
             },
         ));
 
@@ -5044,6 +5695,7 @@ Use this skill for {name} tasks.
                 message_id: assistant_id,
                 tool_calls: vec![run_command_tool_call("call_plan_gate")],
                 mutating_tools_allowed: false,
+                continue_after_tools: false,
             },
         ));
         let block_id = store
@@ -5172,6 +5824,7 @@ Use this skill for {name} tasks.
                 message_id: assistant_id,
                 tool_calls: vec![read_file_tool_call("call_read", "fixture.txt")],
                 mutating_tools_allowed: true,
+                continue_after_tools: false,
             },
         ));
         let tool_block_id = store

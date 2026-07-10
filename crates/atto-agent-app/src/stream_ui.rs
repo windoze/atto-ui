@@ -29,6 +29,7 @@ pub(crate) struct DeepSeekUiStream {
     tool_calls: ToolCallAccumulator,
     emitted_tool_calls: bool,
     emitted_plan: bool,
+    continue_after_tool_calls: bool,
     finished: bool,
 }
 
@@ -72,6 +73,28 @@ impl DeepSeekUiStream {
         expects_plan: bool,
         mutating_tools_allowed: bool,
     ) -> Self {
+        Self::new_with_plan_gate_and_tool_loop(
+            branch,
+            message_id,
+            text_block_id,
+            model,
+            expects_plan,
+            mutating_tools_allowed,
+            false,
+        )
+    }
+
+    /// Creates a mapper that keeps live turns open after tool calls so the app
+    /// can execute tools and continue with a follow-up model request.
+    pub(crate) fn new_with_plan_gate_and_tool_loop(
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        text_block_id: ChatBlockId,
+        model: impl Into<String>,
+        expects_plan: bool,
+        mutating_tools_allowed: bool,
+        continue_after_tool_calls: bool,
+    ) -> Self {
         Self {
             branch,
             message_id,
@@ -86,6 +109,7 @@ impl DeepSeekUiStream {
             tool_calls: ToolCallAccumulator::default(),
             emitted_tool_calls: false,
             emitted_plan: false,
+            continue_after_tool_calls,
             finished: false,
         }
     }
@@ -100,6 +124,9 @@ impl DeepSeekUiStream {
             ChatCompletionSseEvent::Chunk(chunk) => self.map_chunk(chunk),
             ChatCompletionSseEvent::Done => {
                 self.finished = true;
+                if self.emitted_tool_calls && self.continue_after_tool_calls {
+                    return Vec::new();
+                }
                 vec![AppAction::TurnDone {
                     branch: self.branch,
                     message_id: self.message_id,
@@ -179,6 +206,7 @@ impl DeepSeekUiStream {
                                 message_id: self.message_id,
                                 tool_calls,
                                 mutating_tools_allowed: self.mutating_tools_allowed,
+                                continue_after_tools: self.continue_after_tool_calls,
                             });
                         }
                         Err(error) => return self.fail(error),
