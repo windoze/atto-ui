@@ -123,7 +123,9 @@
 - [x] **[DONE] M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
   - 完成记录（2026-07-10）：复核 `atto-ui-chat` 已有 `PlanDecisionView` 可渲染 pending plan、展示 Accept/Reject 操作并发出 `PlanDecisionEvent`；agent app 现在在构建 `ChatMessageList` 时绑定 `on_plan_decision`，通过 `handle_plan_decision` 将 pending `PlanBlock` 锁定为 accepted/rejected，并忽略对已决 plan 的旧事件覆盖。新增 app 层回归测试覆盖 plan 决策状态更新。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M5.5 Accept/Reject 流程** - Accept 后追加内部执行指令并继续 agent loop；Reject 后停止当前 turn。
+- [x] **[DONE] M5.5 Accept/Reject 流程** - Accept 后追加内部执行指令并继续 agent loop；Reject 后停止当前 turn。
+  - 完成记录（2026-07-10）：`on_plan_decision` 现在接入 plan decision runtime；Accept 会锁定 `PlanBlock` 为 accepted，结束计划等待 turn，追加内部 system 指令 `The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.`，并以 direct 模式启动后续 assistant 执行 turn；Reject 会锁定为 rejected，取消/释放计划 turn、恢复输入和状态栏，不追加内部指令也不启动执行。补充 app 层单测覆盖决策锁定、Accept 继续执行和 Reject 停止。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app plan_decision`；`cargo test -p atto-agent-app accepting_plan_appends_internal_instruction_and_starts_execution_turn`；`cargo test -p atto-agent-app rejecting_plan_stops_turn_without_starting_execution`；`cargo test -p atto-agent-app --all-targets`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M5.6 副作用工具门控** - 计划接受前拦截 `apply_patch`、`run_command` 等 mutating tool，并写入明确 tool result。
 - [ ] **M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
 - [ ] **M5.R Review** - 复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。

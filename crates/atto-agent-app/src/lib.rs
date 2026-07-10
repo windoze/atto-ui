@@ -67,6 +67,7 @@ const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
 const MOCK_READ_FILE_PROMPT: &str = "agent-pty-read-file";
 const MOCK_RUN_COMMAND_PROMPT: &str = "agent-pty-run-command";
+const ACCEPTED_PLAN_EXECUTION_INSTRUCTION: &str = "The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.";
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -149,6 +150,14 @@ struct AgentTurnLauncher {
     tool_registry: ToolRegistry,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
+}
+
+#[derive(Clone)]
+struct PlanDecisionRuntime {
+    input_handle: ChatInputHandle,
+    mock_turns: MockTurnRegistry,
+    status_state: Property<String>,
+    turn_launcher: AgentTurnLauncher,
 }
 
 #[derive(Clone, Debug)]
@@ -519,13 +528,19 @@ fn build_chat_panel(
     let store_for_approval = store.clone();
     let tool_runtime_for_approval = tool_runtime.clone();
     let store_for_plan_decision = store.clone();
+    let plan_runtime = PlanDecisionRuntime {
+        input_handle: slash_runtime.input_handle.clone(),
+        mock_turns: slash_runtime.mock_turns.clone(),
+        status_state: slash_runtime.status_state.clone(),
+        turn_launcher: turn_launcher.clone(),
+    };
     let list = ChatMessageList::new(store.clone())
         .show_timestamps(false)
         .on_approve(move |decision| {
             handle_tool_approval(&store_for_approval, &tool_runtime_for_approval, decision);
         })
         .on_plan_decision(move |event| {
-            handle_plan_decision(&store_for_plan_decision, event);
+            handle_plan_decision(&store_for_plan_decision, &plan_runtime, event);
         })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
@@ -593,6 +608,26 @@ fn submit_input_response(
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
 
+    start_mock_agent_turn_for_prompt(
+        store,
+        &slash_runtime.input_handle,
+        &slash_runtime.mock_turns,
+        &slash_runtime.status_state,
+        turn_launcher,
+        text,
+        plan_decision,
+    );
+}
+
+fn start_mock_agent_turn_for_prompt(
+    store: &ChatMessageStore,
+    input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
+    status_state: &Property<String>,
+    turn_launcher: &AgentTurnLauncher,
+    prompt: String,
+    plan_decision: PlanTurnDecision,
+) -> Option<ChatMessageId> {
     let assistant_id = store.next_message_id();
     let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
         .with_status(ChatTurnStatus::Streaming);
@@ -608,12 +643,12 @@ fn submit_input_response(
     {
         store.fail_streaming_turn(assistant_id, error);
         turn_launcher.turn_budgets.finish_turn(assistant_id);
-        return;
+        return None;
     }
-    let cancel = slash_runtime.mock_turns.start(assistant_id);
+    let cancel = mock_turns.start(assistant_id);
 
-    slash_runtime.input_handle.streaming_binding().set(true);
-    slash_runtime.status_state.set(STATUS_STREAMING.to_string());
+    input_handle.streaming_binding().set(true);
+    status_state.set(STATUS_STREAMING.to_string());
     spawn_mock_agent_turn(
         turn_launcher.action_sender.clone(),
         MockAgentTurnRequest {
@@ -621,12 +656,13 @@ fn submit_input_response(
             message_id: assistant_id,
             block_id: text_block_id,
             cancel,
-            token_delay: slash_runtime.mock_turns.token_delay(),
+            token_delay: mock_turns.token_delay(),
             model: turn_launcher.model.clone(),
-            prompt: text,
+            prompt,
             plan_decision,
         },
     );
+    Some(assistant_id)
 }
 
 fn auto_load_matching_skills(
@@ -1351,7 +1387,11 @@ fn tool_approval_request(tool_use: &ToolUseBlock, allow_project: bool) -> Approv
     }
 }
 
-fn handle_plan_decision(store: &ChatMessageStore, event: PlanDecisionEvent) {
+fn handle_plan_decision(
+    store: &ChatMessageStore,
+    runtime: &PlanDecisionRuntime,
+    event: PlanDecisionEvent,
+) {
     if event.decision == PlanDecision::Pending {
         return;
     }
@@ -1361,8 +1401,52 @@ fn handle_plan_decision(store: &ChatMessageStore, event: PlanDecisionEvent) {
         })
         .unwrap_or(false);
     if is_pending_plan {
-        let _ = store.set_plan_decision(event.block_id, event.decision);
+        if !store.set_plan_decision(event.block_id, event.decision) {
+            return;
+        }
+        match event.decision {
+            PlanDecision::Accepted => {
+                continue_after_accepted_plan(store, runtime, event.message_id)
+            }
+            PlanDecision::Rejected => finish_plan_decision_turn(store, runtime, event.message_id),
+            PlanDecision::Pending => {}
+        }
     }
+}
+
+fn continue_after_accepted_plan(
+    store: &ChatMessageStore,
+    runtime: &PlanDecisionRuntime,
+    plan_message_id: ChatMessageId,
+) {
+    finish_plan_decision_turn(store, runtime, plan_message_id);
+    let instruction = ACCEPTED_PLAN_EXECUTION_INSTRUCTION.to_string();
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        instruction.clone(),
+    ));
+    start_mock_agent_turn_for_prompt(
+        store,
+        &runtime.input_handle,
+        &runtime.mock_turns,
+        &runtime.status_state,
+        &runtime.turn_launcher,
+        instruction,
+        PlanTurnDecision::Direct,
+    );
+}
+
+fn finish_plan_decision_turn(
+    store: &ChatMessageStore,
+    runtime: &PlanDecisionRuntime,
+    message_id: ChatMessageId,
+) {
+    let _ = runtime.mock_turns.cancel(message_id);
+    let _ = store.set_turn_status(message_id, ChatTurnStatus::Complete);
+    runtime.turn_launcher.turn_budgets.finish_turn(message_id);
+    runtime.input_handle.streaming_binding().set(false);
+    runtime.status_state.set(STATUS_READY.to_string());
 }
 
 fn handle_tool_approval(
@@ -1942,7 +2026,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use atto_ui::ComponentValue;
     use atto_ui::composable::{
@@ -1977,12 +2061,13 @@ mod tests {
     };
 
     use super::{
-        APP_TITLE, AgentApp, AgentTurnLauncher, AgentTurnLimits, AppAction, MockTurnRegistry,
-        STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker,
-        apply_app_action, build_chat_panel, deepseek_plan_request_from_transcript,
-        deepseek_request_from_transcript, deepseek_request_from_transcript_with_skills,
-        execute_tool_use_to_result_block, handle_plan_decision, handle_tool_approval,
-        submit_input_response, submit_slash_command_text,
+        ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
+        AgentTurnLimits, AppAction, MockTurnRegistry, PlanDecisionRuntime, STATUS_READY,
+        STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker, apply_app_action,
+        build_chat_panel, deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
+        deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
+        handle_plan_decision, handle_tool_approval, submit_input_response,
+        submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -2241,6 +2326,30 @@ Use this skill for {name} tasks.
             turn_budgets: TurnBudgetTracker::default(),
             limits,
         }
+    }
+
+    fn test_plan_decision_runtime(
+        input_handle: &atto_ui_chat::ChatInputHandle,
+        mock_turns: &MockTurnRegistry,
+        status_state: &atto_ui::reactive::Property<String>,
+        turn_budgets: &TurnBudgetTracker,
+    ) -> (PlanDecisionRuntime, std::sync::mpsc::Receiver<AppAction>) {
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        (
+            PlanDecisionRuntime {
+                input_handle: input_handle.clone(),
+                mock_turns: mock_turns.clone(),
+                status_state: status_state.clone(),
+                turn_launcher: AgentTurnLauncher {
+                    model: "deepseek-chat".to_string(),
+                    action_sender: sender,
+                    tool_registry: test_tool_registry(),
+                    turn_budgets: turn_budgets.clone(),
+                    limits: AgentTurnLimits::default(),
+                },
+            },
+            receiver,
+        )
     }
 
     fn apply_test_app_action(
@@ -3057,6 +3166,12 @@ Use this skill for {name} tasks.
     #[test]
     fn plan_decision_callback_updates_pending_plan_block() {
         let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let turn_budgets = TurnBudgetTracker::default();
+        let (runtime, _receiver) =
+            test_plan_decision_runtime(&input_handle, &mock_turns, &status_state, &turn_budgets);
         let assistant_id = store.next_message_id();
         let plan_block_id = ChatBlockId::new(30_001);
         store.push(ChatMessage::new(
@@ -3073,6 +3188,7 @@ Use this skill for {name} tasks.
 
         handle_plan_decision(
             &store,
+            &runtime,
             PlanDecisionEvent {
                 message_id: assistant_id,
                 block_id: plan_block_id,
@@ -3084,6 +3200,7 @@ Use this skill for {name} tasks.
 
         handle_plan_decision(
             &store,
+            &runtime,
             PlanDecisionEvent {
                 message_id: assistant_id,
                 block_id: plan_block_id,
@@ -3092,6 +3209,114 @@ Use this skill for {name} tasks.
         );
 
         assert_eq!(plan_decision(&store, plan_block_id), PlanDecision::Accepted);
+    }
+
+    #[test]
+    fn accepting_plan_appends_internal_instruction_and_starts_execution_turn() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let turn_budgets = TurnBudgetTracker::default();
+        input_handle.streaming_binding().set(true);
+        let (runtime, receiver) =
+            test_plan_decision_runtime(&input_handle, &mock_turns, &status_state, &turn_budgets);
+        let assistant_id = store.next_message_id();
+        let plan_block_id = ChatBlockId::new(30_002);
+        store.push(
+            ChatMessage::new(
+                assistant_id,
+                ChatRole::Assistant,
+                vec![ChatBlock::Plan(PlanBlock {
+                    id: plan_block_id,
+                    items: vec![PlanItem {
+                        text: "Inspect current implementation.".to_string(),
+                    }],
+                    decision: PlanDecision::Pending,
+                })],
+            )
+            .with_status(ChatTurnStatus::Streaming),
+        );
+        turn_budgets.start_turn(assistant_id, AgentTurnLimits::default());
+        let plan_cancel = mock_turns.start(assistant_id);
+
+        handle_plan_decision(
+            &store,
+            &runtime,
+            PlanDecisionEvent {
+                message_id: assistant_id,
+                block_id: plan_block_id,
+                decision: PlanDecision::Accepted,
+            },
+        );
+
+        let messages = store.messages();
+        assert_eq!(plan_decision(&store, plan_block_id), PlanDecision::Accepted);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].status, ChatTurnStatus::Complete);
+        assert!(plan_cancel.is_cancelled());
+        assert_eq!(messages[1].role, ChatRole::System);
+        assert_eq!(
+            message_text(&messages[1]),
+            ACCEPTED_PLAN_EXECUTION_INSTRUCTION
+        );
+        assert_eq!(messages[2].role, ChatRole::Assistant);
+        assert_eq!(messages[2].status, ChatTurnStatus::Streaming);
+        assert!(input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_STREAMING);
+        let action = receiver
+            .recv_timeout(Duration::from_millis(250))
+            .expect("accepted plan should continue the mock execution loop");
+        assert!(matches!(action, AppAction::TextDelta { .. }));
+    }
+
+    #[test]
+    fn rejecting_plan_stops_turn_without_starting_execution() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let turn_budgets = TurnBudgetTracker::default();
+        input_handle.streaming_binding().set(true);
+        let (runtime, receiver) =
+            test_plan_decision_runtime(&input_handle, &mock_turns, &status_state, &turn_budgets);
+        let assistant_id = store.next_message_id();
+        let plan_block_id = ChatBlockId::new(30_003);
+        store.push(
+            ChatMessage::new(
+                assistant_id,
+                ChatRole::Assistant,
+                vec![ChatBlock::Plan(PlanBlock {
+                    id: plan_block_id,
+                    items: vec![PlanItem {
+                        text: "Inspect current implementation.".to_string(),
+                    }],
+                    decision: PlanDecision::Pending,
+                })],
+            )
+            .with_status(ChatTurnStatus::Streaming),
+        );
+        turn_budgets.start_turn(assistant_id, AgentTurnLimits::default());
+        let plan_cancel = mock_turns.start(assistant_id);
+
+        handle_plan_decision(
+            &store,
+            &runtime,
+            PlanDecisionEvent {
+                message_id: assistant_id,
+                block_id: plan_block_id,
+                decision: PlanDecision::Rejected,
+            },
+        );
+
+        let messages = store.messages();
+        assert_eq!(plan_decision(&store, plan_block_id), PlanDecision::Rejected);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].status, ChatTurnStatus::Complete);
+        assert!(plan_cancel.is_cancelled());
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]

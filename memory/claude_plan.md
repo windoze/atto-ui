@@ -2,30 +2,31 @@
 
 此文件记录本次调用的可公开执行计划与进度；不会记录私有推理过程。
 
-## 当前目标
+## 范围
 
-- 已从 `TODO.md` 识别第一个未完成任务：`M5.4 PlanBlock UI`。
-- 任务要求：渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
-- 本次只完成该任务，完成后提交并停止。
+- 以 `TODO.md` 作为唯一任务来源。
+- 只识别并完成第一个标题未带 `[DONE]` 的任务。
+- 完成该任务的实现、验证、记录和提交后停止，不进入下一项。
 
-## 执行步骤
+## 步骤
 
-1. 检查最新提交是否声明与 `M5.4` 直接相关的未完成事项。
-2. 定位 `PlanBlock` 数据模型、当前 chat block 渲染代码、输入/列表事件回调和已有测试。
-3. 设计并实现 pending plan 的可见 UI，包括计划条目、待决状态和可操作提示，保持现有视觉风格。
-4. 将 UI 决策事件接到现有 `on_plan_decision`/事件分发路径，确保 accept/reject 操作能到达 app 层；实际 accept/reject 流程若属于 `M5.5`，本任务只完成事件接入和状态传递。
-5. 增加或更新相关单元测试或 PTY/snapshot 覆盖，验证 pending `PlanBlock` 可渲染且决策回调可触发。
-6. 按要求运行 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、再运行相关或完整测试。
-7. 更新 `TODO.md`，给 `M5.4` 标记 `[DONE]` 并写入完成记录。
-8. 提交本次任务相关变更，停止。
+1. 读取 `TODO.md`，确定第一个未完成任务和验证要求。
+2. 检查最新提交是否有与该任务直接相关的未完成事项。
+3. 阅读当前任务所需的实现代码和测试。
+4. 如任务、阻塞点或执行路径发生实质变化，及时更新本文件。
+5. 以最小正确改动完成任务要求。
+6. 先运行 `cargo fmt`，再运行 `cargo clippy --workspace --all-targets -- -D warnings`，最后运行所需测试；完整测试使用长超时。
+7. 若验证发现未计划的失败，立即修复，或在 `TODO.md` 中加入最小前置任务后停止。
+8. 在 `TODO.md` 中将已完成任务标题标记为 `[DONE]`，并写入完成记录。
+9. 提交本任务相关改动。
+10. 停止，不处理下一项任务。
 
-## 进度记录
+## 当前状态
 
-- 已记录初始计划。
-- 已读取 `TODO.md`，确认当前任务为 `M5.4 PlanBlock UI`。
-- 已检查最新提交 `[M5.3] Add plan generation`，未发现与 `M5.4` 直接相关的未完成事项。
-- 已定位现有 `atto-ui-chat` 的 `PlanDecisionView`、`PlanBlock` 渲染和事件发射实现；缺口在 app 构建 `ChatMessageList` 时未绑定 `on_plan_decision`。
-- 已完成 app 层接入初稿：新增 `handle_plan_decision`，在 `build_chat_panel` 绑定 `.on_plan_decision`，将 pending `PlanBlock` 锁定为 accepted/rejected，并拒绝已决 plan 的旧事件覆盖。
-- 已补充 app 单测 `plan_decision_callback_updates_pending_plan_block`，覆盖决策状态更新和重复旧事件忽略。
-- 已完成验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check` 均通过。
-- 已更新 `TODO.md`，将 `M5.4 PlanBlock UI` 标记为 `[DONE]` 并写入完成记录。
+- 已选择第一个未完成任务：`M5.5 Accept/Reject 流程`。
+- 最新提交 `29ecadb [M5.4] Wire plan block decisions` 未声明与本任务直接相关的未完成阻塞项。
+- 已确认现有代码能生成并锁定 `PlanBlock` 决策，但 Accept 后不会继续执行，Reject 后也没有显式释放计划 turn。
+- 已完成 M5.5 实现：Accept 会追加内部执行指令并启动 direct 执行 turn；Reject 会释放计划 turn 且不启动执行。
+- 已完成验证：`cargo fmt --all`、M5.5 针对性测试、`cargo test -p atto-agent-app --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check` 均通过。
+- 已更新 `TODO.md`，将 `M5.5` 标记为 `[DONE]` 并写入完成记录。
+- 下一步：提交本任务变更。
