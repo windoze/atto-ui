@@ -76,7 +76,7 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     host.wait_for_text("Skills: none registered yet.", PTY_WAIT)?;
 
     submit_text(&mut host, "/tools")?;
-    host.wait_for_text("Tools: none registered in the M1 mock provider.", PTY_WAIT)?;
+    host.wait_for_text("Tools: none registered yet.", PTY_WAIT)?;
 
     submit_text(&mut host, "/abort")?;
     host.wait_for_text("No active turn to abort.", PTY_WAIT)?;

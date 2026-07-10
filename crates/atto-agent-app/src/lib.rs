@@ -30,6 +30,7 @@ pub mod config;
 pub mod deepseek;
 pub mod deepseek_client;
 mod stream_ui;
+pub mod tool;
 
 use crate::config::{AgentConfig, PlanMode};
 use crate::deepseek::{
@@ -647,7 +648,7 @@ fn skills_text() -> &'static str {
 }
 
 fn tools_text() -> &'static str {
-    "Tools: none registered in the M1 mock provider. Tool registry and approvals are scheduled for M3."
+    "Tools: none registered yet. Tool registry abstractions are available; built-in tools and approvals are scheduled for M3.3-M3.5."
 }
 
 fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
