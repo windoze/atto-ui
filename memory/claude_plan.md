@@ -26,3 +26,4 @@
 - Required validation passed: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`.
 - Updated `TODO.md` with `[DONE] M4.7` and its completion record. Only documentation changed after the green full test run.
 - Next step is to inspect git status/diff/log, then commit the intended changes for M4.7 and stop.
+- Committed implementation and task record as `56ab547 [M4.7] Add skill registry test coverage`.
