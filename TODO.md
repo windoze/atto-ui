@@ -93,7 +93,9 @@
 - [x] **[DONE] M4.3 手动加载命令** - `/skills` 展示可用 skill，`/skill <name>` 激活 skill，并在状态栏显示数量。
   - 完成记录（2026-07-10）：新增运行时 `LoadedSkillSet` 保存手动激活的 skill；agent app 注入 `/skill` slash 命令，`/skill <name>` 会校验 discovery registry、处理未知/重复加载并更新状态栏 `skills: N`，`/skills` 现在展示 discovered/loaded 数量并标记每个 skill 的 loaded/available 状态。补充单元测试覆盖激活、重复、未知参数和列表标记，更新 PTY slash 测试覆盖状态栏 skill 计数与新 `/skills` 文案。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。
+- [x] **[DONE] M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。
+  - 完成记录（2026-07-10）：新增 auto-mode skill 确定性词匹配，用户 prompt 与 skill 的 `name`、`description`、`triggers` 做大小写不敏感 token 交集匹配；普通用户提交时自动加载匹配的 `mode: auto` skill，跳过已加载 skill 和 `mode: manual` skill，并按 registry 名称顺序限制每个 prompt 最多自动加载 4 个，同时同步状态栏 `skills: N`。新增单测覆盖字段匹配、大小写/标点 token 化、手动 skill 不自动加载、已加载跳过、上限限制，以及提交路径自动更新 loaded skill 状态。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
 - [ ] **M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。
 - [ ] **M4.7 测试** - 单测解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill`。

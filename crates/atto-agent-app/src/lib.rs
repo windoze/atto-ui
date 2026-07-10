@@ -45,7 +45,7 @@ use crate::deepseek::{
     ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
-use crate::skill::{LoadedSkillSet, SkillRegistry};
+use crate::skill::{DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry};
 use crate::stream_ui::DeepSeekUiStream;
 use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
@@ -561,6 +561,13 @@ fn submit_input_response(
         return;
     }
 
+    auto_load_matching_skills(
+        &slash_runtime.skill_registry,
+        &slash_runtime.loaded_skills,
+        &slash_runtime.skill_count_state,
+        &text,
+    );
+
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
 
@@ -597,6 +604,26 @@ fn submit_input_response(
             prompt: text,
         },
     );
+}
+
+fn auto_load_matching_skills(
+    registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    skill_count_state: &Property<String>,
+    prompt: &str,
+) -> Vec<String> {
+    let matching_names =
+        registry.matching_auto_skill_names(prompt, loaded_skills, DEFAULT_MAX_AUTO_LOADED_SKILLS);
+    let mut loaded_names = Vec::new();
+    for name in matching_names {
+        if loaded_skills.insert(name.clone()) {
+            loaded_names.push(name);
+        }
+    }
+    if !loaded_names.is_empty() {
+        skill_count_state.set(loaded_skills.status());
+    }
+    loaded_names
 }
 
 fn input_response_text(response: ChatInputResponse) -> String {
@@ -1798,7 +1825,7 @@ mod tests {
         chat_error_from_stream_disconnect, parse_chat_completion_sse,
         parse_chat_completion_sse_data,
     };
-    use crate::skill::{LoadedSkillSet, SkillRegistry, SkillSearchPath};
+    use crate::skill::{LoadedSkillSet, SkillMode, SkillRegistry, SkillSearchPath};
     use crate::stream_ui::DeepSeekUiStream;
     use crate::tool::{
         ToolContext, ToolExecutor, ToolOutputKind, ToolPermission, ToolPermissionPolicy,
@@ -1949,17 +1976,40 @@ mod tests {
     }
 
     fn write_test_skill(workspace: &Path, dir_name: &str, name: &str, description: &str) {
+        write_test_skill_with_mode(
+            workspace,
+            dir_name,
+            name,
+            description,
+            SkillMode::Manual,
+            &[],
+        );
+    }
+
+    fn write_test_skill_with_mode(
+        workspace: &Path,
+        dir_name: &str,
+        name: &str,
+        description: &str,
+        mode: SkillMode,
+        triggers: &[&str],
+    ) {
         let dir = workspace.join(".atto/skills").join(dir_name);
         fs::create_dir_all(&dir).expect("test skill directory should be created");
+        let triggers = triggers
+            .iter()
+            .map(|trigger| format!("\"{trigger}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         fs::write(
             dir.join("SKILL.md"),
             format!(
                 r#"---
 name: {name}
 description: {description}
-triggers: []
+triggers: [{triggers}]
 tools: []
-mode: manual
+mode: {mode}
 ---
 Use this skill for {name} tasks.
 "#
@@ -2701,6 +2751,67 @@ Use this skill for {name} tasks.
         assert!(input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_STREAMING);
         drop(receiver);
+    }
+
+    #[test]
+    fn text_submit_auto_loads_matching_auto_skills() {
+        let workspace = unique_temp_dir("submit-auto-skills");
+        write_test_skill_with_mode(
+            &workspace,
+            "rust",
+            "rust-review",
+            "Review Rust code.",
+            SkillMode::Auto,
+            &["clippy"],
+        );
+        write_test_skill_with_mode(
+            &workspace,
+            "docs",
+            "docs",
+            "Write documentation.",
+            SkillMode::Manual,
+            &["docs"],
+        );
+        let registry =
+            SkillRegistry::discover_from_paths(&[SkillSearchPath::workspace(&workspace)]);
+        let skills = TestSkillState::new(registry);
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let runtime = test_slash_runtime_with_skills(
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &plan_mode_state,
+            &skills,
+            &turn_budgets,
+        );
+        let turn_launcher = AgentTurnLauncher {
+            model: "deepseek-chat".to_string(),
+            action_sender: sender,
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+        };
+
+        submit_input_response(
+            &store,
+            &runtime,
+            &turn_launcher,
+            ChatInputResponse::Text("please run clippy on this rust code".to_string()),
+        );
+
+        assert_eq!(skills.loaded.names(), vec!["rust-review"]);
+        assert_eq!(skills.count_state.get(), "skills: 1");
+        let messages = store.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        drop(receiver);
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]

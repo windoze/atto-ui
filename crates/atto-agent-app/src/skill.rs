@@ -2,8 +2,8 @@
 //!
 //! Skills are Markdown instruction files with YAML frontmatter. This module owns
 //! deterministic discovery from the default workspace and user skill roots, plus
-//! runtime tracking for manually loaded skills. Matching and prompt injection are
-//! implemented in later M4 tasks.
+//! runtime tracking for loaded skills, and deterministic prompt matching for
+//! auto-mode skills. Prompt injection is implemented in a later M4 task.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -21,6 +21,9 @@ pub const WORKSPACE_SKILLS_DIR: &str = ".atto/skills";
 pub const USER_SKILLS_DIR: &str = ".config/atto-agent/skills";
 
 const SKILL_FILE_NAME: &str = "SKILL.md";
+
+/// Maximum number of skills automatically loaded from one user prompt.
+pub const DEFAULT_MAX_AUTO_LOADED_SKILLS: usize = 4;
 
 /// Parsed contents of one `SKILL.md` file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,6 +227,40 @@ impl SkillRegistry {
         &self.issues
     }
 
+    /// Returns auto-mode skill names whose metadata shares a word with `prompt`.
+    pub fn matching_auto_skill_names(
+        &self,
+        prompt: &str,
+        loaded_skills: &LoadedSkillSet,
+        limit: usize,
+    ) -> Vec<String> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let prompt_terms = matching_terms(prompt);
+        if prompt_terms.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+        for skill in self.skills.values() {
+            if matches.len() >= limit {
+                break;
+            }
+            if skill.definition.mode != SkillMode::Auto {
+                continue;
+            }
+            if loaded_skills.contains(&skill.definition.name) {
+                continue;
+            }
+            if skill_matches_prompt(&skill.definition, &prompt_terms) {
+                matches.push(skill.definition.name.clone());
+            }
+        }
+        matches
+    }
+
     fn insert(&mut self, skill: DiscoveredSkill) {
         let name = skill.definition.name.clone();
         if let Some(existing) = self.skills.get(&name) {
@@ -242,7 +279,7 @@ impl SkillRegistry {
     }
 }
 
-/// Shared runtime state for skills manually loaded into the current agent session.
+/// Shared runtime state for skills loaded into the current agent session.
 #[derive(Clone, Debug, Default)]
 pub struct LoadedSkillSet {
     names: Arc<Mutex<BTreeSet<String>>>,
@@ -370,6 +407,37 @@ fn scan_skill_path(registry: &mut SkillRegistry, search_path: &SkillSearchPath) 
     }
 }
 
+fn skill_matches_prompt(definition: &SkillDefinition, prompt_terms: &BTreeSet<String>) -> bool {
+    skill_match_terms(definition)
+        .iter()
+        .any(|term| prompt_terms.contains(term))
+}
+
+fn skill_match_terms(definition: &SkillDefinition) -> BTreeSet<String> {
+    let mut terms = matching_terms(&definition.name);
+    terms.extend(matching_terms(&definition.description));
+    for trigger in &definition.triggers {
+        terms.extend(matching_terms(trigger));
+    }
+    terms
+}
+
+fn matching_terms(text: &str) -> BTreeSet<String> {
+    let mut terms = BTreeSet::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            current.extend(ch.to_lowercase());
+        } else if !current.is_empty() {
+            terms.insert(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        terms.insert(current);
+    }
+    terms
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SkillFrontmatter {
@@ -485,10 +553,26 @@ Prefer tests that reproduce behavioral regressions.
     }
 
     fn skill_markdown(name: &str, description: &str) -> String {
+        skill_markdown_with_mode(name, description, SkillMode::Manual, &[])
+    }
+
+    fn skill_markdown_with_mode(
+        name: &str,
+        description: &str,
+        mode: SkillMode,
+        triggers: &[&str],
+    ) -> String {
+        let triggers = triggers
+            .iter()
+            .map(|trigger| format!("\"{trigger}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             r#"---
 name: {name}
 description: {description}
+triggers: [{triggers}]
+mode: {mode}
 ---
 
 Use this skill for {name} tasks.
@@ -786,6 +870,72 @@ Body.
             }
             other => panic!("expected invalid file issue, got {other:?}"),
         }
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn auto_matching_uses_name_description_and_triggers() {
+        let workspace = test_dir("auto-match-fields");
+        write(
+            &workspace.join(".atto/skills/api/SKILL.md"),
+            skill_markdown_with_mode(
+                "api-audit",
+                "Check service contracts.",
+                SkillMode::Auto,
+                &[],
+            ),
+        );
+        write(
+            &workspace.join(".atto/skills/rust/SKILL.md"),
+            skill_markdown_with_mode(
+                "rust-review",
+                "Review implementation details.",
+                SkillMode::Auto,
+                &["clippy"],
+            ),
+        );
+        write(
+            &workspace.join(".atto/skills/tests/SKILL.md"),
+            skill_markdown_with_mode("tests", "Design regression coverage.", SkillMode::Auto, &[]),
+        );
+        write(
+            &workspace.join(".atto/skills/manual/SKILL.md"),
+            skill_markdown("manual-match", "Audit API behavior."),
+        );
+        let registry = SkillRegistry::discover(&workspace, None);
+        let loaded = LoadedSkillSet::default();
+
+        let matches = registry.matching_auto_skill_names(
+            "Please audit the API, run CLIPPY, and cover regression cases.",
+            &loaded,
+            DEFAULT_MAX_AUTO_LOADED_SKILLS,
+        );
+
+        assert_eq!(matches, vec!["api-audit", "rust-review", "tests"]);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn auto_matching_respects_limit_and_loaded_set() {
+        let workspace = test_dir("auto-match-limit");
+        for name in ["alpha", "beta", "gamma", "omega"] {
+            write(
+                &workspace.join(format!(".atto/skills/{name}/SKILL.md")),
+                skill_markdown_with_mode(name, "Review Rust code.", SkillMode::Auto, &[]),
+            );
+        }
+        let registry = SkillRegistry::discover(&workspace, None);
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("beta"));
+
+        let matches = registry.matching_auto_skill_names("rust review", &loaded, 2);
+
+        assert_eq!(matches, vec!["alpha", "gamma"]);
+        assert!(
+            registry
+                .matching_auto_skill_names("rust review", &loaded, 0)
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(workspace);
     }
 }

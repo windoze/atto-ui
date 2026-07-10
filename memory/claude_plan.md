@@ -1,30 +1,31 @@
-# 执行计划
+# 当前任务计划：M4.4 自动加载
 
-## 当前目标
+## 范围
 
-- 按 `TODO.md` 的顺序只完成第一个未标记 `[DONE]` 的任务，然后停止。
-- `TODO.md` 是任务细节、依赖、验证要求和完成记录的唯一权威来源。
-- `PLAN.md` 只在阶段级计划、依赖或完成标准发生变化时更新。
+- 只完成 `TODO.md` 中第一个未完成任务：`M4.4 自动加载`。
+- 目标：对用户 prompt 与 skill 的 `name`、`description`、`triggers` 做确定性词匹配，并限制最多自动加载数量。
+- 不推进 `M4.5` 及后续任务；不修改 `PLAN.md`，除非发现阶段级依赖或完成标准需要调整。
 
-## 步骤
+## 执行步骤
 
-1. 读取 `TODO.md`，识别第一个标题未以 `[DONE]` 开头的任务，并记录任务范围、依赖和验证要求。
-2. 检查最新提交信息，若其中明确提到与当前任务直接相关的未完成问题，则把它纳入当前任务或在 `TODO.md` 中作为前置任务处理。
-3. 根据当前任务阅读相关代码和测试，避免无关的开放式历史问题排查。
-4. 若任务可直接完成，则实施最小且完整的代码或文档修改；若发现具体阻塞项，则只添加必要的前置任务并停止。
-5. 按要求运行验证：先 `cargo fmt`，再 `cargo clippy --all-targets -- -D warnings`，最后在需要时运行完整测试套件。
-6. 如果发现未被计划覆盖的测试失败，立即修复，或在 `TODO.md` 中添加最小必要任务并保持当前任务未完成。
-7. 完成后更新 `TODO.md`：给当前任务标题加 `[DONE]`，填写完成记录和验证结果；仅在阶段级计划变化时更新 `PLAN.md`。
-8. 提交所有与本次任务相关的变更，提交信息包含任务编号或清晰描述。
-9. 提交后停止，不继续处理下一个任务。
+1. 检查最近提交与当前 worktree，确认是否存在与 `M4.4` 直接相关的未完成事项或冲突。
+2. 阅读 skill registry、loaded skill set、agent submit/turn loop、slash 命令与状态栏相关代码，定位自动加载应接入的位置。
+3. 设计最小实现：新增确定性词匹配逻辑、自动加载上限常量或配置入口，并保证手动加载的 skill 不被重复计数。
+4. 在用户提交 prompt 时执行自动匹配和加载，更新 loaded skill 数与可见反馈；保持 `/skill` 手动加载行为不变。
+5. 添加或更新单元测试，覆盖 name、description、triggers 匹配、大小写/分词、上限限制、重复已加载 skill 等核心行为。
+6. 运行 `cargo fmt --all`，再运行 `cargo clippy --workspace --all-targets -- -D warnings`，最后运行 `cargo test --workspace --all-targets`。
+7. 将 `TODO.md` 中 `M4.4` 标记为 `[DONE]` 并写入完成记录与验证命令。
+8. 检查 `git status` / `git diff` / 最近提交，提交本次任务相关全部变更，然后停止。
 
 ## 进度记录
 
-- 已创建本执行计划，下一步读取 `TODO.md` 并确定第一个未完成任务。
-- 已确认第一个未完成任务为 `M4.3 手动加载命令`；最近提交 `[M4.2] Add skill discovery paths` 未声明直接相关的未完成事项。
-- 已定位 slash 命令、skill discovery registry 和状态栏 segment 实现；当前编辑目标是新增已加载 skill 状态、`/skill <name>` 激活命令、`/skills` 已加载标记和状态栏计数。
-- 已完成核心实现与单元测试补充。首次 clippy 发现测试 helper 参数过多，已改为测试专用 `TestSkillState` 聚合参数，下一步重新运行格式化和 clippy。
-- 已修复 PTY 测试旧文案断言，并修正 `/skill <name>` 帮助文本渲染。验证通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
-- 下一步更新 `TODO.md`，将 `M4.3` 标记为 `[DONE]` 并记录完成内容与验证命令。
-- 已更新 `TODO.md`，`M4.3` 已标记 `[DONE]` 并写入完成记录。下一步检查 git 状态和 diff，然后提交本次任务变更。
-- 已修正 `skill.rs` 模块注释中关于 activation 的旧描述，并再次确认 `cargo fmt --all -- --check` 通过。
+- 已确认首个未完成任务为 `M4.4 自动加载`。
+- 已检查仓库状态：当前只有本计划文件变更；最近提交为 `[M4.3] Add manual skill loading`，未发现直接阻塞 `M4.4` 的未完成事项。
+- 已阅读相关代码：`skill.rs` 负责解析、发现和 loaded set，`lib.rs::submit_input_response` 是普通用户 prompt 提交入口，`/skill` 已经更新 `skill_count_state`。
+- 实现决策：只让 `mode: auto` 的 skill 参与自动加载；用大小写不敏感的确定性词 token 交集匹配 `name`、`description`、`triggers`；按 registry 名称顺序最多加载固定数量；不做 M4.5 prompt 注入，不改变工具权限。
+- 已在 `skill.rs` 添加默认自动加载上限、匹配 API、token 化辅助函数和单元测试；已在 `lib.rs::submit_input_response` 接入自动加载，并新增 app 层提交测试。
+- 已运行 `cargo fmt --all` 和 `cargo clippy --workspace --all-targets -- -D warnings` 通过。
+- 首次完整测试有 1 个新增测试失败：测试 prompt 使用 `regressions`，而实现按任务要求做确定性词匹配、不做词干化。下一步修正测试输入为同一词形后重新验证。
+- 已修正新增单测输入，并重新运行验证通过：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
+- 已更新 `TODO.md`，`M4.4` 已标记 `[DONE]` 并写入完成记录。已检查 git 状态、diff 和最近提交，变更范围符合本任务。
+- 下一步：提交本次任务变更并停止。
