@@ -32,4 +32,5 @@
 - 已新增单测覆盖正常注入、越界/缺失文件错误记录、预算限制和 request 构建入口。
 - 已完成验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-agent-app context_builder`、`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_file_mentions_from_config_workspace`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
 - 已将 `TODO.md` 中 `M6.2 文件 mention` 标记为 `[DONE]` 并补充完成记录。
-- 下一步检查 git diff/status，确认提交本次任务相关文件。
+- 已创建提交 `3e46fce [M6.2] Implement file mention context`，包含代码、测试、`TODO.md` 和本计划文件此前记录。
+- 本轮任务完成后停止，不继续 `M6.3`。
