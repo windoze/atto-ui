@@ -147,7 +147,9 @@
 - [x] **[DONE] M6.3 工具输出预算** - 回传模型的 tool output 做截断，UI 保留完整或尾部窗口。
   - 完成记录（2026-07-10）：`ContextBuilder` 现在对每条 role=`tool` 消息应用默认 16 KiB 模型上下文预算，超长 `ToolResultBlock` 输出会按 UTF-8 边界截断并追加明确的模型可见截断说明；截断只发生在 DeepSeek request/message 构建边界，UI transcript 中的 `ToolResultBlock` 保持完整，既有 ANSI 工具输出尾部窗口能力继续负责 UI 长输出展示。新增单测覆盖长工具输出截断、UI 输出不被修改和多字节字符边界安全。
   - 验证：`cargo test -p atto-agent-app context_builder`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
+- [x] **[DONE] M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
+  - 完成记录（2026-07-10）：新增 agent app deterministic compact 策略，默认按 64K 上下文窗口 70% 阈值触发、保留最近 20 条消息，并用本地摘要兜底生成完成态 `CompactBlock { before_tokens, after_tokens, summary }`；提交用户消息和接受 plan 后继续执行前都会在 assistant turn 启动前压缩已 settled 的早期 transcript，跳过 streaming、pending approval/plan/diff/task 等仍需交互的块。压缩通过 `ChatMessageStore::replace_all` 推进 branch token，后续 DeepSeek request 由既有 `ContextBuilder` 将 `<compact>` system context 发送给模型，而不再重放被压缩旧 turn 的完整消息。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app compact`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
 - [ ] **M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
 - [ ] **M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。

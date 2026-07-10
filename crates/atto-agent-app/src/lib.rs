@@ -29,6 +29,7 @@ use atto_ui_chat::{
 use ratatui::layout::Rect;
 use serde_json::Value;
 
+mod compact;
 pub mod config;
 pub mod context;
 pub mod deepseek;
@@ -39,6 +40,7 @@ pub mod skill;
 mod stream_ui;
 pub mod tool;
 
+use crate::compact::{CompactPolicy, compact_store_if_needed};
 use crate::config::{AgentConfig, PlanMode};
 use crate::context::{ContextBuilder, component_value_to_json};
 use crate::deepseek::{
@@ -160,6 +162,7 @@ struct AgentTurnLauncher {
     tool_registry: ToolRegistry,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
+    compact_policy: CompactPolicy,
 }
 
 #[derive(Clone)]
@@ -366,6 +369,7 @@ impl AgentApp {
                 tool_registry: runtime.tool_registry.clone(),
                 turn_budgets: runtime.turn_budgets.clone(),
                 limits: runtime.limits,
+                compact_policy: CompactPolicy::default(),
             },
             runtime.slash_runtime(),
             runtime.tool_runtime(),
@@ -618,6 +622,7 @@ fn submit_input_response(
 
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
+    let _ = compact_store_if_needed(store, turn_launcher.compact_policy);
 
     start_mock_agent_turn_for_prompt(
         store,
@@ -1453,6 +1458,7 @@ fn continue_after_accepted_plan(
         ChatRole::System,
         instruction.clone(),
     ));
+    let _ = compact_store_if_needed(store, runtime.turn_launcher.compact_policy);
     start_mock_agent_turn_for_prompt(
         store,
         &runtime.input_handle,
@@ -1898,13 +1904,14 @@ mod tests {
     use atto_ui_chat::{
         ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatBlockId, ChatError,
         ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, PlanBlock, PlanDecision, PlanDecisionEvent,
-        PlanItem, StopReason, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus,
-        ToolUseBlock,
+        ChatSlashCommandAction, ChatTurnStatus, CompactStatus, PlanBlock, PlanDecision,
+        PlanDecisionEvent, PlanItem, StopReason, TokenUsage, ToolInput, ToolOutput,
+        ToolResultBlock, ToolStatus, ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
+    use crate::compact::CompactPolicy;
     use crate::config::{AgentConfig, PlanMode};
     use crate::deepseek::{
         ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta,
@@ -2208,6 +2215,7 @@ Use this skill for {name} tasks.
                     tool_registry: test_tool_registry(),
                     turn_budgets: turn_budgets.clone(),
                     limits: AgentTurnLimits::default(),
+                    compact_policy: CompactPolicy::default(),
                 },
             },
             receiver,
@@ -2823,6 +2831,7 @@ Use this skill for {name} tasks.
                 tool_registry: test_tool_registry(),
                 turn_budgets: turn_budgets.clone(),
                 limits: AgentTurnLimits::default(),
+                compact_policy: CompactPolicy::default(),
             },
             test_slash_runtime(
                 &input_handle,
@@ -2879,6 +2888,7 @@ Use this skill for {name} tasks.
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
             limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
         };
 
         submit_input_response(
@@ -2903,6 +2913,114 @@ Use this skill for {name} tasks.
         assert_eq!(messages[1].status, ChatTurnStatus::Streaming);
         assert!(input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_STREAMING);
+        drop(receiver);
+    }
+
+    #[test]
+    fn text_submit_compacts_older_transcript_before_starting_turn() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "old user zero full body should be summarized",
+        ));
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "old assistant zero full body should be summarized",
+        ));
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "old user one full body should be summarized",
+        ));
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "recent assistant keep",
+        ));
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let turn_launcher = AgentTurnLauncher {
+            model: "deepseek-chat".to_string(),
+            action_sender: sender,
+            tool_registry: test_tool_registry(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy {
+                threshold_tokens: 1,
+                recent_message_limit: 2,
+                summary_max_bytes: 4096,
+            },
+        };
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("current prompt keep".to_string()),
+        );
+
+        let messages = store.messages();
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].role, ChatRole::System);
+        match &messages[0].blocks[0] {
+            ChatBlock::Compact(compact) => {
+                assert_eq!(compact.status, CompactStatus::Complete);
+                assert!(compact.before_tokens.is_some());
+                assert!(compact.after_tokens.is_some());
+                assert!(compact.summary.contains("old user zero full body"));
+                assert!(compact.summary.contains("old assistant zero full body"));
+                assert!(compact.summary.contains("old user one full body"));
+            }
+            other => panic!("expected compact block, got {other:?}"),
+        }
+        assert_eq!(message_text(&messages[1]), "recent assistant keep");
+        assert_eq!(messages[2].role, ChatRole::User);
+        assert_eq!(message_text(&messages[2]), "current prompt keep");
+        assert_eq!(messages[3].role, ChatRole::Assistant);
+        assert_eq!(messages[3].status, ChatTurnStatus::Streaming);
+
+        let request = deepseek_request_from_transcript(
+            &AgentConfig::defaults("."),
+            &test_tool_registry(),
+            &messages,
+        );
+        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages[0].role, ChatMessageRole::System);
+        assert!(
+            request.messages[0]
+                .content
+                .as_deref()
+                .is_some_and(|content| content.starts_with("<compact status=\"complete\""))
+        );
+        assert_eq!(request.messages[1].role, ChatMessageRole::Assistant);
+        assert_eq!(
+            request.messages[1].content.as_deref(),
+            Some("recent assistant keep")
+        );
+        assert_eq!(request.messages[2].role, ChatMessageRole::User);
+        assert_eq!(
+            request.messages[2].content.as_deref(),
+            Some("current prompt keep")
+        );
+        assert!(!request.messages.iter().any(|message| {
+            message.role == ChatMessageRole::User
+                && message
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| content.contains("old user zero full body"))
+        }));
         drop(receiver);
     }
 
@@ -2949,6 +3067,7 @@ Use this skill for {name} tasks.
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
             limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
         };
 
         submit_input_response(
