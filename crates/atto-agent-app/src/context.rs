@@ -26,8 +26,14 @@ use crate::tool::{display_workspace_path, resolve_existing_workspace_path};
 pub const MENTION_FILE_MAX_BYTES: usize = 32 * 1024;
 /// Maximum aggregate UTF-8 bytes injected for all file mentions in one user message.
 pub const MENTION_FILES_MAX_BYTES: usize = 128 * 1024;
+/// Maximum unique `@path` mentions expanded for one user message.
+pub const MENTION_FILES_MAX_COUNT: usize = 128;
 /// Maximum UTF-8 bytes sent back to the model for one tool result message.
 pub const TOOL_RESULT_MAX_BYTES: usize = 16 * 1024;
+
+const CONTEXT_FILES_OPEN: &str = "<context_files>\n";
+const CONTEXT_FILES_CLOSE: &str = "</context_files>";
+const FILE_MENTION_READ_CHUNK_BYTES: usize = 8 * 1024;
 
 /// Builds DeepSeek messages from UI transcript state plus optional active skills.
 #[derive(Clone, Copy, Debug)]
@@ -238,6 +244,7 @@ fn push_section(content: &mut String, section: &str) {
 struct FileMentionBudget {
     max_file_bytes: usize,
     max_total_bytes: usize,
+    max_mentions: usize,
 }
 
 impl Default for FileMentionBudget {
@@ -245,6 +252,7 @@ impl Default for FileMentionBudget {
         Self {
             max_file_bytes: MENTION_FILE_MAX_BYTES,
             max_total_bytes: MENTION_FILES_MAX_BYTES,
+            max_mentions: MENTION_FILES_MAX_COUNT,
         }
     }
 }
@@ -269,6 +277,20 @@ fn append_file_mention_context(content: &mut String, workspace: Option<&Path>) {
         return;
     };
     push_section(content, &context);
+}
+
+/// Conservatively estimates the extra model-visible bytes from expanding `@path` mentions.
+pub(crate) fn estimate_file_mention_context_bytes(content: &str) -> usize {
+    let mention_count = parse_file_mentions(content)
+        .len()
+        .min(MENTION_FILES_MAX_COUNT);
+    if mention_count == 0 {
+        return 0;
+    }
+
+    let per_file_budget = MENTION_FILE_MAX_BYTES + 160;
+    (CONTEXT_FILES_OPEN.len() + CONTEXT_FILES_CLOSE.len() + mention_count * per_file_budget)
+        .min(MENTION_FILES_MAX_BYTES)
 }
 
 fn parse_file_mentions(content: &str) -> Vec<String> {
@@ -296,6 +318,9 @@ fn parse_file_mentions(content: &str) -> Vec<String> {
         let candidate = trim_file_mention_token(&content[start..end]);
         if is_valid_file_mention(candidate) && seen.insert(candidate.to_string()) {
             mentions.push(candidate.to_string());
+            if mentions.len() >= MENTION_FILES_MAX_COUNT {
+                break;
+            }
         }
         previous = content[start..end].chars().next_back().or(Some(ch));
     }
@@ -333,34 +358,70 @@ fn build_file_mention_context(
     mentions: &[String],
     budget: FileMentionBudget,
 ) -> Option<String> {
-    if mentions.is_empty() || budget.max_file_bytes == 0 || budget.max_total_bytes == 0 {
+    if mentions.is_empty()
+        || budget.max_file_bytes == 0
+        || budget.max_total_bytes == 0
+        || budget.max_mentions == 0
+    {
+        return None;
+    }
+    let fixed_budget = CONTEXT_FILES_OPEN.len() + CONTEXT_FILES_CLOSE.len();
+    if fixed_budget > budget.max_total_bytes {
         return None;
     }
 
-    let mut context = String::from("<context_files>\n");
+    let mut context = String::from(CONTEXT_FILES_OPEN);
+    let mut remaining_bytes = budget.max_total_bytes - fixed_budget;
     let workspace_root = match canonical_file_mention_workspace(workspace) {
         Ok(workspace_root) => workspace_root,
         Err(error) => {
-            context.push_str(&format!(
+            let entry = format!(
                 "<file error=\"{}\" />\n",
                 xml_attr_escape(&format!("workspace unavailable: {error:#}"))
-            ));
-            context.push_str("</context_files>");
+            );
+            let _ = push_budgeted_file_mention_entry(&mut context, &mut remaining_bytes, entry);
+            context.push_str(CONTEXT_FILES_CLOSE);
             return Some(context);
         }
     };
 
-    let mut remaining_bytes = budget.max_total_bytes;
-    for mention in mentions {
-        context.push_str(&file_mention_entry(
+    for mention in mentions.iter().take(budget.max_mentions) {
+        let Some(entry) = file_mention_entry(
             &workspace_root,
             mention,
-            &mut remaining_bytes,
+            remaining_bytes,
             budget.max_file_bytes,
-        ));
+        ) else {
+            break;
+        };
+        if !push_budgeted_file_mention_entry(&mut context, &mut remaining_bytes, entry) {
+            break;
+        }
     }
-    context.push_str("</context_files>");
+
+    if mentions.len() > budget.max_mentions && remaining_bytes > 0 {
+        let entry = format!(
+            "<file skipped=\"mention_count_exhausted\" remaining_mentions=\"{}\" />\n",
+            mentions.len() - budget.max_mentions
+        );
+        let _ = push_budgeted_file_mention_entry(&mut context, &mut remaining_bytes, entry);
+    }
+
+    context.push_str(CONTEXT_FILES_CLOSE);
     Some(context)
+}
+
+fn push_budgeted_file_mention_entry(
+    context: &mut String,
+    remaining_bytes: &mut usize,
+    entry: String,
+) -> bool {
+    if entry.len() > *remaining_bytes {
+        return false;
+    }
+    context.push_str(&entry);
+    *remaining_bytes -= entry.len();
+    true
 }
 
 fn canonical_file_mention_workspace(workspace: &Path) -> Result<std::path::PathBuf> {
@@ -376,26 +437,30 @@ fn canonical_file_mention_workspace(workspace: &Path) -> Result<std::path::PathB
 fn file_mention_entry(
     workspace_root: &Path,
     mention: &str,
-    remaining_bytes: &mut usize,
+    max_entry_bytes: usize,
     max_file_bytes: usize,
-) -> String {
-    if *remaining_bytes == 0 {
-        return format!(
-            "<file path=\"{}\" skipped=\"total_budget_exhausted\" />\n",
-            xml_attr_escape(mention)
-        );
+) -> Option<String> {
+    if max_entry_bytes == 0 {
+        return None;
     }
 
     let path = match resolve_existing_workspace_path(workspace_root, mention) {
         Ok(path) => path,
-        Err(error) => return file_mention_error_entry(mention, error),
-    };
-    match read_file_mention_summary(workspace_root, &path, max_file_bytes.min(*remaining_bytes)) {
-        Ok(summary) => {
-            *remaining_bytes = (*remaining_bytes).saturating_sub(summary.included_bytes);
-            format_file_mention_summary(&summary)
+        Err(error) => {
+            return fit_file_mention_entry(
+                file_mention_error_entry(mention, error),
+                mention,
+                max_entry_bytes,
+            );
         }
-        Err(error) => file_mention_error_entry(mention, error),
+    };
+    match read_file_mention_summary(workspace_root, &path, max_file_bytes) {
+        Ok(summary) => fit_file_mention_summary(&summary, max_entry_bytes),
+        Err(error) => fit_file_mention_entry(
+            file_mention_error_entry(mention, error),
+            mention,
+            max_entry_bytes,
+        ),
     }
 }
 
@@ -413,28 +478,72 @@ fn read_file_mention_summary(
         bail!("file mention budget is exhausted");
     }
 
-    let mut bytes = Vec::new();
-    File::open(path)
-        .with_context(|| format!("failed to open `{}`", path.display()))?
-        .take(max_bytes as u64 + 4)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("failed to read `{}`", path.display()))?;
-
-    let truncated = bytes.len() > max_bytes || metadata.len() > max_bytes as u64;
-    if bytes.len() > max_bytes {
-        bytes.truncate(max_bytes);
-    }
-    let text = utf8_mention_prefix(&bytes, truncated)
+    let bytes = read_valid_utf8_file_prefix(path, max_bytes)?;
+    let may_have_incomplete_tail = metadata.len() > max_bytes as u64;
+    let text = utf8_mention_prefix(&bytes, may_have_incomplete_tail)
         .with_context(|| format!("mention path `{}` is not valid UTF-8", path.display()))?
         .to_string();
+    let truncated = metadata.len() > text.len() as u64;
 
     Ok(FileMentionSummary {
         path: display_workspace_path(workspace_root, path),
         total_bytes: metadata.len(),
         included_bytes: text.len(),
-        truncated: truncated || text.len() < metadata.len() as usize,
+        truncated,
         text,
     })
+}
+
+fn read_valid_utf8_file_prefix(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut file =
+        File::open(path).with_context(|| format!("failed to open `{}`", path.display()))?;
+    let mut prefix = Vec::with_capacity(max_bytes.min(FILE_MENTION_READ_CHUNK_BYTES));
+    let mut pending_utf8 = Vec::new();
+    let mut buffer = [0_u8; FILE_MENTION_READ_CHUNK_BYTES];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("failed to read `{}`", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        if prefix.len() < max_bytes {
+            let take = (max_bytes - prefix.len()).min(read);
+            prefix.extend_from_slice(&buffer[..take]);
+        }
+        validate_utf8_chunk(&mut pending_utf8, &buffer[..read])
+            .with_context(|| format!("mention path `{}` is not valid UTF-8", path.display()))?;
+    }
+
+    if !pending_utf8.is_empty() {
+        bail!(
+            "mention path `{}` is not valid UTF-8: incomplete UTF-8 sequence at end of file",
+            path.display()
+        );
+    }
+    Ok(prefix)
+}
+
+fn validate_utf8_chunk(pending_utf8: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
+    if pending_utf8.is_empty() {
+        return validate_utf8_bytes(chunk, pending_utf8);
+    }
+
+    let mut combined = std::mem::take(pending_utf8);
+    combined.extend_from_slice(chunk);
+    validate_utf8_bytes(&combined, pending_utf8)
+}
+
+fn validate_utf8_bytes(bytes: &[u8], pending_utf8: &mut Vec<u8>) -> Result<()> {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error_len().is_none() => {
+            pending_utf8.extend_from_slice(&bytes[error.valid_up_to()..]);
+            Ok(())
+        }
+        Err(error) => bail!("invalid UTF-8 near byte {}", error.valid_up_to()),
+    }
 }
 
 fn utf8_mention_prefix(bytes: &[u8], allow_incomplete_tail: bool) -> Result<&str> {
@@ -456,6 +565,53 @@ fn format_file_mention_summary(summary: &FileMentionSummary) -> String {
         summary.included_bytes,
         summary.truncated,
         summary.text
+    )
+}
+
+fn fit_file_mention_summary(
+    summary: &FileMentionSummary,
+    max_entry_bytes: usize,
+) -> Option<String> {
+    let entry = format_file_mention_summary(summary);
+    if entry.len() <= max_entry_bytes {
+        return Some(entry);
+    }
+
+    let mut fitted = summary.clone();
+    fitted.truncated = true;
+    let mut text_budget = fitted.text.len().min(max_entry_bytes);
+    loop {
+        fitted.text = utf8_prefix(&summary.text, text_budget).to_string();
+        fitted.included_bytes = fitted.text.len();
+        let entry = format_file_mention_summary(&fitted);
+        if entry.len() <= max_entry_bytes {
+            return Some(entry);
+        }
+        if text_budget == 0 {
+            break;
+        }
+        text_budget = text_budget.saturating_sub((entry.len() - max_entry_bytes).max(1));
+    }
+
+    fit_file_mention_entry(
+        file_mention_skipped_entry(&summary.path, "total_budget_exhausted"),
+        &summary.path,
+        max_entry_bytes,
+    )
+}
+
+fn fit_file_mention_entry(entry: String, mention: &str, max_entry_bytes: usize) -> Option<String> {
+    if entry.len() <= max_entry_bytes {
+        return Some(entry);
+    }
+    let fallback = file_mention_skipped_entry(mention, "total_budget_exhausted");
+    (fallback.len() <= max_entry_bytes).then_some(fallback)
+}
+
+fn file_mention_skipped_entry(path: &str, reason: &str) -> String {
+    format!(
+        "<file path=\"{}\" skipped=\"{reason}\" />\n",
+        xml_attr_escape(path)
     )
 }
 
@@ -911,9 +1067,76 @@ mod tests {
             MENTION_FILE_MAX_BYTES
         )));
         assert!(content.contains("<file path=\"f3.txt\""));
-        assert!(content.contains("<file path=\"f4.txt\" skipped=\"total_budget_exhausted\" />"));
+        let context = content
+            .split("<context_files>\n")
+            .nth(1)
+            .map(|context| format!("<context_files>\n{context}"))
+            .expect("context block should be present");
+        assert!(context.len() <= MENTION_FILES_MAX_BYTES);
+        assert!(context.ends_with("</context_files>"));
 
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn context_builder_rejects_non_utf8_mentions_without_leaking_prefix() {
+        let workspace = unique_temp_dir("context-mention-non-utf8");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        let mut bytes = b"valid prefix that must not leak\n".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe]);
+        fs::write(workspace.join("binary.dat"), bytes).expect("write binary file");
+
+        let messages = ContextBuilder::new()
+            .with_file_mentions(&workspace)
+            .build_messages(&[ChatMessage::text(1, ChatRole::User, "Inspect @binary.dat")]);
+
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("user message should contain text");
+        assert!(content.contains("<file path=\"binary.dat\" error=\""));
+        assert!(content.contains("not valid UTF-8"));
+        assert!(!content.contains("valid prefix that must not leak"));
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn file_mention_context_respects_total_budget_including_errors_and_wrappers() {
+        let workspace = unique_temp_dir("context-mention-total-budget");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("small.txt"), "small body").expect("write file");
+
+        let mentions = vec![
+            "small.txt".to_string(),
+            "missing-one.txt".to_string(),
+            "missing-two.txt".to_string(),
+        ];
+        let context = build_file_mention_context(
+            &workspace,
+            &mentions,
+            FileMentionBudget {
+                max_file_bytes: 64,
+                max_total_bytes: 180,
+                max_mentions: 3,
+            },
+        )
+        .expect("context should fit at least the wrappers");
+
+        assert!(context.starts_with("<context_files>\n"));
+        assert!(context.ends_with("</context_files>"));
+        assert!(context.len() <= 180);
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn estimate_file_mention_context_bytes_accounts_for_unique_mentions() {
+        let estimate = estimate_file_mention_context_bytes("Read @a.rs and @b.rs then @a.rs.");
+
+        assert!(estimate >= MENTION_FILE_MAX_BYTES * 2);
+        assert!(estimate <= MENTION_FILES_MAX_BYTES);
+        assert_eq!(estimate_file_mention_context_bytes("no mentions here"), 0);
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {

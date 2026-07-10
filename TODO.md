@@ -162,7 +162,9 @@
 - [x] **[DONE] M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
   - 完成记录（2026-07-10）：扩展 deterministic `snapshot_agent_app` fixture，新增 snapshot 专用小 compact 阈值和 context probe mock prompt，context probe 通过 `deepseek_request_from_transcript` 走真实 file mention 展开路径；新增 PTY 覆盖 `@.atto/skills/pty-fixture/SKILL.md` mention 注入、长会话触发 `CompactBlock` 并滚动查看摘要、Retry 重启 assistant turn、Edit 修改用户 prompt 后重跑，以及保留既有 Esc 取消后迟到 token 不显示的 PTY 覆盖。Retry/Edit PTY 使用可见递增 mock turn 序号验证按钮实际触发重跑。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。
+- [x] **[DONE] M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。
+  - 完成记录（2026-07-10）：复核 M6 ContextBuilder、file mention、tool output budget、compact、retry/edit、transcript 持久化、状态栏和 PTY 覆盖；确认分支 token 取消/重跑路径已有单测和 PTY 覆盖，迟到 token 不污染新分支。复核中发现 file mention 展开未纳入 compact/status 预算、mention 注入总预算未包含错误/wrapper 开销、非 UTF-8 截断文件可能泄漏前缀，以及启用 transcript 持久化时流式 delta 可能频繁同步全量保存；已修复为 file mention 硬总预算与数量上限、严格 UTF-8 校验、compact/status 保守计入 mention 展开预算、compact 长输出限量摘录、transcript 脏保存节流并保留退出强制落盘。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 收尾
 

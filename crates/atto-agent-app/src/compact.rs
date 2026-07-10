@@ -13,6 +13,8 @@ use atto_ui_chat::{
     TaskStatus, ToolStatus,
 };
 
+use crate::context::estimate_file_mention_context_bytes;
+
 const DEFAULT_CONTEXT_WINDOW_TOKENS: u64 = 64 * 1024;
 const DEFAULT_COMPACT_THRESHOLD_PERCENT: u64 = 70;
 const DEFAULT_RECENT_MESSAGE_LIMIT: usize = 20;
@@ -178,14 +180,21 @@ fn estimate_message_tokens(message: &ChatMessage) -> u64 {
     let block_bytes = message
         .blocks
         .iter()
-        .map(estimate_block_bytes)
+        .map(|block| estimate_block_bytes(block, &message.role))
         .sum::<usize>();
     estimate_bytes_as_tokens(role_bytes + status_bytes + block_bytes + 16)
 }
 
-fn estimate_block_bytes(block: &ChatBlock) -> usize {
+fn estimate_block_bytes(block: &ChatBlock, role: &ChatRole) -> usize {
     match block {
-        ChatBlock::Text(text) => text.markdown.len(),
+        ChatBlock::Text(text) => {
+            let mention_bytes = if matches!(role, ChatRole::User) {
+                estimate_file_mention_context_bytes(&text.markdown)
+            } else {
+                0
+            };
+            text.markdown.len() + mention_bytes
+        }
         ChatBlock::Thinking(thinking) => thinking.markdown.len(),
         ChatBlock::ToolUse(tool) => {
             tool.name.len() + tool.call_id.len() + format!("{:?}", tool.input).len()
@@ -358,8 +367,8 @@ fn turn_status_label(status: &ChatTurnStatus) -> &'static str {
 }
 
 fn excerpt(text: &str) -> String {
-    let normalized = normalize_whitespace(text);
-    if normalized.chars().count() <= BLOCK_EXCERPT_MAX_CHARS {
+    let (normalized, truncated) = normalize_whitespace_limited(text, BLOCK_EXCERPT_MAX_CHARS);
+    if !truncated {
         return normalized;
     }
     let mut excerpt = normalized
@@ -370,21 +379,30 @@ fn excerpt(text: &str) -> String {
     excerpt
 }
 
-fn normalize_whitespace(text: &str) -> String {
+fn normalize_whitespace_limited(text: &str, max_chars: usize) -> (String, bool) {
     let mut normalized = String::new();
     let mut pending_space = false;
+    let mut chars = 0;
     for ch in text.chars() {
         if ch.is_whitespace() {
             pending_space = true;
             continue;
         }
         if pending_space && !normalized.is_empty() {
+            if chars >= max_chars {
+                return (normalized, true);
+            }
             normalized.push(' ');
+            chars += 1;
+        }
+        if chars >= max_chars {
+            return (normalized, true);
         }
         normalized.push(ch);
+        chars += 1;
         pending_space = false;
     }
-    normalized
+    (normalized, false)
 }
 
 fn truncate_summary(summary: String, max_bytes: usize) -> String {
@@ -499,6 +517,35 @@ mod tests {
     }
 
     #[test]
+    fn compact_transcript_budget_includes_file_mention_expansion() {
+        let transcript = vec![
+            ChatMessage::text(1, ChatRole::User, "Read @large-a.txt"),
+            ChatMessage::text(2, ChatRole::Assistant, "Will inspect it."),
+            ChatMessage::text(3, ChatRole::User, "Now read @large-b.txt"),
+        ];
+        let plain_tokens = estimate_bytes_as_tokens("Read @large-a.txt".len());
+
+        assert!(estimate_transcript_tokens(&transcript) > plain_tokens + 1_000);
+        let compacted = compact_transcript_if_needed(
+            &transcript,
+            ChatMessageId::new(99),
+            ChatBlockId::new(100),
+            CompactPolicy {
+                threshold_tokens: 9_000,
+                recent_message_limit: 1,
+                summary_max_bytes: 4096,
+            },
+        )
+        .expect("mention-expanded context should exceed the compact threshold");
+
+        assert_eq!(compacted.stats.compacted_messages, 2);
+        assert!(matches!(
+            compacted.messages[0].blocks[0],
+            ChatBlock::Compact(_)
+        ));
+    }
+
+    #[test]
     fn compact_transcript_does_not_remove_pending_interactive_blocks() {
         let pending_plan = ChatMessage::new(
             2,
@@ -576,6 +623,31 @@ mod tests {
                 .summary
                 .contains("Compact summary truncated by local budget")
         );
+    }
+
+    #[test]
+    fn compact_summary_uses_bounded_excerpts_for_long_tool_output() {
+        let transcript = vec![ChatMessage::new(
+            1,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolResult(atto_ui_chat::ToolResultBlock {
+                id: ChatBlockId::new(20),
+                call_id: "call_long".to_string(),
+                ok: true,
+                exit_code: None,
+                output: atto_ui_chat::ToolOutput::Ansi(format!(
+                    "{}UNREACHED_SUFFIX",
+                    "very-long-output ".repeat(10_000)
+                )),
+                collapsed: false,
+            })],
+        )];
+
+        let summary = local_compact_summary(&transcript, 4096);
+
+        assert!(summary.contains("very-long-output"));
+        assert!(summary.contains("..."));
+        assert!(!summary.contains("UNREACHED_SUFFIX"));
     }
 
     #[test]

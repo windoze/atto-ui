@@ -13,7 +13,7 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use atto_ui::CancellationToken;
@@ -74,6 +74,7 @@ const STATUS_READY: &str = "ready";
 const STATUS_STREAMING: &str = "streaming";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
+const TRANSCRIPT_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 const SNAPSHOT_COMPACT_POLICY: CompactPolicy = CompactPolicy {
     threshold_tokens: 40,
     recent_message_limit: 2,
@@ -259,6 +260,8 @@ struct TranscriptPersistence {
     path: Option<PathBuf>,
     messages: Binding<Vec<ChatMessage>>,
     observer: DirtyObserver,
+    pending_dirty: bool,
+    last_save: Option<Instant>,
 }
 
 impl TranscriptPersistence {
@@ -269,6 +272,8 @@ impl TranscriptPersistence {
             path,
             messages,
             observer,
+            pending_dirty: false,
+            last_save: None,
         }
     }
 
@@ -277,16 +282,31 @@ impl TranscriptPersistence {
             return Ok(());
         };
         if self.messages.check_dirty(&mut self.observer) {
-            save_transcript_jsonl(path, &self.messages.get())?;
+            self.pending_dirty = true;
         }
+        if !self.pending_dirty {
+            return Ok(());
+        }
+        if self
+            .last_save
+            .is_some_and(|last_save| last_save.elapsed() < TRANSCRIPT_SAVE_DEBOUNCE)
+        {
+            return Ok(());
+        }
+        save_transcript_jsonl(path, &self.messages.get())?;
+        self.pending_dirty = false;
+        self.last_save = Some(Instant::now());
         Ok(())
     }
 
-    fn save_now(&self) -> Result<()> {
+    fn save_now(&mut self) -> Result<()> {
         let Some(path) = self.path.as_deref() else {
             return Ok(());
         };
-        save_transcript_jsonl(path, &self.messages.get())
+        save_transcript_jsonl(path, &self.messages.get())?;
+        self.pending_dirty = false;
+        self.last_save = Some(Instant::now());
+        Ok(())
     }
 }
 
@@ -2380,8 +2400,8 @@ mod tests {
         ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
         AgentTurnLimits, AppAction, MockTurnRegistry, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
         PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime,
-        TranscriptStatusState, TurnBudgetTracker, apply_app_action, build_chat_panel,
-        deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
+        TranscriptPersistence, TranscriptStatusState, TurnBudgetTracker, apply_app_action,
+        build_chat_panel, deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
         deepseek_request_from_transcript_with_skills, error_summary_status,
         execute_tool_use_to_result_block, format_token_estimate_status, handle_edit_and_resubmit,
         handle_message_action, handle_plan_decision, handle_tool_approval, status_segments,
@@ -3016,6 +3036,43 @@ Use this skill for {name} tasks.
         sync_transcript_status(&store, &token_estimate_state, &error_summary_state);
 
         assert!(error_summary_state.get().starts_with("err:network"));
+    }
+
+    #[test]
+    fn transcript_persistence_debounces_dirty_saves_and_flushes_on_save_now() {
+        let workspace = unique_temp_dir("transcript-debounce");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        let transcript_path = workspace.join("session.jsonl");
+        let store = ChatMessageStore::new();
+        let mut persistence = TranscriptPersistence::new(Some(transcript_path.clone()), &store);
+
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "first persisted message",
+        ));
+        persistence
+            .save_if_dirty()
+            .expect("initial save should pass");
+        let saved = fs::read_to_string(&transcript_path).expect("read initial transcript");
+        assert!(saved.contains("first persisted message"));
+
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "second pending message",
+        ));
+        persistence
+            .save_if_dirty()
+            .expect("debounced save should pass");
+        let debounced = fs::read_to_string(&transcript_path).expect("read debounced transcript");
+        assert!(!debounced.contains("second pending message"));
+
+        persistence.save_now().expect("final flush should pass");
+        let flushed = fs::read_to_string(&transcript_path).expect("read flushed transcript");
+        assert!(flushed.contains("second pending message"));
+
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
