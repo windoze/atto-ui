@@ -26,13 +26,27 @@ use crate::tool::{display_workspace_path, resolve_existing_workspace_path};
 pub const MENTION_FILE_MAX_BYTES: usize = 32 * 1024;
 /// Maximum aggregate UTF-8 bytes injected for all file mentions in one user message.
 pub const MENTION_FILES_MAX_BYTES: usize = 128 * 1024;
+/// Maximum UTF-8 bytes sent back to the model for one tool result message.
+pub const TOOL_RESULT_MAX_BYTES: usize = 16 * 1024;
 
 /// Builds DeepSeek messages from UI transcript state plus optional active skills.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContextBuilder<'a> {
     skill_registry: Option<&'a SkillRegistry>,
     loaded_skills: Option<&'a LoadedSkillSet>,
     file_mentions_workspace: Option<&'a Path>,
+    tool_result_max_bytes: usize,
+}
+
+impl<'a> Default for ContextBuilder<'a> {
+    fn default() -> Self {
+        Self {
+            skill_registry: None,
+            loaded_skills: None,
+            file_mentions_workspace: None,
+            tool_result_max_bytes: TOOL_RESULT_MAX_BYTES,
+        }
+    }
 }
 
 impl<'a> ContextBuilder<'a> {
@@ -58,6 +72,12 @@ impl<'a> ContextBuilder<'a> {
         self
     }
 
+    /// Overrides the per-tool-result model context budget.
+    pub fn with_tool_result_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.tool_result_max_bytes = max_bytes;
+        self
+    }
+
     /// Converts a UI transcript into OpenAI-compatible chat messages.
     pub fn build_messages(&self, transcript: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
         let mut messages = Vec::new();
@@ -65,7 +85,12 @@ impl<'a> ContextBuilder<'a> {
             messages.push(ChatCompletionMessage::system(skill_prompt));
         }
         for message in transcript {
-            push_transcript_message(&mut messages, message, self.file_mentions_workspace);
+            push_transcript_message(
+                &mut messages,
+                message,
+                self.file_mentions_workspace,
+                self.tool_result_max_bytes,
+            );
         }
         messages
     }
@@ -119,6 +144,7 @@ fn push_transcript_message(
     messages: &mut Vec<ChatCompletionMessage>,
     message: &ChatMessage,
     file_mentions_workspace: Option<&Path>,
+    tool_result_max_bytes: usize,
 ) {
     let mut pending = PendingRoleMessage::new(role_for_chat_message(&message.role));
     for block in &message.blocks {
@@ -133,7 +159,7 @@ fn push_transcript_message(
                 pending.flush(messages);
                 messages.push(ChatCompletionMessage::tool(
                     tool_result.call_id.clone(),
-                    tool_result_content(tool_result),
+                    tool_result_content(tool_result, tool_result_max_bytes),
                 ));
             }
             ChatBlock::Notice(notice) => {
@@ -477,7 +503,7 @@ fn tool_arguments_from_input(input: &ToolInput) -> String {
     }
 }
 
-fn tool_result_content(result: &ToolResultBlock) -> String {
+fn tool_result_content(result: &ToolResultBlock, max_bytes: usize) -> String {
     let mut content = format!("ok: {}", result.ok);
     if let Some(exit_code) = result.exit_code {
         content.push_str(&format!("\nexit_code: {exit_code}"));
@@ -487,7 +513,44 @@ fn tool_result_content(result: &ToolResultBlock) -> String {
         content.push_str("\n\n");
         content.push_str(output);
     }
-    content
+    truncate_tool_result_for_model(content, max_bytes)
+}
+
+fn truncate_tool_result_for_model(content: String, max_bytes: usize) -> String {
+    if max_bytes == 0 || content.len() <= max_bytes {
+        return if max_bytes == 0 {
+            String::new()
+        } else {
+            content
+        };
+    }
+
+    let total_bytes = content.len();
+    let notice = tool_result_truncation_notice(total_bytes, max_bytes);
+    if notice.len() >= max_bytes {
+        return utf8_prefix(&notice, max_bytes).to_string();
+    }
+
+    let prefix_budget = max_bytes.saturating_sub(notice.len());
+    let prefix = utf8_prefix(&content, prefix_budget);
+    format!("{prefix}{notice}")
+}
+
+fn tool_result_truncation_notice(total_bytes: usize, max_bytes: usize) -> String {
+    format!(
+        "\n\n[Tool result truncated for model context: original_bytes={total_bytes}, max_bytes={max_bytes}. UI output retains the full result or a tail window.]"
+    )
+}
+
+fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 /// Converts UI component values into JSON for DeepSeek tool call arguments.
@@ -657,6 +720,74 @@ mod tests {
                 "<compact status=\"complete\" before_tokens=\"120\" after_tokens=\"30\">\nEarlier turns discussed the fixture.\n</compact>"
             )
         );
+    }
+
+    #[test]
+    fn context_builder_truncates_long_tool_results_for_model_context() {
+        let full_output = format!("{}END-OF-FULL-OUTPUT", "a".repeat(TOOL_RESULT_MAX_BYTES));
+        let transcript = vec![ChatMessage::new(
+            1,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolResult(ToolResultBlock {
+                id: ChatBlockId::new(10),
+                call_id: "call_long".to_string(),
+                ok: true,
+                exit_code: None,
+                output: ToolOutput::Markdown(full_output.clone()),
+                collapsed: false,
+            })],
+        )];
+
+        let messages = ContextBuilder::new().build_messages(&transcript);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, ChatMessageRole::Tool);
+        assert_eq!(messages[0].tool_call_id.as_deref(), Some("call_long"));
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("tool message should contain content");
+        assert!(content.len() <= TOOL_RESULT_MAX_BYTES);
+        assert!(content.contains("ok: true"));
+        assert!(content.contains("Tool result truncated for model context"));
+        assert!(content.contains("UI output retains the full result or a tail window"));
+        assert!(!content.contains("END-OF-FULL-OUTPUT"));
+        match &transcript[0].blocks[0] {
+            ChatBlock::ToolResult(result) => {
+                assert_eq!(result.output.as_text(), full_output);
+            }
+            other => panic!("expected tool result block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_builder_truncates_tool_results_on_utf8_boundaries() {
+        let transcript = vec![ChatMessage::new(
+            1,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolResult(ToolResultBlock {
+                id: ChatBlockId::new(10),
+                call_id: "call_utf8".to_string(),
+                ok: false,
+                exit_code: Some(1),
+                output: ToolOutput::Markdown("中".repeat(512)),
+                collapsed: false,
+            })],
+        )];
+
+        let messages = ContextBuilder::new()
+            .with_tool_result_max_bytes(220)
+            .build_messages(&transcript);
+
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("tool message should contain content");
+        assert!(content.len() <= 220);
+        assert!(std::str::from_utf8(content.as_bytes()).is_ok());
+        assert!(content.contains("Tool result truncated for model context"));
+        assert!(content.contains("ok: false"));
+        assert!(content.contains("exit_code: 1"));
     }
 
     #[test]

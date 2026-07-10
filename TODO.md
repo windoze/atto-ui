@@ -144,7 +144,9 @@
 - [x] **[DONE] M6.2 文件 mention** - 解析 `@path`，读取 workspace 内文件摘要注入 prompt，限制单文件和总大小。
   - 完成记录（2026-07-10）：`ContextBuilder` 现在可解析用户消息中的 `@path` mention，按 workspace canonicalize 后读取 UTF-8 文件摘要，并以 `<context_files>` 追加到 user prompt；文件读取限制为单文件最多 32 KiB、单条用户消息总计最多 128 KiB，越界、缺失、目录和非 UTF-8 文件会作为明确错误条目注入而不会泄漏文件内容。普通 DeepSeek request 与 plan request 构建入口现在均使用 `AgentConfig.workspace` 启用 file mention expansion。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app context_builder`；`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_file_mentions_from_config_workspace`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.3 工具输出预算** - 回传模型的 tool output 做截断，UI 保留完整或尾部窗口。
+- [x] **[DONE] M6.3 工具输出预算** - 回传模型的 tool output 做截断，UI 保留完整或尾部窗口。
+  - 完成记录（2026-07-10）：`ContextBuilder` 现在对每条 role=`tool` 消息应用默认 16 KiB 模型上下文预算，超长 `ToolResultBlock` 输出会按 UTF-8 边界截断并追加明确的模型可见截断说明；截断只发生在 DeepSeek request/message 构建边界，UI transcript 中的 `ToolResultBlock` 保持完整，既有 ANSI 工具输出尾部窗口能力继续负责 UI 长输出展示。新增单测覆盖长工具输出截断、UI 输出不被修改和多字节字符边界安全。
+  - 验证：`cargo test -p atto-agent-app context_builder`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
 - [ ] **M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
 - [ ] **M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
