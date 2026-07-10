@@ -81,6 +81,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "toml 0.8.23",
  "unicode-width",

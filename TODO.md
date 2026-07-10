@@ -84,7 +84,9 @@
 
 ## 阶段 M4 - Skill Registry
 
-- [ ] **M4.1 Skill 文件格式** - 解析 `SKILL.md` frontmatter 和 body，支持 name、description、triggers、tools、mode。
+- [x] **[DONE] M4.1 Skill 文件格式** - 解析 `SKILL.md` frontmatter 和 body，支持 name、description、triggers、tools、mode。
+  - 完成记录（2026-07-10）：新增 `atto_agent_app::skill` 模块，解析 `SKILL.md` YAML frontmatter 和 Markdown body，支持并校验 `name`、`description`、`triggers`、`tools`、`mode`；`mode` 支持 `manual` / `auto` 且默认 `manual`，`triggers` / `tools` 默认空列表，body 保留原始 Markdown 内容并拒绝空 body。新增 `parse_skill_markdown` / `parse_skill_file` API 和单测覆盖有效文件、默认字段、元数据裁剪、缺失/非法字段、未知 mode、重复列表项、无 frontmatter、空 body 与磁盘文件读取。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --lib skill`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M4.2 Skill 搜索路径** - 扫描 `.atto/skills` 和 `~/.config/atto-agent/skills`，处理重复 name 和无效文件。
 - [ ] **M4.3 手动加载命令** - `/skills` 展示可用 skill，`/skill <name>` 激活 skill，并在状态栏显示数量。
 - [ ] **M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。

@@ -34,6 +34,7 @@ pub mod config;
 pub mod deepseek;
 pub mod deepseek_client;
 mod limits;
+pub mod skill;
 mod stream_ui;
 pub mod tool;
 
