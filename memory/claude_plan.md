@@ -27,4 +27,5 @@
 - 已新增并通过定向回归测试：`cargo test -p atto-agent-app skill_prompt_block_preserves_loaded_order_for_priority`。
 - 已通过验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
 - 已更新 `TODO.md`，将 `M4.R Review` 标记为 `[DONE]` 并写入完成记录。
-- 下一步：检查 git 状态和 diff，确认只包含本轮相关变更后提交。
+- 已提交本轮 review 修复与完成记录：`ba9ab9e [M4.R] Complete skill registry review`。
+- 当前任务已完成，提交进度记录后停止，不继续处理 M5。
