@@ -996,6 +996,35 @@ description: Review Rust.
     }
 
     #[test]
+    fn discovery_uses_sorted_paths_for_duplicate_names_within_one_root() {
+        let workspace = test_dir("discover-duplicate-sorted");
+        let kept_path = workspace.join(".atto/skills/a-first/SKILL.md");
+        let skipped_path = workspace.join(".atto/skills/z-later/SKILL.md");
+        write(
+            &skipped_path,
+            skill_markdown("shared", "Later path version."),
+        );
+        write(
+            &kept_path,
+            skill_markdown("shared", "Earlier path version."),
+        );
+
+        let registry = SkillRegistry::discover(&workspace, None);
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get("shared").unwrap().path, kept_path);
+        assert_eq!(
+            registry.issues(),
+            &[SkillDiscoveryIssue::DuplicateName {
+                name: "shared".to_string(),
+                kept_path: registry.get("shared").unwrap().path.clone(),
+                skipped_path,
+            }]
+        );
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
     fn discovery_records_invalid_files_without_failing_scan() {
         let workspace = test_dir("discover-invalid-workspace");
         write(

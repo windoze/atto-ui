@@ -2245,21 +2245,25 @@ impl ::atto_ui::composable::EventHandling for ChatInputPanel {
             }
         }
         if self.slash_open.get() {
-            let popup_res = self.slash_popup.handle_event(event, ctx);
-            if popup_res.is_consumed() {
-                if matches!(
-                    event,
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Esc,
-                        kind,
-                        ..
-                    }) if !matches!(kind, KeyEventKind::Release)
-                ) {
-                    self.dismiss_slash_completion_for_current_draft();
-                } else {
-                    let _ = self.apply_accepted_slash_command();
+            if is_enter_press(event) && !self.slash_popup.has_matches() {
+                self.dismiss_slash_completion_for_current_draft();
+            } else {
+                let popup_res = self.slash_popup.handle_event(event, ctx);
+                if popup_res.is_consumed() {
+                    if matches!(
+                        event,
+                        Event::Key(KeyEvent {
+                            code: KeyCode::Esc,
+                            kind,
+                            ..
+                        }) if !matches!(kind, KeyEventKind::Release)
+                    ) {
+                        self.dismiss_slash_completion_for_current_draft();
+                    } else {
+                        let _ = self.apply_accepted_slash_command();
+                    }
+                    return popup_res;
                 }
-                return popup_res;
             }
         }
 
@@ -2363,6 +2367,17 @@ fn is_escape_press(event: &Event) -> bool {
         event,
         Event::Key(KeyEvent {
             code: KeyCode::Esc,
+            kind,
+            ..
+        }) if !matches!(kind, KeyEventKind::Release)
+    )
+}
+
+fn is_enter_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
             kind,
             ..
         }) if !matches!(kind, KeyEventKind::Release)
@@ -2545,6 +2560,30 @@ mod tests {
 
         assert_eq!(result, EventResult::submitted());
         assert_eq!(accepted.lock().unwrap().as_slice(), ["clear"]);
+        assert_eq!(handle.draft_binding().get(), "");
+        assert!(!panel.slash_open.get());
+    }
+
+    #[test]
+    fn enter_submits_slash_text_with_arguments_when_popup_has_no_match() {
+        let handle = ChatInputHandle::new();
+        handle.set_slash_commands(vec![ChatSlashCommand::new("/skill").submit_on_accept()]);
+        let submitted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let submitted_for_callback = submitted.clone();
+        let mut panel = handle.panel().on_submit(move |response| {
+            if let ChatInputResponse::Text(text) = response {
+                submitted_for_callback.lock().unwrap().push(text);
+            }
+        });
+        let theme = Theme::dark();
+
+        type_text(&mut panel, &theme, "/skill pty-fixture");
+        assert!(panel.slash_open.get());
+        assert!(!panel.slash_popup.has_matches());
+        let result = panel.handle_event(&key(KeyCode::Enter), context(&theme));
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(submitted.lock().unwrap().as_slice(), ["/skill pty-fixture"]);
         assert_eq!(handle.draft_binding().get(), "");
         assert!(!panel.slash_open.get());
     }

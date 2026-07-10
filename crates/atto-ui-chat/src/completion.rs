@@ -248,6 +248,12 @@ impl CompletionPopup {
         self.last_popup_rect
     }
 
+    /// Returns whether the current query has at least one matching candidate.
+    pub(crate) fn has_matches(&mut self) -> bool {
+        self.sync_query_and_items();
+        !self.filtered_items().is_empty()
+    }
+
     fn sync_query_and_items(&mut self) {
         let query_changed = self.query.check_dirty(&mut self.query_observer);
         let items_changed = self.items.check_dirty(&mut self.items_observer);

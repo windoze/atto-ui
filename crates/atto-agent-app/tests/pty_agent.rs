@@ -88,7 +88,8 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     host.wait_for_text("plan: off", PTY_WAIT)?;
 
     submit_text(&mut host, "/skills")?;
-    host.wait_for_text("Skills: 0 discovered, 0 loaded.", PTY_WAIT)?;
+    host.wait_for_text("Skills: 1 discovered, 0 loaded.", PTY_WAIT)?;
+    host.wait_for_text("- [available] pty-fixture", PTY_WAIT)?;
     host.wait_for_text("skills: 0", PTY_WAIT)?;
 
     submit_text(&mut host, "/tools")?;
@@ -116,6 +117,31 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     )?;
     host.wait_for_text("plan: off", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_skill_commands_list_and_load_fixture_skill() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "/skills")?;
+    host.wait_for_text("Skills: 1 discovered, 0 loaded.", PTY_WAIT)?;
+    host.wait_for_text("- [available] pty-fixture", PTY_WAIT)?;
+    host.wait_for_text("activate one.", PTY_WAIT)?;
+
+    submit_text(&mut host, "/skill pty-fixture")?;
+    host.wait_for_text("Loaded skill pty-fixture", PTY_WAIT)?;
+    host.wait_for_text("skills: 1", PTY_WAIT)?;
+
+    submit_text(&mut host, "/skills")?;
+    host.wait_for_text("Skills: 1 discovered, 1 loaded.", PTY_WAIT)?;
+    host.wait_for_text("- [loaded] pty-fixture", PTY_WAIT)?;
 
     host.send_ctrl('q')?;
     host.wait_for_exit(Duration::from_secs(2))?;
