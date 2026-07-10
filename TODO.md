@@ -63,7 +63,9 @@
 - [x] **[DONE] M3.3 只读工具** - 实现 `read_file`、`list_files`、`search_text`，路径必须限制在 workspace 内。
   - 完成记录（2026-07-10）：新增 app crate 内置只读工具注册入口，`read_file` 支持 workspace 内 UTF-8 文件读取并限制 256 KiB，`list_files` 使用受控 workspace 遍历和 glob 匹配返回相对路径，`search_text` 使用 Rust 实现搜索 UTF-8 文件并返回匹配行摘要；所有工具参数均做 JSON 类型/未知字段校验，输入路径和 symlink 解析后必须仍位于 workspace 内；`/tools` 现在展示 3 个已注册只读工具。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.4 副作用工具** - 实现 `apply_patch`、`run_command`，默认需要审批；命令使用 argv，不做 shell 字符串拼接。
+- [x] **[DONE] M3.4 副作用工具** - 实现 `apply_patch`、`run_command`，默认需要审批；命令使用 argv，不做 shell 字符串拼接。
+  - 完成记录（2026-07-10）：新增内置副作用工具注册入口，完整内置工具表现在包含 `read_file`、`list_files`、`search_text`、`apply_patch`、`run_command`；`apply_patch` 在执行前解析 patch 路径并拒绝绝对路径、`..`、workspace/symlink 逃逸、二进制 patch 和非 UTF-8 既有文件，再通过 `git apply --check` / `git apply` 的 argv 调用从 stdin 应用 patch；`run_command` 仅接受 `argv: string[]` 和 workspace 内 `cwd`，通过 `std::process::Command` 执行，不经过 shell 字符串拼接。两个副作用工具默认 `ApproveForProject`，因此首次执行会要求审批。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.5 Approval UI** - 渲染 `ToolUseBlock.approval`，处理 allow once / allow project / deny，deny 时写入失败 tool result。
 - [ ] **M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
 - [ ] **M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。

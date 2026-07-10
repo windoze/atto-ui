@@ -653,8 +653,8 @@ fn skills_text() -> &'static str {
 }
 
 fn tools_text() -> String {
-    let registry = crate::tool::readonly_tool_registry()
-        .expect("built-in read-only tool registry must be valid");
+    let registry =
+        crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
     let mut text = format!("Tools: {} registered.\n", registry.len());
     for spec in registry.specs() {
         text.push_str(&format!(
@@ -665,7 +665,7 @@ fn tools_text() -> String {
             tool_output_label(spec.output)
         ));
     }
-    text.push_str("Mutating tools and approvals are scheduled for M3.4-M3.5.");
+    text.push_str("Mutating tools require approval before execution.");
     text
 }
 
@@ -1246,9 +1246,11 @@ mod tests {
 
         let messages = store.messages();
         assert!(message_text(&messages[0]).contains("Skills: none registered"));
-        assert!(message_text(&messages[1]).contains("Tools: 3 registered"));
+        assert!(message_text(&messages[1]).contains("Tools: 5 registered"));
+        assert!(message_text(&messages[1]).contains("apply_patch"));
         assert!(message_text(&messages[1]).contains("read_file"));
         assert!(message_text(&messages[1]).contains("list_files"));
+        assert!(message_text(&messages[1]).contains("run_command"));
         assert!(message_text(&messages[1]).contains("search_text"));
     }
 

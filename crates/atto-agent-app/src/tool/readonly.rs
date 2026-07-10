@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use walkdir::WalkDir;
 
 use super::{
-    ToolContext, ToolExecutor, ToolOutputKind, ToolPermission, ToolRegistry, ToolResult, ToolSpec,
+    ToolArgs, ToolContext, ToolExecutor, ToolOutputKind, ToolPermission, ToolRegistry, ToolResult,
+    ToolSpec, canonical_workspace_root, display_workspace_path, is_workspace_path,
+    resolve_existing_workspace_path,
 };
 
 const READ_FILE_MAX_BYTES: u64 = 256 * 1024;
@@ -69,7 +71,7 @@ impl ToolExecutor for ReadFileTool {
         let args = ToolArgs::parse("read_file", args, &["path"])?;
         let requested_path = args.required_string("path")?;
         let workspace_root = canonical_workspace_root(&ctx)?;
-        let path = resolve_workspace_path(&workspace_root, requested_path)?;
+        let path = resolve_existing_workspace_path(&workspace_root, requested_path)?;
         let metadata = fs::metadata(&path)
             .with_context(|| format!("failed to read metadata for `{}`", path.display()))?;
         if !metadata.is_file() {
@@ -147,7 +149,7 @@ impl ToolExecutor for ListFilesTool {
         let max_results =
             args.optional_usize("max_results", DEFAULT_LIST_MAX_RESULTS, MAX_LIST_RESULTS)?;
         let workspace_root = canonical_workspace_root(&ctx)?;
-        let start = resolve_workspace_path(&workspace_root, requested_path)?;
+        let start = resolve_existing_workspace_path(&workspace_root, requested_path)?;
         let files = collect_workspace_files(&workspace_root, &start, pattern, max_results)?;
 
         Ok(ToolResult::success(
@@ -218,7 +220,7 @@ impl ToolExecutor for SearchTextTool {
             MAX_SEARCH_RESULTS,
         )?;
         let workspace_root = canonical_workspace_root(&ctx)?;
-        let start = resolve_workspace_path(&workspace_root, requested_path)?;
+        let start = resolve_existing_workspace_path(&workspace_root, requested_path)?;
         let files = collect_workspace_files(&workspace_root, &start, pattern, usize::MAX)?;
         let matches = search_files(&workspace_root, &files, query, case_sensitive, max_results)?;
 
@@ -229,129 +231,11 @@ impl ToolExecutor for SearchTextTool {
     }
 }
 
-struct ToolArgs {
-    tool_name: &'static str,
-    object: Map<String, Value>,
-}
-
-impl ToolArgs {
-    fn parse(tool_name: &'static str, value: Value, allowed_keys: &[&str]) -> Result<Self> {
-        let Value::Object(object) = value else {
-            bail!("tool `{tool_name}` arguments must be a JSON object");
-        };
-        for key in object.keys() {
-            if !allowed_keys.contains(&key.as_str()) {
-                bail!("tool `{tool_name}` received unknown argument `{key}`");
-            }
-        }
-        Ok(Self { tool_name, object })
-    }
-
-    fn required_string(&self, name: &str) -> Result<&str> {
-        self.optional_string(name)?.with_context(|| {
-            format!(
-                "tool `{}` requires string argument `{name}`",
-                self.tool_name
-            )
-        })
-    }
-
-    fn optional_string(&self, name: &str) -> Result<Option<&str>> {
-        match self.object.get(name) {
-            Some(Value::String(value)) if value.trim().is_empty() => {
-                bail!(
-                    "tool `{}` argument `{name}` must not be empty",
-                    self.tool_name
-                )
-            }
-            Some(Value::String(value)) => Ok(Some(value)),
-            Some(_) => bail!(
-                "tool `{}` argument `{name}` must be a string",
-                self.tool_name
-            ),
-            None => Ok(None),
-        }
-    }
-
-    fn optional_bool(&self, name: &str, default: bool) -> Result<bool> {
-        match self.object.get(name) {
-            Some(Value::Bool(value)) => Ok(*value),
-            Some(_) => bail!(
-                "tool `{}` argument `{name}` must be a boolean",
-                self.tool_name
-            ),
-            None => Ok(default),
-        }
-    }
-
-    fn optional_usize(&self, name: &str, default: usize, max: usize) -> Result<usize> {
-        match self.object.get(name) {
-            Some(Value::Number(value)) => {
-                let Some(value) = value.as_u64() else {
-                    bail!(
-                        "tool `{}` argument `{name}` must be a positive integer",
-                        self.tool_name
-                    );
-                };
-                if value == 0 || value > max as u64 {
-                    bail!(
-                        "tool `{}` argument `{name}` must be between 1 and {max}",
-                        self.tool_name
-                    );
-                }
-                Ok(value as usize)
-            }
-            Some(_) => bail!(
-                "tool `{}` argument `{name}` must be an integer",
-                self.tool_name
-            ),
-            None => Ok(default),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SearchMatch {
     path: String,
     line_number: usize,
     line: String,
-}
-
-fn canonical_workspace_root(ctx: &ToolContext) -> Result<PathBuf> {
-    let root = ctx
-        .workspace_root
-        .canonicalize()
-        .with_context(|| format!("workspace `{}` must exist", ctx.workspace_root.display()))?;
-    if !root.is_dir() {
-        bail!("workspace `{}` is not a directory", root.display());
-    }
-    Ok(root)
-}
-
-fn resolve_workspace_path(workspace_root: &Path, requested: &str) -> Result<PathBuf> {
-    let raw = Path::new(requested);
-    let joined = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        workspace_root.join(raw)
-    };
-    let path = joined
-        .canonicalize()
-        .with_context(|| format!("path `{}` must exist", joined.display()))?;
-    ensure_workspace_path(workspace_root, &path)?;
-    Ok(path)
-}
-
-fn ensure_workspace_path(workspace_root: &Path, path: &Path) -> Result<()> {
-    if path == workspace_root || path.starts_with(workspace_root) {
-        Ok(())
-    } else {
-        bail!(
-            "path `{}` escapes workspace `{}`",
-            path.display(),
-            workspace_root.display()
-        )
-    }
 }
 
 fn collect_workspace_files(
@@ -391,10 +275,6 @@ fn collect_workspace_files(
         }
     }
     Ok(files.into_iter().collect())
-}
-
-fn is_workspace_path(workspace_root: &Path, path: &Path) -> bool {
-    path == workspace_root || path.starts_with(workspace_root)
 }
 
 fn compile_relative_glob(pattern: &str) -> Result<GlobSet> {
@@ -524,17 +404,6 @@ fn format_search_output(query: &str, matches: &[SearchMatch], max_results: usize
         ));
     }
     output
-}
-
-fn display_workspace_path(workspace_root: &Path, path: &Path) -> String {
-    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
-    if relative.as_os_str().is_empty() {
-        ".".to_string()
-    } else {
-        relative
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/")
-    }
 }
 
 fn preview_line(line: &str) -> String {

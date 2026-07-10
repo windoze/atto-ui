@@ -4,17 +4,33 @@
 //! tool schema conversion. Built-in tool executors live in focused submodules.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::deepseek::ChatTool;
 
+mod mutating;
 mod readonly;
 
+pub use mutating::{mutating_tool_registry, register_mutating_tools};
 pub use readonly::{readonly_tool_registry, register_readonly_tools};
+
+/// Registers every built-in local tool currently available to the agent.
+pub fn register_builtin_tools(registry: &mut ToolRegistry) -> Result<()> {
+    register_readonly_tools(registry)?;
+    register_mutating_tools(registry)?;
+    Ok(())
+}
+
+/// Builds a registry containing all built-in local tools.
+pub fn builtin_tool_registry() -> Result<ToolRegistry> {
+    let mut registry = ToolRegistry::new();
+    register_builtin_tools(&mut registry)?;
+    Ok(registry)
+}
 
 /// Public metadata and policy for one local tool.
 #[derive(Clone, Debug, PartialEq)]
@@ -257,6 +273,179 @@ impl ToolRegistry {
             .get(name)
             .with_context(|| format!("tool `{name}` is not registered"))?;
         tool.executor.execute(ctx, args)
+    }
+}
+
+pub(super) struct ToolArgs {
+    tool_name: &'static str,
+    object: Map<String, Value>,
+}
+
+impl ToolArgs {
+    pub(super) fn parse(
+        tool_name: &'static str,
+        value: Value,
+        allowed_keys: &[&str],
+    ) -> Result<Self> {
+        let Value::Object(object) = value else {
+            bail!("tool `{tool_name}` arguments must be a JSON object");
+        };
+        for key in object.keys() {
+            if !allowed_keys.contains(&key.as_str()) {
+                bail!("tool `{tool_name}` received unknown argument `{key}`");
+            }
+        }
+        Ok(Self { tool_name, object })
+    }
+
+    pub(super) fn required_string(&self, name: &str) -> Result<&str> {
+        self.optional_string(name)?.with_context(|| {
+            format!(
+                "tool `{}` requires string argument `{name}`",
+                self.tool_name
+            )
+        })
+    }
+
+    pub(super) fn optional_string(&self, name: &str) -> Result<Option<&str>> {
+        match self.object.get(name) {
+            Some(Value::String(value)) if value.trim().is_empty() => {
+                bail!(
+                    "tool `{}` argument `{name}` must not be empty",
+                    self.tool_name
+                )
+            }
+            Some(Value::String(value)) => Ok(Some(value)),
+            Some(_) => bail!(
+                "tool `{}` argument `{name}` must be a string",
+                self.tool_name
+            ),
+            None => Ok(None),
+        }
+    }
+
+    pub(super) fn required_string_array(&self, name: &str) -> Result<Vec<String>> {
+        let Some(value) = self.object.get(name) else {
+            bail!("tool `{}` requires array argument `{name}`", self.tool_name);
+        };
+        let Value::Array(items) = value else {
+            bail!(
+                "tool `{}` argument `{name}` must be an array of strings; shell strings are not supported",
+                self.tool_name
+            );
+        };
+        if items.is_empty() {
+            bail!(
+                "tool `{}` argument `{name}` must contain at least one string",
+                self.tool_name
+            );
+        }
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, value)| match value {
+                Value::String(item) if item.trim().is_empty() => bail!(
+                    "tool `{}` argument `{name}` item {index} must not be empty",
+                    self.tool_name
+                ),
+                Value::String(item) => Ok(item.clone()),
+                _ => bail!(
+                    "tool `{}` argument `{name}` item {index} must be a string",
+                    self.tool_name
+                ),
+            })
+            .collect()
+    }
+
+    pub(super) fn optional_bool(&self, name: &str, default: bool) -> Result<bool> {
+        match self.object.get(name) {
+            Some(Value::Bool(value)) => Ok(*value),
+            Some(_) => bail!(
+                "tool `{}` argument `{name}` must be a boolean",
+                self.tool_name
+            ),
+            None => Ok(default),
+        }
+    }
+
+    pub(super) fn optional_usize(&self, name: &str, default: usize, max: usize) -> Result<usize> {
+        match self.object.get(name) {
+            Some(Value::Number(value)) => {
+                let Some(value) = value.as_u64() else {
+                    bail!(
+                        "tool `{}` argument `{name}` must be a positive integer",
+                        self.tool_name
+                    );
+                };
+                if value == 0 || value > max as u64 {
+                    bail!(
+                        "tool `{}` argument `{name}` must be between 1 and {max}",
+                        self.tool_name
+                    );
+                }
+                Ok(value as usize)
+            }
+            Some(_) => bail!(
+                "tool `{}` argument `{name}` must be an integer",
+                self.tool_name
+            ),
+            None => Ok(default),
+        }
+    }
+}
+
+pub(super) fn canonical_workspace_root(ctx: &ToolContext) -> Result<PathBuf> {
+    let root = ctx
+        .workspace_root
+        .canonicalize()
+        .with_context(|| format!("workspace `{}` must exist", ctx.workspace_root.display()))?;
+    if !root.is_dir() {
+        bail!("workspace `{}` is not a directory", root.display());
+    }
+    Ok(root)
+}
+
+pub(super) fn resolve_existing_workspace_path(
+    workspace_root: &Path,
+    requested: &str,
+) -> Result<PathBuf> {
+    let raw = Path::new(requested);
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        workspace_root.join(raw)
+    };
+    let path = joined
+        .canonicalize()
+        .with_context(|| format!("path `{}` must exist", joined.display()))?;
+    ensure_workspace_path(workspace_root, &path)?;
+    Ok(path)
+}
+
+pub(super) fn ensure_workspace_path(workspace_root: &Path, path: &Path) -> Result<()> {
+    if is_workspace_path(workspace_root, path) {
+        Ok(())
+    } else {
+        bail!(
+            "path `{}` escapes workspace `{}`",
+            path.display(),
+            workspace_root.display()
+        )
+    }
+}
+
+pub(super) fn is_workspace_path(workspace_root: &Path, path: &Path) -> bool {
+    path == workspace_root || path.starts_with(workspace_root)
+}
+
+pub(super) fn display_workspace_path(workspace_root: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+    if relative.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/")
     }
 }
 
