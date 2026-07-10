@@ -111,7 +111,9 @@
 
 ## 阶段 M5 - Plan Mode
 
-- [ ] **M5.1 Plan mode 状态** - 实现 `off`、`on`、`auto` 配置和 `/plan` 切换，状态栏显示当前模式。
+- [x] **[DONE] M5.1 Plan mode 状态** - 实现 `off`、`on`、`auto` 配置和 `/plan` 切换，状态栏显示当前模式。
+  - 完成记录（2026-07-10）：复核现有 app crate 实现，确认 `PlanMode` 已支持 `off` / `on` / `auto`，配置加载覆盖默认值、用户/工作区 TOML、环境变量与 CLI 参数，运行时从配置初始化状态栏 `plan: <mode>`，`/plan [on|off|auto]` 支持显式设置且无参数按 `off -> on -> auto -> off` 循环切换。
+  - 验证：`cargo test -p atto-agent-app plan_mode`；`cargo test -p atto-agent-app config::tests`。本次未修改编译代码；完整 workspace fmt/clippy/test 复用上一条 M4.R 完成记录中的绿色结果。
 - [ ] **M5.2 Auto 判定** - 根据 prompt 和工具需求粗判是否涉及写文件、命令、代码修改等副作用。
 - [ ] **M5.3 计划生成** - 实现虚拟 tool `submit_plan({ items })`，兜底解析 markdown 列表为 `PlanItem`。
 - [ ] **M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
