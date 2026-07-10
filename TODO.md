@@ -191,7 +191,9 @@
 - [x] **[DONE] M7.7 错误映射接线** - 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误；无 key 且未 `--mock` 时给出可操作提示。
   - 完成记录（2026-07-11）：DeepSeek live provider 失败路径现在通过既有 `DeepSeekClient` / `DeepSeekUiStream::map_error` 将缺失 API key、HTTP 401/403、429、5xx 和 SSE 断流映射为结构化 `ChatError`，主线程统一写入 failed assistant turn、恢复 ready/非 streaming 状态并更新 `err:*` 状态栏摘要。缺失 key 的 live 错误现在提示设置 `DEEPSEEK_API_KEY` / `--api-key` 或显式 `--mock`；无 key 且未显式 `--mock` 的默认 mock fallback 会在空 transcript 启动时追加可操作 system notice，snapshot fixture 显式标记为 mock 以保持确定性。补充 live provider 单测覆盖缺失 key、401 invalid key、429、502、断流和 no-key startup notice，并同步更新 README / app README / `TUI_AGENT.md` 的 live provider 与错误提示说明。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
+- [x] **[DONE] M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
+  - 完成记录（2026-07-11）：扩展 ignored `deepseek_real_smoke`，真实 DeepSeek smoke 现在先强制调用 `atto_smoke_echo` function tool，聚合 streamed tool-call delta，本地执行工具并以 role=`tool` 回灌，再发起 follow-up 请求验证最终文本流包含 smoke phrase；测试仍标记 `#[ignore]`，默认运行只编译并报告 ignored，不会访问外网。默认 workspace 测试继续覆盖 mock provider 和本地 mock SSE server 路径。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --test deepseek_real_smoke`（0 passed, 1 ignored）；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored --nocapture`（手动真实 DeepSeek smoke，1 passed）。
 - [ ] **M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
 
 ## 收尾
