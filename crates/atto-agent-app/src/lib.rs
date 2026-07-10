@@ -20,9 +20,11 @@ use atto_ui::reactive::{Binding, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
-    ChatBlock, ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse,
-    ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
-    ChatRole, ChatSlashCommand, ChatTurnStatus, ThinkingBlock, ToolUseBlock,
+    ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
+    ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
+    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
+    ChatSlashCommand, ChatTurnStatus, ThinkingBlock, ToolOutput, ToolResultBlock, ToolStatus,
+    ToolUseBlock,
 };
 use ratatui::layout::Rect;
 
@@ -38,6 +40,7 @@ use crate::deepseek::{
     FinishReason,
 };
 use crate::stream_ui::DeepSeekUiStream;
+use crate::tool::{ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry};
 
 pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
@@ -109,6 +112,8 @@ struct AgentRuntime {
     config: AgentConfig,
     action_sender: mpsc::Sender<AppAction>,
     mock_turns: MockTurnRegistry,
+    tool_registry: ToolRegistry,
+    tool_permissions: Arc<Mutex<ToolPermissionPolicy>>,
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
@@ -124,10 +129,14 @@ impl AgentRuntime {
     ) -> Self {
         let model_state = Property::new(format!("model: {}", config.model));
         let plan_mode_state = Property::new(config.plan_mode.status());
+        let tool_registry =
+            crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
         Self {
             config,
             action_sender,
             mock_turns,
+            tool_registry,
+            tool_permissions: Arc::new(Mutex::new(ToolPermissionPolicy::default())),
             message_store: ChatMessageStore::new(),
             input_handle: ChatInputHandle::new(),
             status_state: Property::new(STATUS_READY.to_string()),
@@ -225,10 +234,13 @@ impl AgentApp {
         let chat_panel = build_chat_panel(
             &runtime.message_store,
             &runtime.input_handle,
-            runtime.config.model.clone(),
+            AgentTurnLauncher {
+                model: runtime.config.model.clone(),
+                action_sender: runtime.action_sender.clone(),
+            },
             runtime.status_state.clone(),
             runtime.plan_mode_state.clone(),
-            runtime.action_sender.clone(),
+            runtime.tool_permissions.clone(),
             runtime.mock_turns.clone(),
         );
 
@@ -349,6 +361,8 @@ fn run_with_config_and_mock_token_delay(
                 &runtime_for_actions.input_handle,
                 &runtime_for_actions.mock_turns,
                 &runtime_for_actions.status_state,
+                &runtime_for_actions.tool_registry,
+                &runtime_for_actions.tool_permissions,
                 action,
             );
             Ok(AppControl::Continue)
@@ -367,18 +381,27 @@ fn run_with_config_and_mock_token_delay(
 fn build_chat_panel(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
-    model: String,
+    turn_launcher: AgentTurnLauncher,
     status_state: Property<String>,
     plan_mode_state: Property<String>,
-    action_sender: mpsc::Sender<AppAction>,
+    tool_permissions: Arc<Mutex<ToolPermissionPolicy>>,
     mock_turns: MockTurnRegistry,
 ) -> ChatPanel {
     // Compose the reusable chat list and input controls around shared state handles.
     let input_handle_for_cancel = input_handle.clone();
     let status_for_cancel = status_state.clone();
     let mock_turns_for_cancel = mock_turns.clone();
+    let store_for_approval = store.clone();
+    let tool_permissions_for_approval = tool_permissions.clone();
     let list = ChatMessageList::new(store.clone())
         .show_timestamps(false)
+        .on_approve(move |decision| {
+            handle_tool_approval(
+                &store_for_approval,
+                &tool_permissions_for_approval,
+                decision,
+            );
+        })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
                 &input_handle_for_cancel,
@@ -392,10 +415,7 @@ fn build_chat_panel(
     let mock_turns_for_submit = mock_turns.clone();
     let status_for_submit = status_state.clone();
     let plan_mode_for_submit = plan_mode_state.clone();
-    let turn_launcher_for_submit = AgentTurnLauncher {
-        model,
-        action_sender,
-    };
+    let turn_launcher_for_submit = turn_launcher;
     let store_for_slash = store.clone();
     let input_handle_for_slash = input_handle.clone();
     let mock_turns_for_slash = mock_turns.clone();
@@ -782,6 +802,8 @@ fn apply_app_action(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    tool_registry: &ToolRegistry,
+    tool_permissions: &Arc<Mutex<ToolPermissionPolicy>>,
     action: AppAction,
 ) -> bool {
     match action {
@@ -804,9 +826,16 @@ fn apply_app_action(
                 return false;
             }
             for tool_call in tool_calls {
+                let prepared = prepare_tool_call(tool_call, tool_registry, tool_permissions);
+                let call_id = prepared.tool_use.call_id.clone();
                 if store
-                    .append_block(message_id, ChatBlock::ToolUse(tool_call))
+                    .append_block(message_id, ChatBlock::ToolUse(prepared.tool_use))
                     .is_none()
+                {
+                    return false;
+                }
+                if let Some(result) = prepared.result
+                    && store.upsert_tool_result(call_id, result).is_none()
                 {
                     return false;
                 }
@@ -848,6 +877,146 @@ fn apply_app_action(
             }
             found
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PreparedToolCall {
+    tool_use: ToolUseBlock,
+    result: Option<ToolResultBlock>,
+}
+
+fn prepare_tool_call(
+    mut tool_use: ToolUseBlock,
+    registry: &ToolRegistry,
+    permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+) -> PreparedToolCall {
+    let Some(spec) = registry.spec(&tool_use.name) else {
+        tool_use.status = ToolStatus::Error;
+        return PreparedToolCall {
+            result: Some(failed_tool_result(
+                &tool_use.call_id,
+                format!("Tool `{}` is not registered.", tool_use.name),
+            )),
+            tool_use,
+        };
+    };
+
+    let decision = permissions
+        .lock()
+        .expect("tool permission policy lock poisoned")
+        .resolve(spec);
+    match decision {
+        ToolPermissionDecision::Allow => {
+            tool_use.status = ToolStatus::Running;
+            tool_use.approval = None;
+            PreparedToolCall {
+                tool_use,
+                result: None,
+            }
+        }
+        ToolPermissionDecision::RequestApproval { allow_project } => {
+            tool_use.status = ToolStatus::Pending;
+            tool_use.approval = Some(tool_approval_request(&tool_use, allow_project));
+            PreparedToolCall {
+                tool_use,
+                result: None,
+            }
+        }
+        ToolPermissionDecision::Deny => {
+            tool_use.status = ToolStatus::Canceled;
+            PreparedToolCall {
+                result: Some(failed_tool_result(
+                    &tool_use.call_id,
+                    format!("Tool `{}` is not allowed by policy.", tool_use.name),
+                )),
+                tool_use,
+            }
+        }
+    }
+}
+
+fn tool_approval_request(tool_use: &ToolUseBlock, allow_project: bool) -> ApprovalRequest {
+    let mut options = vec![ApprovalOption::allow_once("allow_once", "Allow once")];
+    if allow_project {
+        options.push(ApprovalOption::allow_project(
+            "allow_project",
+            "Allow project",
+        ));
+    }
+    options.push(ApprovalOption::deny("deny", "Deny"));
+
+    ApprovalRequest {
+        id: format!("approval:{}", tool_use.call_id),
+        prompt: format!("Allow tool `{}` to run?", tool_use.name),
+        options,
+        resolved: None,
+    }
+}
+
+fn handle_tool_approval(
+    store: &ChatMessageStore,
+    permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+    decision: ApprovalDecision,
+) {
+    let Some(tool_use) = tool_use_for_approval(store, &decision) else {
+        return;
+    };
+    if !store.resolve_approval(decision.block_id, decision.option_id) {
+        return;
+    }
+
+    match decision.action {
+        ApprovalAction::Allow if decision.level == ApprovalLevel::Project => {
+            permissions
+                .lock()
+                .expect("tool permission policy lock poisoned")
+                .allow_for_project(tool_use.name);
+        }
+        ApprovalAction::Allow => {}
+        ApprovalAction::Deny => {
+            let call_id = tool_use.call_id.clone();
+            store.upsert_tool_result(
+                call_id.clone(),
+                denied_tool_result(&call_id, &tool_use.name),
+            );
+        }
+    }
+}
+
+fn tool_use_for_approval(
+    store: &ChatMessageStore,
+    decision: &ApprovalDecision,
+) -> Option<ToolUseBlock> {
+    store
+        .with_block(decision.block_id, |block| match block {
+            ChatBlock::ToolUse(tool_use) => Some(tool_use.clone()),
+            _ => None,
+        })
+        .flatten()
+        .filter(|tool_use| {
+            tool_use
+                .approval
+                .as_ref()
+                .is_some_and(|approval| approval.id == decision.approval_id)
+        })
+}
+
+fn denied_tool_result(call_id: &str, tool_name: &str) -> ToolResultBlock {
+    failed_tool_result(
+        call_id,
+        format!("User denied tool call `{tool_name}`. The tool was not executed."),
+    )
+}
+
+fn failed_tool_result(call_id: &str, output: impl Into<String>) -> ToolResultBlock {
+    ToolResultBlock {
+        id: ChatBlockId::new(0),
+        call_id: call_id.to_string(),
+        ok: false,
+        exit_code: None,
+        output: ToolOutput::Markdown(output.into()),
+        collapsed: false,
     }
 }
 
@@ -962,6 +1131,9 @@ fn chat_window_rect(screen: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
     use atto_ui::ComponentValue;
     use atto_ui::composable::{
         ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
@@ -969,9 +1141,10 @@ mod tests {
     use atto_ui::theme::Theme;
     use atto_ui::wm::WindowId;
     use atto_ui_chat::{
-        ChatBlock, ChatError, ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage,
-        ChatMessageStore, ChatRole, ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage,
-        ToolInput, ToolStatus,
+        ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatError, ChatErrorKind,
+        ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
+        ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage, ToolInput, ToolOutput,
+        ToolResultBlock, ToolStatus, ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -985,11 +1158,12 @@ mod tests {
         parse_chat_completion_sse_data,
     };
     use crate::stream_ui::DeepSeekUiStream;
+    use crate::tool::{ToolPermissionPolicy, ToolRegistry};
 
     use super::{
         APP_TITLE, AgentApp, AgentTurnLauncher, AppAction, MockTurnRegistry, STATUS_READY,
-        STATUS_STREAMING, apply_app_action, build_chat_panel, submit_input_response,
-        submit_slash_command_text,
+        STATUS_STREAMING, apply_app_action, build_chat_panel, handle_tool_approval,
+        submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -1047,6 +1221,133 @@ mod tests {
             tab_mode: TabMode::Cycle,
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             drag: None,
+        }
+    }
+
+    fn test_tool_registry() -> ToolRegistry {
+        crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid")
+    }
+
+    fn test_tool_permissions() -> Arc<Mutex<ToolPermissionPolicy>> {
+        Arc::new(Mutex::new(ToolPermissionPolicy::default()))
+    }
+
+    fn apply_test_app_action(
+        store: &ChatMessageStore,
+        input_handle: &atto_ui_chat::ChatInputHandle,
+        mock_turns: &MockTurnRegistry,
+        status_state: &atto_ui::reactive::Property<String>,
+        action: AppAction,
+    ) -> bool {
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        apply_app_action(
+            store,
+            input_handle,
+            mock_turns,
+            status_state,
+            &registry,
+            &permissions,
+            action,
+        )
+    }
+
+    fn run_command_tool_call(call_id: &str) -> ToolUseBlock {
+        ToolUseBlock {
+            id: atto_ui_chat::ChatBlockId::new(0),
+            call_id: call_id.to_string(),
+            name: "run_command".to_string(),
+            input: ToolInput::Json(ComponentValue::Map(BTreeMap::from([(
+                "argv".to_string(),
+                ComponentValue::List(vec![ComponentValue::String("cargo".to_string())]),
+            )]))),
+            status: ToolStatus::Pending,
+            approval: None,
+            collapsed: false,
+        }
+    }
+
+    fn append_tool_call_with_runtime(
+        store: &ChatMessageStore,
+        input_handle: &atto_ui_chat::ChatInputHandle,
+        mock_turns: &MockTurnRegistry,
+        status_state: &atto_ui::reactive::Property<String>,
+        registry: &ToolRegistry,
+        permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+        tool_call: ToolUseBlock,
+    ) -> atto_ui_chat::ChatBlockId {
+        let expected_call_id = tool_call.call_id.clone();
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        store.push(assistant);
+        let branch = store.branch_token();
+
+        assert!(apply_app_action(
+            store,
+            input_handle,
+            mock_turns,
+            status_state,
+            registry,
+            permissions,
+            AppAction::ToolCallsReady {
+                branch,
+                message_id: assistant_id,
+                tool_calls: vec![tool_call],
+            },
+        ));
+
+        store
+            .messages()
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) if tool.call_id == expected_call_id => Some(tool.id),
+                _ => None,
+            })
+            .expect("tool use block should be appended")
+    }
+
+    fn tool_use_for_block(
+        store: &ChatMessageStore,
+        block_id: atto_ui_chat::ChatBlockId,
+    ) -> ToolUseBlock {
+        store
+            .with_block(block_id, |block| match block {
+                ChatBlock::ToolUse(tool) => Some(tool.clone()),
+                other => panic!("expected tool use block, got {other:?}"),
+            })
+            .flatten()
+            .expect("tool use block should exist")
+    }
+
+    fn tool_result_for_call(store: &ChatMessageStore, call_id: &str) -> ToolResultBlock {
+        store
+            .messages()
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .find_map(|block| match block {
+                ChatBlock::ToolResult(result) if result.call_id == call_id => Some(result.clone()),
+                _ => None,
+            })
+            .expect("tool result block should exist")
+    }
+
+    fn approval_decision(
+        store: &ChatMessageStore,
+        block_id: atto_ui_chat::ChatBlockId,
+        approval_id: &str,
+        option_id: &str,
+        action: ApprovalAction,
+        level: ApprovalLevel,
+    ) -> ApprovalDecision {
+        ApprovalDecision {
+            message_id: store.messages()[0].id,
+            block_id,
+            approval_id: approval_id.to_string(),
+            option_id: option_id.to_string(),
+            action,
+            level,
         }
     }
 
@@ -1286,7 +1587,7 @@ mod tests {
         assert!(cancel.is_cancelled());
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
-        assert!(!apply_app_action(
+        assert!(!apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1319,10 +1620,13 @@ mod tests {
         let mut panel = build_chat_panel(
             &store,
             &input_handle,
-            "deepseek-chat".to_string(),
+            AgentTurnLauncher {
+                model: "deepseek-chat".to_string(),
+                action_sender: sender,
+            },
             status_state.clone(),
             plan_mode_state,
-            sender,
+            test_tool_permissions(),
             mock_turns.clone(),
         );
         let theme = Theme::dark();
@@ -1337,7 +1641,7 @@ mod tests {
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
         assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
-        assert!(!apply_app_action(
+        assert!(!apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1401,7 +1705,7 @@ mod tests {
         let branch = store.branch_token();
         let cancel = mock_turns.start(assistant_id);
 
-        assert!(apply_app_action(
+        assert!(apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1412,7 +1716,7 @@ mod tests {
                 delta: "Mock ".to_string(),
             },
         ));
-        assert!(apply_app_action(
+        assert!(apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1423,7 +1727,7 @@ mod tests {
                 delta: "done".to_string(),
             },
         ));
-        assert!(apply_app_action(
+        assert!(apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1442,6 +1746,227 @@ mod tests {
         assert!(!mock_turns.cancel(assistant_id));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn tool_calls_requiring_project_approval_render_approval_options() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+
+        let block_id = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_run"),
+        );
+
+        let tool = tool_use_for_block(&store, block_id);
+        assert_eq!(tool.status, ToolStatus::Pending);
+        let approval = tool.approval.expect("run_command should require approval");
+        let options = approval
+            .options
+            .iter()
+            .map(|option| {
+                (
+                    option.id.as_str(),
+                    option.label.as_str(),
+                    option.action,
+                    option.level,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(approval.id, "approval:call_run");
+        assert!(approval.prompt.contains("run_command"));
+        assert_eq!(
+            options,
+            vec![
+                (
+                    "allow_once",
+                    "Allow once",
+                    ApprovalAction::Allow,
+                    ApprovalLevel::Once
+                ),
+                (
+                    "allow_project",
+                    "Allow project",
+                    ApprovalAction::Allow,
+                    ApprovalLevel::Project
+                ),
+                ("deny", "Deny", ApprovalAction::Deny, ApprovalLevel::Once),
+            ]
+        );
+    }
+
+    #[test]
+    fn approval_allow_once_resolves_tool_without_project_grant() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        let block_id = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_once"),
+        );
+        let approval_id = tool_use_for_block(&store, block_id)
+            .approval
+            .expect("approval should exist")
+            .id;
+
+        handle_tool_approval(
+            &store,
+            &permissions,
+            approval_decision(
+                &store,
+                block_id,
+                &approval_id,
+                "allow_once",
+                ApprovalAction::Allow,
+                ApprovalLevel::Once,
+            ),
+        );
+
+        let tool = tool_use_for_block(&store, block_id);
+        assert_eq!(tool.status, ToolStatus::Running);
+        assert_eq!(
+            tool.approval.and_then(|approval| approval.resolved),
+            Some(atto_ui_chat::ApprovalResolution {
+                option_id: "allow_once".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Once,
+            })
+        );
+        assert!(
+            !permissions
+                .lock()
+                .expect("tool permission policy lock poisoned")
+                .is_project_allowed("run_command")
+        );
+    }
+
+    #[test]
+    fn approval_allow_project_records_grant_and_skips_future_approval() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        let first_block = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_project_1"),
+        );
+        let approval_id = tool_use_for_block(&store, first_block)
+            .approval
+            .expect("approval should exist")
+            .id;
+
+        handle_tool_approval(
+            &store,
+            &permissions,
+            approval_decision(
+                &store,
+                first_block,
+                &approval_id,
+                "allow_project",
+                ApprovalAction::Allow,
+                ApprovalLevel::Project,
+            ),
+        );
+
+        assert!(
+            permissions
+                .lock()
+                .expect("tool permission policy lock poisoned")
+                .is_project_allowed("run_command")
+        );
+        let second_block = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_project_2"),
+        );
+        let second_tool = tool_use_for_block(&store, second_block);
+        assert_eq!(second_tool.status, ToolStatus::Running);
+        assert!(second_tool.approval.is_none());
+    }
+
+    #[test]
+    fn approval_deny_cancels_tool_and_writes_failed_result() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        let block_id = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            run_command_tool_call("call_deny"),
+        );
+        let approval_id = tool_use_for_block(&store, block_id)
+            .approval
+            .expect("approval should exist")
+            .id;
+
+        handle_tool_approval(
+            &store,
+            &permissions,
+            approval_decision(
+                &store,
+                block_id,
+                &approval_id,
+                "deny",
+                ApprovalAction::Deny,
+                ApprovalLevel::Once,
+            ),
+        );
+
+        let tool = tool_use_for_block(&store, block_id);
+        let result = tool_result_for_call(&store, "call_deny");
+        assert_eq!(tool.status, ToolStatus::Canceled);
+        assert_eq!(
+            tool.approval.and_then(|approval| approval.resolved),
+            Some(atto_ui_chat::ApprovalResolution {
+                option_id: "deny".to_string(),
+                action: ApprovalAction::Deny,
+                level: ApprovalLevel::Once,
+            })
+        );
+        assert!(!result.ok);
+        assert_eq!(result.exit_code, None);
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert!(output.contains("User denied tool call `run_command`"));
+            }
+            other => panic!("expected markdown denial result, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1542,7 +2067,7 @@ mod tests {
 
         for event in events {
             for action in stream.map_event(event) {
-                assert!(apply_app_action(
+                assert!(apply_test_app_action(
                     &store,
                     &input_handle,
                     &mock_turns,
@@ -1565,7 +2090,7 @@ mod tests {
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
         assert!(!mock_turns.cancel(assistant_id));
-        assert!(!apply_app_action(
+        assert!(!apply_test_app_action(
             &store,
             &input_handle,
             &mock_turns,
@@ -1642,7 +2167,7 @@ mod tests {
 
         for event in events {
             for action in stream.map_event(event) {
-                assert!(apply_app_action(
+                assert!(apply_test_app_action(
                     &store,
                     &input_handle,
                     &mock_turns,
@@ -1664,7 +2189,7 @@ mod tests {
             ChatBlock::ToolUse(block) => {
                 assert_eq!(block.call_id, "call_1");
                 assert_eq!(block.name, "read_file");
-                assert_eq!(block.status, ToolStatus::Pending);
+                assert_eq!(block.status, ToolStatus::Running);
                 assert!(block.approval.is_none());
                 match &block.input {
                     ToolInput::Json(ComponentValue::Map(input)) => assert_eq!(
@@ -1680,7 +2205,7 @@ mod tests {
             ChatBlock::ToolUse(block) => {
                 assert_eq!(block.call_id, "call_2");
                 assert_eq!(block.name, "search_text");
-                assert_eq!(block.status, ToolStatus::Pending);
+                assert_eq!(block.status, ToolStatus::Running);
                 match &block.input {
                     ToolInput::Json(ComponentValue::Map(input)) => assert_eq!(
                         input.get("query"),
@@ -1759,7 +2284,7 @@ mod tests {
 
         for event in events {
             for action in stream.map_event(event) {
-                assert!(apply_app_action(
+                assert!(apply_test_app_action(
                     &store,
                     &input_handle,
                     &mock_turns,
