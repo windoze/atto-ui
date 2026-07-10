@@ -45,8 +45,12 @@
 - [x] **[DONE] M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。
   - 完成记录（2026-07-10）：新增 DeepSeek HTTP/API/network/断流/JSON 错误到 `ChatError` 的结构化映射；SSE error event 现在通过 `TurnFailed` action 将 assistant turn 标为 `Failed(ChatError)`，UI header 显示 kind/message/detail；失败 streaming turn 会推进 branch token，避免迟到 token 污染已失败回合。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M2.6 Mock + ignored real 测试** - 单测覆盖 SSE parser；PTY 走 mock client；真实 DeepSeek smoke 标记 ignored。
-- [ ] **M2.R Review** - 复核网络依赖只在 app crate，默认测试无外网，取消和错误路径稳定。
+- [x] **[DONE] M2.6 Mock + ignored real 测试** - 单测覆盖 SSE parser；PTY 走 mock client；真实 DeepSeek smoke 标记 ignored。
+  - 完成记录（2026-07-10）：新增 app crate 私有 DeepSeek HTTP streaming client，默认单测通过本地 mock HTTP SSE server 覆盖请求构造、Bearer auth、SSE 事件收集和 HTTP 错误映射；保留并验证 PTY snapshot fixture 默认走 mock provider；新增 `deepseek_real_smoke` ignored 真实 DeepSeek streaming smoke，默认测试只编译不访问外网，手动设置 `DEEPSEEK_API_KEY` 后可运行。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --all-targets`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
+- [x] **[DONE] M2.R Review** - 复核网络依赖只在 app crate，默认测试无外网，取消和错误路径稳定。
+  - 完成记录（2026-07-10）：复核 M2 DeepSeek client、SSE parser、UI mapper、错误映射、取消路径和测试边界；确认 `reqwest` / `futures-util` / app 测试 `tokio` 仅新增于 `crates/atto-agent-app`，`atto-ui` 和 `atto-ui-chat` 未新增网络依赖；默认 DeepSeek client 测试使用本地 mock SSE server，真实 DeepSeek smoke 测试已标记 ignored，需要手动提供 `DEEPSEEK_API_KEY`；取消和失败路径都会推进 branch token，单测和 PTY 覆盖迟到 token 不污染已取消或失败 turn。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 阶段 M3 - Tool Loop + Approval
 

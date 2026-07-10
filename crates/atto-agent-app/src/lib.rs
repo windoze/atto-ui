@@ -28,6 +28,7 @@ use ratatui::layout::Rect;
 
 pub mod config;
 pub mod deepseek;
+pub mod deepseek_client;
 mod stream_ui;
 
 use crate::config::{AgentConfig, PlanMode};

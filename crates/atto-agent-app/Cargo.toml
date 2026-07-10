@@ -8,7 +8,9 @@ anyhow = "1.0.101"
 atto-ui = { path = "../.." }
 atto-ui-async = { path = "../atto-ui-async", default-features = false, features = ["event-stream", "tokio-runtime"] }
 atto-ui-chat = { path = "../atto-ui-chat" }
+futures-util = "0.3.32"
 ratatui = "0.30.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 toml = "0.8"
@@ -16,3 +18,4 @@ toml = "0.8"
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }
 crossterm = "0.29.0"
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread"] }
