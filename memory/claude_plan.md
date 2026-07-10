@@ -22,7 +22,8 @@
 - 已新增定向单测覆盖长工具输出截断、UI 输出不被修改、UTF-8 边界安全；`cargo test -p atto-agent-app context_builder` 已通过且无警告。
 - 已完成最终验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`、`cargo test -p atto-agent-app context_builder` 均通过。
 - 已将 `TODO.md` 中 `M6.3 工具输出预算` 标记为 `[DONE]` 并补充完成记录。
-- 下一步检查 diff/status 并提交。
+- 已创建提交 `229057c [M6.3] Implement tool output budget`，包含代码、测试、`TODO.md` 和本计划文件记录。
+- 本轮任务完成后停止，不继续 `M6.4`。
 
 ## M6.3 执行步骤
 
