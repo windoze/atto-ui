@@ -123,8 +123,11 @@ impl DeepSeekClient {
         request: crate::deepseek::ChatCompletionsRequestParts,
     ) -> DeepSeekClientResult<reqwest::Response> {
         let api_key = config.deepseek_api_key().map_err(|error| {
-            ChatError::new(ChatErrorKind::Api, "DeepSeek API key is required.")
-                .with_detail(error.to_string())
+            ChatError::new(
+                ChatErrorKind::Api,
+                "DeepSeek API key is required; set DEEPSEEK_API_KEY or pass --api-key, or pass --mock to use mock.",
+            )
+            .with_detail(error.to_string())
         })?;
 
         let response = self

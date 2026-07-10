@@ -90,7 +90,7 @@ Launch the agent app from a checkout:
 cargo run -p atto-agent-app -- --workspace .
 ```
 
-The app selects `provider: deepseek` when an API key is configured and `--mock` is not set; otherwise it selects `provider: mock`. Turn execution is still deterministic and mock-backed until the remaining live-provider wiring lands, so the app can be exercised without network access. The app crate also contains the DeepSeek request model, SSE parser, HTTP streaming client, tool schema conversion, and ignored real-API smoke test:
+The app selects `provider: deepseek` when an API key is configured and `--mock` is not set; otherwise it selects `provider: mock` and shows a startup notice with next steps unless mock mode was explicitly forced. Live DeepSeek turns stream over HTTP/SSE through the same UI action path as the deterministic mock provider, including structured error display; default tests still avoid external network access. The ignored real-API smoke test can be run manually with:
 
 ```sh
 DEEPSEEK_API_KEY=... cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored

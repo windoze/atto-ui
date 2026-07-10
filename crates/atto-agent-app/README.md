@@ -8,7 +8,7 @@
 |---|---|
 | TUI shell | Desktop, status bar, one `ChatPanel`, slash commands, cancellation, retry, regenerate, and edit/resubmit are wired. |
 | Provider selection | The app selects `provider: deepseek` when a resolved API key is present and `--mock` is not set; otherwise it selects `provider: mock`. |
-| Interactive turn loop | Turn execution is still deterministic and mock-backed until the later M7 live turn-loop tasks wire the selected DeepSeek provider into requests. |
+| Interactive turn loop | `provider: deepseek` runs live HTTP/SSE turns through the same UI action path as the deterministic mock provider, including tool-loop continuation, cancellation, and structured error display. |
 | DeepSeek protocol | OpenAI-compatible request/response models, SSE parser, UI stream mapper, error mapping, and HTTP streaming client are implemented in this crate. |
 | Real DeepSeek smoke | Available as an ignored test that requires `DEEPSEEK_API_KEY`; default tests do not use the network. |
 | Tools | Built-in `read_file`, `list_files`, `search_text`, `apply_patch`, and `run_command` are registered with workspace path checks and approval policy. |
@@ -22,7 +22,7 @@
 cargo run -p atto-agent-app -- --workspace .
 ```
 
-Without a configured API key the app selects the mock provider. Set `DEEPSEEK_API_KEY` or `--api-key` to select DeepSeek, or pass `--mock` to force the mock provider. The deterministic PTY fixture always uses mock provider state.
+Without a configured API key the app selects the mock provider and shows a startup notice with next steps. Set `DEEPSEEK_API_KEY` or `--api-key` to select DeepSeek, or pass `--mock` to explicitly force the mock provider and suppress the notice. The deterministic PTY fixture always uses mock provider state.
 
 Run the deterministic PTY fixture binary directly with:
 
@@ -97,7 +97,7 @@ transcript_path = ".atto/transcript.jsonl"
 | `/skills` | List discovered skills, loaded skills, and non-fatal discovery issues. |
 | `/skill <name>` | Load a discovered skill into the current session. |
 | `/tools` | List built-in tools, output kinds, and approval policy. |
-| `/abort` | Cancel the active mock turn. |
+| `/abort` | Cancel the active turn, including live DeepSeek HTTP/SSE requests. |
 
 ## Tools
 

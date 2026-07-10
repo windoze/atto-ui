@@ -18,9 +18,9 @@
 | 项 | 状态 |
 |---|---|
 | 阶段 M1-M6 | 已完成 app skeleton、DeepSeek 协议/client、tool loop、skill registry、plan mode、context/session polish。 |
-| 交互式 binary | 当前 `cargo run -p atto-agent-app` 使用 deterministic in-process mock turn loop，便于本地和 PTY 测试稳定运行。 |
-| DeepSeek 真实接口 | 请求构造、SSE 解析和 HTTP streaming client 已实现；真实 DeepSeek smoke 通过 ignored test 手动运行，默认验证不访问网络。 |
-| 文档范围 | 本文以实际实现为准；交互式 live provider wiring 属于后续可扩展点。 |
+| 交互式 binary | 当前 `cargo run -p atto-agent-app` 会在存在有效 API key 且未 `--mock` 时使用 live DeepSeek HTTP/SSE turn loop；无 key 时回退 mock 并显示可操作提示。 |
+| DeepSeek 真实接口 | 请求构造、SSE 解析、HTTP streaming client、tool loop、取消和结构化错误映射已接入交互式路径；真实 DeepSeek smoke 通过 ignored test 手动运行，默认验证不访问网络。 |
+| 文档范围 | 本文以实际实现为准；后续 M7 工作主要补充真实冒烟覆盖和最终复核。 |
 
 ## 非目标
 
@@ -148,7 +148,7 @@ UI 状态只能在主线程通过 `AppAction` 更新。后台任务只发送动�
 | `/skills` | 列出可用 skill。 |
 | `/skill <name>` | 手动附加 skill 到下一次或当前会话。 |
 | `/tools` | 列出工具和审批策略。 |
-| `/abort` | 取消当前 mock 流式任务。 |
+| `/abort` | 取消当前流式任务，包括 live DeepSeek HTTP/SSE 请求。 |
 
 当前没有单独的 `@` 候选 provider。用户可直接输入 `@path/to/file`，`ContextBuilder` 在发起请求前解析这些 mention 并添加只读文件摘要。
 
@@ -196,7 +196,7 @@ CLI 参数：
 
 ## DeepSeek 对接
 
-DeepSeek 协议层走 OpenAI-compatible Chat Completions。当前 crate 已实现 provider 选择、request builder、SSE parser 和 HTTP streaming client；交互式 binary 的 turn 执行仍由 mock turn launcher 驱动，真实网络路径通过 ignored smoke test 手动验证，live turn loop 由 M7 后续任务接线。
+DeepSeek 协议层走 OpenAI-compatible Chat Completions。当前 crate 已实现 provider 选择、request builder、SSE parser、HTTP streaming client 和交互式 live turn loop；live 路径复用 `ContextBuilder`、tool schema、`DeepSeekUiStream`、branch token、取消和 M2.5 的结构化错误映射。无 key 且未显式 `--mock` 时使用 mock provider 并显示如何设置 `DEEPSEEK_API_KEY` / `--api-key` 或显式 `--mock` 的提示。
 
 | 项 | 设计 |
 |---|---|

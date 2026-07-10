@@ -1,17 +1,16 @@
-## Current Invocation Plan
+# Current Invocation Plan
 
-Selected task: **M7.6 真实请求取消** from `TODO.md`.
+Selected task: **M7.7 错误映射接线** from `TODO.md`.
 
-Goal: ensure Esc, `ChatMessageList::on_cancel`, and `/abort` cancel in-flight live DeepSeek HTTP/SSE requests, advance branch tokens, and prevent late live events from mutating a canceled or replaced branch. PTY coverage may remain mock-backed as required by the task.
+Goal: ensure the live DeepSeek provider path reuses the existing M2.5 `ChatError` mapping so missing/invalid API keys, 401/403, 429, 5xx, network disconnects, and no-key live-provider attempts surface clear, actionable UI errors.
 
-### Steps
+## Steps
 
-1. Check the latest commit message for unfinished work directly relevant to M7.6.
-2. Inspect the agent app live provider, cancellation, branch-token, `/abort`, and existing DeepSeek provider tests.
-3. Identify how live DeepSeek turns are spawned and how cancellation tokens/handles currently flow through mock and live paths.
-4. Implement real request cancellation by wiring cancellation into the live HTTP/SSE future and ensuring all UI cancel entry points invoke it. **Done:** live DeepSeek turns now register a futures abort handle alongside the existing cancellation token, and both initial live turns and live tool-loop continuations are aborted by the existing cancel entry points.
-5. Add or update focused tests for live request cancellation and late-event rejection; keep PTY tests mock-backed where applicable. **Done:** added a live local SSE test for `/abort` closing the in-flight connection and rejecting stale branch events.
-6. Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`. **Done:** also ran `cargo fmt --all -- --check`.
-7. Mark M7.6 `[DONE]` in `TODO.md` with completion notes and validation commands. **Done.**
-8. Update this progress file with the completed state. **Done.**
-9. Commit all related changes with a clear M7.6 commit message and required co-author trailer, then stop. **Next.**
+1. Confirm the latest commit has no unfinished work directly relevant to M7.7. **Done:** latest commit is M7.6 request cancellation and does not list unfinished M7.7 work.
+2. Inspect DeepSeek client error mapping, live provider startup/selection, app action failure handling, and existing tests.
+3. Identify any mismatch between M2.5 mapping and the M7 live provider path, especially around preflight API-key validation and stream interruption.
+4. Implement missing wiring so live provider failures become structured `ChatError` UI failures and status summaries instead of silent exits or generic errors. **Done:** live errors now surface through structured failed turns, and no-key mock fallback gets an actionable startup notice.
+5. Add focused tests for missing/invalid API key behavior, HTTP status mappings, and live stream disconnect/error display where coverage is missing. **Done:** added live-provider coverage for missing key, 401, 429, 502, stream disconnect, and startup notice suppression.
+6. Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`. **Done.**
+7. Mark M7.7 `[DONE]` in `TODO.md` with completion notes and validation commands. **Done.**
+8. Update this progress file with completion status, commit all related changes with the required co-author trailer, and stop. **Next.**

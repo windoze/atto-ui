@@ -188,7 +188,9 @@
 - [x] **[DONE] M7.6 真实请求取消** - Esc / `on_cancel` / `/abort` 中止进行中的 HTTP 请求（abort handle / drop future），推进 branch token，迟到事件不污染新分支；补单测/PTY（PTY 走 mock）。
   - 完成记录（2026-07-11）：DeepSeek live turn 现在为每个真实 HTTP/SSE 请求注册 `AbortHandle`，并与既有 cancel token 一起保存在 active turn registry；Esc、`on_cancel`、`/abort`、retry/edit 截断等既有取消入口会同时推进 branch token、取消 UI turn budget，并 abort/drop 正在等待的 live request future。真实 tool loop 的后续 DeepSeek 请求同样注册 abort handle，避免工具回灌后的多轮 live request 在取消后继续占用连接；迟到 action 继续通过 branch-token 校验被拒绝。新增本地 SSE 单测验证 `/abort` 会关闭 in-flight live SSE 连接并拒绝 stale branch delta；PTY 覆盖仍走 deterministic mock。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M7.7 错误映射接线** - 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误；无 key 且未 `--mock` 时给出可操作提示。
+- [x] **[DONE] M7.7 错误映射接线** - 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误；无 key 且未 `--mock` 时给出可操作提示。
+  - 完成记录（2026-07-11）：DeepSeek live provider 失败路径现在通过既有 `DeepSeekClient` / `DeepSeekUiStream::map_error` 将缺失 API key、HTTP 401/403、429、5xx 和 SSE 断流映射为结构化 `ChatError`，主线程统一写入 failed assistant turn、恢复 ready/非 streaming 状态并更新 `err:*` 状态栏摘要。缺失 key 的 live 错误现在提示设置 `DEEPSEEK_API_KEY` / `--api-key` 或显式 `--mock`；无 key 且未显式 `--mock` 的默认 mock fallback 会在空 transcript 启动时追加可操作 system notice，snapshot fixture 显式标记为 mock 以保持确定性。补充 live provider 单测覆盖缺失 key、401 invalid key、429、502、断流和 no-key startup notice，并同步更新 README / app README / `TUI_AGENT.md` 的 live provider 与错误提示说明。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
 - [ ] **M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
 

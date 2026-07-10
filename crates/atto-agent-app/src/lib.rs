@@ -86,6 +86,7 @@ const MOCK_READ_FILE_PROMPT: &str = "agent-pty-read-file";
 const MOCK_RUN_COMMAND_PROMPT: &str = "agent-pty-run-command";
 const MOCK_CONTEXT_PROBE_PREFIX: &str = "agent-pty-context-probe";
 const MOCK_RETRY_EDIT_PROMPT: &str = "agent-pty-retry-edit-seed";
+const MISSING_DEEPSEEK_API_KEY_NOTICE: &str = "DeepSeek API key is not configured; using the mock provider. Set DEEPSEEK_API_KEY or pass --api-key to use live DeepSeek, or pass --mock to explicitly stay on mock.";
 const ACCEPTED_PLAN_EXECUTION_INSTRUCTION: &str = "The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.";
 const PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT: &str =
     "Plan mode blocks mutating tools until the plan is accepted.";
@@ -678,8 +679,10 @@ pub fn run() -> Result<()> {
 
 /// Runs the deterministic mock fixture used by PTY snapshot tests.
 pub fn run_snapshot_fixture() -> Result<()> {
+    let mut config = AgentConfig::defaults(env!("CARGO_MANIFEST_DIR"));
+    config.force_mock = true;
     run_with_config_mock_token_delay_and_compact_policy(
-        AgentConfig::defaults(env!("CARGO_MANIFEST_DIR")),
+        config,
         SNAPSHOT_MOCK_TOKEN_DELAY,
         SNAPSHOT_COMPACT_POLICY,
     )
@@ -714,6 +717,8 @@ fn run_with_config_mock_token_delay_and_compact_policy(
         &runtime.message_store,
         runtime.config.transcript_path.as_deref(),
     )?;
+    append_startup_notices(&runtime.config, &runtime.message_store);
+    runtime.transcript_status.sync(&runtime.message_store);
     let transcript_persistence = Arc::new(Mutex::new(TranscriptPersistence::new(
         runtime.config.transcript_path.clone(),
         &runtime.message_store,
@@ -785,6 +790,12 @@ fn restore_transcript_if_configured(store: &ChatMessageStore, path: Option<&Path
         store.replace_all(messages);
     }
     Ok(())
+}
+
+fn append_startup_notices(config: &AgentConfig, store: &ChatMessageStore) {
+    if config.should_show_missing_api_key_prompt() && store.messages().is_empty() {
+        append_system_message(store, MISSING_DEEPSEEK_API_KEY_NOTICE);
+    }
 }
 
 fn build_chat_panel(
@@ -2773,15 +2784,15 @@ mod tests {
 
     use super::{
         ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
-        AgentTurnLimits, AppAction, MockTurnRegistry, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
-        PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, StatusSegmentBindings,
-        ToolRuntime, TranscriptPersistence, TranscriptStatusState, TurnBudgetTracker,
-        apply_app_action, build_chat_panel, deepseek_plan_request_from_transcript,
-        deepseek_request_from_transcript, deepseek_request_from_transcript_with_skills,
-        error_summary_status, execute_tool_use_to_result_block, format_token_estimate_status,
-        handle_edit_and_resubmit, handle_message_action, handle_plan_decision,
-        handle_tool_approval, status_segments, submit_input_response, submit_slash_command_text,
-        sync_transcript_status,
+        AgentTurnLimits, AppAction, MISSING_DEEPSEEK_API_KEY_NOTICE, MockTurnRegistry,
+        PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT, PlanDecisionRuntime, STATUS_READY,
+        STATUS_STREAMING, SlashRuntime, StatusSegmentBindings, ToolRuntime, TranscriptPersistence,
+        TranscriptStatusState, TurnBudgetTracker, append_startup_notices, apply_app_action,
+        build_chat_panel, deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
+        deepseek_request_from_transcript_with_skills, error_summary_status,
+        execute_tool_use_to_result_block, format_token_estimate_status, handle_edit_and_resubmit,
+        handle_message_action, handle_plan_decision, handle_tool_approval, status_segments,
+        submit_input_response, submit_slash_command_text, sync_transcript_status,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -2789,6 +2800,13 @@ mod tests {
             ChatBlock::Text(block) => &block.markdown,
             other => panic!("expected text block, got {other:?}"),
         }
+    }
+
+    fn failed_turn_error(message: &ChatMessage) -> &ChatError {
+        let ChatTurnStatus::Failed(error) = &message.status else {
+            panic!("expected failed turn, got {:?}", message.status);
+        };
+        error
     }
 
     fn plan_decision(store: &ChatMessageStore, block_id: ChatBlockId) -> PlanDecision {
@@ -3123,6 +3141,105 @@ Use this skill for {name} tasks.
             }
         }
         panic!("live DeepSeek tool loop did not become idle");
+    }
+
+    struct LivePromptResult {
+        messages: Vec<ChatMessage>,
+        streaming: bool,
+        status: String,
+        error_summary: String,
+    }
+
+    struct LiveHttpErrorResult {
+        error: ChatError,
+        error_summary: String,
+        request: String,
+    }
+
+    fn run_live_prompt_to_idle(config: AgentConfig, prompt: &str) -> LivePromptResult {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let registry = test_tool_registry();
+        let limits = AgentTurnLimits::default();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: registry.clone(),
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            compact_policy: CompactPolicy::default(),
+        };
+        let transcript_status = TranscriptStatusState::new();
+        let tool_runtime = live_tool_runtime(LiveToolRuntimeParts {
+            config,
+            action_sender: sender,
+            registry,
+            turn_budgets: turn_budgets.clone(),
+            limits,
+            input_handle: &input_handle,
+            mock_turns: &mock_turns,
+            status_state: &status_state,
+            transcript_status: &transcript_status,
+        });
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text(prompt.to_string()),
+        );
+        apply_live_actions_until_idle(
+            &receiver,
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &transcript_status,
+            &tool_runtime,
+        );
+
+        LivePromptResult {
+            messages: store.messages(),
+            streaming: input_handle.streaming_binding().get(),
+            status: status_state.get(),
+            error_summary: transcript_status.error_summary_state.get(),
+        }
+    }
+
+    fn live_http_error(
+        status: u16,
+        reason: &'static str,
+        body: &'static str,
+    ) -> LiveHttpErrorResult {
+        let server = TestSseServer::spawn_response(status, reason, "application/json", body);
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+
+        let result = run_live_prompt_to_idle(config, "live http error prompt");
+        let request = server.join();
+        let error = failed_turn_error(&result.messages[1]).clone();
+
+        assert_eq!(result.status, STATUS_READY);
+        assert!(!result.streaming);
+        LiveHttpErrorResult {
+            error,
+            error_summary: result.error_summary,
+            request,
+        }
     }
 
     fn test_plan_decision_runtime(
@@ -3710,6 +3827,40 @@ Use this skill for {name} tasks.
             }
             other => panic!("expected text input mode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn startup_notice_explains_implicit_mock_when_deepseek_key_is_missing() {
+        let store = ChatMessageStore::new();
+        let config = AgentConfig::defaults(".");
+
+        append_startup_notices(&config, &store);
+
+        let messages = store.messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, ChatRole::System);
+        assert_eq!(message_text(&messages[0]), MISSING_DEEPSEEK_API_KEY_NOTICE);
+        assert!(message_text(&messages[0]).contains("DEEPSEEK_API_KEY"));
+        assert!(message_text(&messages[0]).contains("--api-key"));
+        assert!(message_text(&messages[0]).contains("--mock"));
+    }
+
+    #[test]
+    fn startup_notice_is_suppressed_for_explicit_mock_or_existing_transcript() {
+        let mut forced_mock = AgentConfig::defaults(".");
+        forced_mock.force_mock = true;
+        let explicit_mock_store = ChatMessageStore::new();
+        append_startup_notices(&forced_mock, &explicit_mock_store);
+        assert!(explicit_mock_store.messages().is_empty());
+
+        let existing_store = ChatMessageStore::new();
+        existing_store.push(ChatMessage::text(
+            existing_store.next_message_id(),
+            ChatRole::User,
+            "existing transcript",
+        ));
+        append_startup_notices(&AgentConfig::defaults("."), &existing_store);
+        assert_eq!(existing_store.messages().len(), 1);
     }
 
     #[test]
@@ -4454,6 +4605,103 @@ Use this skill for {name} tasks.
             },
         ));
         assert_eq!(message_text(&store.messages()[1]), "first live token");
+    }
+
+    #[test]
+    fn deepseek_provider_missing_api_key_fails_turn_with_actionable_error() {
+        let mut config = AgentConfig::defaults(".");
+        config.provider = AgentProvider::DeepSeek;
+        config.plan_mode = PlanMode::Off;
+
+        let result = run_live_prompt_to_idle(config, "live without key");
+
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].role, ChatRole::User);
+        let error = failed_turn_error(&result.messages[1]);
+        assert_eq!(error.kind, ChatErrorKind::Api);
+        assert!(error.message.contains("DEEPSEEK_API_KEY"));
+        assert!(error.message.contains("--api-key"));
+        assert!(error.message.contains("--mock"));
+        let detail = error.detail.as_deref().expect("detail should be present");
+        assert!(detail.contains("DEEPSEEK_API_KEY"));
+        assert!(detail.contains("--api-key"));
+        assert_eq!(result.status, STATUS_READY);
+        assert!(!result.streaming);
+        assert!(result.error_summary.starts_with("err:api"));
+    }
+
+    #[test]
+    fn deepseek_provider_http_errors_reuse_structured_chat_error_mapping() {
+        let auth = live_http_error(
+            401,
+            "Unauthorized",
+            r#"{"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key","param":null}}"#,
+        );
+        assert!(
+            auth.request
+                .starts_with("POST /v1/chat/completions HTTP/1.1")
+        );
+        assert_eq!(auth.error.kind, ChatErrorKind::Api);
+        assert!(auth.error.message.contains("DEEPSEEK_API_KEY"));
+        assert!(auth.error.detail.as_deref().is_some_and(|detail| {
+            detail.contains("HTTP status: 401") && detail.contains("invalid_api_key")
+        }));
+        assert!(auth.error_summary.starts_with("err:api"));
+
+        let rate_limit = live_http_error(429, "Too Many Requests", "rate limit body");
+        assert_eq!(rate_limit.error.kind, ChatErrorKind::RateLimit);
+        assert!(rate_limit.error.message.contains("429"));
+        assert!(
+            rate_limit
+                .error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("rate limit body"))
+        );
+        assert!(rate_limit.error_summary.starts_with("err:rate"));
+
+        let service = live_http_error(502, "Bad Gateway", "gateway down");
+        assert_eq!(service.error.kind, ChatErrorKind::Api);
+        assert!(service.error.message.contains("502"));
+        assert!(
+            service
+                .error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("gateway down"))
+        );
+        assert!(service.error_summary.starts_with("err:api"));
+    }
+
+    #[test]
+    fn deepseek_provider_stream_disconnect_fails_turn_with_network_error() {
+        let server = TestSseServer::spawn(
+            "data: {\"model\":\"mock-deepseek\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial live token\"},\"finish_reason\":null}]}\n\n",
+        );
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+
+        let result = run_live_prompt_to_idle(config, "live disconnect prompt");
+        let request = server.join();
+
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(message_text(&result.messages[1]), "partial live token");
+        let error = failed_turn_error(&result.messages[1]);
+        assert_eq!(error.kind, ChatErrorKind::Network);
+        assert!(error.message.contains("network stream failed"));
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("[DONE]"))
+        );
+        assert_eq!(result.status, STATUS_READY);
+        assert!(!result.streaming);
+        assert!(result.error_summary.starts_with("err:network"));
     }
 
     #[test]

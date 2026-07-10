@@ -109,6 +109,7 @@ impl fmt::Display for AgentProvider {
 pub struct AgentConfig {
     pub api_key: Option<String>,
     pub provider: AgentProvider,
+    pub force_mock: bool,
     pub base_url: String,
     pub model: String,
     pub temperature: f32,
@@ -124,6 +125,7 @@ impl AgentConfig {
         Self {
             api_key: None,
             provider: AgentProvider::Mock,
+            force_mock: false,
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
             temperature: DEFAULT_TEMPERATURE,
@@ -143,7 +145,11 @@ impl AgentConfig {
         self.api_key
             .as_deref()
             .filter(|key| !key.trim().is_empty())
-            .context("DEEPSEEK_API_KEY is required for DeepSeek requests")
+            .context("set DEEPSEEK_API_KEY or pass --api-key to use DeepSeek, or pass --mock")
+    }
+
+    pub fn should_show_missing_api_key_prompt(&self) -> bool {
+        self.provider == AgentProvider::Mock && self.api_key.is_none() && !self.force_mock
     }
 }
 
@@ -285,6 +291,7 @@ impl ConfigBuilder {
         Ok(AgentConfig {
             api_key,
             provider,
+            force_mock,
             base_url: self
                 .overrides
                 .base_url
@@ -584,6 +591,8 @@ mod tests {
 
         assert_eq!(config.api_key, None);
         assert_eq!(config.provider, AgentProvider::Mock);
+        assert!(!config.force_mock);
+        assert!(config.should_show_missing_api_key_prompt());
         assert_eq!(config.base_url, DEFAULT_BASE_URL);
         assert_eq!(config.model, DEFAULT_MODEL);
         assert_eq!(config.temperature, DEFAULT_TEMPERATURE);
@@ -652,6 +661,8 @@ transcript_path = ".atto/workspace.jsonl"
 
         assert_eq!(config.api_key.as_deref(), Some("cli-key"));
         assert_eq!(config.provider, AgentProvider::Mock);
+        assert!(config.force_mock);
+        assert!(!config.should_show_missing_api_key_prompt());
         assert_eq!(config.base_url, "https://workspace.example/v1");
         assert_eq!(config.model, "cli-model");
         assert_eq!(config.temperature, 0.3);
@@ -718,6 +729,8 @@ plan_mode = "on"
 
         assert_eq!(config.api_key.as_deref(), Some("env-key"));
         assert_eq!(config.provider, AgentProvider::DeepSeek);
+        assert!(!config.force_mock);
+        assert!(!config.should_show_missing_api_key_prompt());
     }
 
     #[test]
@@ -735,6 +748,8 @@ plan_mode = "on"
 
         assert_eq!(config.api_key.as_deref(), Some("env-key"));
         assert_eq!(config.provider, AgentProvider::Mock);
+        assert!(config.force_mock);
+        assert!(!config.should_show_missing_api_key_prompt());
     }
 
     #[test]
@@ -747,6 +762,8 @@ plan_mode = "on"
 
         assert_eq!(config.api_key, None);
         assert_eq!(config.provider, AgentProvider::Mock);
+        assert!(!config.force_mock);
+        assert!(config.should_show_missing_api_key_prompt());
     }
 
     #[test]
