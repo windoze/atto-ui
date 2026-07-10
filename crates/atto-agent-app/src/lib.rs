@@ -34,6 +34,7 @@ pub mod config;
 pub mod deepseek;
 pub mod deepseek_client;
 mod limits;
+pub mod plan;
 pub mod skill;
 mod stream_ui;
 pub mod tool;
@@ -45,6 +46,7 @@ use crate::deepseek::{
     ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
+use crate::plan::{PlanTurnDecision, decide_plan_for_turn};
 use crate::skill::{
     DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry, build_skill_prompt_block,
 };
@@ -107,6 +109,7 @@ struct MockAgentTurnRequest {
     token_delay: Duration,
     model: String,
     prompt: String,
+    plan_decision: PlanTurnDecision,
 }
 
 #[derive(Clone)]
@@ -131,10 +134,11 @@ struct SlashRuntime {
     turn_budgets: TurnBudgetTracker,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct AgentTurnLauncher {
     model: String,
     action_sender: mpsc::Sender<AppAction>,
+    tool_registry: ToolRegistry,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
 }
@@ -332,6 +336,7 @@ impl AgentApp {
             AgentTurnLauncher {
                 model: runtime.config.model.clone(),
                 action_sender: runtime.action_sender.clone(),
+                tool_registry: runtime.tool_registry.clone(),
                 turn_budgets: runtime.turn_budgets.clone(),
                 limits: runtime.limits,
             },
@@ -569,6 +574,9 @@ fn submit_input_response(
         &slash_runtime.skill_count_state,
         &text,
     );
+    let plan_mode =
+        plan_mode_from_status(&slash_runtime.plan_mode_state.get()).unwrap_or(PlanMode::Off);
+    let plan_decision = decide_plan_for_turn(plan_mode, &text, &turn_launcher.tool_registry);
 
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
@@ -604,6 +612,7 @@ fn submit_input_response(
             token_delay: slash_runtime.mock_turns.token_delay(),
             model: turn_launcher.model.clone(),
             prompt: text,
+            plan_decision,
         },
     );
 }
@@ -950,7 +959,7 @@ fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAg
             request.block_id,
             request.model,
         );
-        for event in mock_agent_events(&request.prompt) {
+        for event in mock_agent_events(&request.prompt, &request.plan_decision) {
             if request.cancel.is_cancelled() {
                 return;
             }
@@ -974,7 +983,10 @@ fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<App
     true
 }
 
-fn mock_agent_events(prompt: &str) -> Vec<ChatCompletionSseEvent> {
+fn mock_agent_events(
+    prompt: &str,
+    plan_decision: &PlanTurnDecision,
+) -> Vec<ChatCompletionSseEvent> {
     match prompt.trim() {
         MOCK_READ_FILE_PROMPT => vec![
             mock_stream_tool_call_event(
@@ -996,7 +1008,7 @@ fn mock_agent_events(prompt: &str) -> Vec<ChatCompletionSseEvent> {
             ChatCompletionSseEvent::Done,
         ],
         _ => {
-            let mut events = mock_agent_deltas(prompt)
+            let mut events = mock_agent_deltas(prompt, plan_decision.requires_plan())
                 .into_iter()
                 .map(mock_stream_content_event)
                 .collect::<Vec<_>>();
@@ -1070,7 +1082,7 @@ fn mock_stream_finish_event() -> ChatCompletionSseEvent {
     })
 }
 
-fn mock_agent_deltas(prompt: &str) -> Vec<String> {
+fn mock_agent_deltas(prompt: &str, _plan_required: bool) -> Vec<String> {
     vec![
         "Mock assistant: ".to_string(),
         prompt.trim().to_string(),
@@ -2725,6 +2737,7 @@ Use this skill for {name} tasks.
             AgentTurnLauncher {
                 model: "deepseek-chat".to_string(),
                 action_sender: sender.clone(),
+                tool_registry: test_tool_registry(),
                 turn_budgets: turn_budgets.clone(),
                 limits: AgentTurnLimits::default(),
             },
@@ -2780,6 +2793,7 @@ Use this skill for {name} tasks.
         let turn_launcher = AgentTurnLauncher {
             model: "deepseek-chat".to_string(),
             action_sender: sender,
+            tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
             limits: AgentTurnLimits::default(),
         };
@@ -2849,6 +2863,7 @@ Use this skill for {name} tasks.
         let turn_launcher = AgentTurnLauncher {
             model: "deepseek-chat".to_string(),
             action_sender: sender,
+            tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
             limits: AgentTurnLimits::default(),
         };

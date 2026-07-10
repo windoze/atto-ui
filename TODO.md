@@ -114,7 +114,9 @@
 - [x] **[DONE] M5.1 Plan mode 状态** - 实现 `off`、`on`、`auto` 配置和 `/plan` 切换，状态栏显示当前模式。
   - 完成记录（2026-07-10）：复核现有 app crate 实现，确认 `PlanMode` 已支持 `off` / `on` / `auto`，配置加载覆盖默认值、用户/工作区 TOML、环境变量与 CLI 参数，运行时从配置初始化状态栏 `plan: <mode>`，`/plan [on|off|auto]` 支持显式设置且无参数按 `off -> on -> auto -> off` 循环切换。
   - 验证：`cargo test -p atto-agent-app plan_mode`；`cargo test -p atto-agent-app config::tests`。本次未修改编译代码；完整 workspace fmt/clippy/test 复用上一条 M4.R 完成记录中的绿色结果。
-- [ ] **M5.2 Auto 判定** - 根据 prompt 和工具需求粗判是否涉及写文件、命令、代码修改等副作用。
+- [x] **[DONE] M5.2 Auto 判定** - 根据 prompt 和工具需求粗判是否涉及写文件、命令、代码修改等副作用。
+  - 完成记录（2026-07-10）：新增 app crate `plan` 模块，提供 deterministic `PlanTurnDecision`，按 `PlanMode::off/on/auto`、用户 prompt、注册工具权限判定当前 turn 是否需要先进入 plan mode；auto 模式会识别 mutating tool 需求（如 `apply_patch` / `run_command`）、命令执行意图、代码/文件修改意图，并保留纯问答和只读工具检查为 direct。用户提交路径现在计算该判定并随 turn request 传递，供后续 M5.3 计划生成消费，同时不提前改变 mock streaming 行为。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M5.3 计划生成** - 实现虚拟 tool `submit_plan({ items })`，兜底解析 markdown 列表为 `PlanItem`。
 - [ ] **M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
 - [ ] **M5.5 Accept/Reject 流程** - Accept 后追加内部执行指令并继续 agent loop；Reject 后停止当前 turn。

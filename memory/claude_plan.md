@@ -1,26 +1,24 @@
-# 执行计划
+## Execution Plan
 
-## 当前目标
+1. Read `TODO.md` first and identify the first task whose heading is not prefixed with `[DONE]`.
+2. Check the latest commit message only for unfinished work directly relevant to that selected task.
+3. Inspect the selected task details, dependencies, validation requirements, and completion record.
+4. Implement the selected task exactly as written, unless a concrete blocking prerequisite is discovered.
+5. If a blocking prerequisite is required, update `TODO.md` with the minimum new prerequisite task in dependency order, keep the current task incomplete, commit the bookkeeping change, and stop.
+6. Run validation in the required order after implementation: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
+7. Address any failing test unless it is already explicitly scheduled for repair before completion.
+8. Mark only the selected task as `[DONE]` in `TODO.md` and update its completion record.
+9. Commit all task-related changes with a clear task-specific commit message.
+10. Stop after completing exactly one task.
 
-完成 `TODO.md` 中第一个未完成任务 `M5.1 Plan mode 状态`，完成验证、记录和提交后停止，不继续处理下一项任务。
+## Progress Log
 
-## 步骤
-
-1. 读取 `TODO.md`，确认第一个标题未带 `[DONE]` 的任务。
-2. 检查最近提交是否声明与该任务直接相关的未完成事项。
-3. 阅读当前任务相关的设计、代码和测试，确认最小正确范围。
-4. 若实现缺失则补齐；若现有实现已满足任务，则不做无意义代码改动。
-5. 运行与任务相关的验证；只有编译代码变更时才重跑完整 fmt、clippy 和测试套件。
-6. 更新 `TODO.md` 的 `[DONE]` 标记和完成记录；只有阶段计划变化时才更新 `PLAN.md`。
-7. 检查 `git status`、`git diff` 和近期提交历史，提交本轮相关变更。
-8. 停止，不处理 `M5.2`。
-
-## 进度记录
-
-- 初始执行计划已在读取任务文件前记录。
-- 已读取 `TODO.md`，第一个未完成任务是 `M5.1 Plan mode 状态`。
-- 本轮范围限定为 `off` / `on` / `auto` plan mode 配置、`/plan` 切换和状态栏当前模式显示。
-- 已检查最新提交 `ef2ce69 [M4.R] Record plan completion`，未发现与 M5.1 直接相关的未完成事项。
-- 已确认现有实现满足 M5.1：`PlanMode` 配置解析、运行时状态栏初始化和 `/plan` slash 切换均已存在。
-- 已通过针对性验证：`cargo test -p atto-agent-app plan_mode` 和 `cargo test -p atto-agent-app config::tests`。
-- 已将 `TODO.md` 中 M5.1 标记为 `[DONE]` 并补充完成记录；未修改编译代码，也不需要更新 `PLAN.md`。
+- Initial execution plan recorded before task discovery.
+- Identified first incomplete task: `M5.2 Auto 判定`.
+- Latest commit is `[M5.1] Record plan mode state completion`; no unfinished issue directly tied to M5.2 was found in the commit title.
+- M5.2 scope: add deterministic auto-plan classification for prompts/tool needs only; leave plan generation, PlanBlock UI, accept/reject, and mutating-tool gate to later M5 tasks.
+- Added `atto_agent_app::plan` with deterministic `PlanTurnDecision` classification and wired submit handling to carry the decision into each mock turn request without changing M5.3+ behavior.
+- First clippy run failed because `AgentTurnLauncher` derived `Debug` after receiving a `ToolRegistry`; removed the unnecessary `Debug` derive.
+- Second clippy run reported consecutive string replacement in plan tool-name matching; changed it to a single replacement over both separators.
+- Validation completed successfully: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`.
+- Updated `TODO.md` to mark `M5.2 Auto 判定` as `[DONE]` with implementation and validation notes.
