@@ -150,7 +150,9 @@
 - [x] **[DONE] M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
   - 完成记录（2026-07-10）：新增 agent app deterministic compact 策略，默认按 64K 上下文窗口 70% 阈值触发、保留最近 20 条消息，并用本地摘要兜底生成完成态 `CompactBlock { before_tokens, after_tokens, summary }`；提交用户消息和接受 plan 后继续执行前都会在 assistant turn 启动前压缩已 settled 的早期 transcript，跳过 streaming、pending approval/plan/diff/task 等仍需交互的块。压缩通过 `ChatMessageStore::replace_all` 推进 branch token，后续 DeepSeek request 由既有 `ContextBuilder` 将 `<compact>` system context 发送给模型，而不再重放被压缩旧 turn 的完整消息。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app compact`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
+- [x] **[DONE] M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
+  - 完成记录（2026-07-10）：agent app 现在注册 `ChatMessageList::on_edit_and_resubmit` 和 retry/regenerate `on_message_action`；编辑重发会在 chat 控件截断旧 user 分支后追加编辑后的 user message，并复用普通提交路径重新计算 skill 自动加载、plan 判定、compact 和 mock turn 启动；retry/regenerate 会使用截断后 transcript 中最后一个 user prompt 重启 assistant turn。分支变更后会取消当前后台 mock turn、释放 turn budget，并依赖 branch token 拒绝旧 turn 的迟到 token。补充 app 层单测覆盖编辑重发、retry/regenerate 重启和旧 branch 迟到 token 拒绝；同时调整 plan accept PTY 断言，避免启用 Retry/Regenerate 按钮后因内容高度增加导致 accepted 标记滚出视口而误报失败。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --lib edit_and_resubmit_appends_edited_user_and_restarts_turn`；`cargo test -p atto-agent-app --lib retry_and_regenerate_restart_from_retained_user_prompt_and_reject_late_tokens`；`cargo test -p atto-agent-app --test pty_agent agent_plan_mode_generates_plan_and_accept_continues_execution`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
 - [ ] **M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
 - [ ] **M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。

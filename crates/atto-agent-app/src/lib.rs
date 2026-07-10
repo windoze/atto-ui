@@ -23,8 +23,9 @@ use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
     ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, DiffData, PlanBlock, PlanDecision, PlanDecisionEvent,
-    PlanItem, ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatSlashCommand, ChatTurnStatus, DiffData, EditAndResubmitEvent, MessageAction,
+    MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, ThinkingBlock,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
 use serde_json::Value;
@@ -311,6 +312,13 @@ impl MockTurnRegistry {
         true
     }
 
+    fn cancel_current(&self) -> Option<ChatMessageId> {
+        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        let turn = current.take()?;
+        turn.cancel.cancel();
+        Some(turn.message_id)
+    }
+
     fn clear(&self, message_id: ChatMessageId) {
         let mut current = self.current.lock().expect("mock turn lock poisoned");
         if current
@@ -548,6 +556,12 @@ fn build_chat_panel(
         status_state: slash_runtime.status_state.clone(),
         turn_launcher: turn_launcher.clone(),
     };
+    let store_for_edit_resubmit = store.clone();
+    let slash_runtime_for_edit_resubmit = slash_runtime.clone();
+    let turn_launcher_for_edit_resubmit = turn_launcher.clone();
+    let store_for_message_action = store.clone();
+    let slash_runtime_for_message_action = slash_runtime.clone();
+    let turn_launcher_for_message_action = turn_launcher.clone();
     let list = ChatMessageList::new(store.clone())
         .show_timestamps(false)
         .on_approve(move |decision| {
@@ -555,6 +569,22 @@ fn build_chat_panel(
         })
         .on_plan_decision(move |event| {
             handle_plan_decision(&store_for_plan_decision, &plan_runtime, event);
+        })
+        .on_edit_and_resubmit(&slash_runtime.input_handle, move |event| {
+            handle_edit_and_resubmit(
+                &store_for_edit_resubmit,
+                &slash_runtime_for_edit_resubmit,
+                &turn_launcher_for_edit_resubmit,
+                event,
+            );
+        })
+        .on_message_action(move |action| {
+            handle_message_action(
+                &store_for_message_action,
+                &slash_runtime_for_message_action,
+                &turn_launcher_for_message_action,
+                action,
+            );
         })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
@@ -609,6 +639,70 @@ fn submit_input_response(
         return;
     }
 
+    let _ = start_agent_turn_from_user_prompt(store, slash_runtime, turn_launcher, text, true);
+}
+
+fn handle_edit_and_resubmit(
+    store: &ChatMessageStore,
+    slash_runtime: &SlashRuntime,
+    turn_launcher: &AgentTurnLauncher,
+    event: EditAndResubmitEvent,
+) {
+    cancel_active_turn_after_transcript_truncation(
+        &slash_runtime.input_handle,
+        &slash_runtime.mock_turns,
+        &slash_runtime.status_state,
+        &slash_runtime.turn_budgets,
+    );
+    let _ = start_agent_turn_from_user_prompt(
+        store,
+        slash_runtime,
+        turn_launcher,
+        event.edited_text,
+        true,
+    );
+}
+
+fn handle_message_action(
+    store: &ChatMessageStore,
+    slash_runtime: &SlashRuntime,
+    turn_launcher: &AgentTurnLauncher,
+    action: MessageAction,
+) {
+    if !matches!(
+        action.kind,
+        MessageActionKind::Retry | MessageActionKind::Regenerate
+    ) {
+        return;
+    }
+
+    cancel_active_turn_after_transcript_truncation(
+        &slash_runtime.input_handle,
+        &slash_runtime.mock_turns,
+        &slash_runtime.status_state,
+        &slash_runtime.turn_budgets,
+    );
+    let Some(prompt) = latest_user_prompt(store) else {
+        append_system_message(
+            store,
+            "Cannot retry or regenerate: no prior user prompt remains in the transcript.",
+        );
+        return;
+    };
+    let _ = start_agent_turn_from_user_prompt(store, slash_runtime, turn_launcher, prompt, false);
+}
+
+fn start_agent_turn_from_user_prompt(
+    store: &ChatMessageStore,
+    slash_runtime: &SlashRuntime,
+    turn_launcher: &AgentTurnLauncher,
+    text: String,
+    append_user_message: bool,
+) -> Option<ChatMessageId> {
+    if text.trim().is_empty() {
+        return None;
+    }
+
     auto_load_matching_skills(
         &slash_runtime.skill_registry,
         &slash_runtime.loaded_skills,
@@ -620,8 +714,10 @@ fn submit_input_response(
     let plan_decision = decide_plan_for_turn(plan_mode, &text, &turn_launcher.tool_registry);
     let mutating_tools_allowed = mutating_tools_allowed_for_turn(plan_mode, &plan_decision);
 
-    let user_id = store.next_message_id();
-    store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
+    if append_user_message {
+        let user_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
+    }
     let _ = compact_store_if_needed(store, turn_launcher.compact_policy);
 
     start_mock_agent_turn_for_prompt(
@@ -635,7 +731,42 @@ fn submit_input_response(
             plan_decision,
             mutating_tools_allowed,
         },
-    );
+    )
+}
+
+fn cancel_active_turn_after_transcript_truncation(
+    input_handle: &ChatInputHandle,
+    mock_turns: &MockTurnRegistry,
+    status_state: &Property<String>,
+    turn_budgets: &TurnBudgetTracker,
+) {
+    if let Some(message_id) = mock_turns.cancel_current() {
+        turn_budgets.finish_turn(message_id);
+    }
+    input_handle.streaming_binding().set(false);
+    status_state.set(STATUS_READY.to_string());
+}
+
+fn latest_user_prompt(store: &ChatMessageStore) -> Option<String> {
+    store.messages().iter().rev().find_map(user_prompt_text)
+}
+
+fn user_prompt_text(message: &ChatMessage) -> Option<String> {
+    if message.role != ChatRole::User {
+        return None;
+    }
+    let text = message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ChatBlock::Text(text) if !text.markdown.trim().is_empty() => {
+                Some(text.markdown.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!text.trim().is_empty()).then_some(text)
 }
 
 fn mutating_tools_allowed_for_turn(plan_mode: PlanMode, plan_decision: &PlanTurnDecision) -> bool {
@@ -1904,9 +2035,9 @@ mod tests {
     use atto_ui_chat::{
         ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatBlockId, ChatError,
         ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, CompactStatus, PlanBlock, PlanDecision,
-        PlanDecisionEvent, PlanItem, StopReason, TokenUsage, ToolInput, ToolOutput,
-        ToolResultBlock, ToolStatus, ToolUseBlock,
+        ChatSlashCommandAction, ChatTurnStatus, CompactStatus, EditAndResubmitEvent, MessageAction,
+        MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
+        TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -1935,8 +2066,8 @@ mod tests {
         TurnBudgetTracker, apply_app_action, build_chat_panel,
         deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
         deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
-        handle_plan_decision, handle_tool_approval, submit_input_response,
-        submit_slash_command_text,
+        handle_edit_and_resubmit, handle_message_action, handle_plan_decision,
+        handle_tool_approval, submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -2220,6 +2351,21 @@ Use this skill for {name} tasks.
             },
             receiver,
         )
+    }
+
+    fn test_turn_launcher(
+        action_sender: std::sync::mpsc::Sender<AppAction>,
+        turn_budgets: &TurnBudgetTracker,
+        compact_policy: CompactPolicy,
+    ) -> AgentTurnLauncher {
+        AgentTurnLauncher {
+            model: "deepseek-chat".to_string(),
+            action_sender,
+            tool_registry: test_tool_registry(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy,
+        }
     }
 
     fn apply_test_app_action(
@@ -3085,6 +3231,138 @@ Use this skill for {name} tasks.
         assert_eq!(messages[1].role, ChatRole::Assistant);
         drop(receiver);
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn edit_and_resubmit_appends_edited_user_and_restarts_turn() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "old prompt"));
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "old answer",
+        ));
+        let removed_messages = store
+            .truncate_from(user_id)
+            .expect("edit controller should have truncated from the user message");
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let turn_budgets = TurnBudgetTracker::default();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let runtime = test_slash_runtime(
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &plan_mode_state,
+            &turn_budgets,
+        );
+        let turn_launcher = test_turn_launcher(sender, &turn_budgets, CompactPolicy::default());
+
+        handle_edit_and_resubmit(
+            &store,
+            &runtime,
+            &turn_launcher,
+            EditAndResubmitEvent {
+                message_id: user_id,
+                original_text: "old prompt".to_string(),
+                edited_text: "edited prompt".to_string(),
+                removed_messages,
+            },
+        );
+
+        let messages = store.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(message_text(&messages[0]), "edited prompt");
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        assert_eq!(messages[1].status, ChatTurnStatus::Streaming);
+        assert!(input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_STREAMING);
+        let action = receiver
+            .recv_timeout(Duration::from_millis(250))
+            .expect("resubmitted edit should start the mock turn");
+        assert!(matches!(action, AppAction::TextDelta { .. }));
+    }
+
+    #[test]
+    fn retry_and_regenerate_restart_from_retained_user_prompt_and_reject_late_tokens() {
+        for kind in [MessageActionKind::Retry, MessageActionKind::Regenerate] {
+            let store = ChatMessageStore::new();
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::User,
+                "retry prompt",
+            ));
+            let assistant_id = store.next_message_id();
+            let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "old")
+                .with_status(ChatTurnStatus::Streaming);
+            let old_text_block_id = assistant.blocks[0].id();
+            store.push(assistant);
+            let stale_branch = store.branch_token();
+            let input_handle = atto_ui_chat::ChatInputHandle::new();
+            let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+            let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+            let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+            let turn_budgets = TurnBudgetTracker::default();
+            input_handle.streaming_binding().set(true);
+            turn_budgets.start_turn(assistant_id, AgentTurnLimits::default());
+            let old_cancel = mock_turns.start(assistant_id);
+            let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+            let runtime = test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            );
+            let turn_launcher = test_turn_launcher(sender, &turn_budgets, CompactPolicy::default());
+            assert!(store.truncate_from(assistant_id).is_some());
+
+            handle_message_action(
+                &store,
+                &runtime,
+                &turn_launcher,
+                MessageAction {
+                    message_id: assistant_id,
+                    kind,
+                },
+            );
+
+            assert!(old_cancel.is_cancelled());
+            let messages = store.messages();
+            assert_eq!(messages.len(), 2);
+            assert_eq!(messages[0].role, ChatRole::User);
+            assert_eq!(message_text(&messages[0]), "retry prompt");
+            assert_eq!(messages[1].role, ChatRole::Assistant);
+            assert_eq!(messages[1].status, ChatTurnStatus::Streaming);
+            assert!(input_handle.streaming_binding().get());
+            assert_eq!(status_state.get(), STATUS_STREAMING);
+            assert!(!apply_test_app_action(
+                &store,
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                AppAction::TextDelta {
+                    branch: stale_branch,
+                    block_id: old_text_block_id,
+                    delta: "late".to_string(),
+                },
+            ));
+
+            let _first = receiver
+                .recv_timeout(Duration::from_millis(250))
+                .expect("retry should start streaming");
+            let second = receiver
+                .recv_timeout(Duration::from_millis(250))
+                .expect("retry should stream the retained prompt");
+            match second {
+                AppAction::TextDelta { delta, .. } => assert_eq!(delta, "retry prompt"),
+                other => panic!("expected prompt text delta, got {other:?}"),
+            }
+        }
     }
 
     #[test]

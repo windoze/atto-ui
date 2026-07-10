@@ -1,24 +1,42 @@
-当前执行计划
+# 执行计划
 
-1. 读取 `TODO.md`，严格按文件顺序识别第一个标题未带 `[DONE]` 的任务；只把该任务作为本次执行范围。
-2. 检查近期提交和相关文件，只确认是否存在与当前任务直接相关的未完成事项或阻塞项，不做开放式历史问题扫查。
-3. 阅读当前任务涉及的代码、测试和文档，确认任务要求、依赖、验证方式和完成记录格式。
-4. 如任务可直接完成，按最小正确改动实现；如发现当前任务无法正确执行且需要新的具体前置任务，则更新 `TODO.md` 并停止在该前置任务安排处。
-5. 运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行完整测试套件；若出现未安排的失败，修复或把最小必要任务加入 `TODO.md`。
-6. 任务完成后，在 `TODO.md` 中给任务标题加 `[DONE]` 并更新完成记录；仅在阶段计划确实变化时更新 `PLAN.md`。
-7. 检查 `git status`、`git diff` 和近期提交，提交本次全部相关改动；提交后停止，不继续下一个任务。
+## 约束说明
 
-进度记录
+- `TODO.md` 是任务顺序、要求、依赖、验证和完成记录的唯一权威来源。
+- 每次只完成第一个标题未带 `[DONE]` 的任务，然后停止。
+- 不做开放式历史问题排查；只处理会阻塞当前任务、使当前任务行为无效，或由当前任务引入的直接回归。
+- 若遇到无法按规格完成的阻塞问题，最小化新增前置任务到 `TODO.md`，提交后停止。
+- 完成任务前必须按要求验证：先格式化，再 lint，再运行相关或完整测试；未计划的失败测试不得忽略。
+- 完成后更新 `TODO.md` 标题为 `[DONE]` 并填写完成记录，必要时更新 `PLAN.md`，然后提交。
 
-- 已创建本执行计划。下一步读取 `TODO.md` 以确定本次唯一任务。
-- 已读取 `TODO.md`，本次唯一任务为 `M6.4 Compact`：超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
-- 下一步只检查与 context/compact/transcript 构建直接相关的设计、代码和最近提交，避免无关历史扫查。
-- 最近提交为 `[M6.3] Record completion status`，未显式声明与 M6.4 直接相关的未完成事项。
-- 初步实现方向：复用 `ContextBuilder` 已有 `CompactBlock` -> system context 映射，在 agent app 的 transcript 进入 DeepSeek request 前加入预算检查与压缩插入逻辑；压缩后 transcript 中保留 compact 摘要和近期消息，后续请求由 `ContextBuilder` 使用该摘要替代旧 turn。
-- 已新增 `crates/atto-agent-app/src/compact.rs`，实现默认 64K 上下文窗口 70% 阈值、保留最近 20 条消息、本地确定性摘要兜底、跳过 streaming/pending 交互块，并通过 `ChatMessageStore::replace_all` 让旧 branch token 失效。
-- 已在普通提交和 accepted plan 继续执行路径中接入 compact，确保新 assistant turn 启动前 transcript 已压缩；已新增单元测试覆盖算法和提交路径后的 DeepSeek request 映射。
-- 验证中 `cargo test -p atto-agent-app compact` 暴露一个测试数据问题：短消息的本地摘要可能比原文更长，导致“before_tokens > after_tokens”断言不稳定。将该测试改为使用长旧消息以验证压缩预算下降。
-- 已修正 compact 测试数据；`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-agent-app compact` 均通过。下一步运行完整 workspace 测试。
-- 完整验证已通过：`cargo test --workspace --all-targets` 和 `cargo fmt --all -- --check` 成功。
-- 已更新 `TODO.md`，将 `M6.4 Compact` 标记为 `[DONE]` 并写入完成记录；`PLAN.md` 阶段级计划未变化，不更新。
-- 下一步检查 git status/diff/log，确认只提交本任务相关文件。
+## 步骤计划
+
+1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务，确认任务正文、依赖、验证要求和完成记录格式。
+2. 检查最新提交信息，若其明确提到与当前任务直接相关的未完成问题，则将其纳入当前任务或作为前置任务记录。
+3. 针对当前任务读取最小必要代码和文档上下文，避免无关范围扩张。
+4. 若任务可直接实现，按最小正确改动完成实现；若存在具体阻塞，更新 `TODO.md` 增加最小前置任务并停止。
+5. 根据任务要求补充或更新测试，保证覆盖新增行为和相关边界。
+6. 运行 `cargo fmt`，随后运行 `cargo clippy --all-targets -- -D warnings`，再按要求运行相关测试或完整测试套件。
+7. 若发现未被任务计划覆盖的失败测试，优先修复；若无法在当前任务内合理修复，则在 `TODO.md` 中添加正确顺序的前置任务并停止。
+8. 任务完成后，将 `TODO.md` 中对应任务标题加上 `[DONE]`，更新完成记录，只有阶段级计划变化时才更新 `PLAN.md`。
+9. 检查 `git status`、`git diff` 和最近提交，确认只提交意图内改动；提交本次任务相关变更。
+10. 提交后停止，不继续下一个任务。
+
+## 当前状态
+
+- 已读取 `TODO.md`。
+- 当前第一个未完成任务：`M6.5 Retry/Edit 重跑`。
+- 任务要求：接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
+- 已读取 `PLAN.md` 中 M6 设计上下文；阶段验收要求 PTY 覆盖 mention、compact、retry/edit 重跑，并确保取消后无迟到 token 污染新分支。
+- 最新提交为 `[M6.4] Implement transcript compacting`，未声明与当前 M6.5 直接相关的未完成事项。
+- 已检查 `atto-ui-chat` 的 edit/retry/regenerate 回调与 `atto-agent-app` 的 turn 启动、取消、compact 和 transcript 截断实现。
+- 已实现 app 层 `on_edit_and_resubmit` 与 retry/regenerate `on_message_action` 接入：截断后取消当前后台 mock turn，复用普通 prompt 启动路径处理 skill、plan、compact，并重启 assistant turn。
+- 已补充 app 单测覆盖编辑重发、retry/regenerate 从保留 user prompt 重启、旧 branch 迟到 token 被拒绝。
+- 已运行 `cargo fmt --all` 和新增专项单测，均通过。
+- 已运行 `cargo clippy --workspace --all-targets -- -D warnings`，通过。
+- 完整 `cargo test --workspace --all-targets` 发现 `agent_plan_mode_generates_plan_and_accept_continues_execution` 失败：启用 message actions 后消息高度增加，计划 accepted 标记被滚出 PTY 当前视口，等待 `[x] Accepted` 超时。
+- 已调整该 PTY 用例为验证接受后插入的内部执行指令和后续 mock 执行，不再依赖已滚出视口的 accepted 标记；专项 PTY 用例已通过。
+- 已重新运行 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 和 `cargo fmt --all -- --check`，均通过。
+- 已更新 `TODO.md`：`M6.5 Retry/Edit 重跑` 已标记 `[DONE]` 并写入完成记录与验证命令。
+- 已检查 `git status`、`git diff` 和最近提交；当前仅有本任务相关文件变更。
+- 下一步：提交本次 M6.5 相关改动后停止。

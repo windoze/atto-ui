@@ -283,7 +283,7 @@ fn agent_plan_mode_generates_plan_and_accept_continues_execution() -> anyhow::Re
 
     click_text(&mut host, "[ Accept ]")?;
 
-    host.wait_for_text("[x] Accepted", PTY_WAIT)?;
+    host.wait_for_text("The user accepted the plan.", PTY_WAIT)?;
     host.wait_for_text("streaming", PTY_WAIT)?;
     host.wait_for_text("Mock assistant:", PTY_WAIT)?;
     host.wait_for_text("Done.", PTY_WAIT)?;
