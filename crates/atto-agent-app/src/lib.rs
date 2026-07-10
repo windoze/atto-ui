@@ -6,6 +6,7 @@
 //! `atto-ui`, `atto-ui-chat`, and `atto-ui-async` here without adding network
 //! dependencies to the reusable UI crates.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -16,7 +17,7 @@ use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     StatusSegment, StatusSegmentAlign, run_crossterm_desktop_with_actions,
 };
-use atto_ui::reactive::{Binding, EventQueue, Property};
+use atto_ui::reactive::{Binding, DirtyObserver, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
@@ -40,6 +41,7 @@ pub mod plan;
 pub mod skill;
 mod stream_ui;
 pub mod tool;
+pub mod transcript;
 
 use crate::compact::{CompactPolicy, compact_store_if_needed};
 use crate::config::{AgentConfig, PlanMode};
@@ -60,6 +62,7 @@ use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
     ToolResult,
 };
+use crate::transcript::{load_transcript_jsonl, save_transcript_jsonl};
 
 pub const APP_TITLE: &str = "Atto Agent";
 const CHAT_WINDOW_TAG: &str = "atto-agent:chat";
@@ -213,6 +216,41 @@ struct ToolRuntime {
     permissions: Arc<Mutex<ToolPermissionPolicy>>,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
+}
+
+struct TranscriptPersistence {
+    path: Option<PathBuf>,
+    messages: Binding<Vec<ChatMessage>>,
+    observer: DirtyObserver,
+}
+
+impl TranscriptPersistence {
+    fn new(path: Option<PathBuf>, store: &ChatMessageStore) -> Self {
+        let messages = store.binding();
+        let observer = messages.dirty_observer();
+        Self {
+            path,
+            messages,
+            observer,
+        }
+    }
+
+    fn save_if_dirty(&mut self) -> Result<()> {
+        let Some(path) = self.path.as_deref() else {
+            return Ok(());
+        };
+        if self.messages.check_dirty(&mut self.observer) {
+            save_transcript_jsonl(path, &self.messages.get())?;
+        }
+        Ok(())
+    }
+
+    fn save_now(&self) -> Result<()> {
+        let Some(path) = self.path.as_deref() else {
+            return Ok(());
+        };
+        save_transcript_jsonl(path, &self.messages.get())
+    }
 }
 
 impl AgentRuntime {
@@ -497,10 +535,20 @@ fn run_with_config_and_mock_token_delay(
         action_sender.clone(),
         MockTurnRegistry::with_token_delay(mock_token_delay),
     );
+    restore_transcript_if_configured(
+        &runtime.message_store,
+        runtime.config.transcript_path.as_deref(),
+    )?;
+    let transcript_persistence = Arc::new(Mutex::new(TranscriptPersistence::new(
+        runtime.config.transcript_path.clone(),
+        &runtime.message_store,
+    )));
     let runtime_for_build = runtime.clone();
     let runtime_for_actions = runtime.clone();
+    let persistence_for_actions = transcript_persistence.clone();
+    let persistence_for_loop = transcript_persistence.clone();
 
-    run_crossterm_desktop_with_actions(
+    let run_result = run_crossterm_desktop_with_actions(
         CrosstermAppConfig::default()
             .bracketed_paste(true)
             .cursor(CursorMode::Show),
@@ -515,7 +563,7 @@ fn run_with_config_and_mock_token_delay(
         action_receiver,
         move |_desktop, action, _screen| {
             let tool_runtime = runtime_for_actions.tool_runtime();
-            apply_app_action(
+            let changed = apply_app_action(
                 &runtime_for_actions.message_store,
                 &runtime_for_actions.input_handle,
                 &runtime_for_actions.mock_turns,
@@ -523,9 +571,19 @@ fn run_with_config_and_mock_token_delay(
                 &tool_runtime,
                 action,
             );
+            if changed {
+                persistence_for_actions
+                    .lock()
+                    .expect("transcript persistence lock poisoned")
+                    .save_if_dirty()?;
+            }
             Ok(AppControl::Continue)
         },
         move |_desktop, _screen| {
+            persistence_for_loop
+                .lock()
+                .expect("transcript persistence lock poisoned")
+                .save_if_dirty()?;
             if quit_events_for_loop.pop().is_some() {
                 Ok(AppControl::Exit)
             } else {
@@ -533,7 +591,23 @@ fn run_with_config_and_mock_token_delay(
             }
         },
         |_desktop, _event, _screen, _result| Ok(AppControl::Continue),
-    )
+    );
+    let save_result = transcript_persistence
+        .lock()
+        .expect("transcript persistence lock poisoned")
+        .save_now();
+    run_result.and(save_result)
+}
+
+fn restore_transcript_if_configured(store: &ChatMessageStore, path: Option<&Path>) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let messages = load_transcript_jsonl(path)?;
+    if !messages.is_empty() {
+        store.replace_all(messages);
+    }
+    Ok(())
 }
 
 fn build_chat_panel(

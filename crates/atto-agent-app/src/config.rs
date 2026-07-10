@@ -79,6 +79,7 @@ pub struct AgentConfig {
     pub workspace: PathBuf,
     pub home_dir: Option<PathBuf>,
     pub plan_mode: PlanMode,
+    pub transcript_path: Option<PathBuf>,
 }
 
 impl AgentConfig {
@@ -92,6 +93,7 @@ impl AgentConfig {
             workspace: workspace.into(),
             home_dir: None,
             plan_mode: PlanMode::Auto,
+            transcript_path: None,
         }
     }
 
@@ -165,6 +167,7 @@ struct ConfigOverrides {
     max_tokens: Option<u32>,
     workspace: Option<PathBuf>,
     plan_mode: Option<PlanMode>,
+    transcript_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -176,6 +179,7 @@ struct TomlConfig {
     max_tokens: Option<u32>,
     workspace: Option<PathBuf>,
     plan_mode: Option<PlanMode>,
+    transcript_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -206,6 +210,9 @@ impl ConfigBuilder {
         if overrides.plan_mode.is_some() {
             self.overrides.plan_mode = overrides.plan_mode;
         }
+        if overrides.transcript_path.is_some() {
+            self.overrides.transcript_path = overrides.transcript_path;
+        }
     }
 
     fn finish(self, current_dir: &Path, home_dir: Option<&Path>) -> Result<AgentConfig> {
@@ -218,6 +225,11 @@ impl ConfigBuilder {
         let max_tokens = self.overrides.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
         validate_temperature(temperature)?;
         validate_max_tokens(max_tokens)?;
+        let transcript_path = resolve_transcript_path(
+            &workspace,
+            self.overrides.transcript_path,
+            "transcript_path",
+        )?;
 
         Ok(AgentConfig {
             api_key: self.overrides.api_key.filter(|value| !value.is_empty()),
@@ -234,6 +246,7 @@ impl ConfigBuilder {
             workspace,
             home_dir: home_dir.map(Path::to_path_buf),
             plan_mode: self.overrides.plan_mode.unwrap_or_default(),
+            transcript_path,
         })
     }
 }
@@ -248,6 +261,7 @@ impl From<TomlConfig> for ConfigOverrides {
             max_tokens: config.max_tokens,
             workspace: config.workspace,
             plan_mode: config.plan_mode,
+            transcript_path: config.transcript_path,
         }
     }
 }
@@ -286,6 +300,14 @@ fn parse_cli_overrides(args: &[String]) -> Result<CliConfig> {
             }
             "--workspace" => {
                 cli.overrides.workspace = Some(PathBuf::from(cli_value(
+                    flag,
+                    inline_value,
+                    args,
+                    &mut index,
+                )?));
+            }
+            "--transcript" => {
+                cli.overrides.transcript_path = Some(PathBuf::from(cli_value(
                     flag,
                     inline_value,
                     args,
@@ -335,6 +357,7 @@ fn parse_env_overrides(env: &BTreeMap<String, String>) -> Result<ConfigOverrides
         base_url: env_value(env, "DEEPSEEK_BASE_URL"),
         model: env_value(env, "DEEPSEEK_MODEL"),
         workspace: env_value(env, "ATTO_AGENT_WORKSPACE").map(PathBuf::from),
+        transcript_path: env_value(env, "ATTO_AGENT_TRANSCRIPT").map(PathBuf::from),
         ..Default::default()
     };
     if let Some(value) = env_value(env, "DEEPSEEK_TEMPERATURE") {
@@ -392,6 +415,20 @@ fn resolve_workspace(current_dir: &Path, workspace: &Path) -> Result<PathBuf> {
     let path = resolve_relative_path(current_dir, workspace);
     path.canonicalize()
         .with_context(|| format!("workspace `{}` must exist", path.display()))
+}
+
+fn resolve_transcript_path(
+    workspace: &Path,
+    path: Option<PathBuf>,
+    label: &str,
+) -> Result<Option<PathBuf>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if path.as_os_str().is_empty() {
+        bail!("{label} must not be empty");
+    }
+    Ok(Some(resolve_relative_path(workspace, &path)))
 }
 
 fn resolve_relative_path(current_dir: &Path, path: &Path) -> PathBuf {
@@ -500,6 +537,7 @@ mod tests {
         assert_eq!(config.workspace, current.canonicalize().unwrap());
         assert_eq!(config.home_dir, Some(home.clone()));
         assert_eq!(config.plan_mode, PlanMode::Auto);
+        assert_eq!(config.transcript_path, None);
     }
 
     #[test]
@@ -517,6 +555,7 @@ model = "user-model"
 temperature = 0.1
 max_tokens = 111
 plan_mode = "off"
+transcript_path = "user.jsonl"
 "#,
         );
         write(
@@ -527,6 +566,7 @@ model = "workspace-model"
 temperature = 0.2
 max_tokens = 222
 plan_mode = "on"
+transcript_path = ".atto/workspace.jsonl"
 "#,
         );
 
@@ -541,6 +581,8 @@ plan_mode = "on"
                 "444",
                 "--plan-mode",
                 "off",
+                "--transcript",
+                "cli.jsonl",
                 "--mock",
             ],
             &[
@@ -549,6 +591,7 @@ plan_mode = "on"
                 ("DEEPSEEK_MODEL", "env-model"),
                 ("DEEPSEEK_TEMPERATURE", "0.3"),
                 ("ATTO_AGENT_PLAN_MODE", "auto"),
+                ("ATTO_AGENT_TRANSCRIPT", "env.jsonl"),
             ],
         ))
         .unwrap();
@@ -561,6 +604,10 @@ plan_mode = "on"
         assert_eq!(config.workspace, workspace.canonicalize().unwrap());
         assert_eq!(config.home_dir, Some(home.clone()));
         assert_eq!(config.plan_mode, PlanMode::Off);
+        assert_eq!(
+            config.transcript_path,
+            Some(workspace.canonicalize().unwrap().join("cli.jsonl"))
+        );
     }
 
     #[test]

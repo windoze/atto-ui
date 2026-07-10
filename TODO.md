@@ -153,7 +153,9 @@
 - [x] **[DONE] M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
   - 完成记录（2026-07-10）：agent app 现在注册 `ChatMessageList::on_edit_and_resubmit` 和 retry/regenerate `on_message_action`；编辑重发会在 chat 控件截断旧 user 分支后追加编辑后的 user message，并复用普通提交路径重新计算 skill 自动加载、plan 判定、compact 和 mock turn 启动；retry/regenerate 会使用截断后 transcript 中最后一个 user prompt 重启 assistant turn。分支变更后会取消当前后台 mock turn、释放 turn budget，并依赖 branch token 拒绝旧 turn 的迟到 token。补充 app 层单测覆盖编辑重发、retry/regenerate 重启和旧 branch 迟到 token 拒绝；同时调整 plan accept PTY 断言，避免启用 Retry/Regenerate 按钮后因内容高度增加导致 accepted 标记滚出视口而误报失败。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --lib edit_and_resubmit_appends_edited_user_and_restarts_turn`；`cargo test -p atto-agent-app --lib retry_and_regenerate_restart_from_retained_user_prompt_and_reject_late_tokens`；`cargo test -p atto-agent-app --test pty_agent agent_plan_mode_generates_plan_and_accept_continues_execution`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
+- [x] **[DONE] M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
+  - 完成记录（2026-07-10）：新增 app crate 私有 `transcript` JSONL 持久化模块，每行保存一个带 schema version 的 `ChatMessage`，显式覆盖当前 UI transcript 的消息、block、meta、审批、错误和嵌套 task transcript；新增默认关闭的配置项 `transcript_path`，支持 TOML、`ATTO_AGENT_TRANSCRIPT` 和 `--transcript`，相对路径按 workspace 解析。真实运行路径现在会在启动时按配置恢复 transcript，运行中用 dirty observer 保存变更，退出后做最终保存；恢复时未完成 streaming turn 会标为 `Canceled`，避免重启后显示不可恢复的活动流。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app transcript`；`cargo test -p atto-agent-app config::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
 - [ ] **M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
 - [ ] **M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
 - [ ] **M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。

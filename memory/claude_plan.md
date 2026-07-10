@@ -1,43 +1,32 @@
-# 执行计划
+# 当前执行计划
 
-## 约束说明
+## 约束
+- 以 `TODO.md` 为任务顺序与完成状态的唯一依据。
+- 本轮只完成第一个标题未带 `[DONE]` 的任务，然后停止。
+- 不做开放式历史问题扫描；只处理当前任务相关或测试暴露且未排期的问题。
+- 若发现阻塞当前任务的具体前置问题，更新 `TODO.md` 插入最小前置任务，提交后停止。
+- 完成任务后必须更新 `TODO.md` 的标题 `[DONE]` 与完成记录，必要时更新 `PLAN.md`。
+- 提交前检查 `git status`、`git diff`、近期日志，并只提交本轮相关变更。
 
-- `TODO.md` 是任务顺序、要求、依赖、验证和完成记录的唯一权威来源。
-- 每次只完成第一个标题未带 `[DONE]` 的任务，然后停止。
-- 不做开放式历史问题排查；只处理会阻塞当前任务、使当前任务行为无效，或由当前任务引入的直接回归。
-- 若遇到无法按规格完成的阻塞问题，最小化新增前置任务到 `TODO.md`，提交后停止。
-- 完成任务前必须按要求验证：先格式化，再 lint，再运行相关或完整测试；未计划的失败测试不得忽略。
-- 完成后更新 `TODO.md` 标题为 `[DONE]` 并填写完成记录，必要时更新 `PLAN.md`，然后提交。
-
-## 步骤计划
-
-1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务，确认任务正文、依赖、验证要求和完成记录格式。
-2. 检查最新提交信息，若其明确提到与当前任务直接相关的未完成问题，则将其纳入当前任务或作为前置任务记录。
-3. 针对当前任务读取最小必要代码和文档上下文，避免无关范围扩张。
-4. 若任务可直接实现，按最小正确改动完成实现；若存在具体阻塞，更新 `TODO.md` 增加最小前置任务并停止。
-5. 根据任务要求补充或更新测试，保证覆盖新增行为和相关边界。
-6. 运行 `cargo fmt`，随后运行 `cargo clippy --all-targets -- -D warnings`，再按要求运行相关测试或完整测试套件。
-7. 若发现未被任务计划覆盖的失败测试，优先修复；若无法在当前任务内合理修复，则在 `TODO.md` 中添加正确顺序的前置任务并停止。
-8. 任务完成后，将 `TODO.md` 中对应任务标题加上 `[DONE]`，更新完成记录，只有阶段级计划变化时才更新 `PLAN.md`。
-9. 检查 `git status`、`git diff` 和最近提交，确认只提交意图内改动；提交本次任务相关变更。
-10. 提交后停止，不继续下一个任务。
+## 步骤
+1. 读取 `TODO.md`，按文件顺序确定第一个标题未带 `[DONE]` 的任务。
+2. 检查最近提交信息，只有在其明确提到与当前任务直接相关的未完成事项时，才纳入当前任务或作为前置任务记录。
+3. 阅读当前任务涉及的代码、测试和文档，确认要求、依赖和验证方式。
+4. 如任务可直接完成，实施最小正确代码或文档变更；如存在必须先修复的阻塞问题，更新 `TODO.md` 记录前置任务并停止。
+5. 按要求运行格式化、lint 和相关测试；若代码有变化，顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试。
+6. 若测试失败且未在后续任务明确排期，优先修复；无法在当前任务内合理修复时，将最小修复任务插入 `TODO.md` 的正确位置。
+7. 完成后更新 `TODO.md`：给当前任务标题加 `[DONE]`，填写完成记录、验证结果和说明。
+8. 仅当阶段计划、依赖或完成标准发生变化时更新 `PLAN.md`。
+9. 更新本文件记录关键进展和最终验证结果。
+10. 检查 `git status`、`git diff`、`git log --oneline -10`，提交本轮所有相关变更，提交信息包含任务编号与动作。
+11. 停止，不继续处理下一个任务。
 
 ## 当前状态
-
-- 已读取 `TODO.md`。
-- 当前第一个未完成任务：`M6.5 Retry/Edit 重跑`。
-- 任务要求：接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
-- 已读取 `PLAN.md` 中 M6 设计上下文；阶段验收要求 PTY 覆盖 mention、compact、retry/edit 重跑，并确保取消后无迟到 token 污染新分支。
-- 最新提交为 `[M6.4] Implement transcript compacting`，未声明与当前 M6.5 直接相关的未完成事项。
-- 已检查 `atto-ui-chat` 的 edit/retry/regenerate 回调与 `atto-agent-app` 的 turn 启动、取消、compact 和 transcript 截断实现。
-- 已实现 app 层 `on_edit_and_resubmit` 与 retry/regenerate `on_message_action` 接入：截断后取消当前后台 mock turn，复用普通 prompt 启动路径处理 skill、plan、compact，并重启 assistant turn。
-- 已补充 app 单测覆盖编辑重发、retry/regenerate 从保留 user prompt 重启、旧 branch 迟到 token 被拒绝。
-- 已运行 `cargo fmt --all` 和新增专项单测，均通过。
-- 已运行 `cargo clippy --workspace --all-targets -- -D warnings`，通过。
-- 完整 `cargo test --workspace --all-targets` 发现 `agent_plan_mode_generates_plan_and_accept_continues_execution` 失败：启用 message actions 后消息高度增加，计划 accepted 标记被滚出 PTY 当前视口，等待 `[x] Accepted` 超时。
-- 已调整该 PTY 用例为验证接受后插入的内部执行指令和后续 mock 执行，不再依赖已滚出视口的 accepted 标记；专项 PTY 用例已通过。
-- 已重新运行 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 和 `cargo fmt --all -- --check`，均通过。
-- 已更新 `TODO.md`：`M6.5 Retry/Edit 重跑` 已标记 `[DONE]` 并写入完成记录与验证命令。
-- 已检查 `git status`、`git diff` 和最近提交；当前仅有本任务相关文件变更。
-- 已提交本次 M6.5 相关改动：`a7d97f9 [M6.5] Implement retry and edit rerun`。
-- 下一步：停止，不继续处理下一个 TODO 任务。
+- 已识别本轮任务：`M6.6 Transcript 持久化（可选）`。
+- 最近提交为 M6.5 完成记录和实现提交，未发现直接要求并入 M6.6 的未完成事项。
+- 已实现默认关闭的 transcript 持久化配置：TOML `transcript_path`、环境变量 `ATTO_AGENT_TRANSCRIPT`、CLI `--transcript`。
+- 已新增 app crate 私有 JSONL transcript 格式，覆盖当前 `ChatMessage` / `ChatBlock` 已知变体、meta、审批、错误和嵌套 task transcript；恢复时将未完成 streaming turn 标为 canceled。
+- 已在真实运行路径接入启动恢复、dirty observer 自动保存和退出最终保存；snapshot 默认配置不启用持久化。
+- 已运行并通过：`cargo fmt --all`；`cargo test -p atto-agent-app transcript`；`cargo test -p atto-agent-app config::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
+- 已更新 `TODO.md`，将 M6.6 标记为 `[DONE]` 并写入完成记录。
+- 下一步检查 git 状态和 diff，确认仅提交本轮相关变更，然后提交并停止。
