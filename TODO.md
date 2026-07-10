@@ -166,6 +166,20 @@
   - 完成记录（2026-07-10）：复核 M6 ContextBuilder、file mention、tool output budget、compact、retry/edit、transcript 持久化、状态栏和 PTY 覆盖；确认分支 token 取消/重跑路径已有单测和 PTY 覆盖，迟到 token 不污染新分支。复核中发现 file mention 展开未纳入 compact/status 预算、mention 注入总预算未包含错误/wrapper 开销、非 UTF-8 截断文件可能泄漏前缀，以及启用 transcript 持久化时流式 delta 可能频繁同步全量保存；已修复为 file mention 硬总预算与数量上限、严格 UTF-8 校验、compact/status 保守计入 mention 展开预算、compact 长输出限量摘录、transcript 脏保存节流并保留退出强制落盘。最近提交未声明与本 review 直接相关的未完成事项。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
+## 阶段 M7 - Live DeepSeek 接入
+
+> 现状（2026-07-11 复核）：M1-M6 已实现真实 DeepSeek 接入所需的所有零件（`DeepSeekClient` 真实 HTTP+SSE、SSE parser、`DeepSeekUiStream` UI 映射、`ContextBuilder`、`ToolRegistry`、plan/skill/compact），并有单测覆盖，**但它们尚未组装成一次真实 live turn**：`DeepSeekClient::stream_chat_completions` 目前只被 `tests/deepseek_real_smoke.rs`（`#[ignore]`）调用；实际 `run()` / 提交路径始终走 `MockTurnRegistry`，没有 provider 分支；`collect_sse_events` 缓冲整段响应无法逐 token 流式；`run()` 内无 async turn 驱动、无真实多轮 tool loop、无进行中请求取消；状态栏 `provider: mock` 写死。M7 负责把这些真正接线起来，用 `.envrc` 的 `DEEPSEEK_API_KEY` 手动/ignored 验证。
+
+- [ ] **M7.1 Provider 选择** - 引入 `AgentProvider`（`Mock` / `DeepSeek`）与解析逻辑：存在有效 `DEEPSEEK_API_KEY` 且未 `--mock` 时选 DeepSeek，否则 mock；snapshot fixture 始终 mock；状态栏 `provider` 段反映实际值，不再写死。
+- [ ] **M7.2 流式增量事件** - 改造 `DeepSeekClient`，在 SSE 到达时逐个 `ChatCompletionSseEvent` 通过回调/channel 尽快推出，不再等 `[DONE]` 一次性 `Vec` 返回；保留现有 batch API 或以增量 API 重写并更新 smoke 测试。
+- [ ] **M7.3 Async turn 驱动** - 在 app 内建立 tokio runtime（或复用 `atto-ui-async`），后台跑真实 turn，逐事件经 `AppAction` 交给主线程；真实 turn 复用现有 `DeepSeekUiStream` 映射，与 mock 走同一条 action/branch-token 路径。
+- [ ] **M7.4 请求构造接线** - 提交/继续 turn 时用 `ContextBuilder` 从当前 transcript 构造 DeepSeek messages（含 skills、file mention、compact、tool 回灌）并带上注册工具 schema，替代 mock 的固定事件序列。
+- [ ] **M7.5 真实 tool loop** - `finish_reason = tool_calls` 后执行本地工具（复用审批门控/plan gate/turn budget），写回 `role=tool`，自动发起下一轮真实请求，直到无 tool call 或触达 budget。
+- [ ] **M7.6 真实请求取消** - Esc / `on_cancel` / `/abort` 中止进行中的 HTTP 请求（abort handle / drop future），推进 branch token，迟到事件不污染新分支；补单测/PTY（PTY 走 mock）。
+- [ ] **M7.7 错误映射接线** - 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误；无 key 且未 `--mock` 时给出可操作提示。
+- [ ] **M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
+- [ ] **M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
+
 ## 收尾
 
 - [x] **[DONE] Docs 更新** - 根据实际实现更新 `TUI_AGENT.md`、README 或新增 app README。
