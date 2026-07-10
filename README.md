@@ -90,13 +90,13 @@ Launch the agent app from a checkout:
 cargo run -p atto-agent-app -- --workspace .
 ```
 
-The current interactive runner uses a deterministic in-process mock turn loop so it can be exercised without network access. The app crate also contains the DeepSeek request model, SSE parser, HTTP streaming client, tool schema conversion, and ignored real-API smoke test:
+The app selects `provider: deepseek` when an API key is configured and `--mock` is not set; otherwise it selects `provider: mock`. Turn execution is still deterministic and mock-backed until the remaining live-provider wiring lands, so the app can be exercised without network access. The app crate also contains the DeepSeek request model, SSE parser, HTTP streaming client, tool schema conversion, and ignored real-API smoke test:
 
 ```sh
 DEEPSEEK_API_KEY=... cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored
 ```
 
-Useful runtime options include `--api-key`, `--base-url`, `--model`, `--temperature`, `--max-tokens`, `--workspace`, `--plan-mode`, `--config`, and `--transcript`. Configuration may also come from `DEEPSEEK_*` / `ATTO_AGENT_*` environment variables, workspace `.atto-agent.toml`, and `~/.config/atto-agent/config.toml`.
+Useful runtime options include `--api-key`, `--base-url`, `--model`, `--temperature`, `--max-tokens`, `--workspace`, `--plan-mode`, `--config`, `--transcript`, and `--mock`. Configuration may also come from `DEEPSEEK_*` / `ATTO_AGENT_*` environment variables, workspace `.atto-agent.toml`, and `~/.config/atto-agent/config.toml`.
 
 See `crates/atto-agent-app/README.md` for slash commands, tool and skill behavior, transcript persistence, and validation notes.
 

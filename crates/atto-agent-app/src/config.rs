@@ -31,6 +31,12 @@ pub enum PlanMode {
     Auto,
 }
 
+fn normalize_api_key(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 impl PlanMode {
     pub fn next(self) -> Self {
         match self {
@@ -68,10 +74,41 @@ impl FromStr for PlanMode {
     }
 }
 
+/// Runtime provider selected from resolved credentials and CLI flags.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentProvider {
+    Mock,
+    DeepSeek,
+}
+
+impl AgentProvider {
+    pub fn select(api_key: Option<&str>, force_mock: bool) -> Self {
+        if !force_mock && api_key.is_some_and(|key| !key.trim().is_empty()) {
+            Self::DeepSeek
+        } else {
+            Self::Mock
+        }
+    }
+
+    pub fn status(self) -> String {
+        format!("provider: {self}")
+    }
+}
+
+impl fmt::Display for AgentProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Mock => "mock",
+            Self::DeepSeek => "deepseek",
+        })
+    }
+}
+
 /// Fully resolved runtime configuration for the app layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentConfig {
     pub api_key: Option<String>,
+    pub provider: AgentProvider,
     pub base_url: String,
     pub model: String,
     pub temperature: f32,
@@ -86,6 +123,7 @@ impl AgentConfig {
     pub fn defaults(workspace: impl Into<PathBuf>) -> Self {
         Self {
             api_key: None,
+            provider: AgentProvider::Mock,
             base_url: DEFAULT_BASE_URL.to_string(),
             model: DEFAULT_MODEL.to_string(),
             temperature: DEFAULT_TEMPERATURE,
@@ -149,13 +187,18 @@ pub fn load_config_from_sources(sources: ConfigLoadSources) -> Result<AgentConfi
 
     builder.apply(env_overrides);
     builder.apply(cli.overrides);
-    builder.finish(&sources.current_dir, sources.home_dir.as_deref())
+    builder.finish(
+        &sources.current_dir,
+        sources.home_dir.as_deref(),
+        cli.force_mock,
+    )
 }
 
 #[derive(Clone, Debug, Default)]
 struct CliConfig {
     overrides: ConfigOverrides,
     config_path: Option<PathBuf>,
+    force_mock: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -215,7 +258,12 @@ impl ConfigBuilder {
         }
     }
 
-    fn finish(self, current_dir: &Path, home_dir: Option<&Path>) -> Result<AgentConfig> {
+    fn finish(
+        self,
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+        force_mock: bool,
+    ) -> Result<AgentConfig> {
         let workspace = self
             .overrides
             .workspace
@@ -231,8 +279,12 @@ impl ConfigBuilder {
             "transcript_path",
         )?;
 
+        let api_key = normalize_api_key(self.overrides.api_key);
+        let provider = AgentProvider::select(api_key.as_deref(), force_mock);
+
         Ok(AgentConfig {
-            api_key: self.overrides.api_key.filter(|value| !value.is_empty()),
+            api_key,
+            provider,
             base_url: self
                 .overrides
                 .base_url
@@ -272,6 +324,7 @@ fn parse_cli_overrides(args: &[String]) -> Result<CliConfig> {
     while index < args.len() {
         let arg = &args[index];
         if arg == "--mock" {
+            cli.force_mock = true;
             index += 1;
             continue;
         }
@@ -530,6 +583,7 @@ mod tests {
         let config = load_config_from_sources(sources(&current, &home, &[], &[])).unwrap();
 
         assert_eq!(config.api_key, None);
+        assert_eq!(config.provider, AgentProvider::Mock);
         assert_eq!(config.base_url, DEFAULT_BASE_URL);
         assert_eq!(config.model, DEFAULT_MODEL);
         assert_eq!(config.temperature, DEFAULT_TEMPERATURE);
@@ -597,6 +651,7 @@ transcript_path = ".atto/workspace.jsonl"
         .unwrap();
 
         assert_eq!(config.api_key.as_deref(), Some("cli-key"));
+        assert_eq!(config.provider, AgentProvider::Mock);
         assert_eq!(config.base_url, "https://workspace.example/v1");
         assert_eq!(config.model, "cli-model");
         assert_eq!(config.temperature, 0.3);
@@ -646,6 +701,52 @@ plan_mode = "on"
         assert_eq!(config.workspace, workspace.canonicalize().unwrap());
         assert_eq!(config.home_dir, Some(home));
         assert_eq!(config.plan_mode, PlanMode::On);
+    }
+
+    #[test]
+    fn selects_deepseek_provider_when_api_key_is_configured() {
+        let current = test_dir("deepseek-provider-current");
+        let home = test_dir("deepseek-provider-home");
+
+        let config = load_config_from_sources(sources(
+            &current,
+            &home,
+            &[],
+            &[("DEEPSEEK_API_KEY", "env-key")],
+        ))
+        .unwrap();
+
+        assert_eq!(config.api_key.as_deref(), Some("env-key"));
+        assert_eq!(config.provider, AgentProvider::DeepSeek);
+    }
+
+    #[test]
+    fn mock_flag_forces_mock_provider_even_with_api_key() {
+        let current = test_dir("mock-provider-current");
+        let home = test_dir("mock-provider-home");
+
+        let config = load_config_from_sources(sources(
+            &current,
+            &home,
+            &["--mock"],
+            &[("DEEPSEEK_API_KEY", "env-key")],
+        ))
+        .unwrap();
+
+        assert_eq!(config.api_key.as_deref(), Some("env-key"));
+        assert_eq!(config.provider, AgentProvider::Mock);
+    }
+
+    #[test]
+    fn blank_api_key_selects_mock_provider() {
+        let current = test_dir("blank-provider-current");
+        let home = test_dir("blank-provider-home");
+        write(&current.join(WORKSPACE_CONFIG_FILE), r#"api_key = "   ""#);
+
+        let config = load_config_from_sources(sources(&current, &home, &[], &[])).unwrap();
+
+        assert_eq!(config.api_key, None);
+        assert_eq!(config.provider, AgentProvider::Mock);
     }
 
     #[test]

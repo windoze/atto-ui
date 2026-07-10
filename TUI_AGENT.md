@@ -107,7 +107,7 @@ UI 状态只能在主线程通过 `AppAction` 更新。后台任务只发送动�
 | UI 区域 | 内容 |
 |---|---|
 | MenuBar | 当前提供 `File -> Quit`。 |
-| StatusBar left | `Atto Agent`、`provider: mock`、`model: ...`、`plan: ...`、`tools: N`、`skills: N`、`tokens~N`。 |
+| StatusBar left | `Atto Agent`、`provider: mock` / `provider: deepseek`、`model: ...`、`plan: ...`、`tools: N`、`skills: N`、`tokens~N`。 |
 | StatusBar right | `err:*` 摘要、`ready`/`streaming`、`Esc cancel | Ctrl+Q quit | /help`。 |
 | MessageList | 展示 user、assistant、thinking、tool、plan、compact、error。 |
 | InputPanel | 多行输入、slash 命令、普通文本 `@path` 文件提及解析、流式时排队。 |
@@ -170,7 +170,7 @@ transcript_path = ".atto/transcript.jsonl"
 
 | 变量 | 说明 |
 |---|---|
-| `DEEPSEEK_API_KEY` | 真实 DeepSeek 请求或 ignored smoke test 必填；mock-backed 交互运行不需要。 |
+| `DEEPSEEK_API_KEY` | DeepSeek provider 选择、真实请求或 ignored smoke test 必填；`--mock` 可强制 mock provider。 |
 | `DEEPSEEK_BASE_URL` | 可选，默认 `https://api.deepseek.com/v1`。 |
 | `DEEPSEEK_MODEL` | 可选，默认 `deepseek-chat`。 |
 | `DEEPSEEK_TEMPERATURE` | 可选，非负数，默认 `0.2`。 |
@@ -192,11 +192,11 @@ CLI 参数：
 | `--plan-mode` / `--plan` | `off`、`on`、`auto`。 |
 | `--transcript` | 可选 JSONL transcript path。 |
 | `--config` | 显式 TOML 配置文件路径。 |
-| `--mock` | 兼容已有 fixture 的 no-op 参数；当前交互式 runner 始终 mock-backed。 |
+| `--mock` | 即使配置了 API key 也强制选择 mock provider；snapshot fixture 始终 mock。 |
 
 ## DeepSeek 对接
 
-DeepSeek 协议层走 OpenAI-compatible Chat Completions。当前 crate 已实现 request builder、SSE parser 和 HTTP streaming client；交互式 binary 仍由 mock turn launcher 驱动，真实网络路径通过 ignored smoke test 手动验证。
+DeepSeek 协议层走 OpenAI-compatible Chat Completions。当前 crate 已实现 provider 选择、request builder、SSE parser 和 HTTP streaming client；交互式 binary 的 turn 执行仍由 mock turn launcher 驱动，真实网络路径通过 ignored smoke test 手动验证，live turn loop 由 M7 后续任务接线。
 
 | 项 | 设计 |
 |---|---|

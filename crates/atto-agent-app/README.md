@@ -7,7 +7,8 @@
 | Area | Status |
 |---|---|
 | TUI shell | Desktop, status bar, one `ChatPanel`, slash commands, cancellation, retry, regenerate, and edit/resubmit are wired. |
-| Interactive turn loop | The binary currently uses a deterministic in-process mock turn loop for local and PTY-stable interaction. |
+| Provider selection | The app selects `provider: deepseek` when a resolved API key is present and `--mock` is not set; otherwise it selects `provider: mock`. |
+| Interactive turn loop | Turn execution is still deterministic and mock-backed until the later M7 live turn-loop tasks wire the selected DeepSeek provider into requests. |
 | DeepSeek protocol | OpenAI-compatible request/response models, SSE parser, UI stream mapper, error mapping, and HTTP streaming client are implemented in this crate. |
 | Real DeepSeek smoke | Available as an ignored test that requires `DEEPSEEK_API_KEY`; default tests do not use the network. |
 | Tools | Built-in `read_file`, `list_files`, `search_text`, `apply_patch`, and `run_command` are registered with workspace path checks and approval policy. |
@@ -21,7 +22,7 @@
 cargo run -p atto-agent-app -- --workspace .
 ```
 
-The `--mock` flag is accepted for compatibility with existing fixtures, but the interactive runner is mock-backed today regardless of that flag.
+Without a configured API key the app selects the mock provider. Set `DEEPSEEK_API_KEY` or `--api-key` to select DeepSeek, or pass `--mock` to force the mock provider. The deterministic PTY fixture always uses mock provider state.
 
 Run the deterministic PTY fixture binary directly with:
 
@@ -59,13 +60,13 @@ Supported CLI flags:
 | `--plan-mode`, `--plan` | `off`, `on`, or `auto`. Defaults to `auto`. |
 | `--transcript` | Optional JSONL transcript path. Relative paths resolve under the workspace. |
 | `--config` | Explicit TOML config path. |
-| `--mock` | Accepted no-op compatibility flag. |
+| `--mock` | Force the mock provider even when an API key is configured. |
 
 Supported environment variables:
 
 | Variable | Meaning |
 |---|---|
-| `DEEPSEEK_API_KEY` | DeepSeek API key for DeepSeek client tests or future live turns. |
+| `DEEPSEEK_API_KEY` | DeepSeek API key; selects the DeepSeek provider unless `--mock` is set. |
 | `DEEPSEEK_BASE_URL` | API base URL. |
 | `DEEPSEEK_MODEL` | Model name. |
 | `DEEPSEEK_TEMPERATURE` | Non-negative temperature. |

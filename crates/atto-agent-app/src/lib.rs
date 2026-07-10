@@ -167,6 +167,17 @@ struct TranscriptStatusState {
     error_summary_state: Property<String>,
 }
 
+struct StatusSegmentBindings {
+    model: Binding<String>,
+    provider: Binding<String>,
+    state: Binding<String>,
+    plan_mode: Binding<String>,
+    tools: Binding<String>,
+    skills: Binding<String>,
+    tokens: Binding<String>,
+    error: Binding<String>,
+}
+
 impl TranscriptStatusState {
     fn new() -> Self {
         Self {
@@ -238,6 +249,7 @@ struct AgentRuntime {
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
+    provider_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
     tool_count_state: Property<String>,
@@ -317,6 +329,7 @@ impl AgentRuntime {
         mock_turns: MockTurnRegistry,
     ) -> Self {
         let model_state = Property::new(format!("model: {}", config.model));
+        let provider_state = Property::new(config.provider.status());
         let plan_mode_state = Property::new(config.plan_mode.status());
         let tool_registry =
             crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
@@ -340,6 +353,7 @@ impl AgentRuntime {
             message_store: ChatMessageStore::new(),
             input_handle: ChatInputHandle::new(),
             status_state: Property::new(STATUS_READY.to_string()),
+            provider_state,
             model_state,
             plan_mode_state,
             tool_count_state,
@@ -438,6 +452,7 @@ pub struct AgentApp {
     message_store: ChatMessageStore,
     input_handle: ChatInputHandle,
     status_state: Property<String>,
+    provider_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
     tool_count_state: Property<String>,
@@ -489,15 +504,18 @@ impl AgentApp {
         );
 
         let mut desktop = Desktop::new(Theme::dark(), agent_menu(quit_events));
-        desktop.status.set_segments(status_segments(
-            runtime.model_state.binding(),
-            runtime.status_state.binding(),
-            runtime.plan_mode_state.binding(),
-            runtime.tool_count_state.binding(),
-            runtime.skill_count_state.binding(),
-            runtime.transcript_status.token_estimate_state.binding(),
-            runtime.transcript_status.error_summary_state.binding(),
-        ));
+        desktop
+            .status
+            .set_segments(status_segments(StatusSegmentBindings {
+                model: runtime.model_state.binding(),
+                provider: runtime.provider_state.binding(),
+                state: runtime.status_state.binding(),
+                plan_mode: runtime.plan_mode_state.binding(),
+                tools: runtime.tool_count_state.binding(),
+                skills: runtime.skill_count_state.binding(),
+                tokens: runtime.transcript_status.token_estimate_state.binding(),
+                error: runtime.transcript_status.error_summary_state.binding(),
+            }));
 
         let chat_window_id = desktop.add_window(
             Window::new(
@@ -517,6 +535,7 @@ impl AgentApp {
             message_store: runtime.message_store,
             input_handle: runtime.input_handle,
             status_state: runtime.status_state,
+            provider_state: runtime.provider_state,
             model_state: runtime.model_state,
             plan_mode_state: runtime.plan_mode_state,
             tool_count_state: runtime.tool_count_state,
@@ -554,6 +573,10 @@ impl AgentApp {
 
     pub fn status_state(&self) -> Property<String> {
         self.status_state.clone()
+    }
+
+    pub fn provider_state(&self) -> Property<String> {
+        self.provider_state.clone()
     }
 
     pub fn model_state(&self) -> Property<String> {
@@ -2298,40 +2321,34 @@ fn agent_menu(quit_events: EventQueue<()>) -> MenuBar {
     )])
 }
 
-fn status_segments(
-    model: Binding<String>,
-    state: Binding<String>,
-    plan_mode: Binding<String>,
-    tools: Binding<String>,
-    skills: Binding<String>,
-    tokens: Binding<String>,
-    error: Binding<String>,
-) -> Vec<StatusSegment> {
+fn status_segments(bindings: StatusSegmentBindings) -> Vec<StatusSegment> {
     vec![
         StatusSegment::new("app", APP_TITLE)
             .priority(40)
             .min_width(10),
-        StatusSegment::new("provider", "provider: mock")
+        StatusSegment::new("provider", bindings.provider)
             .priority(86)
-            .min_width(14),
-        StatusSegment::new("model", model)
+            .min_width(18),
+        StatusSegment::new("model", bindings.model)
             .priority(95)
             .min_width(18),
-        StatusSegment::new("plan", plan_mode)
+        StatusSegment::new("plan", bindings.plan_mode)
             .priority(94)
             .min_width(9),
-        StatusSegment::new("tools", tools).priority(93).min_width(8),
-        StatusSegment::new("skills", skills)
+        StatusSegment::new("tools", bindings.tools)
+            .priority(93)
+            .min_width(8),
+        StatusSegment::new("skills", bindings.skills)
             .priority(92)
             .min_width(9),
-        StatusSegment::new("tokens", tokens)
+        StatusSegment::new("tokens", bindings.tokens)
             .priority(91)
             .min_width(8),
-        StatusSegment::new("error", error)
+        StatusSegment::new("error", bindings.error)
             .align(StatusSegmentAlign::Right)
             .priority(89)
             .min_width(6),
-        StatusSegment::new("streaming", state)
+        StatusSegment::new("streaming", bindings.state)
             .align(StatusSegmentAlign::Right)
             .priority(90)
             .min_width(9),
@@ -2380,7 +2397,7 @@ mod tests {
     use ratatui::layout::Rect;
 
     use crate::compact::CompactPolicy;
-    use crate::config::{AgentConfig, PlanMode};
+    use crate::config::{AgentConfig, AgentProvider, PlanMode};
     use crate::deepseek::{
         ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta,
         ChatCompletionSseEvent, ChatFunctionCallDelta, ChatMessageRole, ChatToolCallDelta,
@@ -2399,13 +2416,14 @@ mod tests {
     use super::{
         ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
         AgentTurnLimits, AppAction, MockTurnRegistry, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
-        PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime,
-        TranscriptPersistence, TranscriptStatusState, TurnBudgetTracker, apply_app_action,
-        build_chat_panel, deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
-        deepseek_request_from_transcript_with_skills, error_summary_status,
-        execute_tool_use_to_result_block, format_token_estimate_status, handle_edit_and_resubmit,
-        handle_message_action, handle_plan_decision, handle_tool_approval, status_segments,
-        submit_input_response, submit_slash_command_text, sync_transcript_status,
+        PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, StatusSegmentBindings,
+        ToolRuntime, TranscriptPersistence, TranscriptStatusState, TurnBudgetTracker,
+        apply_app_action, build_chat_panel, deepseek_plan_request_from_transcript,
+        deepseek_request_from_transcript, deepseek_request_from_transcript_with_skills,
+        error_summary_status, execute_tool_use_to_result_block, format_token_estimate_status,
+        handle_edit_and_resubmit, handle_message_action, handle_plan_decision,
+        handle_tool_approval, status_segments, submit_input_response, submit_slash_command_text,
+        sync_transcript_status,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -2946,6 +2964,7 @@ Use this skill for {name} tasks.
 
         assert!(app.message_store().messages().is_empty());
         assert_eq!(app.status_state().get(), STATUS_READY);
+        assert_eq!(app.provider_state().get(), AgentProvider::Mock.status());
         assert_eq!(app.model_state().get(), "model: deepseek-chat");
         assert_eq!(app.plan_mode_state().get(), PlanMode::Auto.status());
         assert_eq!(app.tool_count_state().get(), "tools: 5");
@@ -2965,11 +2984,15 @@ Use this skill for {name} tasks.
     #[test]
     fn applies_configured_model_and_plan_mode_to_runtime_state() {
         let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
         config.model = "deepseek-reasoner".to_string();
         config.plan_mode = PlanMode::On;
 
         let app = AgentApp::with_config(Rect::new(0, 0, 80, 24), config);
 
+        assert_eq!(app.config().provider, AgentProvider::DeepSeek);
+        assert_eq!(app.provider_state().get(), AgentProvider::DeepSeek.status());
         assert_eq!(app.config().model, "deepseek-reasoner");
         assert_eq!(app.model_state().get(), "model: deepseek-reasoner");
         assert_eq!(app.plan_mode_state().get(), PlanMode::On.status());
@@ -2978,6 +3001,7 @@ Use this skill for {name} tasks.
     #[test]
     fn status_bar_segments_include_agent_runtime_fields() {
         let model = atto_ui::reactive::Property::new("model: deepseek-chat".to_string());
+        let provider = atto_ui::reactive::Property::new(AgentProvider::DeepSeek.status());
         let state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
         let plan = atto_ui::reactive::Property::new(PlanMode::Auto.status());
         let tools = atto_ui::reactive::Property::new("tools: 5".to_string());
@@ -2985,21 +3009,23 @@ Use this skill for {name} tasks.
         let tokens = atto_ui::reactive::Property::new("tokens~0".to_string());
         let error = atto_ui::reactive::Property::new("err:ok".to_string());
 
-        let segments = status_segments(
-            model.binding(),
-            state.binding(),
-            plan.binding(),
-            tools.binding(),
-            skills.binding(),
-            tokens.binding(),
-            error.binding(),
-        );
+        let segments = status_segments(StatusSegmentBindings {
+            model: model.binding(),
+            provider: provider.binding(),
+            state: state.binding(),
+            plan_mode: plan.binding(),
+            tools: tools.binding(),
+            skills: skills.binding(),
+            tokens: tokens.binding(),
+            error: error.binding(),
+        });
         let pairs = segments
             .iter()
             .map(|segment| (segment.id.as_str(), segment.text.get()))
             .collect::<Vec<_>>();
 
         assert!(pairs.contains(&("model", "model: deepseek-chat".to_string())));
+        assert!(pairs.contains(&("provider", "provider: deepseek".to_string())));
         assert!(pairs.contains(&("plan", "plan: auto".to_string())));
         assert!(pairs.contains(&("tools", "tools: 5".to_string())));
         assert!(pairs.contains(&("skills", "skills: 0".to_string())));
