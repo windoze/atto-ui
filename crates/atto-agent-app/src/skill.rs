@@ -305,7 +305,7 @@ impl SkillRegistry {
 /// Shared runtime state for skills loaded into the current agent session.
 #[derive(Clone, Debug, Default)]
 pub struct LoadedSkillSet {
-    names: Arc<Mutex<BTreeSet<String>>>,
+    names: Arc<Mutex<Vec<String>>>,
 }
 
 impl LoadedSkillSet {
@@ -321,14 +321,18 @@ impl LoadedSkillSet {
         self.names
             .lock()
             .expect("loaded skill lock poisoned")
-            .contains(name)
+            .iter()
+            .any(|loaded| loaded == name)
     }
 
     pub fn insert(&self, name: impl Into<String>) -> bool {
-        self.names
-            .lock()
-            .expect("loaded skill lock poisoned")
-            .insert(name.into())
+        let name = name.into();
+        let mut names = self.names.lock().expect("loaded skill lock poisoned");
+        if names.contains(&name) {
+            return false;
+        }
+        names.push(name);
+        true
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -1146,6 +1150,31 @@ Body.
         ));
         assert!(prompt.contains("Inspect Rust changes first."));
         assert!(!prompt.contains("Write clear docs."));
+    }
+
+    #[test]
+    fn skill_prompt_block_preserves_loaded_order_for_priority() {
+        let mut registry = SkillRegistry::default();
+        registry.insert(discovered_skill(
+            "z-auto",
+            ".atto/skills/z-auto/SKILL.md",
+            "Automatically loaded guidance.\n",
+        ));
+        registry.insert(discovered_skill(
+            "a-manual",
+            ".atto/skills/a-manual/SKILL.md",
+            "Manually loaded guidance.\n",
+        ));
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("z-auto"));
+        assert!(loaded.insert("a-manual"));
+        assert!(!loaded.insert("z-auto"));
+
+        let prompt = build_skill_prompt_block(&registry, &loaded).unwrap();
+
+        let auto_position = prompt.find("name=\"z-auto\"").unwrap();
+        let manual_position = prompt.find("name=\"a-manual\"").unwrap();
+        assert!(auto_position < manual_position);
     }
 
     #[test]

@@ -105,7 +105,9 @@
 - [x] **[DONE] M4.7 测试** - 单测解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill`。
   - 完成记录（2026-07-10）：复核并保留既有解析、自动匹配和 prompt 大小限制单测，新增同一 skill 搜索根内重复 name 按排序路径确定性保留首个条目的冲突优先级单测；新增 snapshot app 专用 `pty-fixture` skill fixture，并扩展 PTY 覆盖 `/skills` 展示 discovered/available/loaded 状态和 `/skill pty-fixture` 激活后状态栏 `skills: 1`。验证过程中发现带参数 slash 文本在无补全匹配时 Enter 被弹层吞掉，已在 `atto-ui-chat` 修复为回退普通文本提交，并新增输入层回归单测。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app discovery_uses_sorted_paths_for_duplicate_names_within_one_root`；`cargo test -p atto-ui-chat enter_submits_slash_text_with_arguments_when_popup_has_no_match`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M4.R Review** - 复核 skill 注入不会泄漏权限、不会破坏 prompt 预算，验证通过。
+- [x] **[DONE] M4.R Review** - 复核 skill 注入不会泄漏权限、不会破坏 prompt 预算，验证通过。
+  - 完成记录（2026-07-10）：复核 M4 skill parser/discovery、手动与自动加载、prompt 注入、工具偏好和权限隔离实现；确认 skill `tools` 仅作为 `<skill ... tools="...">` prompt 元数据注入，不改变 `ToolRegistry` 中的工具 schema 或 `ToolPermissionPolicy`，`run_command` / `apply_patch` 仍默认要求审批。复核 prompt 预算时确认单 skill body 和总 `<skills>` block 均按字节预算截断且保持 UTF-8 边界；同时修复 `LoadedSkillSet` 原先按名称排序导致加载优先级丢失的问题，改为去重但保留加载顺序，并新增 prompt 注入顺序回归测试。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app skill_prompt_block_preserves_loaded_order_for_priority`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 阶段 M5 - Plan Mode
 
