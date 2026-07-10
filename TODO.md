@@ -132,7 +132,9 @@
 - [x] **[DONE] M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
   - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` PTY 覆盖 plan mode：auto plan prompt 会渲染 pending `PlanBlock` 和 Accept/Reject 操作；点击 Accept 后锁定为 accepted 并启动后续 mock execution turn；点击 Reject 后锁定为 rejected 且不追加执行 turn；默认 `plan: auto` 下 `run_command` tool call 会在计划接受前被拦截并写入失败 tool result，不渲染审批 UI 或成功结果。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M5.R Review** - 复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。
+- [x] **[DONE] M5.R Review** - 复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。
+  - 完成记录（2026-07-10）：复核 M5 plan mode 的本地 deterministic 判定、虚拟 `submit_plan` tool、markdown fallback、PlanBlock Accept/Reject 续跑/停止流程，以及副作用工具 gate 与权限策略的执行顺序；确认 plan 草稿请求只暴露虚拟 `submit_plan`，不依赖模型特有能力，且 `apply_patch` / `run_command` 等 mutating tool 在计划接受前会由 app 层 gate 优先拦截，项目级授权不能绕过。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 阶段 M6 - Context / Session Polish
 
