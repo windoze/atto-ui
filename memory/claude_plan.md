@@ -39,4 +39,5 @@
 - 已重新运行 `cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 和 `cargo fmt --all -- --check`，均通过。
 - 已更新 `TODO.md`：`M6.5 Retry/Edit 重跑` 已标记 `[DONE]` 并写入完成记录与验证命令。
 - 已检查 `git status`、`git diff` 和最近提交；当前仅有本任务相关文件变更。
-- 下一步：提交本次 M6.5 相关改动后停止。
+- 已提交本次 M6.5 相关改动：`a7d97f9 [M6.5] Implement retry and edit rerun`。
+- 下一步：停止，不继续处理下一个 TODO 任务。
