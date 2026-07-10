@@ -12,6 +12,7 @@
 | `packages/react` / `@atto-ui/react` | React reconciler, JSX host components, event bridge, and `render()` loop. |
 | `crates/atto-ui-node/npm/*` | Platform binary npm packages used by optional dependencies. |
 | `crates/atto-editor-app` | Multi-window terminal editor app with Explorer, tabs, split views, command palette, file/symbol/search pickers, and LSP-backed editor features. |
+| `crates/atto-agent-app` | Single-window TUI agent app built on `atto-ui-chat`, with DeepSeek protocol/client modules, local tools, skills, plan mode, context compaction, and deterministic mock PTY fixtures. |
 
 ## Requirements
 
@@ -80,6 +81,24 @@ Key entry points:
 | `F7` | Toggle inlay hints. |
 
 LSP support is opt-in. Set `ATTO_EDITOR_LSP_CMD_<LANGID>` (for example `ATTO_EDITOR_LSP_CMD_RUST="rust-analyzer"`) or the fallback `ATTO_EDITOR_LSP_CMD`; commands are split on whitespace.
+
+## Agent App Quick Start
+
+Launch the agent app from a checkout:
+
+```sh
+cargo run -p atto-agent-app -- --workspace .
+```
+
+The current interactive runner uses a deterministic in-process mock turn loop so it can be exercised without network access. The app crate also contains the DeepSeek request model, SSE parser, HTTP streaming client, tool schema conversion, and ignored real-API smoke test:
+
+```sh
+DEEPSEEK_API_KEY=... cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored
+```
+
+Useful runtime options include `--api-key`, `--base-url`, `--model`, `--temperature`, `--max-tokens`, `--workspace`, `--plan-mode`, `--config`, and `--transcript`. Configuration may also come from `DEEPSEEK_*` / `ATTO_AGENT_*` environment variables, workspace `.atto-agent.toml`, and `~/.config/atto-agent/config.toml`.
+
+See `crates/atto-agent-app/README.md` for slash commands, tool and skill behavior, transcript persistence, and validation notes.
 
 ## JavaScript Quick Start
 

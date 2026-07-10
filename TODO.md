@@ -168,6 +168,8 @@
 
 ## 收尾
 
-- [ ] **Docs 更新** - 根据实际实现更新 `TUI_AGENT.md`、README 或新增 app README。
+- [x] **[DONE] Docs 更新** - 根据实际实现更新 `TUI_AGENT.md`、README 或新增 app README。
+  - 完成记录（2026-07-10）：根 `README.md` 新增 `atto-agent-app` 包说明和 agent app quick start；新增 `crates/atto-agent-app/README.md`，覆盖运行方式、配置优先级、CLI/env/TOML、slash 命令、内置工具、skill、plan/context/transcript 和验证命令；更新 `TUI_AGENT.md`，使实现状态、模块位置、依赖、状态栏、slash 命令、配置字段、DeepSeek mock/live 边界、tool/skill/plan/context/compact 和后续扩展点与当前实现一致。
+  - 验证：本次仅修改 Markdown 文档、`TODO.md` 和 `memory/claude_plan.md`，未修改编译代码；完整 Rust fmt/clippy/test 复用上一条 M6.R 完成记录中的绿色结果（`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`）。
 - [ ] **CI 检查** - 确认默认 CI 不依赖 `DEEPSEEK_API_KEY` 或网络。
 - [ ] **Release 检查** - 如新增 crate 需要发布策略，补充 `docs/RELEASE.md` 或说明其仅作为 workspace app。
