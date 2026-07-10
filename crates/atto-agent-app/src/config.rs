@@ -77,6 +77,7 @@ pub struct AgentConfig {
     pub temperature: f32,
     pub max_tokens: u32,
     pub workspace: PathBuf,
+    pub home_dir: Option<PathBuf>,
     pub plan_mode: PlanMode,
 }
 
@@ -89,6 +90,7 @@ impl AgentConfig {
             temperature: DEFAULT_TEMPERATURE,
             max_tokens: DEFAULT_MAX_TOKENS,
             workspace: workspace.into(),
+            home_dir: None,
             plan_mode: PlanMode::Auto,
         }
     }
@@ -145,7 +147,7 @@ pub fn load_config_from_sources(sources: ConfigLoadSources) -> Result<AgentConfi
 
     builder.apply(env_overrides);
     builder.apply(cli.overrides);
-    builder.finish(&sources.current_dir)
+    builder.finish(&sources.current_dir, sources.home_dir.as_deref())
 }
 
 #[derive(Clone, Debug, Default)]
@@ -206,7 +208,7 @@ impl ConfigBuilder {
         }
     }
 
-    fn finish(self, current_dir: &Path) -> Result<AgentConfig> {
+    fn finish(self, current_dir: &Path, home_dir: Option<&Path>) -> Result<AgentConfig> {
         let workspace = self
             .overrides
             .workspace
@@ -230,6 +232,7 @@ impl ConfigBuilder {
             temperature,
             max_tokens,
             workspace,
+            home_dir: home_dir.map(Path::to_path_buf),
             plan_mode: self.overrides.plan_mode.unwrap_or_default(),
         })
     }
@@ -495,6 +498,7 @@ mod tests {
         assert_eq!(config.temperature, DEFAULT_TEMPERATURE);
         assert_eq!(config.max_tokens, DEFAULT_MAX_TOKENS);
         assert_eq!(config.workspace, current.canonicalize().unwrap());
+        assert_eq!(config.home_dir, Some(home.clone()));
         assert_eq!(config.plan_mode, PlanMode::Auto);
     }
 
@@ -555,6 +559,7 @@ plan_mode = "on"
         assert_eq!(config.temperature, 0.3);
         assert_eq!(config.max_tokens, 444);
         assert_eq!(config.workspace, workspace.canonicalize().unwrap());
+        assert_eq!(config.home_dir, Some(home.clone()));
         assert_eq!(config.plan_mode, PlanMode::Off);
     }
 
@@ -592,6 +597,7 @@ plan_mode = "on"
 
         assert_eq!(config.model, "explicit-model");
         assert_eq!(config.workspace, workspace.canonicalize().unwrap());
+        assert_eq!(config.home_dir, Some(home));
         assert_eq!(config.plan_mode, PlanMode::On);
     }
 

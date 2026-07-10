@@ -87,7 +87,7 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     host.wait_for_text("plan: off", PTY_WAIT)?;
 
     submit_text(&mut host, "/skills")?;
-    host.wait_for_text("Skills: none registered yet.", PTY_WAIT)?;
+    host.wait_for_text("Skills: 0 discovered.", PTY_WAIT)?;
 
     submit_text(&mut host, "/tools")?;
     host.wait_for_text("Tools: 5 registered.", PTY_WAIT)?;

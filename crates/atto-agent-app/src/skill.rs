@@ -1,17 +1,24 @@
-//! Skill file parsing for local prompt packages.
+//! Skill file parsing and discovery for local prompt packages.
 //!
-//! Skills are Markdown instruction files with YAML frontmatter. This module only
-//! parses and validates the standalone `SKILL.md` format; registry discovery,
+//! Skills are Markdown instruction files with YAML frontmatter. This module owns
+//! deterministic discovery from the default workspace and user skill roots;
 //! activation, matching, and prompt injection are implemented in later M4 tasks.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use walkdir::WalkDir;
+
+pub const WORKSPACE_SKILLS_DIR: &str = ".atto/skills";
+pub const USER_SKILLS_DIR: &str = ".config/atto-agent/skills";
+
+const SKILL_FILE_NAME: &str = "SKILL.md";
 
 /// Parsed contents of one `SKILL.md` file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +91,167 @@ impl FromStr for SkillMode {
     }
 }
 
+/// Default skill roots are searched in this order, so workspace skills override user skills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillSourceKind {
+    Workspace,
+    User,
+}
+
+impl fmt::Display for SkillSourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Workspace => "workspace",
+            Self::User => "user",
+        })
+    }
+}
+
+/// One concrete directory scanned for `SKILL.md` files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillSearchPath {
+    pub kind: SkillSourceKind,
+    pub root: PathBuf,
+}
+
+impl SkillSearchPath {
+    pub fn workspace(workspace_root: impl AsRef<Path>) -> Self {
+        Self {
+            kind: SkillSourceKind::Workspace,
+            root: workspace_root.as_ref().join(WORKSPACE_SKILLS_DIR),
+        }
+    }
+
+    pub fn user(home_dir: impl AsRef<Path>) -> Self {
+        Self {
+            kind: SkillSourceKind::User,
+            root: home_dir.as_ref().join(USER_SKILLS_DIR),
+        }
+    }
+}
+
+/// A parsed skill together with its source metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredSkill {
+    pub definition: SkillDefinition,
+    pub path: PathBuf,
+    pub source: SkillSourceKind,
+}
+
+/// Non-fatal discovery issues. Invalid files do not prevent other skills from loading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkillDiscoveryIssue {
+    InvalidDirectory {
+        path: PathBuf,
+        message: String,
+    },
+    InvalidFile {
+        path: PathBuf,
+        message: String,
+    },
+    DuplicateName {
+        name: String,
+        kept_path: PathBuf,
+        skipped_path: PathBuf,
+    },
+}
+
+impl fmt::Display for SkillDiscoveryIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDirectory { path, message } => {
+                write!(f, "invalid skill directory `{}`: {message}", path.display())
+            }
+            Self::InvalidFile { path, message } => {
+                write!(f, "invalid skill file `{}`: {message}", path.display())
+            }
+            Self::DuplicateName {
+                name,
+                kept_path,
+                skipped_path,
+            } => write!(
+                f,
+                "duplicate skill `{name}` skipped `{}`; kept `{}`",
+                skipped_path.display(),
+                kept_path.display()
+            ),
+        }
+    }
+}
+
+/// Deterministic in-memory registry of discovered skills and non-fatal scan issues.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SkillRegistry {
+    skills: BTreeMap<String, DiscoveredSkill>,
+    issues: Vec<SkillDiscoveryIssue>,
+}
+
+impl SkillRegistry {
+    /// Scans the default workspace and optional user roots for `SKILL.md` files.
+    pub fn discover(workspace_root: impl AsRef<Path>, home_dir: Option<&Path>) -> Self {
+        let paths = default_skill_search_paths(workspace_root.as_ref(), home_dir);
+        Self::discover_from_paths(&paths)
+    }
+
+    /// Scans explicit roots in order. The first valid skill for a name wins.
+    pub fn discover_from_paths(paths: &[SkillSearchPath]) -> Self {
+        let mut registry = Self::default();
+        for search_path in paths {
+            scan_skill_path(&mut registry, search_path);
+        }
+        registry
+    }
+
+    pub fn len(&self) -> usize {
+        self.skills.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&DiscoveredSkill> {
+        self.skills.get(name)
+    }
+
+    pub fn skills(&self) -> impl Iterator<Item = &DiscoveredSkill> {
+        self.skills.values()
+    }
+
+    pub fn issues(&self) -> &[SkillDiscoveryIssue] {
+        &self.issues
+    }
+
+    fn insert(&mut self, skill: DiscoveredSkill) {
+        let name = skill.definition.name.clone();
+        if let Some(existing) = self.skills.get(&name) {
+            self.issues.push(SkillDiscoveryIssue::DuplicateName {
+                name,
+                kept_path: existing.path.clone(),
+                skipped_path: skill.path,
+            });
+            return;
+        }
+        self.skills.insert(name, skill);
+    }
+
+    fn push_issue(&mut self, issue: SkillDiscoveryIssue) {
+        self.issues.push(issue);
+    }
+}
+
+/// Builds the default search path list from a workspace and optional home directory.
+pub fn default_skill_search_paths(
+    workspace_root: &Path,
+    home_dir: Option<&Path>,
+) -> Vec<SkillSearchPath> {
+    let mut paths = vec![SkillSearchPath::workspace(workspace_root)];
+    if let Some(home_dir) = home_dir {
+        paths.push(SkillSearchPath::user(home_dir));
+    }
+    paths
+}
+
 /// Reads and parses a UTF-8 `SKILL.md` file from disk.
 pub fn parse_skill_file(path: impl AsRef<Path>) -> Result<SkillDefinition> {
     let path = path.as_ref();
@@ -99,6 +267,62 @@ pub fn parse_skill_markdown(markdown: &str) -> Result<SkillDefinition> {
     let frontmatter = serde_yaml::from_str::<SkillFrontmatter>(frontmatter)
         .context("failed to parse skill frontmatter")?;
     SkillDefinition::from_parts(frontmatter, body)
+}
+
+fn scan_skill_path(registry: &mut SkillRegistry, search_path: &SkillSearchPath) {
+    match fs::metadata(&search_path.root) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            registry.push_issue(SkillDiscoveryIssue::InvalidDirectory {
+                path: search_path.root.clone(),
+                message: "path is not a directory".to_string(),
+            });
+            return;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            registry.push_issue(SkillDiscoveryIssue::InvalidDirectory {
+                path: search_path.root.clone(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    }
+
+    let mut skill_files = Vec::new();
+    for entry in WalkDir::new(&search_path.root).follow_links(false) {
+        match entry {
+            Ok(entry) => {
+                if entry.file_type().is_file() && entry.file_name() == OsStr::new(SKILL_FILE_NAME) {
+                    skill_files.push(entry.path().to_path_buf());
+                }
+            }
+            Err(error) => {
+                registry.push_issue(SkillDiscoveryIssue::InvalidDirectory {
+                    path: error
+                        .path()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| search_path.root.clone()),
+                    message: error.to_string(),
+                });
+            }
+        }
+    }
+    skill_files.sort();
+
+    for path in skill_files {
+        match parse_skill_file(&path) {
+            Ok(definition) => registry.insert(DiscoveredSkill {
+                definition,
+                path,
+                source: search_path.kind,
+            }),
+            Err(error) => registry.push_issue(SkillDiscoveryIssue::InvalidFile {
+                path,
+                message: format!("{error:#}"),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -213,6 +437,39 @@ mode: auto
 When this skill is active, inspect changed Rust files first.
 Prefer tests that reproduce behavioral regressions.
 "#
+    }
+
+    fn skill_markdown(name: &str, description: &str) -> String {
+        format!(
+            r#"---
+name: {name}
+description: {description}
+---
+
+Use this skill for {name} tasks.
+"#
+        )
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "atto-agent-skill-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("failed to create test dir");
+        dir
+    }
+
+    fn write(path: &Path, text: impl AsRef<str>) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("failed to create parent dir");
+        }
+        fs::write(path, text.as_ref()).expect("failed to write test fixture");
     }
 
     #[test]
@@ -378,5 +635,112 @@ description: Review Rust.
 
         assert_eq!(skill.name, "rust-review");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discovery_ignores_missing_default_roots() {
+        let workspace = test_dir("discover-missing-workspace");
+        let home = test_dir("discover-missing-home");
+
+        let registry = SkillRegistry::discover(&workspace, Some(home.as_path()));
+
+        assert!(registry.is_empty());
+        assert!(registry.issues().is_empty());
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discovers_workspace_and_user_skill_files() {
+        let workspace = test_dir("discover-workspace");
+        let home = test_dir("discover-home");
+        write(
+            &workspace.join(".atto/skills/rust-review/SKILL.md"),
+            skill_markdown("rust-review", "Review Rust code."),
+        );
+        write(
+            &home.join(".config/atto-agent/skills/docs/SKILL.md"),
+            skill_markdown("docs", "Write docs."),
+        );
+        write(&workspace.join(".atto/skills/README.md"), "ignored");
+
+        let registry = SkillRegistry::discover(&workspace, Some(home.as_path()));
+
+        assert_eq!(registry.len(), 2);
+        assert!(registry.issues().is_empty());
+        let names = registry
+            .skills()
+            .map(|skill| skill.definition.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["docs", "rust-review"]);
+        assert_eq!(
+            registry.get("rust-review").map(|skill| skill.source),
+            Some(SkillSourceKind::Workspace)
+        );
+        assert_eq!(
+            registry.get("docs").map(|skill| skill.source),
+            Some(SkillSourceKind::User)
+        );
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discovery_keeps_first_duplicate_name_and_records_issue() {
+        let workspace = test_dir("discover-duplicate-workspace");
+        let home = test_dir("discover-duplicate-home");
+        let workspace_path = workspace.join(".atto/skills/shared/SKILL.md");
+        let user_path = home.join(".config/atto-agent/skills/shared/SKILL.md");
+        write(
+            &workspace_path,
+            skill_markdown("shared", "Workspace version."),
+        );
+        write(&user_path, skill_markdown("shared", "User version."));
+
+        let registry = SkillRegistry::discover(&workspace, Some(home.as_path()));
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get("shared").unwrap().path, workspace_path);
+        assert_eq!(
+            registry.issues(),
+            &[SkillDiscoveryIssue::DuplicateName {
+                name: "shared".to_string(),
+                kept_path: registry.get("shared").unwrap().path.clone(),
+                skipped_path: user_path,
+            }]
+        );
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discovery_records_invalid_files_without_failing_scan() {
+        let workspace = test_dir("discover-invalid-workspace");
+        write(
+            &workspace.join(".atto/skills/good/SKILL.md"),
+            skill_markdown("good", "Valid skill."),
+        );
+        write(
+            &workspace.join(".atto/skills/bad/SKILL.md"),
+            r#"---
+name: bad
+---
+Body.
+"#,
+        );
+
+        let registry = SkillRegistry::discover(&workspace, None);
+
+        assert_eq!(registry.len(), 1);
+        assert!(registry.get("good").is_some());
+        assert_eq!(registry.issues().len(), 1);
+        match &registry.issues()[0] {
+            SkillDiscoveryIssue::InvalidFile { path, message } => {
+                assert!(path.ends_with("SKILL.md"));
+                assert!(message.contains("description"));
+            }
+            other => panic!("expected invalid file issue, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(workspace);
     }
 }
