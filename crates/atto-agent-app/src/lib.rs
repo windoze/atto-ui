@@ -1684,9 +1684,14 @@ pub fn deepseek_request_from_transcript(
     registry: &ToolRegistry,
     messages: &[ChatMessage],
 ) -> ChatCompletionRequest {
-    ChatCompletionRequest::from_config(config, ContextBuilder::new().build_messages(messages))
-        .with_tools(registry.chat_tools())
-        .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
+    ChatCompletionRequest::from_config(
+        config,
+        ContextBuilder::new()
+            .with_file_mentions(&config.workspace)
+            .build_messages(messages),
+    )
+    .with_tools(registry.chat_tools())
+    .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
 }
 
 /// Builds the OpenAI-compatible request body and prepends active skills to the system prompt.
@@ -1701,6 +1706,7 @@ pub fn deepseek_request_from_transcript_with_skills(
         config,
         ContextBuilder::new()
             .with_skills(skill_registry, loaded_skills)
+            .with_file_mentions(&config.workspace)
             .build_messages(messages),
     )
     .with_tools(registry.chat_tools())
@@ -1712,7 +1718,12 @@ pub fn deepseek_plan_request_from_transcript(
     config: &AgentConfig,
     messages: &[ChatMessage],
 ) -> ChatCompletionRequest {
-    deepseek_plan_request_from_messages(config, ContextBuilder::new().build_messages(messages))
+    deepseek_plan_request_from_messages(
+        config,
+        ContextBuilder::new()
+            .with_file_mentions(&config.workspace)
+            .build_messages(messages),
+    )
 }
 
 /// Builds a plan-draft request while preserving active skill prompt injection.
@@ -1726,6 +1737,7 @@ pub fn deepseek_plan_request_from_transcript_with_skills(
         config,
         ContextBuilder::new()
             .with_skills(skill_registry, loaded_skills)
+            .with_file_mentions(&config.workspace)
             .build_messages(messages),
     )
 }
@@ -3744,6 +3756,31 @@ Use this skill for {name} tasks.
             request.tool_choice,
             Some(ToolChoice::Mode(ToolChoiceMode::Auto))
         );
+    }
+
+    #[test]
+    fn deepseek_request_from_transcript_injects_file_mentions_from_config_workspace() {
+        let workspace = unique_temp_dir("request-file-mentions");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("note.txt"), "workspace context\n").expect("write fixture");
+        let config = AgentConfig::defaults(workspace.clone());
+        let registry = test_tool_registry();
+
+        let request = deepseek_request_from_transcript(
+            &config,
+            &registry,
+            &[ChatMessage::text(1, ChatRole::User, "Use @note.txt")],
+        );
+
+        let content = request.messages[0]
+            .content
+            .as_deref()
+            .expect("user message should contain text");
+        assert!(content.contains("<context_files>"));
+        assert!(content.contains("<file path=\"note.txt\""));
+        assert!(content.contains("workspace context"));
+
+        fs::remove_dir_all(workspace).expect("remove fixture workspace");
     }
 
     #[test]

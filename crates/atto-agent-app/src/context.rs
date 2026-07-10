@@ -1,9 +1,14 @@
 //! Context construction for DeepSeek chat completion requests.
 //!
 //! The builder owns conversion from the UI transcript shape to OpenAI-compatible
-//! messages. Later M6 work can extend this module with mention expansion,
-//! budgets, and compaction without scattering prompt assembly through the app.
+//! messages, including bounded file mention expansion and context-only blocks.
 
+use std::collections::BTreeSet;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::Path;
+
+use anyhow::{Context, Result, bail};
 use atto_ui::ComponentValue;
 use atto_ui_chat::{
     ChatBlock, ChatMessage, ChatRole, CompactBlock, NoticeBlock, NoticeLevel, ToolInput,
@@ -15,12 +20,19 @@ use crate::deepseek::{
     ChatCompletionMessage, ChatFunctionCall, ChatMessageRole, ChatToolCall, ChatToolKind,
 };
 use crate::skill::{LoadedSkillSet, SkillRegistry, build_skill_prompt_block};
+use crate::tool::{display_workspace_path, resolve_existing_workspace_path};
+
+/// Maximum UTF-8 bytes injected for one `@path` mention.
+pub const MENTION_FILE_MAX_BYTES: usize = 32 * 1024;
+/// Maximum aggregate UTF-8 bytes injected for all file mentions in one user message.
+pub const MENTION_FILES_MAX_BYTES: usize = 128 * 1024;
 
 /// Builds DeepSeek messages from UI transcript state plus optional active skills.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ContextBuilder<'a> {
     skill_registry: Option<&'a SkillRegistry>,
     loaded_skills: Option<&'a LoadedSkillSet>,
+    file_mentions_workspace: Option<&'a Path>,
 }
 
 impl<'a> ContextBuilder<'a> {
@@ -40,6 +52,12 @@ impl<'a> ContextBuilder<'a> {
         self
     }
 
+    /// Enables `@path` mention expansion for files contained in the workspace.
+    pub fn with_file_mentions(mut self, workspace: &'a Path) -> Self {
+        self.file_mentions_workspace = Some(workspace);
+        self
+    }
+
     /// Converts a UI transcript into OpenAI-compatible chat messages.
     pub fn build_messages(&self, transcript: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
         let mut messages = Vec::new();
@@ -47,7 +65,7 @@ impl<'a> ContextBuilder<'a> {
             messages.push(ChatCompletionMessage::system(skill_prompt));
         }
         for message in transcript {
-            push_transcript_message(&mut messages, message);
+            push_transcript_message(&mut messages, message, self.file_mentions_workspace);
         }
         messages
     }
@@ -97,7 +115,11 @@ impl PendingRoleMessage {
     }
 }
 
-fn push_transcript_message(messages: &mut Vec<ChatCompletionMessage>, message: &ChatMessage) {
+fn push_transcript_message(
+    messages: &mut Vec<ChatCompletionMessage>,
+    message: &ChatMessage,
+    file_mentions_workspace: Option<&Path>,
+) {
     let mut pending = PendingRoleMessage::new(role_for_chat_message(&message.role));
     for block in &message.blocks {
         match block {
@@ -128,6 +150,9 @@ fn push_transcript_message(messages: &mut Vec<ChatCompletionMessage>, message: &
             }
             _ => {}
         }
+    }
+    if pending.role == ChatMessageRole::User {
+        append_file_mention_context(&mut pending.content, file_mentions_workspace);
     }
     pending.flush(messages);
 }
@@ -181,6 +206,254 @@ fn push_section(content: &mut String, section: &str) {
         content.push_str("\n\n");
     }
     content.push_str(section);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileMentionBudget {
+    max_file_bytes: usize,
+    max_total_bytes: usize,
+}
+
+impl Default for FileMentionBudget {
+    fn default() -> Self {
+        Self {
+            max_file_bytes: MENTION_FILE_MAX_BYTES,
+            max_total_bytes: MENTION_FILES_MAX_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileMentionSummary {
+    path: String,
+    total_bytes: u64,
+    included_bytes: usize,
+    truncated: bool,
+    text: String,
+}
+
+fn append_file_mention_context(content: &mut String, workspace: Option<&Path>) {
+    let Some(workspace) = workspace else {
+        return;
+    };
+    let mentions = parse_file_mentions(content);
+    let Some(context) =
+        build_file_mention_context(workspace, &mentions, FileMentionBudget::default())
+    else {
+        return;
+    };
+    push_section(content, &context);
+}
+
+fn parse_file_mentions(content: &str) -> Vec<String> {
+    let mut mentions = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut indices = content.char_indices().peekable();
+    let mut previous = None;
+
+    while let Some((index, ch)) = indices.next() {
+        if ch != '@' || !is_file_mention_start(previous) {
+            previous = Some(ch);
+            continue;
+        }
+
+        let start = index + ch.len_utf8();
+        let mut end = start;
+        while let Some(&(next_index, next_ch)) = indices.peek() {
+            if is_file_mention_terminator(next_ch) {
+                break;
+            }
+            end = next_index + next_ch.len_utf8();
+            indices.next();
+        }
+
+        let candidate = trim_file_mention_token(&content[start..end]);
+        if is_valid_file_mention(candidate) && seen.insert(candidate.to_string()) {
+            mentions.push(candidate.to_string());
+        }
+        previous = content[start..end].chars().next_back().or(Some(ch));
+    }
+
+    mentions
+}
+
+fn is_file_mention_start(previous: Option<char>) -> bool {
+    previous.is_none_or(|ch| {
+        ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '<' | '"' | '\'' | '`')
+    })
+}
+
+fn is_file_mention_terminator(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ')' | ']' | '}' | '<' | '>' | '"' | '\'' | '`')
+}
+
+fn trim_file_mention_token(mut token: &str) -> &str {
+    token = token.trim();
+    while let Some(ch) = token.chars().next_back() {
+        if !matches!(ch, ',' | '.' | ';' | ':' | '!' | '?') {
+            break;
+        }
+        token = &token[..token.len() - ch.len_utf8()];
+    }
+    token
+}
+
+fn is_valid_file_mention(token: &str) -> bool {
+    !token.is_empty() && token != "." && token != ".." && !token.starts_with('@')
+}
+
+fn build_file_mention_context(
+    workspace: &Path,
+    mentions: &[String],
+    budget: FileMentionBudget,
+) -> Option<String> {
+    if mentions.is_empty() || budget.max_file_bytes == 0 || budget.max_total_bytes == 0 {
+        return None;
+    }
+
+    let mut context = String::from("<context_files>\n");
+    let workspace_root = match canonical_file_mention_workspace(workspace) {
+        Ok(workspace_root) => workspace_root,
+        Err(error) => {
+            context.push_str(&format!(
+                "<file error=\"{}\" />\n",
+                xml_attr_escape(&format!("workspace unavailable: {error:#}"))
+            ));
+            context.push_str("</context_files>");
+            return Some(context);
+        }
+    };
+
+    let mut remaining_bytes = budget.max_total_bytes;
+    for mention in mentions {
+        context.push_str(&file_mention_entry(
+            &workspace_root,
+            mention,
+            &mut remaining_bytes,
+            budget.max_file_bytes,
+        ));
+    }
+    context.push_str("</context_files>");
+    Some(context)
+}
+
+fn canonical_file_mention_workspace(workspace: &Path) -> Result<std::path::PathBuf> {
+    let workspace = workspace
+        .canonicalize()
+        .with_context(|| format!("workspace `{}` must exist", workspace.display()))?;
+    if !workspace.is_dir() {
+        bail!("workspace `{}` is not a directory", workspace.display());
+    }
+    Ok(workspace)
+}
+
+fn file_mention_entry(
+    workspace_root: &Path,
+    mention: &str,
+    remaining_bytes: &mut usize,
+    max_file_bytes: usize,
+) -> String {
+    if *remaining_bytes == 0 {
+        return format!(
+            "<file path=\"{}\" skipped=\"total_budget_exhausted\" />\n",
+            xml_attr_escape(mention)
+        );
+    }
+
+    let path = match resolve_existing_workspace_path(workspace_root, mention) {
+        Ok(path) => path,
+        Err(error) => return file_mention_error_entry(mention, error),
+    };
+    match read_file_mention_summary(workspace_root, &path, max_file_bytes.min(*remaining_bytes)) {
+        Ok(summary) => {
+            *remaining_bytes = (*remaining_bytes).saturating_sub(summary.included_bytes);
+            format_file_mention_summary(&summary)
+        }
+        Err(error) => file_mention_error_entry(mention, error),
+    }
+}
+
+fn read_file_mention_summary(
+    workspace_root: &Path,
+    path: &Path,
+    max_bytes: usize,
+) -> Result<FileMentionSummary> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("failed to read metadata for `{}`", path.display()))?;
+    if !metadata.is_file() {
+        bail!("mention path `{}` is not a file", path.display());
+    }
+    if max_bytes == 0 {
+        bail!("file mention budget is exhausted");
+    }
+
+    let mut bytes = Vec::new();
+    File::open(path)
+        .with_context(|| format!("failed to open `{}`", path.display()))?
+        .take(max_bytes as u64 + 4)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read `{}`", path.display()))?;
+
+    let truncated = bytes.len() > max_bytes || metadata.len() > max_bytes as u64;
+    if bytes.len() > max_bytes {
+        bytes.truncate(max_bytes);
+    }
+    let text = utf8_mention_prefix(&bytes, truncated)
+        .with_context(|| format!("mention path `{}` is not valid UTF-8", path.display()))?
+        .to_string();
+
+    Ok(FileMentionSummary {
+        path: display_workspace_path(workspace_root, path),
+        total_bytes: metadata.len(),
+        included_bytes: text.len(),
+        truncated: truncated || text.len() < metadata.len() as usize,
+        text,
+    })
+}
+
+fn utf8_mention_prefix(bytes: &[u8], allow_incomplete_tail: bool) -> Result<&str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text),
+        Err(error) if allow_incomplete_tail && error.error_len().is_none() => {
+            std::str::from_utf8(&bytes[..error.valid_up_to()])
+                .context("valid UTF-8 prefix should decode")
+        }
+        Err(error) => bail!("invalid UTF-8 near byte {}", error.valid_up_to()),
+    }
+}
+
+fn format_file_mention_summary(summary: &FileMentionSummary) -> String {
+    format!(
+        "<file path=\"{}\" bytes=\"{}\" included_bytes=\"{}\" truncated=\"{}\">\n{}\n</file>\n",
+        xml_attr_escape(&summary.path),
+        summary.total_bytes,
+        summary.included_bytes,
+        summary.truncated,
+        summary.text
+    )
+}
+
+fn file_mention_error_entry(mention: &str, error: anyhow::Error) -> String {
+    format!(
+        "<file path=\"{}\" error=\"{}\" />\n",
+        xml_attr_escape(mention),
+        xml_attr_escape(&format!("{error:#}"))
+    )
+}
+
+fn xml_attr_escape(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn chat_tool_call_from_tool_use(tool_use: &ToolUseBlock) -> ChatToolCall {
@@ -415,6 +688,99 @@ mod tests {
         assert!(skill_prompt.contains("<skill name=\"rust-review\" source=\""));
         assert!(skill_prompt.contains("Use this skill for Rust review tasks."));
         assert_eq!(messages[1].role, ChatMessageRole::User);
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn context_builder_expands_file_mentions_into_user_context() {
+        let workspace = unique_temp_dir("context-mentions");
+        fs::create_dir_all(workspace.join("src")).expect("create src directory");
+        fs::write(workspace.join("src/lib.rs"), "pub fn run() {}\n").expect("write Rust file");
+        fs::write(workspace.join("Makefile"), "build:\n\tcargo build\n").expect("write makefile");
+
+        let messages = ContextBuilder::new()
+            .with_file_mentions(&workspace)
+            .build_messages(&[ChatMessage::text(
+                1,
+                ChatRole::User,
+                "Review @src/lib.rs, then @Makefile.",
+            )]);
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("user message should contain text");
+        assert!(content.starts_with("Review @src/lib.rs, then @Makefile."));
+        assert!(content.contains("<context_files>"));
+        assert!(content.contains("<file path=\"src/lib.rs\""));
+        assert!(content.contains("pub fn run() {}"));
+        assert!(content.contains("<file path=\"Makefile\""));
+        assert!(content.contains("cargo build"));
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn context_builder_records_file_mention_errors_without_leaking_escaped_files() {
+        let workspace = unique_temp_dir("context-mention-escape");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        let secret_path = workspace
+            .parent()
+            .expect("workspace should have parent")
+            .join("context-mention-secret.txt");
+        fs::write(&secret_path, "do not leak this secret").expect("write escaped file");
+
+        let messages = ContextBuilder::new()
+            .with_file_mentions(&workspace)
+            .build_messages(&[ChatMessage::text(
+                1,
+                ChatRole::User,
+                "Compare @../context-mention-secret.txt and @missing.txt",
+            )]);
+
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("user message should contain text");
+        assert!(content.contains("<file path=\"../context-mention-secret.txt\" error=\""));
+        assert!(content.contains("<file path=\"missing.txt\" error=\""));
+        assert!(!content.contains("do not leak this secret"));
+
+        let _ = fs::remove_file(secret_path);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn context_builder_limits_file_mention_bytes() {
+        let workspace = unique_temp_dir("context-mention-budget");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        let large_file = "a".repeat(MENTION_FILE_MAX_BYTES + 10);
+        for index in 0..5 {
+            fs::write(workspace.join(format!("f{index}.txt")), &large_file)
+                .expect("write large file");
+        }
+
+        let messages = ContextBuilder::new()
+            .with_file_mentions(&workspace)
+            .build_messages(&[ChatMessage::text(
+                1,
+                ChatRole::User,
+                "Read @f0.txt @f1.txt @f2.txt @f3.txt @f4.txt",
+            )]);
+
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("user message should contain text");
+        assert!(content.contains(&format!(
+            "<file path=\"f0.txt\" bytes=\"{}\" included_bytes=\"{}\" truncated=\"true\">",
+            MENTION_FILE_MAX_BYTES + 10,
+            MENTION_FILE_MAX_BYTES
+        )));
+        assert!(content.contains("<file path=\"f3.txt\""));
+        assert!(content.contains("<file path=\"f4.txt\" skipped=\"total_budget_exhausted\" />"));
 
         let _ = fs::remove_dir_all(workspace);
     }
