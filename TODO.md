@@ -168,7 +168,7 @@
 
 ## 阶段 M7 - Live DeepSeek 接入
 
-> 现状（2026-07-11 复核）：M1-M6 已实现真实 DeepSeek 接入所需的所有零件（`DeepSeekClient` 真实 HTTP+SSE、SSE parser、`DeepSeekUiStream` UI 映射、`ContextBuilder`、`ToolRegistry`、plan/skill/compact），并有单测覆盖，**但它们尚未组装成一次真实 live turn**：`DeepSeekClient` 已支持逐个 SSE event 增量回调，且兼容保留 batch API；M7.1 已接入 provider 选择和状态栏显示，但实际 `run()` / 提交路径仍始终走 `MockTurnRegistry`，尚未按 DeepSeek provider 驱动 live turn；`run()` 内无 async turn 驱动、无真实多轮 tool loop、无进行中请求取消。M7 负责把这些真正接线起来，用 `.envrc` 的 `DEEPSEEK_API_KEY` 手动/ignored 验证。
+> 现状（2026-07-11 复核）：M1-M6 已实现真实 DeepSeek 接入所需的所有零件（`DeepSeekClient` 真实 HTTP+SSE、SSE parser、`DeepSeekUiStream` UI 映射、`ContextBuilder`、`ToolRegistry`、plan/skill/compact），并有单测覆盖。M7.1-M7.3 已接入 provider 选择、逐 SSE event 增量回调和 DeepSeek provider 的后台 async turn 驱动；真实 turn 现在经 `DeepSeekUiStream` 映射后通过 `AppAction`/branch-token 路径更新 UI。剩余 M7 工作是把当前 live turn 的 prompt-only 请求升级为完整 `ContextBuilder`/tool schema 构造、实现真实多轮 tool loop、HTTP 请求取消和真实端到端冒烟。
 
 - [x] **[DONE] M7.1 Provider 选择** - 引入 `AgentProvider`（`Mock` / `DeepSeek`）与解析逻辑：存在有效 `DEEPSEEK_API_KEY` 且未 `--mock` 时选 DeepSeek，否则 mock；snapshot fixture 始终 mock；状态栏 `provider` 段反映实际值，不再写死。
   - 完成记录（2026-07-11）：新增 `AgentProvider`（`Mock` / `DeepSeek`）和确定性选择逻辑；解析配置后若 resolved API key 非空且未传 `--mock` 则选择 DeepSeek，否则选择 mock，`--mock` 会在有 key 时强制 mock，snapshot fixture 继续使用默认 mock 配置。状态栏 provider 段改为运行时绑定，显示 `provider: mock` 或 `provider: deepseek`，不再写死；同步更新 README / app README / `TUI_AGENT.md` 中的 provider 与 `--mock` 说明。
@@ -176,7 +176,9 @@
 - [x] **[DONE] M7.2 流式增量事件** - 改造 `DeepSeekClient`，在 SSE 到达时逐个 `ChatCompletionSseEvent` 通过回调/channel 尽快推出，不再等 `[DONE]` 一次性 `Vec` 返回；保留现有 batch API 或以增量 API 重写并更新 smoke 测试。
   - 完成记录（2026-07-11）：`DeepSeekClient` 新增 `stream_chat_completion_events` 增量回调 API，SSE 解析出每个 `ChatCompletionSseEvent` 后立即按顺序交给调用方，并在收到 `[DONE]` 后完成请求而不等待服务端关闭连接；既有 `stream_chat_completions` batch API 保留并改为复用增量 API 收集 `Vec`。更新 ignored `deepseek_real_smoke` 通过增量 API 消费真实流；新增本地延迟 SSE mock 测试，确认首个 chunk 在后续事件和 `[DONE]` 前即可被观察到。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app deepseek_client`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- [ ] **M7.3 Async turn 驱动** - 在 app 内建立 tokio runtime（或复用 `atto-ui-async`），后台跑真实 turn，逐事件经 `AppAction` 交给主线程；真实 turn 复用现有 `DeepSeekUiStream` 映射，与 mock 走同一条 action/branch-token 路径。
+- [x] **[DONE] M7.3 Async turn 驱动** - 在 app 内建立 tokio runtime（或复用 `atto-ui-async`），后台跑真实 turn，逐事件经 `AppAction` 交给主线程；真实 turn 复用现有 `DeepSeekUiStream` 映射，与 mock 走同一条 action/branch-token 路径。
+  - 完成记录（2026-07-11）：新增 DeepSeek provider 专用 turn request 与后台 worker；当 `AgentConfig.provider == DeepSeek` 时，提交/plan accept 续跑路径会启动真实 DeepSeek HTTP+SSE turn，复用 `DeepSeekUiStream` 将每个增量 `ChatCompletionSseEvent` 映射为既有 `AppAction`，主线程继续通过 branch-token 校验更新 UI；snapshot 和 mock provider 仍走确定性 mock path。`atto-ui-async` 的 Tokio runtime helper 现在启用 I/O 和 timer，以支持 `reqwest` live stream；新增本地 SSE server 单测覆盖 live provider 事件经 action channel 写入 UI，更新 `/abort` 文案为 provider-neutral。
+  - 验证：`cargo check -p atto-agent-app --all-targets`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app deepseek_provider_streams_live_events_through_app_actions`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M7.4 请求构造接线** - 提交/继续 turn 时用 `ContextBuilder` 从当前 transcript 构造 DeepSeek messages（含 skills、file mention、compact、tool 回灌）并带上注册工具 schema，替代 mock 的固定事件序列。
 - [ ] **M7.5 真实 tool loop** - `finish_reason = tool_calls` 后执行本地工具（复用审批门控/plan gate/turn budget），写回 `role=tool`，自动发起下一轮真实请求，直到无 tool call 或触达 budget。
 - [ ] **M7.6 真实请求取消** - Esc / `on_cancel` / `/abort` 中止进行中的 HTTP 请求（abort handle / drop future），推进 branch token，迟到事件不污染新分支；补单测/PTY（PTY 走 mock）。

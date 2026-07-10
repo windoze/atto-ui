@@ -48,13 +48,14 @@ pub mod tool;
 pub mod transcript;
 
 use crate::compact::{CompactPolicy, compact_store_if_needed, estimate_transcript_tokens};
-use crate::config::{AgentConfig, PlanMode};
+use crate::config::{AgentConfig, AgentProvider, PlanMode};
 use crate::context::{ContextBuilder, component_value_to_json};
 use crate::deepseek::{
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionMessage,
     ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCallDelta, ChatToolCallDelta,
     ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
+use crate::deepseek_client::DeepSeekClient;
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
 use crate::plan::{
     PLAN_MODE_SYSTEM_PROMPT, PlanTurnDecision, decide_plan_for_turn, submit_plan_chat_tool,
@@ -145,6 +146,18 @@ struct MockAgentTurnRequest {
 }
 
 #[derive(Clone, Debug)]
+struct DeepSeekAgentTurnRequest {
+    branch: ChatBranchToken,
+    message_id: ChatMessageId,
+    block_id: ChatBlockId,
+    cancel: CancellationToken,
+    config: AgentConfig,
+    messages: Vec<ChatCompletionMessage>,
+    plan_decision: PlanTurnDecision,
+    mutating_tools_allowed: bool,
+}
+
+#[derive(Clone, Debug)]
 struct AgentTurnStartRequest {
     prompt: String,
     plan_decision: PlanTurnDecision,
@@ -206,7 +219,7 @@ struct SlashRuntime {
 
 #[derive(Clone)]
 struct AgentTurnLauncher {
-    model: String,
+    config: AgentConfig,
     action_sender: mpsc::Sender<AppAction>,
     tool_registry: ToolRegistry,
     turn_budgets: TurnBudgetTracker,
@@ -407,7 +420,7 @@ impl MockTurnRegistry {
 
     fn start(&self, message_id: ChatMessageId) -> CancellationToken {
         let cancel = CancellationToken::new();
-        *self.current.lock().expect("mock turn lock poisoned") = Some(ActiveMockTurn {
+        *self.current.lock().expect("active turn lock poisoned") = Some(ActiveMockTurn {
             message_id,
             cancel: cancel.clone(),
         });
@@ -415,7 +428,7 @@ impl MockTurnRegistry {
     }
 
     fn cancel(&self, message_id: ChatMessageId) -> bool {
-        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        let mut current = self.current.lock().expect("active turn lock poisoned");
         let Some(turn) = current
             .as_ref()
             .filter(|turn| turn.message_id == message_id)
@@ -428,14 +441,14 @@ impl MockTurnRegistry {
     }
 
     fn cancel_current(&self) -> Option<ChatMessageId> {
-        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        let mut current = self.current.lock().expect("active turn lock poisoned");
         let turn = current.take()?;
         turn.cancel.cancel();
         Some(turn.message_id)
     }
 
     fn clear(&self, message_id: ChatMessageId) {
-        let mut current = self.current.lock().expect("mock turn lock poisoned");
+        let mut current = self.current.lock().expect("active turn lock poisoned");
         if current
             .as_ref()
             .is_some_and(|turn| turn.message_id == message_id)
@@ -492,7 +505,7 @@ impl AgentApp {
         let chat_panel = build_chat_panel(
             &runtime.message_store,
             AgentTurnLauncher {
-                model: runtime.config.model.clone(),
+                config: runtime.config.clone(),
                 action_sender: runtime.action_sender.clone(),
                 tool_registry: runtime.tool_registry.clone(),
                 turn_budgets: runtime.turn_budgets.clone(),
@@ -922,7 +935,7 @@ fn start_agent_turn_from_user_prompt(
     }
     let _ = compact_store_if_needed(store, turn_launcher.compact_policy);
 
-    let assistant_id = start_mock_agent_turn_for_prompt(
+    let assistant_id = start_agent_turn_for_request(
         store,
         &slash_runtime.input_handle,
         &slash_runtime.mock_turns,
@@ -977,7 +990,7 @@ fn mutating_tools_allowed_for_turn(plan_mode: PlanMode, plan_decision: &PlanTurn
     plan_mode == PlanMode::Off && !plan_decision.requires_plan()
 }
 
-fn start_mock_agent_turn_for_prompt(
+fn start_agent_turn_for_request(
     store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
@@ -1006,21 +1019,51 @@ fn start_mock_agent_turn_for_prompt(
 
     input_handle.streaming_binding().set(true);
     status_state.set(STATUS_STREAMING.to_string());
-    spawn_mock_agent_turn(
-        turn_launcher.action_sender.clone(),
-        MockAgentTurnRequest {
-            branch,
-            message_id: assistant_id,
-            block_id: text_block_id,
-            cancel,
-            token_delay: mock_turns.token_delay(),
-            model: turn_launcher.model.clone(),
-            prompt: request.prompt,
-            plan_decision: request.plan_decision,
-            mutating_tools_allowed: request.mutating_tools_allowed,
-        },
-    );
+    match turn_launcher.config.provider {
+        AgentProvider::Mock => spawn_mock_agent_turn(
+            turn_launcher.action_sender.clone(),
+            MockAgentTurnRequest {
+                branch,
+                message_id: assistant_id,
+                block_id: text_block_id,
+                cancel,
+                token_delay: mock_turns.token_delay(),
+                model: turn_launcher.config.model.clone(),
+                prompt: request.prompt,
+                plan_decision: request.plan_decision,
+                mutating_tools_allowed: request.mutating_tools_allowed,
+            },
+        ),
+        AgentProvider::DeepSeek => spawn_deepseek_agent_turn(
+            turn_launcher.action_sender.clone(),
+            DeepSeekAgentTurnRequest {
+                branch,
+                message_id: assistant_id,
+                block_id: text_block_id,
+                cancel,
+                config: turn_launcher.config.clone(),
+                messages: deepseek_live_messages_for_prompt(
+                    &request.prompt,
+                    &request.plan_decision,
+                ),
+                plan_decision: request.plan_decision,
+                mutating_tools_allowed: request.mutating_tools_allowed,
+            },
+        ),
+    }
     Some(assistant_id)
+}
+
+fn deepseek_live_messages_for_prompt(
+    prompt: &str,
+    plan_decision: &PlanTurnDecision,
+) -> Vec<ChatCompletionMessage> {
+    let mut messages = Vec::new();
+    if plan_decision.requires_plan() {
+        messages.push(ChatCompletionMessage::system(PLAN_MODE_SYSTEM_PROMPT));
+    }
+    messages.push(ChatCompletionMessage::user(prompt.to_string()));
+    messages
 }
 
 fn auto_load_matching_skills(
@@ -1071,7 +1114,7 @@ fn agent_slash_commands() -> Vec<ChatSlashCommand> {
             .detail("List available tools")
             .submit_on_accept(),
         ChatSlashCommand::new("/abort")
-            .detail("Cancel the active mock turn")
+            .detail("Cancel the active turn")
             .submit_on_accept(),
     ]
 }
@@ -1255,7 +1298,7 @@ fn help_text() -> &'static str {
 - /skills: List available skills.\n\
 - `/skill <name>`: Activate a skill for this session.\n\
 - /tools: List available tools and approval policy.\n\
-- /abort: Cancel the active mock turn."
+- /abort: Cancel the active turn."
 }
 
 fn apply_skill_command(
@@ -1398,6 +1441,65 @@ fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAg
     });
 }
 
+fn spawn_deepseek_agent_turn(
+    action_sender: mpsc::Sender<AppAction>,
+    request: DeepSeekAgentTurnRequest,
+) {
+    thread::spawn(move || {
+        let runtime = match atto_ui_async::build_current_thread_runtime() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = action_sender.send(AppAction::TurnFailed {
+                    branch: request.branch,
+                    message_id: request.message_id,
+                    error: deepseek_runtime_error(error),
+                });
+                return;
+            }
+        };
+        runtime.block_on(run_deepseek_agent_turn(action_sender, request));
+    });
+}
+
+async fn run_deepseek_agent_turn(
+    action_sender: mpsc::Sender<AppAction>,
+    request: DeepSeekAgentTurnRequest,
+) {
+    if request.cancel.is_cancelled() {
+        return;
+    }
+
+    let mut stream = DeepSeekUiStream::new_with_plan_gate(
+        request.branch,
+        request.message_id,
+        request.block_id,
+        request.config.model.clone(),
+        request.plan_decision.requires_plan(),
+        request.mutating_tools_allowed,
+    );
+    let cancel = request.cancel.clone();
+    let result = DeepSeekClient::new()
+        .stream_chat_completion_events(&request.config, request.messages, |event| {
+            if cancel.is_cancelled() {
+                return Err(deepseek_turn_cancelled_error());
+            }
+            if !send_stream_actions(&action_sender, stream.map_event(event)) {
+                return Err(ui_action_channel_closed_error());
+            }
+            if cancel.is_cancelled() {
+                return Err(deepseek_turn_cancelled_error());
+            }
+            Ok(())
+        })
+        .await;
+
+    if let Err(error) = result
+        && !request.cancel.is_cancelled()
+    {
+        let _ = send_stream_actions(&action_sender, stream.map_error(error));
+    }
+}
+
 fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<AppAction>) -> bool {
     for action in actions {
         if action_sender.send(action).is_err() {
@@ -1405,6 +1507,25 @@ fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<App
         }
     }
     true
+}
+
+fn deepseek_runtime_error(error: std::io::Error) -> ChatError {
+    ChatError::new(
+        ChatErrorKind::Other,
+        "Failed to start DeepSeek async runtime.",
+    )
+    .with_detail(error.to_string())
+}
+
+fn deepseek_turn_cancelled_error() -> ChatError {
+    ChatError::new(ChatErrorKind::Other, "DeepSeek turn was canceled.")
+}
+
+fn ui_action_channel_closed_error() -> ChatError {
+    ChatError::new(
+        ChatErrorKind::Other,
+        "UI action channel closed before DeepSeek turn finished.",
+    )
 }
 
 fn mock_agent_events(
@@ -1862,7 +1983,7 @@ fn continue_after_accepted_plan(
         instruction.clone(),
     ));
     let _ = compact_store_if_needed(store, runtime.turn_launcher.compact_policy);
-    let _ = start_mock_agent_turn_for_prompt(
+    let _ = start_agent_turn_for_request(
         store,
         &runtime.input_handle,
         &runtime.mock_turns,
@@ -2376,9 +2497,12 @@ fn chat_window_rect(screen: Rect) -> Rect {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use atto_ui::ComponentValue;
     use atto_ui::composable::{
@@ -2700,7 +2824,7 @@ Use this skill for {name} tasks.
                 status_state: status_state.clone(),
                 transcript_status: TranscriptStatusState::new(),
                 turn_launcher: AgentTurnLauncher {
-                    model: "deepseek-chat".to_string(),
+                    config: AgentConfig::defaults("."),
                     action_sender: sender,
                     tool_registry: test_tool_registry(),
                     turn_budgets: turn_budgets.clone(),
@@ -2718,7 +2842,7 @@ Use this skill for {name} tasks.
         compact_policy: CompactPolicy,
     ) -> AgentTurnLauncher {
         AgentTurnLauncher {
-            model: "deepseek-chat".to_string(),
+            config: AgentConfig::defaults("."),
             action_sender,
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
@@ -2825,6 +2949,111 @@ Use this skill for {name} tasks.
                 ToolOutputKind::Markdown,
             ))
         }
+    }
+
+    struct TestSseServer {
+        address: String,
+        handle: thread::JoinHandle<String>,
+    }
+
+    impl TestSseServer {
+        fn spawn(body: impl Into<String>) -> Self {
+            Self::spawn_response(200, "OK", "text/event-stream", body)
+        }
+
+        fn spawn_response(
+            status: u16,
+            reason: &'static str,
+            content_type: &'static str,
+            body: impl Into<String>,
+        ) -> Self {
+            let body = body.into();
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock SSE server");
+            listener
+                .set_nonblocking(true)
+                .expect("configure mock SSE listener");
+            let address = listener
+                .local_addr()
+                .expect("mock SSE server address")
+                .to_string();
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = accept_with_timeout(&listener, Duration::from_secs(5));
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("configure mock SSE read timeout");
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .expect("configure mock SSE write timeout");
+                let request = read_http_request(&mut stream);
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write mock SSE response");
+                request
+            });
+            Self { address, handle }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}/v1", self.address)
+        }
+
+        fn join(self) -> String {
+            self.handle.join().expect("mock SSE server should join")
+        }
+    }
+
+    fn accept_with_timeout(
+        listener: &TcpListener,
+        timeout: Duration,
+    ) -> (TcpStream, std::net::SocketAddr) {
+        let start = Instant::now();
+        loop {
+            match listener.accept() {
+                Ok(stream) => return stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && start.elapsed() < timeout =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept mock SSE request: {error}"),
+            }
+        }
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer).expect("read mock HTTP request");
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+            if http_request_body_complete(&bytes) {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn http_request_body_complete(bytes: &[u8]) -> bool {
+        let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let headers = String::from_utf8_lossy(&bytes[..header_end]);
+        let content_length = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        });
+        let body_start = header_end + 4;
+        bytes.len() >= body_start + content_length.unwrap_or(0)
     }
 
     fn slow_tool_call(call_id: &str) -> ToolUseBlock {
@@ -3446,7 +3675,7 @@ Use this skill for {name} tasks.
         let mut panel = build_chat_panel(
             &store,
             AgentTurnLauncher {
-                model: "deepseek-chat".to_string(),
+                config: AgentConfig::defaults("."),
                 action_sender: sender.clone(),
                 tool_registry: test_tool_registry(),
                 turn_budgets: turn_budgets.clone(),
@@ -3503,7 +3732,7 @@ Use this skill for {name} tasks.
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
         let turn_budgets = TurnBudgetTracker::default();
         let turn_launcher = AgentTurnLauncher {
-            model: "deepseek-chat".to_string(),
+            config: AgentConfig::defaults("."),
             action_sender: sender,
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
@@ -3537,6 +3766,87 @@ Use this skill for {name} tasks.
     }
 
     #[test]
+    fn deepseek_provider_streams_live_events_through_app_actions() {
+        let server = TestSseServer::spawn(concat!(
+            "data: {\"model\":\"mock-deepseek\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello from live\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ));
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender.clone(),
+            tool_registry: test_tool_registry(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
+        };
+        let tool_runtime = test_tool_runtime(
+            config.clone(),
+            sender,
+            test_tool_registry(),
+            test_tool_permissions(),
+        );
+        let transcript_status = TranscriptStatusState::new();
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("live prompt".to_string()),
+        );
+
+        for _ in 0..4 {
+            let action = receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("live DeepSeek turn should emit an app action");
+            apply_app_action(
+                &store,
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &transcript_status,
+                &tool_runtime,
+                action,
+            );
+            if !input_handle.streaming_binding().get() {
+                break;
+            }
+        }
+
+        let request = server.join();
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(request.contains(r#""content":"live prompt""#));
+        let messages = store.messages();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        assert_eq!(message_text(&messages[1]), "hello from live");
+        assert_eq!(messages[1].status, ChatTurnStatus::Complete);
+        assert_eq!(messages[1].meta.model.as_deref(), Some("mock-deepseek"));
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
     fn text_submit_compacts_older_transcript_before_starting_turn() {
         let store = ChatMessageStore::new();
         store.push(ChatMessage::text(
@@ -3566,7 +3876,7 @@ Use this skill for {name} tasks.
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
         let turn_budgets = TurnBudgetTracker::default();
         let turn_launcher = AgentTurnLauncher {
-            model: "deepseek-chat".to_string(),
+            config: AgentConfig::defaults("."),
             action_sender: sender,
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),
@@ -3682,7 +3992,7 @@ Use this skill for {name} tasks.
             &turn_budgets,
         );
         let turn_launcher = AgentTurnLauncher {
-            model: "deepseek-chat".to_string(),
+            config: AgentConfig::defaults("."),
             action_sender: sender,
             tool_registry: test_tool_registry(),
             turn_budgets: turn_budgets.clone(),

@@ -114,7 +114,7 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
 
     submit_text(&mut host, "/help")?;
     host.wait_for_text("Available commands:", PTY_WAIT)?;
-    host.wait_for_text("/abort: Cancel the active mock turn.", PTY_WAIT)?;
+    host.wait_for_text("/abort: Cancel the active turn.", PTY_WAIT)?;
 
     submit_text(&mut host, "/plan")?;
     host.wait_for_text("Plan mode set to off.", PTY_WAIT)?;

@@ -8,15 +8,15 @@ use atto_ui::task::{CancellationToken, TaskHandle, TaskId, TaskRegistry};
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 
-/// Builds a current-thread tokio runtime with timers enabled.
+/// Builds a current-thread tokio runtime with I/O and timers enabled.
 pub fn build_current_thread_runtime() -> io::Result<Runtime> {
-    Builder::new_current_thread().enable_time().build()
+    Builder::new_current_thread().enable_all().build()
 }
 
-/// Builds a multi-thread tokio runtime with timers enabled.
+/// Builds a multi-thread tokio runtime with I/O and timers enabled.
 pub fn build_multi_thread_runtime(worker_threads: usize) -> io::Result<Runtime> {
     let mut builder = Builder::new_multi_thread();
-    builder.enable_time();
+    builder.enable_all();
     if worker_threads > 0 {
         builder.worker_threads(worker_threads);
     }
