@@ -13,4 +13,4 @@ Goal: ensure the live DeepSeek provider path reuses the existing M2.5 `ChatError
 5. Add focused tests for missing/invalid API key behavior, HTTP status mappings, and live stream disconnect/error display where coverage is missing. **Done:** added live-provider coverage for missing key, 401, 429, 502, stream disconnect, and startup notice suppression.
 6. Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`. **Done.**
 7. Mark M7.7 `[DONE]` in `TODO.md` with completion notes and validation commands. **Done.**
-8. Update this progress file with completion status, commit all related changes with the required co-author trailer, and stop. **Next.**
+8. Update this progress file with completion status, commit all related changes with the required co-author trailer, and stop. **Done.**
