@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use atto_ui::CancellationToken;
-use atto_ui::ComponentValue;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     StatusSegment, StatusSegmentAlign, run_crossterm_desktop_with_actions,
@@ -28,9 +27,10 @@ use atto_ui_chat::{
     PlanItem, ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
-use serde_json::{Map, Number, Value};
+use serde_json::Value;
 
 pub mod config;
+pub mod context;
 pub mod deepseek;
 pub mod deepseek_client;
 mod limits;
@@ -40,19 +40,18 @@ mod stream_ui;
 pub mod tool;
 
 use crate::config::{AgentConfig, PlanMode};
+use crate::context::{ContextBuilder, component_value_to_json};
 use crate::deepseek::{
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionMessage,
-    ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCall, ChatFunctionCallDelta,
-    ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
+    ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCallDelta, ChatToolCallDelta,
+    ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
 use crate::plan::{
     PLAN_MODE_SYSTEM_PROMPT, PlanTurnDecision, decide_plan_for_turn, submit_plan_chat_tool,
     submit_plan_tool_choice,
 };
-use crate::skill::{
-    DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry, build_skill_prompt_block,
-};
+use crate::skill::{DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry};
 use crate::stream_ui::DeepSeekUiStream;
 use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
@@ -1685,7 +1684,7 @@ pub fn deepseek_request_from_transcript(
     registry: &ToolRegistry,
     messages: &[ChatMessage],
 ) -> ChatCompletionRequest {
-    ChatCompletionRequest::from_config(config, deepseek_messages_from_transcript(messages))
+    ChatCompletionRequest::from_config(config, ContextBuilder::new().build_messages(messages))
         .with_tools(registry.chat_tools())
         .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
 }
@@ -1700,7 +1699,9 @@ pub fn deepseek_request_from_transcript_with_skills(
 ) -> ChatCompletionRequest {
     ChatCompletionRequest::from_config(
         config,
-        deepseek_messages_from_transcript_with_skills(skill_registry, loaded_skills, messages),
+        ContextBuilder::new()
+            .with_skills(skill_registry, loaded_skills)
+            .build_messages(messages),
     )
     .with_tools(registry.chat_tools())
     .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
@@ -1711,7 +1712,7 @@ pub fn deepseek_plan_request_from_transcript(
     config: &AgentConfig,
     messages: &[ChatMessage],
 ) -> ChatCompletionRequest {
-    deepseek_plan_request_from_messages(config, deepseek_messages_from_transcript(messages))
+    deepseek_plan_request_from_messages(config, ContextBuilder::new().build_messages(messages))
 }
 
 /// Builds a plan-draft request while preserving active skill prompt injection.
@@ -1723,7 +1724,9 @@ pub fn deepseek_plan_request_from_transcript_with_skills(
 ) -> ChatCompletionRequest {
     deepseek_plan_request_from_messages(
         config,
-        deepseek_messages_from_transcript_with_skills(skill_registry, loaded_skills, messages),
+        ContextBuilder::new()
+            .with_skills(skill_registry, loaded_skills)
+            .build_messages(messages),
     )
 }
 
@@ -1739,23 +1742,7 @@ fn deepseek_plan_request_from_messages(
 
 /// Converts the UI transcript into DeepSeek/OpenAI-compatible chat messages.
 pub fn deepseek_messages_from_transcript(messages: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
-    let mut result = Vec::new();
-    for message in messages {
-        match &message.role {
-            ChatRole::User => push_text_message(
-                &mut result,
-                ChatCompletionMessage::user,
-                text_content_for_message(message),
-            ),
-            ChatRole::System | ChatRole::Custom(_) => push_text_message(
-                &mut result,
-                ChatCompletionMessage::system,
-                text_content_for_message(message),
-            ),
-            ChatRole::Assistant => push_assistant_messages(&mut result, message),
-        }
-    }
-    result
+    ContextBuilder::new().build_messages(messages)
 }
 
 /// Converts the UI transcript and active skills into DeepSeek/OpenAI-compatible messages.
@@ -1764,178 +1751,9 @@ pub fn deepseek_messages_from_transcript_with_skills(
     loaded_skills: &LoadedSkillSet,
     messages: &[ChatMessage],
 ) -> Vec<ChatCompletionMessage> {
-    let mut result = deepseek_messages_from_transcript(messages);
-    if let Some(skill_prompt) = build_skill_prompt_block(skill_registry, loaded_skills) {
-        result.insert(0, ChatCompletionMessage::system(skill_prompt));
-    }
-    result
-}
-
-fn push_text_message(
-    result: &mut Vec<ChatCompletionMessage>,
-    build: impl FnOnce(String) -> ChatCompletionMessage,
-    content: String,
-) {
-    if !content.is_empty() {
-        result.push(build(content));
-    }
-}
-
-fn push_assistant_messages(result: &mut Vec<ChatCompletionMessage>, message: &ChatMessage) {
-    let content = text_content_for_message(message);
-    let tool_calls = message
-        .blocks
-        .iter()
-        .filter_map(|block| match block {
-            ChatBlock::ToolUse(tool_use) => Some(chat_tool_call_from_tool_use(tool_use)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if !content.is_empty() || !tool_calls.is_empty() {
-        result.push(ChatCompletionMessage {
-            role: crate::deepseek::ChatMessageRole::Assistant,
-            content: (!content.is_empty()).then_some(content),
-            reasoning_content: None,
-            tool_calls,
-            tool_call_id: None,
-        });
-    }
-
-    for block in &message.blocks {
-        if let ChatBlock::ToolResult(tool_result) = block {
-            result.push(ChatCompletionMessage::tool(
-                tool_result.call_id.clone(),
-                tool_result_content(tool_result),
-            ));
-        }
-    }
-}
-
-fn text_content_for_message(message: &ChatMessage) -> String {
-    let mut content = String::new();
-    for block in &message.blocks {
-        match block {
-            ChatBlock::Text(text) if !text.markdown.is_empty() => {
-                push_section(&mut content, &text.markdown);
-            }
-            ChatBlock::Notice(notice) if !notice.text.is_empty() => {
-                push_section(&mut content, &notice.text);
-            }
-            ChatBlock::Compact(compact) if !compact.summary.is_empty() => {
-                push_section(&mut content, &compact.summary);
-            }
-            _ => {}
-        }
-    }
-    content
-}
-
-fn push_section(content: &mut String, section: &str) {
-    if !content.is_empty() {
-        content.push_str("\n\n");
-    }
-    content.push_str(section);
-}
-
-fn chat_tool_call_from_tool_use(tool_use: &ToolUseBlock) -> ChatToolCall {
-    ChatToolCall {
-        id: tool_use.call_id.clone(),
-        kind: ChatToolKind::Function,
-        function: ChatFunctionCall {
-            name: tool_use.name.clone(),
-            arguments: tool_arguments_from_input(&tool_use.input),
-        },
-    }
-}
-
-fn tool_arguments_from_input(input: &ToolInput) -> String {
-    match input {
-        ToolInput::Text(text) if text.trim().is_empty() => "{}".to_string(),
-        ToolInput::Text(text) => text.clone(),
-        ToolInput::Json(value) => serde_json::to_string(&component_value_to_json(value))
-            .unwrap_or_else(|_| "{}".to_string()),
-    }
-}
-
-fn tool_result_content(result: &ToolResultBlock) -> String {
-    let mut content = format!("ok: {}", result.ok);
-    if let Some(exit_code) = result.exit_code {
-        content.push_str(&format!("\nexit_code: {exit_code}"));
-    }
-    let output = result.output.as_text();
-    if !output.is_empty() {
-        content.push_str("\n\n");
-        content.push_str(output);
-    }
-    content
-}
-
-fn component_value_to_json(value: &ComponentValue) -> Value {
-    match value {
-        ComponentValue::Null => Value::Null,
-        ComponentValue::Bool(value) => Value::Bool(*value),
-        ComponentValue::I64(value) => Value::Number(Number::from(*value)),
-        ComponentValue::U64(value) => Value::Number(Number::from(*value)),
-        ComponentValue::F64(value) => Number::from_f64(*value)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        ComponentValue::String(value) => Value::String(value.clone()),
-        ComponentValue::StringList(values) => Value::Array(
-            values
-                .iter()
-                .map(|value| Value::String(value.clone()))
-                .collect(),
-        ),
-        ComponentValue::Table(rows) => Value::Array(
-            rows.iter()
-                .map(|row| {
-                    Value::Array(
-                        row.iter()
-                            .map(|value| Value::String(value.clone()))
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ),
-        ComponentValue::Rect(rect) => Value::Object(
-            [
-                (
-                    "x".to_string(),
-                    Value::Number(Number::from(u64::from(rect.x))),
-                ),
-                (
-                    "y".to_string(),
-                    Value::Number(Number::from(u64::from(rect.y))),
-                ),
-                (
-                    "width".to_string(),
-                    Value::Number(Number::from(u64::from(rect.width))),
-                ),
-                (
-                    "height".to_string(),
-                    Value::Number(Number::from(u64::from(rect.height))),
-                ),
-            ]
-            .into_iter()
-            .collect::<Map<_, _>>(),
-        ),
-        ComponentValue::Bytes(bytes) => Value::Array(
-            bytes
-                .iter()
-                .map(|byte| Value::Number(Number::from(u64::from(*byte))))
-                .collect(),
-        ),
-        ComponentValue::List(values) => {
-            Value::Array(values.iter().map(component_value_to_json).collect())
-        }
-        ComponentValue::Map(values) => Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), component_value_to_json(value)))
-                .collect(),
-        ),
-    }
+    ContextBuilder::new()
+        .with_skills(skill_registry, loaded_skills)
+        .build_messages(messages)
 }
 
 fn append_thinking_delta(store: &ChatMessageStore, message_id: ChatMessageId, delta: &str) -> bool {

@@ -138,7 +138,9 @@
 
 ## 阶段 M6 - Context / Session Polish
 
-- [ ] **M6.1 ContextBuilder** - 将 UI transcript 转成 DeepSeek messages，正确处理 user、assistant、tool use、tool result、notice、compact、skills。
+- [x] **[DONE] M6.1 ContextBuilder** - 将 UI transcript 转成 DeepSeek messages，正确处理 user、assistant、tool use、tool result、notice、compact、skills。
+  - 完成记录（2026-07-10）：新增 `atto_agent_app::context::ContextBuilder`，集中负责 UI transcript 到 DeepSeek/OpenAI-compatible messages 的转换；现有 `deepseek_*_from_transcript*` request/message API 保持不变并委托 ContextBuilder。转换现在按 block 顺序处理 user/system/custom/assistant 文本，assistant `ToolUseBlock` 聚合为 `tool_calls`，`ToolResultBlock` 映射为 role=`tool`，`NoticeBlock` 和 `CompactBlock` 映射为独立 system context 消息，已加载 skills 仍作为 `<skills>` system prompt 注入到 transcript 前。新增单测覆盖 user/assistant/tool/notice/compact 转换和 loaded skill 注入。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.2 文件 mention** - 解析 `@path`，读取 workspace 内文件摘要注入 prompt，限制单文件和总大小。
 - [ ] **M6.3 工具输出预算** - 回传模型的 tool output 做截断，UI 保留完整或尾部窗口。
 - [ ] **M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。

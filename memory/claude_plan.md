@@ -11,30 +11,32 @@
 
 ## 当前任务
 
-- 第一个未完成任务：`M5.R Review`。
-- 任务要求：复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。
-- 最近提交：`[M5.7] Add plan mode PTY coverage`，未声明与 `M5.R Review` 直接相关的未完成事项。
+- 第一个未完成任务：`M6.1 ContextBuilder`。
+- 任务要求：将 UI transcript 转成 DeepSeek messages，正确处理 user、assistant、tool use、tool result、notice、compact、skills。
+- 最近提交：`[M5.R] Complete plan mode review`，未声明与 `M6.1 ContextBuilder` 直接相关的未完成事项。
 
 ## 执行步骤
 
 1. 读取 `TODO.md`，确认第一个标题未标记 `[DONE]` 的任务。
 2. 检查最近提交是否有与当前任务直接相关的未完成事项。
-3. 只审查 M5 plan mode 相关实现、测试和请求构造路径。
-4. 确认 plan 判定为本地 deterministic 逻辑，plan 草稿请求只暴露虚拟 `submit_plan`，并保留 markdown fallback。
-5. 确认 `apply_patch`、`run_command` 等 mutating tool 在计划接受前由 app 层 gate 优先拦截，且项目级授权不能绕过。
-6. 运行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
-7. 验证通过后，将 `M5.R Review` 在 `TODO.md` 标记为 `[DONE]` 并填写完成记录。
-8. 检查 diff/status/log，提交本轮相关变更，然后停止。
+3. 只审查 `M6.1` 相关的 `PLAN.md`、`TUI_AGENT.md` 要求和当前 transcript 到 DeepSeek request 的构造路径。
+4. 新增 `context::ContextBuilder`，集中负责 UI transcript 到 DeepSeek/OpenAI-compatible messages 的转换。
+5. 保持现有 `deepseek_*_from_transcript*` 公开 API 不变，内部改为委托 ContextBuilder。
+6. 添加聚焦单测，覆盖 user/assistant/tool use/tool result/notice/compact 转换和 loaded skill prompt 注入。
+7. 运行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`。
+8. 验证通过后，将 `M6.1 ContextBuilder` 在 `TODO.md` 标记为 `[DONE]` 并填写完成记录。
+9. 检查 diff/status/log，提交本轮相关变更，然后停止。
 
 ## 进度
 
-- 已读取 `TODO.md` 并确认当前任务为 `M5.R Review`。
+- 已读取 `TODO.md` 并确认当前任务为 `M6.1 ContextBuilder`。
 - 已检查最近提交，无直接相关未完成事项。
-- 已复核本地 plan decision、虚拟 `submit_plan`、markdown fallback、PlanBlock Accept/Reject 流程和 mutating-tool gate 顺序。
-- 未发现阻塞 M5.R 的问题：plan mode 不依赖模型特有能力，副作用工具 gate 先于权限策略执行，项目级授权不能绕过 gate。
+- 已新增 `atto_agent_app::context::ContextBuilder`。
+- 已将现有 DeepSeek transcript request/message helper 改为委托 ContextBuilder。
+- 已添加 ContextBuilder 单测，覆盖 transcript block 转换和 skill 注入。
 - `cargo fmt --all` 已通过。
 - `cargo clippy --workspace --all-targets -- -D warnings` 已通过。
 - `cargo test --workspace --all-targets` 已通过。
 - `cargo fmt --all -- --check` 已通过。
-- `TODO.md` 已将 `M5.R Review` 标记为 `[DONE]` 并记录完成情况和验证命令。
-- 下一步：提交 `TODO.md` 和 `memory/claude_plan.md`。
+- `TODO.md` 已将 `M6.1 ContextBuilder` 标记为 `[DONE]` 并记录完成情况和验证命令。
+- 下一步：提交 `TODO.md`、`memory/claude_plan.md`、`crates/atto-agent-app/src/lib.rs` 和 `crates/atto-agent-app/src/context.rs`。
