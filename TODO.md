@@ -96,7 +96,9 @@
 - [x] **[DONE] M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。
   - 完成记录（2026-07-10）：新增 auto-mode skill 确定性词匹配，用户 prompt 与 skill 的 `name`、`description`、`triggers` 做大小写不敏感 token 交集匹配；普通用户提交时自动加载匹配的 `mode: auto` skill，跳过已加载 skill 和 `mode: manual` skill，并按 registry 名称顺序限制每个 prompt 最多自动加载 4 个，同时同步状态栏 `skills: N`。新增单测覆盖字段匹配、大小写/标点 token 化、手动 skill 不自动加载、已加载跳过、上限限制，以及提交路径自动更新 loaded skill 状态。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
+- [x] **[DONE] M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
+  - 完成记录（2026-07-10）：新增 skill prompt 注入构建器，按设计将已加载 skill 渲染为 `<skills><skill name="..." source="...">...</skill></skills>` system prompt 块；默认限制单个 skill body 最多 6 KiB、完整 skill prompt 最多 20 KiB，并按 UTF-8 边界安全截断。新增带 skill 注入的 DeepSeek transcript request/messages 构建入口，保持无 skill 请求构建入口可用于既有场景；补充单测覆盖 prompt 格式、未加载 skill 忽略、单 skill 与总 prompt 大小限制、UTF-8 截断和 request 注入位置。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app skill_prompt`；`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_loaded_skills`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
 - [ ] **M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。
 - [ ] **M4.7 测试** - 单测解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill`。
 - [ ] **M4.R Review** - 复核 skill 注入不会泄漏权限、不会破坏 prompt 预算，验证通过。

@@ -45,7 +45,9 @@ use crate::deepseek::{
     ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
-use crate::skill::{DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry};
+use crate::skill::{
+    DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry, build_skill_prompt_block,
+};
 use crate::stream_ui::DeepSeekUiStream;
 use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
@@ -1492,6 +1494,22 @@ pub fn deepseek_request_from_transcript(
         .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
 }
 
+/// Builds the OpenAI-compatible request body and prepends active skills to the system prompt.
+pub fn deepseek_request_from_transcript_with_skills(
+    config: &AgentConfig,
+    registry: &ToolRegistry,
+    skill_registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    messages: &[ChatMessage],
+) -> ChatCompletionRequest {
+    ChatCompletionRequest::from_config(
+        config,
+        deepseek_messages_from_transcript_with_skills(skill_registry, loaded_skills, messages),
+    )
+    .with_tools(registry.chat_tools())
+    .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
+}
+
 /// Converts the UI transcript into DeepSeek/OpenAI-compatible chat messages.
 pub fn deepseek_messages_from_transcript(messages: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
     let mut result = Vec::new();
@@ -1509,6 +1527,19 @@ pub fn deepseek_messages_from_transcript(messages: &[ChatMessage]) -> Vec<ChatCo
             ),
             ChatRole::Assistant => push_assistant_messages(&mut result, message),
         }
+    }
+    result
+}
+
+/// Converts the UI transcript and active skills into DeepSeek/OpenAI-compatible messages.
+pub fn deepseek_messages_from_transcript_with_skills(
+    skill_registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    messages: &[ChatMessage],
+) -> Vec<ChatCompletionMessage> {
+    let mut result = deepseek_messages_from_transcript(messages);
+    if let Some(skill_prompt) = build_skill_prompt_block(skill_registry, loaded_skills) {
+        result.insert(0, ChatCompletionMessage::system(skill_prompt));
     }
     result
 }
@@ -1836,8 +1867,8 @@ mod tests {
         APP_TITLE, AgentApp, AgentTurnLauncher, AgentTurnLimits, AppAction, MockTurnRegistry,
         STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker,
         apply_app_action, build_chat_panel, deepseek_request_from_transcript,
-        execute_tool_use_to_result_block, handle_tool_approval, submit_input_response,
-        submit_slash_command_text,
+        deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
+        handle_tool_approval, submit_input_response, submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -3381,6 +3412,41 @@ Use this skill for {name} tasks.
             request.tool_choice,
             Some(ToolChoice::Mode(ToolChoiceMode::Auto))
         );
+    }
+
+    #[test]
+    fn deepseek_request_from_transcript_injects_loaded_skills() {
+        let (workspace, skill_registry) = test_skill_registry(&[
+            ("rust", "rust-review", "Review Rust code."),
+            ("docs", "docs", "Write documentation."),
+        ]);
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("rust-review"));
+        let registry = test_tool_registry();
+
+        let request = deepseek_request_from_transcript_with_skills(
+            &AgentConfig::defaults("."),
+            &registry,
+            &skill_registry,
+            &loaded,
+            &[ChatMessage::text(1, ChatRole::User, "Please review this.")],
+        );
+
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, ChatMessageRole::System);
+        let skill_prompt = request.messages[0]
+            .content
+            .as_deref()
+            .expect("skill system prompt should have content");
+        assert!(skill_prompt.starts_with("<skills>\n"));
+        assert!(skill_prompt.contains("<skill name=\"rust-review\" source=\""));
+        assert!(skill_prompt.contains("Use this skill for rust-review tasks."));
+        assert!(!skill_prompt.contains("Use this skill for docs tasks."));
+        assert!(skill_prompt.ends_with("</skills>"));
+        assert_eq!(request.messages[1].role, ChatMessageRole::User);
+        assert_eq!(request.tools.len(), registry.len());
+
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]

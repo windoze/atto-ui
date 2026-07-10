@@ -2,8 +2,8 @@
 //!
 //! Skills are Markdown instruction files with YAML frontmatter. This module owns
 //! deterministic discovery from the default workspace and user skill roots, plus
-//! runtime tracking for loaded skills, and deterministic prompt matching for
-//! auto-mode skills. Prompt injection is implemented in a later M4 task.
+//! runtime tracking for loaded skills, deterministic prompt matching for
+//! auto-mode skills, and bounded prompt injection for active skills.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -24,6 +24,13 @@ const SKILL_FILE_NAME: &str = "SKILL.md";
 
 /// Maximum number of skills automatically loaded from one user prompt.
 pub const DEFAULT_MAX_AUTO_LOADED_SKILLS: usize = 4;
+/// Maximum bytes from one skill body included in the model prompt.
+pub const DEFAULT_MAX_SKILL_BODY_BYTES: usize = 6 * 1024;
+/// Maximum bytes for the complete `<skills>` prompt block.
+pub const DEFAULT_MAX_SKILL_PROMPT_BYTES: usize = 20 * 1024;
+
+const SKILLS_OPEN_TAG: &str = "<skills>\n";
+const SKILLS_CLOSE_TAG: &str = "</skills>";
 
 /// Parsed contents of one `SKILL.md` file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +41,22 @@ pub struct SkillDefinition {
     pub tools: Vec<String>,
     pub mode: SkillMode,
     pub body: String,
+}
+
+/// Byte budget used when rendering loaded skills into a system prompt block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkillPromptBudget {
+    pub max_skill_body_bytes: usize,
+    pub max_total_bytes: usize,
+}
+
+impl Default for SkillPromptBudget {
+    fn default() -> Self {
+        Self {
+            max_skill_body_bytes: DEFAULT_MAX_SKILL_BODY_BYTES,
+            max_total_bytes: DEFAULT_MAX_SKILL_PROMPT_BYTES,
+        }
+    }
 }
 
 impl SkillDefinition {
@@ -322,6 +345,103 @@ impl LoadedSkillSet {
     }
 }
 
+/// Renders loaded skills as the `<skills>` system prompt block using default limits.
+pub fn build_skill_prompt_block(
+    registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+) -> Option<String> {
+    build_skill_prompt_block_with_budget(registry, loaded_skills, SkillPromptBudget::default())
+}
+
+/// Renders loaded skills as a bounded `<skills>` block for insertion into a system prompt.
+pub fn build_skill_prompt_block_with_budget(
+    registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    budget: SkillPromptBudget,
+) -> Option<String> {
+    if budget.max_skill_body_bytes == 0
+        || budget.max_total_bytes <= SKILLS_OPEN_TAG.len() + SKILLS_CLOSE_TAG.len()
+    {
+        return None;
+    }
+
+    let mut prompt = String::from(SKILLS_OPEN_TAG);
+    for name in loaded_skills.names() {
+        let Some(skill) = registry.get(&name) else {
+            continue;
+        };
+        let remaining = budget
+            .max_total_bytes
+            .saturating_sub(prompt.len() + SKILLS_CLOSE_TAG.len());
+        let Some(entry) = build_skill_prompt_entry(skill, budget.max_skill_body_bytes, remaining)
+        else {
+            continue;
+        };
+        prompt.push_str(&entry);
+    }
+
+    if prompt.len() == SKILLS_OPEN_TAG.len() {
+        return None;
+    }
+    prompt.push_str(SKILLS_CLOSE_TAG);
+    Some(prompt)
+}
+
+fn build_skill_prompt_entry(
+    skill: &DiscoveredSkill,
+    max_body_bytes: usize,
+    max_entry_bytes: usize,
+) -> Option<String> {
+    let open = format!(
+        "<skill name=\"{}\" source=\"{}\">\n",
+        xml_attr_escape(&skill.definition.name),
+        xml_attr_escape(&skill.path.to_string_lossy())
+    );
+    let close = "\n</skill>\n";
+    let overhead = open.len() + close.len();
+    if max_entry_bytes <= overhead {
+        return None;
+    }
+
+    let body_budget = max_body_bytes.min(max_entry_bytes - overhead);
+    let body = truncate_utf8_to_byte_limit(&skill.definition.body, body_budget);
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut entry = open;
+    entry.push_str(body);
+    entry.push_str(close);
+    Some(entry)
+}
+
+fn truncate_utf8_to_byte_limit(value: &str, limit: usize) -> &str {
+    if value.len() <= limit {
+        return value;
+    }
+
+    let mut end = limit;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn xml_attr_escape(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 /// Builds the default search path list from a workspace and optional home directory.
 pub fn default_skill_search_paths(
     workspace_root: &Path,
@@ -599,6 +719,21 @@ Use this skill for {name} tasks.
             fs::create_dir_all(parent).expect("failed to create parent dir");
         }
         fs::write(path, text.as_ref()).expect("failed to write test fixture");
+    }
+
+    fn discovered_skill(name: &str, path: &str, body: &str) -> DiscoveredSkill {
+        DiscoveredSkill {
+            definition: SkillDefinition {
+                name: name.to_string(),
+                description: format!("Description for {name}."),
+                triggers: Vec::new(),
+                tools: Vec::new(),
+                mode: SkillMode::Manual,
+                body: body.to_string(),
+            },
+            path: PathBuf::from(path),
+            source: SkillSourceKind::Workspace,
+        }
     }
 
     #[test]
@@ -937,5 +1072,60 @@ Body.
                 .is_empty()
         );
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn skill_prompt_block_renders_loaded_skills() {
+        let mut registry = SkillRegistry::default();
+        registry.insert(discovered_skill(
+            "rust-review",
+            ".atto/skills/rust-review/SKILL.md",
+            "Inspect Rust changes first.\n",
+        ));
+        registry.insert(discovered_skill(
+            "docs",
+            ".atto/skills/docs/SKILL.md",
+            "Write clear docs.\n",
+        ));
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("rust-review"));
+
+        let prompt = build_skill_prompt_block(&registry, &loaded).unwrap();
+
+        assert!(prompt.starts_with("<skills>\n"));
+        assert!(prompt.ends_with("</skills>"));
+        assert!(prompt.contains(
+            "<skill name=\"rust-review\" source=\".atto/skills/rust-review/SKILL.md\">\n"
+        ));
+        assert!(prompt.contains("Inspect Rust changes first."));
+        assert!(!prompt.contains("Write clear docs."));
+    }
+
+    #[test]
+    fn skill_prompt_block_respects_body_and_total_limits() {
+        let mut registry = SkillRegistry::default();
+        registry.insert(discovered_skill("alpha", "a/SKILL.md", "abcdefghi"));
+        registry.insert(discovered_skill("beta", "b/SKILL.md", "beta body"));
+        let loaded = LoadedSkillSet::default();
+        assert!(loaded.insert("alpha"));
+        assert!(loaded.insert("beta"));
+        let budget = SkillPromptBudget {
+            max_skill_body_bytes: 5,
+            max_total_bytes: 100,
+        };
+
+        let prompt = build_skill_prompt_block_with_budget(&registry, &loaded, budget).unwrap();
+
+        assert!(prompt.len() <= budget.max_total_bytes);
+        assert!(prompt.contains("abcde"));
+        assert!(!prompt.contains("abcdef"));
+        assert!(prompt.contains("name=\"alpha\""));
+        assert!(!prompt.contains("name=\"beta\""));
+    }
+
+    #[test]
+    fn skill_prompt_truncation_preserves_utf8_boundaries() {
+        assert_eq!(truncate_utf8_to_byte_limit("a\u{00e9}b", 2), "a");
+        assert_eq!(truncate_utf8_to_byte_limit("a\u{00e9}b", 3), "a\u{00e9}");
     }
 }
