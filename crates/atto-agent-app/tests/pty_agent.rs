@@ -195,6 +195,10 @@ fn agent_mock_tool_approval_allow_once_runs_command() -> anyhow::Result<()> {
 
     host.wait_for_text("Atto Agent", PTY_WAIT)?;
 
+    submit_text(&mut host, "/plan off")?;
+    host.wait_for_text("Plan mode set to off.", PTY_WAIT)?;
+    host.wait_for_text("plan: off", PTY_WAIT)?;
+
     submit_text(&mut host, "agent-pty-run-command")?;
 
     host.wait_for_text("run_command", PTY_WAIT)?;
@@ -221,6 +225,10 @@ fn agent_mock_tool_approval_deny_writes_failed_result() -> anyhow::Result<()> {
     let mut host = spawn_agent()?;
 
     host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "/plan off")?;
+    host.wait_for_text("Plan mode set to off.", PTY_WAIT)?;
+    host.wait_for_text("plan: off", PTY_WAIT)?;
 
     submit_text(&mut host, "agent-pty-run-command")?;
 

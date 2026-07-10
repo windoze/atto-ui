@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::config::PlanMode;
 use crate::deepseek::{ChatTool, ToolChoice, ToolChoiceFunction};
-use crate::tool::{ToolPermission, ToolRegistry, ToolSpec};
+use crate::tool::ToolRegistry;
 
 /// Virtual function name used when the model submits a plan draft.
 pub const SUBMIT_PLAN_TOOL_NAME: &str = "submit_plan";
@@ -188,13 +188,9 @@ fn mentioned_mutating_tool(
 ) -> Option<String> {
     registry
         .specs()
-        .filter(|spec| tool_can_have_side_effects(spec))
+        .filter(|spec| spec.can_have_side_effects())
         .find(|spec| text_mentions_tool(lower, tokens, &spec.name))
         .map(|spec| spec.name.clone())
-}
-
-fn tool_can_have_side_effects(spec: &ToolSpec) -> bool {
-    !matches!(spec.permission, ToolPermission::AlwaysAllow)
 }
 
 fn text_mentions_tool(lower: &str, tokens: &BTreeSet<String>, name: &str) -> bool {

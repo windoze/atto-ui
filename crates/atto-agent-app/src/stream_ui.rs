@@ -24,6 +24,7 @@ pub(crate) struct DeepSeekUiStream {
     text_block_id: ChatBlockId,
     meta: ChatMessageMeta,
     expects_plan: bool,
+    mutating_tools_allowed: bool,
     content: String,
     tool_calls: ToolCallAccumulator,
     emitted_tool_calls: bool,
@@ -33,22 +34,43 @@ pub(crate) struct DeepSeekUiStream {
 
 impl DeepSeekUiStream {
     /// Creates a mapper bound to the current transcript branch and assistant turn.
+    #[cfg(test)]
     pub(crate) fn new(
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         text_block_id: ChatBlockId,
         model: impl Into<String>,
     ) -> Self {
-        Self::new_with_plan_requirement(branch, message_id, text_block_id, model, false)
+        Self::new_with_plan_gate(branch, message_id, text_block_id, model, false, true)
     }
 
     /// Creates a mapper that can convert plan-mode output into a `PlanBlock`.
+    #[cfg(test)]
     pub(crate) fn new_with_plan_requirement(
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         text_block_id: ChatBlockId,
         model: impl Into<String>,
         expects_plan: bool,
+    ) -> Self {
+        Self::new_with_plan_gate(
+            branch,
+            message_id,
+            text_block_id,
+            model,
+            expects_plan,
+            !expects_plan,
+        )
+    }
+
+    /// Creates a mapper with explicit plan and mutating-tool gate state.
+    pub(crate) fn new_with_plan_gate(
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        text_block_id: ChatBlockId,
+        model: impl Into<String>,
+        expects_plan: bool,
+        mutating_tools_allowed: bool,
     ) -> Self {
         Self {
             branch,
@@ -59,6 +81,7 @@ impl DeepSeekUiStream {
                 ..ChatMessageMeta::default()
             },
             expects_plan,
+            mutating_tools_allowed,
             content: String::new(),
             tool_calls: ToolCallAccumulator::default(),
             emitted_tool_calls: false,
@@ -155,6 +178,7 @@ impl DeepSeekUiStream {
                                 branch: self.branch,
                                 message_id: self.message_id,
                                 tool_calls,
+                                mutating_tools_allowed: self.mutating_tools_allowed,
                             });
                         }
                         Err(error) => return self.fail(error),
@@ -231,8 +255,11 @@ impl ToolCallAccumulator {
             .iter()
             .map(|(key, call)| call.to_complete_call(*key))
             .collect::<Result<Vec<_>, _>>()?;
-        if expects_plan {
-            return complete_plan_tool_call(calls).map(FinishedToolCalls::Plan);
+        if expects_plan
+            && let [call] = calls.as_slice()
+            && call.name == SUBMIT_PLAN_TOOL_NAME
+        {
+            return parse_submit_plan_arguments(&call.arguments).map(FinishedToolCalls::Plan);
         }
 
         let tool_calls = calls
@@ -324,28 +351,6 @@ impl CompleteToolCall {
             approval: None,
             collapsed: false,
         }
-    }
-}
-
-fn complete_plan_tool_call(calls: Vec<CompleteToolCall>) -> Result<Vec<PlanItem>, ChatError> {
-    match calls.as_slice() {
-        [call] if call.name == SUBMIT_PLAN_TOOL_NAME => {
-            parse_submit_plan_arguments(&call.arguments)
-        }
-        [call] => Err(tool_call_error(
-            "DeepSeek returned a non-plan tool call during plan generation.",
-            format!(
-                "expected `{SUBMIT_PLAN_TOOL_NAME}`, got `{}` for call id `{}`",
-                call.name, call.call_id
-            ),
-        )),
-        _ => Err(tool_call_error(
-            "DeepSeek returned multiple tool calls during plan generation.",
-            format!(
-                "expected exactly one `{SUBMIT_PLAN_TOOL_NAME}` call, got {} calls",
-                calls.len()
-            ),
-        )),
     }
 }
 

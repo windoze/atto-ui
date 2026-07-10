@@ -68,6 +68,8 @@ const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
 const MOCK_READ_FILE_PROMPT: &str = "agent-pty-read-file";
 const MOCK_RUN_COMMAND_PROMPT: &str = "agent-pty-run-command";
 const ACCEPTED_PLAN_EXECUTION_INSTRUCTION: &str = "The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.";
+const PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT: &str =
+    "Plan mode blocks mutating tools until the plan is accepted.";
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -85,6 +87,7 @@ enum AppAction {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         tool_calls: Vec<ToolUseBlock>,
+        mutating_tools_allowed: bool,
     },
     PlanReady {
         branch: ChatBranchToken,
@@ -119,6 +122,14 @@ struct MockAgentTurnRequest {
     model: String,
     prompt: String,
     plan_decision: PlanTurnDecision,
+    mutating_tools_allowed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct AgentTurnStartRequest {
+    prompt: String,
+    plan_decision: PlanTurnDecision,
+    mutating_tools_allowed: bool,
 }
 
 #[derive(Clone)]
@@ -604,6 +615,7 @@ fn submit_input_response(
     let plan_mode =
         plan_mode_from_status(&slash_runtime.plan_mode_state.get()).unwrap_or(PlanMode::Off);
     let plan_decision = decide_plan_for_turn(plan_mode, &text, &turn_launcher.tool_registry);
+    let mutating_tools_allowed = mutating_tools_allowed_for_turn(plan_mode, &plan_decision);
 
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(user_id, ChatRole::User, text.clone()));
@@ -614,9 +626,16 @@ fn submit_input_response(
         &slash_runtime.mock_turns,
         &slash_runtime.status_state,
         turn_launcher,
-        text,
-        plan_decision,
+        AgentTurnStartRequest {
+            prompt: text,
+            plan_decision,
+            mutating_tools_allowed,
+        },
     );
+}
+
+fn mutating_tools_allowed_for_turn(plan_mode: PlanMode, plan_decision: &PlanTurnDecision) -> bool {
+    plan_mode == PlanMode::Off && !plan_decision.requires_plan()
 }
 
 fn start_mock_agent_turn_for_prompt(
@@ -625,8 +644,7 @@ fn start_mock_agent_turn_for_prompt(
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
     turn_launcher: &AgentTurnLauncher,
-    prompt: String,
-    plan_decision: PlanTurnDecision,
+    request: AgentTurnStartRequest,
 ) -> Option<ChatMessageId> {
     let assistant_id = store.next_message_id();
     let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
@@ -658,8 +676,9 @@ fn start_mock_agent_turn_for_prompt(
             cancel,
             token_delay: mock_turns.token_delay(),
             model: turn_launcher.model.clone(),
-            prompt,
-            plan_decision,
+            prompt: request.prompt,
+            plan_decision: request.plan_decision,
+            mutating_tools_allowed: request.mutating_tools_allowed,
         },
     );
     Some(assistant_id)
@@ -1001,22 +1020,14 @@ fn tool_output_label(output: crate::tool::ToolOutputKind) -> &'static str {
 
 fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
     thread::spawn(move || {
-        let mut stream = if request.plan_decision.requires_plan() {
-            DeepSeekUiStream::new_with_plan_requirement(
-                request.branch,
-                request.message_id,
-                request.block_id,
-                request.model,
-                true,
-            )
-        } else {
-            DeepSeekUiStream::new(
-                request.branch,
-                request.message_id,
-                request.block_id,
-                request.model,
-            )
-        };
+        let mut stream = DeepSeekUiStream::new_with_plan_gate(
+            request.branch,
+            request.message_id,
+            request.block_id,
+            request.model,
+            request.plan_decision.requires_plan(),
+            request.mutating_tools_allowed,
+        );
         for event in mock_agent_events(&request.prompt, &request.plan_decision) {
             if request.cancel.is_cancelled() {
                 return;
@@ -1186,6 +1197,7 @@ fn apply_app_action(
             branch,
             message_id,
             tool_calls,
+            mutating_tools_allowed,
         } => {
             if !store.is_branch_current(branch) || tool_calls.is_empty() {
                 return false;
@@ -1205,8 +1217,12 @@ fn apply_app_action(
                 return found;
             }
             for tool_call in tool_calls {
-                let PreparedToolCall { tool_use, result } =
-                    prepare_tool_call(tool_call, &tool_runtime.registry, &tool_runtime.permissions);
+                let PreparedToolCall { tool_use, result } = prepare_tool_call(
+                    tool_call,
+                    &tool_runtime.registry,
+                    &tool_runtime.permissions,
+                    mutating_tools_allowed,
+                );
                 let mut tool_use = tool_use;
                 let call_id = tool_use.call_id.clone();
                 let Some(block_id) =
@@ -1323,6 +1339,7 @@ fn prepare_tool_call(
     mut tool_use: ToolUseBlock,
     registry: &ToolRegistry,
     permissions: &Arc<Mutex<ToolPermissionPolicy>>,
+    mutating_tools_allowed: bool,
 ) -> PreparedToolCall {
     let Some(spec) = registry.spec(&tool_use.name) else {
         tool_use.status = ToolStatus::Error;
@@ -1334,6 +1351,17 @@ fn prepare_tool_call(
             tool_use,
         };
     };
+
+    if !mutating_tools_allowed && spec.can_have_side_effects() {
+        tool_use.status = ToolStatus::Canceled;
+        return PreparedToolCall {
+            result: Some(failed_tool_result(
+                &tool_use.call_id,
+                PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
+            )),
+            tool_use,
+        };
+    }
 
     let decision = permissions
         .lock()
@@ -1432,8 +1460,11 @@ fn continue_after_accepted_plan(
         &runtime.mock_turns,
         &runtime.status_state,
         &runtime.turn_launcher,
-        instruction,
-        PlanTurnDecision::Direct,
+        AgentTurnStartRequest {
+            prompt: instruction,
+            plan_decision: PlanTurnDecision::Direct,
+            mutating_tools_allowed: true,
+        },
     );
 }
 
@@ -2062,9 +2093,10 @@ mod tests {
 
     use super::{
         ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
-        AgentTurnLimits, AppAction, MockTurnRegistry, PlanDecisionRuntime, STATUS_READY,
-        STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker, apply_app_action,
-        build_chat_panel, deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
+        AgentTurnLimits, AppAction, MockTurnRegistry, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
+        PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime,
+        TurnBudgetTracker, apply_app_action, build_chat_panel,
+        deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
         deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
         handle_plan_decision, handle_tool_approval, submit_input_response,
         submit_slash_command_text,
@@ -2508,6 +2540,7 @@ Use this skill for {name} tasks.
                 branch,
                 message_id: assistant_id,
                 tool_calls: vec![tool_call],
+                mutating_tools_allowed: true,
             },
         ));
 
@@ -3378,6 +3411,7 @@ Use this skill for {name} tasks.
                     read_file_tool_call("call_1", "a.txt"),
                     read_file_tool_call("call_2", "b.txt"),
                 ],
+                mutating_tools_allowed: true,
             },
         ));
 
@@ -3600,6 +3634,69 @@ Use this skill for {name} tasks.
     }
 
     #[test]
+    fn plan_gate_blocks_mutating_tool_even_with_project_grant() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+        permissions
+            .lock()
+            .expect("tool permission policy lock poisoned")
+            .allow_for_project("run_command");
+        let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let tool_runtime = test_tool_runtime(
+            AgentConfig::defaults("."),
+            sender,
+            registry.clone(),
+            permissions.clone(),
+        );
+        let assistant_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let branch = store.branch_token();
+
+        assert!(apply_app_action(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &tool_runtime,
+            AppAction::ToolCallsReady {
+                branch,
+                message_id: assistant_id,
+                tool_calls: vec![run_command_tool_call("call_plan_gate")],
+                mutating_tools_allowed: false,
+            },
+        ));
+        let block_id = store
+            .messages()
+            .iter()
+            .flat_map(|message| message.blocks.iter())
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) if tool.call_id == "call_plan_gate" => Some(tool.id),
+                _ => None,
+            })
+            .expect("blocked tool use should be appended");
+
+        let tool = tool_use_for_block(&store, block_id);
+        let result = tool_result_for_call(&store, "call_plan_gate");
+        assert_eq!(tool.status, ToolStatus::Canceled);
+        assert!(tool.approval.is_none());
+        assert!(!result.ok);
+        assert_eq!(result.exit_code, None);
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert_eq!(output, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT);
+            }
+            other => panic!("expected markdown plan-gate result, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn approval_deny_cancels_tool_and_writes_failed_result() {
         let store = ChatMessageStore::new();
         let input_handle = atto_ui_chat::ChatInputHandle::new();
@@ -3698,6 +3795,7 @@ Use this skill for {name} tasks.
                 branch,
                 message_id: assistant_id,
                 tool_calls: vec![read_file_tool_call("call_read", "fixture.txt")],
+                mutating_tools_allowed: true,
             },
         ));
         let tool_block_id = store
@@ -3947,6 +4045,90 @@ Use this skill for {name} tasks.
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
         assert!(!mock_turns.cancel(assistant_id));
+    }
+
+    #[test]
+    fn deepseek_stream_plan_turn_mutating_tool_call_writes_blocked_tool_result() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream = DeepSeekUiStream::new_with_plan_requirement(
+            branch,
+            assistant_id,
+            text_block_id,
+            "deepseek-chat",
+            true,
+        );
+        let events = vec![
+            ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+                id: None,
+                object: None,
+                created: None,
+                model: None,
+                choices: vec![ChatCompletionChunkChoice {
+                    index: 0,
+                    delta: ChatCompletionDelta {
+                        tool_calls: vec![tool_call_delta(
+                            0,
+                            Some("call_blocked_run"),
+                            Some("run_command"),
+                            Some(r#"{"argv":["/bin/echo","blocked"],"cwd":"."}"#),
+                        )],
+                        ..ChatCompletionDelta::default()
+                    },
+                    finish_reason: Some(crate::deepseek::FinishReason::ToolCalls),
+                }],
+                usage: None,
+            }),
+            ChatCompletionSseEvent::Done,
+        ];
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_test_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let assistant = &messages[0];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        let tool = assistant
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ChatBlock::ToolUse(tool) => Some(tool),
+                _ => None,
+            })
+            .expect("blocked tool use should be appended");
+        assert_eq!(tool.call_id, "call_blocked_run");
+        assert_eq!(tool.name, "run_command");
+        assert_eq!(tool.status, ToolStatus::Canceled);
+        assert!(tool.approval.is_none());
+        let result = tool_result_for_call(&store, "call_blocked_run");
+        assert!(!result.ok);
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert_eq!(output, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT);
+            }
+            other => panic!("expected markdown plan-gate result, got {other:?}"),
+        }
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
     }
 
     #[test]

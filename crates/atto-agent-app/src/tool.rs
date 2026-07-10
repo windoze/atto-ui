@@ -84,6 +84,11 @@ impl ToolSpec {
             self.parameters.clone(),
         )
     }
+
+    /// Reports whether this tool may perform work that should be gated by plan mode.
+    pub fn can_have_side_effects(&self) -> bool {
+        !matches!(self.permission, ToolPermission::AlwaysAllow)
+    }
 }
 
 /// Static permission requested by a tool specification.
