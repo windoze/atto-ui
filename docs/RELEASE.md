@@ -20,6 +20,12 @@ Coverage:
 
 The React test suite includes reconciler matrix tests, headless integration, PTY tests, and e2e coverage.
 
+## Workspace App Scope
+
+`crates/atto-agent-app` is a workspace-only TUI application used for local agent development, deterministic PTY fixtures, and manual DeepSeek smoke validation. It is not part of the npm package set, is not published to crates.io, and is marked `publish = false` in its `Cargo.toml` to prevent accidental `cargo publish`.
+
+Release tags still validate `atto-agent-app` through the workspace Rust fmt, clippy, and test gates. The ignored real DeepSeek smoke test remains manual because it requires `DEEPSEEK_API_KEY` and external network access.
+
 ## Local Preflight
 
 Run these before creating a release tag:

@@ -166,7 +166,7 @@ The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the 
 ## Documentation
 
 - `docs/NODE_API.md` documents the Node binding, `@atto-ui/core`, React package, component spec shape, events, and runtime compatibility notes.
-- `docs/RELEASE.md` documents CI coverage and the tag-based npm release workflow.
+- `docs/RELEASE.md` documents CI coverage, the tag-based npm release workflow, and workspace-only app release scope.
 - `NODE_BINDING.md` is the design record for the Node binding and React host architecture.
 
 ## CI And Release

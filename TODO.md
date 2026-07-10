@@ -174,4 +174,6 @@
 - [x] **[DONE] CI 检查** - 确认默认 CI 不依赖 `DEEPSEEK_API_KEY` 或网络。
   - 完成记录（2026-07-10）：复核 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`，默认 Rust 测试步骤均运行普通 `cargo test`，未传 `--ignored`，workflow 未设置或要求 `DEEPSEEK_API_KEY`；真实 DeepSeek smoke 测试保持 `#[ignore]`，手动设置 `DEEPSEEK_API_KEY` 并显式运行 ignored 测试才会访问 DeepSeek 外网；默认 DeepSeek client 单测使用 `127.0.0.1` 本地 mock SSE server。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo test -p atto-agent-app --test deepseek_real_smoke`（0 passed, 1 ignored）。
-- [ ] **Release 检查** - 如新增 crate 需要发布策略，补充 `docs/RELEASE.md` 或说明其仅作为 workspace app。
+- [x] **[DONE] Release 检查** - 如新增 crate 需要发布策略，补充 `docs/RELEASE.md` 或说明其仅作为 workspace app。
+  - 完成记录（2026-07-10）：确认新增 `crates/atto-agent-app` 仅作为 workspace-only TUI 应用，不进入 tag 发布产物或 crates.io 发布；在 app manifest 中设置 `publish = false` 防止误发布，并在 `docs/RELEASE.md` 记录 workspace app 发布范围、CI 验证边界和真实 DeepSeek smoke 的手动性质；同步根 README 的 release 文档说明。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
