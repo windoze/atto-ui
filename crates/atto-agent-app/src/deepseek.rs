@@ -617,10 +617,21 @@ pub fn build_chat_completions_request(
     config: &AgentConfig,
     messages: Vec<ChatCompletionMessage>,
 ) -> Result<ChatCompletionsRequestParts> {
+    build_prepared_chat_completions_request(
+        config,
+        ChatCompletionRequest::from_config(config, messages),
+    )
+}
+
+/// Builds deterministic request parts for an already prepared chat completions body.
+pub fn build_prepared_chat_completions_request(
+    config: &AgentConfig,
+    body: ChatCompletionRequest,
+) -> Result<ChatCompletionsRequestParts> {
     Ok(ChatCompletionsRequestParts {
         method: HttpMethod::Post,
         url: chat_completions_url(&config.base_url)?,
-        body: ChatCompletionRequest::from_config(config, messages),
+        body,
     })
 }
 

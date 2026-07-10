@@ -152,7 +152,7 @@ struct DeepSeekAgentTurnRequest {
     block_id: ChatBlockId,
     cancel: CancellationToken,
     config: AgentConfig,
-    messages: Vec<ChatCompletionMessage>,
+    request: ChatCompletionRequest,
     plan_decision: PlanTurnDecision,
     mutating_tools_allowed: bool,
 }
@@ -162,6 +162,8 @@ struct AgentTurnStartRequest {
     prompt: String,
     plan_decision: PlanTurnDecision,
     mutating_tools_allowed: bool,
+    skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
 }
 
 #[derive(Clone)]
@@ -232,6 +234,8 @@ struct PlanDecisionRuntime {
     input_handle: ChatInputHandle,
     mock_turns: MockTurnRegistry,
     status_state: Property<String>,
+    skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
     transcript_status: TranscriptStatusState,
     turn_launcher: AgentTurnLauncher,
 }
@@ -765,6 +769,8 @@ fn build_chat_panel(
         input_handle: slash_runtime.input_handle.clone(),
         mock_turns: slash_runtime.mock_turns.clone(),
         status_state: slash_runtime.status_state.clone(),
+        skill_registry: slash_runtime.skill_registry.clone(),
+        loaded_skills: slash_runtime.loaded_skills.clone(),
         transcript_status: slash_runtime.transcript_status.clone(),
         turn_launcher: turn_launcher.clone(),
     };
@@ -945,6 +951,8 @@ fn start_agent_turn_from_user_prompt(
             prompt: text,
             plan_decision,
             mutating_tools_allowed,
+            skill_registry: slash_runtime.skill_registry.clone(),
+            loaded_skills: slash_runtime.loaded_skills.clone(),
         },
     );
     slash_runtime.transcript_status.sync(store);
@@ -998,6 +1006,13 @@ fn start_agent_turn_for_request(
     turn_launcher: &AgentTurnLauncher,
     request: AgentTurnStartRequest,
 ) -> Option<ChatMessageId> {
+    let AgentTurnStartRequest {
+        prompt,
+        plan_decision,
+        mutating_tools_allowed,
+        skill_registry,
+        loaded_skills,
+    } = request;
     let assistant_id = store.next_message_id();
     let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
         .with_status(ChatTurnStatus::Streaming);
@@ -1029,9 +1044,9 @@ fn start_agent_turn_for_request(
                 cancel,
                 token_delay: mock_turns.token_delay(),
                 model: turn_launcher.config.model.clone(),
-                prompt: request.prompt,
-                plan_decision: request.plan_decision,
-                mutating_tools_allowed: request.mutating_tools_allowed,
+                prompt,
+                plan_decision,
+                mutating_tools_allowed,
             },
         ),
         AgentProvider::DeepSeek => spawn_deepseek_agent_turn(
@@ -1042,28 +1057,46 @@ fn start_agent_turn_for_request(
                 block_id: text_block_id,
                 cancel,
                 config: turn_launcher.config.clone(),
-                messages: deepseek_live_messages_for_prompt(
-                    &request.prompt,
-                    &request.plan_decision,
+                request: deepseek_live_request_for_turn(
+                    &turn_launcher.config,
+                    &turn_launcher.tool_registry,
+                    &skill_registry,
+                    &loaded_skills,
+                    &store.messages(),
+                    &plan_decision,
                 ),
-                plan_decision: request.plan_decision,
-                mutating_tools_allowed: request.mutating_tools_allowed,
+                plan_decision,
+                mutating_tools_allowed,
             },
         ),
     }
     Some(assistant_id)
 }
 
-fn deepseek_live_messages_for_prompt(
-    prompt: &str,
+fn deepseek_live_request_for_turn(
+    config: &AgentConfig,
+    registry: &ToolRegistry,
+    skill_registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    messages: &[ChatMessage],
     plan_decision: &PlanTurnDecision,
-) -> Vec<ChatCompletionMessage> {
-    let mut messages = Vec::new();
+) -> ChatCompletionRequest {
     if plan_decision.requires_plan() {
-        messages.push(ChatCompletionMessage::system(PLAN_MODE_SYSTEM_PROMPT));
+        deepseek_plan_request_from_transcript_with_skills(
+            config,
+            skill_registry,
+            loaded_skills,
+            messages,
+        )
+    } else {
+        deepseek_request_from_transcript_with_skills(
+            config,
+            registry,
+            skill_registry,
+            loaded_skills,
+            messages,
+        )
     }
-    messages.push(ChatCompletionMessage::user(prompt.to_string()));
-    messages
 }
 
 fn auto_load_matching_skills(
@@ -1479,7 +1512,7 @@ async fn run_deepseek_agent_turn(
     );
     let cancel = request.cancel.clone();
     let result = DeepSeekClient::new()
-        .stream_chat_completion_events(&request.config, request.messages, |event| {
+        .stream_prepared_chat_completion_events(&request.config, request.request, |event| {
             if cancel.is_cancelled() {
                 return Err(deepseek_turn_cancelled_error());
             }
@@ -1993,6 +2026,8 @@ fn continue_after_accepted_plan(
             prompt: instruction,
             plan_decision: PlanTurnDecision::Direct,
             mutating_tools_allowed: true,
+            skill_registry: runtime.skill_registry.clone(),
+            loaded_skills: runtime.loaded_skills.clone(),
         },
     );
     runtime.transcript_status.sync(store);
@@ -2513,9 +2548,9 @@ mod tests {
     use atto_ui_chat::{
         ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatBlockId, ChatError,
         ChatErrorKind, ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, CompactStatus, EditAndResubmitEvent, MessageAction,
-        MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason,
-        TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+        ChatSlashCommandAction, ChatTurnStatus, CompactBlock, CompactStatus, EditAndResubmitEvent,
+        MessageAction, MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem,
+        StopReason, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -2822,6 +2857,8 @@ Use this skill for {name} tasks.
                 input_handle: input_handle.clone(),
                 mock_turns: mock_turns.clone(),
                 status_state: status_state.clone(),
+                skill_registry: SkillRegistry::default(),
+                loaded_skills: LoadedSkillSet::default(),
                 transcript_status: TranscriptStatusState::new(),
                 turn_launcher: AgentTurnLauncher {
                     config: AgentConfig::defaults("."),
@@ -3054,6 +3091,13 @@ Use this skill for {name} tasks.
         });
         let body_start = header_end + 4;
         bytes.len() >= body_start + content_length.unwrap_or(0)
+    }
+
+    fn http_request_json(request: &str) -> serde_json::Value {
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .expect("mock HTTP request should contain a header/body separator");
+        serde_json::from_str(body).expect("mock HTTP request body should be JSON")
     }
 
     fn slow_tool_call(call_id: &str) -> ToolUseBlock {
@@ -3844,6 +3888,315 @@ Use this skill for {name} tasks.
         assert_eq!(messages[1].meta.model.as_deref(), Some("mock-deepseek"));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+    }
+
+    #[test]
+    fn deepseek_provider_posts_context_builder_request_with_tools() {
+        let workspace = unique_temp_dir("live-context-request");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("note.txt"), "workspace note context\n").expect("write note");
+        write_test_skill(
+            &workspace,
+            "rust",
+            "rust-review",
+            "Review Rust code before responding.",
+        );
+        let skill_registry =
+            SkillRegistry::discover_from_paths(&[SkillSearchPath::workspace(&workspace)]);
+        let skills = TestSkillState::new(skill_registry);
+        assert!(skills.loaded.insert("rust-review"));
+
+        let server = TestSseServer::spawn("data: [DONE]\n\n");
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::Off;
+        let registry = test_tool_registry();
+
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::new(
+            store.next_message_id(),
+            ChatRole::System,
+            vec![ChatBlock::Compact(CompactBlock {
+                id: ChatBlockId::new(70_001),
+                status: CompactStatus::Complete,
+                before_tokens: Some(2048),
+                after_tokens: Some(256),
+                summary: "summarized earlier conversation".to_string(),
+            })],
+        ));
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "Earlier request",
+        ));
+        store.push(ChatMessage::new(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::ToolUse(read_file_tool_call("call_read", "prior.txt")),
+                ChatBlock::ToolResult(ToolResultBlock {
+                    id: ChatBlockId::new(70_002),
+                    call_id: "call_read".to_string(),
+                    ok: true,
+                    exit_code: None,
+                    output: ToolOutput::Markdown("prior tool output".to_string()),
+                    collapsed: false,
+                }),
+            ],
+        ));
+
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let slash_runtime = test_slash_runtime_with_skills(
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &plan_mode_state,
+            &skills,
+            &turn_budgets,
+        );
+        let turn_launcher = AgentTurnLauncher {
+            config: config.clone(),
+            action_sender: sender,
+            tool_registry: registry.clone(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
+        };
+
+        submit_input_response(
+            &store,
+            &slash_runtime,
+            &turn_launcher,
+            ChatInputResponse::Text("Use @note.txt with rust-review context".to_string()),
+        );
+
+        let request = http_request_json(&server.join());
+        let messages = request["messages"]
+            .as_array()
+            .expect("request should contain messages");
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("system")
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains("<skills>")
+                        && content.contains("rust-review")
+                        && content.contains("Use this skill for rust-review tasks.")
+                })
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("system")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("<compact status=\"complete\""))
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("user")
+                && message["content"].as_str().is_some_and(|content| {
+                    content.contains("Use @note.txt")
+                        && content.contains("<context_files>")
+                        && content.contains("workspace note context")
+                })
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("assistant")
+                && message["tool_calls"]
+                    .as_array()
+                    .is_some_and(|calls| calls[0]["function"]["name"].as_str() == Some("read_file"))
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("tool")
+                && message["tool_call_id"].as_str() == Some("call_read")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("prior tool output"))
+        }));
+
+        let tool_names = request["tools"]
+            .as_array()
+            .expect("request should include tool schema")
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tool_names.len(), registry.len());
+        assert!(tool_names.contains(&"read_file"));
+        assert!(tool_names.contains(&"run_command"));
+        assert_eq!(request["tool_choice"].as_str(), Some("auto"));
+
+        drop(receiver);
+        fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn deepseek_provider_plan_turn_posts_submit_plan_context_request() {
+        let workspace = unique_temp_dir("live-plan-request");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::write(workspace.join("plan.txt"), "plan context\n").expect("write note");
+        let server = TestSseServer::spawn("data: [DONE]\n\n");
+        let mut config = AgentConfig::defaults(workspace.clone());
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::On;
+
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::On.status());
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let turn_budgets = TurnBudgetTracker::default();
+        let turn_launcher = AgentTurnLauncher {
+            config,
+            action_sender: sender,
+            tool_registry: test_tool_registry(),
+            turn_budgets: turn_budgets.clone(),
+            limits: AgentTurnLimits::default(),
+            compact_policy: CompactPolicy::default(),
+        };
+
+        submit_input_response(
+            &store,
+            &test_slash_runtime(
+                &input_handle,
+                &mock_turns,
+                &status_state,
+                &plan_mode_state,
+                &turn_budgets,
+            ),
+            &turn_launcher,
+            ChatInputResponse::Text("Update @plan.txt and run tests".to_string()),
+        );
+
+        let request = http_request_json(&server.join());
+        let messages = request["messages"]
+            .as_array()
+            .expect("request should contain messages");
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("system")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("You are in plan mode"))
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("user")
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("plan context"))
+        }));
+        let tools = request["tools"]
+            .as_array()
+            .expect("plan request should include virtual submit_plan tool");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0]["function"]["name"].as_str(),
+            Some(crate::plan::SUBMIT_PLAN_TOOL_NAME)
+        );
+        assert_eq!(
+            request["tool_choice"]["function"]["name"].as_str(),
+            Some(crate::plan::SUBMIT_PLAN_TOOL_NAME)
+        );
+        drop(receiver);
+        fs::remove_dir_all(workspace).expect("remove workspace");
+    }
+
+    #[test]
+    fn deepseek_provider_accepted_plan_continue_posts_transcript_request_with_tools() {
+        let server = TestSseServer::spawn("data: [DONE]\n\n");
+        let mut config = AgentConfig::defaults(".");
+        config.api_key = Some("test-key".to_string());
+        config.provider = AgentProvider::DeepSeek;
+        config.base_url = server.base_url();
+        config.plan_mode = PlanMode::On;
+
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "Please update the implementation.",
+        ));
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::with_token_delay(Duration::from_millis(1));
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let turn_budgets = TurnBudgetTracker::default();
+        let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
+        let registry = test_tool_registry();
+        let runtime = PlanDecisionRuntime {
+            input_handle: input_handle.clone(),
+            mock_turns: mock_turns.clone(),
+            status_state: status_state.clone(),
+            skill_registry: SkillRegistry::default(),
+            loaded_skills: LoadedSkillSet::default(),
+            transcript_status: TranscriptStatusState::new(),
+            turn_launcher: AgentTurnLauncher {
+                config,
+                action_sender: sender,
+                tool_registry: registry.clone(),
+                turn_budgets: turn_budgets.clone(),
+                limits: AgentTurnLimits::default(),
+                compact_policy: CompactPolicy::default(),
+            },
+        };
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let plan_block_id = ChatBlockId::new(70_003);
+        store.push(
+            ChatMessage::new(
+                assistant_id,
+                ChatRole::Assistant,
+                vec![ChatBlock::Plan(PlanBlock {
+                    id: plan_block_id,
+                    items: vec![PlanItem {
+                        text: "Inspect and edit.".to_string(),
+                    }],
+                    decision: PlanDecision::Pending,
+                })],
+            )
+            .with_status(ChatTurnStatus::Streaming),
+        );
+        turn_budgets.start_turn(assistant_id, AgentTurnLimits::default());
+        let _plan_cancel = mock_turns.start(assistant_id);
+
+        handle_plan_decision(
+            &store,
+            &runtime,
+            PlanDecisionEvent {
+                message_id: assistant_id,
+                block_id: plan_block_id,
+                decision: PlanDecision::Accepted,
+            },
+        );
+
+        let request = http_request_json(&server.join());
+        let messages = request["messages"]
+            .as_array()
+            .expect("request should contain messages");
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("user")
+                && message["content"].as_str() == Some("Please update the implementation.")
+        }));
+        assert!(messages.iter().any(|message| {
+            message["role"].as_str() == Some("system")
+                && message["content"].as_str() == Some(ACCEPTED_PLAN_EXECUTION_INSTRUCTION)
+        }));
+        let tool_names = request["tools"]
+            .as_array()
+            .expect("accepted-plan execution should include registered tools")
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(tool_names.len(), registry.len());
+        assert!(tool_names.contains(&"apply_patch"));
+        assert!(tool_names.contains(&"run_command"));
+        assert_eq!(request["tool_choice"].as_str(), Some("auto"));
+        assert!(!tool_names.contains(&crate::plan::SUBMIT_PLAN_TOOL_NAME));
+
+        drop(receiver);
     }
 
     #[test]

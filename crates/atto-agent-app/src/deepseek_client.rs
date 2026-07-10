@@ -11,9 +11,10 @@ use futures_util::StreamExt;
 
 use crate::config::AgentConfig;
 use crate::deepseek::{
-    ChatCompletionMessage, ChatCompletionSseEvent, ChatCompletionSseParser,
-    build_chat_completions_request, chat_error_from_http_status, chat_error_from_json_error,
-    chat_error_from_network_failure, chat_error_from_stream_disconnect,
+    ChatCompletionMessage, ChatCompletionRequest, ChatCompletionSseEvent, ChatCompletionSseParser,
+    build_chat_completions_request, build_prepared_chat_completions_request,
+    chat_error_from_http_status, chat_error_from_json_error, chat_error_from_network_failure,
+    chat_error_from_stream_disconnect,
 };
 
 /// Result type returned by the DeepSeek HTTP client.
@@ -74,17 +75,55 @@ impl DeepSeekClient {
         stream_sse_events(response, on_event).await
     }
 
+    /// Posts a fully prepared streaming chat completion request and emits each
+    /// parsed SSE event as soon as it arrives.
+    pub async fn stream_prepared_chat_completion_events<F>(
+        &self,
+        config: &AgentConfig,
+        request: ChatCompletionRequest,
+        on_event: F,
+    ) -> DeepSeekClientResult<()>
+    where
+        F: FnMut(ChatCompletionSseEvent) -> DeepSeekClientResult<()>,
+    {
+        let response = self
+            .send_prepared_chat_completion_request(config, request)
+            .await?;
+        stream_sse_events(response, on_event).await
+    }
+
     async fn send_chat_completion_request(
         &self,
         config: &AgentConfig,
         messages: Vec<ChatCompletionMessage>,
     ) -> DeepSeekClientResult<reqwest::Response> {
-        let api_key = config.deepseek_api_key().map_err(|error| {
-            ChatError::new(ChatErrorKind::Api, "DeepSeek API key is required.")
-                .with_detail(error.to_string())
-        })?;
         let request = build_chat_completions_request(config, messages).map_err(|error| {
             ChatError::new(ChatErrorKind::Api, "Failed to build DeepSeek request.")
+                .with_detail(error.to_string())
+        })?;
+        self.send_prepared_request_parts(config, request).await
+    }
+
+    async fn send_prepared_chat_completion_request(
+        &self,
+        config: &AgentConfig,
+        request: ChatCompletionRequest,
+    ) -> DeepSeekClientResult<reqwest::Response> {
+        let request =
+            build_prepared_chat_completions_request(config, request).map_err(|error| {
+                ChatError::new(ChatErrorKind::Api, "Failed to build DeepSeek request.")
+                    .with_detail(error.to_string())
+            })?;
+        self.send_prepared_request_parts(config, request).await
+    }
+
+    async fn send_prepared_request_parts(
+        &self,
+        config: &AgentConfig,
+        request: crate::deepseek::ChatCompletionsRequestParts,
+    ) -> DeepSeekClientResult<reqwest::Response> {
+        let api_key = config.deepseek_api_key().map_err(|error| {
+            ChatError::new(ChatErrorKind::Api, "DeepSeek API key is required.")
                 .with_detail(error.to_string())
         })?;
 

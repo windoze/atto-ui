@@ -1,40 +1,24 @@
 # Execution Plan
 
-## Status
+I will follow `TODO.md` as the authoritative task list and complete only the first task whose heading is not prefixed with `[DONE]`.
 
-Selected first incomplete task: `M7.3 Async turn 驱动`.
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Check the latest commit message only for directly relevant unfinished work tied to that selected task.
+3. Inspect the implementation areas and tests needed for that task.
+4. Implement the task without narrowing scope or using workarounds.
+5. Run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and the relevant/full tests required by the task.
+6. If unscheduled failures or blockers appear, fix them or add the minimum prerequisite task to `TODO.md`, then stop.
+7. Mark the completed task heading with `[DONE]`, update its completion record, and update this file.
+8. Commit all task-related changes with a clear message and the required co-author trailer.
 
-Latest commit `e132540 [M7.2] Add incremental DeepSeek streaming` does not mention an unfinished issue that blocks M7.3.
+Selected task: `M7.4 请求构造接线` — submit/continue turns must build DeepSeek requests from the current transcript via `ContextBuilder`, including skills, file mentions, compact context, tool result feedback, and registered tool schemas, replacing the live path's prompt-only request construction.
 
-Implementation boundary: add a live DeepSeek async turn path that streams parsed SSE events through `DeepSeekUiStream` into the existing `AppAction` channel and branch-token checks. Keep full transcript/tool-loop request construction for the already scheduled M7.4/M7.5 tasks.
+Next steps:
+1. Check the latest commit message for unfinished work directly tied to M7.4.
+2. Inspect the agent app turn-start code, DeepSeek request builders, context builder APIs, and tests around live provider/mock SSE.
+3. Wire the DeepSeek provider path to construct requests from the transcript using existing request builder/context APIs and tool registry schema.
+4. Add/update focused tests proving live requests include transcript history, skills/file mentions/compact/tool messages, and tool schema.
+5. Run formatting, clippy, and tests required by `TODO.md`.
+6. Mark M7.4 `[DONE]`, update its completion record and this file, then commit.
 
-## Plan
-
-1. Read `TODO.md` and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit only for unfinished work directly relevant to that selected task.
-3. Inspect the selected task's requirements, dependencies, validation notes, and relevant code.
-4. Implement the selected task fully, adding or updating tests where required.
-5. Run formatting, linting, and relevant/full validation in the required order.
-6. If validation exposes an unscheduled failure, fix it or add the minimum prerequisite task before marking the current task done.
-7. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling in its completion record.
-8. Update this progress file at key milestones.
-9. Commit all task-related changes with a descriptive message and stop without starting the next task.
-
-## Current Steps
-
-1. Completed: added a DeepSeek turn request/launcher path alongside the existing mock path.
-2. Completed: reused `atto-ui-async` to create a Tokio runtime for the live HTTP stream and enabled Tokio I/O in that helper.
-3. Completed: routed provider selection so `AgentProvider::DeepSeek` starts the live path and mock/snapshot remains deterministic.
-4. Completed: added unit coverage using a local SSE server to verify live events reach the UI through `AppAction`.
-5. Completed: ran formatting, clippy, focused live-provider test, full workspace tests, and final format check.
-6. Completed: marked `M7.3 Async turn 驱动` as `[DONE]` in `TODO.md` with completion and validation notes.
-7. In progress: inspect final diff/status and commit the task changes.
-
-## Validation Notes
-
-- `cargo check -p atto-agent-app --all-targets` passed after implementation.
-- `cargo fmt --all` passed.
-- `cargo clippy --workspace --all-targets -- -D warnings` passed.
-- `cargo test -p atto-agent-app deepseek_provider_streams_live_events_through_app_actions` passed.
-- `cargo test --workspace --all-targets` passed after updating the PTY help assertion for the provider-neutral `/abort` text.
-- `cargo fmt --all -- --check` passed.
+Status: M7.4 completed. The live DeepSeek path builds prepared request bodies from the current transcript and active skill state, with direct/execution turns using registered tool schemas and plan turns using the virtual `submit_plan` tool. Focused request-body tests, workspace clippy, full workspace tests, and final rustfmt check passed. `TODO.md` has been updated with the `[DONE]` completion record. Next step is committing the task changes.
