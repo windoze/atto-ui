@@ -29,3 +29,4 @@
 - 下一步更新 `TODO.md`，将 `M3.6` 标记为 `[DONE]` 并填写完成记录。
 - 已更新 `TODO.md`，`M3.6 Tool result 回灌` 已标记为 `[DONE]` 并写入完成记录。
 - 提交前检查显示变更仅包含 `TODO.md`、`crates/atto-agent-app/src/lib.rs`、`memory/claude_plan.md`；下一步提交本任务。
+- 已提交任务实现，提交为 `61b1e32 [M3.6] Add tool result feedback`。
