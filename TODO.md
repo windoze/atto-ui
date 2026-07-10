@@ -156,7 +156,9 @@
 - [x] **[DONE] M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
   - 完成记录（2026-07-10）：新增 app crate 私有 `transcript` JSONL 持久化模块，每行保存一个带 schema version 的 `ChatMessage`，显式覆盖当前 UI transcript 的消息、block、meta、审批、错误和嵌套 task transcript；新增默认关闭的配置项 `transcript_path`，支持 TOML、`ATTO_AGENT_TRANSCRIPT` 和 `--transcript`，相对路径按 workspace 解析。真实运行路径现在会在启动时按配置恢复 transcript，运行中用 dirty observer 保存变更，退出后做最终保存；恢复时未完成 streaming turn 会标为 `Canceled`，避免重启后显示不可恢复的活动流。
   - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app transcript`；`cargo test -p atto-agent-app config::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [ ] **M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
+- [x] **[DONE] M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
+  - 完成记录（2026-07-10）：agent app 状态栏现在包含 model、plan、tools、skills、streaming、`tokens~N` transcript token 估算和 `err:*` 最新错误摘要；新增 `TranscriptStatusState` 聚合 token/error 状态，并在用户提交、slash 命令、取消、plan 决策、tool 审批和后台 action 变更后同步状态。复用 compact transcript token 估算逻辑，错误摘要覆盖 failed turn 和失败 tool result，并修复 tool-call budget 失败分支早退导致状态不同步的问题。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --lib tool_call_budget_fails_turn_before_appending_over_limit`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
 - [ ] **M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。
 

@@ -168,7 +168,7 @@ fn block_is_compactable(block: &ChatBlock) -> bool {
     }
 }
 
-fn estimate_transcript_tokens(messages: &[ChatMessage]) -> u64 {
+pub(crate) fn estimate_transcript_tokens(messages: &[ChatMessage]) -> u64 {
     messages.iter().map(estimate_message_tokens).sum()
 }
 

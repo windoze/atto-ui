@@ -22,9 +22,9 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
-    ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
-    ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, DiffData, EditAndResubmitEvent, MessageAction,
+    ChatBlockId, ChatBranchToken, ChatError, ChatErrorKind, ChatInputHandle, ChatInputResponse,
+    ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
+    ChatRole, ChatSlashCommand, ChatTurnStatus, DiffData, EditAndResubmitEvent, MessageAction,
     MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, ThinkingBlock,
     ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
@@ -43,7 +43,7 @@ mod stream_ui;
 pub mod tool;
 pub mod transcript;
 
-use crate::compact::{CompactPolicy, compact_store_if_needed};
+use crate::compact::{CompactPolicy, compact_store_if_needed, estimate_transcript_tokens};
 use crate::config::{AgentConfig, PlanMode};
 use crate::context::{ContextBuilder, component_value_to_json};
 use crate::deepseek::{
@@ -148,6 +148,25 @@ struct ToolExecutionRequest {
 }
 
 #[derive(Clone, Debug)]
+struct TranscriptStatusState {
+    token_estimate_state: Property<String>,
+    error_summary_state: Property<String>,
+}
+
+impl TranscriptStatusState {
+    fn new() -> Self {
+        Self {
+            token_estimate_state: Property::new(format_token_estimate_status(0)),
+            error_summary_state: Property::new(error_summary_status(&[])),
+        }
+    }
+
+    fn sync(&self, store: &ChatMessageStore) {
+        sync_transcript_status(store, &self.token_estimate_state, &self.error_summary_state);
+    }
+}
+
+#[derive(Clone, Debug)]
 struct SlashRuntime {
     input_handle: ChatInputHandle,
     mock_turns: MockTurnRegistry,
@@ -156,6 +175,7 @@ struct SlashRuntime {
     skill_registry: SkillRegistry,
     loaded_skills: LoadedSkillSet,
     skill_count_state: Property<String>,
+    transcript_status: TranscriptStatusState,
     turn_budgets: TurnBudgetTracker,
 }
 
@@ -174,6 +194,7 @@ struct PlanDecisionRuntime {
     input_handle: ChatInputHandle,
     mock_turns: MockTurnRegistry,
     status_state: Property<String>,
+    transcript_status: TranscriptStatusState,
     turn_launcher: AgentTurnLauncher,
 }
 
@@ -205,7 +226,9 @@ struct AgentRuntime {
     status_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
+    tool_count_state: Property<String>,
     skill_count_state: Property<String>,
+    transcript_status: TranscriptStatusState,
 }
 
 #[derive(Clone)]
@@ -216,6 +239,7 @@ struct ToolRuntime {
     permissions: Arc<Mutex<ToolPermissionPolicy>>,
     turn_budgets: TurnBudgetTracker,
     limits: AgentTurnLimits,
+    transcript_status: TranscriptStatusState,
 }
 
 struct TranscriptPersistence {
@@ -263,11 +287,13 @@ impl AgentRuntime {
         let plan_mode_state = Property::new(config.plan_mode.status());
         let tool_registry =
             crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
+        let tool_count_state = Property::new(format_tool_count_status(tool_registry.len()));
         let skill_registry = SkillRegistry::discover(&config.workspace, config.home_dir.as_deref());
         let loaded_skills = LoadedSkillSet::default();
         let limits = AgentTurnLimits::default();
         let turn_budgets = TurnBudgetTracker::default();
         let skill_count_state = Property::new(loaded_skills.status());
+        let transcript_status = TranscriptStatusState::new();
         Self {
             config,
             action_sender,
@@ -283,7 +309,9 @@ impl AgentRuntime {
             status_state: Property::new(STATUS_READY.to_string()),
             model_state,
             plan_mode_state,
+            tool_count_state,
             skill_count_state,
+            transcript_status,
         }
     }
 
@@ -295,6 +323,7 @@ impl AgentRuntime {
             permissions: self.tool_permissions.clone(),
             turn_budgets: self.turn_budgets.clone(),
             limits: self.limits,
+            transcript_status: self.transcript_status.clone(),
         }
     }
 
@@ -307,6 +336,7 @@ impl AgentRuntime {
             skill_registry: self.skill_registry.clone(),
             loaded_skills: self.loaded_skills.clone(),
             skill_count_state: self.skill_count_state.clone(),
+            transcript_status: self.transcript_status.clone(),
             turn_budgets: self.turn_budgets.clone(),
         }
     }
@@ -377,7 +407,9 @@ pub struct AgentApp {
     status_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
+    tool_count_state: Property<String>,
     skill_count_state: Property<String>,
+    transcript_status: TranscriptStatusState,
     skill_registry: SkillRegistry,
     loaded_skills: LoadedSkillSet,
     chat_window_id: WindowId,
@@ -407,6 +439,7 @@ impl AgentApp {
         quit_events: EventQueue<()>,
         runtime: AgentRuntime,
     ) -> Self {
+        runtime.transcript_status.sync(&runtime.message_store);
         let chat_panel = build_chat_panel(
             &runtime.message_store,
             AgentTurnLauncher {
@@ -426,7 +459,10 @@ impl AgentApp {
             runtime.model_state.binding(),
             runtime.status_state.binding(),
             runtime.plan_mode_state.binding(),
+            runtime.tool_count_state.binding(),
             runtime.skill_count_state.binding(),
+            runtime.transcript_status.token_estimate_state.binding(),
+            runtime.transcript_status.error_summary_state.binding(),
         ));
 
         let chat_window_id = desktop.add_window(
@@ -449,7 +485,9 @@ impl AgentApp {
             status_state: runtime.status_state,
             model_state: runtime.model_state,
             plan_mode_state: runtime.plan_mode_state,
+            tool_count_state: runtime.tool_count_state,
             skill_count_state: runtime.skill_count_state,
+            transcript_status: runtime.transcript_status,
             skill_registry: runtime.skill_registry,
             loaded_skills: runtime.loaded_skills,
             chat_window_id,
@@ -492,8 +530,20 @@ impl AgentApp {
         self.plan_mode_state.clone()
     }
 
+    pub fn tool_count_state(&self) -> Property<String> {
+        self.tool_count_state.clone()
+    }
+
     pub fn skill_count_state(&self) -> Property<String> {
         self.skill_count_state.clone()
+    }
+
+    pub fn token_estimate_state(&self) -> Property<String> {
+        self.transcript_status.token_estimate_state.clone()
+    }
+
+    pub fn error_summary_state(&self) -> Property<String> {
+        self.transcript_status.error_summary_state.clone()
     }
 
     pub fn skill_registry(&self) -> &SkillRegistry {
@@ -568,6 +618,7 @@ fn run_with_config_and_mock_token_delay(
                 &runtime_for_actions.input_handle,
                 &runtime_for_actions.mock_turns,
                 &runtime_for_actions.status_state,
+                &runtime_for_actions.transcript_status,
                 &tool_runtime,
                 action,
             );
@@ -621,6 +672,8 @@ fn build_chat_panel(
     let status_for_cancel = slash_runtime.status_state.clone();
     let mock_turns_for_cancel = slash_runtime.mock_turns.clone();
     let turn_budgets_for_cancel = slash_runtime.turn_budgets.clone();
+    let store_for_cancel = store.clone();
+    let transcript_status_for_cancel = slash_runtime.transcript_status.clone();
     let store_for_approval = store.clone();
     let tool_runtime_for_approval = tool_runtime.clone();
     let store_for_plan_decision = store.clone();
@@ -628,6 +681,7 @@ fn build_chat_panel(
         input_handle: slash_runtime.input_handle.clone(),
         mock_turns: slash_runtime.mock_turns.clone(),
         status_state: slash_runtime.status_state.clone(),
+        transcript_status: slash_runtime.transcript_status.clone(),
         turn_launcher: turn_launcher.clone(),
     };
     let store_for_edit_resubmit = store.clone();
@@ -662,9 +716,11 @@ fn build_chat_panel(
         })
         .on_cancel(move |message_id| {
             finish_canceled_turn(
+                &store_for_cancel,
                 &input_handle_for_cancel,
                 &mock_turns_for_cancel,
                 &status_for_cancel,
+                &transcript_status_for_cancel,
                 &turn_budgets_for_cancel,
                 message_id,
             );
@@ -761,6 +817,7 @@ fn handle_message_action(
             store,
             "Cannot retry or regenerate: no prior user prompt remains in the transcript.",
         );
+        slash_runtime.transcript_status.sync(store);
         return;
     };
     let _ = start_agent_turn_from_user_prompt(store, slash_runtime, turn_launcher, prompt, false);
@@ -794,7 +851,7 @@ fn start_agent_turn_from_user_prompt(
     }
     let _ = compact_store_if_needed(store, turn_launcher.compact_policy);
 
-    start_mock_agent_turn_for_prompt(
+    let assistant_id = start_mock_agent_turn_for_prompt(
         store,
         &slash_runtime.input_handle,
         &slash_runtime.mock_turns,
@@ -805,7 +862,9 @@ fn start_agent_turn_from_user_prompt(
             plan_decision,
             mutating_tools_allowed,
         },
-    )
+    );
+    slash_runtime.transcript_status.sync(store);
+    assistant_id
 }
 
 fn cancel_active_turn_after_transcript_truncation(
@@ -985,6 +1044,7 @@ fn submit_slash_command_text(store: &ChatMessageStore, runtime: &SlashRuntime, t
             &runtime.input_handle,
             &runtime.mock_turns,
             &runtime.status_state,
+            &runtime.transcript_status,
             &runtime.turn_budgets,
         ),
         _ => append_system_message(
@@ -992,6 +1052,7 @@ fn submit_slash_command_text(store: &ChatMessageStore, runtime: &SlashRuntime, t
             format!("Unknown slash command `/{command}`. Type `/help` for available commands."),
         ),
     }
+    runtime.transcript_status.sync(store);
     true
 }
 
@@ -1049,9 +1110,17 @@ fn apply_abort_command(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    transcript_status: &TranscriptStatusState,
     turn_budgets: &TurnBudgetTracker,
 ) {
-    if cancel_latest_streaming_turn(store, input_handle, mock_turns, status_state, turn_budgets) {
+    if cancel_latest_streaming_turn(
+        store,
+        input_handle,
+        mock_turns,
+        status_state,
+        transcript_status,
+        turn_budgets,
+    ) {
         append_system_message(store, "Aborted active turn.");
     } else {
         append_system_message(store, "No active turn to abort.");
@@ -1063,6 +1132,7 @@ fn cancel_latest_streaming_turn(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    transcript_status: &TranscriptStatusState,
     turn_budgets: &TurnBudgetTracker,
 ) -> bool {
     let Some(message_id) = store
@@ -1079,9 +1149,11 @@ fn cancel_latest_streaming_turn(
         return false;
     }
     finish_canceled_turn(
+        store,
         input_handle,
         mock_turns,
         status_state,
+        transcript_status,
         turn_budgets,
         message_id,
     );
@@ -1089,9 +1161,11 @@ fn cancel_latest_streaming_turn(
 }
 
 fn finish_canceled_turn(
+    store: &ChatMessageStore,
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    transcript_status: &TranscriptStatusState,
     turn_budgets: &TurnBudgetTracker,
     message_id: ChatMessageId,
 ) {
@@ -1099,6 +1173,7 @@ fn finish_canceled_turn(
     turn_budgets.finish_turn(message_id);
     input_handle.streaming_binding().set(false);
     status_state.set(STATUS_READY.to_string());
+    transcript_status.sync(store);
 }
 
 fn help_text() -> &'static str {
@@ -1388,10 +1463,11 @@ fn apply_app_action(
     input_handle: &ChatInputHandle,
     mock_turns: &MockTurnRegistry,
     status_state: &Property<String>,
+    transcript_status: &TranscriptStatusState,
     tool_runtime: &ToolRuntime,
     action: AppAction,
 ) -> bool {
-    match action {
+    let changed = match action {
         AppAction::TextDelta {
             branch,
             block_id,
@@ -1423,43 +1499,44 @@ fn apply_app_action(
                     status_state.set(STATUS_READY.to_string());
                     tool_runtime.turn_budgets.finish_turn(message_id);
                 }
-                return found;
-            }
-            for tool_call in tool_calls {
-                let PreparedToolCall { tool_use, result } = prepare_tool_call(
-                    tool_call,
-                    &tool_runtime.registry,
-                    &tool_runtime.permissions,
-                    mutating_tools_allowed,
-                );
-                let mut tool_use = tool_use;
-                let call_id = tool_use.call_id.clone();
-                let Some(block_id) =
-                    store.append_block(message_id, ChatBlock::ToolUse(tool_use.clone()))
-                else {
-                    return false;
-                };
-                tool_use.id = block_id;
-                match result {
-                    Some(result) => {
-                        if store.upsert_tool_result(call_id, result).is_none() {
-                            return false;
+                found
+            } else {
+                for tool_call in tool_calls {
+                    let PreparedToolCall { tool_use, result } = prepare_tool_call(
+                        tool_call,
+                        &tool_runtime.registry,
+                        &tool_runtime.permissions,
+                        mutating_tools_allowed,
+                    );
+                    let mut tool_use = tool_use;
+                    let call_id = tool_use.call_id.clone();
+                    let Some(block_id) =
+                        store.append_block(message_id, ChatBlock::ToolUse(tool_use.clone()))
+                    else {
+                        return false;
+                    };
+                    tool_use.id = block_id;
+                    match result {
+                        Some(result) => {
+                            if store.upsert_tool_result(call_id, result).is_none() {
+                                return false;
+                            }
                         }
+                        None if tool_use.status == ToolStatus::Running => {
+                            spawn_tool_execution(ToolExecutionRequest {
+                                branch,
+                                tool_use,
+                                config: tool_runtime.config.clone(),
+                                registry: tool_runtime.registry.clone(),
+                                limits: tool_runtime.limits,
+                                action_sender: tool_runtime.action_sender.clone(),
+                            });
+                        }
+                        None => {}
                     }
-                    None if tool_use.status == ToolStatus::Running => {
-                        spawn_tool_execution(ToolExecutionRequest {
-                            branch,
-                            tool_use,
-                            config: tool_runtime.config.clone(),
-                            registry: tool_runtime.registry.clone(),
-                            limits: tool_runtime.limits,
-                            action_sender: tool_runtime.action_sender.clone(),
-                        });
-                    }
-                    None => {}
                 }
+                true
             }
-            true
         }
         AppAction::PlanReady {
             branch,
@@ -1535,7 +1612,11 @@ fn apply_app_action(
             }
             found
         }
+    };
+    if changed {
+        transcript_status.sync(store);
     }
+    changed
 }
 
 #[derive(Clone, Debug)]
@@ -1664,7 +1745,7 @@ fn continue_after_accepted_plan(
         instruction.clone(),
     ));
     let _ = compact_store_if_needed(store, runtime.turn_launcher.compact_policy);
-    start_mock_agent_turn_for_prompt(
+    let _ = start_mock_agent_turn_for_prompt(
         store,
         &runtime.input_handle,
         &runtime.mock_turns,
@@ -1676,6 +1757,7 @@ fn continue_after_accepted_plan(
             mutating_tools_allowed: true,
         },
     );
+    runtime.transcript_status.sync(store);
 }
 
 fn finish_plan_decision_turn(
@@ -1688,6 +1770,7 @@ fn finish_plan_decision_turn(
     runtime.turn_launcher.turn_budgets.finish_turn(message_id);
     runtime.input_handle.streaming_binding().set(false);
     runtime.status_state.set(STATUS_READY.to_string());
+    runtime.transcript_status.sync(store);
 }
 
 fn handle_tool_approval(
@@ -1745,6 +1828,7 @@ fn handle_tool_approval(
             );
         }
     }
+    tool_runtime.transcript_status.sync(store);
 }
 
 fn tool_use_for_approval(
@@ -2037,6 +2121,81 @@ fn thinking_block_id(store: &ChatMessageStore, message_id: ChatMessageId) -> Opt
         })
 }
 
+fn sync_transcript_status(
+    store: &ChatMessageStore,
+    token_estimate_state: &Property<String>,
+    error_summary_state: &Property<String>,
+) {
+    let messages = store.messages();
+    token_estimate_state.set(format_token_estimate_status(estimate_transcript_tokens(
+        &messages,
+    )));
+    error_summary_state.set(error_summary_status(&messages));
+}
+
+fn format_tool_count_status(count: usize) -> String {
+    format!("tools: {count}")
+}
+
+fn format_token_estimate_status(tokens: u64) -> String {
+    format!("tokens~{tokens}")
+}
+
+fn error_summary_status(messages: &[ChatMessage]) -> String {
+    latest_error_summary(messages).unwrap_or_else(|| "err:ok".to_string())
+}
+
+fn latest_error_summary(messages: &[ChatMessage]) -> Option<String> {
+    for message in messages.iter().rev() {
+        if let ChatTurnStatus::Failed(error) = &message.status {
+            return Some(format_status_error_summary(
+                chat_error_kind_label(&error.kind),
+                &error.message,
+            ));
+        }
+        for block in message.blocks.iter().rev() {
+            if let ChatBlock::ToolResult(result) = block
+                && !result.ok
+            {
+                return Some(format_status_error_summary("tool", result.output.as_text()));
+            }
+        }
+    }
+    None
+}
+
+fn format_status_error_summary(kind: &str, message: &str) -> String {
+    truncate_status_text(
+        &format!("err:{kind} {}", normalize_status_text(message)),
+        36,
+    )
+}
+
+fn normalize_status_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_status_text(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let prefix = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_none() {
+        return prefix;
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", text.chars().take(keep).collect::<String>())
+}
+
+fn chat_error_kind_label(kind: &ChatErrorKind) -> &'static str {
+    match kind {
+        ChatErrorKind::Api => "api",
+        ChatErrorKind::Tool => "tool",
+        ChatErrorKind::RateLimit => "rate",
+        ChatErrorKind::Refusal => "refusal",
+        ChatErrorKind::Network => "network",
+        ChatErrorKind::Other => "other",
+    }
+}
+
 fn agent_menu(quit_events: EventQueue<()>) -> MenuBar {
     // Keep the initial app shell minimal while still offering a discoverable quit action.
     MenuBar::new(vec![MenuSpec::new(
@@ -2049,32 +2208,42 @@ fn status_segments(
     model: Binding<String>,
     state: Binding<String>,
     plan_mode: Binding<String>,
+    tools: Binding<String>,
     skills: Binding<String>,
+    tokens: Binding<String>,
+    error: Binding<String>,
 ) -> Vec<StatusSegment> {
-    // Keep provider static until DeepSeek streaming lands while surfacing loaded model config.
     vec![
         StatusSegment::new("app", APP_TITLE)
-            .priority(100)
+            .priority(40)
             .min_width(10),
         StatusSegment::new("provider", "provider: mock")
-            .priority(80)
+            .priority(86)
             .min_width(14),
         StatusSegment::new("model", model)
-            .priority(78)
+            .priority(95)
             .min_width(18),
         StatusSegment::new("plan", plan_mode)
-            .priority(75)
+            .priority(94)
             .min_width(9),
+        StatusSegment::new("tools", tools).priority(93).min_width(8),
         StatusSegment::new("skills", skills)
-            .priority(74)
+            .priority(92)
             .min_width(9),
-        StatusSegment::new("state", state)
+        StatusSegment::new("tokens", tokens)
+            .priority(91)
+            .min_width(8),
+        StatusSegment::new("error", error)
+            .align(StatusSegmentAlign::Right)
+            .priority(89)
+            .min_width(6),
+        StatusSegment::new("streaming", state)
             .align(StatusSegmentAlign::Right)
             .priority(90)
             .min_width(9),
         StatusSegment::new("keys", "Esc cancel | Ctrl+Q quit | /help")
             .align(StatusSegmentAlign::Right)
-            .priority(70)
+            .priority(30)
             .min_width(28),
     ]
 }
@@ -2137,11 +2306,12 @@ mod tests {
         ACCEPTED_PLAN_EXECUTION_INSTRUCTION, APP_TITLE, AgentApp, AgentTurnLauncher,
         AgentTurnLimits, AppAction, MockTurnRegistry, PLAN_MODE_MUTATING_TOOL_BLOCKED_RESULT,
         PlanDecisionRuntime, STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime,
-        TurnBudgetTracker, apply_app_action, build_chat_panel,
+        TranscriptStatusState, TurnBudgetTracker, apply_app_action, build_chat_panel,
         deepseek_plan_request_from_transcript, deepseek_request_from_transcript,
-        deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
-        handle_edit_and_resubmit, handle_message_action, handle_plan_decision,
-        handle_tool_approval, submit_input_response, submit_slash_command_text,
+        deepseek_request_from_transcript_with_skills, error_summary_status,
+        execute_tool_use_to_result_block, format_token_estimate_status, handle_edit_and_resubmit,
+        handle_message_action, handle_plan_decision, handle_tool_approval, status_segments,
+        submit_input_response, submit_slash_command_text, sync_transcript_status,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -2257,6 +2427,7 @@ mod tests {
             skill_registry: skills.registry.clone(),
             loaded_skills: skills.loaded.clone(),
             skill_count_state: skills.count_state.clone(),
+            transcript_status: TranscriptStatusState::new(),
             turn_budgets: turn_budgets.clone(),
         }
     }
@@ -2399,6 +2570,7 @@ Use this skill for {name} tasks.
             permissions,
             turn_budgets: TurnBudgetTracker::default(),
             limits,
+            transcript_status: TranscriptStatusState::new(),
         }
     }
 
@@ -2414,6 +2586,7 @@ Use this skill for {name} tasks.
                 input_handle: input_handle.clone(),
                 mock_turns: mock_turns.clone(),
                 status_state: status_state.clone(),
+                transcript_status: TranscriptStatusState::new(),
                 turn_launcher: AgentTurnLauncher {
                     model: "deepseek-chat".to_string(),
                     action_sender: sender,
@@ -2454,11 +2627,13 @@ Use this skill for {name} tasks.
         let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
         let tool_runtime =
             test_tool_runtime(AgentConfig::defaults("."), sender, registry, permissions);
+        let transcript_status = TranscriptStatusState::new();
         apply_app_action(
             store,
             input_handle,
             mock_turns,
             status_state,
+            &transcript_status,
             &tool_runtime,
             action,
         )
@@ -2587,12 +2762,14 @@ Use this skill for {name} tasks.
             .with_status(ChatTurnStatus::Streaming);
         store.push(assistant);
         let branch = store.branch_token();
+        let transcript_status = TranscriptStatusState::new();
 
         assert!(apply_app_action(
             store,
             input_handle,
             mock_turns,
             status_state,
+            &transcript_status,
             &tool_runtime,
             AppAction::ToolCallsReady {
                 branch,
@@ -2677,7 +2854,10 @@ Use this skill for {name} tasks.
         assert_eq!(app.status_state().get(), STATUS_READY);
         assert_eq!(app.model_state().get(), "model: deepseek-chat");
         assert_eq!(app.plan_mode_state().get(), PlanMode::Auto.status());
+        assert_eq!(app.tool_count_state().get(), "tools: 5");
         assert_eq!(app.skill_count_state().get(), "skills: 0");
+        assert_eq!(app.token_estimate_state().get(), "tokens~0");
+        assert_eq!(app.error_summary_state().get(), "err:ok");
         assert!(app.loaded_skills().is_empty());
         match app.input_handle().mode() {
             ChatInputMode::Text(config) => {
@@ -2699,6 +2879,69 @@ Use this skill for {name} tasks.
         assert_eq!(app.config().model, "deepseek-reasoner");
         assert_eq!(app.model_state().get(), "model: deepseek-reasoner");
         assert_eq!(app.plan_mode_state().get(), PlanMode::On.status());
+    }
+
+    #[test]
+    fn status_bar_segments_include_agent_runtime_fields() {
+        let model = atto_ui::reactive::Property::new("model: deepseek-chat".to_string());
+        let state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan = atto_ui::reactive::Property::new(PlanMode::Auto.status());
+        let tools = atto_ui::reactive::Property::new("tools: 5".to_string());
+        let skills = atto_ui::reactive::Property::new("skills: 0".to_string());
+        let tokens = atto_ui::reactive::Property::new("tokens~0".to_string());
+        let error = atto_ui::reactive::Property::new("err:ok".to_string());
+
+        let segments = status_segments(
+            model.binding(),
+            state.binding(),
+            plan.binding(),
+            tools.binding(),
+            skills.binding(),
+            tokens.binding(),
+            error.binding(),
+        );
+        let pairs = segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.text.get()))
+            .collect::<Vec<_>>();
+
+        assert!(pairs.contains(&("model", "model: deepseek-chat".to_string())));
+        assert!(pairs.contains(&("plan", "plan: auto".to_string())));
+        assert!(pairs.contains(&("tools", "tools: 5".to_string())));
+        assert!(pairs.contains(&("skills", "skills: 0".to_string())));
+        assert!(pairs.contains(&("tokens", "tokens~0".to_string())));
+        assert!(pairs.contains(&("error", "err:ok".to_string())));
+        assert!(pairs.contains(&("streaming", STATUS_READY.to_string())));
+    }
+
+    #[test]
+    fn transcript_status_summarizes_tokens_and_latest_error() {
+        let store = ChatMessageStore::new();
+        let token_estimate_state =
+            atto_ui::reactive::Property::new(format_token_estimate_status(0));
+        let error_summary_state = atto_ui::reactive::Property::new(error_summary_status(&[]));
+
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "hello status tokens",
+        ));
+        sync_transcript_status(&store, &token_estimate_state, &error_summary_state);
+
+        assert_ne!(token_estimate_state.get(), "tokens~0");
+        assert_eq!(error_summary_state.get(), "err:ok");
+
+        store.push(
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "").with_status(
+                ChatTurnStatus::Failed(ChatError::new(
+                    ChatErrorKind::Network,
+                    "Network stream disconnected while reading SSE",
+                )),
+            ),
+        );
+        sync_transcript_status(&store, &token_estimate_state, &error_summary_state);
+
+        assert!(error_summary_state.get().starts_with("err:network"));
     }
 
     #[test]
@@ -3682,6 +3925,7 @@ Use this skill for {name} tasks.
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let transcript_status = TranscriptStatusState::new();
         input_handle.streaming_binding().set(true);
         let limits = AgentTurnLimits::new(8, 1, std::time::Duration::from_secs(30));
         let (sender, _receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
@@ -3704,6 +3948,7 @@ Use this skill for {name} tasks.
             &input_handle,
             &mock_turns,
             &status_state,
+            &transcript_status,
             &tool_runtime,
             AppAction::ToolCallsReady {
                 branch,
@@ -3725,6 +3970,12 @@ Use this skill for {name} tasks.
         assert_eq!(messages[0].blocks.len(), 1);
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
+        assert!(
+            transcript_status
+                .error_summary_state
+                .get()
+                .contains("err:tool")
+        );
         assert!(!mock_turns.cancel(assistant_id));
     }
 
@@ -3940,6 +4191,7 @@ Use this skill for {name} tasks.
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let transcript_status = TranscriptStatusState::new();
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
         permissions
@@ -3965,6 +4217,7 @@ Use this skill for {name} tasks.
             &input_handle,
             &mock_turns,
             &status_state,
+            &transcript_status,
             &tool_runtime,
             AppAction::ToolCallsReady {
                 branch,
@@ -4070,6 +4323,7 @@ Use this skill for {name} tasks.
         let input_handle = atto_ui_chat::ChatInputHandle::new();
         let mock_turns = MockTurnRegistry::new();
         let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let transcript_status = TranscriptStatusState::new();
         let registry = test_tool_registry();
         let permissions = test_tool_permissions();
         let (sender, receiver) = atto_ui::reactive::EventQueue::<AppAction>::channel();
@@ -4091,6 +4345,7 @@ Use this skill for {name} tasks.
             &input_handle,
             &mock_turns,
             &status_state,
+            &transcript_status,
             &tool_runtime,
             AppAction::ToolCallsReady {
                 branch,
@@ -4121,6 +4376,7 @@ Use this skill for {name} tasks.
             &input_handle,
             &mock_turns,
             &status_state,
+            &transcript_status,
             &tool_runtime,
             action,
         ));
