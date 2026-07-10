@@ -1,27 +1,25 @@
-## Execution plan
+# Claude Execution Plan
 
-I will follow `TODO.md` as the authoritative task list and complete only the first task whose heading is not prefixed with `[DONE]`.
+## Scope
 
-1. Read `TODO.md` first to identify the first incomplete task and its validation requirements.
-2. Inspect only the files needed for that task, plus the latest commit if it is directly relevant to the selected task.
-3. Implement the task without narrowing scope or using workarounds.
-4. Run formatting, linting, and relevant tests in the required order, fixing any unscheduled failures that appear.
-5. Mark the completed task title with `[DONE]` in `TODO.md` and update its completion record.
-6. Update this file at key milestones.
-7. Commit all changes for the completed task with a clear message and stop.
+Complete exactly the first incomplete task listed in `TODO.md`, using `TODO.md` as the authoritative task source. Do not proceed to the next task after completion.
 
-## Current task
+## Step-by-step plan
 
-Selected first incomplete task: `M7.8 测试与冒烟`.
-
-Task scope:
-1. Keep default tests on mock provider and local mock SSE server only.
-2. Extend the ignored `deepseek_real_smoke` to cover one real end-to-end turn with text streaming and at least one tool round trip.
-3. Confirm default CI/test runs do not require external network access.
-4. Mark `M7.8` done in `TODO.md` after validation and commit the changes.
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Inspect the latest commit only for directly relevant unfinished notes tied to that selected task.
+3. Read the selected task details, dependencies, validation requirements, and nearby plan context as needed.
+4. Implement the selected task completely, avoiding workarounds or scope narrowing.
+5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite required by the task.
+6. If a blocking prerequisite or unscheduled failing test is found, update `TODO.md` with the minimum required prerequisite task, commit that bookkeeping, and stop.
+7. If the task is completed, mark its title in `TODO.md` with `[DONE]`, update its completion record, and update this plan file with completion progress.
+8. Commit all changes for this invocation with a clear task-specific message and the required co-author trailer.
 
 ## Progress
 
-- Implemented the ignored real DeepSeek smoke as a two-request round trip: force `atto_smoke_echo`, append the local tool result, then verify the final streamed response.
-- Validation completed: formatting, clippy, default ignored-smoke check, full workspace tests, final format check, and the manual ignored real DeepSeek smoke all passed.
-- Next: commit the M7.8 changes and stop.
+- Initialized execution plan.
+- Selected first incomplete task: `M7.R Review`.
+- Review focus: real/mock provider branching, incremental streaming, real tool loop termination, request cancellation and branch token handling, error mapping/status display, network dependency boundaries, and default non-network validation.
+- Reviewed implementation and focused regression coverage for M7. No blocking issue found; proceeding to required fmt, clippy, and test validation.
+- Validation completed successfully: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`.
+- Marked `M7.R Review` as `[DONE]` in `TODO.md` with the review completion record.

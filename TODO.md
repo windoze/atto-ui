@@ -194,7 +194,9 @@
 - [x] **[DONE] M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
   - 完成记录（2026-07-11）：扩展 ignored `deepseek_real_smoke`，真实 DeepSeek smoke 现在先强制调用 `atto_smoke_echo` function tool，聚合 streamed tool-call delta，本地执行工具并以 role=`tool` 回灌，再发起 follow-up 请求验证最终文本流包含 smoke phrase；测试仍标记 `#[ignore]`，默认运行只编译并报告 ignored，不会访问外网。默认 workspace 测试继续覆盖 mock provider 和本地 mock SSE server 路径。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --test deepseek_real_smoke`（0 passed, 1 ignored）；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored --nocapture`（手动真实 DeepSeek smoke，1 passed）。
-- [ ] **M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
+- [x] **[DONE] M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
+  - 完成记录（2026-07-11）：复核 M7 live DeepSeek 接入路径，确认 provider 选择按 `DEEPSEEK_API_KEY` / `--mock` 在 mock 与 DeepSeek 间切换，snapshot fixture 保持 mock，状态栏展示实际 provider/model/streaming/error；`DeepSeekClient` 逐 SSE event 增量回调并保留本地 mock SSE 测试，真实 turn 复用 `DeepSeekUiStream`、`AppAction` 和 branch-token 路径。复核真实 tool loop 后确认 `finish_reason=tool_calls` 会复用审批、plan gate、tool budget 和 `role=tool` 回灌，工具完成或拒绝后继续请求，触达 model/tool budget 时停止并失败当前 turn；Esc、`on_cancel`、`/abort`、retry/edit 会取消 active turn、abort live HTTP future 并拒绝 stale branch action。错误映射覆盖缺失 key、401/403、429、5xx、JSON/SSE/网络断流并同步 `err:*` 状态栏摘要；`reqwest` / `futures-util` 网络依赖仍只在 `crates/atto-agent-app`，真实 DeepSeek smoke 保持 ignored，默认测试只使用 mock provider 和 `127.0.0.1` 本地 mock SSE server。最近提交未声明与本 review 直接相关的未完成事项。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 
 ## 收尾
 
