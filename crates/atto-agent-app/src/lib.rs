@@ -24,8 +24,8 @@ use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
     ChatBlockId, ChatBranchToken, ChatError, ChatInputHandle, ChatInputResponse, ChatMessage,
     ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole,
-    ChatSlashCommand, ChatTurnStatus, DiffData, ThinkingBlock, ToolInput, ToolOutput,
-    ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatSlashCommand, ChatTurnStatus, DiffData, PlanBlock, PlanDecision, PlanItem, ThinkingBlock,
+    ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use ratatui::layout::Rect;
 use serde_json::{Map, Number, Value};
@@ -46,7 +46,10 @@ use crate::deepseek::{
     ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
-use crate::plan::{PlanTurnDecision, decide_plan_for_turn};
+use crate::plan::{
+    PLAN_MODE_SYSTEM_PROMPT, PlanTurnDecision, decide_plan_for_turn, submit_plan_chat_tool,
+    submit_plan_tool_choice,
+};
 use crate::skill::{
     DEFAULT_MAX_AUTO_LOADED_SKILLS, LoadedSkillSet, SkillRegistry, build_skill_prompt_block,
 };
@@ -81,6 +84,11 @@ enum AppAction {
         branch: ChatBranchToken,
         message_id: ChatMessageId,
         tool_calls: Vec<ToolUseBlock>,
+    },
+    PlanReady {
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        items: Vec<PlanItem>,
     },
     ToolResultReady {
         branch: ChatBranchToken,
@@ -953,12 +961,22 @@ fn tool_output_label(output: crate::tool::ToolOutputKind) -> &'static str {
 
 fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAgentTurnRequest) {
     thread::spawn(move || {
-        let mut stream = DeepSeekUiStream::new(
-            request.branch,
-            request.message_id,
-            request.block_id,
-            request.model,
-        );
+        let mut stream = if request.plan_decision.requires_plan() {
+            DeepSeekUiStream::new_with_plan_requirement(
+                request.branch,
+                request.message_id,
+                request.block_id,
+                request.model,
+                true,
+            )
+        } else {
+            DeepSeekUiStream::new(
+                request.branch,
+                request.message_id,
+                request.block_id,
+                request.model,
+            )
+        };
         for event in mock_agent_events(&request.prompt, &request.plan_decision) {
             if request.cancel.is_cancelled() {
                 return;
@@ -1007,8 +1025,22 @@ fn mock_agent_events(
             ),
             ChatCompletionSseEvent::Done,
         ],
+        _ if plan_decision.requires_plan() => vec![
+            mock_stream_tool_call_event(
+                "call_submit_plan",
+                crate::plan::SUBMIT_PLAN_TOOL_NAME,
+                serde_json::json!({
+                    "items": [
+                        "Review the request and relevant context.",
+                        "Implement the requested change in the appropriate files.",
+                        "Run formatting, linting, and tests before reporting back."
+                    ]
+                }),
+            ),
+            ChatCompletionSseEvent::Done,
+        ],
         _ => {
-            let mut events = mock_agent_deltas(prompt, plan_decision.requires_plan())
+            let mut events = mock_agent_deltas(prompt)
                 .into_iter()
                 .map(mock_stream_content_event)
                 .collect::<Vec<_>>();
@@ -1082,7 +1114,7 @@ fn mock_stream_finish_event() -> ChatCompletionSseEvent {
     })
 }
 
-fn mock_agent_deltas(prompt: &str, _plan_required: bool) -> Vec<String> {
+fn mock_agent_deltas(prompt: &str) -> Vec<String> {
     vec![
         "Mock assistant: ".to_string(),
         prompt.trim().to_string(),
@@ -1163,6 +1195,25 @@ fn apply_app_action(
                 }
             }
             true
+        }
+        AppAction::PlanReady {
+            branch,
+            message_id,
+            items,
+        } => {
+            if !store.is_branch_current(branch) || items.is_empty() {
+                return false;
+            }
+            store
+                .append_block(
+                    message_id,
+                    ChatBlock::Plan(PlanBlock {
+                        id: ChatBlockId::new(0),
+                        items,
+                        decision: PlanDecision::Pending,
+                    }),
+                )
+                .is_some()
         }
         AppAction::ToolResultReady {
             branch,
@@ -1522,6 +1573,37 @@ pub fn deepseek_request_from_transcript_with_skills(
     .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto))
 }
 
+/// Builds the plan-draft request body and exposes only the virtual `submit_plan` tool.
+pub fn deepseek_plan_request_from_transcript(
+    config: &AgentConfig,
+    messages: &[ChatMessage],
+) -> ChatCompletionRequest {
+    deepseek_plan_request_from_messages(config, deepseek_messages_from_transcript(messages))
+}
+
+/// Builds a plan-draft request while preserving active skill prompt injection.
+pub fn deepseek_plan_request_from_transcript_with_skills(
+    config: &AgentConfig,
+    skill_registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    messages: &[ChatMessage],
+) -> ChatCompletionRequest {
+    deepseek_plan_request_from_messages(
+        config,
+        deepseek_messages_from_transcript_with_skills(skill_registry, loaded_skills, messages),
+    )
+}
+
+fn deepseek_plan_request_from_messages(
+    config: &AgentConfig,
+    mut messages: Vec<ChatCompletionMessage>,
+) -> ChatCompletionRequest {
+    messages.insert(0, ChatCompletionMessage::system(PLAN_MODE_SYSTEM_PROMPT));
+    ChatCompletionRequest::from_config(config, messages)
+        .with_tools(vec![submit_plan_chat_tool()])
+        .with_tool_choice(submit_plan_tool_choice())
+}
+
 /// Converts the UI transcript into DeepSeek/OpenAI-compatible chat messages.
 pub fn deepseek_messages_from_transcript(messages: &[ChatMessage]) -> Vec<ChatCompletionMessage> {
     let mut result = Vec::new();
@@ -1853,8 +1935,8 @@ mod tests {
     use atto_ui_chat::{
         ApprovalAction, ApprovalDecision, ApprovalLevel, ChatBlock, ChatError, ChatErrorKind,
         ChatInputMode, ChatInputResponse, ChatMessage, ChatMessageStore, ChatRole,
-        ChatSlashCommandAction, ChatTurnStatus, StopReason, TokenUsage, ToolInput, ToolOutput,
-        ToolResultBlock, ToolStatus, ToolUseBlock,
+        ChatSlashCommandAction, ChatTurnStatus, PlanDecision, StopReason, TokenUsage, ToolInput,
+        ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
     };
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -1878,9 +1960,10 @@ mod tests {
     use super::{
         APP_TITLE, AgentApp, AgentTurnLauncher, AgentTurnLimits, AppAction, MockTurnRegistry,
         STATUS_READY, STATUS_STREAMING, SlashRuntime, ToolRuntime, TurnBudgetTracker,
-        apply_app_action, build_chat_panel, deepseek_request_from_transcript,
-        deepseek_request_from_transcript_with_skills, execute_tool_use_to_result_block,
-        handle_tool_approval, submit_input_response, submit_slash_command_text,
+        apply_app_action, build_chat_panel, deepseek_plan_request_from_transcript,
+        deepseek_request_from_transcript, deepseek_request_from_transcript_with_skills,
+        execute_tool_use_to_result_block, handle_tool_approval, submit_input_response,
+        submit_slash_command_text,
     };
 
     fn message_text(message: &ChatMessage) -> &str {
@@ -3452,6 +3535,190 @@ Use this skill for {name} tasks.
             request.tool_choice,
             Some(ToolChoice::Mode(ToolChoiceMode::Auto))
         );
+    }
+
+    #[test]
+    fn deepseek_plan_request_forces_submit_plan_virtual_tool() {
+        let request = deepseek_plan_request_from_transcript(
+            &AgentConfig::defaults("."),
+            &[ChatMessage::text(
+                1,
+                ChatRole::User,
+                "Please update README and run tests.",
+            )],
+        );
+
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, ChatMessageRole::System);
+        assert!(
+            request.messages[0]
+                .content
+                .as_deref()
+                .is_some_and(|content| content.contains("You are in plan mode"))
+        );
+        assert_eq!(request.messages[1].role, ChatMessageRole::User);
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(
+            request.tools[0].function.name,
+            crate::plan::SUBMIT_PLAN_TOOL_NAME
+        );
+        assert_eq!(
+            request.tool_choice,
+            Some(ToolChoice::Function(
+                crate::deepseek::ToolChoiceFunction::named(crate::plan::SUBMIT_PLAN_TOOL_NAME,)
+            ))
+        );
+    }
+
+    #[test]
+    fn deepseek_stream_submit_plan_tool_call_writes_pending_plan_block() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream = DeepSeekUiStream::new_with_plan_requirement(
+            branch,
+            assistant_id,
+            text_block_id,
+            "deepseek-chat",
+            true,
+        );
+        let events = vec![
+            ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+                id: None,
+                object: None,
+                created: None,
+                model: None,
+                choices: vec![ChatCompletionChunkChoice {
+                    index: 0,
+                    delta: ChatCompletionDelta {
+                        tool_calls: vec![tool_call_delta(
+                            0,
+                            Some("call_plan"),
+                            Some(crate::plan::SUBMIT_PLAN_TOOL_NAME),
+                            Some(
+                                r#"{"items":["Inspect the current implementation.","Add submit_plan mapping.","Run validation."]}"#,
+                            ),
+                        )],
+                        ..ChatCompletionDelta::default()
+                    },
+                    finish_reason: Some(crate::deepseek::FinishReason::ToolCalls),
+                }],
+                usage: None,
+            }),
+            ChatCompletionSseEvent::Done,
+        ];
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_test_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let assistant = &messages[0];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert_eq!(assistant.meta.stop_reason, Some(StopReason::EndTurn));
+        assert_eq!(message_text(assistant), "");
+        match &assistant.blocks[1] {
+            ChatBlock::Plan(plan) => {
+                assert_eq!(plan.decision, PlanDecision::Pending);
+                assert_eq!(
+                    plan.items
+                        .iter()
+                        .map(|item| item.text.as_str())
+                        .collect::<Vec<_>>(),
+                    vec![
+                        "Inspect the current implementation.",
+                        "Add submit_plan mapping.",
+                        "Run validation."
+                    ]
+                );
+            }
+            other => panic!("expected plan block, got {other:?}"),
+        }
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
+        assert!(!mock_turns.cancel(assistant_id));
+    }
+
+    #[test]
+    fn deepseek_stream_markdown_plan_fallback_writes_pending_plan_block() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        input_handle.streaming_binding().set(true);
+        let assistant_id = store.next_message_id();
+        let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "")
+            .with_status(ChatTurnStatus::Streaming);
+        let text_block_id = assistant.blocks[0].id();
+        store.push(assistant);
+        let branch = store.branch_token();
+        let _cancel = mock_turns.start(assistant_id);
+        let mut stream = DeepSeekUiStream::new_with_plan_requirement(
+            branch,
+            assistant_id,
+            text_block_id,
+            "deepseek-chat",
+            true,
+        );
+        let events = parse_chat_completion_sse(concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Plan:\\n1. Inspect current state.\\n\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"2. Implement the plan parser.\\n- [ ] Run validation.\\n\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .unwrap();
+
+        for event in events {
+            for action in stream.map_event(event) {
+                assert!(apply_test_app_action(
+                    &store,
+                    &input_handle,
+                    &mock_turns,
+                    &status_state,
+                    action,
+                ));
+            }
+        }
+
+        let messages = store.messages();
+        let assistant = &messages[0];
+        assert_eq!(assistant.status, ChatTurnStatus::Complete);
+        assert_eq!(message_text(assistant), "");
+        match &assistant.blocks[1] {
+            ChatBlock::Plan(plan) => {
+                assert_eq!(plan.decision, PlanDecision::Pending);
+                assert_eq!(
+                    plan.items
+                        .iter()
+                        .map(|item| item.text.as_str())
+                        .collect::<Vec<_>>(),
+                    vec![
+                        "Inspect current state.",
+                        "Implement the plan parser.",
+                        "Run validation."
+                    ]
+                );
+            }
+            other => panic!("expected plan block, got {other:?}"),
+        }
+        assert!(!input_handle.streaming_binding().get());
+        assert_eq!(status_state.get(), STATUS_READY);
     }
 
     #[test]

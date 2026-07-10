@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use atto_ui::ComponentValue;
 use atto_ui_chat::{
     ChatBlockId, ChatBranchToken, ChatError, ChatErrorKind, ChatMessageId, ChatMessageMeta,
-    StopReason, TokenUsage, ToolInput, ToolStatus, ToolUseBlock,
+    PlanItem, StopReason, TokenUsage, ToolInput, ToolStatus, ToolUseBlock,
 };
 use serde_json::Value;
 
@@ -14,6 +14,7 @@ use crate::deepseek::{
     ChatCompletionChunk, ChatCompletionSseEvent, ChatToolCallDelta, CompletionUsage, FinishReason,
     chat_error_from_api_error,
 };
+use crate::plan::{SUBMIT_PLAN_TOOL_NAME, parse_markdown_plan_items, parse_submit_plan_arguments};
 
 /// Stateful mapper for one assistant turn's DeepSeek stream.
 #[derive(Clone, Debug)]
@@ -22,8 +23,11 @@ pub(crate) struct DeepSeekUiStream {
     message_id: ChatMessageId,
     text_block_id: ChatBlockId,
     meta: ChatMessageMeta,
+    expects_plan: bool,
+    content: String,
     tool_calls: ToolCallAccumulator,
     emitted_tool_calls: bool,
+    emitted_plan: bool,
     finished: bool,
 }
 
@@ -35,6 +39,17 @@ impl DeepSeekUiStream {
         text_block_id: ChatBlockId,
         model: impl Into<String>,
     ) -> Self {
+        Self::new_with_plan_requirement(branch, message_id, text_block_id, model, false)
+    }
+
+    /// Creates a mapper that can convert plan-mode output into a `PlanBlock`.
+    pub(crate) fn new_with_plan_requirement(
+        branch: ChatBranchToken,
+        message_id: ChatMessageId,
+        text_block_id: ChatBlockId,
+        model: impl Into<String>,
+        expects_plan: bool,
+    ) -> Self {
         Self {
             branch,
             message_id,
@@ -43,8 +58,11 @@ impl DeepSeekUiStream {
                 model: Some(model.into()),
                 ..ChatMessageMeta::default()
             },
+            expects_plan,
+            content: String::new(),
             tool_calls: ToolCallAccumulator::default(),
             emitted_tool_calls: false,
+            emitted_plan: false,
             finished: false,
         }
     }
@@ -103,25 +121,56 @@ impl DeepSeekUiStream {
             if let Some(content) = delta.content
                 && !content.is_empty()
             {
-                actions.push(AppAction::TextDelta {
-                    branch: self.branch,
-                    block_id: self.text_block_id,
-                    delta: content,
-                });
+                self.content.push_str(&content);
+                if !self.expects_plan {
+                    actions.push(AppAction::TextDelta {
+                        branch: self.branch,
+                        block_id: self.text_block_id,
+                        delta: content,
+                    });
+                }
             }
             for tool_call_delta in delta.tool_calls {
                 self.tool_calls.push_delta(choice_index, tool_call_delta);
             }
             if let Some(finish_reason) = choice.finish_reason {
                 self.meta.stop_reason = stop_reason_from_finish(finish_reason);
-                if finish_reason == FinishReason::ToolCalls && !self.emitted_tool_calls {
-                    match self.tool_calls.finish_blocks() {
-                        Ok(tool_calls) => {
+                if finish_reason == FinishReason::ToolCalls
+                    && !self.emitted_tool_calls
+                    && !self.emitted_plan
+                {
+                    match self.tool_calls.finish(self.expects_plan) {
+                        Ok(FinishedToolCalls::Plan(items)) => {
+                            self.emitted_plan = true;
+                            self.meta.stop_reason = Some(StopReason::EndTurn);
+                            actions.push(AppAction::PlanReady {
+                                branch: self.branch,
+                                message_id: self.message_id,
+                                items,
+                            });
+                        }
+                        Ok(FinishedToolCalls::Tools(tool_calls)) => {
                             self.emitted_tool_calls = true;
                             actions.push(AppAction::ToolCallsReady {
                                 branch: self.branch,
                                 message_id: self.message_id,
                                 tool_calls,
+                            });
+                        }
+                        Err(error) => return self.fail(error),
+                    }
+                } else if self.expects_plan
+                    && finish_reason == FinishReason::Stop
+                    && !self.emitted_plan
+                    && !self.emitted_tool_calls
+                {
+                    match parse_markdown_plan_items(&self.content) {
+                        Ok(items) => {
+                            self.emitted_plan = true;
+                            actions.push(AppAction::PlanReady {
+                                branch: self.branch,
+                                message_id: self.message_id,
+                                items,
                             });
                         }
                         Err(error) => return self.fail(error),
@@ -169,7 +218,7 @@ impl ToolCallAccumulator {
         }
     }
 
-    fn finish_blocks(&self) -> Result<Vec<ToolUseBlock>, ChatError> {
+    fn finish(&self, expects_plan: bool) -> Result<FinishedToolCalls, ChatError> {
         if self.calls.is_empty() {
             return Err(tool_call_error(
                 "DeepSeek requested tool execution without tool calls.",
@@ -177,11 +226,27 @@ impl ToolCallAccumulator {
             ));
         }
 
-        self.calls
+        let calls = self
+            .calls
             .iter()
-            .map(|(key, call)| call.to_tool_use_block(*key))
-            .collect()
+            .map(|(key, call)| call.to_complete_call(*key))
+            .collect::<Result<Vec<_>, _>>()?;
+        if expects_plan {
+            return complete_plan_tool_call(calls).map(FinishedToolCalls::Plan);
+        }
+
+        let tool_calls = calls
+            .into_iter()
+            .map(CompleteToolCall::into_tool_use_block)
+            .collect::<Vec<_>>();
+        Ok(FinishedToolCalls::Tools(tool_calls))
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum FinishedToolCalls {
+    Tools(Vec<ToolUseBlock>),
+    Plan(Vec<PlanItem>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,7 +263,7 @@ struct PartialToolCall {
 }
 
 impl PartialToolCall {
-    fn to_tool_use_block(&self, key: ToolCallKey) -> Result<ToolUseBlock, ChatError> {
+    fn to_complete_call(&self, key: ToolCallKey) -> Result<CompleteToolCall, ChatError> {
         let call_id = self
             .id
             .as_deref()
@@ -233,15 +298,54 @@ impl PartialToolCall {
             )
         })?;
 
-        Ok(ToolUseBlock {
-            id: ChatBlockId::new(0),
+        Ok(CompleteToolCall {
             call_id: call_id.to_string(),
             name: name.to_string(),
-            input: ToolInput::Json(component_value_from_json(arguments)),
+            arguments,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CompleteToolCall {
+    call_id: String,
+    name: String,
+    arguments: Value,
+}
+
+impl CompleteToolCall {
+    fn into_tool_use_block(self) -> ToolUseBlock {
+        ToolUseBlock {
+            id: ChatBlockId::new(0),
+            call_id: self.call_id,
+            name: self.name,
+            input: ToolInput::Json(component_value_from_json(self.arguments)),
             status: ToolStatus::Pending,
             approval: None,
             collapsed: false,
-        })
+        }
+    }
+}
+
+fn complete_plan_tool_call(calls: Vec<CompleteToolCall>) -> Result<Vec<PlanItem>, ChatError> {
+    match calls.as_slice() {
+        [call] if call.name == SUBMIT_PLAN_TOOL_NAME => {
+            parse_submit_plan_arguments(&call.arguments)
+        }
+        [call] => Err(tool_call_error(
+            "DeepSeek returned a non-plan tool call during plan generation.",
+            format!(
+                "expected `{SUBMIT_PLAN_TOOL_NAME}`, got `{}` for call id `{}`",
+                call.name, call.call_id
+            ),
+        )),
+        _ => Err(tool_call_error(
+            "DeepSeek returned multiple tool calls during plan generation.",
+            format!(
+                "expected exactly one `{SUBMIT_PLAN_TOOL_NAME}` call, got {} calls",
+                calls.len()
+            ),
+        )),
     }
 }
 

@@ -1,24 +1,31 @@
-## Execution Plan
+# 执行计划
 
-1. Read `TODO.md` first and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect the selected task details, dependencies, validation requirements, and completion record.
-4. Implement the selected task exactly as written, unless a concrete blocking prerequisite is discovered.
-5. If a blocking prerequisite is required, update `TODO.md` with the minimum new prerequisite task in dependency order, keep the current task incomplete, commit the bookkeeping change, and stop.
-6. Run validation in the required order after implementation: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
-7. Address any failing test unless it is already explicitly scheduled for repair before completion.
-8. Mark only the selected task as `[DONE]` in `TODO.md` and update its completion record.
-9. Commit all task-related changes with a clear task-specific commit message.
-10. Stop after completing exactly one task.
+此文件记录本次调用的可公开执行计划与进度；不会记录私有推理过程。
 
-## Progress Log
+## 当前目标
 
-- Initial execution plan recorded before task discovery.
-- Identified first incomplete task: `M5.2 Auto 判定`.
-- Latest commit is `[M5.1] Record plan mode state completion`; no unfinished issue directly tied to M5.2 was found in the commit title.
-- M5.2 scope: add deterministic auto-plan classification for prompts/tool needs only; leave plan generation, PlanBlock UI, accept/reject, and mutating-tool gate to later M5 tasks.
-- Added `atto_agent_app::plan` with deterministic `PlanTurnDecision` classification and wired submit handling to carry the decision into each mock turn request without changing M5.3+ behavior.
-- First clippy run failed because `AgentTurnLauncher` derived `Debug` after receiving a `ToolRegistry`; removed the unnecessary `Debug` derive.
-- Second clippy run reported consecutive string replacement in plan tool-name matching; changed it to a single replacement over both separators.
-- Validation completed successfully: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --all-targets`, and `cargo fmt --all -- --check`.
-- Updated `TODO.md` to mark `M5.2 Auto 判定` as `[DONE]` with implementation and validation notes.
+- 已从 `TODO.md` 识别第一个未完成任务：`M5.3 计划生成`。
+- 任务要求：实现虚拟 tool `submit_plan({ items })`，并兜底解析 markdown 列表为 `PlanItem`。
+- 本次只完成该任务，完成后提交并停止。
+
+## 执行步骤
+
+1. 检查最新提交是否声明与 `M5.3` 直接相关的未完成事项。
+2. 定位现有 plan mode 判定、DeepSeek tool call 聚合、tool registry、Chat/Plan block 数据模型与测试。
+3. 实现 `submit_plan` 虚拟工具的请求/聚合/解析路径，确保不会作为本地可执行工具绕过权限模型。
+4. 实现 markdown 列表兜底解析为 `PlanItem`，覆盖常见有序/无序/checkbox 列表输入。
+5. 增加或更新相关单元测试，必要时补充确定性 fixture 覆盖。
+6. 按要求运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、再运行相关或完整测试。
+7. 更新 `TODO.md`，给 `M5.3` 标记 `[DONE]` 并写入完成记录。
+8. 提交本次任务相关变更，停止。
+
+## 进度记录
+
+- 已记录初始计划。
+- 已读取 `TODO.md`，确认当前任务为 `M5.3 计划生成`。
+- 已检查最新提交 `[M5.2] Add auto plan detection`，未发现与 `M5.3` 直接相关的未完成事项。
+- 已定位实现点：`plan.rs` 放置虚拟 `submit_plan` schema 与计划解析，`stream_ui.rs` 把流式结果映射为 plan action，`lib.rs` 负责把 `PlanBlock` 写入 store 并构建 plan draft request。
+- 已完成核心实现：新增 `submit_plan` 虚拟工具 schema/forced tool choice、markdown fallback 解析、`PlanReady` action、plan draft request builder，以及 plan-mode mock stream。
+- 已完成验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check` 均通过。
+- 已更新 `TODO.md`，将 `M5.3 计划生成` 标记为 `[DONE]` 并写入完成记录。
+- 已检查 `git diff --check`，未发现空白错误。
