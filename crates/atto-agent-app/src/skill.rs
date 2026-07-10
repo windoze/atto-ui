@@ -1,8 +1,9 @@
 //! Skill file parsing and discovery for local prompt packages.
 //!
 //! Skills are Markdown instruction files with YAML frontmatter. This module owns
-//! deterministic discovery from the default workspace and user skill roots;
-//! activation, matching, and prompt injection are implemented in later M4 tasks.
+//! deterministic discovery from the default workspace and user skill roots, plus
+//! runtime tracking for manually loaded skills. Matching and prompt injection are
+//! implemented in later M4 tasks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -10,6 +11,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -237,6 +239,49 @@ impl SkillRegistry {
 
     fn push_issue(&mut self, issue: SkillDiscoveryIssue) {
         self.issues.push(issue);
+    }
+}
+
+/// Shared runtime state for skills manually loaded into the current agent session.
+#[derive(Clone, Debug, Default)]
+pub struct LoadedSkillSet {
+    names: Arc<Mutex<BTreeSet<String>>>,
+}
+
+impl LoadedSkillSet {
+    pub fn len(&self) -> usize {
+        self.names.lock().expect("loaded skill lock poisoned").len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.names
+            .lock()
+            .expect("loaded skill lock poisoned")
+            .contains(name)
+    }
+
+    pub fn insert(&self, name: impl Into<String>) -> bool {
+        self.names
+            .lock()
+            .expect("loaded skill lock poisoned")
+            .insert(name.into())
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        self.names
+            .lock()
+            .expect("loaded skill lock poisoned")
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    pub fn status(&self) -> String {
+        format!("skills: {}", self.len())
     }
 }
 

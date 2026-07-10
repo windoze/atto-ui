@@ -57,6 +57,7 @@ fn agent_mock_fixture_streams_submitted_input() -> anyhow::Result<()> {
     host.wait_for_text("provider: mock", PTY_WAIT)?;
     host.wait_for_text("model: deepseek-chat", PTY_WAIT)?;
     host.wait_for_text("plan: auto", PTY_WAIT)?;
+    host.wait_for_text("skills: 0", PTY_WAIT)?;
 
     submit_text(&mut host, "hello agent")?;
 
@@ -87,7 +88,8 @@ fn agent_slash_commands_render_outputs_and_update_state() -> anyhow::Result<()> 
     host.wait_for_text("plan: off", PTY_WAIT)?;
 
     submit_text(&mut host, "/skills")?;
-    host.wait_for_text("Skills: 0 discovered.", PTY_WAIT)?;
+    host.wait_for_text("Skills: 0 discovered, 0 loaded.", PTY_WAIT)?;
+    host.wait_for_text("skills: 0", PTY_WAIT)?;
 
     submit_text(&mut host, "/tools")?;
     host.wait_for_text("Tools: 5 registered.", PTY_WAIT)?;

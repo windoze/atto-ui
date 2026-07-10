@@ -90,7 +90,9 @@
 - [x] **[DONE] M4.2 Skill 搜索路径** - 扫描 `.atto/skills` 和 `~/.config/atto-agent/skills`，处理重复 name 和无效文件。
   - 完成记录（2026-07-10）：新增 `SkillRegistry` discovery，按 workspace `.atto/skills` 优先、用户级 `~/.config/atto-agent/skills` 其次递归扫描 `SKILL.md`；缺失目录忽略，非目录/遍历错误/无效 skill 文件记录为非致命 discovery issue，重复 name 保留先发现 skill 并记录冲突。`AgentConfig` 现在保留 `home_dir` 供真实运行扫描用户路径，`AgentConfig::defaults`/snapshot 仍不读取用户 HOME；agent runtime 持有发现到的 registry，`/skills` 输出发现数量和 discovery issue，`/skill` 激活留给 M4.3。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M4.3 手动加载命令** - `/skills` 展示可用 skill，`/skill <name>` 激活 skill，并在状态栏显示数量。
+- [x] **[DONE] M4.3 手动加载命令** - `/skills` 展示可用 skill，`/skill <name>` 激活 skill，并在状态栏显示数量。
+  - 完成记录（2026-07-10）：新增运行时 `LoadedSkillSet` 保存手动激活的 skill；agent app 注入 `/skill` slash 命令，`/skill <name>` 会校验 discovery registry、处理未知/重复加载并更新状态栏 `skills: N`，`/skills` 现在展示 discovered/loaded 数量并标记每个 skill 的 loaded/available 状态。补充单元测试覆盖激活、重复、未知参数和列表标记，更新 PTY slash 测试覆盖状态栏 skill 计数与新 `/skills` 文案。
+  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。
 - [ ] **M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
 - [ ] **M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。

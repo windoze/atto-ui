@@ -45,7 +45,7 @@ use crate::deepseek::{
     ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
-use crate::skill::SkillRegistry;
+use crate::skill::{LoadedSkillSet, SkillRegistry};
 use crate::stream_ui::DeepSeekUiStream;
 use crate::tool::{
     ToolContext, ToolOutputKind, ToolPermissionDecision, ToolPermissionPolicy, ToolRegistry,
@@ -124,6 +124,8 @@ struct SlashRuntime {
     status_state: Property<String>,
     plan_mode_state: Property<String>,
     skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
+    skill_count_state: Property<String>,
     turn_budgets: TurnBudgetTracker,
 }
 
@@ -153,6 +155,7 @@ struct AgentRuntime {
     action_sender: mpsc::Sender<AppAction>,
     mock_turns: MockTurnRegistry,
     skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
     tool_registry: ToolRegistry,
     tool_permissions: Arc<Mutex<ToolPermissionPolicy>>,
     turn_budgets: TurnBudgetTracker,
@@ -162,6 +165,7 @@ struct AgentRuntime {
     status_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
+    skill_count_state: Property<String>,
 }
 
 #[derive(Clone)]
@@ -185,13 +189,16 @@ impl AgentRuntime {
         let tool_registry =
             crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid");
         let skill_registry = SkillRegistry::discover(&config.workspace, config.home_dir.as_deref());
+        let loaded_skills = LoadedSkillSet::default();
         let limits = AgentTurnLimits::default();
         let turn_budgets = TurnBudgetTracker::default();
+        let skill_count_state = Property::new(loaded_skills.status());
         Self {
             config,
             action_sender,
             mock_turns,
             skill_registry,
+            loaded_skills,
             tool_registry,
             tool_permissions: Arc::new(Mutex::new(ToolPermissionPolicy::default())),
             turn_budgets,
@@ -201,6 +208,7 @@ impl AgentRuntime {
             status_state: Property::new(STATUS_READY.to_string()),
             model_state,
             plan_mode_state,
+            skill_count_state,
         }
     }
 
@@ -222,6 +230,8 @@ impl AgentRuntime {
             status_state: self.status_state.clone(),
             plan_mode_state: self.plan_mode_state.clone(),
             skill_registry: self.skill_registry.clone(),
+            loaded_skills: self.loaded_skills.clone(),
+            skill_count_state: self.skill_count_state.clone(),
             turn_budgets: self.turn_budgets.clone(),
         }
     }
@@ -285,7 +295,9 @@ pub struct AgentApp {
     status_state: Property<String>,
     model_state: Property<String>,
     plan_mode_state: Property<String>,
+    skill_count_state: Property<String>,
     skill_registry: SkillRegistry,
+    loaded_skills: LoadedSkillSet,
     chat_window_id: WindowId,
 }
 
@@ -330,6 +342,7 @@ impl AgentApp {
             runtime.model_state.binding(),
             runtime.status_state.binding(),
             runtime.plan_mode_state.binding(),
+            runtime.skill_count_state.binding(),
         ));
 
         let chat_window_id = desktop.add_window(
@@ -352,7 +365,9 @@ impl AgentApp {
             status_state: runtime.status_state,
             model_state: runtime.model_state,
             plan_mode_state: runtime.plan_mode_state,
+            skill_count_state: runtime.skill_count_state,
             skill_registry: runtime.skill_registry,
+            loaded_skills: runtime.loaded_skills,
             chat_window_id,
         }
     }
@@ -393,8 +408,16 @@ impl AgentApp {
         self.plan_mode_state.clone()
     }
 
+    pub fn skill_count_state(&self) -> Property<String> {
+        self.skill_count_state.clone()
+    }
+
     pub fn skill_registry(&self) -> &SkillRegistry {
         &self.skill_registry
+    }
+
+    pub fn loaded_skills(&self) -> LoadedSkillSet {
+        self.loaded_skills.clone()
     }
 
     pub fn chat_window_id(&self) -> WindowId {
@@ -597,6 +620,9 @@ fn agent_slash_commands() -> Vec<ChatSlashCommand> {
         ChatSlashCommand::new("/skills")
             .detail("List available skills")
             .submit_on_accept(),
+        ChatSlashCommand::new("/skill")
+            .detail("Activate a skill by name")
+            .submit_on_accept(),
         ChatSlashCommand::new("/tools")
             .detail("List available tools")
             .submit_on_accept(),
@@ -628,7 +654,17 @@ fn submit_slash_command_text(store: &ChatMessageStore, runtime: &SlashRuntime, t
             &runtime.turn_budgets,
         ),
         "plan" => apply_plan_command(store, &runtime.plan_mode_state, &args),
-        "skills" => append_system_message(store, skills_text(&runtime.skill_registry)),
+        "skills" => append_system_message(
+            store,
+            skills_text(&runtime.skill_registry, &runtime.loaded_skills),
+        ),
+        "skill" => apply_skill_command(
+            store,
+            &runtime.skill_registry,
+            &runtime.loaded_skills,
+            &runtime.skill_count_state,
+            &args,
+        ),
         "tools" => append_system_message(store, tools_text()),
         "abort" => apply_abort_command(
             store,
@@ -757,18 +793,67 @@ fn help_text() -> &'static str {
 - /clear: Clear the current conversation and keep app configuration.\n\
 - /plan [on|off|auto]: Cycle or set the basic plan mode state.\n\
 - /skills: List available skills.\n\
+- `/skill <name>`: Activate a skill for this session.\n\
 - /tools: List available tools and approval policy.\n\
 - /abort: Cancel the active mock turn."
 }
 
-fn skills_text(registry: &SkillRegistry) -> String {
-    let mut text = format!("Skills: {} discovered.\n", registry.len());
+fn apply_skill_command(
+    store: &ChatMessageStore,
+    registry: &SkillRegistry,
+    loaded_skills: &LoadedSkillSet,
+    skill_count_state: &Property<String>,
+    args: &[&str],
+) {
+    let [name] = args else {
+        append_system_message(store, "Usage: /skill <name>");
+        return;
+    };
+    let name = *name;
+
+    let Some(skill) = registry.get(name) else {
+        append_system_message(
+            store,
+            format!("Skill `{name}` not found. Type `/skills` to list available skills."),
+        );
+        return;
+    };
+
+    if loaded_skills.insert(skill.definition.name.clone()) {
+        skill_count_state.set(loaded_skills.status());
+        append_system_message(
+            store,
+            format!(
+                "Loaded skill `{}`: {}",
+                skill.definition.name, skill.definition.description
+            ),
+        );
+    } else {
+        append_system_message(
+            store,
+            format!("Skill `{}` is already active.", skill.definition.name),
+        );
+    }
+}
+
+fn skills_text(registry: &SkillRegistry, loaded_skills: &LoadedSkillSet) -> String {
+    let mut text = format!(
+        "Skills: {} discovered, {} loaded.\n",
+        registry.len(),
+        loaded_skills.len()
+    );
     if registry.is_empty() {
         text.push_str("No skills found in .atto/skills or ~/.config/atto-agent/skills.\n");
     } else {
         for skill in registry.skills() {
+            let loaded = if loaded_skills.contains(&skill.definition.name) {
+                "loaded"
+            } else {
+                "available"
+            };
             text.push_str(&format!(
-                "- {}: {} (mode: {}, source: {}, path: {})\n",
+                "- [{}] {}: {} (mode: {}, source: {}, path: {})\n",
+                loaded,
                 skill.definition.name,
                 skill.definition.description,
                 skill.definition.mode,
@@ -783,7 +868,14 @@ fn skills_text(registry: &SkillRegistry) -> String {
             text.push_str(&format!("- {issue}\n"));
         }
     }
-    text.push_str("Skill activation is scheduled for M4.3.");
+    if loaded_skills.is_empty() {
+        text.push_str("No skills loaded. Type `/skill <name>` to activate one.");
+    } else {
+        text.push_str(&format!(
+            "Loaded skills: {}.",
+            loaded_skills.names().join(", ")
+        ));
+    }
     text
 }
 
@@ -1631,6 +1723,7 @@ fn status_segments(
     model: Binding<String>,
     state: Binding<String>,
     plan_mode: Binding<String>,
+    skills: Binding<String>,
 ) -> Vec<StatusSegment> {
     // Keep provider static until DeepSeek streaming lands while surfacing loaded model config.
     vec![
@@ -1645,6 +1738,9 @@ fn status_segments(
             .min_width(18),
         StatusSegment::new("plan", plan_mode)
             .priority(75)
+            .min_width(9),
+        StatusSegment::new("skills", skills)
+            .priority(74)
             .min_width(9),
         StatusSegment::new("state", state)
             .align(StatusSegmentAlign::Right)
@@ -1674,7 +1770,9 @@ fn chat_window_rect(screen: Rect) -> Rect {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use atto_ui::ComponentValue;
     use atto_ui::composable::{
@@ -1700,7 +1798,7 @@ mod tests {
         chat_error_from_stream_disconnect, parse_chat_completion_sse,
         parse_chat_completion_sse_data,
     };
-    use crate::skill::SkillRegistry;
+    use crate::skill::{LoadedSkillSet, SkillRegistry, SkillSearchPath};
     use crate::stream_ui::DeepSeekUiStream;
     use crate::tool::{
         ToolContext, ToolExecutor, ToolOutputKind, ToolPermission, ToolPermissionPolicy,
@@ -1761,6 +1859,30 @@ mod tests {
         }
     }
 
+    struct TestSkillState {
+        registry: SkillRegistry,
+        loaded: LoadedSkillSet,
+        count_state: atto_ui::reactive::Property<String>,
+    }
+
+    impl TestSkillState {
+        fn new(registry: SkillRegistry) -> Self {
+            let loaded = LoadedSkillSet::default();
+            let count_state = atto_ui::reactive::Property::new(loaded.status());
+            Self {
+                registry,
+                loaded,
+                count_state,
+            }
+        }
+    }
+
+    impl Default for TestSkillState {
+        fn default() -> Self {
+            Self::new(SkillRegistry::default())
+        }
+    }
+
     fn test_slash_runtime(
         input_handle: &atto_ui_chat::ChatInputHandle,
         mock_turns: &MockTurnRegistry,
@@ -1768,12 +1890,33 @@ mod tests {
         plan_mode_state: &atto_ui::reactive::Property<String>,
         turn_budgets: &TurnBudgetTracker,
     ) -> SlashRuntime {
+        let skills = TestSkillState::default();
+        test_slash_runtime_with_skills(
+            input_handle,
+            mock_turns,
+            status_state,
+            plan_mode_state,
+            &skills,
+            turn_budgets,
+        )
+    }
+
+    fn test_slash_runtime_with_skills(
+        input_handle: &atto_ui_chat::ChatInputHandle,
+        mock_turns: &MockTurnRegistry,
+        status_state: &atto_ui::reactive::Property<String>,
+        plan_mode_state: &atto_ui::reactive::Property<String>,
+        skills: &TestSkillState,
+        turn_budgets: &TurnBudgetTracker,
+    ) -> SlashRuntime {
         SlashRuntime {
             input_handle: input_handle.clone(),
             mock_turns: mock_turns.clone(),
             status_state: status_state.clone(),
             plan_mode_state: plan_mode_state.clone(),
-            skill_registry: SkillRegistry::default(),
+            skill_registry: skills.registry.clone(),
+            loaded_skills: skills.loaded.clone(),
+            skill_count_state: skills.count_state.clone(),
             turn_budgets: turn_budgets.clone(),
         }
     }
@@ -1792,6 +1935,47 @@ mod tests {
 
     fn test_tool_registry() -> ToolRegistry {
         crate::tool::builtin_tool_registry().expect("built-in tool registry must be valid")
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "atto-agent-app-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn write_test_skill(workspace: &Path, dir_name: &str, name: &str, description: &str) {
+        let dir = workspace.join(".atto/skills").join(dir_name);
+        fs::create_dir_all(&dir).expect("test skill directory should be created");
+        fs::write(
+            dir.join("SKILL.md"),
+            format!(
+                r#"---
+name: {name}
+description: {description}
+triggers: []
+tools: []
+mode: manual
+---
+Use this skill for {name} tasks.
+"#
+            ),
+        )
+        .expect("test skill file should be written");
+    }
+
+    fn test_skill_registry(skills: &[(&str, &str, &str)]) -> (PathBuf, SkillRegistry) {
+        let workspace = unique_temp_dir("skills");
+        for (dir_name, name, description) in skills {
+            write_test_skill(&workspace, dir_name, name, description);
+        }
+        let registry =
+            SkillRegistry::discover_from_paths(&[SkillSearchPath::workspace(&workspace)]);
+        (workspace, registry)
     }
 
     fn test_tool_permissions() -> Arc<Mutex<ToolPermissionPolicy>> {
@@ -2064,6 +2248,8 @@ mod tests {
         assert_eq!(app.status_state().get(), STATUS_READY);
         assert_eq!(app.model_state().get(), "model: deepseek-chat");
         assert_eq!(app.plan_mode_state().get(), PlanMode::Auto.status());
+        assert_eq!(app.skill_count_state().get(), "skills: 0");
+        assert!(app.loaded_skills().is_empty());
         match app.input_handle().mode() {
             ChatInputMode::Text(config) => {
                 assert_eq!(config.title, "Message");
@@ -2097,7 +2283,9 @@ mod tests {
 
         assert_eq!(
             labels,
-            vec!["/help", "/clear", "/plan", "/skills", "/tools", "/abort"]
+            vec![
+                "/help", "/clear", "/plan", "/skills", "/skill", "/tools", "/abort"
+            ]
         );
         assert!(
             commands
@@ -2131,6 +2319,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, ChatRole::System);
         assert!(message_text(&messages[0]).contains("/clear"));
+        assert!(message_text(&messages[0]).contains("/skill <name>"));
         assert!(message_text(&messages[0]).contains("/abort"));
         assert!(!input_handle.streaming_binding().get());
         assert_eq!(status_state.get(), STATUS_READY);
@@ -2263,14 +2452,99 @@ mod tests {
         ));
 
         let messages = store.messages();
-        assert!(message_text(&messages[0]).contains("Skills: 0 discovered"));
+        assert!(message_text(&messages[0]).contains("Skills: 0 discovered, 0 loaded"));
         assert!(message_text(&messages[0]).contains("No skills found"));
+        assert!(message_text(&messages[0]).contains("No skills loaded"));
         assert!(message_text(&messages[1]).contains("Tools: 5 registered"));
         assert!(message_text(&messages[1]).contains("apply_patch"));
         assert!(message_text(&messages[1]).contains("read_file"));
         assert!(message_text(&messages[1]).contains("list_files"));
         assert!(message_text(&messages[1]).contains("run_command"));
         assert!(message_text(&messages[1]).contains("search_text"));
+    }
+
+    #[test]
+    fn skill_slash_command_activates_skill_and_updates_listing() {
+        let (workspace, registry) = test_skill_registry(&[
+            ("rust", "rust-review", "Review Rust code."),
+            ("docs", "docs", "Write documentation."),
+        ]);
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let skills = TestSkillState::new(registry);
+        let turn_budgets = TurnBudgetTracker::default();
+        let runtime = test_slash_runtime_with_skills(
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &plan_mode_state,
+            &skills,
+            &turn_budgets,
+        );
+
+        assert!(submit_slash_command_text(
+            &store,
+            &runtime,
+            "/skill rust-review"
+        ));
+        assert!(skills.loaded.contains("rust-review"));
+        assert_eq!(skills.loaded.names(), vec!["rust-review"]);
+        assert_eq!(skills.count_state.get(), "skills: 1");
+
+        assert!(submit_slash_command_text(
+            &store,
+            &runtime,
+            "/skill rust-review"
+        ));
+        assert_eq!(skills.loaded.names(), vec!["rust-review"]);
+        assert_eq!(skills.count_state.get(), "skills: 1");
+
+        assert!(submit_slash_command_text(&store, &runtime, "/skills"));
+
+        let messages = store.messages();
+        assert!(message_text(&messages[0]).contains("Loaded skill `rust-review`"));
+        assert!(message_text(&messages[1]).contains("already active"));
+        assert!(message_text(&messages[2]).contains("Skills: 2 discovered, 1 loaded"));
+        assert!(message_text(&messages[2]).contains("- [available] docs"));
+        assert!(message_text(&messages[2]).contains("- [loaded] rust-review"));
+        assert!(message_text(&messages[2]).contains("Loaded skills: rust-review."));
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn skill_slash_command_reports_usage_and_unknown_skill() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_READY.to_string());
+        let plan_mode_state = atto_ui::reactive::Property::new(PlanMode::Off.status());
+        let skills = TestSkillState::default();
+        let turn_budgets = TurnBudgetTracker::default();
+        let runtime = test_slash_runtime_with_skills(
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &plan_mode_state,
+            &skills,
+            &turn_budgets,
+        );
+
+        assert!(submit_slash_command_text(&store, &runtime, "/skill"));
+        assert!(submit_slash_command_text(
+            &store,
+            &runtime,
+            "/skill missing"
+        ));
+
+        let messages = store.messages();
+        assert!(message_text(&messages[0]).contains("Usage: /skill <name>"));
+        assert!(message_text(&messages[1]).contains("Skill `missing` not found"));
+        assert!(skills.loaded.is_empty());
+        assert_eq!(skills.count_state.get(), "skills: 0");
     }
 
     #[test]
