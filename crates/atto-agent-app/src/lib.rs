@@ -40,8 +40,8 @@ pub mod tool;
 use crate::config::{AgentConfig, PlanMode};
 use crate::deepseek::{
     ChatCompletionChunk, ChatCompletionChunkChoice, ChatCompletionDelta, ChatCompletionMessage,
-    ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCall, ChatToolCall, ChatToolKind,
-    FinishReason, ToolChoice, ToolChoiceMode,
+    ChatCompletionRequest, ChatCompletionSseEvent, ChatFunctionCall, ChatFunctionCallDelta,
+    ChatToolCall, ChatToolCallDelta, ChatToolKind, FinishReason, ToolChoice, ToolChoiceMode,
 };
 use crate::limits::{AgentTurnLimits, TurnBudgetTracker};
 use crate::stream_ui::DeepSeekUiStream;
@@ -56,6 +56,8 @@ const STATUS_READY: &str = "ready";
 const STATUS_STREAMING: &str = "streaming";
 const MOCK_TOKEN_DELAY: Duration = Duration::from_millis(24);
 const SNAPSHOT_MOCK_TOKEN_DELAY: Duration = Duration::from_millis(96);
+const MOCK_READ_FILE_PROMPT: &str = "agent-pty-read-file";
+const MOCK_RUN_COMMAND_PROMPT: &str = "agent-pty-run-command";
 
 #[derive(Clone, Debug)]
 enum AppAction {
@@ -378,7 +380,10 @@ pub fn run() -> Result<()> {
 
 /// Runs the deterministic mock fixture used by PTY snapshot tests.
 pub fn run_snapshot_fixture() -> Result<()> {
-    run_with_config_and_mock_token_delay(AgentConfig::defaults("."), SNAPSHOT_MOCK_TOKEN_DELAY)
+    run_with_config_and_mock_token_delay(
+        AgentConfig::defaults(env!("CARGO_MANIFEST_DIR")),
+        SNAPSHOT_MOCK_TOKEN_DELAY,
+    )
 }
 
 fn run_with_config_and_mock_token_delay(
@@ -794,7 +799,7 @@ fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAg
             request.block_id,
             request.model,
         );
-        for delta in mock_agent_deltas(&request.prompt) {
+        for event in mock_agent_events(&request.prompt) {
             if request.cancel.is_cancelled() {
                 return;
             }
@@ -802,27 +807,10 @@ fn spawn_mock_agent_turn(action_sender: mpsc::Sender<AppAction>, request: MockAg
             if request.cancel.is_cancelled() {
                 return;
             }
-            if !send_stream_actions(
-                &action_sender,
-                stream.map_event(mock_stream_content_event(delta)),
-            ) {
+            if !send_stream_actions(&action_sender, stream.map_event(event)) {
                 return;
             }
         }
-        if request.cancel.is_cancelled() {
-            return;
-        }
-        thread::sleep(request.token_delay);
-        if request.cancel.is_cancelled() {
-            return;
-        }
-        if !send_stream_actions(&action_sender, stream.map_event(mock_stream_finish_event())) {
-            return;
-        }
-        let _ = send_stream_actions(
-            &action_sender,
-            stream.map_event(ChatCompletionSseEvent::Done),
-        );
     });
 }
 
@@ -833,6 +821,39 @@ fn send_stream_actions(action_sender: &mpsc::Sender<AppAction>, actions: Vec<App
         }
     }
     true
+}
+
+fn mock_agent_events(prompt: &str) -> Vec<ChatCompletionSseEvent> {
+    match prompt.trim() {
+        MOCK_READ_FILE_PROMPT => vec![
+            mock_stream_tool_call_event(
+                "call_read_cargo",
+                "read_file",
+                serde_json::json!({ "path": "Cargo.toml" }),
+            ),
+            ChatCompletionSseEvent::Done,
+        ],
+        MOCK_RUN_COMMAND_PROMPT => vec![
+            mock_stream_tool_call_event(
+                "call_run_echo",
+                "run_command",
+                serde_json::json!({
+                    "argv": ["/bin/echo", "AGENT-ALLOW-OUTPUT"],
+                    "cwd": "."
+                }),
+            ),
+            ChatCompletionSseEvent::Done,
+        ],
+        _ => {
+            let mut events = mock_agent_deltas(prompt)
+                .into_iter()
+                .map(mock_stream_content_event)
+                .collect::<Vec<_>>();
+            events.push(mock_stream_finish_event());
+            events.push(ChatCompletionSseEvent::Done);
+            events
+        }
+    }
 }
 
 fn mock_stream_content_event(delta: String) -> ChatCompletionSseEvent {
@@ -848,6 +869,36 @@ fn mock_stream_content_event(delta: String) -> ChatCompletionSseEvent {
                 ..ChatCompletionDelta::default()
             },
             finish_reason: None,
+        }],
+        usage: None,
+    })
+}
+
+fn mock_stream_tool_call_event(
+    call_id: &str,
+    name: &str,
+    arguments: serde_json::Value,
+) -> ChatCompletionSseEvent {
+    ChatCompletionSseEvent::Chunk(ChatCompletionChunk {
+        id: None,
+        object: None,
+        created: None,
+        model: None,
+        choices: vec![ChatCompletionChunkChoice {
+            index: 0,
+            delta: ChatCompletionDelta {
+                tool_calls: vec![ChatToolCallDelta {
+                    index: 0,
+                    id: Some(call_id.to_string()),
+                    kind: Some(ChatToolKind::Function),
+                    function: Some(ChatFunctionCallDelta {
+                        name: Some(name.to_string()),
+                        arguments: Some(arguments.to_string()),
+                    }),
+                }],
+                ..ChatCompletionDelta::default()
+            },
+            finish_reason: Some(FinishReason::ToolCalls),
         }],
         usage: None,
     })
@@ -1776,6 +1827,18 @@ mod tests {
                 "path".to_string(),
                 ComponentValue::String(path.to_string()),
             )]))),
+            status: ToolStatus::Pending,
+            approval: None,
+            collapsed: false,
+        }
+    }
+
+    fn unknown_tool_call(call_id: &str) -> ToolUseBlock {
+        ToolUseBlock {
+            id: atto_ui_chat::ChatBlockId::new(0),
+            call_id: call_id.to_string(),
+            name: "missing_tool".to_string(),
+            input: ToolInput::Json(ComponentValue::Map(BTreeMap::new())),
             status: ToolStatus::Pending,
             approval: None,
             collapsed: false,
@@ -2771,6 +2834,38 @@ mod tests {
         }
 
         fs::remove_dir_all(&workspace).expect("remove fixture workspace");
+    }
+
+    #[test]
+    fn unknown_tool_call_writes_failed_tool_result_without_execution() {
+        let store = ChatMessageStore::new();
+        let input_handle = atto_ui_chat::ChatInputHandle::new();
+        let mock_turns = MockTurnRegistry::new();
+        let status_state = atto_ui::reactive::Property::new(STATUS_STREAMING.to_string());
+        let registry = test_tool_registry();
+        let permissions = test_tool_permissions();
+
+        let block_id = append_tool_call_with_runtime(
+            &store,
+            &input_handle,
+            &mock_turns,
+            &status_state,
+            &registry,
+            &permissions,
+            unknown_tool_call("call_missing"),
+        );
+
+        let tool = tool_use_for_block(&store, block_id);
+        let result = tool_result_for_call(&store, "call_missing");
+        assert_eq!(tool.status, ToolStatus::Error);
+        assert!(tool.approval.is_none());
+        assert!(!result.ok);
+        match result.output {
+            ToolOutput::Markdown(output) => {
+                assert!(output.contains("Tool `missing_tool` is not registered."));
+            }
+            other => panic!("expected markdown missing-tool result, got {other:?}"),
+        }
     }
 
     #[test]

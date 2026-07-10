@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
+use unicode_width::UnicodeWidthStr;
 
 static AGENT_PTY_LOCK: Mutex<()> = Mutex::new(());
 const PTY_WAIT: Duration = Duration::from_secs(5);
@@ -32,6 +33,19 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
         }
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
+    let contents = host.screen_contents().ok()?;
+    contents.lines().enumerate().find_map(|(y, line)| {
+        line.find(needle).map(|byte_idx| {
+            let x = UnicodeWidthStr::width(&line[..byte_idx]);
+            (
+                x.min(u16::MAX as usize) as u16,
+                y.min(u16::MAX as usize) as u16,
+            )
+        })
+    })
 }
 
 #[test]
@@ -120,6 +134,85 @@ fn agent_escape_cancels_active_mock_turn_without_late_done() -> anyhow::Result<(
     host.wait_for_text("canceled", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
     assert_text_absent_for(&host, "Done.", Duration::from_millis(700));
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_mock_tool_result_renders_auto_allowed_read_file() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent-pty-read-file")?;
+
+    host.wait_for_text("read_file", PTY_WAIT)?;
+    host.wait_for_text("Tool result: call_read_cargo", PTY_WAIT)?;
+    host.wait_for_text("Path: Cargo.toml", PTY_WAIT)?;
+    host.wait_for_text("[package] name = \"atto-agent-app\"", PTY_WAIT)?;
+    host.wait_for_text("ready", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_mock_tool_approval_allow_once_runs_command() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent-pty-run-command")?;
+
+    host.wait_for_text("run_command", PTY_WAIT)?;
+    host.wait_for_text("Approval: Allow tool `run_command` to run?", PTY_WAIT)?;
+    host.wait_for_text("Allow once", PTY_WAIT)?;
+    host.wait_for_text("Allow project", PTY_WAIT)?;
+    host.wait_for_text("Deny", PTY_WAIT)?;
+
+    let (x, y) = find_text_position(&host, "Allow once").expect("allow once button");
+    host.click(x, y)?;
+
+    host.wait_for_text("[x] Allow once", PTY_WAIT)?;
+    host.wait_for_text("Tool result: call_run_echo (exit 0)", PTY_WAIT)?;
+    host.wait_for_text("AGENT-ALLOW-OUTPUT", PTY_WAIT)?;
+
+    host.send_ctrl('q')?;
+    host.wait_for_exit(Duration::from_secs(2))?;
+    Ok(())
+}
+
+#[test]
+fn agent_mock_tool_approval_deny_writes_failed_result() -> anyhow::Result<()> {
+    let _guard = agent_pty_lock();
+    let mut host = spawn_agent()?;
+
+    host.wait_for_text("Atto Agent", PTY_WAIT)?;
+
+    submit_text(&mut host, "agent-pty-run-command")?;
+
+    host.wait_for_text("Approval: Allow tool `run_command` to run?", PTY_WAIT)?;
+    host.wait_for_text("Deny", PTY_WAIT)?;
+
+    let (x, y) = find_text_position(&host, "Deny").expect("deny button");
+    host.click(x, y)?;
+
+    host.wait_for_text("[x] Deny", PTY_WAIT)?;
+    host.wait_for_text("Tool result: call_run_echo", PTY_WAIT)?;
+    host.wait_for_text(
+        "User denied tool call run_command. The tool was not executed.",
+        PTY_WAIT,
+    )?;
+    assert_text_absent_for(
+        &host,
+        "Tool result: call_run_echo (exit 0)",
+        Duration::from_millis(300),
+    );
 
     host.send_ctrl('q')?;
     host.wait_for_exit(Duration::from_secs(2))?;

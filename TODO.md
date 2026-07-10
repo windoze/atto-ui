@@ -75,7 +75,9 @@
 - [x] **[DONE] M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。
   - 完成记录（2026-07-10）：新增 turn budget tracker，默认限制每个 user turn 最多 8 次模型请求、16 次 tool call、单工具 30 秒超时；提交 turn 时登记首个模型请求，`ToolCallsReady` 按 assistant turn 扣减 tool call 预算并在超限时失败当前 turn，完成、失败、取消和清空会释放预算。工具执行现在带 timeout 上下文，app 层对任意工具等待超时后写入失败 `ToolResultBlock`，`run_command` 和 `apply_patch` 内部子进程也按 timeout 终止，避免长时间卡住。
   - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [ ] **M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
+- [x] **[DONE] M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
+  - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` deterministic mock fixture，固定 snapshot workspace 到 app crate 根目录，并为 `agent-pty-read-file` / `agent-pty-run-command` 注入 DeepSeek-style tool call 事件；新增 app PTY 覆盖自动 `read_file` tool result、`run_command` allow once 后执行并渲染结果、deny 后写入失败 tool result；新增 app 层未注册工具单测，结合既有只读/副作用工具单测覆盖非法参数和 workspace 越界路径。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app unknown_tool_call_writes_failed_tool_result_without_execution`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
 - [ ] **M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。
 
 ## 阶段 M4 - Skill Registry
