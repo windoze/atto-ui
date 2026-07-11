@@ -52,14 +52,22 @@ mod tests {
 
     fn test_shared() -> TerminalShared {
         TerminalShared {
-            parser: vt100::Parser::new(24, 80, DEFAULT_SCROLLBACK_LEN),
+            parser: terminal_parser(24, 80, DEFAULT_SCROLLBACK_LEN),
             scrollback_len: DEFAULT_SCROLLBACK_LEN,
             input: VecDeque::new(),
             on_input: None,
             input_forward: None,
             on_exit: None,
+            on_window_title: None,
+            on_window_icon_name: None,
+            on_audible_bell: None,
+            on_clipboard_copy: None,
             exit_status: None,
             process_running: false,
+            window_title: None,
+            window_icon_name: None,
+            audible_bell_count: 0,
+            last_clipboard_copy: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::new(),
@@ -131,22 +139,142 @@ fn default_release_shortcut() -> TerminalShortcut {
 
 type InputCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
 type ExitCallback = Arc<dyn Fn(ExitStatus) + Send + Sync>;
+type TextCallback = Arc<dyn Fn(&str) + Send + Sync>;
+type BellCallback = Arc<dyn Fn() + Send + Sync>;
+type ClipboardCopyCallback = Arc<dyn Fn(&TerminalClipboardCopy) + Send + Sync>;
+type TerminalParser = vt100::Parser<TerminalCallbacks>;
+
+/// OSC 52 clipboard-copy request observed in the terminal output stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalClipboardCopy {
+    /// Clipboard selector from the OSC 52 sequence, for example `c`.
+    pub selector: Vec<u8>,
+    /// Base64-encoded clipboard payload from the OSC 52 sequence.
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TerminalCallbackEvent {
+    WindowTitle(String),
+    WindowIconName(String),
+    AudibleBell,
+    ClipboardCopy(TerminalClipboardCopy),
+}
+
+#[derive(Default)]
+struct TerminalCallbacks {
+    events: Vec<TerminalCallbackEvent>,
+}
+
+impl TerminalCallbacks {
+    fn take_events(&mut self) -> Vec<TerminalCallbackEvent> {
+        std::mem::take(&mut self.events)
+    }
+}
+
+impl vt100::Callbacks for TerminalCallbacks {
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.events.push(TerminalCallbackEvent::AudibleBell);
+    }
+
+    fn set_window_icon_name(&mut self, _: &mut vt100::Screen, icon_name: &[u8]) {
+        self.events.push(TerminalCallbackEvent::WindowIconName(
+            string_from_terminal_bytes(icon_name),
+        ));
+    }
+
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.events.push(TerminalCallbackEvent::WindowTitle(
+            string_from_terminal_bytes(title),
+        ));
+    }
+
+    fn copy_to_clipboard(&mut self, _: &mut vt100::Screen, selector: &[u8], data: &[u8]) {
+        self.events.push(TerminalCallbackEvent::ClipboardCopy(
+            TerminalClipboardCopy {
+                selector: selector.to_vec(),
+                data: data.to_vec(),
+            },
+        ));
+    }
+}
+
+enum TerminalCallbackDispatch {
+    WindowTitle(TextCallback, String),
+    WindowIconName(TextCallback, String),
+    AudibleBell(BellCallback),
+    ClipboardCopy(ClipboardCopyCallback, TerminalClipboardCopy),
+}
+
+fn terminal_parser(rows: u16, cols: u16, scrollback_len: usize) -> TerminalParser {
+    vt100::Parser::new_with_callbacks(rows, cols, scrollback_len, TerminalCallbacks::default())
+}
+
+fn string_from_terminal_bytes(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
 
 struct TerminalShared {
-    parser: vt100::Parser,
+    parser: TerminalParser,
     scrollback_len: usize,
     input: VecDeque<u8>,
     on_input: Option<InputCallback>,
     input_forward: Option<InputCallback>,
     on_exit: Option<ExitCallback>,
+    on_window_title: Option<TextCallback>,
+    on_window_icon_name: Option<TextCallback>,
+    on_audible_bell: Option<BellCallback>,
+    on_clipboard_copy: Option<ClipboardCopyCallback>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
+    window_title: Option<String>,
+    window_icon_name: Option<String>,
+    audible_bell_count: u64,
+    last_clipboard_copy: Option<TerminalClipboardCopy>,
     capture: bool,
     release_shortcut: TerminalShortcut,
     dsr_tail: Vec<u8>,
 }
 
 impl TerminalShared {
+    fn apply_callback_events(
+        &mut self,
+        events: Vec<TerminalCallbackEvent>,
+    ) -> Vec<TerminalCallbackDispatch> {
+        let mut dispatches = Vec::new();
+        for event in events {
+            match event {
+                TerminalCallbackEvent::WindowTitle(title) => {
+                    self.window_title = Some(title.clone());
+                    if let Some(callback) = self.on_window_title.clone() {
+                        dispatches.push(TerminalCallbackDispatch::WindowTitle(callback, title));
+                    }
+                }
+                TerminalCallbackEvent::WindowIconName(icon_name) => {
+                    self.window_icon_name = Some(icon_name.clone());
+                    if let Some(callback) = self.on_window_icon_name.clone() {
+                        dispatches.push(TerminalCallbackDispatch::WindowIconName(
+                            callback, icon_name,
+                        ));
+                    }
+                }
+                TerminalCallbackEvent::AudibleBell => {
+                    self.audible_bell_count = self.audible_bell_count.saturating_add(1);
+                    if let Some(callback) = self.on_audible_bell.clone() {
+                        dispatches.push(TerminalCallbackDispatch::AudibleBell(callback));
+                    }
+                }
+                TerminalCallbackEvent::ClipboardCopy(copy) => {
+                    self.last_clipboard_copy = Some(copy.clone());
+                    if let Some(callback) = self.on_clipboard_copy.clone() {
+                        dispatches.push(TerminalCallbackDispatch::ClipboardCopy(callback, copy));
+                    }
+                }
+            }
+        }
+        dispatches
+    }
+
     fn queue_input(&mut self, bytes: &[u8]) {
         self.input.extend(bytes);
     }
@@ -277,6 +405,17 @@ fn forward_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
     }
 }
 
+fn dispatch_terminal_callback_events(dispatches: Vec<TerminalCallbackDispatch>) {
+    for dispatch in dispatches {
+        match dispatch {
+            TerminalCallbackDispatch::WindowTitle(callback, title) => callback(&title),
+            TerminalCallbackDispatch::WindowIconName(callback, icon_name) => callback(&icon_name),
+            TerminalCallbackDispatch::AudibleBell(callback) => callback(),
+            TerminalCallbackDispatch::ClipboardCopy(callback, copy) => callback(&copy),
+        }
+    }
+}
+
 enum DsrResponse {
     Cursor { private: bool },
     Status { private: bool },
@@ -395,7 +534,7 @@ pub struct TerminalEmulator {
 
 impl TerminalEmulator {
     pub fn new() -> Self {
-        let parser = vt100::Parser::new(24, 80, DEFAULT_SCROLLBACK_LEN);
+        let parser = terminal_parser(24, 80, DEFAULT_SCROLLBACK_LEN);
         let shared = TerminalShared {
             parser,
             scrollback_len: DEFAULT_SCROLLBACK_LEN,
@@ -403,8 +542,16 @@ impl TerminalEmulator {
             on_input: None,
             input_forward: None,
             on_exit: None,
+            on_window_title: None,
+            on_window_icon_name: None,
+            on_audible_bell: None,
+            on_clipboard_copy: None,
             exit_status: None,
             process_running: false,
+            window_title: None,
+            window_icon_name: None,
+            audible_bell_count: 0,
+            last_clipboard_copy: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::with_capacity(4),
@@ -431,7 +578,7 @@ impl TerminalEmulator {
             let mut shared = self.shared.lock();
             shared.scrollback_len = len;
             let (rows, cols) = shared.parser.screen().size();
-            shared.parser = vt100::Parser::new(rows, cols, len);
+            shared.parser = terminal_parser(rows, cols, len);
         }
         self
     }
@@ -478,6 +625,42 @@ impl TerminalEmulator {
         F: Fn(ExitStatus) + Send + Sync + 'static,
     {
         self.shared.lock().on_exit = Some(Arc::new(callback));
+        self
+    }
+
+    /// Registers a callback that fires when OSC 0/2 updates the window title.
+    pub fn on_window_title<F>(self, callback: F) -> Self
+    where
+        F: Fn(&str) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_window_title = Some(Arc::new(callback));
+        self
+    }
+
+    /// Registers a callback that fires when OSC 0/1 updates the window icon name.
+    pub fn on_window_icon_name<F>(self, callback: F) -> Self
+    where
+        F: Fn(&str) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_window_icon_name = Some(Arc::new(callback));
+        self
+    }
+
+    /// Registers a callback that fires when BEL requests an audible bell.
+    pub fn on_audible_bell<F>(self, callback: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.shared.lock().on_audible_bell = Some(Arc::new(callback));
+        self
+    }
+
+    /// Registers a callback that fires when OSC 52 requests a clipboard copy.
+    pub fn on_clipboard_copy<F>(self, callback: F) -> Self
+    where
+        F: Fn(&TerminalClipboardCopy) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_clipboard_copy = Some(Arc::new(callback));
         self
     }
 
@@ -882,14 +1065,18 @@ pub struct TerminalHandle {
 impl TerminalHandle {
     /// Feeds bytes into the terminal emulator (ANSI output stream).
     pub fn process_output(&self, bytes: &[u8]) {
-        let responses = {
+        let (responses, dispatches) = {
             let mut shared = self.shared.lock();
             shared.parser.process(bytes);
-            collect_dsr_responses(&mut shared, bytes)
+            let events = shared.parser.callbacks_mut().take_events();
+            let responses = collect_dsr_responses(&mut shared, bytes);
+            let dispatches = shared.apply_callback_events(events);
+            (responses, dispatches)
         };
         for response in responses {
             forward_input(&self.shared, &response);
         }
+        dispatch_terminal_callback_events(dispatches);
     }
 
     pub fn process_output_str(&self, text: &str) {
@@ -951,6 +1138,26 @@ impl TerminalHandle {
 
     pub fn release_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().release_shortcut
+    }
+
+    /// Returns the latest OSC 0/2 window title, if one has been observed.
+    pub fn window_title(&self) -> Option<String> {
+        self.shared.lock().window_title.clone()
+    }
+
+    /// Returns the latest OSC 0/1 window icon name, if one has been observed.
+    pub fn window_icon_name(&self) -> Option<String> {
+        self.shared.lock().window_icon_name.clone()
+    }
+
+    /// Returns the number of audible bell requests observed in terminal output.
+    pub fn audible_bell_count(&self) -> u64 {
+        self.shared.lock().audible_bell_count
+    }
+
+    /// Returns the latest OSC 52 clipboard-copy request, if one has been observed.
+    pub fn last_clipboard_copy(&self) -> Option<TerminalClipboardCopy> {
+        self.shared.lock().last_clipboard_copy.clone()
     }
 
     /// Returns whether a subprocess is currently attached and has not reported exit.

@@ -4,27 +4,28 @@ I will follow the task order in `TODO.md` and complete only the first task whose
 
 ## Selected task
 
-First incomplete task from `TODO.md`: **M1.2 运行状态查询接口**.
+First incomplete task from `TODO.md`: **M1.3 new_with_callbacks 改造**.
 
 ## Plan
 
-1. Inspect `crates/atto-ui-terminal/src/terminal.rs` for `TerminalHandle`, `TerminalShared`, and the M1.1 exit-status state.
-2. Add `TerminalHandle::is_running()` and `TerminalHandle::exit_status()` using the existing shared lifecycle state.
-3. Ensure status polling observes already-exited children without requiring a draw, if the current architecture supports that safely.
-4. Add focused tests covering running state before and after subprocess exit, exit status exposure, and no-subprocess behavior if applicable.
-5. Run validation in order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, then `cargo test --workspace --all-targets`.
-6. Mark M1.2 as `[DONE]` in `TODO.md` with a completion record.
-7. Commit all task-related changes and stop.
+1. Inspect `crates/atto-ui-terminal/src/terminal.rs` and related tests to understand the current vt100 parser, shared state, handle API, and callback patterns.
+2. Check the latest commit for directly relevant unfinished M1.3 notes.
+3. Replace the bare `Parser::new` construction with `Parser::new_with_callbacks`.
+4. Bridge vt100 callbacks for window title, icon name, audible bell, and clipboard copy into `TerminalShared`.
+5. Expose callback-observed state through `TerminalHandle` and/or user callbacks following existing lifecycle API conventions.
+6. Add focused tests proving title, icon name, bell, and clipboard callback events are observable.
+7. Run validation in order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, then `cargo test --workspace --all-targets`.
+8. Mark M1.3 as `[DONE]` in `TODO.md` with a completion record.
+9. Commit all task-related changes and stop.
 
 ## Progress
 
-- Initialized the current invocation plan tracker.
-- Identified M1.2 as the first incomplete task.
-- Latest commit is M1.1 and does not mention unfinished work that changes M1.2 ordering.
-- Added shared lifecycle state for subprocess running status.
-- Exposed `TerminalHandle::is_running()` and `TerminalHandle::exit_status()`.
-- Added a focused process lifecycle test for handle running/exit-status polling.
-- Focused `process_exit` tests passed.
-- Full required validation sequence passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Marked M1.2 as `[DONE]` in `TODO.md` with completion notes.
-- Next step: commit the task changes and stop.
+- Updated this invocation to target M1.3 after reading the current `TODO.md`.
+- Latest commit is M1.2 and does not mention an unfinished blocker for M1.3.
+- Implemented the callback-enabled vt100 parser bridge for title, icon, audible bell, and OSC 52 clipboard-copy events.
+- Added handle accessors and public callback registration methods for the new callback-observed state.
+- Added focused terminal callback tests.
+- `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` passed after formatting.
+- `cargo test --workspace --all-targets` passed.
+- Marked M1.3 as `[DONE]` in `TODO.md` with completion notes.
+- Next step: commit all task-related changes and stop.

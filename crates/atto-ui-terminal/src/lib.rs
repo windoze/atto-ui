@@ -11,4 +11,6 @@ mod terminal;
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,
 };
-pub use terminal::{TerminalEmulator, TerminalHandle, TerminalShortcut, TerminalSnapshot};
+pub use terminal::{
+    TerminalClipboardCopy, TerminalEmulator, TerminalHandle, TerminalShortcut, TerminalSnapshot,
+};

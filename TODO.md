@@ -16,7 +16,9 @@
 - [x] **[DONE] M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
   - 完成记录（2026-07-11）：在 `TerminalShared` 中维护 subprocess running 状态，`TerminalHandle::is_running()` 可轮询当前子进程是否仍存活，`TerminalHandle::exit_status()` 可读取最近一次记录的 `ExitStatus`。新进程启动会清空旧退出状态并标记运行中，进程自然退出时复用 M1.1 的退出记录路径翻转为非运行，显式 `stop_process()` 也会清除运行态。
   - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
+- [x] **[DONE] M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
+  - 完成记录（2026-07-11）：`TerminalEmulator` 的 parser 初始化与 scrollback 重建路径均改为 `vt100::Parser::new_with_callbacks`，新增 callback bridge 捕获 OSC 0/1/2 标题与图标名、BEL audible bell、OSC 52 clipboard copy 请求，写入 `TerminalShared` 并通过 `TerminalHandle` 查询接口与注册回调暴露。新增 `TerminalClipboardCopy` 公共事件类型与 `callbacks` 测试覆盖 handle 状态和回调可观察性。
+  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
 - [ ] **M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
 
