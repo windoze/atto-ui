@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::status::Fill;
-use crate::composable::{ComponentAction, EventOutcome};
+use crate::composable::{ComponentAction, EventOutcome, EventResult};
 use crate::reactive::EventQueue;
 use crate::theme::Theme;
 use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode, WindowState};
@@ -265,16 +265,51 @@ impl Desktop {
             return DesktopEventResult::ignored();
         };
 
-        if res.action == ComponentAction::CloseWindow {
-            if self.wm.request_close(id) {
-                return DesktopEventResult::close_window(id);
+        self.handle_component_event_result(id, res, layout.work_area)
+            .unwrap_or_else(DesktopEventResult::ignored)
+    }
+
+    fn handle_component_event_result(
+        &mut self,
+        id: WindowId,
+        res: EventResult,
+        work_area: Rect,
+    ) -> Option<DesktopEventResult> {
+        match res.action {
+            ComponentAction::None | ComponentAction::Changed | ComponentAction::Submitted => {}
+            ComponentAction::CloseWindow => {
+                if self.wm.request_close(id) {
+                    return Some(DesktopEventResult::close_window(id));
+                }
+                return Some(DesktopEventResult::consumed());
             }
-            return DesktopEventResult::consumed();
+            ComponentAction::ActivateMenu => {
+                self.clear_which_key();
+                self.mode = DesktopMode::Menu;
+                self.menu.activate();
+                return Some(DesktopEventResult::consumed());
+            }
+            ComponentAction::ToggleWindowManagement => {
+                self.clear_which_key();
+                self.menu.deactivate();
+                self.mode = if self.mode == DesktopMode::WindowManagement {
+                    DesktopMode::Normal
+                } else {
+                    DesktopMode::WindowManagement
+                };
+                return Some(DesktopEventResult::consumed());
+            }
+            ComponentAction::ToggleMaximizeWindow => {
+                self.clear_which_key();
+                self.wm.maximize_window(id, work_area);
+                return Some(DesktopEventResult::consumed());
+            }
         }
+
         if res.is_consumed() {
-            DesktopEventResult::consumed()
+            Some(DesktopEventResult::consumed())
         } else {
-            DesktopEventResult::ignored()
+            None
         }
     }
 
@@ -607,12 +642,9 @@ impl Desktop {
             if let Some((id, res)) =
                 self.wm
                     .dispatch_to_window_view(cap_win, event, layout.work_area, &self.theme)
-                && res.action == ComponentAction::CloseWindow
+                && let Some(result) = self.handle_component_event_result(id, res, layout.work_area)
             {
-                if self.wm.request_close(id) {
-                    return DesktopEventResult::close_window(id);
-                }
-                return DesktopEventResult::consumed();
+                return result;
             }
             return DesktopEventResult::consumed();
         }
@@ -666,16 +698,9 @@ impl Desktop {
             if let Some((id, res)) =
                 self.wm
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
+                && let Some(result) = self.handle_component_event_result(id, res, layout.work_area)
             {
-                if res.action == ComponentAction::CloseWindow {
-                    if self.wm.request_close(id) {
-                        return DesktopEventResult::close_window(id);
-                    }
-                    return DesktopEventResult::consumed();
-                }
-                if res.is_consumed() {
-                    return DesktopEventResult::consumed();
-                }
+                return result;
             }
         }
 
@@ -702,16 +727,9 @@ impl Desktop {
             && let Some((id, res)) =
                 self.wm
                     .dispatch_to_window_view(target_id, event, layout.work_area, &self.theme)
+            && let Some(result) = self.handle_component_event_result(id, res, layout.work_area)
         {
-            if res.action == ComponentAction::CloseWindow {
-                if self.wm.request_close(id) {
-                    return DesktopEventResult::close_window(id);
-                }
-                return DesktopEventResult::consumed();
-            }
-            if res.is_consumed() {
-                return DesktopEventResult::consumed();
-            }
+            return result;
         }
 
         if input_mode == WindowManagerInputMode::Normal
@@ -719,16 +737,9 @@ impl Desktop {
             && let Some((id, res)) =
                 self.wm
                     .dispatch_to_focused_view(event, layout.work_area, &self.theme)
+            && let Some(result) = self.handle_component_event_result(id, res, layout.work_area)
         {
-            if res.action == ComponentAction::CloseWindow {
-                if self.wm.request_close(id) {
-                    return DesktopEventResult::close_window(id);
-                }
-                return DesktopEventResult::consumed();
-            }
-            if res.is_consumed() {
-                return DesktopEventResult::consumed();
-            }
+            return result;
         }
 
         // Modals act as an event sink: even if the modal view ignores an event, it should not
@@ -1063,7 +1074,7 @@ mod tests {
         EventHandling, EventResult,
     };
     use crate::theme::Theme;
-    use crate::wm::{DockSide, Window, WindowDock, WindowKind};
+    use crate::wm::{DockSide, Window, WindowDock, WindowKind, WindowState};
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -1090,6 +1101,30 @@ mod tests {
     }
 
     crate::impl_component_default_traits!(ConsumeF6View => Layout, Scrollable, FocusNav, DynamicTree);
+
+    #[derive(Clone)]
+    struct ActionOnKeyView {
+        action: ComponentAction,
+    }
+
+    impl Component for ActionOnKeyView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for ActionOnKeyView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            if matches!(event, Event::Key(_)) {
+                return EventResult {
+                    outcome: EventOutcome::Consumed,
+                    action: self.action,
+                    capture: crate::composable::Capture::None,
+                };
+            }
+            EventResult::ignored()
+        }
+    }
+
+    crate::impl_component_default_traits!(ActionOnKeyView => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[derive(Clone)]
     struct CountingMouseView {
@@ -1403,6 +1438,92 @@ mod tests {
         assert!(
             !desktop.menu.is_active(),
             "expected menu to remain inactive"
+        );
+    }
+
+    #[test]
+    fn component_action_can_activate_menu_from_focused_view() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Action",
+                Rect::new(2, 2, 20, 6),
+                Box::new(ActionOnKeyView {
+                    action: ComponentAction::ActivateMenu,
+                }),
+            ),
+            screen,
+        );
+        desktop.wm.focus(id);
+
+        let result = desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Menu);
+        assert!(desktop.menu.is_active());
+    }
+
+    #[test]
+    fn component_action_can_toggle_window_management_from_focused_view() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Action",
+                Rect::new(2, 2, 20, 6),
+                Box::new(ActionOnKeyView {
+                    action: ComponentAction::ToggleWindowManagement,
+                }),
+            ),
+            screen,
+        );
+        desktop.wm.focus(id);
+
+        let result = desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::WindowManagement);
+    }
+
+    #[test]
+    fn component_action_can_toggle_own_window_maximize_state() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Action",
+                Rect::new(2, 2, 20, 6),
+                Box::new(ActionOnKeyView {
+                    action: ComponentAction::ToggleMaximizeWindow,
+                }),
+            ),
+            screen,
+        );
+        desktop.wm.focus(id);
+
+        let result = desktop.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(
+            desktop.wm.window(id).map(|w| w.state.get()),
+            Some(WindowState::Maximized)
         );
     }
 

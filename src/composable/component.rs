@@ -133,6 +133,9 @@ pub enum ComponentAction {
     CloseWindow,
     Changed,
     Submitted,
+    ActivateMenu,
+    ToggleWindowManagement,
+    ToggleMaximizeWindow,
 }
 
 /// Pointer-capture request a component can attach to its `EventResult`.

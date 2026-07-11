@@ -1,5 +1,6 @@
 use atto_ui::composable::{
-    Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    Component, ComponentAction, ComponentContext, EventHandling, MouseCoordinateSpace,
+    ScrollbarHost, TabMode,
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
@@ -55,6 +56,18 @@ fn component_key_input_with_terminal(mut terminal: TerminalEmulator, keys: &[Key
 
 fn component_key_input(keys: &[KeyEvent]) -> Vec<u8> {
     component_key_input_with_terminal(TerminalEmulator::new(), keys)
+}
+
+fn component_key_actions(keys: &[KeyEvent]) -> Vec<ComponentAction> {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    keys.iter()
+        .map(|key| {
+            terminal
+                .handle_event(&Event::Key(*key), context(&theme))
+                .action
+        })
+        .collect()
 }
 
 fn ctrl_key(ch: char) -> KeyEvent {
@@ -244,6 +257,78 @@ fn terminal_prefix_key_waits_for_next_captured_key() {
             KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
         ]),
         b"\x02x"
+    );
+}
+
+#[test]
+fn terminal_prefix_command_table_maps_shell_commands_to_component_actions() {
+    assert_eq!(
+        component_key_actions(&[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE)
+        ]),
+        vec![ComponentAction::None, ComponentAction::ActivateMenu]
+    );
+    assert_eq!(
+        component_key_actions(&[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE),
+        ]),
+        vec![
+            ComponentAction::None,
+            ComponentAction::ToggleWindowManagement
+        ]
+    );
+    assert_eq!(
+        component_key_actions(&[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        ]),
+        vec![ComponentAction::None, ComponentAction::ToggleMaximizeWindow]
+    );
+    assert_eq!(
+        component_key_input(&[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE),
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE),
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        ]),
+        b""
+    );
+}
+
+#[test]
+fn terminal_prefix_command_table_enters_copy_mode_placeholder() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    let result = terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE)),
+        context(&theme),
+    );
+
+    assert!(result.is_consumed());
+    assert_eq!(result.action, ComponentAction::None);
+    assert!(handle.copy_mode());
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_prefix_escape_dispatches_single_literal_prefix() {
+    assert_eq!(
+        component_key_input(&[ctrl_key('b'), ctrl_key('b')]),
+        b"\x02"
+    );
+    let terminal = TerminalEmulator::new()
+        .prefix_key('a')
+        .expect("valid prefix key");
+    assert_eq!(
+        component_key_input_with_terminal(terminal, &[ctrl_key('a'), ctrl_key('a')]),
+        b"\x01"
     );
 }
 

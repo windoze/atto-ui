@@ -15,7 +15,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use atto_ui::composable::{ComponentContext, EventResult, MouseCoordinateSpace, ScrollConfig};
+use atto_ui::composable::{
+    Capture, ComponentAction, ComponentContext, EventOutcome, EventResult, MouseCoordinateSpace,
+    ScrollConfig,
+};
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
@@ -72,6 +75,7 @@ mod tests {
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
             prefix_pending: false,
+            copy_mode: false,
             dsr_tail: Vec::new(),
         }
     }
@@ -187,6 +191,16 @@ pub struct TerminalClipboardCopy {
     pub data: Vec<u8>,
 }
 
+/// Command selected by the terminal prefix key table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalPrefixCommand {
+    ActivateMenu,
+    ToggleWindowManagement,
+    ToggleMaximize,
+    EnterCopyMode,
+    SendPrefix,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TerminalCallbackEvent {
     WindowTitle(String),
@@ -269,6 +283,7 @@ struct TerminalShared {
     release_shortcut: TerminalShortcut,
     prefix_shortcut: TerminalShortcut,
     prefix_pending: bool,
+    copy_mode: bool,
     dsr_tail: Vec<u8>,
 }
 
@@ -285,9 +300,20 @@ impl TerminalShared {
         self.prefix_pending = false;
     }
 
-    fn matches_prefix_command(&self, _event: KeyEvent) -> bool {
-        // M3.3 populates the prefix command table; M3.1 keeps unmatched keys lossless.
-        false
+    fn prefix_command_for_event(&self, event: KeyEvent) -> Option<TerminalPrefixCommand> {
+        if self.prefix_shortcut.matches(event) {
+            return Some(TerminalPrefixCommand::SendPrefix);
+        }
+        if event.kind == KeyEventKind::Release || event.modifiers != KeyModifiers::NONE {
+            return None;
+        }
+        match event.code {
+            KeyCode::F(10) => Some(TerminalPrefixCommand::ActivateMenu),
+            KeyCode::Char('w') => Some(TerminalPrefixCommand::ToggleWindowManagement),
+            KeyCode::Char('z') => Some(TerminalPrefixCommand::ToggleMaximize),
+            KeyCode::Char('[') => Some(TerminalPrefixCommand::EnterCopyMode),
+            _ => None,
+        }
     }
 
     fn apply_callback_events(
@@ -360,6 +386,7 @@ impl TerminalShared {
 enum CapturedKeyAction {
     Consumed,
     Dispatch(Vec<u8>),
+    Component(ComponentAction),
 }
 
 fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
@@ -372,8 +399,8 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     }
     if shared.prefix_pending {
         shared.prefix_pending = false;
-        if shared.matches_prefix_command(event) {
-            return CapturedKeyAction::Consumed;
+        if let Some(command) = shared.prefix_command_for_event(event) {
+            return handle_prefix_command(shared, command);
         }
         return encode_prefix_fallback(shared, event)
             .map(CapturedKeyAction::Dispatch)
@@ -386,6 +413,40 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     encode_key_event(shared.parser.screen(), event)
         .map(CapturedKeyAction::Dispatch)
         .unwrap_or(CapturedKeyAction::Consumed)
+}
+
+fn handle_prefix_command(
+    shared: &mut TerminalShared,
+    command: TerminalPrefixCommand,
+) -> CapturedKeyAction {
+    match command {
+        TerminalPrefixCommand::ActivateMenu => {
+            CapturedKeyAction::Component(ComponentAction::ActivateMenu)
+        }
+        TerminalPrefixCommand::ToggleWindowManagement => {
+            CapturedKeyAction::Component(ComponentAction::ToggleWindowManagement)
+        }
+        TerminalPrefixCommand::ToggleMaximize => {
+            CapturedKeyAction::Component(ComponentAction::ToggleMaximizeWindow)
+        }
+        TerminalPrefixCommand::EnterCopyMode => {
+            shared.copy_mode = true;
+            CapturedKeyAction::Consumed
+        }
+        TerminalPrefixCommand::SendPrefix => encode_prefix_literal(shared)
+            .map(CapturedKeyAction::Dispatch)
+            .unwrap_or(CapturedKeyAction::Consumed),
+    }
+}
+
+fn encode_prefix_literal(shared: &TerminalShared) -> Option<Vec<u8>> {
+    encode_key_event(
+        shared.parser.screen(),
+        KeyEvent::new(
+            shared.prefix_shortcut.code,
+            shared.prefix_shortcut.modifiers,
+        ),
+    )
 }
 
 fn encode_prefix_fallback(shared: &TerminalShared, event: KeyEvent) -> Option<Vec<u8>> {
@@ -656,6 +717,7 @@ impl TerminalEmulator {
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
             prefix_pending: false,
+            copy_mode: false,
             dsr_tail: Vec::with_capacity(4),
         };
 
@@ -1071,6 +1133,11 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
         match key.code {
             KeyCode::Tab | KeyCode::BackTab => match handle_captured_key(&mut shared, *key) {
                 CapturedKeyAction::Consumed => EventResult::consumed(),
+                CapturedKeyAction::Component(action) => EventResult {
+                    outcome: EventOutcome::Consumed,
+                    action,
+                    capture: Capture::None,
+                },
                 CapturedKeyAction::Dispatch(bytes) => {
                     drop(shared);
                     dispatch_input(&self.shared, &bytes);
@@ -1088,6 +1155,13 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                 if shared.capture {
                     match handle_captured_key(&mut shared, *key) {
                         CapturedKeyAction::Consumed => return EventResult::consumed(),
+                        CapturedKeyAction::Component(action) => {
+                            return EventResult {
+                                outcome: EventOutcome::Consumed,
+                                action,
+                                capture: Capture::None,
+                            };
+                        }
                         CapturedKeyAction::Dispatch(bytes) => {
                             drop(shared);
                             dispatch_input(&self.shared, &bytes);
@@ -1261,6 +1335,13 @@ impl TerminalHandle {
 
     pub fn prefix_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().prefix_shortcut
+    }
+
+    /// Returns whether the prefix command table has entered copy-mode.
+    ///
+    /// M4 expands this placeholder into selection/navigation behavior.
+    pub fn copy_mode(&self) -> bool {
+        self.shared.lock().copy_mode
     }
 
     /// Returns the latest OSC 0/2 window title, if one has been observed.

@@ -54,6 +54,12 @@ fn rects_from_screen(screen: &str) -> Option<(Option<Rect>, Option<Rect>)> {
     Some((term, tools))
 }
 
+fn terminal_border_is_flush_left(screen: &str) -> bool {
+    screen
+        .lines()
+        .any(|line| line.starts_with('╔') && line.contains(" Terminal "))
+}
+
 #[test]
 fn pty_terminal_does_not_intercept_outside_mouse() {
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
@@ -141,6 +147,62 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     wait_for_text(&host, "TERM=CLOSED");
 
     assert_text_absent_for(&host, "Terminal", Duration::from_millis(200));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_prefix_commands_drive_desktop_chrome() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+
+    wait_for_text(&host, "FOCUS=TERM");
+    wait_for_text(&host, "CAP=ON");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("\x1b[21~").expect("F10");
+    wait_for_text(&host, "Menu:");
+    wait_for_text(&host, "ACTIVE=ON");
+
+    host.send_str("\x1b").expect("close menu");
+    wait_for_text(&host, "ACTIVE=OFF");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("w").expect("window mode");
+    wait_for_text(&host, "Window:");
+
+    host.send_str("\x1b").expect("leave window mode");
+    wait_for_text(&host, "F10 Menu");
+
+    let before = rects_from_screen(&host.screen_contents().unwrap_or_default())
+        .and_then(|(term, _)| term)
+        .expect("terminal rect before maximize");
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("z").expect("toggle maximize");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut maximized = false;
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if let Some((Some(after), _)) = rects_from_screen(&screen)
+            && (after.width > before.width || after.height > before.height)
+        {
+            maximized = true;
+            break;
+        }
+        if terminal_border_is_flush_left(&screen) {
+            maximized = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        maximized,
+        "prefix+z should maximize the terminal window\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
