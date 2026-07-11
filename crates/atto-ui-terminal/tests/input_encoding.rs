@@ -418,6 +418,38 @@ fn terminal_mouse_selection_copies_to_local_buffer_on_release() {
 }
 
 #[test]
+fn terminal_mouse_selection_copies_wide_character_from_either_cell() {
+    for col in [6, 7] {
+        let (input, selected) = component_mouse_input_and_selection(
+            "alpha 你",
+            &[
+                mouse_event_at(
+                    MouseEventKind::Down(MouseButton::Left),
+                    col,
+                    0,
+                    KeyModifiers::NONE,
+                ),
+                mouse_event_at(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    col,
+                    0,
+                    KeyModifiers::NONE,
+                ),
+                mouse_event_at(
+                    MouseEventKind::Up(MouseButton::Left),
+                    col,
+                    0,
+                    KeyModifiers::NONE,
+                ),
+            ],
+        );
+
+        assert_eq!(input, b"");
+        assert_eq!(selected.as_deref(), Some("你"));
+    }
+}
+
+#[test]
 fn terminal_capture_on_click_forwards_the_recapture_click() {
     let theme = Theme::dark();
     let mut terminal = TerminalEmulator::new().without_system_clipboard();

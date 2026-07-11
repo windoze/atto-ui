@@ -85,7 +85,9 @@
 - [x] **[DONE] M4.7 测试** - PTY 覆盖鼠标框选/复制、copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf `--height` 滚轮各落正确分支、主屏 scrollback 仍正常。
   - 完成记录（2026-07-12）：补齐 `pty_terminal_window_interactions` 的 M4 PTY 覆盖；新增鼠标 plain drag 在无 mouse reporting 时本地框选并复制、`Shift+drag` 在子进程启用 mouse reporting 时仍本地框选并复制的回归测试。新增 app-like 滚轮分流 PTY probe，分别覆盖 vim mouse on、htop、fzf `--height` 这类 mouse reporting 优先转发 SGR wheel，vim mouse off、less 这类 alternate screen 无 mouse reporting 转换为 3 次方向键，以及主屏无 mouse reporting 时滚轮仍走本地 scrollback。既有 copy-mode 选择复制与内部 copy buffer 粘贴 PTY 覆盖一并复跑。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M4.R Review** - 复核 selection 命中测试对宽字符正确、滚动分流三级树覆盖残余类靠 copy-mode 兜底、剪贴板首版不引入跨平台依赖，验证通过。
+- [x] **[DONE] M4.R Review** - 复核 selection 命中测试对宽字符正确、滚动分流三级树覆盖残余类靠 copy-mode 兜底、剪贴板首版不引入跨平台依赖，验证通过。
+  - 完成记录（2026-07-12）：复核 M4 selection、copy-mode、滚轮分流与剪贴板实现；补齐并修复宽字符选区文本提取在只命中宽字符左/右半格时无法复制字符的问题，使高亮命中测试与实际 copied text 保持一致。确认滚轮分流仍按 mouse reporting 优先、alternate screen 转方向键、主屏本地 scrollback 的三级树执行，copy-mode 内滚轮/方向键继续本地消费。剪贴板首版核心仍保持组件内部 copy buffer；M4.6 系统剪贴板能力集中在可替换/可禁用的 `TerminalSystemClipboard` 后端。
+  - 验证：`cargo test -p atto-ui-terminal selected_text_expands_partial_wide_character_cells -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_mouse_selection_copies_wide_character_from_either_cell -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 
 ## 阶段 M5 - 语义提示符标记（P1.4，OSC 133/7）
 

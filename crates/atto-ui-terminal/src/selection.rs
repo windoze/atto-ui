@@ -185,6 +185,11 @@ pub(crate) fn selected_text_from_screen(
         let start_col = if is_first { range.start.col } else { 0 };
         let end_col = if is_last { range.end.col } else { cols };
         let local_row = make_absolute_row_visible(screen, max_scrollback, absolute_row);
+        let Some((start_col, end_col)) =
+            expand_wide_cell_selection_cols(screen, local_row, start_col, end_col, cols)
+        else {
+            continue;
+        };
 
         if !is_last && rows > 1 && local_row.saturating_add(1) < rows {
             out.push_str(&screen.contents_between(local_row, start_col, local_row + 1, 0));
@@ -198,6 +203,38 @@ pub(crate) fn selected_text_from_screen(
 
     screen.set_scrollback(original_scrollback);
     (!out.is_empty()).then_some(out)
+}
+
+fn expand_wide_cell_selection_cols(
+    screen: &Screen,
+    row: u16,
+    start_col: u16,
+    end_col: u16,
+    cols: u16,
+) -> Option<(u16, u16)> {
+    let mut start_col = start_col.min(cols);
+    let mut end_col = end_col.min(cols);
+    if start_col >= end_col {
+        return None;
+    }
+
+    while start_col > 0
+        && screen
+            .cell(row, start_col)
+            .is_some_and(vt100::Cell::is_wide_continuation)
+    {
+        start_col = start_col.saturating_sub(1);
+    }
+
+    while end_col < cols
+        && screen
+            .cell(row, end_col)
+            .is_some_and(vt100::Cell::is_wide_continuation)
+    {
+        end_col = end_col.saturating_add(1);
+    }
+
+    Some((start_col, end_col))
 }
 
 fn clamp_range(
@@ -297,5 +334,27 @@ mod tests {
             selected_text_from_screen(parser.screen_mut(), 0, range).as_deref(),
             Some("你\nbe")
         );
+    }
+
+    #[test]
+    fn selected_text_expands_partial_wide_character_cells() {
+        let mut parser = vt100::Parser::new(2, 10, 0);
+        parser.process("alpha 你".as_bytes());
+
+        for range in [
+            TerminalSelectionRange {
+                start: TerminalSelectionPosition::new(0, 6),
+                end: TerminalSelectionPosition::new(0, 7),
+            },
+            TerminalSelectionRange {
+                start: TerminalSelectionPosition::new(0, 7),
+                end: TerminalSelectionPosition::new(0, 8),
+            },
+        ] {
+            assert_eq!(
+                selected_text_from_screen(parser.screen_mut(), 0, range).as_deref(),
+                Some("你")
+            );
+        }
     }
 }

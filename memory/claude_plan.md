@@ -1,21 +1,34 @@
-# Execution plan
+## Execution plan
 
-I will follow `TODO.md` as the source of truth, complete exactly the first task whose heading is not prefixed with `[DONE]`, update the task record, commit the resulting changes, and stop.
+I will use `TODO.md` as the authoritative source and complete exactly the first task whose heading is not prefixed with `[DONE]`. I will not do broad issue triage before selecting that task.
 
-## Step-by-step plan
+1. Read `TODO.md` to identify the first incomplete task, including its requirements, dependencies, validation steps, and completion record expectations.
+2. Check the latest commit message only for directly relevant unfinished work tied to that selected task.
+3. Inspect the minimum relevant project files needed to understand and implement the selected task.
+4. Implement the task completely without narrowing scope or introducing workarounds.
+5. Update tests or documentation that are directly required by the task.
+6. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test command required by `TODO.md`.
+7. If any observed test failure is not already scheduled, fix it or add the minimum prerequisite/follow-up task in `TODO.md` before marking the current task done.
+8. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record with the implementation and validation outcome.
+9. Update this plan file at key milestones or if the plan changes.
+10. Commit all task-related changes with a clear task-specific commit message and the required co-author trailer, then stop.
 
-1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect the files and code paths needed for that task, avoiding unrelated historical triage.
-4. Implement the requested change completely, preserving existing conventions and avoiding workarounds.
-5. Run formatting, linting, and the smallest relevant tests first; escalate to the full suite if required by the task or by observed failures.
-6. If a blocking prerequisite is discovered, update `TODO.md` with the minimum new prerequisite task, commit that bookkeeping, and stop.
-7. If implementation succeeds, mark the selected task title with `[DONE]`, update its completion record with the meaningful changes and validation result, and update `PLAN.md` only if phase-level planning changed.
-8. Commit all task-related changes with a clear task-specific message, then stop without starting the next task.
+## Current task
 
-## Progress log
+Selected first incomplete task: `M4.R Review`.
 
-- Created this plan before inspecting task details.
-- Identified the first incomplete task as `M4.7 测试`: add PTY coverage for mouse selection/copy, copy-mode selection copy, terminal app scroll-wheel routing for mouse-reporting apps, alternate-screen apps, popup-style apps, and main-screen scrollback.
-- Added PTY coverage in `crates/atto-ui-terminal/tests/pty_terminal_window_interactions.rs` for mouse drag copy, Shift-drag copy with mouse reporting, app-like wheel routing branches, and main-screen local scrollback; the terminal window PTY suite passed.
-- Completed validation with formatting, clippy, targeted PTY tests, and the full workspace test suite; marked `M4.7` as `[DONE]` in `TODO.md`.
+Relevant latest commit: `[M4.7] Add terminal PTY coverage`; it is directly related to M4 test coverage and does not mention unfinished work that changes the selected task ordering.
+
+Review focus:
+
+1. Inspect terminal selection hit testing and text extraction, especially wide-character handling.
+2. Inspect wheel routing for the required three-way decision tree: mouse reporting, alternate screen, then local scrollback.
+3. Inspect clipboard behavior and dependency configuration to ensure the default/first-version behavior remains safe and portable.
+4. Run formatting, clippy, and workspace tests after any needed fixes.
+5. Mark `M4.R Review` as `[DONE]`, update its completion record, commit, and stop.
+
+## Progress
+
+- Identified a review coverage gap: wide-character highlighting is tested, but selected-text extraction needs direct coverage when the selection intersects only the leading or continuation half of a wide cell.
+- The new regression failed, confirming a bug in selected-text extraction for partial wide-cell ranges. I will normalize extraction columns to full wide-cell boundaries before calling `vt100::Screen::contents_between`.
+- Fixed wide-cell text extraction, added unit/component regressions, completed `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` successfully. `TODO.md` now marks `M4.R Review` as done.
