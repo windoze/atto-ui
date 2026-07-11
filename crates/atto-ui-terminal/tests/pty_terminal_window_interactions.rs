@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_test_host::{KeyModifiers, PtyTestHost};
+use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
@@ -567,6 +567,41 @@ fn pty_terminal_command_block_presentation_marks_failed_commands() {
     wait_for_text(&host, "boom");
     wait_for_text(&host, "────");
     wait_for_text(&host, "!");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_ctrl_arrows_navigate_command_blocks() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut script = "printf 'NAV-SCRIPT-READY\\r\\n'; IFS= read -r _; ".to_string();
+    for index in 0..18 {
+        script.push_str(&format!(
+            "printf '\\033]133;A\\007$ \\033]133;B\\007cmd-{index:02}\\r\\n\\033]133;C\\007OUT-{index:02}\\r\\n\\033]133;D;0\\007'; "
+        ));
+    }
+    script.push_str("sleep 10");
+    let mut host = PtyTestHost::spawn(bin, &["/bin/sh", "-c", script.as_str()], 80, 24)
+        .expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    wait_for_text(&host, "NAV-SCRIPT-READY");
+    host.send_str("go\n").expect("release navigation script");
+    wait_for_text(&host, "OUT-17");
+    assert_text_absent_for(&host, "OUT-11", Duration::from_millis(200));
+
+    for _ in 0..2 {
+        host.key_with_mods(KeyCode::Up, KeyModifiers::CONTROL)
+            .expect("Ctrl+Up");
+    }
+    wait_for_text(&host, "OUT-11");
+
+    host.key_with_mods(KeyCode::Down, KeyModifiers::CONTROL)
+        .expect("Ctrl+Down");
+    wait_for_text(&host, "OUT-17");
+    assert_text_absent_for(&host, "OUT-11", Duration::from_millis(200));
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

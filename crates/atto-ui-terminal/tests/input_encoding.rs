@@ -1220,6 +1220,27 @@ fn terminal_command_block_actions_use_marker_columns() {
 }
 
 #[test]
+fn terminal_command_block_actions_degrade_without_osc_markers() {
+    let terminal = TerminalEmulator::new().without_system_clipboard();
+    let handle = terminal.handle();
+    handle.process_output_str("plain output\r\nwithout shell integration\r\n");
+
+    assert!(handle.command_blocks().is_empty());
+    assert_eq!(
+        handle.command_block_index_at_position(TerminalSelectionPosition::new(0, 0)),
+        None
+    );
+    assert_eq!(handle.scroll_to_previous_command_block(), None);
+    assert_eq!(handle.scroll_to_next_command_block(), None);
+    assert_eq!(handle.select_command_block_output(0), None);
+    assert_eq!(handle.copy_command_block_command(0), None);
+    assert_eq!(handle.copy_command_block_output(0), None);
+    assert!(!handle.rerun_command_block(0));
+    assert_eq!(handle.take_input(), b"");
+    assert_eq!(handle.copied_text(), None);
+}
+
+#[test]
 fn terminal_ctrl_arrows_navigate_command_blocks_without_forwarding() {
     let theme = Theme::dark();
     let mut widget = TerminalEmulator::new();

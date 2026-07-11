@@ -108,7 +108,9 @@
 - [x] **[DONE] M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
   - 完成记录（2026-07-12）：新增默认关闭的 `TerminalShellIntegration` 配置面，组件 builder、`TerminalHandle` 与动态组件 schema 均可读写开关；默认零侵入路径继续只消费用户 shell 已发出的 OSC 133/7 标记，无标记时第 1/2 层仍降级为普通 scrollback。开启后，`spawn_command` 会对支持的交互式 bash/zsh 启动注入临时 shell integration 脚本，生成 OSC 133/7 标记；非交互式 `-c` 等命令和不支持的 shell 保持原样。注入脚本临时文件随进程生命周期清理，注入失败会记录到 handle 可查询错误并继续按未注入命令启动，避免第 1/2 层硬依赖第 3 层成功。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal shell_integration -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
+- [x] **[DONE] M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
+  - 完成记录（2026-07-12）：补齐 M5 测试覆盖；`callbacks` 新增多命令块 OSC 133/7 状态机与 cwd 更新、未知 OSC 133/非法 OSC 7 降级用例；`input_encoding` 新增无 OSC 标记时命令块导航、选择、复制、重跑接口安全降级用例；PTY window fixture 新增 `Ctrl+↑/↓` 命令级导航端到端覆盖，并复跑既有命令块呈现、右键 Copy command / Copy output / Rerun 覆盖。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_ -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_ctrl_arrows_navigate_command_blocks -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
 
 ## 阶段 M6 - 分屏/标签页 + 会话管理 + spawn 环境（P2）

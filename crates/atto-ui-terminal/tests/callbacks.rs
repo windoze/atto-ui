@@ -190,6 +190,48 @@ fn terminal_command_blocks_are_queryable_and_report_finished_callback() {
 }
 
 #[test]
+fn terminal_osc133_state_machine_tracks_multiple_blocks_and_cwd_updates() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.process_output_str(
+        "\x1b]7;file://host/home/one\x07\
+         \x1b]133;A\x07one$ \x1b]133;B\x07echo one\r\n\
+         \x1b]133;C\x07one\r\n\
+         \x1b]133;D;0\x07\r\n\
+         \x1b]133;A\x07two$ \x1b]7;file:///tmp/two%20words\x07\x1b]133;B\x07echo two\r\n\
+         \x1b]133;C\x07two\r\n\
+         \x1b]133;D;5\x07",
+    );
+
+    let blocks = handle.command_blocks();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].cwd.as_deref(), Some("/home/one"));
+    assert_eq!(blocks[0].exit_code, Some(0));
+    assert_eq!(blocks[1].cwd.as_deref(), Some("/tmp/two words"));
+    assert_eq!(blocks[1].exit_code, Some(5));
+    assert!(
+        blocks[1].prompt_start.expect("second prompt row")
+            > blocks[0].prompt_start.expect("first prompt row")
+    );
+    assert_eq!(handle.last_exit_code(), Some(5));
+}
+
+#[test]
+fn terminal_osc133_unknown_markers_do_not_create_command_blocks() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.process_output_str(
+        "\x1b]133;Z\x07plain output\r\n\
+         \x1b]7;http://example.invalid/tmp\x07still plain\r\n",
+    );
+
+    assert!(handle.command_blocks().is_empty());
+    assert_eq!(handle.last_exit_code(), None);
+}
+
+#[test]
 fn terminal_command_block_queries_degrade_without_osc_markers() {
     let terminal = TerminalEmulator::new();
     let handle = terminal.handle();
