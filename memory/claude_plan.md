@@ -1,38 +1,21 @@
-# Claude Execution Plan
+# Execution plan
 
-## Scope
+I will follow `TODO.md` as the source of truth, complete exactly the first task whose heading is not prefixed with `[DONE]`, update the task record, commit the resulting changes, and stop.
 
-- Source of truth: `TODO.md`.
-- Goal for this invocation: complete exactly the first incomplete task in `TODO.md`, then stop.
-- Completion rule: a task is complete only if its title is explicitly prefixed with `[DONE]`.
-- I will not perform broad historical triage before selecting the current task.
+## Step-by-step plan
 
-## Execution Plan
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Check the latest commit message only for unfinished work directly relevant to that selected task.
+3. Inspect the files and code paths needed for that task, avoiding unrelated historical triage.
+4. Implement the requested change completely, preserving existing conventions and avoiding workarounds.
+5. Run formatting, linting, and the smallest relevant tests first; escalate to the full suite if required by the task or by observed failures.
+6. If a blocking prerequisite is discovered, update `TODO.md` with the minimum new prerequisite task, commit that bookkeeping, and stop.
+7. If implementation succeeds, mark the selected task title with `[DONE]`, update its completion record with the meaningful changes and validation result, and update `PLAN.md` only if phase-level planning changed.
+8. Commit all task-related changes with a clear task-specific message, then stop without starting the next task.
 
-1. Read `TODO.md` and identify the first task whose title is not prefixed with `[DONE]`.
-2. Check recent git context only as needed for the selected task, including whether the latest commit mentions an unfinished issue directly relevant to it.
-3. Inspect the code and tests relevant to that task.
-4. Implement the task as written, without narrowing scope or adding workarounds.
-5. Run required validation in order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task and repository rules.
-6. If validation reveals an unscheduled failing test or a blocking spec mismatch, fix it if it is in scope; otherwise add the minimum prerequisite task to `TODO.md`, keep the current task incomplete, commit that bookkeeping, and stop.
-7. When the selected task is complete, update `TODO.md` by prefixing the task title with `[DONE]` and adding/updating its completion record.
-8. Update this file after key steps or if the plan changes.
-9. Review `git status`, `git diff`, and recent commits before committing.
-10. Commit all changes for this task with a clear task-specific commit message.
-11. Stop after the commit and do not proceed to the next task.
+## Progress log
 
-## Progress Log
-
-- New invocation started. I will re-read `TODO.md`, select the first task whose title is not prefixed with `[DONE]`, and complete only that task before stopping.
-- Selected first incomplete task: `M4.6 剪贴板（后续，可选）` from `TODO.md`. The implementation goal is to add system clipboard support via `arboard` and wire OSC 52 clipboard callbacks with OSC 52 taking priority over `arboard` fallback.
-- Implemented terminal system clipboard wiring: default copy backend now emits OSC52 first and tries `arboard`, selection/copy-mode copies sync to the configured system clipboard, and valid OSC52 clipboard callbacks update both the local copy buffer and configured system clipboard. Focused terminal clipboard tests pass.
-- Required validation passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`. `TODO.md` is updated to mark `M4.6` as `[DONE]`.
-- Initialized plan before reading project task files or running commands.
-- Selected first incomplete task: `M4.5 alt screen 滚动分流` from `TODO.md`.
-- Latest commit is `[M4.4] Implement terminal local clipboard`; it does not explicitly mention an unfinished issue that changes the selected task ordering.
-- Relevant implementation path found in `crates/atto-ui-terminal/src/terminal.rs`: captured mouse events currently forward protocol mouse events first, then fall back to local scrollback. The missing branch is `alternate_screen()` wheel-to-arrow dispatch before local scrollback.
-- Test strategy: add focused `input_encoding` coverage for alternate-screen wheel up/down, mouse protocol priority over alternate-screen, and main-screen scrollback remaining local.
-- Implemented `handle_alternate_screen_wheel` and inserted it between mouse protocol forwarding and local scrollback fallback in the captured mouse event path.
-- Added `input_encoding` tests for alternate-screen wheel-to-arrow behavior, mouse reporting priority, and main-screen local scrollback. `cargo test -p atto-ui-terminal --test input_encoding -- --nocapture` passed.
-- Formal validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Updated `TODO.md` to mark `M4.5` as `[DONE]` with completion and validation records.
+- Created this plan before inspecting task details.
+- Identified the first incomplete task as `M4.7 测试`: add PTY coverage for mouse selection/copy, copy-mode selection copy, terminal app scroll-wheel routing for mouse-reporting apps, alternate-screen apps, popup-style apps, and main-screen scrollback.
+- Added PTY coverage in `crates/atto-ui-terminal/tests/pty_terminal_window_interactions.rs` for mouse drag copy, Shift-drag copy with mouse reporting, app-like wheel routing branches, and main-screen local scrollback; the terminal window PTY suite passed.
+- Completed validation with formatting, clippy, targeted PTY tests, and the full workspace test suite; marked `M4.7` as `[DONE]` in `TODO.md`.

@@ -1,8 +1,9 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_test_host::PtyTestHost;
+use atto_ui_test_host::{KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
+use unicode_width::UnicodeWidthStr;
 
 fn wait_for_text(host: &PtyTestHost, needle: &str) {
     host.wait_for_text(needle, Duration::from_secs(5))
@@ -22,6 +23,59 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 
 fn find_line_with<'a>(screen: &'a str, needle: &str) -> Option<&'a str> {
     screen.lines().find(|line| line.contains(needle))
+}
+
+fn find_text_position(screen: &str, needle: &str) -> Option<(u16, u16)> {
+    for (row, line) in screen.lines().enumerate() {
+        if let Some(byte_idx) = line.find(needle) {
+            let col = UnicodeWidthStr::width(&line[..byte_idx]);
+            return Some((col as u16, row as u16));
+        }
+    }
+    None
+}
+
+fn wait_for_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
+    wait_for_text(host, needle);
+    let screen = host.screen_contents().unwrap_or_default();
+    find_text_position(&screen, needle).unwrap_or_else(|| {
+        panic!("expected to find {needle:?} in screen\n--- screen ---\n{screen}")
+    })
+}
+
+fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
+    let mut cb = 0;
+    if mods.contains(KeyModifiers::SHIFT) {
+        cb += 4;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        cb += 8;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        cb += 16;
+    }
+    cb
+}
+
+fn drag_left_with_mods(
+    host: &mut PtyTestHost,
+    x0: u16,
+    y0: u16,
+    x1: u16,
+    y1: u16,
+    mods: KeyModifiers,
+) {
+    let modifier_bits = mouse_modifier_bits(mods);
+    let x0 = x0.saturating_add(1);
+    let y0 = y0.saturating_add(1);
+    let x1 = x1.saturating_add(1);
+    let y1 = y1.saturating_add(1);
+    host.send_str(&format!("\x1b[<{};{x0};{y0}M", modifier_bits))
+        .expect("mouse press");
+    host.send_str(&format!("\x1b[<{};{x1};{y1}M", 32 + modifier_bits))
+        .expect("mouse drag");
+    host.send_str(&format!("\x1b[<{};{x1};{y1}m", modifier_bits))
+        .expect("mouse release");
 }
 
 fn parse_rect_field(line: &str, key: &str) -> Option<Rect> {
@@ -258,6 +312,41 @@ fn pty_terminal_copy_mode_selects_and_copies_text() {
 }
 
 #[test]
+fn pty_terminal_mouse_drag_selection_copies_text_without_mouse_reporting() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "TTY READY");
+    wait_for_text(&host, "CAP=ON");
+
+    host.drag_left(x, y, x.saturating_add(2), y)
+        .expect("drag terminal selection");
+    wait_for_text(&host, "COPYMODE=OFF COPY=TTY");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_shift_drag_selection_copies_text_with_mouse_reporting() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = "printf '\\033[?1000h\\033[?1006hSHIFT PICK\\r\\n'; sleep 10";
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "SHIFT PICK");
+    wait_for_text(&host, "CAP=ON");
+
+    drag_left_with_mods(&mut host, x, y, x.saturating_add(4), y, KeyModifiers::SHIFT);
+    wait_for_text(&host, "COPYMODE=OFF COPY=SHIFT");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_terminal_local_copy_buffer_pastes_to_subprocess() {
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = concat!(
@@ -282,6 +371,76 @@ fn pty_terminal_local_copy_buffer_pastes_to_subprocess() {
     host.send_ctrl('b').expect("prefix");
     host.send_str("]").expect("paste copy buffer");
     wait_for_text(&host, "PASTE=TTY");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+fn wheel_probe_script(label: &str, mode_sequence: &str, min_input_bytes: u8) -> String {
+    format!(
+        "stty raw -echo min {min_input_bytes} time 20; \
+         printf '{mode_sequence}{label}\\r\\n'; \
+         bytes=$(dd bs=64 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); \
+         printf '\\r\\n{label}_HEX=%s\\r\\n' \"$bytes\"; \
+         sleep 10"
+    )
+}
+
+fn assert_wheel_probe(label: &str, mode_sequence: &str, min_input_bytes: u8, expected_hex: &str) {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = wheel_probe_script(label, mode_sequence, min_input_bytes);
+    let mut host = PtyTestHost::spawn(bin, &["/bin/sh", "-c", script.as_str()], 80, 24)
+        .expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, label);
+    wait_for_text(&host, "CAP=ON");
+    host.wheel_up(x, y).expect("wheel up over terminal");
+    wait_for_text(&host, &format!("{label}_HEX={expected_hex}"));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_app_like_wheel_routing_uses_expected_branch() {
+    const ALT_SCREEN: &str = r"\033[?1049h";
+    const MOUSE_REPORTING: &str = r"\033[?1000h\033[?1006h";
+    const ALT_SCREEN_MOUSE_REPORTING: &str = r"\033[?1049h\033[?1000h\033[?1006h";
+    const SGR_WHEEL_UP_PREFIX_HEX: &str = "1b5b3c36343b";
+    const THREE_UP_KEYS_HEX: &str = "1b5b411b5b411b5b41";
+
+    assert_wheel_probe(
+        "VIM_MOUSE_ON",
+        ALT_SCREEN_MOUSE_REPORTING,
+        6,
+        SGR_WHEEL_UP_PREFIX_HEX,
+    );
+    assert_wheel_probe(
+        "HTOP",
+        ALT_SCREEN_MOUSE_REPORTING,
+        6,
+        SGR_WHEEL_UP_PREFIX_HEX,
+    );
+    assert_wheel_probe("FZF_HEIGHT", MOUSE_REPORTING, 6, SGR_WHEEL_UP_PREFIX_HEX);
+    assert_wheel_probe("VIM_MOUSE_OFF", ALT_SCREEN, 9, THREE_UP_KEYS_HEX);
+    assert_wheel_probe("LESS", ALT_SCREEN, 9, THREE_UP_KEYS_HEX);
+}
+
+#[test]
+fn pty_terminal_main_screen_wheel_uses_local_scrollback() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = "for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do printf 'MAIN-%s\\r\\n' \"$i\"; done; sleep 10";
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "MAIN-30");
+    assert_text_absent_for(&host, "MAIN-00", Duration::from_millis(200));
+    for _ in 0..12 {
+        host.wheel_up(x, y).expect("wheel up local scrollback");
+    }
+    wait_for_text(&host, "MAIN-00");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
