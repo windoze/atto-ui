@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use atto_ui_terminal::{TerminalClipboardCopy, TerminalEmulator};
+use atto_ui_terminal::{TerminalClipboardCopy, TerminalCommandBlock, TerminalEmulator};
 
 #[test]
 fn terminal_callbacks_report_window_title_and_icon_name() {
@@ -142,6 +142,53 @@ fn terminal_osc52_non_clipboard_selector_does_not_sync_system_clipboard() {
     assert_eq!(handle.copied_text(), None);
     assert_eq!(handle.last_system_clipboard_text(), None);
     assert!(copied.lock().expect("clipboard lock").is_empty());
+}
+
+#[test]
+fn terminal_command_blocks_are_queryable_and_report_finished_callback() {
+    let (tx, rx) = mpsc::channel();
+    let terminal = TerminalEmulator::new().on_command_finished(move |block| {
+        tx.send(block.clone()).expect("send command block");
+    });
+    let handle = terminal.handle();
+    let expected = TerminalCommandBlock {
+        prompt_start: Some(0),
+        command_start: Some(0),
+        output_start: Some(1),
+        end: Some(2),
+        exit_code: Some(42),
+        cwd: Some("/tmp/project one".to_string()),
+    };
+
+    assert!(handle.command_blocks().is_empty());
+    assert_eq!(handle.last_exit_code(), None);
+
+    handle.process_output_str(
+        "\x1b]7;file://host/tmp/project%20one\x07\
+         \x1b]133;A\x07$ false\
+         \x1b]133;B\x07\r\n\
+         \x1b]133;C\x07boom\r\n\
+         \x1b]133;D;42\x07",
+    );
+
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("command finished callback"),
+        expected
+    );
+    assert_eq!(handle.command_blocks(), vec![expected]);
+    assert_eq!(handle.last_exit_code(), Some(42));
+}
+
+#[test]
+fn terminal_command_block_queries_degrade_without_osc_markers() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.process_output_str("plain output\r\nwithout shell integration\r\n");
+
+    assert!(handle.command_blocks().is_empty());
+    assert_eq!(handle.last_exit_code(), None);
 }
 
 #[test]

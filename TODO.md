@@ -96,7 +96,9 @@
 - [x] **[DONE] M5.1 第 1 层 感知与信号【组件层】** - 与 M1.3 共用 callbacks，接 `unhandled_osc`（vt100 透传 `[b"133", b"A"]` / `[b"133", b"D", b"0"]` / `[b"7", b"file://..."]`），推进小状态机记 `command_marks: Vec<CommandBlock>`（prompt_start/command_start/output_start/end 行号、exit_code、cwd，行号用 vt100 绝对行/scrollback 坐标）。**无需 fork vt100。**
   - 完成记录（2026-07-12）：终端组件复用 M1.3 的 `new_with_callbacks` 通道，实现 `vt100::Callbacks::unhandled_osc` 捕获未处理 OSC 参数；新增内部 `CommandBlock` 状态机与 `command_marks`/`current_cwd` 状态，支持 OSC 133 `A`/`B`/`C`/`D` 记录 prompt、command、output、end 的 vt100 scrollback 绝对行坐标和命令级退出码，并支持 OSC 7 `file://...` cwd 解析与 percent decode。无 OSC 标记的普通输出保持降级为空状态，不依赖 shell integration 注入，也未 fork vt100。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal osc133 -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M5.2 第 1 层 查询接口** - `TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished(status)` 回调；无标记时退回普通 scrollback 不崩。
+- [x] **[DONE] M5.2 第 1 层 查询接口** - `TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished(status)` 回调；无标记时退回普通 scrollback 不崩。
+  - 完成记录（2026-07-12）：新增公开 `TerminalCommandBlock` 快照类型并从 crate root 导出，`TerminalHandle::command_blocks()` 可读取 OSC 133/7 记录到的命令块列表，`TerminalHandle::last_exit_code()` 返回最近完成命令块的命令级退出码；新增 `TerminalEmulator::on_command_finished(...)` 回调，在 OSC 133 `D` 完成命令块时于锁外派发完成块快照。无 shell integration/OSC 标记的普通输出保持 `command_blocks()` 为空、`last_exit_code()` 为 `None`，不影响普通 scrollback。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_command_block -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M5.3 第 2 层 呈现【外壳层】** - 命令块分隔线/输出区底色、失败命令（exit≠0）标红标记。仅依赖第 1 层 `command_blocks()`。
 - [ ] **M5.4 第 2 层 交互【外壳层】** - 命令级导航（`Ctrl+↑/↓` 跳上/下一条命令）、选择粒度升级到整条命令输出、右键「重跑/复制命令/复制输出」。
 - [ ] **M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。

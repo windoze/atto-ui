@@ -72,6 +72,7 @@ mod tests {
             on_window_icon_name: None,
             on_audible_bell: None,
             on_clipboard_copy: None,
+            on_command_finished: None,
             system_clipboard: None,
             exit_status: None,
             process_running: false,
@@ -168,7 +169,7 @@ mod tests {
         assert_eq!(shared.command_marks.len(), 1);
         assert_eq!(
             shared.command_marks[0],
-            CommandBlock {
+            TerminalCommandBlock {
                 prompt_start: Some(0),
                 command_start: Some(0),
                 output_start: Some(1),
@@ -190,11 +191,11 @@ mod tests {
         assert_eq!(shared.command_marks.len(), 1);
         assert_eq!(
             shared.command_marks[0],
-            CommandBlock {
+            TerminalCommandBlock {
                 prompt_start: Some(1),
                 end: Some(1),
                 exit_code: Some(0),
-                ..CommandBlock::default()
+                ..TerminalCommandBlock::default()
             }
         );
     }
@@ -332,6 +333,7 @@ type ExitCallback = Arc<dyn Fn(ExitStatus) + Send + Sync>;
 type TextCallback = Arc<dyn Fn(&str) + Send + Sync>;
 type BellCallback = Arc<dyn Fn() + Send + Sync>;
 type ClipboardCopyCallback = Arc<dyn Fn(&TerminalClipboardCopy) + Send + Sync>;
+type CommandFinishedCallback = Arc<dyn Fn(&TerminalCommandBlock) + Send + Sync>;
 type SystemClipboard = Arc<dyn TerminalSystemClipboard>;
 type TerminalParser = vt100::Parser<TerminalCallbacks>;
 
@@ -433,17 +435,24 @@ impl TerminalCopyModeState {
     }
 }
 
+/// OSC 133/7 command block markers observed in terminal output.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct CommandBlock {
-    prompt_start: Option<usize>,
-    command_start: Option<usize>,
-    output_start: Option<usize>,
-    end: Option<usize>,
-    exit_code: Option<i32>,
-    cwd: Option<String>,
+pub struct TerminalCommandBlock {
+    /// Absolute terminal row where the prompt started.
+    pub prompt_start: Option<usize>,
+    /// Absolute terminal row where the command text started.
+    pub command_start: Option<usize>,
+    /// Absolute terminal row where command output started.
+    pub output_start: Option<usize>,
+    /// Absolute terminal row where the command finished.
+    pub end: Option<usize>,
+    /// Command-level exit code reported by OSC 133 `D`, if present.
+    pub exit_code: Option<i32>,
+    /// Current working directory reported by OSC 7 for this block.
+    pub cwd: Option<String>,
 }
 
-impl CommandBlock {
+impl TerminalCommandBlock {
     fn at_prompt(row: usize, cwd: Option<String>) -> Self {
         Self {
             prompt_start: Some(row),
@@ -520,6 +529,7 @@ enum TerminalCallbackDispatch {
     WindowIconName(TextCallback, String),
     AudibleBell(BellCallback),
     ClipboardCopy(ClipboardCopyCallback, TerminalClipboardCopy),
+    CommandFinished(CommandFinishedCallback, TerminalCommandBlock),
     SystemClipboardCopy(String),
 }
 
@@ -639,6 +649,7 @@ struct TerminalShared {
     on_window_icon_name: Option<TextCallback>,
     on_audible_bell: Option<BellCallback>,
     on_clipboard_copy: Option<ClipboardCopyCallback>,
+    on_command_finished: Option<CommandFinishedCallback>,
     system_clipboard: Option<SystemClipboard>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
@@ -656,7 +667,7 @@ struct TerminalShared {
     copy_mode: Option<TerminalCopyModeState>,
     copy_buffer: Option<String>,
     selection: TerminalSelectionState,
-    command_marks: Vec<CommandBlock>,
+    command_marks: Vec<TerminalCommandBlock>,
     current_cwd: Option<String>,
     dsr_tail: Vec<u8>,
 }
@@ -749,18 +760,24 @@ impl TerminalShared {
                     }
                 }
                 TerminalCallbackEvent::UnhandledOsc { params, row } => {
-                    self.apply_unhandled_osc(&params, row);
+                    if let Some(block) = self.apply_unhandled_osc(&params, row)
+                        && let Some(callback) = self.on_command_finished.clone()
+                    {
+                        dispatches.push(TerminalCallbackDispatch::CommandFinished(callback, block));
+                    }
                 }
             }
         }
         dispatches
     }
 
-    fn apply_unhandled_osc(&mut self, params: &[Vec<u8>], row: usize) {
+    fn apply_unhandled_osc(
+        &mut self,
+        params: &[Vec<u8>],
+        row: usize,
+    ) -> Option<TerminalCommandBlock> {
         match params {
-            [kind, rest @ ..] if kind.as_slice() == b"133" => {
-                self.apply_osc133_marker(rest, row);
-            }
+            [kind, rest @ ..] if kind.as_slice() == b"133" => self.apply_osc133_marker(rest, row),
             [kind, cwd] if kind.as_slice() == b"7" => {
                 if let Some(cwd) = parse_osc7_cwd(cwd) {
                     self.current_cwd = Some(cwd.clone());
@@ -768,26 +785,34 @@ impl TerminalShared {
                         block.cwd = Some(cwd);
                     }
                 }
+                None
             }
-            _ => {}
+            _ => None,
         }
     }
 
-    fn apply_osc133_marker(&mut self, params: &[Vec<u8>], row: usize) {
-        let Some(marker) = params.first().and_then(|marker| marker.first()).copied() else {
-            return;
-        };
+    fn apply_osc133_marker(
+        &mut self,
+        params: &[Vec<u8>],
+        row: usize,
+    ) -> Option<TerminalCommandBlock> {
+        let marker = params.first().and_then(|marker| marker.first()).copied()?;
         match marker {
-            b'A' => self.record_prompt_start(row),
+            b'A' => {
+                self.record_prompt_start(row);
+                None
+            }
             b'B' => {
                 let cwd = self.current_cwd.clone();
                 let block = self.open_command_block(row, cwd);
                 block.command_start = Some(row);
+                None
             }
             b'C' => {
                 let cwd = self.current_cwd.clone();
                 let block = self.open_command_block(row, cwd);
                 block.output_start = Some(row);
+                None
             }
             b'D' => {
                 let exit_code = params.get(1).and_then(|code| parse_osc133_exit_code(code));
@@ -795,8 +820,9 @@ impl TerminalShared {
                 let block = self.open_command_block(row, cwd);
                 block.end = Some(row);
                 block.exit_code = exit_code;
+                Some(block.clone())
             }
-            _ => {}
+            _ => None,
         }
     }
 
@@ -807,26 +833,28 @@ impl TerminalShared {
                 block.prompt_start = Some(row);
                 block.cwd = cwd;
             }
-            _ => self.command_marks.push(CommandBlock::at_prompt(row, cwd)),
+            _ => self
+                .command_marks
+                .push(TerminalCommandBlock::at_prompt(row, cwd)),
         }
     }
 
-    fn open_command_block(&mut self, row: usize, cwd: Option<String>) -> &mut CommandBlock {
+    fn open_command_block(&mut self, row: usize, cwd: Option<String>) -> &mut TerminalCommandBlock {
         let needs_new_block = self
             .command_marks
             .last()
             .is_none_or(|block| !block.is_open());
         if needs_new_block {
-            self.command_marks.push(CommandBlock {
+            self.command_marks.push(TerminalCommandBlock {
                 prompt_start: Some(row),
                 cwd,
-                ..CommandBlock::default()
+                ..TerminalCommandBlock::default()
             });
         }
         self.command_marks.last_mut().expect("command block exists")
     }
 
-    fn current_command_block_mut(&mut self) -> Option<&mut CommandBlock> {
+    fn current_command_block_mut(&mut self) -> Option<&mut TerminalCommandBlock> {
         self.command_marks
             .last_mut()
             .filter(|block| block.is_open())
@@ -1328,6 +1356,7 @@ fn dispatch_terminal_callback_events(
             TerminalCallbackDispatch::WindowIconName(callback, icon_name) => callback(&icon_name),
             TerminalCallbackDispatch::AudibleBell(callback) => callback(),
             TerminalCallbackDispatch::ClipboardCopy(callback, copy) => callback(&copy),
+            TerminalCallbackDispatch::CommandFinished(callback, block) => callback(&block),
             TerminalCallbackDispatch::SystemClipboardCopy(text) => {
                 dispatch_system_clipboard_copy(shared, &text);
             }
@@ -1465,6 +1494,7 @@ impl TerminalEmulator {
             on_window_icon_name: None,
             on_audible_bell: None,
             on_clipboard_copy: None,
+            on_command_finished: None,
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
             exit_status: None,
             process_running: false,
@@ -1639,6 +1669,15 @@ impl TerminalEmulator {
         F: Fn(&TerminalClipboardCopy) + Send + Sync + 'static,
     {
         self.shared.lock().on_clipboard_copy = Some(Arc::new(callback));
+        self
+    }
+
+    /// Registers a callback that fires when OSC 133 marks a command as finished.
+    pub fn on_command_finished<F>(self, callback: F) -> Self
+    where
+        F: Fn(&TerminalCommandBlock) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_command_finished = Some(Arc::new(callback));
         self
     }
 
@@ -2412,6 +2451,22 @@ impl TerminalHandle {
     /// Returns the last system clipboard sync error, if the most recent sync failed.
     pub fn last_system_clipboard_error(&self) -> Option<String> {
         self.shared.lock().last_system_clipboard_error.clone()
+    }
+
+    /// Returns OSC 133/7 command blocks observed in terminal output.
+    pub fn command_blocks(&self) -> Vec<TerminalCommandBlock> {
+        self.shared.lock().command_marks.clone()
+    }
+
+    /// Returns the exit code for the most recently completed command block, if reported.
+    pub fn last_exit_code(&self) -> Option<i32> {
+        self.shared
+            .lock()
+            .command_marks
+            .iter()
+            .rev()
+            .find(|block| block.end.is_some())
+            .and_then(|block| block.exit_code)
     }
 
     /// Returns whether a subprocess is currently attached and has not reported exit.
