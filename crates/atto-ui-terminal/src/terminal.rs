@@ -177,6 +177,10 @@ fn default_prefix_bindings() -> Vec<TerminalPrefixBinding> {
             TerminalShortcut::new(KeyCode::Char('['), KeyModifiers::NONE),
             TerminalPrefixCommand::EnterCopyMode,
         ),
+        TerminalPrefixBinding::new(
+            TerminalShortcut::new(KeyCode::Char(']'), KeyModifiers::NONE),
+            TerminalPrefixCommand::PasteCopyBuffer,
+        ),
     ]
 }
 
@@ -239,6 +243,7 @@ pub enum TerminalPrefixCommand {
     ToggleWindowManagement,
     ToggleMaximize,
     EnterCopyMode,
+    PasteCopyBuffer,
     SendPrefix,
 }
 
@@ -332,6 +337,18 @@ fn terminal_parser(rows: u16, cols: u16, scrollback_len: usize) -> TerminalParse
 
 fn string_from_terminal_bytes(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn encode_paste_text(screen: &vt100::Screen, text: &str) -> Vec<u8> {
+    if screen.bracketed_paste() {
+        let mut buf = Vec::with_capacity(text.len() + 16);
+        buf.extend_from_slice(b"\x1b[200~");
+        buf.extend_from_slice(text.as_bytes());
+        buf.extend_from_slice(b"\x1b[201~");
+        buf
+    } else {
+        text.as_bytes().to_vec()
+    }
 }
 
 struct TerminalShared {
@@ -490,11 +507,21 @@ impl TerminalShared {
     }
 
     fn finish_copy_mode_copy(&mut self) {
-        if let Some(text) = self.selected_text() {
-            self.copy_buffer = Some(text);
-        }
+        let _ = self.copy_selection();
         self.copy_mode = None;
         self.selection.clear();
+    }
+
+    fn copy_selection(&mut self) -> Option<String> {
+        let text = self.selected_text()?;
+        self.copy_buffer = Some(text.clone());
+        Some(text)
+    }
+
+    fn paste_copy_buffer_bytes(&self) -> Option<Vec<u8>> {
+        self.copy_buffer
+            .as_deref()
+            .map(|text| encode_paste_text(self.parser.screen(), text))
     }
 
     fn selected_text(&mut self) -> Option<String> {
@@ -768,6 +795,10 @@ fn handle_prefix_command(
             shared.enter_copy_mode();
             CapturedKeyAction::Consumed
         }
+        TerminalPrefixCommand::PasteCopyBuffer => shared
+            .paste_copy_buffer_bytes()
+            .map(CapturedKeyAction::Dispatch)
+            .unwrap_or(CapturedKeyAction::Consumed),
         TerminalPrefixCommand::SendPrefix => encode_prefix_literal(shared)
             .map(CapturedKeyAction::Dispatch)
             .unwrap_or(CapturedKeyAction::Consumed),
@@ -1410,6 +1441,7 @@ impl TerminalEmulator {
                     return false;
                 };
                 shared.selection.finish(position);
+                let _ = shared.copy_selection();
                 true
             }
             _ => false,
@@ -1655,16 +1687,7 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                 if !shared.capture {
                     return EventResult::ignored();
                 }
-                let screen = shared.parser.screen();
-                let bytes = if screen.bracketed_paste() {
-                    let mut buf = Vec::with_capacity(text.len() + 16);
-                    buf.extend_from_slice(b"\x1b[200~");
-                    buf.extend_from_slice(text.as_bytes());
-                    buf.extend_from_slice(b"\x1b[201~");
-                    buf
-                } else {
-                    text.as_bytes().to_vec()
-                };
+                let bytes = encode_paste_text(shared.parser.screen(), text);
                 drop(shared);
                 dispatch_input(&self.shared, &bytes);
                 EventResult::consumed()
@@ -1760,17 +1783,7 @@ impl TerminalHandle {
         let screen = shared.parser.screen();
         let bytes = match event {
             Event::Key(key) => encode_key_event(screen, *key),
-            Event::Paste(text) => {
-                if screen.bracketed_paste() {
-                    let mut buf = Vec::with_capacity(text.len() + 16);
-                    buf.extend_from_slice(b"\x1b[200~");
-                    buf.extend_from_slice(text.as_bytes());
-                    buf.extend_from_slice(b"\x1b[201~");
-                    Some(buf)
-                } else {
-                    Some(text.as_bytes().to_vec())
-                }
-            }
+            Event::Paste(text) => Some(encode_paste_text(screen, text)),
             Event::Mouse(m) => encode_mouse_event(screen, *m, None, MouseCoordinateSpace::Absolute),
             _ => None,
         };
@@ -1852,9 +1865,24 @@ impl TerminalHandle {
             .map(|mode| mode.cursor)
     }
 
-    /// Returns the last text copied from copy-mode.
+    /// Returns the last text copied into the terminal-local copy buffer.
     pub fn copied_text(&self) -> Option<String> {
         self.shared.lock().copy_buffer.clone()
+    }
+
+    /// Copies the active selection into the terminal-local copy buffer.
+    pub fn copy_selection(&self) -> Option<String> {
+        self.shared.lock().copy_selection()
+    }
+
+    /// Pastes the terminal-local copy buffer back into the subprocess input stream.
+    pub fn paste_copied_text(&self) -> bool {
+        let bytes = { self.shared.lock().paste_copy_buffer_bytes() };
+        let Some(bytes) = bytes else {
+            return false;
+        };
+        dispatch_input(&self.shared, &bytes);
+        true
     }
 
     /// Starts a terminal text selection at an absolute scrollback/screen position.

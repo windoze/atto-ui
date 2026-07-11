@@ -378,6 +378,44 @@ fn terminal_mouse_reporting_shift_drag_selects_locally() {
 }
 
 #[test]
+fn terminal_mouse_selection_copies_to_local_buffer_on_release() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+
+    for event in [
+        mouse_event_at(
+            MouseEventKind::Down(MouseButton::Left),
+            0,
+            0,
+            KeyModifiers::NONE,
+        ),
+        mouse_event_at(
+            MouseEventKind::Drag(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ),
+        mouse_event_at(
+            MouseEventKind::Up(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ),
+    ] {
+        assert!(
+            terminal
+                .handle_event(&Event::Mouse(event), context(&theme))
+                .is_consumed()
+        );
+    }
+
+    assert_eq!(handle.selected_text().as_deref(), Some("alpha"));
+    assert_eq!(handle.copied_text().as_deref(), Some("alpha"));
+}
+
+#[test]
 fn terminal_capture_on_click_forwards_the_recapture_click() {
     let theme = Theme::dark();
     let mut terminal = TerminalEmulator::new();
@@ -410,6 +448,29 @@ fn terminal_bracketed_paste_wraps_only_when_enabled() {
         paste_input_after_output("\x1b[?2004h", "one\ntwo"),
         b"\x1b[200~one\ntwo\x1b[201~"
     );
+}
+
+#[test]
+fn terminal_local_copy_buffer_pastes_with_bracketed_paste() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+    handle.begin_selection(TerminalSelectionPosition::new(0, 0));
+    handle.update_selection(TerminalSelectionPosition::new(0, 5));
+
+    assert_eq!(handle.copy_selection().as_deref(), Some("alpha"));
+
+    handle.process_output_str("\x1b[?2004h");
+    assert!(handle.paste_copied_text());
+    assert_eq!(handle.take_input(), b"\x1b[200~alpha\x1b[201~");
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert_eq!(handle.take_input(), b"\x1b[200~alpha\x1b[201~");
 }
 
 #[test]
