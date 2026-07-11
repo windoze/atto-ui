@@ -1,34 +1,25 @@
-## Execution plan
+# Execution Plan
 
-I will use `TODO.md` as the authoritative source and complete exactly the first task whose heading is not prefixed with `[DONE]`. I will not do broad issue triage before selecting that task.
+I will keep this file updated with a concise execution plan and progress notes. Private reasoning is not recorded here, but the actionable plan and key decisions are.
 
-1. Read `TODO.md` to identify the first incomplete task, including its requirements, dependencies, validation steps, and completion record expectations.
-2. Check the latest commit message only for directly relevant unfinished work tied to that selected task.
-3. Inspect the minimum relevant project files needed to understand and implement the selected task.
-4. Implement the task completely without narrowing scope or introducing workarounds.
-5. Update tests or documentation that are directly required by the task.
-6. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test command required by `TODO.md`.
-7. If any observed test failure is not already scheduled, fix it or add the minimum prerequisite/follow-up task in `TODO.md` before marking the current task done.
-8. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record with the implementation and validation outcome.
-9. Update this plan file at key milestones or if the plan changes.
-10. Commit all task-related changes with a clear task-specific commit message and the required co-author trailer, then stop.
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Inspect only the files needed to understand that task, plus the latest commit if it directly mentions an unfinished issue relevant to the selected task.
+3. Implement the selected task completely, adding or updating tests and documentation that are directly required by the task.
+4. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite required by `TODO.md`.
+5. If an unscheduled failure or blocker appears, fix it if it is in scope; otherwise add the minimum prerequisite task to `TODO.md`, commit that bookkeeping, and stop.
+6. When the selected task is complete, mark its `TODO.md` heading with `[DONE]`, update its completion record, commit all task-related changes, and stop.
 
-## Current task
-
-Selected first incomplete task: `M4.R Review`.
-
-Relevant latest commit: `[M4.7] Add terminal PTY coverage`; it is directly related to M4 test coverage and does not mention unfinished work that changes the selected task ordering.
-
-Review focus:
-
-1. Inspect terminal selection hit testing and text extraction, especially wide-character handling.
-2. Inspect wheel routing for the required three-way decision tree: mouse reporting, alternate screen, then local scrollback.
-3. Inspect clipboard behavior and dependency configuration to ensure the default/first-version behavior remains safe and portable.
-4. Run formatting, clippy, and workspace tests after any needed fixes.
-5. Mark `M4.R Review` as `[DONE]`, update its completion record, commit, and stop.
-
-## Progress
-
-- Identified a review coverage gap: wide-character highlighting is tested, but selected-text extraction needs direct coverage when the selection intersects only the leading or continuation half of a wide cell.
-- The new regression failed, confirming a bug in selected-text extraction for partial wide-cell ranges. I will normalize extraction columns to full wide-cell boundaries before calling `vt100::Screen::contents_between`.
-- Fixed wide-cell text extraction, added unit/component regressions, completed `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` successfully. `TODO.md` now marks `M4.R Review` as done.
+Progress:
+- Created the execution plan before reading project task details.
+- Selected first incomplete task: `M5.1 第 1 层 感知与信号【组件层】`.
+- Task objective: use vt100 callbacks to observe OSC 133/7 through `unhandled_osc`, maintain component-layer command block state, and avoid shell-integration hard dependencies.
+- Next steps:
+  1. Check the latest commit and worktree status for relevant unfinished work.
+  2. Inspect `atto-ui-terminal` callback wiring, shared state, handle APIs, and tests.
+  3. Add a command-mark state machine for OSC 133 prompt/command/output/end markers and OSC 7 cwd markers.
+  4. Add targeted tests for OSC parsing and state transitions.
+  5. Run formatting, clippy, and tests; then mark `M5.1` done and commit.
+- Latest commit did not mention an unfinished issue relevant to M5.1; worktree only had this plan file before implementation.
+- Implemented OSC 133/7 callback capture through `unhandled_osc`, internal command block state, cwd tracking, and focused unit coverage. Targeted `cargo test -p atto-ui-terminal osc133 -- --nocapture` passes after `cargo fmt --all`.
+- Validation completed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed.
+- Marked `M5.1` as `[DONE]` in `TODO.md`; next step is committing the task changes and stopping.

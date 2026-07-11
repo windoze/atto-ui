@@ -89,6 +89,8 @@ mod tests {
             copy_mode: None,
             copy_buffer: None,
             selection: TerminalSelectionState::default(),
+            command_marks: Vec::new(),
+            current_cwd: None,
             dsr_tail: Vec::new(),
         }
     }
@@ -146,6 +148,68 @@ mod tests {
 
         assert!(collect_dsr_responses(&mut shared, b"x").is_empty());
         assert!(shared.dsr_tail.is_empty());
+    }
+
+    #[test]
+    fn osc133_and_osc7_record_command_block_marks() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        handle.process_output_str(
+            "\x1b]7;file://host/tmp/project%20one\x07\
+             \x1b]133;A\x07$ echo ok\
+             \x1b]133;B\x07\r\n\
+             \x1b]133;C\x07ok\r\n\
+             \x1b]133;D;7\x07",
+        );
+
+        let shared = terminal.shared.lock();
+        assert_eq!(shared.current_cwd.as_deref(), Some("/tmp/project one"));
+        assert_eq!(shared.command_marks.len(), 1);
+        assert_eq!(
+            shared.command_marks[0],
+            CommandBlock {
+                prompt_start: Some(0),
+                command_start: Some(0),
+                output_start: Some(1),
+                end: Some(2),
+                exit_code: Some(7),
+                cwd: Some("/tmp/project one".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn osc133_missing_markers_degrade_to_partial_blocks() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        handle.process_output_str("plain output\r\n\x1b]133;D;0\x07");
+
+        let shared = terminal.shared.lock();
+        assert_eq!(shared.command_marks.len(), 1);
+        assert_eq!(
+            shared.command_marks[0],
+            CommandBlock {
+                prompt_start: Some(1),
+                end: Some(1),
+                exit_code: Some(0),
+                ..CommandBlock::default()
+            }
+        );
+    }
+
+    #[test]
+    fn osc7_decodes_file_uri_paths() {
+        assert_eq!(
+            parse_osc7_cwd(b"file://localhost/Users/test/project%20one").as_deref(),
+            Some("/Users/test/project one")
+        );
+        assert_eq!(
+            parse_osc7_cwd(b"file:///tmp/%E4%BD%A0%E5%A5%BD").as_deref(),
+            Some("/tmp/你好")
+        );
+        assert_eq!(parse_osc7_cwd(b"https://example.invalid/tmp"), None);
     }
 
     #[test]
@@ -369,12 +433,41 @@ impl TerminalCopyModeState {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CommandBlock {
+    prompt_start: Option<usize>,
+    command_start: Option<usize>,
+    output_start: Option<usize>,
+    end: Option<usize>,
+    exit_code: Option<i32>,
+    cwd: Option<String>,
+}
+
+impl CommandBlock {
+    fn at_prompt(row: usize, cwd: Option<String>) -> Self {
+        Self {
+            prompt_start: Some(row),
+            cwd,
+            ..Self::default()
+        }
+    }
+
+    fn is_open(&self) -> bool {
+        self.end.is_none()
+    }
+
+    fn has_command_activity(&self) -> bool {
+        self.command_start.is_some() || self.output_start.is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TerminalCallbackEvent {
     WindowTitle(String),
     WindowIconName(String),
     AudibleBell,
     ClipboardCopy(TerminalClipboardCopy),
+    UnhandledOsc { params: Vec<Vec<u8>>, row: usize },
 }
 
 #[derive(Default)]
@@ -413,6 +506,13 @@ impl vt100::Callbacks for TerminalCallbacks {
             },
         ));
     }
+
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        self.events.push(TerminalCallbackEvent::UnhandledOsc {
+            params: params.iter().map(|param| param.to_vec()).collect(),
+            row: current_absolute_row_for_screen(screen),
+        });
+    }
 }
 
 enum TerminalCallbackDispatch {
@@ -427,8 +527,63 @@ fn terminal_parser(rows: u16, cols: u16, scrollback_len: usize) -> TerminalParse
     vt100::Parser::new_with_callbacks(rows, cols, scrollback_len, TerminalCallbacks::default())
 }
 
+fn current_absolute_row_for_screen(screen: &mut vt100::Screen) -> usize {
+    let current_scrollback = screen.scrollback();
+    screen.set_scrollback(usize::MAX);
+    let max_scrollback = screen.scrollback();
+    screen.set_scrollback(current_scrollback);
+    let row = screen.cursor_position().0;
+    max_scrollback.saturating_add(usize::from(row))
+}
+
 fn string_from_terminal_bytes(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn parse_osc133_exit_code(bytes: &[u8]) -> Option<i32> {
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+fn parse_osc7_cwd(bytes: &[u8]) -> Option<String> {
+    let uri = std::str::from_utf8(bytes).ok()?;
+    let rest = uri.strip_prefix("file://")?;
+    let path = if rest.starts_with('/') {
+        rest
+    } else {
+        rest.get(rest.find('/')?..)?
+    };
+    if path.is_empty() {
+        return None;
+    }
+    Some(percent_decode_uri_path(path))
+}
+
+fn percent_decode_uri_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+        {
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn encode_paste_text(screen: &vt100::Screen, text: &str) -> Vec<u8> {
@@ -501,6 +656,8 @@ struct TerminalShared {
     copy_mode: Option<TerminalCopyModeState>,
     copy_buffer: Option<String>,
     selection: TerminalSelectionState,
+    command_marks: Vec<CommandBlock>,
+    current_cwd: Option<String>,
     dsr_tail: Vec<u8>,
 }
 
@@ -591,9 +748,88 @@ impl TerminalShared {
                         dispatches.push(TerminalCallbackDispatch::ClipboardCopy(callback, copy));
                     }
                 }
+                TerminalCallbackEvent::UnhandledOsc { params, row } => {
+                    self.apply_unhandled_osc(&params, row);
+                }
             }
         }
         dispatches
+    }
+
+    fn apply_unhandled_osc(&mut self, params: &[Vec<u8>], row: usize) {
+        match params {
+            [kind, rest @ ..] if kind.as_slice() == b"133" => {
+                self.apply_osc133_marker(rest, row);
+            }
+            [kind, cwd] if kind.as_slice() == b"7" => {
+                if let Some(cwd) = parse_osc7_cwd(cwd) {
+                    self.current_cwd = Some(cwd.clone());
+                    if let Some(block) = self.current_command_block_mut() {
+                        block.cwd = Some(cwd);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_osc133_marker(&mut self, params: &[Vec<u8>], row: usize) {
+        let Some(marker) = params.first().and_then(|marker| marker.first()).copied() else {
+            return;
+        };
+        match marker {
+            b'A' => self.record_prompt_start(row),
+            b'B' => {
+                let cwd = self.current_cwd.clone();
+                let block = self.open_command_block(row, cwd);
+                block.command_start = Some(row);
+            }
+            b'C' => {
+                let cwd = self.current_cwd.clone();
+                let block = self.open_command_block(row, cwd);
+                block.output_start = Some(row);
+            }
+            b'D' => {
+                let exit_code = params.get(1).and_then(|code| parse_osc133_exit_code(code));
+                let cwd = self.current_cwd.clone();
+                let block = self.open_command_block(row, cwd);
+                block.end = Some(row);
+                block.exit_code = exit_code;
+            }
+            _ => {}
+        }
+    }
+
+    fn record_prompt_start(&mut self, row: usize) {
+        let cwd = self.current_cwd.clone();
+        match self.command_marks.last_mut() {
+            Some(block) if block.is_open() && !block.has_command_activity() => {
+                block.prompt_start = Some(row);
+                block.cwd = cwd;
+            }
+            _ => self.command_marks.push(CommandBlock::at_prompt(row, cwd)),
+        }
+    }
+
+    fn open_command_block(&mut self, row: usize, cwd: Option<String>) -> &mut CommandBlock {
+        let needs_new_block = self
+            .command_marks
+            .last()
+            .is_none_or(|block| !block.is_open());
+        if needs_new_block {
+            self.command_marks.push(CommandBlock {
+                prompt_start: Some(row),
+                cwd,
+                ..CommandBlock::default()
+            });
+        }
+        self.command_marks.last_mut().expect("command block exists")
+    }
+
+    fn current_command_block_mut(&mut self) -> Option<&mut CommandBlock> {
+        self.command_marks
+            .last_mut()
+            .filter(|block| block.is_open())
     }
 
     fn queue_input(&mut self, bytes: &[u8]) {
@@ -1246,6 +1482,8 @@ impl TerminalEmulator {
             copy_mode: None,
             copy_buffer: None,
             selection: TerminalSelectionState::default(),
+            command_marks: Vec::new(),
+            current_cwd: None,
             dsr_tail: Vec::with_capacity(4),
         };
 
