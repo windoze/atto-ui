@@ -34,7 +34,14 @@ Complete exactly the first incomplete task listed in `TODO.md`, then stop after 
   - Identified first incomplete task: `M2.2 标题联动`.
   - Implemented UI-thread polling of terminal OSC titles in `terminal_viewer` and the snapshot terminal window fixture, reset default titles on restart, refreshed the Windows menu from current `Window.title`, and added a PTY regression for titlebar/menu propagation.
   - Validation completed successfully for M2.2, and `TODO.md` was updated to mark only `M2.2 标题联动` as `[DONE]`.
-- Plan updated before reading task files or running commands.
-- Selected first incomplete task: `M2.3 测试` in `TODO.md`.
-- Confirmed existing PTY coverage for dead process prompt/restart and OSC 2 title linkage; adding OSC 0 title linkage coverage.
-- Added OSC 0/2 PTY title-linkage coverage, completed validation, and marked `M2.3` done in `TODO.md`.
+  - Selected first incomplete task: `M2.3 测试` in `TODO.md`.
+  - Confirmed existing PTY coverage for dead process prompt/restart and OSC 2 title linkage; added OSC 0 title linkage coverage.
+  - Added OSC 0/2 PTY title-linkage coverage, completed validation, and marked `M2.3` done in `TODO.md`.
+- Current invocation:
+  - Refreshed this execution plan before task execution.
+  - Identified first incomplete task: `M2.R Review`.
+  - Latest commit is `[M2.3] Complete terminal PTY coverage` and does not call out an unfinished issue requiring prerequisite insertion.
+  - Reviewed M2 surfaces in `terminal_viewer`, `snapshot_terminal_window_app`, `pty_terminal_window_interactions`, and `terminal.rs`.
+  - Confirmed dead-window recovery is driven by recorded `exit_status()` rather than live-window heuristics or process killing, and title synchronization reads cloned handle state under the terminal shared mutex before mutating UI state on the app thread.
+  - Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+  - Marked `M2.R Review` as `[DONE]` in `TODO.md` with the completion record.

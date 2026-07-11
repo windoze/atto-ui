@@ -37,7 +37,9 @@
 - [x] **[DONE] M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
   - 完成记录（2026-07-11）：补齐 `pty_terminal_window_interactions` 中的 M2 PTY 覆盖；保留 shell 子进程退出后显示退出提示、释放 capture、按 `R` 重启并更新 `RESTARTS` 的回归测试；将标题联动测试扩展为同时覆盖 OSC 0 与 OSC 2，确认窗口标题和 Windows → Switch to 菜单项同步更新。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_dead_process_prompts_and_restarts pty_terminal_osc_zero_and_two_titles_update_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
+- [x] **[DONE] M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
+  - 完成记录（2026-07-11）：复核终端 viewer、PTY window fixture 与 `TerminalHandle` 状态流，确认死窗口回收只在组件记录到 `exit_status()` 后释放 capture 并显示退出提示，不基于焦点/标题等启发式关闭或误杀仍存活窗口；重启路径会替换 view、刷新 handle 并恢复默认标题。标题联动通过 `TerminalHandle::window_title()` 克隆共享状态后，在 UI tick/action 线程调用 `Desktop::set_title` 与刷新 Windows 菜单，callback 事件在 terminal shared 锁外派发，未引入跨线程 UI 变更。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 
 ## 阶段 M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
 
