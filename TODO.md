@@ -31,7 +31,9 @@
 - [x] **[DONE] M2.1 死窗口回收** - 在 tick 或 `on_exit` 检测进程退出，按策略关窗，或原地显示 `[Process exited: code N — press R to restart]`。
   - 完成记录（2026-07-11）：终端 viewer 与 PTY window fixture 增加外壳层 session tracking；tick 轮询发现子进程退出后会释放 terminal capture、原地写入 `[Process exited: code N — press R to restart]` 提示，并在 focused dead terminal 上按 plain `R` 时替换为新的 `TerminalEmulator` 并按原命令重启。fixture 支持通过参数启动真实子进程并暴露 `PROC`/`RESTARTS` 状态，新增 PTY 回归覆盖退出提示与 R 重启入口。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_dead_process_prompts_and_restarts --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M2.2 标题联动** - 把组件暴露的标题（M1.3）同步到 `Window.title`，刷新 Windows 菜单窗口列表。
+- [x] **[DONE] M2.2 标题联动** - 把组件暴露的标题（M1.3）同步到 `Window.title`，刷新 Windows 菜单窗口列表。
+  - 完成记录（2026-07-11）：终端 viewer 与 PTY window fixture 在 UI tick/action 路径轮询 `TerminalHandle::window_title()`，将 OSC 0/2 暴露的标题同步到对应 `Window.title`，并在刷新 Windows 菜单窗口列表前使用当前窗口标题作为菜单项来源。终端重启时恢复默认窗口标题，避免旧进程标题滞留。新增 PTY 回归覆盖子进程输出 OSC 2 后标题栏更新，并在 Windows → Switch to 菜单中显示更新后的窗口标题。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_osc_title_updates_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
 - [ ] **M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
 

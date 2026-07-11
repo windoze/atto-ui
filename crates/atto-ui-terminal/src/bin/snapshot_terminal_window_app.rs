@@ -18,8 +18,12 @@ use atto_ui::composable::{Component, VStack};
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
-use atto_ui::wm::{Window, WindowId, WindowKind};
+use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{TerminalEmulator, TerminalHandle};
+
+const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
+const WINDOWS_MENU_ID: &str = "atto-ui-terminal:snapshot-window:windows";
+const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:snapshot-window:windows:list";
 
 #[derive(Clone)]
 struct TerminalCommand {
@@ -64,6 +68,23 @@ fn build_status_view(lines: &[Binding<String>]) -> Box<dyn Component> {
         stack = stack.child(Label::new(line.clone()));
     }
     Box::new(stack)
+}
+
+fn build_menu(menu_action: &Binding<String>) -> MenuBar {
+    let menu_action_cb = menu_action.clone();
+    MenuBar::new(vec![
+        MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Ping", move || {
+                menu_action_cb.set("PING".to_string());
+            })],
+        ),
+        MenuSpec::new(
+            "Windows",
+            vec![MenuItem::submenu("Switch to", Vec::new()).with_tag(WINDOWS_MENU_LIST_ID)],
+        )
+        .with_tag(WINDOWS_MENU_ID),
+    ])
 }
 
 fn rect_text(rect: Option<Rect>) -> String {
@@ -124,6 +145,64 @@ fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSes
     true
 }
 
+fn sync_terminal_window_title(desktop: &mut Desktop, session: &TerminalWindowSession) -> bool {
+    let Some(title) = session.handle.window_title() else {
+        return false;
+    };
+    let current_title = desktop.wm.window(session.id).map(|w| w.title.get());
+    if current_title.as_deref() == Some(title.as_str()) {
+        return false;
+    }
+    desktop.set_title(session.id, title)
+}
+
+fn refresh_windows_menu(desktop: &mut Desktop) {
+    if desktop.menu.is_active() {
+        return;
+    }
+
+    let focused = desktop.wm.focused();
+    let mut windows: Vec<(String, WindowId, bool)> = desktop
+        .wm
+        .windows()
+        .iter()
+        .filter(|w| w.kind.is_focusable())
+        .filter(|w| w.state.get() != WindowState::Minimized)
+        .map(|w| {
+            let id = w.id();
+            (w.title.get(), id, Some(id) == focused)
+        })
+        .collect();
+    windows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut items = Vec::new();
+    for (title, id, is_focused) in windows {
+        let label = if is_focused {
+            format!("* {title}")
+        } else {
+            title
+        };
+        items.push(MenuItem::action(label, move || {
+            let _ = id;
+        }));
+    }
+    if items.is_empty() {
+        items.push(MenuItem::submenu("No terminal windows", Vec::new()).enabled(false));
+    }
+
+    for menu in desktop.menu.menus_mut() {
+        if menu.tag.as_deref() != Some(WINDOWS_MENU_ID) {
+            continue;
+        }
+        for item in &mut menu.items {
+            if item.tag.as_deref() == Some(WINDOWS_MENU_LIST_ID) {
+                item.submenu = items;
+                return;
+            }
+        }
+    }
+}
+
 fn restart_terminal_view(
     desktop: &mut Desktop,
     session: &mut TerminalWindowSession,
@@ -142,6 +221,7 @@ fn restart_terminal_view(
     session.handle = handle;
     session.exit_prompted = false;
     session.restart_count = session.restart_count.saturating_add(1);
+    desktop.set_title(session.id, DEFAULT_TERMINAL_TITLE);
     desktop.wm.focus(session.id);
     Ok(true)
 }
@@ -214,13 +294,7 @@ fn main() -> Result<()> {
     terminal.clear()?;
 
     let menu_action = Binding::new("NONE".to_string());
-    let menu_action_cb = menu_action.clone();
-    let menu = MenuBar::new(vec![MenuSpec::new(
-        "File",
-        vec![MenuItem::action("Ping", move || {
-            menu_action_cb.set("PING".to_string());
-        })],
-    )]);
+    let menu = build_menu(&menu_action);
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
@@ -263,7 +337,7 @@ fn main() -> Result<()> {
     let term_id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
-            "Terminal",
+            DEFAULT_TERMINAL_TITLE,
             term_rect,
             Box::new(term_view),
         ),
@@ -285,9 +359,12 @@ fn main() -> Result<()> {
         screen,
     );
     desktop.wm.focus(term_id);
+    refresh_windows_menu(&mut desktop);
 
     loop {
         show_exit_prompt_if_needed(&desktop, &mut term_session);
+        sync_terminal_window_title(&mut desktop, &term_session);
+        refresh_windows_menu(&mut desktop);
         update_status_lines(
             &desktop,
             &term_session,

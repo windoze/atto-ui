@@ -170,3 +170,31 @@ fn pty_terminal_dead_process_prompts_and_restarts() {
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
+
+#[test]
+fn pty_terminal_osc_title_updates_window_title_and_windows_menu() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &[
+            "/bin/sh",
+            "-c",
+            "printf '\\033]2;OSC Project Shell\\007'; sleep 10",
+        ],
+        80,
+        24,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    wait_for_text(&host, "OSC Project Shell");
+
+    host.click(8, 0).expect("open Windows menu");
+    wait_for_text(&host, "Switch to");
+    host.click(9, 2).expect("open window list submenu");
+    wait_for_text(&host, "* OSC Project Shell");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}

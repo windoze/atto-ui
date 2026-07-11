@@ -131,6 +131,10 @@ fn terminal_window_rect(work_area: Rect, index: usize) -> Rect {
     }
 }
 
+fn terminal_window_title(window_number: usize) -> String {
+    format!("Terminal {window_number}")
+}
+
 fn is_plain_restart_key(event: &Event) -> bool {
     let Event::Key(key) = event else {
         return false;
@@ -195,6 +199,21 @@ fn update_terminal_exit_prompts(
     changed
 }
 
+fn sync_terminal_window_titles(desktop: &mut Desktop, sessions: &[TerminalWindowSession]) -> bool {
+    let mut changed = false;
+    for session in sessions {
+        let Some(title) = session.handle.window_title() else {
+            continue;
+        };
+        let current_title = desktop.wm.window(session.id).map(|w| w.title.get());
+        if current_title.as_deref() == Some(title.as_str()) {
+            continue;
+        }
+        changed |= desktop.set_title(session.id, title);
+    }
+    changed
+}
+
 fn restart_terminal_window(
     desktop: &mut Desktop,
     session: &mut TerminalWindowSession,
@@ -211,6 +230,7 @@ fn restart_terminal_window(
     }
     session.handle = handle;
     session.exit_prompted = false;
+    desktop.set_title(session.id, terminal_window_title(session.window_number));
     desktop.wm.focus(session.id);
     Ok(true)
 }
@@ -247,7 +267,7 @@ fn spawn_terminal_window(
     let rect = terminal_window_rect(work_area, window_number);
 
     let (terminal, handle) = build_terminal_view(window_number, command, command_args)?;
-    let title = format!("Terminal {window_number}");
+    let title = terminal_window_title(window_number);
     let window = Window::new(WindowKind::Normal, title, rect, Box::new(terminal));
     let id = desktop.add_window(window, screen);
     Ok(TerminalWindowSession::new(id, handle, window_number))
@@ -393,6 +413,7 @@ fn main() -> Result<()> {
 
                 let mut sessions = terminal_sessions.borrow_mut();
                 prune_terminal_sessions(desktop, &mut sessions);
+                sync_terminal_window_titles(desktop, &sessions);
                 refresh_windows_menu(desktop, &action_tx);
                 Ok(AppControl::Continue)
             }
@@ -400,6 +421,7 @@ fn main() -> Result<()> {
         move |desktop: &mut Desktop, _screen: Rect| {
             let mut sessions = terminal_sessions_for_tick.borrow_mut();
             update_terminal_exit_prompts(desktop, &mut sessions);
+            sync_terminal_window_titles(desktop, &sessions);
             refresh_windows_menu(desktop, &action_tx_for_tick);
             Ok(AppControl::Continue)
         },

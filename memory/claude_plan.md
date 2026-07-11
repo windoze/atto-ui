@@ -19,3 +19,10 @@ Progress:
 - First focused PTY run found the new fixture process status line was clipped by the status window; expanded the fixture status window to fit all four status lines.
 - Validation completed successfully: formatting, clippy with warnings denied, the focused PTY regression, and the full workspace test suite all passed.
 - Updated `TODO.md` to mark only `M2.1 死窗口回收` as `[DONE]` with its completion record.
+- Identified first incomplete task: `M2.2 标题联动`.
+- Latest commit is `[M2.1] Add terminal process exit recovery`; it does not describe unfinished work that changes M2.2 ordering.
+- Current task plan: inspect terminal title callback APIs, shell/window title ownership, Windows menu list refresh paths, and existing PTY fixtures; implement title propagation from terminal OSC 0/2 events into `Window.title`; ensure the Windows menu list uses updated titles; add targeted PTY coverage; run required formatting, clippy, and tests; mark only M2.2 done and commit.
+- Inspected the terminal callback/handle APIs, viewer shell session tracking, Desktop `set_title`, Window title storage, menu mutation APIs, and the terminal window PTY fixture. Implementation will poll `TerminalHandle::window_title()` from the shell tick/action loop and update `Window.title` on the UI thread before refreshing the Windows menu.
+- Implemented UI-thread polling of terminal OSC titles in `terminal_viewer` and the snapshot terminal window fixture, reset default titles on restart, refreshed the Windows menu from current `Window.title`, and added a PTY regression for titlebar/menu propagation.
+- Validation completed successfully: formatting, format check, clippy with warnings denied, the focused OSC title PTY regression, and the full workspace test suite all passed.
+- Updated `TODO.md` to mark only `M2.2 标题联动` as `[DONE]` with its completion record.
