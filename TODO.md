@@ -1,211 +1,81 @@
-# TODO：TUI Agent 对接 DeepSeek / Tool / Skill / Plan Mode
+# TODO：全功能多窗口终端 App
 
-执行计划见 [`PLAN.md`](PLAN.md)，设计文档见 [`TUI_AGENT.md`](TUI_AGENT.md)。
+执行计划见 [`PLAN.md`](PLAN.md)，缺口分析见 [`TERMINAL_GAP.md`](TERMINAL_GAP.md)。
 
-通用验收：每个阶段完成后至少运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。真实 DeepSeek 测试必须默认 ignored 或手动执行，CI 不依赖外部网络。
+上一阶段 TUI Agent / DeepSeek 计划已归档至 [`docs/archive/2026-07-11-tui-agent-deepseek/`](docs/archive/2026-07-11-tui-agent-deepseek/)。
 
-## 阶段 M1 - App Skeleton + Mock Provider
+通用验收：每个阶段完成后至少运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。终端交互优先走 PTY 快照（`snapshot_terminal_app` / `snapshot_terminal_window_app` + `pty_terminal_*`），不依赖真实交互终端。
 
-- [x] **[DONE] M1.1 新建 `crates/atto-agent-app`** - 创建 crate、加入 workspace、配置依赖 `atto-ui` / `atto-ui-chat` / `atto-ui-async`，保持 `atto-ui` 和 `atto-ui-chat` 不新增网络依赖。
-  - 完成记录（2026-07-10）：新增 `crates/atto-agent-app` workspace 成员，添加最小 library/binary 入口和 skeleton 单测；依赖仅配置在 app crate，未修改 `atto-ui` / `atto-ui-chat` 的依赖。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M1.2 组装基础 TUI** - 创建 `Desktop`、状态栏、单窗口 `ChatPanel`，初始化 `ChatMessageStore` 和 `ChatInputHandle`。
-  - 完成记录（2026-07-10）：新增 `AgentApp` 构建器，组装 `Desktop`、File/Quit 菜单、自定义状态栏、单个 `ChatPanel` 窗口，并保留 `ChatMessageStore` / `ChatInputHandle` 句柄供后续 turn loop 使用；`run()` 现在启动 crossterm TUI。
-  - 验证：`cargo fmt --all`；`cargo clippy --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M1.3 输入提交闭环** - `on_submit` 写入 user message，启动后台 mock agent turn，通过 `AppAction` 在主线程追加 assistant 流式文本。
-  - 完成记录（2026-07-10）：新增 app 私有 `AppAction`，提交文本后追加 user message 和 streaming assistant turn，后台 mock turn 通过 action channel 发送确定性文本 delta/done，主线程 action handler 追加 assistant 文本并完成 turn，同时同步输入 streaming 状态和状态栏 ready/streaming。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M1.4 Slash 命令** - 注入 `/help`、`/clear`、`/plan`、`/skills`、`/tools`、`/abort`，实现基础状态变更和帮助输出。
-  - 完成记录（2026-07-10）：app crate 现在注入提交型 slash 命令，并在直接输入 `/cmd` 时走同一命令分派；`/help` 输出命令说明，`/clear` 清空 transcript 并复位 streaming 状态，`/plan` 支持基础 on/off/auto 状态切换并显示在状态栏，`/skills` 和 `/tools` 输出当前 M1 mock 下的空注册表说明，`/abort` 将当前 streaming assistant turn 置为 `Canceled` 并通过 transcript replace 推进 branch token，避免迟到 mock token 污染已取消分支。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M1.5 取消语义** - 接入 `on_cancel` 和 Esc，取消 mock turn，assistant turn 显示 `Canceled`，迟到 token 不污染新分支。
-  - 完成记录（2026-07-10）：`ChatMessageStore::cancel_streaming_turn` 现在会在取消 streaming turn 时推进 branch token；agent app 维护当前 mock turn 的取消令牌，并将 `ChatMessageList::on_cancel`、输入 Esc、`/abort` 和 streaming `/clear` 接到同一取消路径，取消后 assistant turn 显示 `Canceled`，迟到 action 因旧 branch token 被拒绝。
-  - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M1.6 快照与 PTY** - 新增 deterministic mock fixture，覆盖输入、流式输出、slash 命令、Esc 取消。
-  - 完成记录（2026-07-10）：新增 `snapshot_agent_app` deterministic mock fixture，并让 mock turn delay 可由 fixture 配置以稳定覆盖取消路径；新增 app crate PTY 测试，覆盖普通输入提交、assistant 流式输出、slash 命令输出与状态更新、Esc 取消 active mock turn 且迟到完成文本不出现。
-  - 验证：`cargo test -p atto-agent-app --test pty_agent`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M1.R Review** - 复核 M1 所有改动，确认 app skeleton 独立、mock 不依赖网络、全套验证通过。
-  - 完成记录（2026-07-10）：复核 M1 app crate、deterministic mock fixture、slash/取消路径和 PTY 覆盖；确认 `atto-agent-app` 作为独立 workspace app 组合 `atto-ui` / `atto-ui-chat` / `atto-ui-async`，M1 mock provider 未引入 DeepSeek/API key/网络调用，`atto-ui` 与 `atto-ui-chat` 未新增网络依赖。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
+代码位置速查：组件层 `crates/atto-ui-terminal/src/terminal.rs`（~1300 行），外壳层 demo `crates/atto-ui-terminal/examples/terminal_viewer.rs`，PTY fixture `src/bin/snapshot_terminal_app.rs` / `snapshot_terminal_window_app.rs`。
 
-## 阶段 M2 - DeepSeek Text Streaming
+## 阶段 M1 - 进程生命周期 + Callbacks 基础（P0.1 + P0.3 组件层）
 
-- [x] **[DONE] M2.1 配置加载** - 支持 CLI/env/TOML，读取 `DEEPSEEK_API_KEY`、base URL、model、temperature、max tokens、workspace、plan mode。
-  - 完成记录（2026-07-10）：新增 `atto-agent-app::config`，按默认值、用户级 `~/.config/atto-agent/config.toml`、工作区 `.atto-agent.toml`、环境变量、CLI 参数的优先级合并配置；支持 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`DEEPSEEK_TEMPERATURE`、`DEEPSEEK_MAX_TOKENS`、`ATTO_AGENT_WORKSPACE`、`ATTO_AGENT_PLAN_MODE`，以及 `--api-key`/`--deepseek-api-key`、`--base-url`、`--model`、`--temperature`、`--max-tokens`、`--workspace`、`--plan-mode`、`--config`、兼容 `--mock`。运行入口加载配置，snapshot fixture 不读取用户环境；状态栏显示配置 model，初始 plan mode 来自配置默认 `auto`。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M2.2 DeepSeek 请求模型** - 定义 request/response/SSE 数据结构，构造 OpenAI-compatible `/chat/completions` 请求。
-  - 完成记录（2026-07-10）：新增 `atto_agent_app::deepseek` 协议模块，定义 OpenAI-compatible chat completions request、message、tool schema/tool choice、non-stream response、SSE chunk/delta、tool call delta、usage、finish reason 和 API error 数据结构；新增 `/chat/completions` endpoint 拼接与基于 `AgentConfig` 的 streaming request 构造，保持网络 client/SSE parser/UI 映射留给后续 M2 任务。
-  - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M2.3 SSE parser** - 解析 `data:` 行、`[DONE]`、`choices[].delta.content`、`reasoning_content`、finish_reason 和错误片段。
-  - 完成记录（2026-07-10）：在 `deepseek.rs` 新增状态化 `ChatCompletionSseParser`、完整缓冲解析入口和单个 `data:` payload 解析入口；支持分片输入、空行事件分隔、CRLF、注释/非 data 字段忽略、多行 `data:` 聚合、`[DONE]` sentinel、stream chunk JSON、DeepSeek error JSON，并为 malformed JSON 返回带原始片段摘要的错误上下文。
-  - 验证：`cargo test -p atto-agent-app deepseek`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M2.4 流式 UI 映射** - content 追加到 `TextBlock`，reasoning_content 追加到 `ThinkingBlock`，结束时设置 turn status 和 meta。
-  - 完成记录（2026-07-10）：新增 DeepSeek stream UI mapper，将 `choices[].delta.content` 转成 text delta action 写入 `TextBlock`，将 `reasoning_content` 转成 reasoning delta action 并在 assistant turn 中惰性插入默认折叠的 `ThinkingBlock`；`[DONE]` 完成时写入 `ChatMessageMeta`（model、usage、stop_reason）并将 turn 置为 `Complete`。现有 mock turn 也通过 DeepSeek-style content/done event 进入同一映射路径，避免只在测试中覆盖。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M2.5 错误映射** - 401/403、429、5xx、网络断流、JSON 错误映射为 `ChatErrorKind`，UI 显示明确 detail。
-  - 完成记录（2026-07-10）：新增 DeepSeek HTTP/API/network/断流/JSON 错误到 `ChatError` 的结构化映射；SSE error event 现在通过 `TurnFailed` action 将 assistant turn 标为 `Failed(ChatError)`，UI header 显示 kind/message/detail；失败 streaming turn 会推进 branch token，避免迟到 token 污染已失败回合。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M2.6 Mock + ignored real 测试** - 单测覆盖 SSE parser；PTY 走 mock client；真实 DeepSeek smoke 标记 ignored。
-  - 完成记录（2026-07-10）：新增 app crate 私有 DeepSeek HTTP streaming client，默认单测通过本地 mock HTTP SSE server 覆盖请求构造、Bearer auth、SSE 事件收集和 HTTP 错误映射；保留并验证 PTY snapshot fixture 默认走 mock provider；新增 `deepseek_real_smoke` ignored 真实 DeepSeek streaming smoke，默认测试只编译不访问外网，手动设置 `DEEPSEEK_API_KEY` 后可运行。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --all-targets`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M2.R Review** - 复核网络依赖只在 app crate，默认测试无外网，取消和错误路径稳定。
-  - 完成记录（2026-07-10）：复核 M2 DeepSeek client、SSE parser、UI mapper、错误映射、取消路径和测试边界；确认 `reqwest` / `futures-util` / app 测试 `tokio` 仅新增于 `crates/atto-agent-app`，`atto-ui` 和 `atto-ui-chat` 未新增网络依赖；默认 DeepSeek client 测试使用本地 mock SSE server，真实 DeepSeek smoke 测试已标记 ignored，需要手动提供 `DEEPSEEK_API_KEY`；取消和失败路径都会推进 branch token，单测和 PTY 覆盖迟到 token 不污染已取消或失败 turn。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **M1.1 进程退出信号** - reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`，`terminal.rs:461-467` / `terminal.rs:777-783`）。
+- [ ] **M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
+- [ ] **M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
+- [ ] **M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
+- [ ] **M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
 
-## 阶段 M3 - Tool Loop + Approval
+## 阶段 M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）
 
-- [x] **[DONE] M3.1 Tool 抽象** - 定义 `ToolSpec`、`ToolExecutor`、`ToolRegistry`、权限策略、OpenAI tools schema 转换。
-  - 完成记录（2026-07-10）：新增 app crate `tool` 模块，定义 `ToolSpec`、`ToolExecutor`、`ToolRegistry`、`ToolContext`、`ToolResult`、`ToolOutputKind`、`ToolPermission`、`ToolPermissionPolicy` 和 `ToolPermissionDecision`；注册表按工具名确定性排序，支持重复注册拒绝、未知工具错误、执行分派，并能将本地工具规格转换为 OpenAI-compatible function tools schema。`/tools` 输出更新为反映抽象层已存在但内置工具尚未注册。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.2 Tool call 聚合** - 按 SSE `tool_calls[].index` 聚合 name/arguments，finish_reason 为 `tool_calls` 时进入工具执行阶段。
-  - 完成记录（2026-07-10）：DeepSeek UI stream mapper 现在按 `(choice.index, tool_calls[].index)` 确定性聚合 tool call delta，拼接 streamed function name 和 arguments；`finish_reason = tool_calls` 时解析 arguments JSON，生成 `ToolUseBlock { status: Pending }` 并通过主线程 action 插入当前 assistant turn，同时在 `[DONE]` 后以 `StopReason::ToolUse` 完成该 turn。非法或不完整 tool call 会映射为 `ChatErrorKind::Tool`，避免以无效参数进入后续工具阶段。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.3 只读工具** - 实现 `read_file`、`list_files`、`search_text`，路径必须限制在 workspace 内。
-  - 完成记录（2026-07-10）：新增 app crate 内置只读工具注册入口，`read_file` 支持 workspace 内 UTF-8 文件读取并限制 256 KiB，`list_files` 使用受控 workspace 遍历和 glob 匹配返回相对路径，`search_text` 使用 Rust 实现搜索 UTF-8 文件并返回匹配行摘要；所有工具参数均做 JSON 类型/未知字段校验，输入路径和 symlink 解析后必须仍位于 workspace 内；`/tools` 现在展示 3 个已注册只读工具。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.4 副作用工具** - 实现 `apply_patch`、`run_command`，默认需要审批；命令使用 argv，不做 shell 字符串拼接。
-  - 完成记录（2026-07-10）：新增内置副作用工具注册入口，完整内置工具表现在包含 `read_file`、`list_files`、`search_text`、`apply_patch`、`run_command`；`apply_patch` 在执行前解析 patch 路径并拒绝绝对路径、`..`、workspace/symlink 逃逸、二进制 patch 和非 UTF-8 既有文件，再通过 `git apply --check` / `git apply` 的 argv 调用从 stdin 应用 patch；`run_command` 仅接受 `argv: string[]` 和 workspace 内 `cwd`，通过 `std::process::Command` 执行，不经过 shell 字符串拼接。两个副作用工具默认 `ApproveForProject`，因此首次执行会要求审批。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.5 Approval UI** - 渲染 `ToolUseBlock.approval`，处理 allow once / allow project / deny，deny 时写入失败 tool result。
-  - 完成记录（2026-07-10）：agent app 现在在 `ToolCallsReady` 入库前依据内置 `ToolRegistry` 与进程内 `ToolPermissionPolicy` 为需审批工具补充 `ApprovalRequest`；`ChatMessageList::on_approve` 接入 allow once / allow project / deny，项目级允许会记录进程内授权并让后续同工具调用跳过审批，deny 会将 tool use 置为 `Canceled` 并写入失败 `ToolResultBlock`。`AlwaysAllow` 工具直接进入 `Running`，未注册或策略拒绝的工具会生成失败结果。
-  - 验证：`cargo fmt`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M3.6 Tool result 回灌** - `ToolResultBlock` 写 UI，并把 tool result 转成下一次 DeepSeek request 的 role=`tool` 消息。
-  - 完成记录（2026-07-10）：agent app 新增后台工具执行回写路径，`AlwaysAllow` 或审批 allow 后的 tool call 会通过 action 在主线程将 `ToolUseBlock` 状态更新为 `Done`/`Error` 并 upsert 对应 `ToolResultBlock`；新增最小 transcript 到 DeepSeek request 的转换入口，assistant `ToolUseBlock` 转 OpenAI-compatible `tool_calls`，`ToolResultBlock` 转 role=`tool` 且携带 `tool_call_id` 的消息，并附带当前内置 tool schema 和 `tool_choice=auto`。补充单测覆盖实际 `read_file` 工具执行写 UI，以及下一次 DeepSeek request 中的 `role=tool` 回灌消息。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.7 限制与超时** - 每 turn 限制模型请求数、tool call 数和单工具超时，避免无限循环。
-  - 完成记录（2026-07-10）：新增 turn budget tracker，默认限制每个 user turn 最多 8 次模型请求、16 次 tool call、单工具 30 秒超时；提交 turn 时登记首个模型请求，`ToolCallsReady` 按 assistant turn 扣减 tool call 预算并在超限时失败当前 turn，完成、失败、取消和清空会释放预算。工具执行现在带 timeout 上下文，app 层对任意工具等待超时后写入失败 `ToolResultBlock`，`run_command` 和 `apply_patch` 内部子进程也按 timeout 终止，避免长时间卡住。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.8 快照与测试** - PTY 覆盖 allow、deny、tool result；单测覆盖非法参数、路径越界、工具不存在。
-  - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` deterministic mock fixture，固定 snapshot workspace 到 app crate 根目录，并为 `agent-pty-read-file` / `agent-pty-run-command` 注入 DeepSeek-style tool call 事件；新增 app PTY 覆盖自动 `read_file` tool result、`run_command` allow once 后执行并渲染结果、deny 后写入失败 tool result；新增 app 层未注册工具单测，结合既有只读/副作用工具单测覆盖非法参数和 workspace 越界路径。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app unknown_tool_call_writes_failed_tool_result_without_execution`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M3.R Review** - 复核工具权限、安全边界、tool loop 终止条件和测试覆盖。
-  - 完成记录（2026-07-10）：复核 M3 工具抽象、内置只读/副作用工具、审批 UI 接入、tool result 回灌、turn budget/timeout 和 PTY 覆盖；确认只读工具做 workspace/symlink 边界校验，`apply_patch` 在执行前校验 patch 路径、文本性和 workspace 归属，`run_command` 使用 argv 并限制 cwd 在 workspace 内，副作用工具默认需要审批；tool call 聚合、未知工具、拒绝、allow once/allow project、tool result 写回、模型/tool call 限制和工具超时均有单测或 PTY 覆盖。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **M2.1 死窗口回收** - 在 tick 或 `on_exit` 检测进程退出，按策略关窗，或原地显示 `[Process exited: code N — press R to restart]`。
+- [ ] **M2.2 标题联动** - 把组件暴露的标题（M1.3）同步到 `Window.title`，刷新 Windows 菜单窗口列表。
+- [ ] **M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
+- [ ] **M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
 
-## 阶段 M4 - Skill Registry
+## 阶段 M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
 
-- [x] **[DONE] M4.1 Skill 文件格式** - 解析 `SKILL.md` frontmatter 和 body，支持 name、description、triggers、tools、mode。
-  - 完成记录（2026-07-10）：新增 `atto_agent_app::skill` 模块，解析 `SKILL.md` YAML frontmatter 和 Markdown body，支持并校验 `name`、`description`、`triggers`、`tools`、`mode`；`mode` 支持 `manual` / `auto` 且默认 `manual`，`triggers` / `tools` 默认空列表，body 保留原始 Markdown 内容并拒绝空 body。新增 `parse_skill_markdown` / `parse_skill_file` API 和单测覆盖有效文件、默认字段、元数据裁剪、缺失/非法字段、未知 mode、重复列表项、无 frontmatter、空 body 与磁盘文件读取。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --lib skill`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.2 Skill 搜索路径** - 扫描 `.atto/skills` 和 `~/.config/atto-agent/skills`，处理重复 name 和无效文件。
-  - 完成记录（2026-07-10）：新增 `SkillRegistry` discovery，按 workspace `.atto/skills` 优先、用户级 `~/.config/atto-agent/skills` 其次递归扫描 `SKILL.md`；缺失目录忽略，非目录/遍历错误/无效 skill 文件记录为非致命 discovery issue，重复 name 保留先发现 skill 并记录冲突。`AgentConfig` 现在保留 `home_dir` 供真实运行扫描用户路径，`AgentConfig::defaults`/snapshot 仍不读取用户 HOME；agent runtime 持有发现到的 registry，`/skills` 输出发现数量和 discovery issue，`/skill` 激活留给 M4.3。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.3 手动加载命令** - `/skills` 展示可用 skill，`/skill <name>` 激活 skill，并在状态栏显示数量。
-  - 完成记录（2026-07-10）：新增运行时 `LoadedSkillSet` 保存手动激活的 skill；agent app 注入 `/skill` slash 命令，`/skill <name>` 会校验 discovery registry、处理未知/重复加载并更新状态栏 `skills: N`，`/skills` 现在展示 discovered/loaded 数量并标记每个 skill 的 loaded/available 状态。补充单元测试覆盖激活、重复、未知参数和列表标记，更新 PTY slash 测试覆盖状态栏 skill 计数与新 `/skills` 文案。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.4 自动加载** - 对用户 prompt 与 name/description/triggers 做确定性词匹配，限制最多加载数量。
-  - 完成记录（2026-07-10）：新增 auto-mode skill 确定性词匹配，用户 prompt 与 skill 的 `name`、`description`、`triggers` 做大小写不敏感 token 交集匹配；普通用户提交时自动加载匹配的 `mode: auto` skill，跳过已加载 skill 和 `mode: manual` skill，并按 registry 名称顺序限制每个 prompt 最多自动加载 4 个，同时同步状态栏 `skills: N`。新增单测覆盖字段匹配、大小写/标点 token 化、手动 skill 不自动加载、已加载跳过、上限限制，以及提交路径自动更新 loaded skill 状态。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.5 Prompt 注入** - 将已加载 skill 以 `<skills>` 块注入 system prompt，控制单 skill 和总 prompt 大小。
-  - 完成记录（2026-07-10）：新增 skill prompt 注入构建器，按设计将已加载 skill 渲染为 `<skills><skill name="..." source="...">...</skill></skills>` system prompt 块；默认限制单个 skill body 最多 6 KiB、完整 skill prompt 最多 20 KiB，并按 UTF-8 边界安全截断。新增带 skill 注入的 DeepSeek transcript request/messages 构建入口，保持无 skill 请求构建入口可用于既有场景；补充单测覆盖 prompt 格式、未加载 skill 忽略、单 skill 与总 prompt 大小限制、UTF-8 截断和 request 注入位置。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app skill_prompt`；`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_loaded_skills`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M4.6 权限隔离** - skill 只能声明工具偏好，不授予额外工具权限；`run_command` 等仍走审批。
-  - 完成记录（2026-07-10）：loaded skill 的 `tools` frontmatter 现在作为 `<skill ... tools="...">` 元数据注入 system prompt，仅表达模型可见工具偏好；DeepSeek request 仍使用 `ToolRegistry` 中的完整注册工具 schema，权限判断仍只由 `ToolSpec.permission` 和 `ToolPermissionPolicy` 决定。新增回归测试覆盖声明 `run_command` 偏好的 skill 不会授予项目级权限，`run_command` tool call 仍渲染 approval 并保持 pending。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app tool_preferences`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.7 测试** - 单测解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill`。
-  - 完成记录（2026-07-10）：复核并保留既有解析、自动匹配和 prompt 大小限制单测，新增同一 skill 搜索根内重复 name 按排序路径确定性保留首个条目的冲突优先级单测；新增 snapshot app 专用 `pty-fixture` skill fixture，并扩展 PTY 覆盖 `/skills` 展示 discovered/available/loaded 状态和 `/skill pty-fixture` 激活后状态栏 `skills: 1`。验证过程中发现带参数 slash 文本在无补全匹配时 Enter 被弹层吞掉，已在 `atto-ui-chat` 修复为回退普通文本提交，并新增输入层回归单测。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app discovery_uses_sorted_paths_for_duplicate_names_within_one_root`；`cargo test -p atto-ui-chat enter_submits_slash_text_with_arguments_when_popup_has_no_match`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M4.R Review** - 复核 skill 注入不会泄漏权限、不会破坏 prompt 预算，验证通过。
-  - 完成记录（2026-07-10）：复核 M4 skill parser/discovery、手动与自动加载、prompt 注入、工具偏好和权限隔离实现；确认 skill `tools` 仅作为 `<skill ... tools="...">` prompt 元数据注入，不改变 `ToolRegistry` 中的工具 schema 或 `ToolPermissionPolicy`，`run_command` / `apply_patch` 仍默认要求审批。复核 prompt 预算时确认单 skill body 和总 `<skills>` block 均按字节预算截断且保持 UTF-8 边界；同时修复 `LoadedSkillSet` 原先按名称排序导致加载优先级丢失的问题，改为去重但保留加载顺序，并新增 prompt 注入顺序回归测试。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app skill_prompt_block_preserves_loaded_order_for_priority`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **M3.1 前缀态状态机** - capture 分支（`terminal.rs:701-712`）收到前缀键进入前缀态（不转发），下一个键查前缀命令表；未命中按策略连同前缀发子进程或吞掉。
+- [ ] **M3.2 可配置前缀键** - 默认 `Ctrl+B`，约束为 plain `Ctrl+<字母>`；前缀键可配置（暂用组件字段，M7 接入配置模型）。
+- [ ] **M3.3 前缀命令表** - `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode（占位，M4 实现选择）、`前缀 + 前缀` 转义一个字面前缀给子进程。
+- [ ] **M3.4 事件冒泡** - 命中外壳命令 `return EventResult::ignored()` 冒泡给 Desktop（`desktop.rs:664-680` / `749`），使 capture 态下外壳快捷键可达。
+- [ ] **M3.5 测试** - PTY 覆盖 capture 态 `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + 前缀` 字面前缀到子进程；非终端窗口快捷键仍直达、capture 释放后 `F10` 直达。
+- [ ] **M3.R Review** - 复核前缀不吞掉子进程需要的键（可靠转义）、命令表可配置、双向 escape 收敛为单一前缀，验证通过。
 
-## 阶段 M5 - Plan Mode
+## 阶段 M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）
 
-- [x] **[DONE] M5.1 Plan mode 状态** - 实现 `off`、`on`、`auto` 配置和 `/plan` 切换，状态栏显示当前模式。
-  - 完成记录（2026-07-10）：复核现有 app crate 实现，确认 `PlanMode` 已支持 `off` / `on` / `auto`，配置加载覆盖默认值、用户/工作区 TOML、环境变量与 CLI 参数，运行时从配置初始化状态栏 `plan: <mode>`，`/plan [on|off|auto]` 支持显式设置且无参数按 `off -> on -> auto -> off` 循环切换。
-  - 验证：`cargo test -p atto-agent-app plan_mode`；`cargo test -p atto-agent-app config::tests`。本次未修改编译代码；完整 workspace fmt/clippy/test 复用上一条 M4.R 完成记录中的绿色结果。
-- [x] **[DONE] M5.2 Auto 判定** - 根据 prompt 和工具需求粗判是否涉及写文件、命令、代码修改等副作用。
-  - 完成记录（2026-07-10）：新增 app crate `plan` 模块，提供 deterministic `PlanTurnDecision`，按 `PlanMode::off/on/auto`、用户 prompt、注册工具权限判定当前 turn 是否需要先进入 plan mode；auto 模式会识别 mutating tool 需求（如 `apply_patch` / `run_command`）、命令执行意图、代码/文件修改意图，并保留纯问答和只读工具检查为 direct。用户提交路径现在计算该判定并随 turn request 传递，供后续 M5.3 计划生成消费，同时不提前改变 mock streaming 行为。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M5.3 计划生成** - 实现虚拟 tool `submit_plan({ items })`，兜底解析 markdown 列表为 `PlanItem`。
-  - 完成记录（2026-07-10）：新增 plan-mode 虚拟 `submit_plan` tool schema、forced tool choice 和 plan draft system prompt；`DeepSeekUiStream` 现在可在需要计划时把 `submit_plan({ items })` 参数直接映射为 pending `PlanBlock`，并在模型未调用虚拟 tool 时解析 markdown 有序/无序/checklist 列表作为 fallback。`submit_plan` 未注册进本地 `ToolRegistry`，不会作为本地工具执行或授予额外权限；mock plan turn 现在通过 DeepSeek-style `tool_calls` 走同一映射路径。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M5.4 PlanBlock UI** - 渲染 `PlanBlock { decision: Pending }`，接入 `on_plan_decision`。
-  - 完成记录（2026-07-10）：复核 `atto-ui-chat` 已有 `PlanDecisionView` 可渲染 pending plan、展示 Accept/Reject 操作并发出 `PlanDecisionEvent`；agent app 现在在构建 `ChatMessageList` 时绑定 `on_plan_decision`，通过 `handle_plan_decision` 将 pending `PlanBlock` 锁定为 accepted/rejected，并忽略对已决 plan 的旧事件覆盖。新增 app 层回归测试覆盖 plan 决策状态更新。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M5.5 Accept/Reject 流程** - Accept 后追加内部执行指令并继续 agent loop；Reject 后停止当前 turn。
-  - 完成记录（2026-07-10）：`on_plan_decision` 现在接入 plan decision runtime；Accept 会锁定 `PlanBlock` 为 accepted，结束计划等待 turn，追加内部 system 指令 `The user accepted the plan. Execute the accepted plan now. Use tools only when needed and obey approval policy.`，并以 direct 模式启动后续 assistant 执行 turn；Reject 会锁定为 rejected，取消/释放计划 turn、恢复输入和状态栏，不追加内部指令也不启动执行。补充 app 层单测覆盖决策锁定、Accept 继续执行和 Reject 停止。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app plan_decision`；`cargo test -p atto-agent-app accepting_plan_appends_internal_instruction_and_starts_execution_turn`；`cargo test -p atto-agent-app rejecting_plan_stops_turn_without_starting_execution`；`cargo test -p atto-agent-app --all-targets`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M5.6 副作用工具门控** - 计划接受前拦截 `apply_patch`、`run_command` 等 mutating tool，并写入明确 tool result。
-  - 完成记录（2026-07-10）：新增 per-turn mutating-tool gate，`plan: on` / `plan: auto` 下未接受计划前会在 app 层优先拦截 `apply_patch`、`run_command` 等非 `AlwaysAllow` 工具，写入失败 `ToolResultBlock`：`Plan mode blocks mutating tools until the plan is accepted.`；项目级 allow grant 不能绕过该 gate，接受计划后的执行 turn 和 `plan: off` 仍走既有审批/执行路径。plan stream 中模型误发非 `submit_plan` tool call 时现在交由同一 gate 处理，旧 PTY approval 用例已显式切换 `/plan off` 以继续验证审批 UI。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app plan_gate_blocks_mutating_tool_even_with_project_grant`；`cargo test -p atto-agent-app deepseek_stream_plan_turn_mutating_tool_call_writes_blocked_tool_result`；`cargo test -p atto-agent-app --test pty_agent`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M5.7 快照与测试** - PTY 覆盖计划生成、Accept 后执行、Reject 后停止、未接受计划时工具被拒绝。
-  - 完成记录（2026-07-10）：扩展 `snapshot_agent_app` PTY 覆盖 plan mode：auto plan prompt 会渲染 pending `PlanBlock` 和 Accept/Reject 操作；点击 Accept 后锁定为 accepted 并启动后续 mock execution turn；点击 Reject 后锁定为 rejected 且不追加执行 turn；默认 `plan: auto` 下 `run_command` tool call 会在计划接受前被拦截并写入失败 tool result，不渲染审批 UI 或成功结果。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M5.R Review** - 复核 plan mode 不依赖模型特殊能力，副作用门控不可绕过，验证通过。
-  - 完成记录（2026-07-10）：复核 M5 plan mode 的本地 deterministic 判定、虚拟 `submit_plan` tool、markdown fallback、PlanBlock Accept/Reject 续跑/停止流程，以及副作用工具 gate 与权限策略的执行顺序；确认 plan 草稿请求只暴露虚拟 `submit_plan`，不依赖模型特有能力，且 `apply_patch` / `run_command` 等 mutating tool 在计划接受前会由 app 层 gate 优先拦截，项目级授权不能绕过。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **M4.1 selection 状态机** - 新增统一 selection 状态机：选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。可参考 chat 组件已有文本选择实现。
+- [ ] **M4.2 鼠标本地框选** - 子进程开鼠标报告时 `Shift+拖拽`=本地框选、不按=转发；未开鼠标报告时直接拖拽即框选（修掉 `capture_on_click` recapture 浪费点击，`terminal.rs:747-770`）。
+- [ ] **M4.3 copy-mode** - 经 `前缀 + [`（M3.3）进入；方向键与 hjkl、起选 `v`/`Space`、复制 `y`/`Enter`、`Esc`/`q` 取消；copy-mode 内滚轮/方向键永远本地 scrollback 导航。
+- [ ] **M4.4 剪贴板（首版）** - 选择 → 组件内部 copy buffer + 粘贴回子进程（bracketed paste 已支持，`terminal.rs:719-737`），先让选择/高亮/命中测试核心逻辑落地过 PTY。
+- [ ] **M4.5 alt screen 滚动分流** - 滚轮分支前置三级决策树：`mouse_protocol_mode() != None` → 转发 SGR 滚轮（已有 `encode_mouse_event` 64/65，`terminal.rs:1266`）；`alternate_screen()` → alternate scroll 翻方向键（默认 ×3）发子进程；else → 本地 `set_scrollback`（现有逻辑，`terminal.rs:499/521`）。不用 `application_cursor()`/清屏启发式。
+- [ ] **M4.6 剪贴板（后续，可选）** - 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1.3 `copy_to_clipboard` 回调），OSC 52 优先、`arboard` 兜底。可拆独立 PR。
+- [ ] **M4.7 测试** - PTY 覆盖鼠标框选/复制、copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf `--height` 滚轮各落正确分支、主屏 scrollback 仍正常。
+- [ ] **M4.R Review** - 复核 selection 命中测试对宽字符正确、滚动分流三级树覆盖残余类靠 copy-mode 兜底、剪贴板首版不引入跨平台依赖，验证通过。
 
-## 阶段 M6 - Context / Session Polish
+## 阶段 M5 - 语义提示符标记（P1.4，OSC 133/7）
 
-- [x] **[DONE] M6.1 ContextBuilder** - 将 UI transcript 转成 DeepSeek messages，正确处理 user、assistant、tool use、tool result、notice、compact、skills。
-  - 完成记录（2026-07-10）：新增 `atto_agent_app::context::ContextBuilder`，集中负责 UI transcript 到 DeepSeek/OpenAI-compatible messages 的转换；现有 `deepseek_*_from_transcript*` request/message API 保持不变并委托 ContextBuilder。转换现在按 block 顺序处理 user/system/custom/assistant 文本，assistant `ToolUseBlock` 聚合为 `tool_calls`，`ToolResultBlock` 映射为 role=`tool`，`NoticeBlock` 和 `CompactBlock` 映射为独立 system context 消息，已加载 skills 仍作为 `<skills>` system prompt 注入到 transcript 前。新增单测覆盖 user/assistant/tool/notice/compact 转换和 loaded skill 注入。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.2 文件 mention** - 解析 `@path`，读取 workspace 内文件摘要注入 prompt，限制单文件和总大小。
-  - 完成记录（2026-07-10）：`ContextBuilder` 现在可解析用户消息中的 `@path` mention，按 workspace canonicalize 后读取 UTF-8 文件摘要，并以 `<context_files>` 追加到 user prompt；文件读取限制为单文件最多 32 KiB、单条用户消息总计最多 128 KiB，越界、缺失、目录和非 UTF-8 文件会作为明确错误条目注入而不会泄漏文件内容。普通 DeepSeek request 与 plan request 构建入口现在均使用 `AgentConfig.workspace` 启用 file mention expansion。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app context_builder`；`cargo test -p atto-agent-app deepseek_request_from_transcript_injects_file_mentions_from_config_workspace`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.3 工具输出预算** - 回传模型的 tool output 做截断，UI 保留完整或尾部窗口。
-  - 完成记录（2026-07-10）：`ContextBuilder` 现在对每条 role=`tool` 消息应用默认 16 KiB 模型上下文预算，超长 `ToolResultBlock` 输出会按 UTF-8 边界截断并追加明确的模型可见截断说明；截断只发生在 DeepSeek request/message 构建边界，UI transcript 中的 `ToolResultBlock` 保持完整，既有 ANSI 工具输出尾部窗口能力继续负责 UI 长输出展示。新增单测覆盖长工具输出截断、UI 输出不被修改和多字节字符边界安全。
-  - 验证：`cargo test -p atto-agent-app context_builder`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.4 Compact** - 超预算时生成 `CompactBlock`，后续请求使用摘要替代旧 turn。
-  - 完成记录（2026-07-10）：新增 agent app deterministic compact 策略，默认按 64K 上下文窗口 70% 阈值触发、保留最近 20 条消息，并用本地摘要兜底生成完成态 `CompactBlock { before_tokens, after_tokens, summary }`；提交用户消息和接受 plan 后继续执行前都会在 assistant turn 启动前压缩已 settled 的早期 transcript，跳过 streaming、pending approval/plan/diff/task 等仍需交互的块。压缩通过 `ChatMessageStore::replace_all` 推进 branch token，后续 DeepSeek request 由既有 `ContextBuilder` 将 `<compact>` system context 发送给模型，而不再重放被压缩旧 turn 的完整消息。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app compact`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.5 Retry/Edit 重跑** - 接入 `on_edit_and_resubmit`、retry/regenerate，截断后重启 agent turn。
-  - 完成记录（2026-07-10）：agent app 现在注册 `ChatMessageList::on_edit_and_resubmit` 和 retry/regenerate `on_message_action`；编辑重发会在 chat 控件截断旧 user 分支后追加编辑后的 user message，并复用普通提交路径重新计算 skill 自动加载、plan 判定、compact 和 mock turn 启动；retry/regenerate 会使用截断后 transcript 中最后一个 user prompt 重启 assistant turn。分支变更后会取消当前后台 mock turn、释放 turn budget，并依赖 branch token 拒绝旧 turn 的迟到 token。补充 app 层单测覆盖编辑重发、retry/regenerate 重启和旧 branch 迟到 token 拒绝；同时调整 plan accept PTY 断言，避免启用 Retry/Regenerate 按钮后因内容高度增加导致 accepted 标记滚出视口而误报失败。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --lib edit_and_resubmit_appends_edited_user_and_restarts_turn`；`cargo test -p atto-agent-app --lib retry_and_regenerate_restart_from_retained_user_prompt_and_reject_late_tokens`；`cargo test -p atto-agent-app --test pty_agent agent_plan_mode_generates_plan_and_accept_continues_execution`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.6 Transcript 持久化（可选）** - 支持 JSONL 保存和恢复，默认可关闭。
-  - 完成记录（2026-07-10）：新增 app crate 私有 `transcript` JSONL 持久化模块，每行保存一个带 schema version 的 `ChatMessage`，显式覆盖当前 UI transcript 的消息、block、meta、审批、错误和嵌套 task transcript；新增默认关闭的配置项 `transcript_path`，支持 TOML、`ATTO_AGENT_TRANSCRIPT` 和 `--transcript`，相对路径按 workspace 解析。真实运行路径现在会在启动时按配置恢复 transcript，运行中用 dirty observer 保存变更，退出后做最终保存；恢复时未完成 streaming turn 会标为 `Canceled`，避免重启后显示不可恢复的活动流。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app transcript`；`cargo test -p atto-agent-app config::tests`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M6.7 状态栏完善** - 显示 model、plan、tools、skills、streaming、token 估算和错误摘要。
-  - 完成记录（2026-07-10）：agent app 状态栏现在包含 model、plan、tools、skills、streaming、`tokens~N` transcript token 估算和 `err:*` 最新错误摘要；新增 `TranscriptStatusState` 聚合 token/error 状态，并在用户提交、slash 命令、取消、plan 决策、tool 审批和后台 action 变更后同步状态。复用 compact transcript token 估算逻辑，错误摘要覆盖 failed turn 和失败 tool result，并修复 tool-call budget 失败分支早退导致状态不同步的问题。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --lib tool_call_budget_fails_turn_before_appending_over_limit`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.8 快照与测试** - PTY 覆盖 mention、compact、retry/edit、取消后无迟到 token。
-  - 完成记录（2026-07-10）：扩展 deterministic `snapshot_agent_app` fixture，新增 snapshot 专用小 compact 阈值和 context probe mock prompt，context probe 通过 `deepseek_request_from_transcript` 走真实 file mention 展开路径；新增 PTY 覆盖 `@.atto/skills/pty-fixture/SKILL.md` mention 注入、长会话触发 `CompactBlock` 并滚动查看摘要、Retry 重启 assistant turn、Edit 修改用户 prompt 后重跑，以及保留既有 Esc 取消后迟到 token 不显示的 PTY 覆盖。Retry/Edit PTY 使用可见递增 mock turn 序号验证按钮实际触发重跑。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app --test pty_agent`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M6.R Review** - 复核上下文预算、分支 token、长会话性能和全套验证。
-  - 完成记录（2026-07-10）：复核 M6 ContextBuilder、file mention、tool output budget、compact、retry/edit、transcript 持久化、状态栏和 PTY 覆盖；确认分支 token 取消/重跑路径已有单测和 PTY 覆盖，迟到 token 不污染新分支。复核中发现 file mention 展开未纳入 compact/status 预算、mention 注入总预算未包含错误/wrapper 开销、非 UTF-8 截断文件可能泄漏前缀，以及启用 transcript 持久化时流式 delta 可能频繁同步全量保存；已修复为 file mention 硬总预算与数量上限、严格 UTF-8 校验、compact/status 保守计入 mention 展开预算、compact 长输出限量摘录、transcript 脏保存节流并保留退出强制落盘。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+三层互相独立，不混在一起实现。
 
-## 阶段 M7 - Live DeepSeek 接入
+- [ ] **M5.1 第 1 层 感知与信号【组件层】** - 与 M1.3 共用 callbacks，接 `unhandled_osc`（vt100 透传 `[b"133", b"A"]` / `[b"133", b"D", b"0"]` / `[b"7", b"file://..."]`），推进小状态机记 `command_marks: Vec<CommandBlock>`（prompt_start/command_start/output_start/end 行号、exit_code、cwd，行号用 vt100 绝对行/scrollback 坐标）。**无需 fork vt100。**
+- [ ] **M5.2 第 1 层 查询接口** - `TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished(status)` 回调；无标记时退回普通 scrollback 不崩。
+- [ ] **M5.3 第 2 层 呈现【外壳层】** - 命令块分隔线/输出区底色、失败命令（exit≠0）标红标记。仅依赖第 1 层 `command_blocks()`。
+- [ ] **M5.4 第 2 层 交互【外壳层】** - 命令级导航（`Ctrl+↑/↓` 跳上/下一条命令）、选择粒度升级到整条命令输出、右键「重跑/复制命令/复制输出」。
+- [ ] **M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
+- [ ] **M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
+- [ ] **M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
 
-> 现状（2026-07-11 复核）：M1-M6 已实现真实 DeepSeek 接入所需的所有零件（`DeepSeekClient` 真实 HTTP+SSE、SSE parser、`DeepSeekUiStream` UI 映射、`ContextBuilder`、`ToolRegistry`、plan/skill/compact），并有单测覆盖。M7.1-M7.3 已接入 provider 选择、逐 SSE event 增量回调和 DeepSeek provider 的后台 async turn 驱动；真实 turn 现在经 `DeepSeekUiStream` 映射后通过 `AppAction`/branch-token 路径更新 UI。剩余 M7 工作是把当前 live turn 的 prompt-only 请求升级为完整 `ContextBuilder`/tool schema 构造、实现真实多轮 tool loop、HTTP 请求取消和真实端到端冒烟。
+## 阶段 M6 - 分屏/标签页 + 会话管理 + spawn 环境（P2）
 
-- [x] **[DONE] M7.1 Provider 选择** - 引入 `AgentProvider`（`Mock` / `DeepSeek`）与解析逻辑：存在有效 `DEEPSEEK_API_KEY` 且未 `--mock` 时选 DeepSeek，否则 mock；snapshot fixture 始终 mock；状态栏 `provider` 段反映实际值，不再写死。
-  - 完成记录（2026-07-11）：新增 `AgentProvider`（`Mock` / `DeepSeek`）和确定性选择逻辑；解析配置后若 resolved API key 非空且未传 `--mock` 则选择 DeepSeek，否则选择 mock，`--mock` 会在有 key 时强制 mock，snapshot fixture 继续使用默认 mock 配置。状态栏 provider 段改为运行时绑定，显示 `provider: mock` 或 `provider: deepseek`，不再写死；同步更新 README / app README / `TUI_AGENT.md` 中的 provider 与 `--mock` 说明。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app config::tests -- --nocapture`；`cargo test -p atto-agent-app status_bar_segments_include_agent_runtime_fields -- --nocapture`；`cargo test -p atto-agent-app applies_configured_model_and_plan_mode_to_runtime_state -- --nocapture`；`cargo test -p atto-agent-app initializes_chat_store_and_input_handle -- --nocapture`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.2 流式增量事件** - 改造 `DeepSeekClient`，在 SSE 到达时逐个 `ChatCompletionSseEvent` 通过回调/channel 尽快推出，不再等 `[DONE]` 一次性 `Vec` 返回；保留现有 batch API 或以增量 API 重写并更新 smoke 测试。
-  - 完成记录（2026-07-11）：`DeepSeekClient` 新增 `stream_chat_completion_events` 增量回调 API，SSE 解析出每个 `ChatCompletionSseEvent` 后立即按顺序交给调用方，并在收到 `[DONE]` 后完成请求而不等待服务端关闭连接；既有 `stream_chat_completions` batch API 保留并改为复用增量 API 收集 `Vec`。更新 ignored `deepseek_real_smoke` 通过增量 API 消费真实流；新增本地延迟 SSE mock 测试，确认首个 chunk 在后续事件和 `[DONE]` 前即可被观察到。
-  - 验证：`cargo fmt --all`；`cargo test -p atto-agent-app deepseek_client`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`。
-- [x] **[DONE] M7.3 Async turn 驱动** - 在 app 内建立 tokio runtime（或复用 `atto-ui-async`），后台跑真实 turn，逐事件经 `AppAction` 交给主线程；真实 turn 复用现有 `DeepSeekUiStream` 映射，与 mock 走同一条 action/branch-token 路径。
-  - 完成记录（2026-07-11）：新增 DeepSeek provider 专用 turn request 与后台 worker；当 `AgentConfig.provider == DeepSeek` 时，提交/plan accept 续跑路径会启动真实 DeepSeek HTTP+SSE turn，复用 `DeepSeekUiStream` 将每个增量 `ChatCompletionSseEvent` 映射为既有 `AppAction`，主线程继续通过 branch-token 校验更新 UI；snapshot 和 mock provider 仍走确定性 mock path。`atto-ui-async` 的 Tokio runtime helper 现在启用 I/O 和 timer，以支持 `reqwest` live stream；新增本地 SSE server 单测覆盖 live provider 事件经 action channel 写入 UI，更新 `/abort` 文案为 provider-neutral。
-  - 验证：`cargo check -p atto-agent-app --all-targets`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app deepseek_provider_streams_live_events_through_app_actions`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.4 请求构造接线** - 提交/继续 turn 时用 `ContextBuilder` 从当前 transcript 构造 DeepSeek messages（含 skills、file mention、compact、tool 回灌）并带上注册工具 schema，替代 mock 的固定事件序列。
-  - 完成记录（2026-07-11）：DeepSeek live provider 现在在提交和接受计划后继续执行时从当前 `ChatMessageStore` transcript 构造完整 request body；direct/execution turn 通过 `ContextBuilder` 注入已加载 skills、workspace file mention、compact 摘要和 tool result 回灌，并携带当前 `ToolRegistry` 的 OpenAI-compatible tool schema 与 `tool_choice=auto`；plan turn 复用 plan request builder，保留同样的 context 注入并只暴露虚拟 `submit_plan` tool。新增 prepared-request DeepSeek client API，真实 live path 发送完整 request body，不再使用 prompt-only messages。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app deepseek_provider_ -- --nocapture`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.5 真实 tool loop** - `finish_reason = tool_calls` 后执行本地工具（复用审批门控/plan gate/turn budget），写回 `role=tool`，自动发起下一轮真实请求，直到无 tool call 或触达 budget。
-  - 完成记录（2026-07-11）：DeepSeek live provider 现在在非 plan turn 的 `finish_reason = tool_calls` 后保持 assistant turn streaming，复用既有 tool call 聚合、审批门控、plan gate 和 turn budget 执行/写回工具结果；当当前批次工具均有 `ToolResultBlock` 后，会用更新后的 transcript（含 `role=tool` 回灌、skills、file mention、compact 与 tool schema）自动发起下一轮真实 DeepSeek 请求，直到最终文本 turn 完成或模型请求/tool call 预算失败。mock provider 和 plan 草稿 turn 保持原有完成语义，不会进入 live tool loop。
-  - 验证：`cargo check -p atto-agent-app --all-targets`；`cargo test -p atto-agent-app deepseek_provider_continues_after_live_tool_result`；`cargo test -p atto-agent-app deepseek_provider_continues_after`；`cargo test -p atto-agent-app deepseek_provider_stops_tool_loop_at_model_request_budget`；`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.6 真实请求取消** - Esc / `on_cancel` / `/abort` 中止进行中的 HTTP 请求（abort handle / drop future），推进 branch token，迟到事件不污染新分支；补单测/PTY（PTY 走 mock）。
-  - 完成记录（2026-07-11）：DeepSeek live turn 现在为每个真实 HTTP/SSE 请求注册 `AbortHandle`，并与既有 cancel token 一起保存在 active turn registry；Esc、`on_cancel`、`/abort`、retry/edit 截断等既有取消入口会同时推进 branch token、取消 UI turn budget，并 abort/drop 正在等待的 live request future。真实 tool loop 的后续 DeepSeek 请求同样注册 abort handle，避免工具回灌后的多轮 live request 在取消后继续占用连接；迟到 action 继续通过 branch-token 校验被拒绝。新增本地 SSE 单测验证 `/abort` 会关闭 in-flight live SSE 连接并拒绝 stale branch delta；PTY 覆盖仍走 deterministic mock。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.7 错误映射接线** - 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误；无 key 且未 `--mock` 时给出可操作提示。
-  - 完成记录（2026-07-11）：DeepSeek live provider 失败路径现在通过既有 `DeepSeekClient` / `DeepSeekUiStream::map_error` 将缺失 API key、HTTP 401/403、429、5xx 和 SSE 断流映射为结构化 `ChatError`，主线程统一写入 failed assistant turn、恢复 ready/非 streaming 状态并更新 `err:*` 状态栏摘要。缺失 key 的 live 错误现在提示设置 `DEEPSEEK_API_KEY` / `--api-key` 或显式 `--mock`；无 key 且未显式 `--mock` 的默认 mock fallback 会在空 transcript 启动时追加可操作 system notice，snapshot fixture 显式标记为 mock 以保持确定性。补充 live provider 单测覆盖缺失 key、401 invalid key、429、502、断流和 no-key startup notice，并同步更新 README / app README / `TUI_AGENT.md` 的 live provider 与错误提示说明。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
-- [x] **[DONE] M7.8 测试与冒烟** - 默认测试保持 mock 与本地 mock SSE server 全绿；扩展 `deepseek_real_smoke` 覆盖一次真实端到端 turn（文本流 + 至少一次 tool 往返），标记 `#[ignore]`，手动用 `DEEPSEEK_API_KEY` 运行；确认默认 CI 不触外网。
-  - 完成记录（2026-07-11）：扩展 ignored `deepseek_real_smoke`，真实 DeepSeek smoke 现在先强制调用 `atto_smoke_echo` function tool，聚合 streamed tool-call delta，本地执行工具并以 role=`tool` 回灌，再发起 follow-up 请求验证最终文本流包含 smoke phrase；测试仍标记 `#[ignore]`，默认运行只编译并报告 ignored，不会访问外网。默认 workspace 测试继续覆盖 mock provider 和本地 mock SSE server 路径。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-agent-app --test deepseek_real_smoke`（0 passed, 1 ignored）；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo test -p atto-agent-app --test deepseek_real_smoke -- --ignored --nocapture`（手动真实 DeepSeek smoke，1 passed）。
-- [x] **[DONE] M7.R Review** - 复核真实/ mock provider 分支、流式增量、tool loop 终止、取消与 branch token、错误映射与状态栏；确认网络依赖仍只在 app crate、默认测试无外网，全套 fmt/clippy/test 通过。
-  - 完成记录（2026-07-11）：复核 M7 live DeepSeek 接入路径，确认 provider 选择按 `DEEPSEEK_API_KEY` / `--mock` 在 mock 与 DeepSeek 间切换，snapshot fixture 保持 mock，状态栏展示实际 provider/model/streaming/error；`DeepSeekClient` 逐 SSE event 增量回调并保留本地 mock SSE 测试，真实 turn 复用 `DeepSeekUiStream`、`AppAction` 和 branch-token 路径。复核真实 tool loop 后确认 `finish_reason=tool_calls` 会复用审批、plan gate、tool budget 和 `role=tool` 回灌，工具完成或拒绝后继续请求，触达 model/tool budget 时停止并失败当前 turn；Esc、`on_cancel`、`/abort`、retry/edit 会取消 active turn、abort live HTTP future 并拒绝 stale branch action。错误映射覆盖缺失 key、401/403、429、5xx、JSON/SSE/网络断流并同步 `err:*` 状态栏摘要；`reqwest` / `futures-util` 网络依赖仍只在 `crates/atto-agent-app`，真实 DeepSeek smoke 保持 ignored，默认测试只使用 mock provider 和 `127.0.0.1` 本地 mock SSE server。最近提交未声明与本 review 直接相关的未完成事项。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **M6.1 分屏/标签页** - 基于现有 `VStack`/`HStack`/`Grid` 在单窗口内做 tmux 式 split panes 或 tab，与既有 WM 浮动窗口形态并存。
+- [ ] **M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
+- [ ] **M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
+- [ ] **M6.4 测试** - PTY 覆盖单窗口内分屏布局、tab 切换、死会话重启、新建时选择 shell/命令并落到指定 cwd。
+- [ ] **M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
+
+## 阶段 M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
+
+**含用户明确要求的「配置界面」——终端 app 的可视化设置面板。**
+
+- [ ] **M7.1 光标形状** - 光标渲染（`terminal.rs:603-612`）读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。
+- [ ] **M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
+- [ ] **M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
+- [ ] **M7.4 配置界面** - 新增可视化**设置窗口**：复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets（`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`）分组编辑各配置项，支持即时预览/应用与保存；从菜单入口打开。
+- [ ] **M7.5 配置生效接线** - 组件层各写死项（scrollback、色板、release 快捷键 `terminal.rs:121`、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。
+- [ ] **M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
+- [ ] **M7.R Review** - 复核配置默认值不改变既有行为、配置持久化格式向后兼容、界面对无效输入有校验，验证通过。
 
 ## 收尾
 
-- [x] **[DONE] Docs 更新** - 根据实际实现更新 `TUI_AGENT.md`、README 或新增 app README。
-  - 完成记录（2026-07-10）：根 `README.md` 新增 `atto-agent-app` 包说明和 agent app quick start；新增 `crates/atto-agent-app/README.md`，覆盖运行方式、配置优先级、CLI/env/TOML、slash 命令、内置工具、skill、plan/context/transcript 和验证命令；更新 `TUI_AGENT.md`，使实现状态、模块位置、依赖、状态栏、slash 命令、配置字段、DeepSeek mock/live 边界、tool/skill/plan/context/compact 和后续扩展点与当前实现一致。
-  - 验证：本次仅修改 Markdown 文档、`TODO.md` 和 `memory/claude_plan.md`，未修改编译代码；完整 Rust fmt/clippy/test 复用上一条 M6.R 完成记录中的绿色结果（`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check`）。
-- [x] **[DONE] CI 检查** - 确认默认 CI 不依赖 `DEEPSEEK_API_KEY` 或网络。
-  - 完成记录（2026-07-10）：复核 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`，默认 Rust 测试步骤均运行普通 `cargo test`，未传 `--ignored`，workflow 未设置或要求 `DEEPSEEK_API_KEY`；真实 DeepSeek smoke 测试保持 `#[ignore]`，手动设置 `DEEPSEEK_API_KEY` 并显式运行 ignored 测试才会访问 DeepSeek 外网；默认 DeepSeek client 单测使用 `127.0.0.1` 本地 mock SSE server。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo test -p atto-agent-app --test deepseek_real_smoke`（0 passed, 1 ignored）。
-- [x] **[DONE] Release 检查** - 如新增 crate 需要发布策略，补充 `docs/RELEASE.md` 或说明其仅作为 workspace app。
-  - 完成记录（2026-07-10）：确认新增 `crates/atto-agent-app` 仅作为 workspace-only TUI 应用，不进入 tag 发布产物或 crates.io 发布；在 app manifest 中设置 `publish = false` 防止误发布，并在 `docs/RELEASE.md` 记录 workspace app 发布范围、CI 验证边界和真实 DeepSeek smoke 的手动性质；同步根 README 的 release 文档说明。
-  - 验证：`cargo fmt --all`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test --workspace --all-targets`；`cargo fmt --all -- --check`。
+- [ ] **Docs 更新** - 根据实际实现更新 `TERMINAL_GAP.md`（标注已闭合缺口）、README 或新增终端 app README；更新 `IMPLEMENTATION_PLAN.md` 里程碑状态（见 `AGENTS.md`）。
+- [ ] **示例升级** - 把 `terminal_viewer` demo 升级为体现全功能（前缀键、copy-mode、分屏、会话管理、配置界面）的示例。

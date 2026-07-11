@@ -1,182 +1,148 @@
-# 执行计划：TUI Agent 对接 DeepSeek / Tool / Skill / Plan Mode
+# 执行计划：全功能多窗口终端 App
 
-本计划对应 [`TUI_AGENT.md`](TUI_AGENT.md)。目标是在现有 `atto-ui-chat` 能力已经齐备的基础上，新增一个应用层 TUI agent：复用 `ChatPanel` / `ChatMessageStore` / `ChatInputHandle`，对接 DeepSeek API，支持本地 tool、skill 注入和 plan mode。
+本计划对应 [`TERMINAL_GAP.md`](TERMINAL_GAP.md)。目标是把 `crates/atto-ui-terminal` 的 `terminal_viewer` demo 从「能跑一个 shell 的多窗口外壳」扩展为**全功能多窗口终端 app**：进程生命周期闭环、tmux 式前缀键、文本选择/复制、alt screen 滚动分流、语义提示符标记、分屏/会话管理，以及一个完整的**配置界面**。
 
-旧的 chat 控件能力补齐计划已归档至 [`docs/archive/2026-07-10-chat-capabilities/`](docs/archive/2026-07-10-chat-capabilities/)。
+上一阶段的 TUI Agent / DeepSeek 接入计划已归档至 [`docs/archive/2026-07-11-tui-agent-deepseek/`](docs/archive/2026-07-11-tui-agent-deepseek/)。
 
-## 当前状态（2026-07-11 复核）
+## 现状（2026-07-11）
 
-M1-M6 已把 DeepSeek 接入所需的所有*零件*实现并单测覆盖，但它们尚未组装成一次真实的 live turn：
+组件层的「终端芯」`TerminalEmulator`（`crates/atto-ui-terminal/src/terminal.rs`，~1300 行）已相当扎实：PTY spawn、reader 线程、按键/鼠标 ANSI 编码、scrollback、DSR 光标查询响应、bracketed paste、capture/release 快捷键、宽字符渲染、鼠标协议转发均已就绪。外壳层 `examples/terminal_viewer.rs`（~280 行 demo）已具备菜单、new/close/minimize/maximize、窗口列表切换。
 
-- `crates/atto-agent-app/src/deepseek_client.rs` 的 `DeepSeekClient::stream_chat_completions`（真实 HTTP + SSE）目前**只被 `tests/deepseek_real_smoke.rs`（`#[ignore]`）调用**。
-- 实际的 `run()` / 提交路径**始终走 `MockTurnRegistry`**（见 `start_mock_agent_turn_for_prompt`），没有任何"检测到 `DEEPSEEK_API_KEY` 就切换到真实 provider"的分支。
-- 真实客户端 `collect_sse_events` 会**缓冲整段响应**（收到 `[DONE]` 后一次性返回 `Vec<ChatCompletionSseEvent>`），无法逐 token 流式写入 UI。
-- `run()` 内**没有 async turn 驱动**（mock turn 跑在普通线程上）、**没有真实的多轮 tool loop**、**没有进行中 HTTP 请求的取消**。
-- 状态栏 `provider` 段写死为 `provider: mock`（`src/lib.rs`）。
-
-因此新增 **M7 - Live DeepSeek 接入**，把已有零件真正接线成可用的 DeepSeek agent，用 `.envrc` 中的 `DEEPSEEK_API_KEY` 做手动/ignored 验证。
+缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**。详见 `TERMINAL_GAP.md` 的 P0-P3 分级。
 
 ## 范围
 
 | 范围 | 说明 |
 |---|---|
-| 新应用 crate | 新增 `crates/atto-agent-app`，作为 Rust TUI agent 应用。 |
-| UI 复用 | 不重做 chat 控件；直接使用 `atto-ui-chat` 的块模型、输入补全、审批、plan、取消、编辑重发等能力。 |
-| DeepSeek | 使用 OpenAI-compatible Chat Completions 和 SSE streaming。 |
-| Tool | 建立本地 `ToolRegistry`，MVP 包含读文件、列文件、搜索、apply patch、run command。 |
-| Skill | 建立本地 `SkillRegistry`，解析 `SKILL.md`，支持手动和简单自动加载。 |
-| Plan mode | app 层执行门控：计划未接受前禁止副作用工具。 |
-| 真实 provider 接入 | 把已有 `DeepSeekClient` / SSE parser / `DeepSeekUiStream` / `ContextBuilder` / `ToolRegistry` 组装成真实的 live agent turn（M7）。 |
+| 组件层增强 | `TerminalEmulator` 增补进程退出信号、`new_with_callbacks`（title/bell/clipboard/OSC）、selection 状态机、alt screen 滚动分流、tmux 式前缀键状态机、语义提示符标记感知、光标形状/keypad。 |
+| 外壳层增强 | `terminal_viewer` 死窗口回收、标题联动、选择→剪贴板、分屏/标签页、会话管理、语义标记呈现/交互。 |
+| 配置界面 | 新增可视化设置界面（scrollback、色板、前缀键、release 快捷键、滚动分流键位、shell/命令、cwd/profile 等），配套配置模型与持久化。 |
+| shell integration | OSC 133/7 的可选注入脚本（第 3 层），零侵入降级为默认。 |
 
 ## 非范围
 
 | 非范围 | 说明 |
 |---|---|
-| 扩展 `atto-ui-chat` 数据模型 | 当前已有 `PlanBlock`、`ToolUseBlock`、`TaskBlock`、审批、compact 等能力，除非发现阻塞 bug，否则不改。 |
-| MCP | MVP 先做本地 tool registry，MCP adapter 后续单独计划。 |
-| 多 agent 调度 | MVP 只做单 agent loop。 |
-| 图片/多模态 | 继续不纳入本计划。 |
-| 强沙箱 | MVP 做 workspace 路径约束、审批和命令 argv 化，不承诺系统级隔离。 |
+| fork vt100 | OSC 133/7 走 `Callbacks::unhandled_osc` 透传，无需 fork。 |
+| 系统级沙箱 | 终端本就托管任意子进程，不承诺隔离。 |
+| GUI 原生键空间 | 不依赖 `Cmd` / 可靠 `Ctrl+Shift`；键盘类命令统一走 tmux 式前缀。 |
+| 远程/SSH 会话托管 | 本计划只做本地 PTY 会话，远程 profile 后续单独排期。 |
 
 ## 原则
 
 | 原则 | 要求 |
 |---|---|
-| 应用层隔离 | `reqwest`、`tokio`、DeepSeek 协议只进入 `crates/atto-agent-app`。 |
-| 核心依赖干净 | `atto-ui` 和 `atto-ui-chat` 不新增网络依赖。 |
-| UI 主线程更新 | 后台任务只发 `AppAction`，主线程更新 `ChatMessageStore` 和 bindings。 |
-| 可测试优先 | DeepSeek client trait/enum 化，MVP 全部关键路径可用 mock provider 测。 |
-| 安全默认 | 写文件、apply patch、run command 默认需要审批；plan mode 接受前始终拦截副作用工具。 |
-| 小步可编译 | 每阶段结束必须能 build/test/clippy/fmt。 |
+| 组件/外壳分层 | 「认出来并暴露」属组件层，「怎么用/怎么显示」属外壳层；两层解耦，语义标记的第 1 层不得硬依赖第 2/3 层。 |
+| 前缀造命名空间 | 我们是跑在宿主字节流里的复用器，无 collision-free 键空间；键盘类外壳/模式命令统一收敛到**一个可配置的 plain `Ctrl+<字母>` 前缀**（默认 `Ctrl+B`）。 |
+| 信号分流而非猜测 | alt screen 滚动分流用 `mouse_protocol_mode()` + `alternate_screen()` 两个稳定信号，不用 `application_cursor()` 或清屏启发式。 |
+| 降级不崩 | 有语义标记则增强，无标记则退回普通 scrollback；shell integration 注入失败不影响前两层。 |
+| 小步可编译 | 每阶段结束必须能 build/test/clippy/fmt，PTY 覆盖关键交互。 |
+| 配置可回归 | 配置项默认值不变行为；配置界面改动通过 PTY 快照验证。 |
 
 ## 阶段划分
 
-### M1 - App Skeleton + Mock Provider
+落地顺序遵循 `TERMINAL_GAP.md`「落地顺序建议」。
 
-建立 `crates/atto-agent-app`，完成可运行的 TUI shell。
+### M1 - 进程生命周期 + Callbacks 基础（P0.1 + P0.3 组件层）
 
-| 产出 | 说明 |
-|---|---|
-| crate 注册 | workspace 加入 `crates/atto-agent-app`。 |
-| UI 组装 | `Desktop` + `MenuBar`/`StatusBar` + 单窗口 `ChatPanel`。 |
-| 输入提交 | `ChatInputPanel::on_submit` push user message，并启动 mock agent turn。 |
-| Slash 命令 | 注入 `/help`、`/clear`、`/plan`、`/skills`、`/tools`。 |
-| Mock stream | 不依赖网络，按 token 流式写入 assistant `TextBlock`。 |
-| 取消 | Esc / cancel 回调取消 mock turn 并置 `Canceled`。 |
-
-验收：`cargo run -p atto-agent-app -- --mock` 可本地交互；PTY 覆盖 mock stream、slash command、Esc cancel。
-
-### M2 - DeepSeek Text Streaming
-
-接入 DeepSeek Chat Completions 的基础文本流。
+一次性引入 `new_with_callbacks`，同时补进程退出回调与 title/bell/clipboard 桥接。这是组件层的硬缺陷，后续一切依赖它。
 
 | 产出 | 说明 |
 |---|---|
-| 配置加载 | CLI/env/TOML：`DEEPSEEK_API_KEY`、base URL、model、temperature、max tokens。 |
-| DeepSeekClient | `POST /chat/completions`，`stream: true`。 |
-| SSE parser | 解析 `data:`、`[DONE]`、content、reasoning_content、finish_reason。 |
-| UI 映射 | content -> `TextBlock`，reasoning_content -> `ThinkingBlock`。 |
-| 错误映射 | 401/403、429、5xx、网络、JSON 错误映射到 `ChatError`。 |
-| real API smoke | 提供 `#[ignore]` 或手动命令，不进默认 CI。 |
+| 进程退出信号 | reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`）。 |
+| 查询接口 | `TerminalHandle` 暴露 `is_running()` / `exit_status()`。 |
+| callbacks 改造 | `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`，桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。 |
 
-验收：mock PTY 稳定；设置 `DEEPSEEK_API_KEY` 后可手动跑真实 streaming；失败时 UI 显示清晰错误。
+验收：单测/PTY 覆盖 shell `exit` 后组件报告退出码、`is_running()` 翻转；title/bell/clipboard 回调可被外壳观察到。
 
-### M3 - Tool Loop + Approval
+### M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）
 
-实现 DeepSeek function calling 到本地 tool 的闭环。
+让多窗口外壳「活」起来。
 
 | 产出 | 说明 |
 |---|---|
-| Tool schema | `ToolSpec` 转 OpenAI-compatible `tools`。 |
-| Tool call 聚合 | 按 SSE `tool_calls[].index` 聚合 name 和 arguments。 |
-| ToolRegistry | 注册、查找、参数校验、权限策略。 |
-| 内置只读工具 | `read_file`、`list_files`、`search_text`。 |
-| 内置副作用工具 | `apply_patch`、`run_command`，默认审批。 |
-| Approval UI | `ToolUseBlock.approval` + `ChatMessageList::on_approve`。 |
-| Tool result | `ToolResultBlock` 写 UI，并作为 role=`tool` 继续请求模型。 |
-| 限制 | 每 turn 最大模型请求数、tool call 数、工具超时。 |
+| 死窗口回收 | tick 或 `on_exit` 检测进程退出，按策略关窗，或原地显示 `[Process exited: code N — press R to restart]`。 |
+| 标题联动 | 把组件暴露的标题同步到 `Window.title`，刷新 Windows 菜单窗口列表。 |
 
-验收：PTY 覆盖 tool 请求、allow once、deny、tool result 回灌；单测覆盖路径越界、非法参数、无限循环限制。
+验收：PTY 覆盖 shell 退出后窗口回收/退出提示；shell/vim 设置 `OSC 0/2` 标题后窗口标题与菜单同步更新。
 
-### M4 - Skill Registry
+### M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
 
-实现 skill 文件格式、索引、选择和 prompt 注入。
+先落地前缀键解析，因为 copy-mode（P1.2 入口）与外壳快捷键通路都挂在它上面。
 
 | 产出 | 说明 |
 |---|---|
-| Skill parser | 解析 `SKILL.md` frontmatter + body。 |
-| 搜索路径 | `.atto/skills` 和 `~/.config/atto-agent/skills`。 |
-| 手动加载 | `/skills` 列表，`/skill <name>` 激活。 |
-| 自动加载 | 按 prompt 与 name/description/triggers 的简单词匹配。 |
-| Prompt 注入 | system prompt 增加 `<skills>` 块。 |
-| 安全约束 | skill 只影响提示词和工具偏好，不授予额外工具权限。 |
-| 预算 | 单 skill、总 skill prompt 大小限制。 |
+| 前缀态状态机 | capture 分支收到前缀键进入前缀态（不转发），下一个键查前缀命令表。 |
+| 可配置前缀 | 默认 `Ctrl+B`，必须是 plain `Ctrl+<字母>`；前缀键与命令表可配置。 |
+| 前缀命令表 | `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode、`前缀 + 前缀` 转义一个字面前缀给子进程。 |
+| 事件冒泡 | 命中外壳命令 `return EventResult::ignored()` 冒泡给 Desktop，命中 `[` 进 copy-mode。 |
 
-验收：单测覆盖解析、匹配、大小限制、冲突优先级；PTY 覆盖 `/skills` 和 `/skill` 生效。
+验收：PTY 覆盖 capture 态下 `前缀 + F10` 能激活菜单、`前缀 + w` 进窗口模式、`前缀 + 前缀` 把字面前缀发给子进程；非终端窗口快捷键仍直达。
 
-### M5 - Plan Mode
+### M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）
 
-实现 app 层计划门控。
+三者共用同一片鼠标/键盘处理代码，一起重写最省。
 
 | 产出 | 说明 |
 |---|---|
-| 模式 | `off`、`on`、`auto`，支持 `/plan` 切换。 |
-| auto 判定 | 根据用户意图和工具需求粗判是否可能有副作用。 |
-| 计划生成 | 优先使用虚拟 tool `submit_plan({ items })`；兜底解析 markdown 列表。 |
-| Plan UI | 渲染 `PlanBlock { decision: Pending }`。 |
-| 接受 | `PlanDecision::Accepted` 后追加内部执行指令并继续 agent loop。 |
-| 拒绝 | `PlanDecision::Rejected` 后停止当前 turn，等待用户补充。 |
-| 副作用拦截 | 计划接受前拒绝 `apply_patch`、`run_command` 等 mutating tool。 |
+| selection 状态机 | 选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。 |
+| 鼠标本地框选 | 子进程开鼠标报告时 `Shift+拖拽`=本地框选、不按=转发；未开鼠标报告时直接拖拽即框选（修掉 `capture_on_click` recapture 浪费点击）。 |
+| copy-mode | 经 `前缀 + [` 进入；方向键与 hjkl、起选 `v`/`Space`、复制 `y`/`Enter`、`Esc`/`q` 取消；滚轮/方向键永远本地 scrollback 导航。 |
+| 剪贴板（首版） | 选择 → 组件内部 copy buffer + 粘贴回子进程。 |
+| 剪贴板（后续） | 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1 clipboard 回调），OSC 52 优先、`arboard` 兜底。 |
+| alt screen 滚动分流 | 滚轮前置三级决策树：`mouse_protocol_mode() != None` → 转发 SGR 滚轮；`alternate_screen()` → alternate scroll 翻方向键（默认 ×3）发子进程；else → 本地 `set_scrollback`。 |
 
-验收：PTY 覆盖 plan 生成、Accept 后执行、Reject 后停止、未接受计划时副作用工具被拦截。
+验收：PTY 覆盖鼠标框选/复制、`前缀 + [` copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf 滚轮各自落到正确分支、主屏 scrollback 仍正常。
 
-### M6 - Context / Session Polish
+### M5 - 语义提示符标记（P1.4，OSC 133/7）
 
-补齐上下文、mention、compact、编辑重发和稳定性。
-
-| 产出 | 说明 |
-|---|---|
-| ContextBuilder | UI transcript -> DeepSeek messages。 |
-| 文件 mention | `@path` 转只读文件摘要。 |
-| 工具输出预算 | 回传模型的 tool output 截断，UI 保留完整或尾部窗口。 |
-| Compact | 超预算时生成 `CompactBlock`，后续请求使用摘要。 |
-| Retry/Edit | `on_edit_and_resubmit`、retry/regenerate 触发截断并重跑。 |
-| Transcript | 可选 JSONL 保存和恢复。 |
-| 状态栏 | 展示 model、plan、tools、skills、streaming、token 估算。 |
-
-验收：PTY 覆盖 mention、compact、retry/edit 重跑；长会话不阻塞 UI；取消后无迟到 token 污染新分支。
-
-### M7 - Live DeepSeek 接入
-
-把 M1-M6 已实现的零件组装成真实可用的 DeepSeek agent turn。这是"真正接入 DeepSeek"的核心里程碑。
+三层互相独立、职责与依赖方向不同，不混在一起实现。
 
 | 产出 | 说明 |
 |---|---|
-| Provider 选择 | 引入 `AgentProvider`（`Mock` / `DeepSeek`）：默认按配置解析——存在有效 `DEEPSEEK_API_KEY` 且未强制 `--mock` 时选 DeepSeek，否则 mock；snapshot fixture 始终 mock。 |
-| 流式增量事件 | 让 `DeepSeekClient` 提供逐块回调/channel（不再等 `[DONE]` 一次性返回），把每个 `ChatCompletionSseEvent` 尽快推给主线程。 |
-| Async turn 驱动 | 在 app 内建立 tokio runtime（或复用 `atto-ui-async`），后台跑真实 turn，只通过 `AppAction` 更新 UI；真实 turn 复用现有 `DeepSeekUiStream` 映射，与 mock 走同一条 action 路径。 |
-| 请求构造 | 提交/继续 turn 时用 `ContextBuilder` 从当前 transcript 构造 messages（含 skills、file mention、compact、tool 回灌），带上注册工具 schema。 |
-| 真实 tool loop | `finish_reason = tool_calls` 后执行本地工具、审批门控、写回 `role=tool`，再自动发起下一轮真实请求，直到无 tool call 或触达 turn budget。 |
-| 取消 | Esc / `on_cancel` / `/abort` 能中止进行中的 HTTP 请求（abort handle / drop），推进 branch token，迟到事件不污染新分支。 |
-| 错误映射 | 真实路径复用 M2.5 的 `ChatError` 映射；缺失/无效 API key、401/403、429、5xx、断流在 UI 显示清晰错误。 |
-| 状态栏 | `provider` 段反映实际 provider（`mock` / `deepseek`），不再写死。 |
-| 验证 | 默认测试仍走 mock 与本地 mock SSE server；新增 `#[ignore]` 的真实端到端 turn 冒烟（含一次 tool 往返），手动用 `.envrc` 的 `DEEPSEEK_API_KEY` 运行。 |
+| 第 1 层 感知与信号【组件层】 | 与 M1 共用 callbacks，接 `unhandled_osc` 识别 `133`/`7`，推进小状态机记 `command_marks: Vec<CommandBlock>`（prompt/command/output/end 行号、exit_code、cwd）；`TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished`。 |
+| 第 2 层 呈现与交互【外壳层】 | 命令块分隔线/底色、失败命令标红、命令级导航（`Ctrl+↑/↓`）、选择粒度升级到整条命令输出、右键重跑/复制命令/复制输出。可独立演进、可不做。 |
+| 第 3 层 shell integration【配置面】 | 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时按 shell 类型注入 integration 脚本。第 1/2 层不得硬依赖注入成功。 |
 
-验收：设置 `DEEPSEEK_API_KEY` 后 `cargo run -p atto-agent-app` 能与真实 DeepSeek 交互（文本流式 + 至少一次 tool 往返 + plan mode 生效）；取消能中止真实请求；默认 CI/测试不触外网；mock PTY 全部保持绿色。
+验收：单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机；无标记时退回普通 scrollback 不崩；第 2 层导航/命令级复制、第 3 层注入按体验需求排期，互不阻塞。
+
+### M6 - 分屏/标签页 + 会话管理 + spawn 环境（P2）
+
+| 产出 | 说明 |
+|---|---|
+| 分屏/标签页 | 基于现有 `VStack`/`HStack`/`Grid` 在单窗口内做 tmux 式 split panes 或 tab。 |
+| 会话管理 | 新建时选 shell/命令入口；重启已死会话（配合 M1 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。 |
+| spawn 环境 | `spawn_command` 设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发）。 |
+
+验收：PTY 覆盖单窗口内分屏布局、tab 切换、死会话重启、新建时选择 shell/命令并落到指定 cwd。
+
+### M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
+
+**本阶段包含用户明确要求的「配置界面」**，作为整个终端 app 的设置面板。
+
+| 产出 | 说明 |
+|---|---|
+| 光标形状 | 光标渲染读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。 |
+| keypad 模式 | 接 `application_keypad()`（DECCKM `application_cursor` 已接）。 |
+| 配置模型 | 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格）。 |
+| 配置界面 | 新增可视化**设置窗口**（复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets：`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`），分组编辑上述配置项，支持即时预览/应用与保存；从菜单入口打开。 |
+| 配置生效 | 组件层各写死项（scrollback、色板、release 快捷键、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。 |
+
+验收：PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
 
 ## 依赖关系
 
 | 阶段 | 依赖 |
 |---|---|
-| M1 | 无，先搭应用骨架和 mock。 |
-| M2 | 依赖 M1 的 action loop 和 UI 映射。 |
-| M3 | 依赖 M2 的 DeepSeek request/stream 基础。 |
-| M4 | 依赖 M1/M2 的 prompt 构建入口，可与 M3 部分并行。 |
-| M5 | 依赖 M3 的 tool gate 和 `PlanBlock` 回调。 |
-| M6 | 依赖 M2-M5，作为收尾和体验完善。 |
-| M7 | 依赖 M2-M6 的全部零件（client/SSE/UI 映射/context/tool loop/plan/skill/compact），把它们组装成真实 live turn。 |
+| M1 | 无，组件层硬缺陷先做。 |
+| M2 | 依赖 M1 的 `on_exit` / `is_running` / 标题回调。 |
+| M3 | 依赖 M1（capture 路径稳定），是 M4 copy-mode 的前置。 |
+| M4 | 依赖 M3 前缀键（copy-mode 入口）与 M1 clipboard 回调（后续剪贴板）。 |
+| M5 | 第 1 层依赖 M1 的 `new_with_callbacks`；第 2 层依赖第 1 层的 `command_blocks()`；第 3 层依赖 M6 的 spawn 环境（方案 B）。 |
+| M6 | 分屏/tab 独立；死会话重启依赖 M1 `exit_status`；cwd 继承依赖 M5 OSC 7。 |
+| M7 | 配置模型贯穿全程；配置界面依赖各阶段已暴露的可配置项与 M6 的 shell/profile。 |
 
-建议顺序：M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7。
+建议顺序：M1 → M2 → M3 → M4 → M5（第 1 层可与 M1 顺带） → M6 → M7。M5 第 2/3 层、M6、M7 可按体验需求灵活穿插，互不阻塞。
 
 ## 验证
 
@@ -188,15 +154,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 ```
 
-涉及真实 DeepSeek 的测试默认忽略或手动执行（`.envrc` 已提供 `DEEPSEEK_API_KEY`，`direnv allow` 后即可）：
-
-```sh
-# M7 后：默认检测到 API key 即走真实 DeepSeek，可手动交互验证文本流 / tool 往返 / plan mode
-cargo run -p atto-agent-app
-# 强制 mock，不触外网
-cargo run -p atto-agent-app -- --mock
-# 仅运行 ignored 的真实端到端冒烟
-cargo test -p atto-agent-app -- --ignored
-```
-
-PTY 覆盖应优先走 mock client，不依赖网络和外部 API。
+终端交互优先走 PTY 快照（`snapshot_terminal_app` / `snapshot_terminal_window_app` + `pty_terminal_*` 测试），不依赖真实交互终端。手动验证用 `cargo run -p atto-ui-terminal --example terminal_viewer`。
