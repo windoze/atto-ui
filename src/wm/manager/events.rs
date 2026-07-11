@@ -149,6 +149,7 @@ impl WindowManager {
                 let mut action = WindowManagerAction {
                     consumed: self.mouse_capture,
                     close: None,
+                    component_result: None,
                 };
 
                 let window_id = hit.window_id;
@@ -244,6 +245,9 @@ impl WindowManager {
                                 area: layout.text_area,
                             };
                             let res = w.view.handle_titlebar_event(&Event::Mouse(*m), ctx);
+                            if res.action != ComponentAction::None {
+                                action.component_result = Some((window_id, res));
+                            }
                             if res.action == ComponentAction::CloseWindow {
                                 action.close = Some(window_id);
                                 action.consumed = true;
@@ -425,6 +429,7 @@ impl WindowManager {
                     return WindowManagerAction {
                         consumed: true,
                         close: None,
+                        component_result: None,
                     };
                 }
 
@@ -590,6 +595,7 @@ impl WindowManager {
                 WindowManagerAction {
                     consumed: true,
                     close: None,
+                    component_result: None,
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -603,6 +609,7 @@ impl WindowManager {
                 WindowManagerAction {
                     consumed,
                     close: None,
+                    component_result: None,
                 }
             }
             _ => WindowManagerAction::default(),
@@ -706,9 +713,13 @@ impl WindowManager {
             .as_ref()
             .is_some_and(|feedback| feedback.effect != DropEffect::None);
         let mut close = None;
+        let mut component_result = None;
         if accepted {
             if let Some(target_id) = state.target_window {
                 if let Some(res) = self.drop_on_window(&state, target_id, x, y, bounds, theme) {
+                    if res.action != ComponentAction::None {
+                        component_result = Some((target_id, res));
+                    }
                     if res.action == ComponentAction::CloseWindow {
                         close = Some(target_id);
                     }
@@ -725,6 +736,7 @@ impl WindowManager {
         WindowManagerAction {
             consumed: true,
             close,
+            component_result,
         }
     }
 
@@ -885,6 +897,7 @@ impl WindowManager {
             return WindowManagerAction {
                 consumed,
                 close: None,
+                component_result: None,
             };
         }
 
@@ -893,6 +906,7 @@ impl WindowManager {
             return WindowManagerAction {
                 consumed: true,
                 close: None,
+                component_result: None,
             };
         }
 
@@ -903,6 +917,7 @@ impl WindowManager {
         let mut action = WindowManagerAction {
             consumed: true,
             close: None,
+            component_result: None,
         };
 
         match k.code {

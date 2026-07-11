@@ -24,3 +24,8 @@ atto-ui-test-host = { path = "../atto-ui-test-host" }
 crossterm = "0.29.0"
 tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "sync", "time"] }
 unicode-width = "0.2.2"
+
+[[bin]]
+name = "snapshot_agent_app"
+path = "src/bin/snapshot_agent_app.rs"
+test = false

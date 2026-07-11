@@ -31,3 +31,4 @@ full = ["event-stream"]
 name = "snapshot_tokio_app"
 path = "src/bin/snapshot_tokio_app.rs"
 required-features = ["event-stream"]
+test = false

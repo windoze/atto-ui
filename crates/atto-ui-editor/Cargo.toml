@@ -23,3 +23,18 @@ unicode-width = "0.2.2"
 
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }
+
+[[bin]]
+name = "snapshot_diff_app"
+path = "src/bin/snapshot_diff_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_editor_app"
+path = "src/bin/snapshot_editor_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_rich_artifact_app"
+path = "src/bin/snapshot_rich_artifact_app.rs"
+test = false

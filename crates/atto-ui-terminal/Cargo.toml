@@ -15,3 +15,13 @@ vt100 = "0.16.2"
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }
 unicode-width = "0.2.2"
+
+[[bin]]
+name = "snapshot_terminal_app"
+path = "src/bin/snapshot_terminal_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_terminal_window_app"
+path = "src/bin/snapshot_terminal_window_app.rs"
+test = false

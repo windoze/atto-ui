@@ -1,34 +1,25 @@
-## Execution Plan
+# Execution Plan
 
-1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for directly relevant unfinished work tied to that task.
-3. Inspect the task's referenced code, tests, and documentation to understand its exact requirements.
-4. Implement the task without changing unrelated behavior or adding workarounds.
-5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant tests, escalating to the full suite when required.
-6. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling in its completion record.
-7. Update this plan file at key milestones, commit all task-related changes with the required trailer, and stop without starting the next task.
+I will follow `TODO.md` as the authoritative task list and complete exactly the first task whose heading is not prefixed with `[DONE]`. I will not perform broad issue triage before selecting that task.
 
-## Current Task
+Steps:
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Check the latest commit only for explicitly mentioned unfinished work that is directly relevant to that task.
+3. Inspect the minimum relevant code, tests, and documentation needed to implement the selected task.
+4. Implement the task without narrowing scope or introducing workarounds.
+5. Run formatting, linting, and the required tests in the requested order, escalating to the full test suite when needed.
+6. If an unscheduled failing test blocks completion, fix it or add the minimum prerequisite task before the current task in `TODO.md`, then stop.
+7. Mark the completed task title with `[DONE]` in `TODO.md` and update its completion record.
+8. Commit all changes for this invocation with a descriptive message and the required co-author trailer.
+9. Stop without starting the next task.
 
-- First incomplete task: `M3.3 前缀命令表`.
-- Latest commit: `[M3.2] Add configurable terminal prefix key`; directly relevant because M3.3 builds on the configurable prefix-key state machine from M3.2.
+Selected task: M3.4 "事件派发桥接".
 
-## Task-Specific Steps
-
-1. Inspect the existing terminal prefix pending/fallback implementation and current event bubbling hooks.
-2. Add a prefix command table covering `prefix+F10`, `prefix+w`, `prefix+z`, `prefix+[`, and `prefix+prefix`.
-3. Preserve lossless fallback for non-command keys and route literal prefix escape to the child process.
-4. Add or update targeted tests for command recognition and literal prefix forwarding.
-5. Run formatting, linting, targeted tests, and required full validation before marking `TODO.md`.
-
-## Progress
-
-- Implemented the prefix command table in `TerminalEmulator`.
-- Added copy-mode placeholder state and literal-prefix escape dispatch.
-- Added component actions so focused terminal views can activate menu, toggle window management, and maximize/restore their own window.
-- Added unit coverage for command mapping, copy-mode placeholder, and literal prefix escape.
-- Added PTY coverage for `prefix+F10`, `prefix+w`, and `prefix+z` driving desktop chrome.
-- Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted prefix/PTY/desktop-action tests, and `cargo test --workspace --all-targets`.
-- Marked only `M3.3 前缀命令表` as `[DONE]` in `TODO.md`.
-- Updated `PLAN.md`, `TERMINAL_GAP.md`, and the next TODO entry to reflect the typed `ComponentAction` dispatch bridge used instead of raw-key bubbling.
-- No additional test rerun was needed after these final Markdown-only documentation updates.
+Task-specific plan:
+1. Completed: checked latest commit (`[M3.3] Add terminal prefix command table`) and confirmed M3.4 is the next task.
+2. Completed: inspected `ComponentAction`, `EventResult`, terminal prefix command emission, desktop/window-manager dispatch paths, pointer capture, tooltip dispatch, and `send_event_to_window`.
+3. Completed: found an existing uncommitted M3.4 implementation that routes typed component actions through a shared desktop bridge and blocks shell commands while a modal is active.
+4. Completed: targeted non-modal bridge, modal bridge, and terminal prefix action tests passed.
+5. Completed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed.
+6. Completed: marked M3.4 `[DONE]` in `TODO.md` with validation notes.
+7. Completed: final diff reviewed; all current invocation changes are being committed for M3.4.

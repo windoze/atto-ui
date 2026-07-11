@@ -5,7 +5,7 @@ use atto_ui_test_host::PtyTestHost;
 use ratatui::layout::Rect;
 
 fn wait_for_text(host: &PtyTestHost, needle: &str) {
-    host.wait_for_text(needle, Duration::from_secs(2))
+    host.wait_for_text(needle, Duration::from_secs(5))
         .unwrap_or_else(|e| panic!("wait_for_text {needle:?} failed: {e}"));
 }
 

@@ -1639,7 +1639,7 @@ fn mock_agent_events(
             mock_stream_tool_call_event(
                 "call_read_cargo",
                 "read_file",
-                serde_json::json!({ "path": "Cargo.toml" }),
+                serde_json::json!({ "path": ".atto/skills/pty-fixture/SKILL.md" }),
             ),
             ChatCompletionSseEvent::Done,
         ],
@@ -3588,7 +3588,12 @@ Use this skill for {name} tasks.
         let start = Instant::now();
         loop {
             match listener.accept() {
-                Ok(stream) => return stream,
+                Ok((stream, address)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .expect("configure mock SSE stream blocking");
+                    return (stream, address);
+                }
                 Err(error)
                     if error.kind() == std::io::ErrorKind::WouldBlock
                         && start.elapsed() < timeout =>

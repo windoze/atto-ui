@@ -138,6 +138,15 @@ pub enum ComponentAction {
     ToggleMaximizeWindow,
 }
 
+impl ComponentAction {
+    pub(crate) const fn is_shell_command(self) -> bool {
+        match self {
+            Self::None | Self::CloseWindow | Self::Changed | Self::Submitted => false,
+            Self::ActivateMenu | Self::ToggleWindowManagement | Self::ToggleMaximizeWindow => true,
+        }
+    }
+}
+
 /// Pointer-capture request a component can attach to its `EventResult`.
 ///
 /// A component that wants to keep receiving mouse move/drag/up after the pointer

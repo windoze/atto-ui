@@ -10,7 +10,10 @@ use crate::app::status::Fill;
 use crate::composable::{ComponentAction, EventOutcome, EventResult};
 use crate::reactive::EventQueue;
 use crate::theme::Theme;
-use crate::wm::{Window, WindowId, WindowKind, WindowManager, WindowManagerInputMode, WindowState};
+use crate::wm::{
+    Window, WindowId, WindowKind, WindowManager, WindowManagerAction, WindowManagerInputMode,
+    WindowState,
+};
 use crate::{CallbackRegistry, ComponentSpec, ComponentValue, TreeError, TreeOp};
 
 use super::menu::{MenuAction, MenuBar, WindowMenuOp};
@@ -275,6 +278,11 @@ impl Desktop {
         res: EventResult,
         work_area: Rect,
     ) -> Option<DesktopEventResult> {
+        if self.wm.has_active_modal() && res.action.is_shell_command() {
+            self.clear_which_key();
+            return Some(DesktopEventResult::consumed());
+        }
+
         match res.action {
             ComponentAction::None | ComponentAction::Changed | ComponentAction::Submitted => {}
             ComponentAction::CloseWindow => {
@@ -311,6 +319,26 @@ impl Desktop {
         } else {
             None
         }
+    }
+
+    fn handle_window_manager_action(
+        &mut self,
+        action: WindowManagerAction,
+        work_area: Rect,
+    ) -> Option<DesktopEventResult> {
+        if let Some((id, result)) = action.component_result
+            && let Some(result) = self.handle_component_event_result(id, result, work_area)
+        {
+            return Some(result);
+        }
+        if let Some(id) = action.close {
+            return Some(if self.wm.request_close(id) {
+                DesktopEventResult::close_window(id)
+            } else {
+                DesktopEventResult::consumed()
+            });
+        }
+        action.consumed.then_some(DesktopEventResult::consumed())
     }
 
     pub fn close_window(&mut self, id: WindowId) -> bool {
@@ -540,10 +568,9 @@ impl Desktop {
                     WindowManagerInputMode::WindowManagement,
                     &self.theme,
                 );
-                if let Some(id) = wm_action.close
-                    && self.wm.request_close(id)
+                if let Some(result) = self.handle_window_manager_action(wm_action, layout.work_area)
                 {
-                    return DesktopAction::CloseWindow(id);
+                    return result.action;
                 }
                 DesktopAction::None
             }
@@ -624,16 +651,12 @@ impl Desktop {
             let wm_action = self
                 .wm
                 .handle_event(event, layout.work_area, input_mode, &self.theme);
-            if let Some(id) = wm_action.close {
-                if self.wm.request_close(id) {
-                    return DesktopEventResult::close_window(id);
-                }
-                return DesktopEventResult::consumed();
-            }
-            if wm_action.consumed {
-                return DesktopEventResult::consumed();
+            if let Some(result) = self.handle_window_manager_action(wm_action, layout.work_area) {
+                return result;
             }
         }
+
+        let modal_active = self.wm.has_active_modal();
 
         // Pointer capture: while a window's content holds the pointer (e.g. a button
         // pressed with the mouse), route mouse events straight to it, bypassing chrome
@@ -685,8 +708,6 @@ impl Desktop {
             };
         }
 
-        let modal_active = self.wm.has_active_modal();
-
         let mut view_dispatched = false;
 
         // Layered input:
@@ -707,14 +728,8 @@ impl Desktop {
         let wm_action = self
             .wm
             .handle_event(event, layout.work_area, input_mode, &self.theme);
-        if let Some(id) = wm_action.close {
-            if self.wm.request_close(id) {
-                return DesktopEventResult::close_window(id);
-            }
-            return DesktopEventResult::consumed();
-        }
-        if wm_action.consumed {
-            return DesktopEventResult::consumed();
+        if let Some(result) = self.handle_window_manager_action(wm_action, layout.work_area) {
+            return result;
         }
 
         // Mouse events need to hit-test and potentially change focus before dispatching to the view,
@@ -1070,8 +1085,8 @@ mod tests {
     use super::*;
     use crate::app::{MenuItem, MenuSpec, StatusSegment};
     use crate::composable::{
-        Component, ComponentContext, DragAndDrop, DragOperation, DragPayload, DragSource,
-        EventHandling, EventResult,
+        Capture, Component, ComponentContext, DragAndDrop, DragOffer, DragOperation, DragPayload,
+        DragSource, DropEffect, DropFeedback, EventHandling, EventResult, TitleBarContext,
     };
     use crate::theme::Theme;
     use crate::wm::{DockSide, Window, WindowDock, WindowKind, WindowState};
@@ -1125,6 +1140,93 @@ mod tests {
     }
 
     crate::impl_component_default_traits!(ActionOnKeyView => Layout, Scrollable, FocusNav, DynamicTree);
+
+    #[derive(Clone)]
+    struct ActionOnTitlebarView {
+        action: ComponentAction,
+    }
+
+    impl Component for ActionOnTitlebarView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+
+        fn handle_titlebar_event(
+            &mut self,
+            event: &Event,
+            _ctx: TitleBarContext<'_>,
+        ) -> EventResult {
+            if matches!(event, Event::Mouse(_)) {
+                return EventResult {
+                    outcome: EventOutcome::Consumed,
+                    action: self.action,
+                    capture: Capture::None,
+                };
+            }
+            EventResult::ignored()
+        }
+    }
+
+    crate::impl_component_default_traits!(ActionOnTitlebarView => Layout, Scrollable, FocusNav, DynamicTree, EventHandling);
+
+    #[derive(Clone)]
+    struct ActionOnMouseView {
+        action: ComponentAction,
+    }
+
+    impl Component for ActionOnMouseView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for ActionOnMouseView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            if matches!(
+                event,
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    ..
+                })
+            ) {
+                return EventResult {
+                    outcome: EventOutcome::Consumed,
+                    action: self.action,
+                    capture: Capture::None,
+                };
+            }
+            EventResult::ignored()
+        }
+    }
+
+    crate::impl_component_default_traits!(ActionOnMouseView => Layout, Scrollable, FocusNav, DynamicTree);
+
+    #[derive(Clone)]
+    struct CaptureActionMouseView {
+        action: ComponentAction,
+    }
+
+    impl Component for CaptureActionMouseView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl EventHandling for CaptureActionMouseView {
+        fn handle_event(&mut self, event: &Event, _ctx: ComponentContext<'_>) -> EventResult {
+            match event {
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    ..
+                }) => EventResult::consumed().with_capture(Capture::Request),
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Drag(MouseButton::Left),
+                    ..
+                }) => EventResult {
+                    outcome: EventOutcome::Consumed,
+                    action: self.action,
+                    capture: Capture::Release,
+                },
+                _ => EventResult::ignored(),
+            }
+        }
+    }
+
+    crate::impl_component_default_traits!(CaptureActionMouseView => Layout, Scrollable, FocusNav, DynamicTree);
 
     #[derive(Clone)]
     struct CountingMouseView {
@@ -1197,6 +1299,39 @@ mod tests {
     impl crate::composable::FocusNav for DesktopDragSourceView {}
     impl crate::composable::DynamicTree for DesktopDragSourceView {}
     impl EventHandling for DesktopDragSourceView {}
+
+    #[derive(Clone)]
+    struct DesktopDropActionView {
+        action: ComponentAction,
+    }
+
+    impl Component for DesktopDropActionView {
+        fn draw(&mut self, _frame: &mut Frame<'_>, _area: Rect, _ctx: ComponentContext<'_>) {}
+    }
+
+    impl DragAndDrop for DesktopDropActionView {
+        fn drag_over(&mut self, _offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> DropFeedback {
+            DropFeedback {
+                effect: DropEffect::Copy,
+                rect: None,
+                label: None,
+            }
+        }
+
+        fn drop(&mut self, _offer: DragOffer<'_>, _ctx: ComponentContext<'_>) -> EventResult {
+            EventResult {
+                outcome: EventOutcome::Consumed,
+                action: self.action,
+                capture: Capture::None,
+            }
+        }
+    }
+
+    impl crate::composable::Layout for DesktopDropActionView {}
+    impl crate::composable::Scrollable for DesktopDropActionView {}
+    impl crate::composable::FocusNav for DesktopDropActionView {}
+    impl crate::composable::DynamicTree for DesktopDropActionView {}
+    impl EventHandling for DesktopDropActionView {}
 
     #[derive(Clone)]
     struct RecordingView {
@@ -1525,6 +1660,343 @@ mod tests {
             desktop.wm.window(id).map(|w| w.state.get()),
             Some(WindowState::Maximized)
         );
+    }
+
+    #[test]
+    fn titlebar_component_action_uses_desktop_bridge() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Titlebar action",
+                Rect::new(2, 2, 20, 6),
+                Box::new(ActionOnTitlebarView {
+                    action: ComponentAction::ActivateMenu,
+                }),
+            ),
+            screen,
+        );
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 8,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Menu);
+        assert!(desktop.menu.is_active());
+    }
+
+    #[test]
+    fn modal_blocks_titlebar_shell_action() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        desktop.show_which_key("Ctrl+B", vec![]);
+        desktop.add_window(
+            Window::new(
+                WindowKind::Modal,
+                "Modal",
+                Rect::new(10, 8, 30, 8),
+                Box::new(ActionOnTitlebarView {
+                    action: ComponentAction::ActivateMenu,
+                }),
+            ),
+            screen,
+        );
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 16,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Normal);
+        assert!(!desktop.menu.is_active());
+        assert!(desktop.which_key().is_none());
+    }
+
+    #[test]
+    fn component_shell_actions_are_blocked_while_modal_is_active() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let shell_actions = [
+            ComponentAction::ActivateMenu,
+            ComponentAction::ToggleWindowManagement,
+            ComponentAction::ToggleMaximizeWindow,
+        ];
+
+        for action in shell_actions {
+            let menu = MenuBar::new(vec![MenuSpec::new(
+                "File",
+                vec![MenuItem::action("Noop", || {})],
+            )]);
+            let mut desktop = Desktop::new(Theme::dark(), menu);
+            desktop.show_which_key("Ctrl+B", vec![]);
+            let modal_id = desktop.add_window(
+                Window::new(
+                    WindowKind::Modal,
+                    format!("{action:?}"),
+                    Rect::new(10, 8, 30, 8),
+                    Box::new(ActionOnKeyView { action }),
+                ),
+                screen,
+            );
+
+            let result = desktop.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+                screen,
+            );
+
+            assert!(result.is_consumed());
+            assert_eq!(desktop.mode, DesktopMode::Normal);
+            assert!(!desktop.menu.is_active());
+            assert!(desktop.which_key().is_none());
+            assert_eq!(
+                desktop.wm.window(modal_id).map(|w| w.state.get()),
+                Some(WindowState::Normal)
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_capture_component_action_uses_desktop_bridge() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Capture",
+                Rect::new(2, 2, 20, 6),
+                Box::new(CaptureActionMouseView {
+                    action: ComponentAction::ToggleWindowManagement,
+                }),
+            ),
+            screen,
+        );
+
+        let down = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        let down_result = desktop.handle_event(&down, screen);
+        assert!(down_result.is_consumed());
+        assert_eq!(desktop.wm.pointer_capture(), Some(id));
+
+        let drag = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 1,
+            row: screen.height.saturating_sub(1),
+            modifiers: KeyModifiers::NONE,
+        });
+        let drag_result = desktop.handle_event(&drag, screen);
+
+        assert!(drag_result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::WindowManagement);
+        assert_eq!(desktop.wm.pointer_capture(), None);
+    }
+
+    #[test]
+    fn drop_component_action_targets_drop_window() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let source_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Source",
+                Rect::new(2, 2, 20, 6),
+                Box::new(DesktopDragSourceView::new(Arc::new(AtomicUsize::new(0)))),
+            ),
+            screen,
+        );
+        let target_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Target",
+                Rect::new(30, 2, 20, 6),
+                Box::new(DesktopDropActionView {
+                    action: ComponentAction::ToggleMaximizeWindow,
+                }),
+            ),
+            screen,
+        );
+
+        desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 3,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+        desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 32,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 32,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(
+            desktop
+                .wm
+                .window(source_id)
+                .map(|window| window.state.get()),
+            Some(WindowState::Normal)
+        );
+        assert_eq!(
+            desktop
+                .wm
+                .window(target_id)
+                .map(|window| window.state.get()),
+            Some(WindowState::Maximized)
+        );
+    }
+
+    #[test]
+    fn tooltip_component_action_uses_desktop_bridge() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let focused_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Focused",
+                Rect::new(2, 2, 20, 6),
+                Box::new(RecordingView::new(events)),
+            ),
+            screen,
+        );
+        desktop.add_window(
+            Window::new(
+                WindowKind::Tooltip,
+                "Tip",
+                Rect::new(10, 5, 20, 5),
+                Box::new(ActionOnMouseView {
+                    action: ComponentAction::ActivateMenu,
+                }),
+            ),
+            screen,
+        );
+
+        let result = desktop.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 12,
+                row: 7,
+                modifiers: KeyModifiers::NONE,
+            }),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Menu);
+        assert!(desktop.menu.is_active());
+        assert_eq!(desktop.wm.focused(), Some(focused_id));
+    }
+
+    #[test]
+    fn send_event_to_window_applies_component_actions_without_modal() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+        let id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Action",
+                Rect::new(2, 2, 20, 6),
+                Box::new(ActionOnKeyView {
+                    action: ComponentAction::ToggleWindowManagement,
+                }),
+            ),
+            screen,
+        );
+        let other_id = desktop.add_window(
+            Window::new(
+                WindowKind::Normal,
+                "Other",
+                Rect::new(30, 2, 20, 6),
+                Box::new(RecordingView::new(Arc::new(Mutex::new(Vec::new())))),
+            ),
+            screen,
+        );
+        assert_eq!(desktop.wm.focused(), Some(other_id));
+
+        let result = desktop.send_event_to_window(
+            id,
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::WindowManagement);
+        assert_eq!(desktop.wm.focused(), Some(id));
+    }
+
+    #[test]
+    fn send_event_to_window_blocks_shell_actions_while_modal_is_active() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![MenuSpec::new(
+            "File",
+            vec![MenuItem::action("Noop", || {})],
+        )]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+        let modal_id = desktop.add_window(
+            Window::new(
+                WindowKind::Modal,
+                "Modal",
+                Rect::new(10, 8, 30, 8),
+                Box::new(ActionOnKeyView {
+                    action: ComponentAction::ActivateMenu,
+                }),
+            ),
+            screen,
+        );
+
+        let result = desktop.send_event_to_window(
+            modal_id,
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            screen,
+        );
+
+        assert!(result.is_consumed());
+        assert_eq!(desktop.mode, DesktopMode::Normal);
+        assert!(!desktop.menu.is_active());
     }
 
     #[test]

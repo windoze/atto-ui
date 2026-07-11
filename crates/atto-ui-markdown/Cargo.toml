@@ -16,3 +16,8 @@ unicode-width = "0.2.2"
 
 [dev-dependencies]
 atto-ui-test-host = { path = "../atto-ui-test-host" }
+
+[[bin]]
+name = "snapshot_markdown_app"
+path = "src/bin/snapshot_markdown_app.rs"
+test = false

@@ -305,8 +305,8 @@ fn agent_mock_tool_result_renders_auto_allowed_read_file() -> anyhow::Result<()>
 
     host.wait_for_text("read_file", PTY_WAIT)?;
     host.wait_for_text("Tool result: call_read_cargo", PTY_WAIT)?;
-    host.wait_for_text("Path: Cargo.toml", PTY_WAIT)?;
-    host.wait_for_text("[package] name = \"atto-agent-app\"", PTY_WAIT)?;
+    host.wait_for_text("Path: .atto/skills/pty-fixture/SKILL.md", PTY_WAIT)?;
+    host.wait_for_text("name: pty-fixture", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
 
     host.send_ctrl('q')?;

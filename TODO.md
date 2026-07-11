@@ -52,7 +52,9 @@
 - [x] **[DONE] M3.3 前缀命令表** - `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode（占位，M4 实现选择）、`前缀 + 前缀` 转义一个字面前缀给子进程。
   - 完成记录（2026-07-11）：终端 capture 态新增前缀命令表；默认/配置前缀后，`前缀+F10` 通过 typed `ComponentAction` 激活菜单，`前缀+w` 切换窗口管理模式，`前缀+z` 最大化/还原当前窗口，`前缀+[` 进入 copy-mode 占位状态供 M4 扩展，`前缀+前缀` 只向子进程发送一个字面前缀。未命中命令继续沿用 lossless fallback，把前缀和后续键一并转发给子进程。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_prefix_commands_drive_desktop_chrome -- --nocapture`、`cargo test -p atto-ui --lib component_action_can_ -- --nocapture`、`cargo test --workspace --all-targets` 均通过；完成记录/计划文档更新后仅改动 Markdown，未重跑全套。
-- [ ] **M3.4 事件派发桥接** - 复核并收敛 M3.3 引入的 typed `ComponentAction` 外壳命令桥接（替代 raw-key `EventResult::ignored()` 冒泡，避免 `前缀+w/z` 无法对应现有全局快捷键），确保 focused view、pointer capture、tooltip view、`send_event_to_window` 等路径语义一致，modal 仍阻断外壳命令。
+- [x] **[DONE] M3.4 事件派发桥接** - 复核并收敛 M3.3 引入的 typed `ComponentAction` 外壳命令桥接（替代 raw-key `EventResult::ignored()` 冒泡，避免 `前缀+w/z` 无法对应现有全局快捷键），确保 focused view、pointer capture、tooltip view、`send_event_to_window` 等路径语义一致，modal 仍阻断外壳命令。
+  - 完成记录（2026-07-12）：收敛 typed `ComponentAction` 到统一 desktop bridge，`WindowManagerAction` 可携带组件结果并由 `Desktop` 统一处理 close/menu/window-mode/maximize 等外壳命令；focused view、titlebar、pointer capture、tooltip hit-test、drag/drop 和 `send_event_to_window` 均复用同一处理路径。modal 激活时 shell command 类组件动作会被消费并清理 which-key，不会激活菜单、窗口模式或最大化外壳状态。
+  - 验证：`cargo test -p atto-ui --lib component_action -- --nocapture`、`cargo test -p atto-ui --lib modal -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M3.5 测试** - PTY 覆盖 capture 态 `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + 前缀` 字面前缀到子进程；非终端窗口快捷键仍直达、capture 释放后 `F10` 直达。
 - [ ] **M3.R Review** - 复核前缀不吞掉子进程需要的键（可靠转义）、命令表可配置、双向 escape 收敛为单一前缀，验证通过。
 
