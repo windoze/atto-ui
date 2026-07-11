@@ -39,9 +39,10 @@ Complete exactly the first incomplete task listed in `TODO.md`, then stop after 
   - Added OSC 0/2 PTY title-linkage coverage, completed validation, and marked `M2.3` done in `TODO.md`.
 - Current invocation:
   - Refreshed this execution plan before task execution.
-  - Identified first incomplete task: `M2.R Review`.
-  - Latest commit is `[M2.3] Complete terminal PTY coverage` and does not call out an unfinished issue requiring prerequisite insertion.
-  - Reviewed M2 surfaces in `terminal_viewer`, `snapshot_terminal_window_app`, `pty_terminal_window_interactions`, and `terminal.rs`.
-  - Confirmed dead-window recovery is driven by recorded `exit_status()` rather than live-window heuristics or process killing, and title synchronization reads cloned handle state under the terminal shared mutex before mutating UI state on the app thread.
-  - Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-  - Marked `M2.R Review` as `[DONE]` in `TODO.md` with the completion record.
+  - Identified first incomplete task: `M3.1 前缀态状态机`.
+  - Latest commit is `[M2.R] Review terminal lifecycle and title sync`; it does not mention unfinished work directly blocking M3.1.
+  - Implementation plan for M3.1: add a default component-level prefix shortcut state to `TerminalShared`, make captured prefix presses enter a pending state without forwarding, make the next non-release key consult an initially empty prefix command hook, and fallback-forward the held prefix plus the next encoded key so subprocess input is not lost.
+  - Add focused component-level tests for held-prefix no-forward behavior, fallback forwarding, release-event handling while pending, and capture release clearing pending prefix state.
+  - Implemented the prefix-pending state for captured key handling, including Tab/BackTab capture-hook routing, and added focused `input_encoding` tests.
+  - Validation passed: `cargo fmt --all`, `cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+  - Marked `M3.1 前缀态状态机` as `[DONE]` in `TODO.md` with the completion record.

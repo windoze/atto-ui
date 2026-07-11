@@ -1,11 +1,11 @@
 use atto_ui::composable::{
-    Component, ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode,
+    Component, ComponentContext, EventHandling, MouseCoordinateSpace, ScrollbarHost, TabMode,
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::TerminalEmulator;
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -42,6 +42,20 @@ fn key_input_after_output(output: &str, key: KeyCode) -> Vec<u8> {
     handle.process_output_str(output);
     handle.send_event(&Event::Key(KeyEvent::new(key, KeyModifiers::NONE)));
     handle.take_input()
+}
+
+fn component_key_input(keys: &[KeyEvent]) -> Vec<u8> {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    for key in keys {
+        terminal.handle_event(&Event::Key(*key), context(&theme));
+    }
+    handle.take_input()
+}
+
+fn ctrl_key(ch: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
 }
 
 fn paste_input_after_output(output: &str, text: &str) -> Vec<u8> {
@@ -216,6 +230,72 @@ fn terminal_application_cursor_changes_arrow_key_encoding() {
         b"\x1bOC"
     );
     assert_eq!(key_input_after_output("\x1b[?1h", KeyCode::Left), b"\x1bOD");
+}
+
+#[test]
+fn terminal_prefix_key_waits_for_next_captured_key() {
+    assert_eq!(component_key_input(&[ctrl_key('b')]), b"");
+    assert_eq!(
+        component_key_input(&[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        ]),
+        b"\x02x"
+    );
+}
+
+#[test]
+fn terminal_prefix_state_ignores_release_before_fallback_key() {
+    assert_eq!(
+        component_key_input(&[
+            ctrl_key('b'),
+            KeyEvent::new_with_kind(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Release,
+            ),
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        ]),
+        b"\x02x"
+    );
+}
+
+#[test]
+fn terminal_prefix_state_applies_to_tab_capture_hook() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    terminal.handle_event_capture(
+        &Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert_eq!(handle.take_input(), b"\x02\t");
+}
+
+#[test]
+fn terminal_release_capture_clears_pending_prefix() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        context(&theme),
+    );
+    assert!(!handle.capture());
+
+    handle.set_capture(true);
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert_eq!(handle.take_input(), b"x");
 }
 
 #[test]

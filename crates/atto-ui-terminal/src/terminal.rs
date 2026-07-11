@@ -70,6 +70,8 @@ mod tests {
             last_clipboard_copy: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
+            prefix_shortcut: default_prefix_shortcut(),
+            prefix_pending: false,
             dsr_tail: Vec::new(),
         }
     }
@@ -134,6 +136,13 @@ fn default_release_shortcut() -> TerminalShortcut {
     TerminalShortcut {
         code: KeyCode::Esc,
         modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    }
+}
+
+fn default_prefix_shortcut() -> TerminalShortcut {
+    TerminalShortcut {
+        code: KeyCode::Char('b'),
+        modifiers: KeyModifiers::CONTROL,
     }
 }
 
@@ -233,10 +242,24 @@ struct TerminalShared {
     last_clipboard_copy: Option<TerminalClipboardCopy>,
     capture: bool,
     release_shortcut: TerminalShortcut,
+    prefix_shortcut: TerminalShortcut,
+    prefix_pending: bool,
     dsr_tail: Vec<u8>,
 }
 
 impl TerminalShared {
+    fn set_capture(&mut self, capture: bool) {
+        self.capture = capture;
+        if !capture {
+            self.prefix_pending = false;
+        }
+    }
+
+    fn matches_prefix_command(&self, _event: KeyEvent) -> bool {
+        // M3.3 populates the prefix command table; M3.1 keeps unmatched keys lossless.
+        false
+    }
+
     fn apply_callback_events(
         &mut self,
         events: Vec<TerminalCallbackEvent>,
@@ -302,6 +325,53 @@ impl TerminalShared {
         let offset = max.saturating_sub(y);
         self.set_scrollback_offset(offset);
     }
+}
+
+enum CapturedKeyAction {
+    Consumed,
+    Dispatch(Vec<u8>),
+}
+
+fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
+    if shared.release_shortcut.matches(event) {
+        shared.set_capture(false);
+        return CapturedKeyAction::Consumed;
+    }
+    if event.kind == KeyEventKind::Release {
+        return CapturedKeyAction::Consumed;
+    }
+    if shared.prefix_pending {
+        shared.prefix_pending = false;
+        if shared.matches_prefix_command(event) {
+            return CapturedKeyAction::Consumed;
+        }
+        return encode_prefix_fallback(shared, event)
+            .map(CapturedKeyAction::Dispatch)
+            .unwrap_or(CapturedKeyAction::Consumed);
+    }
+    if shared.prefix_shortcut.matches(event) {
+        shared.prefix_pending = true;
+        return CapturedKeyAction::Consumed;
+    }
+    encode_key_event(shared.parser.screen(), event)
+        .map(CapturedKeyAction::Dispatch)
+        .unwrap_or(CapturedKeyAction::Consumed)
+}
+
+fn encode_prefix_fallback(shared: &TerminalShared, event: KeyEvent) -> Option<Vec<u8>> {
+    let screen = shared.parser.screen();
+    let mut bytes = encode_key_event(
+        screen,
+        KeyEvent::new(
+            shared.prefix_shortcut.code,
+            shared.prefix_shortcut.modifiers,
+        ),
+    )
+    .unwrap_or_default();
+    if let Some(mut event_bytes) = encode_key_event(screen, event) {
+        bytes.append(&mut event_bytes);
+    }
+    if bytes.is_empty() { None } else { Some(bytes) }
 }
 
 type PtyChild = Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>;
@@ -554,6 +624,8 @@ impl TerminalEmulator {
             last_clipboard_copy: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
+            prefix_shortcut: default_prefix_shortcut(),
+            prefix_pending: false,
             dsr_tail: Vec::with_capacity(4),
         };
 
@@ -584,7 +656,7 @@ impl TerminalEmulator {
     }
 
     pub fn capture(self, capture: bool) -> Self {
-        self.shared.lock().capture = capture;
+        self.shared.lock().set_capture(capture);
         self
     }
 
@@ -829,7 +901,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
 
         let mut shared = self.shared.lock();
         if !ctx.is_focused && shared.capture {
-            shared.capture = false;
+            shared.set_capture(false);
         }
         let screen = shared.parser.screen_mut();
         let (rows, cols) = (area.height, area.width);
@@ -950,19 +1022,19 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
         let Event::Key(key) = event else {
             return EventResult::ignored();
         };
-        let shared = self.shared.lock();
+        let mut shared = self.shared.lock();
         if !shared.capture {
             return EventResult::ignored();
         }
         match key.code {
-            KeyCode::Tab | KeyCode::BackTab => {
-                if let Some(bytes) = encode_key_event(shared.parser.screen(), *key) {
+            KeyCode::Tab | KeyCode::BackTab => match handle_captured_key(&mut shared, *key) {
+                CapturedKeyAction::Consumed => EventResult::consumed(),
+                CapturedKeyAction::Dispatch(bytes) => {
                     drop(shared);
                     dispatch_input(&self.shared, &bytes);
-                    return EventResult::consumed();
+                    EventResult::consumed()
                 }
-                EventResult::consumed()
-            }
+            },
             _ => EventResult::ignored(),
         }
     }
@@ -972,16 +1044,14 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
             Event::Key(key) => {
                 let mut shared = self.shared.lock();
                 if shared.capture {
-                    if shared.release_shortcut.matches(*key) {
-                        shared.capture = false;
-                        return EventResult::consumed();
+                    match handle_captured_key(&mut shared, *key) {
+                        CapturedKeyAction::Consumed => return EventResult::consumed(),
+                        CapturedKeyAction::Dispatch(bytes) => {
+                            drop(shared);
+                            dispatch_input(&self.shared, &bytes);
+                            return EventResult::consumed();
+                        }
                     }
-                    if let Some(bytes) = encode_key_event(shared.parser.screen(), *key) {
-                        drop(shared);
-                        dispatch_input(&self.shared, &bytes);
-                        return EventResult::consumed();
-                    }
-                    return EventResult::consumed();
                 }
                 drop(shared);
                 if self.handle_scrollback_key(*key) {
@@ -1020,7 +1090,7 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                 if !shared.capture {
                     drop(shared);
                     if matches!(m.kind, MouseEventKind::Down(_)) && self.capture_on_click {
-                        self.shared.lock().capture = true;
+                        self.shared.lock().set_capture(true);
                         return EventResult::consumed();
                     }
                     if self.handle_scrollback_wheel(*m, self.scroll_step) {
@@ -1125,7 +1195,7 @@ impl TerminalHandle {
     }
 
     pub fn set_capture(&self, capture: bool) {
-        self.shared.lock().capture = capture;
+        self.shared.lock().set_capture(capture);
     }
 
     pub fn capture(&self) -> bool {

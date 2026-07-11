@@ -43,7 +43,9 @@
 
 ## 阶段 M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
 
-- [ ] **M3.1 前缀态状态机** - capture 分支（`terminal.rs:701-712`）收到前缀键进入前缀态（不转发），下一个键查前缀命令表；未命中按策略连同前缀发子进程或吞掉。
+- [x] **[DONE] M3.1 前缀态状态机** - capture 分支（`terminal.rs:701-712`）收到前缀键进入前缀态（不转发），下一个键查前缀命令表；未命中按策略连同前缀发子进程或吞掉。
+  - 完成记录（2026-07-11）：在 `TerminalShared` 中新增默认 `Ctrl+B` 前缀键与 pending 状态；capture 态收到前缀键时只进入 pending、不转发给子进程；下一次非 release 按键先走前缀命令 hook（M3.3 填充命令表），未命中时按 lossless fallback 将已暂存前缀与当前按键编码后一并发给子进程。Tab/BackTab 的 capture hook 也复用同一状态机，capture 释放或失焦会清除 pending 前缀，避免悬挂状态污染后续输入。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M3.2 可配置前缀键** - 默认 `Ctrl+B`，约束为 plain `Ctrl+<字母>`；前缀键可配置（暂用组件字段，M7 接入配置模型）。
 - [ ] **M3.3 前缀命令表** - `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode（占位，M4 实现选择）、`前缀 + 前缀` 转义一个字面前缀给子进程。
 - [ ] **M3.4 事件冒泡** - 命中外壳命令 `return EventResult::ignored()` 冒泡给 Desktop（`desktop.rs:664-680` / `749`），使 capture 态下外壳快捷键可达。
