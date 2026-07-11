@@ -59,6 +59,7 @@ mod tests {
             input_forward: None,
             on_exit: None,
             exit_status: None,
+            process_running: false,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::new(),
@@ -139,6 +140,7 @@ struct TerminalShared {
     input_forward: Option<InputCallback>,
     on_exit: Option<ExitCallback>,
     exit_status: Option<ExitStatus>,
+    process_running: bool,
     capture: bool,
     release_shortcut: TerminalShortcut,
     dsr_tail: Vec<u8>,
@@ -234,6 +236,7 @@ fn record_exit_status(shared: &Arc<Mutex<TerminalShared>>, status: ExitStatus) {
             return;
         }
         shared.exit_status = Some(status.clone());
+        shared.process_running = false;
         shared.input_forward = None;
         shared.on_exit.clone()
     };
@@ -401,6 +404,7 @@ impl TerminalEmulator {
             input_forward: None,
             on_exit: None,
             exit_status: None,
+            process_running: false,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::with_capacity(4),
@@ -489,7 +493,11 @@ impl TerminalEmulator {
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, cmd: CommandBuilder) -> Result<()> {
         self.stop_process();
-        self.shared.lock().exit_status = None;
+        {
+            let mut shared = self.shared.lock();
+            shared.exit_status = None;
+            shared.process_running = false;
+        }
 
         let (rows, cols) = {
             let shared = self.shared.lock();
@@ -508,6 +516,7 @@ impl TerminalEmulator {
         let child = Arc::new(Mutex::new(child));
         let writer = pair.master.take_writer()?;
         let reader = pair.master.try_clone_reader()?;
+        self.shared.lock().process_running = true;
 
         let handle = self.handle();
         let shared_for_reader = Arc::clone(&self.shared);
@@ -564,7 +573,11 @@ impl TerminalEmulator {
 
     /// Stops the currently attached subprocess, if any.
     pub fn stop_process(&mut self) {
-        self.shared.lock().input_forward = None;
+        {
+            let mut shared = self.shared.lock();
+            shared.input_forward = None;
+            shared.process_running = false;
+        }
         if let Some(mut process) = self.process.take() {
             process.shutdown(&self.shared);
         }
@@ -938,6 +951,16 @@ impl TerminalHandle {
 
     pub fn release_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().release_shortcut
+    }
+
+    /// Returns whether a subprocess is currently attached and has not reported exit.
+    pub fn is_running(&self) -> bool {
+        self.shared.lock().process_running
+    }
+
+    /// Returns the last recorded subprocess exit status, if the process has exited.
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.shared.lock().exit_status.clone()
     }
 
     /// Snapshot of the terminal contents including scrollback.

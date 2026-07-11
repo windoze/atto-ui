@@ -6,6 +6,40 @@ use std::time::Duration;
 use atto_ui_terminal::TerminalEmulator;
 
 #[test]
+fn terminal_handle_reports_running_state_and_exit_status() {
+    let (tx, rx) = mpsc::channel();
+    let mut terminal = TerminalEmulator::new().on_exit(move |status| {
+        tx.send(status.exit_code()).expect("send exit status");
+    });
+    let handle = terminal.handle();
+
+    assert!(!handle.is_running());
+    assert!(handle.exit_status().is_none());
+
+    let args = vec![
+        "-c".to_string(),
+        "printf terminal-running-ready; sleep 1; exit 9".to_string(),
+    ];
+    terminal
+        .spawn_process("/bin/sh", &args)
+        .expect("spawn shell command");
+
+    assert!(handle.is_running());
+    assert!(handle.exit_status().is_none());
+
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("exit status callback"),
+        9
+    );
+    assert!(!handle.is_running());
+    assert_eq!(
+        handle.exit_status().map(|status| status.exit_code()),
+        Some(9)
+    );
+}
+
+#[test]
 fn terminal_on_exit_reports_subprocess_status_once() {
     let (tx, rx) = mpsc::channel();
     let mut terminal = TerminalEmulator::new().on_exit(move |status| {

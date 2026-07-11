@@ -13,7 +13,9 @@
 - [x] **[DONE] M1.1 进程退出信号** - reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`，`terminal.rs:461-467` / `terminal.rs:777-783`）。
   - 完成记录（2026-07-11）：在 `TerminalShared` 中记录进程 `ExitStatus`，新增独立于 `on_close` 的 `on_exit(status)` 回调；reader EOF、draw-time `try_wait()` 轮询和生命周期 watcher 均可幂等发布退出状态。新增 `process_exit` 集成测试覆盖退出码回调只触发一次，以及无子进程 drop 时只触发 `on_close`。
   - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
+- [x] **[DONE] M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
+  - 完成记录（2026-07-11）：在 `TerminalShared` 中维护 subprocess running 状态，`TerminalHandle::is_running()` 可轮询当前子进程是否仍存活，`TerminalHandle::exit_status()` 可读取最近一次记录的 `ExitStatus`。新进程启动会清空旧退出状态并标记运行中，进程自然退出时复用 M1.1 的退出记录路径翻转为非运行，显式 `stop_process()` 也会清除运行态。
+  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
 - [ ] **M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
 - [ ] **M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
