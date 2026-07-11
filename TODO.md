@@ -99,7 +99,9 @@
 - [x] **[DONE] M5.2 第 1 层 查询接口** - `TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished(status)` 回调；无标记时退回普通 scrollback 不崩。
   - 完成记录（2026-07-12）：新增公开 `TerminalCommandBlock` 快照类型并从 crate root 导出，`TerminalHandle::command_blocks()` 可读取 OSC 133/7 记录到的命令块列表，`TerminalHandle::last_exit_code()` 返回最近完成命令块的命令级退出码；新增 `TerminalEmulator::on_command_finished(...)` 回调，在 OSC 133 `D` 完成命令块时于锁外派发完成块快照。无 shell integration/OSC 标记的普通输出保持 `command_blocks()` 为空、`last_exit_code()` 为 `None`，不影响普通 scrollback。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_command_block -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M5.3 第 2 层 呈现【外壳层】** - 命令块分隔线/输出区底色、失败命令（exit≠0）标红标记。仅依赖第 1 层 `command_blocks()`。
+- [x] **[DONE] M5.3 第 2 层 呈现【外壳层】** - 命令块分隔线/输出区底色、失败命令（exit≠0）标红标记。仅依赖第 1 层 `command_blocks()`。
+  - 完成记录（2026-07-12）：新增可选 `TerminalCommandBlockPresentation` 命令块呈现模式，终端外壳层 `terminal_viewer` 与 `snapshot_terminal_window_app` 显式启用；渲染时仅依据 M5.2 暴露的 OSC 133 命令块行号，在 prompt 行空白区绘制命令块分隔线、为 output 行套用主题驱动底色，并在 exit code 非 0 的命令块结束行绘制红色失败标记。无命令块或未启用呈现时保持既有终端渲染行为。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block_presentation_marks_semantic_rows -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command_block_presentation_marks_failed_commands -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M5.4 第 2 层 交互【外壳层】** - 命令级导航（`Ctrl+↑/↓` 跳上/下一条命令）、选择粒度升级到整条命令输出、右键「重跑/复制命令/复制输出」。
 - [ ] **M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
 - [ ] **M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。

@@ -14,7 +14,9 @@ use atto_ui::app::{
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
-use atto_ui_terminal::{TerminalEmulator, TerminalHandle, TerminalShortcut};
+use atto_ui_terminal::{
+    TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalShortcut,
+};
 
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:terminal_viewer:windows";
 const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:terminal_viewer:windows:list";
@@ -159,7 +161,9 @@ fn build_terminal_view(
     command: &str,
     command_args: &[String],
 ) -> Result<(TerminalEmulator, TerminalHandle)> {
-    let mut terminal = TerminalEmulator::new().release_shortcut(terminal_release_shortcut());
+    let mut terminal = TerminalEmulator::new()
+        .release_shortcut(terminal_release_shortcut())
+        .command_block_presentation(TerminalCommandBlockPresentation::enabled());
     terminal.spawn_process(command, command_args)?;
     let handle = terminal.handle();
     seed_terminal_banner(&handle, window_number);

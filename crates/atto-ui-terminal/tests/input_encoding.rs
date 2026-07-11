@@ -7,8 +7,8 @@ use atto_ui::composable::{
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::{
-    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalSelectionPosition,
-    TerminalShortcut,
+    TerminalCommandBlockPresentation, TerminalEmulator, TerminalPrefixBinding,
+    TerminalPrefixCommand, TerminalSelectionPosition, TerminalShortcut,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -1142,4 +1142,44 @@ fn terminal_selection_draw_highlights_wide_character_cells() {
     let selection_bg = theme.selection.bg.expect("selection background");
     assert_ne!(buffer.cell((5, 0)).expect("pre-wide cell").bg, selection_bg);
     assert_eq!(buffer.cell((6, 0)).expect("wide start").bg, selection_bg);
+}
+
+#[test]
+fn terminal_command_block_presentation_marks_semantic_rows() {
+    let theme = Theme::dark();
+    let mut widget = TerminalEmulator::new()
+        .command_block_presentation(TerminalCommandBlockPresentation::enabled());
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(16, 4)).expect("terminal");
+
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 16, 4), context(&theme)))
+        .expect("draw initial size");
+    handle.process_output_str(
+        "\x1b]133;A\x07$ false\x1b]133;B\x07\r\n\
+         \x1b]133;C\x07boom\r\n\
+         \x1b]133;D;2\x07",
+    );
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 16, 4), context(&theme)))
+        .expect("draw command block presentation");
+
+    let buffer = terminal.backend().buffer();
+    let output_bg = theme.status_bar.bg.expect("status background");
+    let separator_fg = theme.status_bar_key.fg.expect("separator foreground");
+    let failure_fg = theme
+        .named_style("status-segment-error")
+        .expect("failure style")
+        .fg
+        .expect("failure foreground");
+
+    let separator = buffer.cell((8, 0)).expect("separator cell");
+    assert_eq!(separator.symbol(), "─");
+    assert_eq!(separator.fg, separator_fg);
+    assert_eq!(buffer.cell((0, 1)).expect("output cell").symbol(), "b");
+    assert_eq!(buffer.cell((0, 1)).expect("output cell").bg, output_bg);
+
+    let marker = buffer.cell((15, 2)).expect("failure marker");
+    assert_eq!(marker.symbol(), "!");
+    assert_eq!(marker.fg, failure_fg);
 }

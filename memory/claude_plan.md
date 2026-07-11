@@ -1,35 +1,27 @@
 # Execution Plan
 
-I will follow the task list exactly and complete only the first incomplete task in `TODO.md`.
+## Current task
 
-1. Read `TODO.md` and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Read the selected task's requirements, dependencies, and validation instructions.
-4. Inspect the relevant code and tests needed for that task.
-5. Implement the task completely, avoiding unrelated changes and workarounds.
-6. Run formatting, linting, and the required tests in the requested order.
-7. If validation reveals an unscheduled failing test or blocker, fix it if in scope or add the minimum prerequisite task to `TODO.md`, commit, and stop.
-8. If successful, mark the task heading in `TODO.md` with `[DONE]`, update its completion record, commit all changes for this task, and stop.
+- First incomplete TODO task: **M5.3 第 2 层 呈现【外壳层】**
+- Requirement: Use component-layer `command_blocks()` data in the shell layer to render command block presentation: separators/background for command output and red markers for failed commands (`exit != 0`).
+- Scope boundary: Complete only M5.3. Do not proceed to M5.4 interaction/navigation or later tasks.
 
-## Current Task
+## Steps
 
-Selected first incomplete task: **M5.2 第 1 层 查询接口**.
-
-Implementation focus:
-
-1. Expose command block query data from `TerminalHandle`.
-2. Expose `last_exit_code()` for the most recently finished OSC 133 command block.
-3. Add an optional `on_command_finished(status)` callback if it fits the existing callback style.
-4. Preserve safe degraded behavior when no OSC markers are present.
-5. Add focused tests for the new handle APIs and callback behavior, then run the required Rust validation sequence.
+1. Inspect the command block snapshot API and existing terminal rendering/test fixtures.
+2. Locate the outer shell/demo surfaces that own terminal windows and have access to `TerminalHandle::command_blocks()`.
+3. Add a presentation mechanism that can render command block separators, output-region background, and failed-command red markers without changing behavior when no command blocks exist.
+4. Add focused tests for semantic command block presentation, including success and failure blocks.
+5. Run `cargo fmt`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and the relevant test suite.
+6. Mark M5.3 `[DONE]` in `TODO.md` with completion and validation details.
+7. Commit the M5.3 changes and stop.
 
 ## Progress
 
-- Identified M5.2 as the first incomplete task.
-- Added public `TerminalCommandBlock` snapshots, `TerminalHandle::command_blocks()`, `TerminalHandle::last_exit_code()`, and `TerminalEmulator::on_command_finished(...)`.
-- Added focused callback/query tests, including no-marker degradation.
-- Completed `cargo fmt --all` and focused `atto-ui-terminal` callback tests successfully.
-- Fixed the clippy `question_mark` warning in the OSC 133 marker parser.
-- Completed `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` successfully.
-- Completed `cargo test --workspace --all-targets` successfully under the 30-minute cap.
-- Marked M5.2 as `[DONE]` in `TODO.md` with a completion record and validation log.
+- Identified M5.3 as the first incomplete task.
+- Confirmed the latest commit completed M5.2, which is the prerequisite for this task.
+- Added opt-in OSC 133 command-block presentation support with separator glyphs, output-row background styling, and failed-command markers.
+- Enabled command-block presentation in the terminal viewer and PTY shell fixture.
+- Added targeted unit and PTY tests for command-block presentation.
+- Completed formatting, focused tests, clippy, and the full workspace test suite successfully.
+- Marked M5.3 as `[DONE]` in `TODO.md` with completion and validation details.

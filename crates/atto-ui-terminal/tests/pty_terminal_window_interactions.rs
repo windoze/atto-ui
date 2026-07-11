@@ -543,3 +543,23 @@ fn pty_terminal_osc_zero_and_two_titles_update_window_title_and_windows_menu() {
     assert_osc_title_updates_window_title_and_windows_menu("0", "OSC Unified Shell");
     assert_osc_title_updates_window_title_and_windows_menu("2", "OSC Project Shell");
 }
+
+#[test]
+fn pty_terminal_command_block_presentation_marks_failed_commands() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "printf '\\033]133;A\\007$ false\\033]133;B\\007\\r\\n'; ",
+        "printf '\\033]133;C\\007boom\\r\\n\\033]133;D;2\\007'; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    wait_for_text(&host, "boom");
+    wait_for_text(&host, "────");
+    wait_for_text(&host, "!");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}

@@ -20,6 +20,7 @@ use atto_ui::composable::{
     Capture, ComponentAction, ComponentContext, EventOutcome, EventResult, MouseCoordinateSpace,
     ScrollConfig,
 };
+use atto_ui::theme::Theme;
 
 use crate::selection::{
     TerminalSelectionPosition, TerminalSelectionRange, TerminalSelectionState,
@@ -29,12 +30,32 @@ use crate::selection::{
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
+const COMMAND_SEPARATOR_SYMBOL: &str = "─";
+const COMMAND_FAILURE_SYMBOL: &str = "!";
 
 /// Keyboard shortcut used to release terminal input capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalShortcut {
     pub code: KeyCode,
     pub modifiers: KeyModifiers,
+}
+
+/// Visual treatment for OSC 133 command blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerminalCommandBlockPresentation {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+impl TerminalCommandBlockPresentation {
+    pub const fn enabled() -> Self {
+        Self::Enabled
+    }
+
+    const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 impl TerminalShortcut {
@@ -636,6 +657,84 @@ where
     Err(anyhow!(
         "failed to copy text to system clipboard via OSC 52 ({osc52_error}) or arboard ({arboard_error})"
     ))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CommandRowPresentation {
+    separator: bool,
+    output: bool,
+    failed_marker: bool,
+}
+
+fn command_row_presentation(blocks: &[TerminalCommandBlock], row: usize) -> CommandRowPresentation {
+    let mut presentation = CommandRowPresentation::default();
+    for block in blocks {
+        if block.prompt_start == Some(row) {
+            presentation.separator = true;
+        }
+
+        if let Some(output_start) = block.output_start {
+            let output_end = block.end.unwrap_or(usize::MAX);
+            if row >= output_start && row < output_end {
+                presentation.output = true;
+            }
+        }
+
+        if block.exit_code.is_some_and(|code| code != 0)
+            && block
+                .end
+                .or(block.output_start)
+                .or(block.command_start)
+                .or(block.prompt_start)
+                == Some(row)
+        {
+            presentation.failed_marker = true;
+        }
+    }
+    presentation
+}
+
+fn command_separator_start(screen: &vt100::Screen, row: u16, width: u16) -> u16 {
+    let mut content_end = 0;
+    for x in 0..width {
+        let Some(cell) = screen.cell(row, x) else {
+            continue;
+        };
+        if cell.is_wide_continuation() || cell.contents().is_empty() {
+            continue;
+        }
+        content_end = x.saturating_add(1);
+    }
+    if content_end == 0 {
+        0
+    } else {
+        content_end.saturating_add(1).min(width)
+    }
+}
+
+fn command_output_style(theme: &Theme) -> Style {
+    theme
+        .named_style("terminal-command-output")
+        .unwrap_or_else(|| {
+            let mut style = Style::default();
+            if let Some(bg) = theme.status_bar.bg {
+                style = style.bg(bg);
+            }
+            style
+        })
+}
+
+fn command_separator_style(theme: &Theme) -> Style {
+    theme
+        .named_style("terminal-command-separator")
+        .unwrap_or_else(|| theme.status_bar_key.add_modifier(Modifier::BOLD))
+}
+
+fn command_failure_style(theme: &Theme) -> Style {
+    theme
+        .named_style("terminal-command-failure")
+        .or_else(|| theme.named_style("status-segment-error"))
+        .unwrap_or_else(|| Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
 }
 
 struct TerminalShared {
@@ -1476,6 +1575,7 @@ pub struct TerminalEmulator {
     last_area: Option<Rect>,
     scroll_step: u16,
     capture_on_click: bool,
+    command_block_presentation: TerminalCommandBlockPresentation,
     process: Option<TerminalProcess>,
     on_close: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -1522,6 +1622,7 @@ impl TerminalEmulator {
             last_area: None,
             scroll_step: DEFAULT_SCROLL_STEP,
             capture_on_click: true,
+            command_block_presentation: TerminalCommandBlockPresentation::default(),
             process: None,
             on_close: None,
         }
@@ -1593,6 +1694,15 @@ impl TerminalEmulator {
 
     pub fn capture_on_click(mut self, enabled: bool) -> Self {
         self.capture_on_click = enabled;
+        self
+    }
+
+    /// Enables or disables visual presentation for OSC 133 command blocks.
+    pub fn command_block_presentation(
+        mut self,
+        presentation: TerminalCommandBlockPresentation,
+    ) -> Self {
+        self.command_block_presentation = presentation;
         self
     }
 
@@ -1980,6 +2090,11 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
+        let command_blocks = if self.command_block_presentation.is_enabled() {
+            shared.command_marks.clone()
+        } else {
+            Vec::new()
+        };
         let max_scrollback = shared.max_scrollback();
         let screen = shared.parser.screen_mut();
         let visible_top = visible_top_row(max_scrollback, screen.scrollback());
@@ -1987,10 +2102,19 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         let base_style = ctx.theme.window_bg;
         let base_fg = base_style.fg;
         let base_bg = base_style.bg;
+        let command_output_style = command_output_style(ctx.theme);
+        let command_separator_style = command_separator_style(ctx.theme);
+        let command_failure_style = command_failure_style(ctx.theme);
 
         let buf = frame.buffer_mut();
         for y in 0..area.height {
             let absolute_row = visible_top.saturating_add(usize::from(y));
+            let row_presentation = command_row_presentation(&command_blocks, absolute_row);
+            let separator_start = if row_presentation.separator {
+                command_separator_start(screen, y, area.width)
+            } else {
+                area.width
+            };
             let selected_ranges = selection_range
                 .map(|range| {
                     selected_cell_ranges_for_screen_row(screen, y, absolute_row, area.width, range)
@@ -1998,8 +2122,8 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                 .unwrap_or_default();
             for x in 0..area.width {
                 let cell = screen.cell(y, x);
-                let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
-                let symbol = cell
+                let mut is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
+                let mut symbol = cell
                     .map(|c| {
                         if c.is_wide_continuation() || c.contents().is_empty() {
                             " "
@@ -2012,6 +2136,24 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                 let style = cell
                     .map(|c| cell_style(c, base_fg, base_bg))
                     .unwrap_or(base_style);
+                let style = if row_presentation.output {
+                    style.patch(command_output_style)
+                } else {
+                    style
+                };
+                let style = if row_presentation.separator && x >= separator_start && !is_wide_cont {
+                    symbol = COMMAND_SEPARATOR_SYMBOL;
+                    style.patch(command_separator_style)
+                } else {
+                    style
+                };
+                let style = if row_presentation.failed_marker && x == area.width.saturating_sub(1) {
+                    symbol = COMMAND_FAILURE_SYMBOL;
+                    is_wide_cont = false;
+                    style.patch(command_failure_style)
+                } else {
+                    style
+                };
                 let style = if selected_ranges
                     .iter()
                     .any(|(start, end)| x >= *start && x < *end)
