@@ -60,6 +60,10 @@ fn terminal_border_is_flush_left(screen: &str) -> bool {
         .any(|line| line.starts_with('╔') && line.contains(" Terminal "))
 }
 
+fn send_f10(host: &mut PtyTestHost) {
+    host.send_str("\x1b[21~").expect("F10");
+}
+
 #[test]
 fn pty_terminal_does_not_intercept_outside_mouse() {
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
@@ -162,7 +166,7 @@ fn pty_terminal_prefix_commands_drive_desktop_chrome() {
     wait_for_text(&host, "CAP=ON");
 
     host.send_ctrl('b').expect("prefix");
-    host.send_str("\x1b[21~").expect("F10");
+    send_f10(&mut host);
     wait_for_text(&host, "Menu:");
     wait_for_text(&host, "ACTIVE=ON");
 
@@ -203,6 +207,78 @@ fn pty_terminal_prefix_commands_drive_desktop_chrome() {
         "prefix+z should maximize the terminal window\n--- screen ---\n{}",
         host.screen_contents().unwrap_or_default()
     );
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "stty raw -echo; ",
+        "printf 'READY-READ\\r\\n'; ",
+        "byte=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'); ",
+        "printf 'BYTE=%s\\r\\n' \"$byte\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    wait_for_text(&host, "READY-READ");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_ctrl('b').expect("literal prefix escape");
+    wait_for_text(&host, "BYTE=02");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+
+    wait_for_text(&host, "FOCUS=TERM");
+    wait_for_text(&host, "CAP=ON");
+
+    let screen = host.screen_contents().unwrap_or_default();
+    let (term_rect, tools_rect) = rects_from_screen(&screen).expect("read rects");
+    let term_rect = term_rect.expect("term rect");
+    let tools_rect = tools_rect.expect("tools rect");
+
+    host.click(
+        tools_rect.x.saturating_add(2),
+        tools_rect.y.saturating_add(2),
+    )
+    .expect("focus tools window");
+    wait_for_text(&host, "FOCUS=TOOLS");
+    wait_for_text(&host, "CAP=OFF");
+
+    send_f10(&mut host);
+    wait_for_text(&host, "Menu:");
+    wait_for_text(&host, "ACTIVE=ON");
+
+    host.send_str("\x1b").expect("close menu");
+    wait_for_text(&host, "ACTIVE=OFF");
+
+    host.click(term_rect.x.saturating_add(2), term_rect.y.saturating_add(2))
+        .expect("focus terminal window");
+    wait_for_text(&host, "FOCUS=TERM");
+    wait_for_text(&host, "CAP=ON");
+
+    host.send_ctrl('g').expect("release terminal capture");
+    wait_for_text(&host, "CAP=OFF");
+
+    send_f10(&mut host);
+    wait_for_text(&host, "Menu:");
+    wait_for_text(&host, "ACTIVE=ON");
+
+    host.send_str("\x1b").expect("close menu");
+    wait_for_text(&host, "ACTIVE=OFF");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

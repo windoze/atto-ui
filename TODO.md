@@ -55,7 +55,9 @@
 - [x] **[DONE] M3.4 事件派发桥接** - 复核并收敛 M3.3 引入的 typed `ComponentAction` 外壳命令桥接（替代 raw-key `EventResult::ignored()` 冒泡，避免 `前缀+w/z` 无法对应现有全局快捷键），确保 focused view、pointer capture、tooltip view、`send_event_to_window` 等路径语义一致，modal 仍阻断外壳命令。
   - 完成记录（2026-07-12）：收敛 typed `ComponentAction` 到统一 desktop bridge，`WindowManagerAction` 可携带组件结果并由 `Desktop` 统一处理 close/menu/window-mode/maximize 等外壳命令；focused view、titlebar、pointer capture、tooltip hit-test、drag/drop 和 `send_event_to_window` 均复用同一处理路径。modal 激活时 shell command 类组件动作会被消费并清理 which-key，不会激活菜单、窗口模式或最大化外壳状态。
   - 验证：`cargo test -p atto-ui --lib component_action -- --nocapture`、`cargo test -p atto-ui --lib modal -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M3.5 测试** - PTY 覆盖 capture 态 `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + 前缀` 字面前缀到子进程；非终端窗口快捷键仍直达、capture 释放后 `F10` 直达。
+- [x] **[DONE] M3.5 测试** - PTY 覆盖 capture 态 `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + 前缀` 字面前缀到子进程；非终端窗口快捷键仍直达、capture 释放后 `F10` 直达。
+  - 完成记录（2026-07-12）：保留并复跑既有 `pty_terminal_prefix_commands_drive_desktop_chrome` 覆盖 capture 态 `前缀+F10` 激活菜单与 `前缀+w` 进入窗口模式；新增 PTY 子进程 raw-byte 回归，验证 `前缀+前缀` 只向子进程发送单个字面 `Ctrl+B`（`BYTE=02`）；新增非终端 Tools 窗口焦点下 `F10` 直达菜单，以及终端 capture 释放后 `F10` 直达菜单的回归覆盖。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_prefix_commands_drive_desktop_chrome pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M3.R Review** - 复核前缀不吞掉子进程需要的键（可靠转义）、命令表可配置、双向 escape 收敛为单一前缀，验证通过。
 
 ## 阶段 M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）

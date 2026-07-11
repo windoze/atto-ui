@@ -19,7 +19,7 @@ use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
-use atto_ui_terminal::{TerminalEmulator, TerminalHandle};
+use atto_ui_terminal::{TerminalEmulator, TerminalHandle, TerminalShortcut};
 
 const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:snapshot-window:windows";
@@ -116,7 +116,10 @@ fn is_plain_restart_key(event: &Event) -> bool {
 fn build_terminal_view(
     command: Option<&TerminalCommand>,
 ) -> Result<(TerminalEmulator, TerminalHandle)> {
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().release_shortcut(TerminalShortcut::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    ));
     if let Some(command) = command {
         terminal.spawn_process(&command.program, &command.args)?;
     }
