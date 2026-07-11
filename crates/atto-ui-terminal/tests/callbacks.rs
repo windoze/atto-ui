@@ -1,7 +1,12 @@
+use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use atto_ui_terminal::{TerminalClipboardCopy, TerminalCommandBlock, TerminalEmulator};
+use atto_ui_terminal::{
+    TerminalClipboardCopy, TerminalCommandBlock, TerminalEmulator, TerminalShellIntegration,
+};
+use portable_pty::CommandBuilder;
 
 #[test]
 fn terminal_callbacks_report_window_title_and_icon_name() {
@@ -274,5 +279,39 @@ fn terminal_callbacks_are_observable_from_spawned_shell_output() {
     assert_eq!(
         handle.exit_status().map(|status| status.exit_code()),
         Some(12)
+    );
+}
+
+#[test]
+fn terminal_shell_integration_can_be_injected_into_spawned_bash() {
+    if !Path::new("/bin/bash").exists() {
+        return;
+    }
+
+    let mut terminal =
+        TerminalEmulator::new().shell_integration(TerminalShellIntegration::enabled());
+    let handle = terminal.handle();
+    let mut cmd = CommandBuilder::new("/bin/bash");
+    cmd.env("ATTO_UI_SHELL_INTEGRATION_NO_USER_RC", "1");
+    terminal.spawn_command(cmd).expect("spawn integrated bash");
+
+    handle.send_input_bytes(b"printf 'shell-integration-ok\\n'\nexit 23\n");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while handle.exit_status().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(handle.last_shell_integration_error(), None);
+    assert_eq!(
+        handle.exit_status().map(|status| status.exit_code()),
+        Some(23)
+    );
+    assert!(handle.snapshot().text().contains("shell-integration-ok"));
+    assert!(
+        handle
+            .command_blocks()
+            .iter()
+            .any(|block| block.exit_code == Some(0)),
+        "injected integration should report at least the completed printf command"
     );
 }

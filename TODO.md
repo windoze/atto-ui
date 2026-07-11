@@ -105,7 +105,9 @@
 - [x] **[DONE] M5.4 第 2 层 交互【外壳层】** - 命令级导航（`Ctrl+↑/↓` 跳上/下一条命令）、选择粒度升级到整条命令输出、右键「重跑/复制命令/复制输出」。
   - 完成记录（2026-07-12）：终端命令块记录补充 OSC 133 marker 列坐标，保留既有行号查询的同时支持精确提取命令文本与输出文本。`TerminalHandle` 新增命令块命中、上一条/下一条命令导航、整条输出选区、复制命令、复制输出与重跑命令接口；`Ctrl+↑/↓` 在存在命令块时本地滚动到相邻命令且不转发给子进程，无标记时继续降级为普通输入路径。终端 window fixture 与 `terminal_viewer` 接入右键 Command 菜单，支持 Rerun / Copy command / Copy output，并在打开菜单时把选区提升为整条命令输出。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_ctrl_arrows_navigate_command_blocks_without_forwarding -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_command_context_menu_copies_output_and_reruns --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
+- [x] **[DONE] M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
+  - 完成记录（2026-07-12）：新增默认关闭的 `TerminalShellIntegration` 配置面，组件 builder、`TerminalHandle` 与动态组件 schema 均可读写开关；默认零侵入路径继续只消费用户 shell 已发出的 OSC 133/7 标记，无标记时第 1/2 层仍降级为普通 scrollback。开启后，`spawn_command` 会对支持的交互式 bash/zsh 启动注入临时 shell integration 脚本，生成 OSC 133/7 标记；非交互式 `-c` 等命令和不支持的 shell 保持原样。注入脚本临时文件随进程生命周期清理，注入失败会记录到 handle 可查询错误并继续按未注入命令启动，避免第 1/2 层硬依赖第 3 层成功。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal shell_integration -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
 - [ ] **M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
 

@@ -1,7 +1,12 @@
 use std::collections::VecDeque;
-use std::io::{Read, Write};
+use std::env;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io::{ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -32,6 +37,7 @@ const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
 const COMMAND_FAILURE_SYMBOL: &str = "!";
+static SHELL_INTEGRATION_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Keyboard shortcut used to release terminal input capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +55,26 @@ pub enum TerminalCommandBlockPresentation {
 }
 
 impl TerminalCommandBlockPresentation {
+    pub const fn enabled() -> Self {
+        Self::Enabled
+    }
+
+    const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+/// Spawn-time shell integration policy for emitting OSC 133/7 command markers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerminalShellIntegration {
+    /// Do not mutate spawned shells. User-provided shell integration still works.
+    #[default]
+    Disabled,
+    /// Inject startup snippets for supported interactive shells.
+    Enabled,
+}
+
+impl TerminalShellIntegration {
     pub const fn enabled() -> Self {
         Self::Enabled
     }
@@ -95,6 +121,8 @@ mod tests {
             on_clipboard_copy: None,
             on_command_finished: None,
             system_clipboard: None,
+            shell_integration: TerminalShellIntegration::default(),
+            last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
             window_title: None,
@@ -238,6 +266,94 @@ mod tests {
             Some("/tmp/你好")
         );
         assert_eq!(parse_osc7_cwd(b"https://example.invalid/tmp"), None);
+    }
+
+    #[test]
+    fn shell_integration_defaults_to_zero_intrusion() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+        let mut cmd = CommandBuilder::new("/bin/bash");
+
+        let files = prepare_shell_integration(&mut cmd, handle.shell_integration())
+            .expect("disabled shell integration is infallible");
+
+        assert_eq!(
+            handle.shell_integration(),
+            TerminalShellIntegration::Disabled
+        );
+        assert!(files.is_none());
+        assert_eq!(cmd.get_argv().as_slice(), [OsString::from("/bin/bash")]);
+    }
+
+    #[test]
+    fn shell_integration_wraps_interactive_bash() {
+        let mut cmd = CommandBuilder::new("/bin/bash");
+
+        let files = prepare_shell_integration(&mut cmd, TerminalShellIntegration::enabled())
+            .expect("prepare integration")
+            .expect("bash integration files");
+
+        assert_eq!(
+            cmd.get_argv().as_slice(),
+            [
+                OsString::from("/bin/bash"),
+                OsString::from("--rcfile"),
+                files.entrypoint().as_os_str().to_os_string(),
+                OsString::from("-i")
+            ]
+        );
+        assert_eq!(
+            cmd.get_env("ATTO_UI_SHELL_INTEGRATION"),
+            Some(OsStr::new("1"))
+        );
+        assert!(
+            fs::read_to_string(files.entrypoint())
+                .expect("read bash integration script")
+                .contains("OSC 133/7")
+        );
+
+        let root = files.root().to_path_buf();
+        drop(files);
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn shell_integration_leaves_non_interactive_shell_commands_unchanged() {
+        let mut cmd = CommandBuilder::new("/bin/bash");
+        cmd.arg("-c");
+        cmd.arg("echo unchanged");
+
+        let files = prepare_shell_integration(&mut cmd, TerminalShellIntegration::enabled())
+            .expect("prepare integration");
+
+        assert!(files.is_none());
+        assert_eq!(
+            cmd.get_argv().as_slice(),
+            [
+                OsString::from("/bin/bash"),
+                OsString::from("-c"),
+                OsString::from("echo unchanged")
+            ]
+        );
+        assert_eq!(cmd.get_env("ATTO_UI_SHELL_INTEGRATION"), None);
+    }
+
+    #[test]
+    fn shell_integration_mode_is_queryable_and_mutable() {
+        let terminal =
+            TerminalEmulator::new().shell_integration(TerminalShellIntegration::enabled());
+        let handle = terminal.handle();
+
+        assert_eq!(
+            handle.shell_integration(),
+            TerminalShellIntegration::enabled()
+        );
+        handle.set_shell_integration(TerminalShellIntegration::Disabled);
+        assert_eq!(
+            handle.shell_integration(),
+            TerminalShellIntegration::Disabled
+        );
+        assert_eq!(handle.last_shell_integration_error(), None);
     }
 
     #[test]
@@ -707,6 +823,195 @@ where
     ))
 }
 
+const BASH_SHELL_INTEGRATION_SCRIPT: &str = r#"# atto-ui OSC 133/7 shell integration for bash.
+if [ -z "${ATTO_UI_SHELL_INTEGRATION_NO_USER_RC:-}" ] && [ -r "${HOME:-}/.bashrc" ]; then
+  . "${HOME}/.bashrc"
+fi
+
+__atto_ui_emit_cwd() {
+  printf '\033]7;file://%s%s\a' "${HOSTNAME:-localhost}" "${PWD}"
+}
+
+__atto_ui_precmd() {
+  local __atto_ui_status=$?
+  if [ "${__atto_ui_prompt_seen:-0}" = 1 ]; then
+    printf '\033]133;D;%s\a' "${__atto_ui_status}"
+  fi
+  __atto_ui_prompt_seen=1
+  __atto_ui_emit_cwd
+  printf '\033]133;A\a'
+}
+
+PS0=$'\[\033]133;B\a\033]133;C\a\]'
+if [ -n "${PROMPT_COMMAND:-}" ]; then
+  PROMPT_COMMAND="__atto_ui_precmd; ${PROMPT_COMMAND}"
+else
+  PROMPT_COMMAND="__atto_ui_precmd"
+fi
+"#;
+
+const ZSH_SHELL_INTEGRATION_SCRIPT: &str = r#"# atto-ui OSC 133/7 shell integration for zsh.
+if [ -z "${ATTO_UI_SHELL_INTEGRATION_NO_USER_RC:-}" ] && [ -n "${ATTO_UI_ORIGINAL_ZDOTDIR:-}" ] && [ -r "${ATTO_UI_ORIGINAL_ZDOTDIR}/.zshrc" ]; then
+  . "${ATTO_UI_ORIGINAL_ZDOTDIR}/.zshrc"
+fi
+
+__atto_ui_emit_cwd() {
+  printf '\033]7;file://%s%s\a' "${HOST:-${HOSTNAME:-localhost}}" "${PWD}"
+}
+
+__atto_ui_precmd() {
+  local __atto_ui_status=$?
+  if [[ "${__atto_ui_prompt_seen:-0}" == 1 ]]; then
+    printf '\033]133;D;%d\a' "${__atto_ui_status}"
+  fi
+  __atto_ui_prompt_seen=1
+  __atto_ui_emit_cwd
+  printf '\033]133;A\a'
+}
+
+__atto_ui_preexec() {
+  printf '\033]133;B\a\033]133;C\a'
+}
+
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd __atto_ui_precmd
+add-zsh-hook preexec __atto_ui_preexec
+"#;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellIntegrationKind {
+    Bash,
+    Zsh,
+}
+
+#[derive(Debug)]
+struct TerminalShellIntegrationFiles {
+    root: PathBuf,
+    entrypoint: PathBuf,
+}
+
+impl TerminalShellIntegrationFiles {
+    fn create(kind: ShellIntegrationKind) -> Result<Self> {
+        let root = create_shell_integration_temp_dir()?;
+        let (entrypoint, script) = match kind {
+            ShellIntegrationKind::Bash => (root.join("bashrc"), BASH_SHELL_INTEGRATION_SCRIPT),
+            ShellIntegrationKind::Zsh => (root.join(".zshrc"), ZSH_SHELL_INTEGRATION_SCRIPT),
+        };
+        fs::write(&entrypoint, script)?;
+        Ok(Self { root, entrypoint })
+    }
+
+    fn entrypoint(&self) -> &Path {
+        &self.entrypoint
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for TerminalShellIntegrationFiles {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.entrypoint);
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn create_shell_integration_temp_dir() -> Result<PathBuf> {
+    for _ in 0..16 {
+        let id = SHELL_INTEGRATION_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path =
+            env::temp_dir().join(format!("atto-ui-shell-integration-{}-{id}", process::id()));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    bail!("failed to allocate a unique shell integration temp directory")
+}
+
+fn prepare_shell_integration(
+    cmd: &mut CommandBuilder,
+    integration: TerminalShellIntegration,
+) -> Result<Option<TerminalShellIntegrationFiles>> {
+    if !integration.is_enabled() {
+        return Ok(None);
+    }
+
+    let argv = cmd.get_argv();
+    let Some(program) = argv.first() else {
+        return Ok(None);
+    };
+    let Some(kind) = shell_integration_kind(program) else {
+        return Ok(None);
+    };
+    if !shell_integration_accepts_args(argv) {
+        return Ok(None);
+    }
+
+    let files = TerminalShellIntegrationFiles::create(kind)?;
+    match kind {
+        ShellIntegrationKind::Bash => {
+            let program = cmd
+                .get_argv()
+                .first()
+                .cloned()
+                .expect("program exists for bash shell integration");
+            let argv = cmd.get_argv_mut();
+            argv.clear();
+            argv.push(program);
+            argv.push(OsString::from("--rcfile"));
+            argv.push(files.entrypoint().as_os_str().to_os_string());
+            argv.push(OsString::from("-i"));
+        }
+        ShellIntegrationKind::Zsh => {
+            if let Some(original_zdotdir) = cmd
+                .get_env("ZDOTDIR")
+                .map(OsStr::to_os_string)
+                .or_else(|| env::var_os("ZDOTDIR"))
+                .or_else(|| env::var_os("HOME"))
+            {
+                cmd.env("ATTO_UI_ORIGINAL_ZDOTDIR", original_zdotdir);
+            }
+            cmd.env("ZDOTDIR", files.root().as_os_str());
+            ensure_interactive_shell_arg(cmd);
+        }
+    }
+    cmd.env("ATTO_UI_SHELL_INTEGRATION", "1");
+    Ok(Some(files))
+}
+
+fn shell_integration_kind(program: &OsStr) -> Option<ShellIntegrationKind> {
+    let name = Path::new(program).file_name()?.to_string_lossy();
+    let name = name.strip_prefix('-').unwrap_or(&name);
+    match name {
+        "bash" => Some(ShellIntegrationKind::Bash),
+        "zsh" => Some(ShellIntegrationKind::Zsh),
+        _ => None,
+    }
+}
+
+fn shell_integration_accepts_args(argv: &[OsString]) -> bool {
+    match &argv[1..] {
+        [] => true,
+        [arg] => arg.as_os_str() == OsStr::new("-i"),
+        _ => false,
+    }
+}
+
+fn ensure_interactive_shell_arg(cmd: &mut CommandBuilder) {
+    if cmd
+        .get_argv()
+        .iter()
+        .skip(1)
+        .any(|arg| arg.as_os_str() == OsStr::new("-i"))
+    {
+        return;
+    }
+    cmd.arg("-i");
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct CommandRowPresentation {
     separator: bool,
@@ -811,6 +1116,8 @@ struct TerminalShared {
     on_clipboard_copy: Option<ClipboardCopyCallback>,
     on_command_finished: Option<CommandFinishedCallback>,
     system_clipboard: Option<SystemClipboard>,
+    shell_integration: TerminalShellIntegration,
+    last_shell_integration_error: Option<String>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
     window_title: Option<String>,
@@ -1566,6 +1873,7 @@ struct TerminalProcess {
     reader_thread: Option<thread::JoinHandle<()>>,
     exit_watcher_thread: Option<thread::JoinHandle<()>>,
     last_size: (u16, u16),
+    _shell_integration_files: Option<TerminalShellIntegrationFiles>,
 }
 
 impl TerminalProcess {
@@ -1820,6 +2128,8 @@ impl TerminalEmulator {
             on_clipboard_copy: None,
             on_command_finished: None,
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
+            shell_integration: TerminalShellIntegration::default(),
+            last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
             window_title: None,
@@ -1945,6 +2255,12 @@ impl TerminalEmulator {
         self
     }
 
+    /// Configures whether supported interactive shell spawns receive OSC 133/7 integration.
+    pub fn shell_integration(self, integration: TerminalShellIntegration) -> Self {
+        self.shared.lock().shell_integration = integration;
+        self
+    }
+
     pub fn on_input<F>(self, callback: F) -> Self
     where
         F: Fn(&[u8]) + Send + Sync + 'static,
@@ -2025,7 +2341,19 @@ impl TerminalEmulator {
     }
 
     /// Spawns a subprocess using a custom command builder.
-    pub fn spawn_command(&mut self, cmd: CommandBuilder) -> Result<()> {
+    pub fn spawn_command(&mut self, mut cmd: CommandBuilder) -> Result<()> {
+        let shell_integration = { self.shared.lock().shell_integration };
+        let shell_integration_files = match prepare_shell_integration(&mut cmd, shell_integration) {
+            Ok(files) => {
+                self.shared.lock().last_shell_integration_error = None;
+                files
+            }
+            Err(error) => {
+                self.shared.lock().last_shell_integration_error = Some(error.to_string());
+                None
+            }
+        };
+
         self.stop_process();
         {
             let mut shared = self.shared.lock();
@@ -2100,6 +2428,7 @@ impl TerminalEmulator {
             reader_thread: Some(reader_thread),
             exit_watcher_thread: Some(exit_watcher_thread),
             last_size: (rows, cols),
+            _shell_integration_files: shell_integration_files,
         });
 
         Ok(())
@@ -2686,6 +3015,21 @@ impl TerminalHandle {
 
     pub fn release_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().release_shortcut
+    }
+
+    /// Updates the spawn-time shell integration policy.
+    pub fn set_shell_integration(&self, integration: TerminalShellIntegration) {
+        self.shared.lock().shell_integration = integration;
+    }
+
+    /// Returns the current spawn-time shell integration policy.
+    pub fn shell_integration(&self) -> TerminalShellIntegration {
+        self.shared.lock().shell_integration
+    }
+
+    /// Returns the last non-fatal shell integration injection error, if any.
+    pub fn last_shell_integration_error(&self) -> Option<String> {
+        self.shared.lock().last_shell_integration_error.clone()
     }
 
     /// Updates the terminal prefix shortcut. Only plain `Ctrl+<ASCII letter>` is accepted.

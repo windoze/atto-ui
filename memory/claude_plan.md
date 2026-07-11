@@ -1,23 +1,25 @@
 # Execution Plan
 
 ## Current objective
-Complete exactly the first incomplete task listed in `TODO.md`, then stop after marking it done and committing the changes.
+Complete exactly the first incomplete task listed in `TODO.md`, then stop after updating task records and committing the result.
 
-Selected task: `M5.4 第 2 层 交互【外壳层】` — command-level navigation with `Ctrl+Up/Down`, command-output selection granularity, and right-click command actions for rerun/copy command/copy output.
-
-## Steps
+## Planned steps
 1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
-2. Inspect only the files and context needed for that task, including `PLAN.md` only if the task or dependency structure requires it.
-3. Implement the task fully, avoiding workarounds or unrelated changes.
-4. Run the required validation in order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task.
-5. Fix any observed unscheduled failures or add the minimum prerequisite task to `TODO.md` if a blocker prevents completion.
-6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling its completion record; update this plan file at major milestones.
-7. Commit all changes for this task with a clear message and the required co-author trailer.
+2. Check the latest commit message only for directly relevant unfinished work tied to that selected task.
+3. Inspect the files and tests relevant to the selected task.
+4. Implement the task completely, preserving existing behavior and codebase conventions.
+5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant tests and full suite as required.
+6. If an unscheduled failing test or blocker appears, either fix it now or add the minimum prerequisite task to `TODO.md` before the blocked task and stop.
+7. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record.
+8. Commit all task-related changes with a descriptive message and the required co-author trailer.
 
-## Implementation notes for M5.4
-1. [DONE] Add precise OSC 133 marker column tracking while keeping existing row-based command block fields available.
-2. [DONE] Add `TerminalHandle` methods for command-block lookup, navigation, output selection, command/output copying, and rerun input.
-3. [DONE] Wire the PTY shell fixture to handle `Ctrl+Up/Down` and right-click command context actions, exposing status text for deterministic tests.
-4. [DONE] Apply the same command interaction wiring to the interactive terminal viewer example.
-5. [DONE] Add targeted unit and PTY tests for command navigation, whole-output selection/copy, and right-click rerun/copy actions.
-6. [DONE] Run formatting, linting, targeted tests, then the workspace test suite if code changed. Formatting, clippy, targeted terminal regressions, and the full workspace test suite have passed.
+## Progress log
+- Initialized plan file before repository inspection.
+- Selected first incomplete task: `M5.5 第 3 层 shell integration【配置面】`.
+- Latest commit is `M5.4` command block interactions, directly preceding this task with no separate unfinished prerequisite noted.
+- Next step: inspect terminal spawn/config surfaces and tests before implementing zero-intrusion/default-off shell integration injection.
+- Implementation direction: add a public default-disabled shell-integration mode, expose it through builder/handle/dynamic properties, and inject OSC 133/7 startup scripts only for supported interactive shell spawns while leaving unsupported or non-interactive commands unchanged.
+- Implemented the shell-integration mode, dynamic property, bash/zsh spawn-time script preparation, temp-file lifetime cleanup, and focused unit/spawn tests. Clippy and focused shell-integration tests have passed.
+- Next step: run the full workspace test suite, then update `TODO.md` and commit if it stays green.
+- Full workspace tests and the explicit format check passed. `TODO.md` now marks M5.5 as `[DONE]` with completion and validation records.
+- Next step: inspect the final diff and commit all task-related files.

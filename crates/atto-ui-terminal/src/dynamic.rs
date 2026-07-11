@@ -8,7 +8,7 @@ use atto_ui::{
     EventMeta, PropertyMeta, ValueType,
 };
 
-use crate::TerminalEmulator;
+use crate::{TerminalEmulator, TerminalShellIntegration};
 
 impl ComponentPropertySchema for TerminalEmulator {
     fn property_schema() -> Vec<PropertyMeta> {
@@ -19,6 +19,7 @@ impl ComponentPropertySchema for TerminalEmulator {
             PropertyMeta::new("capture", ValueType::Bool),
             PropertyMeta::new("capture_on_click", ValueType::Bool),
             PropertyMeta::new("prefix_key", ValueType::String),
+            PropertyMeta::new("shell_integration", ValueType::Bool),
             PropertyMeta::new("scroll_step", ValueType::U64),
         ]
     }
@@ -75,6 +76,14 @@ pub fn register_terminal_emulator(
 
         if let Some(step) = prop_u16(spec, "scroll_step")? {
             view = view.scroll_step(step);
+        }
+
+        if let Some(enabled) = prop_bool(spec, "shell_integration")? {
+            view = view.shell_integration(if enabled {
+                TerminalShellIntegration::enabled()
+            } else {
+                TerminalShellIntegration::Disabled
+            });
         }
 
         if let Some(cb) = event_handle(spec, "input", callbacks.clone()) {

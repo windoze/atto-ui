@@ -16,5 +16,5 @@ pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use terminal::{
     TerminalClipboardCopy, TerminalCommandBlock, TerminalCommandBlockPresentation,
     TerminalEmulator, TerminalHandle, TerminalPrefixBinding, TerminalPrefixCommand,
-    TerminalShortcut, TerminalSnapshot, TerminalSystemClipboard,
+    TerminalShellIntegration, TerminalShortcut, TerminalSnapshot, TerminalSystemClipboard,
 };
