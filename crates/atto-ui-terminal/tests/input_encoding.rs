@@ -4,7 +4,9 @@ use atto_ui::composable::{
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
-use atto_ui_terminal::{TerminalEmulator, TerminalShortcut};
+use atto_ui_terminal::{
+    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalShortcut,
+};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -58,9 +60,11 @@ fn component_key_input(keys: &[KeyEvent]) -> Vec<u8> {
     component_key_input_with_terminal(TerminalEmulator::new(), keys)
 }
 
-fn component_key_actions(keys: &[KeyEvent]) -> Vec<ComponentAction> {
+fn component_key_actions_with_terminal(
+    mut terminal: TerminalEmulator,
+    keys: &[KeyEvent],
+) -> Vec<ComponentAction> {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
     keys.iter()
         .map(|key| {
             terminal
@@ -68,6 +72,10 @@ fn component_key_actions(keys: &[KeyEvent]) -> Vec<ComponentAction> {
                 .action
         })
         .collect()
+}
+
+fn component_key_actions(keys: &[KeyEvent]) -> Vec<ComponentAction> {
+    component_key_actions_with_terminal(TerminalEmulator::new(), keys)
 }
 
 fn ctrl_key(ch: char) -> KeyEvent {
@@ -297,6 +305,75 @@ fn terminal_prefix_command_table_maps_shell_commands_to_component_actions() {
         ]),
         b""
     );
+}
+
+#[test]
+fn terminal_prefix_command_table_can_be_replaced() {
+    let bindings = [TerminalPrefixBinding::new(
+        TerminalShortcut::new(KeyCode::Char('m'), KeyModifiers::NONE),
+        TerminalPrefixCommand::ToggleMaximize,
+    )];
+    let terminal = TerminalEmulator::new().prefix_bindings(bindings);
+
+    assert_eq!(
+        component_key_actions_with_terminal(
+            terminal,
+            &[
+                ctrl_key('b'),
+                KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+            ],
+        ),
+        vec![ComponentAction::None, ComponentAction::ToggleMaximizeWindow]
+    );
+
+    let fallback = component_key_input_with_terminal(
+        TerminalEmulator::new().prefix_bindings(bindings),
+        &[
+            ctrl_key('b'),
+            KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE),
+        ],
+    );
+    assert!(fallback.starts_with(b"\x02"));
+    assert!(fallback.len() > 1);
+}
+
+#[test]
+fn terminal_prefix_command_table_binding_replaces_existing_command() {
+    let terminal = TerminalEmulator::new().prefix_binding(
+        TerminalShortcut::new(KeyCode::Char('W'), KeyModifiers::NONE),
+        TerminalPrefixCommand::ActivateMenu,
+    );
+
+    assert_eq!(
+        component_key_actions_with_terminal(
+            terminal,
+            &[
+                ctrl_key('b'),
+                KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE),
+            ],
+        ),
+        vec![ComponentAction::None, ComponentAction::ActivateMenu]
+    );
+}
+
+#[test]
+fn terminal_prefix_command_table_runtime_replacement_clears_pending_prefix() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    handle.set_prefix_bindings([TerminalPrefixBinding::new(
+        TerminalShortcut::new(KeyCode::Char('m'), KeyModifiers::NONE),
+        TerminalPrefixCommand::ToggleMaximize,
+    )]);
+
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+        context(&theme),
+    );
+
+    assert_eq!(handle.take_input(), b"x");
 }
 
 #[test]

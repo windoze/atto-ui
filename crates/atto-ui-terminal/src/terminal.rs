@@ -74,6 +74,7 @@ mod tests {
             capture: true,
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
+            prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: false,
             dsr_tail: Vec::new(),
@@ -150,6 +151,27 @@ fn default_prefix_shortcut() -> TerminalShortcut {
     }
 }
 
+fn default_prefix_bindings() -> Vec<TerminalPrefixBinding> {
+    vec![
+        TerminalPrefixBinding::new(
+            TerminalShortcut::new(KeyCode::F(10), KeyModifiers::NONE),
+            TerminalPrefixCommand::ActivateMenu,
+        ),
+        TerminalPrefixBinding::new(
+            TerminalShortcut::new(KeyCode::Char('w'), KeyModifiers::NONE),
+            TerminalPrefixCommand::ToggleWindowManagement,
+        ),
+        TerminalPrefixBinding::new(
+            TerminalShortcut::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            TerminalPrefixCommand::ToggleMaximize,
+        ),
+        TerminalPrefixBinding::new(
+            TerminalShortcut::new(KeyCode::Char('['), KeyModifiers::NONE),
+            TerminalPrefixCommand::EnterCopyMode,
+        ),
+    ]
+}
+
 fn prefix_shortcut_from_letter(letter: char) -> Result<TerminalShortcut> {
     normalize_prefix_shortcut(TerminalShortcut::new(
         KeyCode::Char(letter),
@@ -173,6 +195,17 @@ fn normalize_prefix_shortcut(shortcut: TerminalShortcut) -> Result<TerminalShort
         code: KeyCode::Char(letter.to_ascii_lowercase()),
         modifiers: KeyModifiers::CONTROL,
     })
+}
+
+fn normalize_prefix_binding_shortcut(shortcut: TerminalShortcut) -> TerminalShortcut {
+    let code = match shortcut.code {
+        KeyCode::Char(letter) => KeyCode::Char(letter.to_ascii_lowercase()),
+        code => code,
+    };
+    TerminalShortcut {
+        code,
+        modifiers: shortcut.modifiers,
+    }
 }
 
 type InputCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
@@ -199,6 +232,22 @@ pub enum TerminalPrefixCommand {
     ToggleMaximize,
     EnterCopyMode,
     SendPrefix,
+}
+
+/// One configurable binding in the prefix command table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalPrefixBinding {
+    pub shortcut: TerminalShortcut,
+    pub command: TerminalPrefixCommand,
+}
+
+impl TerminalPrefixBinding {
+    pub fn new(shortcut: TerminalShortcut, command: TerminalPrefixCommand) -> Self {
+        Self {
+            shortcut: normalize_prefix_binding_shortcut(shortcut),
+            command,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,6 +331,7 @@ struct TerminalShared {
     capture: bool,
     release_shortcut: TerminalShortcut,
     prefix_shortcut: TerminalShortcut,
+    prefix_bindings: Vec<TerminalPrefixBinding>,
     prefix_pending: bool,
     copy_mode: bool,
     dsr_tail: Vec<u8>,
@@ -300,20 +350,38 @@ impl TerminalShared {
         self.prefix_pending = false;
     }
 
+    fn set_prefix_binding(&mut self, binding: TerminalPrefixBinding) {
+        if let Some(existing) = self
+            .prefix_bindings
+            .iter_mut()
+            .find(|existing| existing.shortcut == binding.shortcut)
+        {
+            *existing = binding;
+        } else {
+            self.prefix_bindings.push(binding);
+        }
+        self.prefix_pending = false;
+    }
+
+    fn set_prefix_bindings(&mut self, bindings: impl IntoIterator<Item = TerminalPrefixBinding>) {
+        self.prefix_bindings.clear();
+        for binding in bindings {
+            self.set_prefix_binding(binding);
+        }
+        self.prefix_pending = false;
+    }
+
     fn prefix_command_for_event(&self, event: KeyEvent) -> Option<TerminalPrefixCommand> {
         if self.prefix_shortcut.matches(event) {
             return Some(TerminalPrefixCommand::SendPrefix);
         }
-        if event.kind == KeyEventKind::Release || event.modifiers != KeyModifiers::NONE {
+        if event.kind == KeyEventKind::Release {
             return None;
         }
-        match event.code {
-            KeyCode::F(10) => Some(TerminalPrefixCommand::ActivateMenu),
-            KeyCode::Char('w') => Some(TerminalPrefixCommand::ToggleWindowManagement),
-            KeyCode::Char('z') => Some(TerminalPrefixCommand::ToggleMaximize),
-            KeyCode::Char('[') => Some(TerminalPrefixCommand::EnterCopyMode),
-            _ => None,
-        }
+        self.prefix_bindings
+            .iter()
+            .find(|binding| binding.shortcut.matches(event))
+            .map(|binding| binding.command)
     }
 
     fn apply_callback_events(
@@ -716,6 +784,7 @@ impl TerminalEmulator {
             capture: true,
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
+            prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: false,
             dsr_tail: Vec::with_capacity(4),
@@ -767,6 +836,27 @@ impl TerminalEmulator {
     /// Sets the terminal prefix key letter, using `Ctrl+letter` as the actual shortcut.
     pub fn prefix_key(self, letter: char) -> Result<Self> {
         self.prefix_shortcut(prefix_shortcut_from_letter(letter)?)
+    }
+
+    /// Adds or replaces one prefix command binding.
+    pub fn prefix_binding(
+        self,
+        shortcut: TerminalShortcut,
+        command: TerminalPrefixCommand,
+    ) -> Self {
+        self.shared
+            .lock()
+            .set_prefix_binding(TerminalPrefixBinding::new(shortcut, command));
+        self
+    }
+
+    /// Replaces the prefix command table.
+    pub fn prefix_bindings(
+        self,
+        bindings: impl IntoIterator<Item = TerminalPrefixBinding>,
+    ) -> Self {
+        self.shared.lock().set_prefix_bindings(bindings);
+        self
     }
 
     pub fn scroll_step(mut self, step: u16) -> Self {
@@ -1335,6 +1425,22 @@ impl TerminalHandle {
 
     pub fn prefix_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().prefix_shortcut
+    }
+
+    /// Adds or replaces one prefix command binding at runtime.
+    pub fn set_prefix_binding(&self, shortcut: TerminalShortcut, command: TerminalPrefixCommand) {
+        self.shared
+            .lock()
+            .set_prefix_binding(TerminalPrefixBinding::new(shortcut, command));
+    }
+
+    /// Replaces the full prefix command table at runtime.
+    pub fn set_prefix_bindings(&self, bindings: impl IntoIterator<Item = TerminalPrefixBinding>) {
+        self.shared.lock().set_prefix_bindings(bindings);
+    }
+
+    pub fn prefix_bindings(&self) -> Vec<TerminalPrefixBinding> {
+        self.shared.lock().prefix_bindings.clone()
     }
 
     /// Returns whether the prefix command table has entered copy-mode.
