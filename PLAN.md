@@ -110,11 +110,11 @@
 
 | 产出 | 说明 |
 |---|---|
-| 分屏/标签页 | 基于现有 `VStack`/`HStack`/`Grid` 在单窗口内做 tmux 式 split panes 或 tab。 |
+| 分屏 | 基于现有组件和功能在单窗口内做 tmux 式 split panes。 |
 | 会话管理 | 新建时选 shell/命令入口；重启已死会话（配合 M1 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。 |
 | spawn 环境 | `spawn_command` 设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发）。 |
 
-验收：PTY 覆盖单窗口内分屏布局、tab 切换、死会话重启、新建时选择 shell/命令并落到指定 cwd。
+验收：PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
 
 ### M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
 
@@ -139,7 +139,7 @@
 | M3 | 依赖 M1（capture 路径稳定），是 M4 copy-mode 的前置。 |
 | M4 | 依赖 M3 前缀键（copy-mode 入口）与 M1 clipboard 回调（后续剪贴板）。 |
 | M5 | 第 1 层依赖 M1 的 `new_with_callbacks`；第 2 层依赖第 1 层的 `command_blocks()`；第 3 层依赖 M6 的 spawn 环境（方案 B）。 |
-| M6 | 分屏/tab 独立；死会话重启依赖 M1 `exit_status`；cwd 继承依赖 M5 OSC 7。 |
+| M6 | 分屏独立；死会话重启依赖 M1 `exit_status`；cwd 继承依赖 M5 OSC 7。 |
 | M7 | 配置模型贯穿全程；配置界面依赖各阶段已暴露的可配置项与 M6 的 shell/profile。 |
 
 建议顺序：M1 → M2 → M3 → M4 → M5（第 1 层可与 M1 顺带） → M6 → M7。M5 第 2/3 层、M6、M7 可按体验需求灵活穿插，互不阻塞。

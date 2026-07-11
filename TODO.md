@@ -113,12 +113,12 @@
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_ -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_ctrl_arrows_navigate_command_blocks -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
 
-## 阶段 M6 - 分屏/标签页 + 会话管理 + spawn 环境（P2）
+## 阶段 M6 - 分屏 + 会话管理 + spawn 环境（P2）
 
-- [ ] **M6.1 分屏/标签页** - 基于现有 `VStack`/`HStack`/`Grid` 在单窗口内做 tmux 式 split panes 或 tab，与既有 WM 浮动窗口形态并存。
+- [ ] **M6.1 分屏** - 基于现有组件和功能在单窗口内做 tmux 式 split panes，与既有 WM 浮动窗口形态并存。
 - [ ] **M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
 - [ ] **M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
-- [ ] **M6.4 测试** - PTY 覆盖单窗口内分屏布局、tab 切换、死会话重启、新建时选择 shell/命令并落到指定 cwd。
+- [ ] **M6.4 测试** - PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
 - [ ] **M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
 
 ## 阶段 M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
