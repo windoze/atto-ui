@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use atto_ui_terminal::{TerminalClipboardCopy, TerminalEmulator};
@@ -71,9 +71,19 @@ fn terminal_callbacks_report_audible_bells() {
 #[test]
 fn terminal_callbacks_report_clipboard_copy_requests() {
     let (tx, rx) = mpsc::channel();
-    let terminal = TerminalEmulator::new().on_clipboard_copy(move |copy| {
-        tx.send(copy.clone()).expect("send clipboard copy");
-    });
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new()
+        .system_clipboard(move |text: &str| {
+            copied_for_clipboard
+                .lock()
+                .expect("clipboard lock")
+                .push(text.to_string());
+            Ok(())
+        })
+        .on_clipboard_copy(move |copy| {
+            tx.send(copy.clone()).expect("send clipboard copy");
+        });
     let handle = terminal.handle();
     let expected = TerminalClipboardCopy {
         selector: b"c".to_vec(),
@@ -83,12 +93,55 @@ fn terminal_callbacks_report_clipboard_copy_requests() {
     assert_eq!(handle.last_clipboard_copy(), None);
     handle.process_output(b"\x1b]52;c;aGVsbG8=\x07");
 
+    assert_eq!(expected.decoded_text().expect("decode OSC 52"), "hello");
     assert_eq!(
         rx.recv_timeout(Duration::from_secs(1))
             .expect("clipboard callback"),
         expected
     );
     assert_eq!(handle.last_clipboard_copy(), Some(expected));
+    assert_eq!(handle.copied_text().as_deref(), Some("hello"));
+    assert_eq!(
+        handle.last_system_clipboard_text().as_deref(),
+        Some("hello")
+    );
+    assert_eq!(handle.last_system_clipboard_error(), None);
+    assert_eq!(copied.lock().expect("clipboard lock").as_slice(), ["hello"]);
+}
+
+#[test]
+fn terminal_osc52_non_clipboard_selector_does_not_sync_system_clipboard() {
+    let (tx, rx) = mpsc::channel();
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new()
+        .system_clipboard(move |text: &str| {
+            copied_for_clipboard
+                .lock()
+                .expect("clipboard lock")
+                .push(text.to_string());
+            Ok(())
+        })
+        .on_clipboard_copy(move |copy| {
+            tx.send(copy.clone()).expect("send clipboard copy");
+        });
+    let handle = terminal.handle();
+    let expected = TerminalClipboardCopy {
+        selector: b"p".to_vec(),
+        data: b"cHJpbWFyeQ==".to_vec(),
+    };
+
+    handle.process_output(b"\x1b]52;p;cHJpbWFyeQ==\x07");
+
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("clipboard callback"),
+        expected
+    );
+    assert_eq!(handle.last_clipboard_copy(), Some(expected));
+    assert_eq!(handle.copied_text(), None);
+    assert_eq!(handle.last_system_clipboard_text(), None);
+    assert!(copied.lock().expect("clipboard lock").is_empty());
 }
 
 #[test]
@@ -97,7 +150,16 @@ fn terminal_callbacks_are_observable_from_spawned_shell_output() {
     let (bell_tx, bell_rx) = mpsc::channel();
     let (clipboard_tx, clipboard_rx) = mpsc::channel();
     let (exit_tx, exit_rx) = mpsc::channel();
+    let system_clipboard = Arc::new(Mutex::new(Vec::new()));
+    let system_clipboard_for_callback = Arc::clone(&system_clipboard);
     let mut terminal = TerminalEmulator::new()
+        .system_clipboard(move |text: &str| {
+            system_clipboard_for_callback
+                .lock()
+                .expect("clipboard lock")
+                .push(text.to_string());
+            Ok(())
+        })
         .on_window_title(move |title| {
             title_tx.send(title.to_string()).expect("send title");
         })
@@ -146,6 +208,11 @@ fn terminal_callbacks_are_observable_from_spawned_shell_output() {
     assert_eq!(handle.window_title().as_deref(), Some("Spawned Shell"));
     assert_eq!(handle.audible_bell_count(), 1);
     assert_eq!(handle.last_clipboard_copy(), Some(expected_clipboard));
+    assert_eq!(handle.copied_text().as_deref(), Some("spawned"));
+    assert_eq!(
+        system_clipboard.lock().expect("clipboard lock").as_slice(),
+        ["spawned"]
+    );
     assert_eq!(
         exit_rx
             .recv_timeout(Duration::from_secs(5))

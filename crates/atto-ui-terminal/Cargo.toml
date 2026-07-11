@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.101"
+arboard = "3"
 atto-ui = { path = "../.." }
+base64 = "0.22.1"
 crossterm = "0.29.0"
 parking_lot = "0.12.5"
 portable-pty = "0.9.0"

@@ -23,6 +23,10 @@
 
 ## Progress Log
 
+- New invocation started. I will re-read `TODO.md`, select the first task whose title is not prefixed with `[DONE]`, and complete only that task before stopping.
+- Selected first incomplete task: `M4.6 剪贴板（后续，可选）` from `TODO.md`. The implementation goal is to add system clipboard support via `arboard` and wire OSC 52 clipboard callbacks with OSC 52 taking priority over `arboard` fallback.
+- Implemented terminal system clipboard wiring: default copy backend now emits OSC52 first and tries `arboard`, selection/copy-mode copies sync to the configured system clipboard, and valid OSC52 clipboard callbacks update both the local copy buffer and configured system clipboard. Focused terminal clipboard tests pass.
+- Required validation passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`. `TODO.md` is updated to mark `M4.6` as `[DONE]`.
 - Initialized plan before reading project task files or running commands.
 - Selected first incomplete task: `M4.5 alt screen 滚动分流` from `TODO.md`.
 - Latest commit is `[M4.4] Implement terminal local clipboard`; it does not explicitly mention an unfinished issue that changes the selected task ordering.

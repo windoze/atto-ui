@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
+use base64::Engine;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -71,12 +72,15 @@ mod tests {
             on_window_icon_name: None,
             on_audible_bell: None,
             on_clipboard_copy: None,
+            system_clipboard: None,
             exit_status: None,
             process_running: false,
             window_title: None,
             window_icon_name: None,
             audible_bell_count: 0,
             last_clipboard_copy: None,
+            last_system_clipboard_text: None,
+            last_system_clipboard_error: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
@@ -142,6 +146,45 @@ mod tests {
 
         assert!(collect_dsr_responses(&mut shared, b"x").is_empty());
         assert!(shared.dsr_tail.is_empty());
+    }
+
+    #[test]
+    fn system_clipboard_backend_uses_arboard_when_osc52_fails() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let osc52_calls = Arc::clone(&calls);
+        let arboard_calls = Arc::clone(&calls);
+
+        copy_text_with_backends(
+            "copy me",
+            move |text| {
+                osc52_calls.lock().push(format!("osc52:{text}"));
+                Err(anyhow!("osc52 failed"))
+            },
+            move |text| {
+                arboard_calls.lock().push(format!("arboard:{text}"));
+                Ok(())
+            },
+        )
+        .expect("arboard fallback should succeed");
+
+        assert_eq!(
+            calls.lock().as_slice(),
+            ["osc52:copy me", "arboard:copy me"]
+        );
+    }
+
+    #[test]
+    fn system_clipboard_backend_reports_when_both_paths_fail() {
+        let error = copy_text_with_backends(
+            "copy me",
+            |_| Err(anyhow!("osc52 failed")),
+            |_| Err(anyhow!("arboard failed")),
+        )
+        .expect_err("both backends should fail")
+        .to_string();
+
+        assert!(error.contains("osc52 failed"));
+        assert!(error.contains("arboard failed"));
     }
 }
 
@@ -225,7 +268,39 @@ type ExitCallback = Arc<dyn Fn(ExitStatus) + Send + Sync>;
 type TextCallback = Arc<dyn Fn(&str) + Send + Sync>;
 type BellCallback = Arc<dyn Fn() + Send + Sync>;
 type ClipboardCopyCallback = Arc<dyn Fn(&TerminalClipboardCopy) + Send + Sync>;
+type SystemClipboard = Arc<dyn TerminalSystemClipboard>;
 type TerminalParser = vt100::Parser<TerminalCallbacks>;
+
+/// System clipboard sink used by [`TerminalEmulator`] copy operations.
+///
+/// The default implementation sends an OSC 52 clipboard request to the host terminal first and
+/// then tries `arboard`, so remote-capable terminal clipboard support takes priority while native
+/// clipboard APIs still cover hosts that ignore OSC 52.
+pub trait TerminalSystemClipboard: Send + Sync {
+    fn copy_text(&self, text: &str) -> Result<()>;
+}
+
+impl<F> TerminalSystemClipboard for F
+where
+    F: Fn(&str) -> Result<()> + Send + Sync,
+{
+    fn copy_text(&self, text: &str) -> Result<()> {
+        self(text)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DefaultTerminalSystemClipboard;
+
+impl TerminalSystemClipboard for DefaultTerminalSystemClipboard {
+    fn copy_text(&self, text: &str) -> Result<()> {
+        copy_text_with_backends(
+            text,
+            |text| atto_ui::clipboard::copy_to_system_clipboard(text).map_err(Into::into),
+            copy_text_with_arboard,
+        )
+    }
+}
 
 /// OSC 52 clipboard-copy request observed in the terminal output stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,6 +309,22 @@ pub struct TerminalClipboardCopy {
     pub selector: Vec<u8>,
     /// Base64-encoded clipboard payload from the OSC 52 sequence.
     pub data: Vec<u8>,
+}
+
+impl TerminalClipboardCopy {
+    /// Returns whether this OSC 52 request targets the standard clipboard selection.
+    pub fn targets_system_clipboard(&self) -> bool {
+        self.selector.is_empty() || self.selector.contains(&b'c')
+    }
+
+    /// Decodes the OSC 52 base64 payload as UTF-8 clipboard text.
+    pub fn decoded_text(&self) -> Result<String> {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.data)
+            .map_err(|error| anyhow!("invalid OSC 52 clipboard payload: {error}"))?;
+        String::from_utf8(bytes)
+            .map_err(|error| anyhow!("OSC 52 clipboard payload is not UTF-8 text: {error}"))
+    }
 }
 
 /// Command selected by the terminal prefix key table.
@@ -329,6 +420,7 @@ enum TerminalCallbackDispatch {
     WindowIconName(TextCallback, String),
     AudibleBell(BellCallback),
     ClipboardCopy(ClipboardCopyCallback, TerminalClipboardCopy),
+    SystemClipboardCopy(String),
 }
 
 fn terminal_parser(rows: u16, cols: u16, scrollback_len: usize) -> TerminalParser {
@@ -351,6 +443,36 @@ fn encode_paste_text(screen: &vt100::Screen, text: &str) -> Vec<u8> {
     }
 }
 
+fn copy_text_with_arboard(text: &str) -> Result<()> {
+    let mut clipboard = arboard::Clipboard::new()?;
+    clipboard.set_text(text.to_owned())?;
+    Ok(())
+}
+
+fn copy_text_with_backends<O, A>(text: &str, osc52: O, arboard: A) -> Result<()>
+where
+    O: FnOnce(&str) -> Result<()>,
+    A: FnOnce(&str) -> Result<()>,
+{
+    let osc52_result = osc52(text);
+    let arboard_result = arboard(text);
+    if osc52_result.is_ok() || arboard_result.is_ok() {
+        return Ok(());
+    }
+
+    let osc52_error = osc52_result
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_else(|| "unknown OSC 52 error".to_string());
+    let arboard_error = arboard_result
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_else(|| "unknown arboard error".to_string());
+    Err(anyhow!(
+        "failed to copy text to system clipboard via OSC 52 ({osc52_error}) or arboard ({arboard_error})"
+    ))
+}
+
 struct TerminalShared {
     parser: TerminalParser,
     scrollback_len: usize,
@@ -362,12 +484,15 @@ struct TerminalShared {
     on_window_icon_name: Option<TextCallback>,
     on_audible_bell: Option<BellCallback>,
     on_clipboard_copy: Option<ClipboardCopyCallback>,
+    system_clipboard: Option<SystemClipboard>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
     window_title: Option<String>,
     window_icon_name: Option<String>,
     audible_bell_count: u64,
     last_clipboard_copy: Option<TerminalClipboardCopy>,
+    last_system_clipboard_text: Option<String>,
+    last_system_clipboard_error: Option<String>,
     capture: bool,
     release_shortcut: TerminalShortcut,
     prefix_shortcut: TerminalShortcut,
@@ -456,6 +581,12 @@ impl TerminalShared {
                 }
                 TerminalCallbackEvent::ClipboardCopy(copy) => {
                     self.last_clipboard_copy = Some(copy.clone());
+                    if copy.targets_system_clipboard()
+                        && let Ok(text) = copy.decoded_text()
+                    {
+                        self.copy_buffer = Some(text.clone());
+                        dispatches.push(TerminalCallbackDispatch::SystemClipboardCopy(text));
+                    }
                     if let Some(callback) = self.on_clipboard_copy.clone() {
                         dispatches.push(TerminalCallbackDispatch::ClipboardCopy(callback, copy));
                     }
@@ -506,10 +637,11 @@ impl TerminalShared {
         self.selection.clear();
     }
 
-    fn finish_copy_mode_copy(&mut self) {
-        let _ = self.copy_selection();
+    fn finish_copy_mode_copy(&mut self) -> Option<String> {
+        let text = self.copy_selection();
         self.copy_mode = None;
         self.selection.clear();
+        text
     }
 
     fn copy_selection(&mut self) -> Option<String> {
@@ -685,6 +817,7 @@ enum CapturedKeyAction {
     Consumed,
     Dispatch(Vec<u8>),
     Component(ComponentAction),
+    SystemClipboardCopy(String),
 }
 
 fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
@@ -725,7 +858,9 @@ fn handle_copy_mode_key(shared: &mut TerminalShared, event: KeyEvent) -> Capture
             shared.cancel_copy_mode();
         }
         KeyCode::Enter => {
-            shared.finish_copy_mode_copy();
+            if let Some(text) = shared.finish_copy_mode_copy() {
+                return CapturedKeyAction::SystemClipboardCopy(text);
+            }
         }
         KeyCode::Up => {
             let _ = shared.move_copy_mode_cursor(-1, 0);
@@ -756,7 +891,11 @@ fn handle_copy_mode_key(shared: &mut TerminalShared, event: KeyEvent) -> Capture
             match ch.to_ascii_lowercase() {
                 'q' => shared.cancel_copy_mode(),
                 'v' | ' ' => shared.begin_copy_mode_selection(),
-                'y' => shared.finish_copy_mode_copy(),
+                'y' => {
+                    if let Some(text) = shared.finish_copy_mode_copy() {
+                        return CapturedKeyAction::SystemClipboardCopy(text);
+                    }
+                }
                 'h' => {
                     let _ = shared.move_copy_mode_cursor(0, -1);
                 }
@@ -932,13 +1071,30 @@ fn forward_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
     }
 }
 
-fn dispatch_terminal_callback_events(dispatches: Vec<TerminalCallbackDispatch>) {
+fn dispatch_system_clipboard_copy(shared: &Arc<Mutex<TerminalShared>>, text: &str) {
+    let clipboard = { shared.lock().system_clipboard.clone() };
+    let Some(clipboard) = clipboard else {
+        return;
+    };
+    let result = clipboard.copy_text(text);
+    let mut shared = shared.lock();
+    shared.last_system_clipboard_text = Some(text.to_string());
+    shared.last_system_clipboard_error = result.err().map(|error| error.to_string());
+}
+
+fn dispatch_terminal_callback_events(
+    shared: &Arc<Mutex<TerminalShared>>,
+    dispatches: Vec<TerminalCallbackDispatch>,
+) {
     for dispatch in dispatches {
         match dispatch {
             TerminalCallbackDispatch::WindowTitle(callback, title) => callback(&title),
             TerminalCallbackDispatch::WindowIconName(callback, icon_name) => callback(&icon_name),
             TerminalCallbackDispatch::AudibleBell(callback) => callback(),
             TerminalCallbackDispatch::ClipboardCopy(callback, copy) => callback(&copy),
+            TerminalCallbackDispatch::SystemClipboardCopy(text) => {
+                dispatch_system_clipboard_copy(shared, &text);
+            }
         }
     }
 }
@@ -1073,12 +1229,15 @@ impl TerminalEmulator {
             on_window_icon_name: None,
             on_audible_bell: None,
             on_clipboard_copy: None,
+            system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
             exit_status: None,
             process_running: false,
             window_title: None,
             window_icon_name: None,
             audible_bell_count: 0,
             last_clipboard_copy: None,
+            last_system_clipboard_text: None,
+            last_system_clipboard_error: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             prefix_shortcut: default_prefix_shortcut(),
@@ -1166,6 +1325,21 @@ impl TerminalEmulator {
 
     pub fn capture_on_click(mut self, enabled: bool) -> Self {
         self.capture_on_click = enabled;
+        self
+    }
+
+    /// Replaces the system clipboard backend used by selection, copy-mode, and OSC 52 copies.
+    pub fn system_clipboard<C>(self, clipboard: C) -> Self
+    where
+        C: TerminalSystemClipboard + 'static,
+    {
+        self.shared.lock().system_clipboard = Some(Arc::new(clipboard));
+        self
+    }
+
+    /// Disables system clipboard writes while preserving the terminal-local copy buffer.
+    pub fn without_system_clipboard(self) -> Self {
+        self.shared.lock().system_clipboard = None;
         self
     }
 
@@ -1468,7 +1642,11 @@ impl TerminalEmulator {
                     return false;
                 };
                 shared.selection.finish(position);
-                let _ = shared.copy_selection();
+                let text = shared.copy_selection();
+                drop(shared);
+                if let Some(text) = text {
+                    dispatch_system_clipboard_copy(&self.shared, &text);
+                }
                 true
             }
             _ => false,
@@ -1677,6 +1855,11 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                     dispatch_input(&self.shared, &bytes);
                     EventResult::consumed()
                 }
+                CapturedKeyAction::SystemClipboardCopy(text) => {
+                    drop(shared);
+                    dispatch_system_clipboard_copy(&self.shared, &text);
+                    EventResult::consumed()
+                }
             },
             _ => EventResult::ignored(),
         }
@@ -1699,6 +1882,11 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                         CapturedKeyAction::Dispatch(bytes) => {
                             drop(shared);
                             dispatch_input(&self.shared, &bytes);
+                            return EventResult::consumed();
+                        }
+                        CapturedKeyAction::SystemClipboardCopy(text) => {
+                            drop(shared);
+                            dispatch_system_clipboard_copy(&self.shared, &text);
                             return EventResult::consumed();
                         }
                     }
@@ -1800,7 +1988,7 @@ impl TerminalHandle {
         for response in responses {
             forward_input(&self.shared, &response);
         }
-        dispatch_terminal_callback_events(dispatches);
+        dispatch_terminal_callback_events(&self.shared, dispatches);
     }
 
     pub fn process_output_str(&self, text: &str) {
@@ -1902,7 +2090,11 @@ impl TerminalHandle {
 
     /// Copies the active selection into the terminal-local copy buffer.
     pub fn copy_selection(&self) -> Option<String> {
-        self.shared.lock().copy_selection()
+        let text = { self.shared.lock().copy_selection() };
+        if let Some(text) = &text {
+            dispatch_system_clipboard_copy(&self.shared, text);
+        }
+        text
     }
 
     /// Pastes the terminal-local copy buffer back into the subprocess input stream.
@@ -1972,6 +2164,16 @@ impl TerminalHandle {
     /// Returns the latest OSC 52 clipboard-copy request, if one has been observed.
     pub fn last_clipboard_copy(&self) -> Option<TerminalClipboardCopy> {
         self.shared.lock().last_clipboard_copy.clone()
+    }
+
+    /// Returns the last text sent to the configured system clipboard backend.
+    pub fn last_system_clipboard_text(&self) -> Option<String> {
+        self.shared.lock().last_system_clipboard_text.clone()
+    }
+
+    /// Returns the last system clipboard sync error, if the most recent sync failed.
+    pub fn last_system_clipboard_error(&self) -> Option<String> {
+        self.shared.lock().last_system_clipboard_error.clone()
     }
 
     /// Returns whether a subprocess is currently attached and has not reported exit.

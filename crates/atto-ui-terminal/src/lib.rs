@@ -15,5 +15,5 @@ pub use dynamic::{
 pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use terminal::{
     TerminalClipboardCopy, TerminalEmulator, TerminalHandle, TerminalPrefixBinding,
-    TerminalPrefixCommand, TerminalShortcut, TerminalSnapshot,
+    TerminalPrefixCommand, TerminalShortcut, TerminalSnapshot, TerminalSystemClipboard,
 };

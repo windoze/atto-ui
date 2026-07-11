@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use atto_ui::composable::{
     Component, ComponentAction, ComponentContext, EventHandling, MouseCoordinateSpace, Scrollable,
     ScrollbarHost, TabMode,
@@ -104,7 +106,7 @@ fn component_mouse_input_and_selection(
     events: &[MouseEvent],
 ) -> (Vec<u8>, Option<String>) {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str(output);
 
@@ -380,7 +382,7 @@ fn terminal_mouse_reporting_shift_drag_selects_locally() {
 #[test]
 fn terminal_mouse_selection_copies_to_local_buffer_on_release() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str("alpha beta");
 
@@ -418,7 +420,7 @@ fn terminal_mouse_selection_copies_to_local_buffer_on_release() {
 #[test]
 fn terminal_capture_on_click_forwards_the_recapture_click() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str(
         mouse_mode_sequence(MouseProtocol::ButtonMotion, MouseEncoding::Sgr).as_str(),
@@ -453,7 +455,7 @@ fn terminal_bracketed_paste_wraps_only_when_enabled() {
 #[test]
 fn terminal_local_copy_buffer_pastes_with_bracketed_paste() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str("alpha beta");
     handle.begin_selection(TerminalSelectionPosition::new(0, 0));
@@ -471,6 +473,71 @@ fn terminal_local_copy_buffer_pastes_with_bracketed_paste() {
         context(&theme),
     );
     assert_eq!(handle.take_input(), b"\x1b[200~alpha\x1b[201~");
+}
+
+#[test]
+fn terminal_copy_selection_syncs_configured_system_clipboard() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new().system_clipboard(move |text: &str| {
+        copied_for_clipboard
+            .lock()
+            .expect("clipboard lock")
+            .push(text.to_string());
+        Ok(())
+    });
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+    handle.begin_selection(TerminalSelectionPosition::new(0, 0));
+    handle.update_selection(TerminalSelectionPosition::new(0, 5));
+
+    assert_eq!(handle.copy_selection().as_deref(), Some("alpha"));
+    assert_eq!(handle.copied_text().as_deref(), Some("alpha"));
+    assert_eq!(
+        handle.last_system_clipboard_text().as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(handle.last_system_clipboard_error(), None);
+    assert_eq!(copied.lock().expect("clipboard lock").as_slice(), ["alpha"]);
+}
+
+#[test]
+fn terminal_copy_mode_copy_syncs_configured_system_clipboard() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new().system_clipboard(move |text: &str| {
+        copied_for_clipboard
+            .lock()
+            .expect("clipboard lock")
+            .push(text.to_string());
+        Ok(())
+    });
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+
+    for key in [
+        ctrl_key('b'),
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    ] {
+        terminal.handle_event(&Event::Key(key), context(&theme));
+    }
+
+    assert_eq!(handle.copied_text().as_deref(), Some("alpha"));
+    assert_eq!(
+        handle.last_system_clipboard_text().as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(handle.last_system_clipboard_error(), None);
+    assert_eq!(copied.lock().expect("clipboard lock").as_slice(), ["alpha"]);
 }
 
 #[test]
@@ -588,7 +655,7 @@ fn terminal_prefix_command_table_binding_replaces_existing_command() {
 #[test]
 fn terminal_prefix_command_table_runtime_replacement_clears_pending_prefix() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
 
     terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
@@ -608,7 +675,7 @@ fn terminal_prefix_command_table_runtime_replacement_clears_pending_prefix() {
 #[test]
 fn terminal_prefix_command_table_enters_copy_mode() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str("alpha");
 
@@ -631,7 +698,7 @@ fn terminal_prefix_command_table_enters_copy_mode() {
 #[test]
 fn terminal_copy_mode_selects_and_copies_with_vi_keys() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str("alpha beta");
 
@@ -659,7 +726,7 @@ fn terminal_copy_mode_selects_and_copies_with_vi_keys() {
 #[test]
 fn terminal_copy_mode_selects_and_copies_with_arrow_keys_and_enter() {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
+    let mut terminal = TerminalEmulator::new().without_system_clipboard();
     let handle = terminal.handle();
     handle.process_output_str("alpha beta");
 

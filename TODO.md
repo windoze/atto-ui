@@ -79,7 +79,9 @@
 - [x] **[DONE] M4.5 alt screen 滚动分流** - 滚轮分支前置三级决策树：`mouse_protocol_mode() != None` → 转发 SGR 滚轮（已有 `encode_mouse_event` 64/65，`terminal.rs:1266`）；`alternate_screen()` → alternate scroll 翻方向键（默认 ×3）发子进程；else → 本地 `set_scrollback`（现有逻辑，`terminal.rs:499/521`）。不用 `application_cursor()`/清屏启发式。
   - 完成记录（2026-07-12）：终端 capture 态鼠标滚轮路径补齐三级分流；子进程启用 mouse reporting 时继续优先经 `encode_mouse_event` 转发滚轮事件，alternate screen 且未启用 mouse reporting 时将竖向滚轮转换为默认 3 次 Up/Down 方向键输入并发往子进程，主屏幕仍沿用本地 scrollback 调整，不使用 `application_cursor()` 或清屏状态作为分流条件。新增 `input_encoding` 回归覆盖 alternate screen 滚轮方向键、mouse reporting 优先级和主屏本地 scrollback。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M4.6 剪贴板（后续，可选）** - 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1.3 `copy_to_clipboard` 回调），OSC 52 优先、`arboard` 兜底。可拆独立 PR。
+- [x] **[DONE] M4.6 剪贴板（后续，可选）** - 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1.3 `copy_to_clipboard` 回调），OSC 52 优先、`arboard` 兜底。可拆独立 PR。
+  - 完成记录（2026-07-12）：终端组件新增可配置 `TerminalSystemClipboard` 后端，默认复制路径先向宿主发送 OSC 52，再通过 `arboard` 尝试原生系统剪贴板兜底；测试可注入假后端或禁用真实剪贴板写入。selection、鼠标框选释放、copy-mode `y`/`Enter` 均继续写入组件内部 copy buffer，并同步到配置的系统剪贴板后端。OSC 52 `copy_to_clipboard` 回调现在会解析标准 clipboard selector 的 base64/UTF-8 payload，更新 `last_clipboard_copy`、内部 copy buffer 和系统剪贴板；非标准 selector 保持可观察回调但不误写系统 clipboard。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks --test input_encoding terminal_ -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M4.7 测试** - PTY 覆盖鼠标框选/复制、copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf `--height` 滚轮各落正确分支、主屏 scrollback 仍正常。
 - [ ] **M4.R Review** - 复核 selection 命中测试对宽字符正确、滚动分流三级树覆盖残余类靠 copy-mode 兜底、剪贴板首版不引入跨平台依赖，验证通过。
 
