@@ -1354,6 +1354,33 @@ impl TerminalEmulator {
         false
     }
 
+    fn handle_alternate_screen_wheel(&mut self, event: MouseEvent, step: u16) -> bool {
+        let key = match event.kind {
+            MouseEventKind::ScrollUp => KeyCode::Up,
+            MouseEventKind::ScrollDown => KeyCode::Down,
+            _ => return false,
+        };
+        let shared = self.shared.lock();
+        let screen = shared.parser.screen();
+        if !matches!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None)
+            || !screen.alternate_screen()
+        {
+            return false;
+        }
+
+        let Some(key_bytes) = encode_key_event(screen, KeyEvent::new(key, KeyModifiers::NONE))
+        else {
+            return true;
+        };
+        let mut bytes = Vec::with_capacity(key_bytes.len() * usize::from(step.max(1)));
+        for _ in 0..step.max(1) {
+            bytes.extend_from_slice(&key_bytes);
+        }
+        drop(shared);
+        dispatch_input(&self.shared, &bytes);
+        true
+    }
+
     fn handle_scrollback_key(&mut self, event: KeyEvent) -> bool {
         if event.kind == KeyEventKind::Release {
             return false;
@@ -1731,6 +1758,9 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                     return EventResult::consumed();
                 }
                 drop(shared);
+                if self.handle_alternate_screen_wheel(*m, self.scroll_step) {
+                    return EventResult::consumed();
+                }
                 if self.handle_scrollback_wheel(*m, self.scroll_step) {
                     return EventResult::consumed();
                 }

@@ -754,6 +754,78 @@ fn terminal_copy_mode_wheel_stays_local_even_with_mouse_reporting() {
 }
 
 #[test]
+fn terminal_alternate_screen_wheel_sends_direction_keys() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("\x1b[?1049h");
+
+    let up = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(up.is_consumed());
+    assert_eq!(handle.take_input(), b"\x1b[A\x1b[A\x1b[A");
+
+    let down = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollDown, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(down.is_consumed());
+    assert_eq!(handle.take_input(), b"\x1b[B\x1b[B\x1b[B");
+}
+
+#[test]
+fn terminal_mouse_reporting_wheel_takes_priority_over_alternate_screen_scroll() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str(
+        format!(
+            "\x1b[?1049h{}",
+            mouse_mode_sequence(MouseProtocol::PressRelease, MouseEncoding::Sgr)
+        )
+        .as_str(),
+    );
+    let event = mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE);
+
+    let result = terminal.handle_event(&Event::Mouse(event), context(&theme));
+
+    assert!(result.is_consumed());
+    assert_eq!(
+        handle.take_input(),
+        expected_mouse_input(
+            MouseProtocol::PressRelease,
+            MouseEncoding::Sgr,
+            event.kind,
+            event.modifiers
+        )
+    );
+}
+
+#[test]
+fn terminal_main_screen_wheel_stays_on_local_scrollback() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new().scrollback_len(20);
+    let handle = terminal.handle();
+    let output = (0..40)
+        .map(|line| format!("line-{line:02}\r\n"))
+        .collect::<String>();
+    handle.process_output_str(&output);
+    let before = terminal.scroll_offset().1;
+
+    let result = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    let after = terminal.scroll_offset().1;
+
+    assert!(result.is_consumed());
+    assert!(after < before);
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
 fn terminal_prefix_escape_dispatches_single_literal_prefix() {
     assert_eq!(
         component_key_input(&[ctrl_key('b'), ctrl_key('b')]),
