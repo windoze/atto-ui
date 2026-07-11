@@ -3,13 +3,14 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use parking_lot::Mutex;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, ExitStatus, PtySize, native_pty_system};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -56,6 +57,8 @@ mod tests {
             input: VecDeque::new(),
             on_input: None,
             input_forward: None,
+            on_exit: None,
+            exit_status: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::new(),
@@ -126,6 +129,7 @@ fn default_release_shortcut() -> TerminalShortcut {
 }
 
 type InputCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
+type ExitCallback = Arc<dyn Fn(ExitStatus) + Send + Sync>;
 
 struct TerminalShared {
     parser: vt100::Parser,
@@ -133,6 +137,8 @@ struct TerminalShared {
     input: VecDeque<u8>,
     on_input: Option<InputCallback>,
     input_forward: Option<InputCallback>,
+    on_exit: Option<ExitCallback>,
+    exit_status: Option<ExitStatus>,
     capture: bool,
     release_shortcut: TerminalShortcut,
     dsr_tail: Vec<u8>,
@@ -168,11 +174,14 @@ impl TerminalShared {
     }
 }
 
+type PtyChild = Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>;
+
 struct TerminalProcess {
     master: Box<dyn portable_pty::MasterPty + Send>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
+    child: PtyChild,
     reader_alive: Arc<AtomicBool>,
     reader_thread: Option<thread::JoinHandle<()>>,
+    exit_watcher_thread: Option<thread::JoinHandle<()>>,
     last_size: (u16, u16),
 }
 
@@ -190,12 +199,47 @@ impl TerminalProcess {
         self.last_size = (rows, cols);
     }
 
-    fn shutdown(&mut self) {
+    fn record_exit_if_ready(&mut self, shared: &Arc<Mutex<TerminalShared>>) -> bool {
+        try_record_child_exit(shared, &self.child)
+    }
+
+    fn shutdown(&mut self, shared: &Arc<Mutex<TerminalShared>>) {
+        let already_exited = self.record_exit_if_ready(shared);
         self.reader_alive.store(false, Ordering::Relaxed);
-        let _ = self.child.kill();
+        if !already_exited {
+            let _ = self.child.lock().kill();
+        }
         if let Some(handle) = self.reader_thread.take() {
             let _ = handle.join();
         }
+        if let Some(handle) = self.exit_watcher_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn try_record_child_exit(shared: &Arc<Mutex<TerminalShared>>, child: &PtyChild) -> bool {
+    let status = match child.lock().try_wait() {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => return false,
+    };
+    record_exit_status(shared, status);
+    true
+}
+
+fn record_exit_status(shared: &Arc<Mutex<TerminalShared>>, status: ExitStatus) {
+    let callback = {
+        let mut shared = shared.lock();
+        if shared.exit_status.is_some() {
+            return;
+        }
+        shared.exit_status = Some(status.clone());
+        shared.input_forward = None;
+        shared.on_exit.clone()
+    };
+
+    if let Some(callback) = callback {
+        callback(status);
     }
 }
 
@@ -355,6 +399,8 @@ impl TerminalEmulator {
             input: VecDeque::new(),
             on_input: None,
             input_forward: None,
+            on_exit: None,
+            exit_status: None,
             capture: true,
             release_shortcut: default_release_shortcut(),
             dsr_tail: Vec::with_capacity(4),
@@ -422,6 +468,15 @@ impl TerminalEmulator {
         self
     }
 
+    /// Registers a callback that fires once when the attached subprocess exits.
+    pub fn on_exit<F>(self, callback: F) -> Self
+    where
+        F: Fn(ExitStatus) + Send + Sync + 'static,
+    {
+        self.shared.lock().on_exit = Some(Arc::new(callback));
+        self
+    }
+
     /// Spawns a subprocess attached to the terminal's PTY.
     pub fn spawn_process(&mut self, command: &str, args: &[String]) -> Result<()> {
         let mut cmd = CommandBuilder::new(command);
@@ -434,6 +489,7 @@ impl TerminalEmulator {
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, cmd: CommandBuilder) -> Result<()> {
         self.stop_process();
+        self.shared.lock().exit_status = None;
 
         let (rows, cols) = {
             let shared = self.shared.lock();
@@ -449,10 +505,13 @@ impl TerminalEmulator {
         })?;
 
         let child = pair.slave.spawn_command(cmd)?;
+        let child = Arc::new(Mutex::new(child));
         let writer = pair.master.take_writer()?;
         let reader = pair.master.try_clone_reader()?;
 
         let handle = self.handle();
+        let shared_for_reader = Arc::clone(&self.shared);
+        let child_for_reader = Arc::clone(&child);
         let reader_alive = Arc::new(AtomicBool::new(true));
         let reader_alive_thread = Arc::clone(&reader_alive);
         let reader_thread = thread::spawn(move || {
@@ -464,6 +523,20 @@ impl TerminalEmulator {
                     Ok(n) => handle.process_output(&buf[..n]),
                     Err(_) => break,
                 }
+            }
+            if reader_alive_thread.load(Ordering::Relaxed) {
+                try_record_child_exit(&shared_for_reader, &child_for_reader);
+            }
+        });
+        let shared_for_watcher = Arc::clone(&self.shared);
+        let child_for_watcher = Arc::clone(&child);
+        let exit_watcher_alive = Arc::clone(&reader_alive);
+        let exit_watcher_thread = thread::spawn(move || {
+            while exit_watcher_alive.load(Ordering::Relaxed) {
+                if try_record_child_exit(&shared_for_watcher, &child_for_watcher) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
         });
 
@@ -482,6 +555,7 @@ impl TerminalEmulator {
             child,
             reader_alive,
             reader_thread: Some(reader_thread),
+            exit_watcher_thread: Some(exit_watcher_thread),
             last_size: (rows, cols),
         });
 
@@ -492,7 +566,7 @@ impl TerminalEmulator {
     pub fn stop_process(&mut self) {
         self.shared.lock().input_forward = None;
         if let Some(mut process) = self.process.take() {
-            process.shutdown();
+            process.shutdown(&self.shared);
         }
     }
 
@@ -552,6 +626,9 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         self.last_area = Some(area);
         if area.width == 0 || area.height == 0 {
             return;
+        }
+        if let Some(process) = &mut self.process {
+            process.record_exit_if_ready(&self.shared);
         }
 
         let mut shared = self.shared.lock();

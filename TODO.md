@@ -10,7 +10,9 @@
 
 ## 阶段 M1 - 进程生命周期 + Callbacks 基础（P0.1 + P0.3 组件层）
 
-- [ ] **M1.1 进程退出信号** - reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`，`terminal.rs:461-467` / `terminal.rs:777-783`）。
+- [x] **[DONE] M1.1 进程退出信号** - reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`，`terminal.rs:461-467` / `terminal.rs:777-783`）。
+  - 完成记录（2026-07-11）：在 `TerminalShared` 中记录进程 `ExitStatus`，新增独立于 `on_close` 的 `on_exit(status)` 回调；reader EOF、draw-time `try_wait()` 轮询和生命周期 watcher 均可幂等发布退出状态。新增 `process_exit` 集成测试覆盖退出码回调只触发一次，以及无子进程 drop 时只触发 `on_close`。
+  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
 - [ ] **M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
 - [ ] **M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
