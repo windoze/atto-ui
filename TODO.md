@@ -34,7 +34,9 @@
 - [x] **[DONE] M2.2 标题联动** - 把组件暴露的标题（M1.3）同步到 `Window.title`，刷新 Windows 菜单窗口列表。
   - 完成记录（2026-07-11）：终端 viewer 与 PTY window fixture 在 UI tick/action 路径轮询 `TerminalHandle::window_title()`，将 OSC 0/2 暴露的标题同步到对应 `Window.title`，并在刷新 Windows 菜单窗口列表前使用当前窗口标题作为菜单项来源。终端重启时恢复默认窗口标题，避免旧进程标题滞留。新增 PTY 回归覆盖子进程输出 OSC 2 后标题栏更新，并在 Windows → Switch to 菜单中显示更新后的窗口标题。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_osc_title_updates_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
+- [x] **[DONE] M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
+  - 完成记录（2026-07-11）：补齐 `pty_terminal_window_interactions` 中的 M2 PTY 覆盖；保留 shell 子进程退出后显示退出提示、释放 capture、按 `R` 重启并更新 `RESTARTS` 的回归测试；将标题联动测试扩展为同时覆盖 OSC 0 与 OSC 2，确认窗口标题和 Windows → Switch to 菜单项同步更新。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_dead_process_prompts_and_restarts pty_terminal_osc_zero_and_two_titles_update_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
 
 ## 阶段 M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
