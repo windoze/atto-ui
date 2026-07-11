@@ -3,7 +3,7 @@ use atto_ui::composable::{
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
-use atto_ui_terminal::TerminalEmulator;
+use atto_ui_terminal::{TerminalEmulator, TerminalShortcut};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -44,14 +44,17 @@ fn key_input_after_output(output: &str, key: KeyCode) -> Vec<u8> {
     handle.take_input()
 }
 
-fn component_key_input(keys: &[KeyEvent]) -> Vec<u8> {
+fn component_key_input_with_terminal(mut terminal: TerminalEmulator, keys: &[KeyEvent]) -> Vec<u8> {
     let theme = Theme::dark();
-    let mut terminal = TerminalEmulator::new();
     let handle = terminal.handle();
     for key in keys {
         terminal.handle_event(&Event::Key(*key), context(&theme));
     }
     handle.take_input()
+}
+
+fn component_key_input(keys: &[KeyEvent]) -> Vec<u8> {
+    component_key_input_with_terminal(TerminalEmulator::new(), keys)
 }
 
 fn ctrl_key(ch: char) -> KeyEvent {
@@ -241,6 +244,83 @@ fn terminal_prefix_key_waits_for_next_captured_key() {
             KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
         ]),
         b"\x02x"
+    );
+}
+
+#[test]
+fn terminal_prefix_key_can_be_configured_to_plain_ctrl_letter() {
+    let terminal = TerminalEmulator::new()
+        .prefix_key('a')
+        .expect("valid prefix key");
+
+    assert_eq!(
+        component_key_input_with_terminal(
+            terminal,
+            &[
+                ctrl_key('b'),
+                ctrl_key('a'),
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            ],
+        ),
+        b"\x02\x01x"
+    );
+}
+
+#[test]
+fn terminal_prefix_shortcut_normalizes_configured_letter_case() {
+    let terminal = TerminalEmulator::new()
+        .prefix_shortcut(TerminalShortcut::new(
+            KeyCode::Char('Z'),
+            KeyModifiers::CONTROL,
+        ))
+        .expect("valid prefix shortcut");
+    let handle = terminal.handle();
+
+    assert_eq!(
+        handle.prefix_shortcut(),
+        TerminalShortcut::new(KeyCode::Char('z'), KeyModifiers::CONTROL)
+    );
+    assert_eq!(
+        component_key_input_with_terminal(
+            terminal,
+            &[
+                ctrl_key('z'),
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            ],
+        ),
+        b"\x1ax"
+    );
+}
+
+#[test]
+fn terminal_prefix_shortcut_rejects_non_plain_ctrl_letters() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    assert!(
+        handle
+            .set_prefix_shortcut(TerminalShortcut::new(
+                KeyCode::Char('1'),
+                KeyModifiers::CONTROL,
+            ))
+            .is_err()
+    );
+    assert!(
+        handle
+            .set_prefix_shortcut(TerminalShortcut::new(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ))
+            .is_err()
+    );
+    assert!(
+        handle
+            .set_prefix_shortcut(TerminalShortcut::new(KeyCode::F(1), KeyModifiers::CONTROL,))
+            .is_err()
+    );
+    assert_eq!(
+        handle.prefix_shortcut(),
+        TerminalShortcut::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
     );
 }
 

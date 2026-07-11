@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail, ensure};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -146,6 +146,31 @@ fn default_prefix_shortcut() -> TerminalShortcut {
     }
 }
 
+fn prefix_shortcut_from_letter(letter: char) -> Result<TerminalShortcut> {
+    normalize_prefix_shortcut(TerminalShortcut::new(
+        KeyCode::Char(letter),
+        KeyModifiers::CONTROL,
+    ))
+}
+
+fn normalize_prefix_shortcut(shortcut: TerminalShortcut) -> Result<TerminalShortcut> {
+    ensure!(
+        shortcut.modifiers == KeyModifiers::CONTROL,
+        "terminal prefix shortcut must be plain Ctrl+<ASCII letter>"
+    );
+    let KeyCode::Char(letter) = shortcut.code else {
+        bail!("terminal prefix shortcut must be plain Ctrl+<ASCII letter>");
+    };
+    ensure!(
+        letter.is_ascii_alphabetic(),
+        "terminal prefix shortcut must be plain Ctrl+<ASCII letter>"
+    );
+    Ok(TerminalShortcut {
+        code: KeyCode::Char(letter.to_ascii_lowercase()),
+        modifiers: KeyModifiers::CONTROL,
+    })
+}
+
 type InputCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
 type ExitCallback = Arc<dyn Fn(ExitStatus) + Send + Sync>;
 type TextCallback = Arc<dyn Fn(&str) + Send + Sync>;
@@ -253,6 +278,11 @@ impl TerminalShared {
         if !capture {
             self.prefix_pending = false;
         }
+    }
+
+    fn set_prefix_shortcut(&mut self, shortcut: TerminalShortcut) {
+        self.prefix_shortcut = shortcut;
+        self.prefix_pending = false;
     }
 
     fn matches_prefix_command(&self, _event: KeyEvent) -> bool {
@@ -663,6 +693,18 @@ impl TerminalEmulator {
     pub fn release_shortcut(self, shortcut: TerminalShortcut) -> Self {
         self.shared.lock().release_shortcut = shortcut;
         self
+    }
+
+    /// Sets the terminal prefix shortcut. Only plain `Ctrl+<ASCII letter>` is accepted.
+    pub fn prefix_shortcut(self, shortcut: TerminalShortcut) -> Result<Self> {
+        let shortcut = normalize_prefix_shortcut(shortcut)?;
+        self.shared.lock().set_prefix_shortcut(shortcut);
+        Ok(self)
+    }
+
+    /// Sets the terminal prefix key letter, using `Ctrl+letter` as the actual shortcut.
+    pub fn prefix_key(self, letter: char) -> Result<Self> {
+        self.prefix_shortcut(prefix_shortcut_from_letter(letter)?)
     }
 
     pub fn scroll_step(mut self, step: u16) -> Self {
@@ -1208,6 +1250,17 @@ impl TerminalHandle {
 
     pub fn release_shortcut(&self) -> TerminalShortcut {
         self.shared.lock().release_shortcut
+    }
+
+    /// Updates the terminal prefix shortcut. Only plain `Ctrl+<ASCII letter>` is accepted.
+    pub fn set_prefix_shortcut(&self, shortcut: TerminalShortcut) -> Result<()> {
+        let shortcut = normalize_prefix_shortcut(shortcut)?;
+        self.shared.lock().set_prefix_shortcut(shortcut);
+        Ok(())
+    }
+
+    pub fn prefix_shortcut(&self) -> TerminalShortcut {
+        self.shared.lock().prefix_shortcut
     }
 
     /// Returns the latest OSC 0/2 window title, if one has been observed.

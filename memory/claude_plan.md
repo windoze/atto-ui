@@ -39,10 +39,16 @@ Complete exactly the first incomplete task listed in `TODO.md`, then stop after 
   - Added OSC 0/2 PTY title-linkage coverage, completed validation, and marked `M2.3` done in `TODO.md`.
 - Current invocation:
   - Refreshed this execution plan before task execution.
-  - Identified first incomplete task: `M3.1 前缀态状态机`.
-  - Latest commit is `[M2.R] Review terminal lifecycle and title sync`; it does not mention unfinished work directly blocking M3.1.
-  - Implementation plan for M3.1: add a default component-level prefix shortcut state to `TerminalShared`, make captured prefix presses enter a pending state without forwarding, make the next non-release key consult an initially empty prefix command hook, and fallback-forward the held prefix plus the next encoded key so subprocess input is not lost.
-  - Add focused component-level tests for held-prefix no-forward behavior, fallback forwarding, release-event handling while pending, and capture release clearing pending prefix state.
-  - Implemented the prefix-pending state for captured key handling, including Tab/BackTab capture-hook routing, and added focused `input_encoding` tests.
+  - Identified first incomplete task: `M3.2 可配置前缀键`.
+  - Planned implementation:
+    1. Inspect the latest commit message for unfinished work directly relevant to M3.2.
+    2. Inspect the existing terminal prefix-key implementation, tests, and public API patterns.
+    3. Add a component-level configurable prefix-key model that defaults to plain `Ctrl+B` and validates values as plain `Ctrl+<letter>`.
+    4. Wire prefix-state matching and literal-prefix fallback behavior to the configured key.
+    5. Add focused tests for the default prefix, an alternate valid prefix, invalid prefix rejection, and unchanged forwarding of non-prefix keys.
+    6. Run formatting, targeted tests, workspace clippy, and the full workspace test suite.
+    7. Mark `M3.2` as `[DONE]` in `TODO.md` with a completion record, then commit the task changes.
+  - Latest commit is `[M3.1] Add terminal prefix state machine`; it does not mention unfinished work directly blocking M3.2.
+  - Implemented the M3.2 code path: validated configurable prefix shortcut APIs on `TerminalEmulator`/`TerminalHandle`, default-preserving dynamic `prefix_key` component property, pending-prefix reset on reconfiguration, and focused input-encoding tests for default/alternate/invalid prefix behavior.
   - Validation passed: `cargo fmt --all`, `cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-  - Marked `M3.1 前缀态状态机` as `[DONE]` in `TODO.md` with the completion record.
+  - Marked `M3.2 可配置前缀键` as `[DONE]` in `TODO.md` with the completion record.
