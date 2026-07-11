@@ -99,6 +99,23 @@ fn mouse_input(protocol: MouseProtocol, encoding: MouseEncoding, event: MouseEve
     handle.take_input()
 }
 
+fn component_mouse_input_and_selection(
+    output: &str,
+    events: &[MouseEvent],
+) -> (Vec<u8>, Option<String>) {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str(output);
+
+    for event in events {
+        let result = terminal.handle_event(&Event::Mouse(*event), context(&theme));
+        assert!(result.is_consumed());
+    }
+
+    (handle.take_input(), handle.selected_text())
+}
+
 fn mouse_mode_sequence(protocol: MouseProtocol, encoding: MouseEncoding) -> String {
     let protocol_seq = match protocol {
         MouseProtocol::PressRelease => "\x1b[?1000h",
@@ -113,10 +130,19 @@ fn mouse_mode_sequence(protocol: MouseProtocol, encoding: MouseEncoding) -> Stri
 }
 
 fn mouse_event(kind: MouseEventKind, modifiers: KeyModifiers) -> MouseEvent {
+    mouse_event_at(kind, 2, 3, modifiers)
+}
+
+fn mouse_event_at(
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+    modifiers: KeyModifiers,
+) -> MouseEvent {
     MouseEvent {
         kind,
-        column: 2,
-        row: 3,
+        column,
+        row,
         modifiers,
     }
 }
@@ -234,6 +260,147 @@ fn terminal_mouse_encoding_matrix_covers_protocol_encoding_and_modifiers() {
             }
         }
     }
+}
+
+#[test]
+fn terminal_plain_drag_selects_locally_without_mouse_reporting() {
+    let (input, selected) = component_mouse_input_and_selection(
+        "alpha beta",
+        &[
+            mouse_event_at(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                0,
+                KeyModifiers::NONE,
+            ),
+            mouse_event_at(
+                MouseEventKind::Drag(MouseButton::Left),
+                4,
+                0,
+                KeyModifiers::NONE,
+            ),
+            mouse_event_at(
+                MouseEventKind::Up(MouseButton::Left),
+                4,
+                0,
+                KeyModifiers::NONE,
+            ),
+        ],
+    );
+
+    assert_eq!(input, b"");
+    assert_eq!(selected.as_deref(), Some("alpha"));
+}
+
+#[test]
+fn terminal_plain_click_without_mouse_reporting_does_not_select_text() {
+    let (input, selected) = component_mouse_input_and_selection(
+        "alpha beta",
+        &[
+            mouse_event_at(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                0,
+                KeyModifiers::NONE,
+            ),
+            mouse_event_at(
+                MouseEventKind::Up(MouseButton::Left),
+                0,
+                0,
+                KeyModifiers::NONE,
+            ),
+        ],
+    );
+
+    assert_eq!(input, b"");
+    assert_eq!(selected, None);
+}
+
+#[test]
+fn terminal_mouse_reporting_plain_drag_forwards_to_subprocess() {
+    let output = format!(
+        "{}alpha beta",
+        mouse_mode_sequence(MouseProtocol::ButtonMotion, MouseEncoding::Sgr)
+    );
+    let events = [
+        mouse_event(MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE),
+        mouse_event(MouseEventKind::Drag(MouseButton::Left), KeyModifiers::NONE),
+        mouse_event(MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE),
+    ];
+    let mut expected = Vec::new();
+    for event in events {
+        expected.extend(expected_mouse_input(
+            MouseProtocol::ButtonMotion,
+            MouseEncoding::Sgr,
+            event.kind,
+            event.modifiers,
+        ));
+    }
+
+    let (input, selected) = component_mouse_input_and_selection(&output, &events);
+
+    assert_eq!(input, expected);
+    assert_eq!(selected, None);
+}
+
+#[test]
+fn terminal_mouse_reporting_shift_drag_selects_locally() {
+    let output = format!(
+        "{}alpha beta",
+        mouse_mode_sequence(MouseProtocol::ButtonMotion, MouseEncoding::Sgr)
+    );
+    let (input, selected) = component_mouse_input_and_selection(
+        &output,
+        &[
+            mouse_event_at(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                0,
+                KeyModifiers::SHIFT,
+            ),
+            mouse_event_at(
+                MouseEventKind::Drag(MouseButton::Left),
+                4,
+                0,
+                KeyModifiers::SHIFT,
+            ),
+            mouse_event_at(
+                MouseEventKind::Up(MouseButton::Left),
+                4,
+                0,
+                KeyModifiers::SHIFT,
+            ),
+        ],
+    );
+
+    assert_eq!(input, b"");
+    assert_eq!(selected.as_deref(), Some("alpha"));
+}
+
+#[test]
+fn terminal_capture_on_click_forwards_the_recapture_click() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str(
+        mouse_mode_sequence(MouseProtocol::ButtonMotion, MouseEncoding::Sgr).as_str(),
+    );
+    handle.set_capture(false);
+
+    let event = mouse_event(MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+    let result = terminal.handle_event(&Event::Mouse(event), context(&theme));
+
+    assert!(result.is_consumed());
+    assert!(handle.capture());
+    assert_eq!(
+        handle.take_input(),
+        expected_mouse_input(
+            MouseProtocol::ButtonMotion,
+            MouseEncoding::Sgr,
+            event.kind,
+            event.modifiers
+        )
+    );
 }
 
 #[test]

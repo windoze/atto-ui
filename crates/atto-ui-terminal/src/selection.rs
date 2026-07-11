@@ -41,12 +41,14 @@ impl TerminalSelectionRange {
 pub(crate) struct TerminalSelectionState {
     anchor: Option<TerminalSelectionPosition>,
     focus: Option<TerminalSelectionPosition>,
+    dragging: bool,
 }
 
 impl TerminalSelectionState {
     pub(crate) fn start(&mut self, position: TerminalSelectionPosition) {
         self.anchor = Some(position);
         self.focus = Some(position);
+        self.dragging = true;
     }
 
     pub(crate) fn update(&mut self, position: TerminalSelectionPosition) {
@@ -55,10 +57,24 @@ impl TerminalSelectionState {
         }
     }
 
+    pub(crate) fn finish(&mut self, position: TerminalSelectionPosition) {
+        self.update(position);
+        self.dragging = false;
+    }
+
+    pub(crate) fn is_dragging(&self) -> bool {
+        self.dragging
+    }
+
+    pub(crate) fn anchor(&self) -> Option<TerminalSelectionPosition> {
+        self.anchor
+    }
+
     pub(crate) fn clear(&mut self) -> bool {
         let had_selection = self.anchor.is_some() || self.focus.is_some();
         self.anchor = None;
         self.focus = None;
+        self.dragging = false;
         had_selection
     }
 

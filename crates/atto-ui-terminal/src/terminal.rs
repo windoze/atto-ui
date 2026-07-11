@@ -1084,6 +1084,77 @@ impl TerminalEmulator {
         }
         false
     }
+
+    fn handle_local_mouse_selection(
+        &mut self,
+        event: MouseEvent,
+        coordinate_space: MouseCoordinateSpace,
+    ) -> bool {
+        if !matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
+        ) {
+            return false;
+        }
+
+        let mut shared = self.shared.lock();
+        let mouse_reporting_enabled = !matches!(
+            shared.parser.screen().mouse_protocol_mode(),
+            vt100::MouseProtocolMode::None
+        );
+        let selection_requested = !mouse_reporting_enabled
+            || event.modifiers.contains(KeyModifiers::SHIFT)
+            || shared.selection.is_dragging();
+        if !selection_requested {
+            return false;
+        }
+
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some(position) = mouse_selection_position(
+                    &mut shared,
+                    self.last_area,
+                    event,
+                    coordinate_space,
+                    false,
+                ) else {
+                    return false;
+                };
+                shared.selection.start(position);
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left) if shared.selection.is_dragging() => {
+                let Some(position) = mouse_selection_position(
+                    &mut shared,
+                    self.last_area,
+                    event,
+                    coordinate_space,
+                    true,
+                ) else {
+                    return false;
+                };
+                shared.selection.update(position);
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if shared.selection.is_dragging() => {
+                let include_cell = shared.selection.range().is_some();
+                let Some(position) = mouse_selection_position(
+                    &mut shared,
+                    self.last_area,
+                    event,
+                    coordinate_space,
+                    include_cell,
+                ) else {
+                    return false;
+                };
+                shared.selection.finish(position);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Default for TerminalEmulator {
@@ -1314,26 +1385,32 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                 EventResult::consumed()
             }
             Event::Mouse(m) => {
-                let shared = self.shared.lock();
-                let screen = shared.parser.screen();
                 let inside =
                     mouse_coords_local(self.last_area, *m, ctx.mouse_coordinate_space).is_some();
                 if !inside {
                     return EventResult::ignored();
                 }
 
+                let mut shared = self.shared.lock();
                 if !shared.capture {
-                    drop(shared);
                     if matches!(m.kind, MouseEventKind::Down(_)) && self.capture_on_click {
-                        self.shared.lock().set_capture(true);
-                        return EventResult::consumed();
+                        shared.set_capture(true);
+                    } else {
+                        drop(shared);
+                        if self.handle_scrollback_wheel(*m, self.scroll_step) {
+                            return EventResult::consumed();
+                        }
+                        return EventResult::ignored();
                     }
-                    if self.handle_scrollback_wheel(*m, self.scroll_step) {
-                        return EventResult::consumed();
-                    }
-                    return EventResult::ignored();
+                }
+                drop(shared);
+
+                if self.handle_local_mouse_selection(*m, ctx.mouse_coordinate_space) {
+                    return EventResult::consumed();
                 }
 
+                let shared = self.shared.lock();
+                let screen = shared.parser.screen();
                 if let Some(bytes) =
                     encode_mouse_event(screen, *m, self.last_area, ctx.mouse_coordinate_space)
                 {
@@ -1636,6 +1713,47 @@ fn mouse_coords_local(
     }
 
     None
+}
+
+fn mouse_selection_position(
+    shared: &mut TerminalShared,
+    area: Option<Rect>,
+    event: MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+    include_cell: bool,
+) -> Option<TerminalSelectionPosition> {
+    let (col, row) = mouse_coords_local(area, event, coordinate_space)?;
+    let max_scrollback = shared.max_scrollback();
+    let screen = shared.parser.screen();
+    let scrollback = screen.scrollback();
+    let (rows, cols) = screen.size();
+    if rows == 0 || cols == 0 || row >= rows || col >= cols {
+        return None;
+    }
+
+    let cell_start = position_for_view_cell(max_scrollback, scrollback, rows, cols, row, col);
+    let include_right_edge = if include_cell {
+        match shared.selection.anchor() {
+            Some(anchor) => cell_start >= anchor,
+            None => true,
+        }
+    } else {
+        false
+    };
+    let selection_col = if include_right_edge {
+        col.saturating_add(1).min(cols)
+    } else {
+        col
+    };
+
+    Some(position_for_view_cell(
+        max_scrollback,
+        scrollback,
+        rows,
+        cols,
+        row,
+        selection_col,
+    ))
 }
 
 fn cell_style(cell: &vt100::Cell, base_fg: Option<Color>, base_bg: Option<Color>) -> Style {
