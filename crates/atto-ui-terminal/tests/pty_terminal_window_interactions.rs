@@ -146,3 +146,27 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
 }
+
+#[test]
+fn pty_terminal_dead_process_prompts_and_restarts() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["/bin/sh", "-c", "printf 'CHILD-RUN\\n'; exit 7"],
+        80,
+        24,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, "CHILD-RUN");
+    wait_for_text(&host, "[Process exited: code 7");
+    wait_for_text(&host, "PROC=EXITED code=7 RESTARTS=0");
+    wait_for_text(&host, "CAP=OFF");
+
+    host.send_str("r").expect("restart terminal process");
+    wait_for_text(&host, "RESTARTS=1");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}

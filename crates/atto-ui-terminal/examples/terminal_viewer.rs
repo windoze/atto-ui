@@ -1,9 +1,11 @@
+use std::cell::RefCell;
 use std::env;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 
 use atto_ui::app::{
@@ -12,7 +14,7 @@ use atto_ui::app::{
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
-use atto_ui_terminal::{TerminalEmulator, TerminalShortcut};
+use atto_ui_terminal::{TerminalEmulator, TerminalHandle, TerminalShortcut};
 
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:terminal_viewer:windows";
 const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:terminal_viewer:windows:list";
@@ -26,6 +28,24 @@ enum TerminalViewerAction {
     ToggleMaximizeFocused,
     CloseFocused,
     FocusWindow(WindowId),
+}
+
+struct TerminalWindowSession {
+    id: WindowId,
+    handle: TerminalHandle,
+    window_number: usize,
+    exit_prompted: bool,
+}
+
+impl TerminalWindowSession {
+    fn new(id: WindowId, handle: TerminalHandle, window_number: usize) -> Self {
+        Self {
+            id,
+            handle,
+            window_number,
+            exit_prompted: false,
+        }
+    }
 }
 
 fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
@@ -111,30 +131,126 @@ fn terminal_window_rect(work_area: Rect, index: usize) -> Rect {
     }
 }
 
-fn spawn_terminal_window(
-    desktop: &mut Desktop,
-    screen: Rect,
-    window_number: usize,
-    command: &str,
-    command_args: &[String],
-) -> Result<WindowId> {
-    let work_area = Desktop::layout(screen).work_area;
-    let rect = terminal_window_rect(work_area, window_number);
+fn is_plain_restart_key(event: &Event) -> bool {
+    let Event::Key(key) = event else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press || key.modifiers != KeyModifiers::NONE {
+        return false;
+    }
+    matches!(key.code, KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&'r'))
+}
 
-    let mut terminal = TerminalEmulator::new().release_shortcut(terminal_release_shortcut());
-    terminal.spawn_process(command, command_args)?;
-    let handle = terminal.handle();
-
+fn seed_terminal_banner(handle: &TerminalHandle, window_number: usize) {
     let banner = format!("Terminal Emulator ({window_number})\r\n");
     handle.process_output_str(&banner);
     handle
         .process_output_str("Menu: click the menu bar, or press F10 after releasing capture.\r\n");
     handle.process_output_str("Ctrl+Shift+L: release capture; click terminal to recapture.\r\n");
     handle.process_output_str("\x1b[?1000h\x1b[?1006h");
+}
 
+fn build_terminal_view(
+    window_number: usize,
+    command: &str,
+    command_args: &[String],
+) -> Result<(TerminalEmulator, TerminalHandle)> {
+    let mut terminal = TerminalEmulator::new().release_shortcut(terminal_release_shortcut());
+    terminal.spawn_process(command, command_args)?;
+    let handle = terminal.handle();
+    seed_terminal_banner(&handle, window_number);
+    Ok((terminal, handle))
+}
+
+fn prune_terminal_sessions(desktop: &Desktop, sessions: &mut Vec<TerminalWindowSession>) {
+    sessions.retain(|session| desktop.wm.windows().iter().any(|w| w.id() == session.id));
+}
+
+fn show_exit_prompt_if_needed(session: &mut TerminalWindowSession) -> bool {
+    if session.exit_prompted {
+        return false;
+    }
+    let Some(status) = session.handle.exit_status() else {
+        return false;
+    };
+
+    session.handle.set_capture(false);
+    session.handle.process_output_str(&format!(
+        "\r\n[Process exited: code {} — press R to restart]\r\n",
+        status.exit_code()
+    ));
+    session.exit_prompted = true;
+    true
+}
+
+fn update_terminal_exit_prompts(
+    desktop: &Desktop,
+    sessions: &mut Vec<TerminalWindowSession>,
+) -> bool {
+    prune_terminal_sessions(desktop, sessions);
+    let mut changed = false;
+    for session in sessions {
+        changed |= show_exit_prompt_if_needed(session);
+    }
+    changed
+}
+
+fn restart_terminal_window(
+    desktop: &mut Desktop,
+    session: &mut TerminalWindowSession,
+    command: &str,
+    command_args: &[String],
+) -> Result<bool> {
+    if !desktop.wm.windows().iter().any(|w| w.id() == session.id) {
+        return Ok(false);
+    }
+
+    let (terminal, handle) = build_terminal_view(session.window_number, command, command_args)?;
+    if !desktop.wm.set_view(session.id, Box::new(terminal)) {
+        return Ok(false);
+    }
+    session.handle = handle;
+    session.exit_prompted = false;
+    desktop.wm.focus(session.id);
+    Ok(true)
+}
+
+fn restart_focused_terminal(
+    desktop: &mut Desktop,
+    sessions: &mut [TerminalWindowSession],
+    command: &str,
+    command_args: &[String],
+) -> Result<bool> {
+    if desktop.menu.is_active() {
+        return Ok(false);
+    }
+    let Some(focused) = desktop.wm.focused() else {
+        return Ok(false);
+    };
+    let Some(session) = sessions
+        .iter_mut()
+        .find(|session| session.id == focused && session.exit_prompted)
+    else {
+        return Ok(false);
+    };
+    restart_terminal_window(desktop, session, command, command_args)
+}
+
+fn spawn_terminal_window(
+    desktop: &mut Desktop,
+    screen: Rect,
+    window_number: usize,
+    command: &str,
+    command_args: &[String],
+) -> Result<TerminalWindowSession> {
+    let work_area = Desktop::layout(screen).work_area;
+    let rect = terminal_window_rect(work_area, window_number);
+
+    let (terminal, handle) = build_terminal_view(window_number, command, command_args)?;
     let title = format!("Terminal {window_number}");
     let window = Window::new(WindowKind::Normal, title, rect, Box::new(terminal));
-    Ok(desktop.add_window(window, screen))
+    let id = desktop.add_window(window, screen);
+    Ok(TerminalWindowSession::new(id, handle, window_number))
 }
 
 fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<TerminalViewerAction>) {
@@ -201,13 +317,20 @@ fn main() -> Result<()> {
         .cursor(CursorMode::Hide);
 
     let (action_tx, action_rx) = mpsc::channel::<TerminalViewerAction>();
+    let terminal_sessions: Rc<RefCell<Vec<TerminalWindowSession>>> =
+        Rc::new(RefCell::new(Vec::new()));
 
     let command_for_build = command.clone();
     let command_args_for_build = command_args.clone();
     let action_tx_for_build = action_tx.clone();
+    let terminal_sessions_for_build = Rc::clone(&terminal_sessions);
 
     let action_tx_for_actions = action_tx.clone();
     let action_tx_for_tick = action_tx.clone();
+    let action_tx_for_event = action_tx.clone();
+    let terminal_sessions_for_actions = Rc::clone(&terminal_sessions);
+    let terminal_sessions_for_tick = Rc::clone(&terminal_sessions);
+    let terminal_sessions_for_event = Rc::clone(&terminal_sessions);
 
     run_crossterm_desktop_with_actions(
         config,
@@ -216,13 +339,14 @@ fn main() -> Result<()> {
             let menu = build_menu(action_tx_for_build.clone());
             let mut desktop = Desktop::new(theme, menu);
 
-            spawn_terminal_window(
+            let session = spawn_terminal_window(
                 &mut desktop,
                 screen,
                 1,
                 &command_for_build,
                 &command_args_for_build,
             )?;
+            terminal_sessions_for_build.borrow_mut().push(session);
             refresh_windows_menu(&mut desktop, &action_tx_for_build);
 
             Ok(desktop)
@@ -232,18 +356,20 @@ fn main() -> Result<()> {
             let command = command.clone();
             let command_args = command_args.clone();
             let action_tx = action_tx_for_actions.clone();
+            let terminal_sessions = Rc::clone(&terminal_sessions_for_actions);
             let mut next_window_number = 2usize;
 
             move |desktop: &mut Desktop, action: TerminalViewerAction, screen: Rect| {
                 match action {
                     TerminalViewerAction::NewWindow => {
-                        spawn_terminal_window(
+                        let session = spawn_terminal_window(
                             desktop,
                             screen,
                             next_window_number,
                             &command,
                             &command_args,
                         )?;
+                        terminal_sessions.borrow_mut().push(session);
                         next_window_number = next_window_number.saturating_add(1);
                     }
                     TerminalViewerAction::Quit => return Ok(AppControl::Exit),
@@ -265,14 +391,32 @@ fn main() -> Result<()> {
                     }
                 }
 
+                let mut sessions = terminal_sessions.borrow_mut();
+                prune_terminal_sessions(desktop, &mut sessions);
                 refresh_windows_menu(desktop, &action_tx);
                 Ok(AppControl::Continue)
             }
         },
         move |desktop: &mut Desktop, _screen: Rect| {
+            let mut sessions = terminal_sessions_for_tick.borrow_mut();
+            update_terminal_exit_prompts(desktop, &mut sessions);
             refresh_windows_menu(desktop, &action_tx_for_tick);
             Ok(AppControl::Continue)
         },
-        |_desktop: &mut Desktop, _ev, _screen, _result| Ok(AppControl::Continue),
+        {
+            let command = command.clone();
+            let command_args = command_args.clone();
+            move |desktop: &mut Desktop, ev, _screen, _result| {
+                if is_plain_restart_key(ev) {
+                    let mut sessions = terminal_sessions_for_event.borrow_mut();
+                    let restarted =
+                        restart_focused_terminal(desktop, &mut sessions, &command, &command_args)?;
+                    if restarted {
+                        refresh_windows_menu(desktop, &action_tx_for_event);
+                    }
+                }
+                Ok(AppControl::Continue)
+            }
+        },
     )
 }

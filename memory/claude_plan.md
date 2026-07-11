@@ -1,36 +1,21 @@
-# Execution Plan
+## Execution Plan
 
-## Current objective
+I will work from `TODO.md` as the source of truth and complete exactly the first task whose heading is not prefixed with `[DONE]`.
 
-Complete exactly the first incomplete task listed in `TODO.md`, mark it `[DONE]`, update its completion record, validate the change according to the task requirements, commit the result, and stop.
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Check the latest commit message only for unfinished work directly relevant to that selected task.
+3. Inspect only the files needed to implement the selected task.
+4. Implement the task without changing unrelated behavior.
+5. Run formatting, clippy with warnings denied, and the required tests unless the task only changes documentation and a previous green full run can be reused.
+6. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling its completion record.
+7. Commit all changes related to this invocation, then stop without starting the next task.
 
-## Constraints
-
-- `TODO.md` is authoritative for task order and completion state.
-- A task is complete only when its heading/title is prefixed with `[DONE]`.
-- Do not proceed to the next task after completing the first incomplete one.
-- Do not split or reorder tasks unless a concrete prerequisite blocker makes the current task impossible.
-- Fix or explicitly schedule any observed unscheduled test failure before marking the current task done.
-- Use `PLAN.md` only for phase-level plan changes, not routine bookkeeping.
-- Include all relevant uncommitted files in the final commit for this invocation.
-
-## Step-by-step plan
-
-1. Read `TODO.md` to find the first task whose title is not prefixed with `[DONE]`.
-2. Inspect the latest commit message for any explicitly unfinished issue directly relevant to that task.
-3. Read the task details and the relevant source/test files needed for that task.
-4. Implement the task as written, without narrowing the scope or introducing workarounds.
-5. Add or update targeted tests for the implemented behavior.
-6. Run formatting and validation in the required order: `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task.
-7. If validation reveals an unscheduled failure, fix it if in scope or add the minimum prerequisite/follow-up task in `TODO.md` before completing.
-8. Update `TODO.md`: prefix the completed task title with `[DONE]` and update its completion record with implementation and validation notes.
-9. Update this progress file at key milestones.
-10. Review the working tree and commit all changes for this completed task with a descriptive message and required co-author trailer.
-
-## Progress log
-
-- Created initial execution plan.
-- Identified first incomplete task: `M1.R Review` in `TODO.md`.
-- Reviewed the terminal lifecycle/callback implementation and preserved capture, paste, mouse forwarding, and scrollback behaviors.
-- Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Updated `TODO.md` to mark `M1.R Review` as `[DONE]` with completion notes.
+Progress:
+- Created this execution plan before reading or modifying project files.
+- Identified first incomplete task: `M2.1 死窗口回收`.
+- Current task plan: inspect the terminal shell/window integration, implement process-exit detection that leaves a visible restart prompt or closes according to existing policy, cover it with targeted PTY/unit tests, then run required validation and mark only M2.1 done.
+- Implemented shell-level terminal session tracking in the terminal viewer and PTY fixture: exited child processes now release capture, show the configured exit prompt, and restart the focused dead terminal when plain `R` is pressed.
+- Added a PTY regression that launches a child shell, verifies the exit prompt/status, presses `R`, and observes the restart counter.
+- First focused PTY run found the new fixture process status line was clipped by the status window; expanded the fixture status window to fit all four status lines.
+- Validation completed successfully: formatting, clippy with warnings denied, the focused PTY regression, and the full workspace test suite all passed.
+- Updated `TODO.md` to mark only `M2.1 死窗口回收` as `[DONE]` with its completion record.
