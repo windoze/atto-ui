@@ -19,7 +19,9 @@
 - [x] **[DONE] M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
   - 完成记录（2026-07-11）：`TerminalEmulator` 的 parser 初始化与 scrollback 重建路径均改为 `vt100::Parser::new_with_callbacks`，新增 callback bridge 捕获 OSC 0/1/2 标题与图标名、BEL audible bell、OSC 52 clipboard copy 请求，写入 `TerminalShared` 并通过 `TerminalHandle` 查询接口与注册回调暴露。新增 `TerminalClipboardCopy` 公共事件类型与 `callbacks` 测试覆盖 handle 状态和回调可观察性。
   - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
+- [x] **[DONE] M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
+  - 完成记录（2026-07-11）：补强 `callbacks` 集成测试，新增真实 `/bin/sh` 子进程输出 OSC 2 title、BEL、OSC 52 clipboard 并以指定退出码结束的回归用例；与既有 `process_exit` 测试共同覆盖退出码报告、`is_running()` 翻转、`on_exit` 触发一次、title/bell/clipboard 回调与 handle 状态可观察。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-terminal --test callbacks --test process_exit`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
 
 ## 阶段 M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）

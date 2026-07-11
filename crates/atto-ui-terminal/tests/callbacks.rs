@@ -90,3 +90,71 @@ fn terminal_callbacks_report_clipboard_copy_requests() {
     );
     assert_eq!(handle.last_clipboard_copy(), Some(expected));
 }
+
+#[test]
+fn terminal_callbacks_are_observable_from_spawned_shell_output() {
+    let (title_tx, title_rx) = mpsc::channel();
+    let (bell_tx, bell_rx) = mpsc::channel();
+    let (clipboard_tx, clipboard_rx) = mpsc::channel();
+    let (exit_tx, exit_rx) = mpsc::channel();
+    let mut terminal = TerminalEmulator::new()
+        .on_window_title(move |title| {
+            title_tx.send(title.to_string()).expect("send title");
+        })
+        .on_audible_bell(move || {
+            bell_tx.send(()).expect("send bell");
+        })
+        .on_clipboard_copy(move |copy| {
+            clipboard_tx
+                .send(copy.clone())
+                .expect("send clipboard copy");
+        })
+        .on_exit(move |status| {
+            exit_tx.send(status.exit_code()).expect("send exit code");
+        });
+    let handle = terminal.handle();
+    let expected_clipboard = TerminalClipboardCopy {
+        selector: b"c".to_vec(),
+        data: b"c3Bhd25lZA==".to_vec(),
+    };
+    let args = vec![
+        "-c".to_string(),
+        "printf '\\033]2;Spawned Shell\\007\\007\\033]52;c;c3Bhd25lZA==\\007'; sleep 1; exit 12"
+            .to_string(),
+    ];
+
+    terminal
+        .spawn_process("/bin/sh", &args)
+        .expect("spawn shell command");
+
+    assert!(handle.is_running());
+    assert_eq!(
+        title_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("title callback"),
+        "Spawned Shell"
+    );
+    bell_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("bell callback");
+    assert_eq!(
+        clipboard_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("clipboard callback"),
+        expected_clipboard
+    );
+    assert_eq!(handle.window_title().as_deref(), Some("Spawned Shell"));
+    assert_eq!(handle.audible_bell_count(), 1);
+    assert_eq!(handle.last_clipboard_copy(), Some(expected_clipboard));
+    assert_eq!(
+        exit_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("exit callback"),
+        12
+    );
+    assert!(!handle.is_running());
+    assert_eq!(
+        handle.exit_status().map(|status| status.exit_code()),
+        Some(12)
+    );
+}
