@@ -64,7 +64,9 @@
 
 ## 阶段 M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）
 
-- [ ] **M4.1 selection 状态机** - 新增统一 selection 状态机：选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。可参考 chat 组件已有文本选择实现。
+- [x] **[DONE] M4.1 selection 状态机** - 新增统一 selection 状态机：选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。可参考 chat 组件已有文本选择实现。
+  - 完成记录（2026-07-12）：新增 `selection` 模块，提供基于 scrollback+visible screen 绝对坐标的 `TerminalSelectionPosition` / `TerminalSelectionRange`、统一 anchor/focus selection 状态机、可复用的 visible-cell 命中测试、宽字符感知的高亮 cell range，以及从 vt100 `Screen` 提取选中文本的核心逻辑。`TerminalShared` 接入 selection 状态，`TerminalEmulator` draw 路径按主题 selection 样式渲染选区，`TerminalHandle` 暴露 `begin_selection` / `update_selection` / `clear_selection` / `selection_range` / `selection_position_for_view_cell` / `selected_text`，供后续鼠标框选与 copy-mode 键盘入口共享。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_selection -- --nocapture`、`cargo test -p atto-ui-terminal selection -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M4.2 鼠标本地框选** - 子进程开鼠标报告时 `Shift+拖拽`=本地框选、不按=转发；未开鼠标报告时直接拖拽即框选（修掉 `capture_on_click` recapture 浪费点击，`terminal.rs:747-770`）。
 - [ ] **M4.3 copy-mode** - 经 `前缀 + [`（M3.3）进入；方向键与 hjkl、起选 `v`/`Space`、复制 `y`/`Enter`、`Esc`/`q` 取消；copy-mode 内滚轮/方向键永远本地 scrollback 导航。
 - [ ] **M4.4 剪贴板（首版）** - 选择 → 组件内部 copy buffer + 粘贴回子进程（bracketed paste 已支持，`terminal.rs:719-737`），先让选择/高亮/命中测试核心逻辑落地过 PTY。

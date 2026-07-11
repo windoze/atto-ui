@@ -1,11 +1,12 @@
 use atto_ui::composable::{
-    Component, ComponentAction, ComponentContext, EventHandling, MouseCoordinateSpace,
+    Component, ComponentAction, ComponentContext, EventHandling, MouseCoordinateSpace, Scrollable,
     ScrollbarHost, TabMode,
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::{
-    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalShortcut,
+    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalSelectionPosition,
+    TerminalShortcut,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -558,4 +559,58 @@ fn terminal_draw_resize_updates_parser_snapshot_size() {
         .expect("draw resized area");
     let resized = handle.snapshot();
     assert_eq!((resized.cols, resized.rows), (35, 8));
+}
+
+#[test]
+fn terminal_selection_handle_extracts_text_from_screen() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha 你\r\nbeta");
+
+    handle.begin_selection(TerminalSelectionPosition::new(0, 6));
+    handle.update_selection(TerminalSelectionPosition::new(1, 2));
+
+    let range = handle.selection_range().expect("selection range");
+    assert_eq!(range.start, TerminalSelectionPosition::new(0, 6));
+    assert_eq!(range.end, TerminalSelectionPosition::new(1, 2));
+    assert_eq!(handle.selected_text().as_deref(), Some("你\nbe"));
+    assert!(handle.clear_selection());
+    assert_eq!(handle.selected_text(), None);
+}
+
+#[test]
+fn terminal_selection_position_for_view_cell_uses_visible_scrollback() {
+    let theme = Theme::dark();
+    let mut widget = TerminalEmulator::new().scrollback_len(10);
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(10, 3)).expect("terminal");
+
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 10, 3), context(&theme)))
+        .expect("draw initial size");
+    handle.process_output_str("one\r\ntwo\r\nthree\r\nfour\r\nfive");
+    widget.set_scroll_offset(0, 0);
+
+    let position = handle.selection_position_for_view_cell(1, 2);
+    assert_eq!(position, TerminalSelectionPosition::new(1, 2));
+}
+
+#[test]
+fn terminal_selection_draw_highlights_wide_character_cells() {
+    let theme = Theme::dark();
+    let mut widget = TerminalEmulator::new();
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(12, 3)).expect("terminal");
+    handle.process_output_str("alpha 你");
+    handle.begin_selection(TerminalSelectionPosition::new(0, 7));
+    handle.update_selection(TerminalSelectionPosition::new(0, 8));
+
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 12, 3), context(&theme)))
+        .expect("draw selection");
+
+    let buffer = terminal.backend().buffer();
+    let selection_bg = theme.selection.bg.expect("selection background");
+    assert_ne!(buffer.cell((5, 0)).expect("pre-wide cell").bg, selection_bg);
+    assert_eq!(buffer.cell((6, 0)).expect("wide start").bg, selection_bg);
 }

@@ -20,6 +20,12 @@ use atto_ui::composable::{
     ScrollConfig,
 };
 
+use crate::selection::{
+    TerminalSelectionPosition, TerminalSelectionRange, TerminalSelectionState,
+    position_for_view_cell, selected_cell_ranges_for_screen_row, selected_text_from_screen,
+    visible_top_row,
+};
+
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
 
@@ -77,6 +83,7 @@ mod tests {
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: false,
+            selection: TerminalSelectionState::default(),
             dsr_tail: Vec::new(),
         }
     }
@@ -334,6 +341,7 @@ struct TerminalShared {
     prefix_bindings: Vec<TerminalPrefixBinding>,
     prefix_pending: bool,
     copy_mode: bool,
+    selection: TerminalSelectionState,
     dsr_tail: Vec<u8>,
 }
 
@@ -787,6 +795,7 @@ impl TerminalEmulator {
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: false,
+            selection: TerminalSelectionState::default(),
             dsr_tail: Vec::with_capacity(4),
         };
 
@@ -1097,14 +1106,20 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         if !ctx.is_focused && shared.capture {
             shared.set_capture(false);
         }
-        let screen = shared.parser.screen_mut();
         let (rows, cols) = (area.height, area.width);
-        if screen.size() != (rows, cols) {
-            screen.set_size(rows, cols);
+        {
+            let screen = shared.parser.screen_mut();
+            if screen.size() != (rows, cols) {
+                screen.set_size(rows, cols);
+            }
         }
         if let Some(process) = &mut self.process {
             process.resize_if_needed(rows, cols);
         }
+        let selection_range = shared.selection.range();
+        let max_scrollback = shared.max_scrollback();
+        let screen = shared.parser.screen_mut();
+        let visible_top = visible_top_row(max_scrollback, screen.scrollback());
 
         let base_style = ctx.theme.window_bg;
         let base_fg = base_style.fg;
@@ -1112,6 +1127,12 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
 
         let buf = frame.buffer_mut();
         for y in 0..area.height {
+            let absolute_row = visible_top.saturating_add(usize::from(y));
+            let selected_ranges = selection_range
+                .map(|range| {
+                    selected_cell_ranges_for_screen_row(screen, y, absolute_row, area.width, range)
+                })
+                .unwrap_or_default();
             for x in 0..area.width {
                 let cell = screen.cell(y, x);
                 let is_wide_cont = cell.is_some_and(vt100::Cell::is_wide_continuation);
@@ -1128,6 +1149,14 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                 let style = cell
                     .map(|c| cell_style(c, base_fg, base_bg))
                     .unwrap_or(base_style);
+                let style = if selected_ranges
+                    .iter()
+                    .any(|(start, end)| x >= *start && x < *end)
+                {
+                    ctx.theme.selection
+                } else {
+                    style
+                };
 
                 let dst_x = area.x.saturating_add(x);
                 let dst_y = area.y.saturating_add(y);
@@ -1448,6 +1477,47 @@ impl TerminalHandle {
     /// M4 expands this placeholder into selection/navigation behavior.
     pub fn copy_mode(&self) -> bool {
         self.shared.lock().copy_mode
+    }
+
+    /// Starts a terminal text selection at an absolute scrollback/screen position.
+    pub fn begin_selection(&self, position: TerminalSelectionPosition) {
+        self.shared.lock().selection.start(position);
+    }
+
+    /// Extends the active terminal text selection to an absolute position.
+    pub fn update_selection(&self, position: TerminalSelectionPosition) {
+        self.shared.lock().selection.update(position);
+    }
+
+    /// Clears the active terminal text selection.
+    pub fn clear_selection(&self) -> bool {
+        self.shared.lock().selection.clear()
+    }
+
+    /// Returns the normalized active terminal text selection range.
+    pub fn selection_range(&self) -> Option<TerminalSelectionRange> {
+        self.shared.lock().selection.range()
+    }
+
+    /// Converts a visible terminal cell into the absolute coordinate used by selections.
+    pub fn selection_position_for_view_cell(
+        &self,
+        row: u16,
+        col: u16,
+    ) -> TerminalSelectionPosition {
+        let mut shared = self.shared.lock();
+        let max_scrollback = shared.max_scrollback();
+        let screen = shared.parser.screen();
+        let (rows, cols) = screen.size();
+        position_for_view_cell(max_scrollback, screen.scrollback(), rows, cols, row, col)
+    }
+
+    /// Returns text currently covered by the active selection.
+    pub fn selected_text(&self) -> Option<String> {
+        let mut shared = self.shared.lock();
+        let range = shared.selection.range()?;
+        let max_scrollback = shared.max_scrollback();
+        selected_text_from_screen(shared.parser.screen_mut(), max_scrollback, range)
     }
 
     /// Returns the latest OSC 0/2 window title, if one has been observed.

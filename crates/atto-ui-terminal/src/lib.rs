@@ -6,11 +6,13 @@
 //! and forwards keyboard/mouse input to a consumer.
 
 mod dynamic;
+mod selection;
 mod terminal;
 
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,
 };
+pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use terminal::{
     TerminalClipboardCopy, TerminalEmulator, TerminalHandle, TerminalPrefixBinding,
     TerminalPrefixCommand, TerminalShortcut, TerminalSnapshot,

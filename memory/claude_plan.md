@@ -45,3 +45,25 @@ I cannot record private chain-of-thought, but this file tracks the concrete exec
 - Workspace validation passed: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
 - Marked `M3.R Review` as `[DONE]` in `TODO.md` with completion and validation notes.
 - After tightening the replacement test, reran targeted prefix tests, targeted M3 PTY checks, formatting check, clippy, and full workspace tests successfully.
+
+# Execution Plan (2026-07-12 M4.1 invocation)
+
+I cannot record private chain-of-thought, but this file tracks the concrete execution plan and progress for this invocation.
+
+1. Use `TODO.md` as the source of truth and complete only the first incomplete task: `M4.1 selection 状态机`.
+2. Check the latest commit message for directly relevant unfinished M4.1 work.
+3. Inspect the terminal component, existing text-selection implementation in the chat component, and terminal tests to understand current selection/copy-mode scaffolding.
+4. Add a unified terminal selection state machine that supports selection ranges, highlighting, hit testing, and extracting selected text from the vt100 screen, with shared keyboard/mouse-facing helpers.
+5. Add focused tests for selection range normalization, wide-character extraction where feasible, highlight behavior, and handle/query APIs needed by later M4 tasks.
+6. Run `cargo fmt`, targeted terminal tests, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+7. Mark `M4.1` as `[DONE]` in `TODO.md` with a completion record and validation details.
+8. Commit all changes for this invocation and stop.
+
+## Progress
+
+- Selected first incomplete task: `M4.1 selection 状态机`.
+- Implemented a focused terminal selection module with absolute scrollback/screen positions, normalized ranges, visible-cell hit testing, wide-character-aware highlight ranges, and selected-text extraction from the vt100 screen.
+- Wired selection state into `TerminalShared`, terminal drawing, and `TerminalHandle` APIs (`begin_selection`, `update_selection`, `clear_selection`, `selection_range`, `selection_position_for_view_cell`, `selected_text`).
+- Added focused unit/integration tests for reversed range normalization, scrollback hit testing, wide-character range expansion, selected text extraction, and visible selection highlighting. Targeted selection tests pass.
+- Required validation passed: `cargo fmt --all`, targeted terminal selection tests, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
+- Marked `M4.1 selection 状态机` as `[DONE]` in `TODO.md` with completion and validation notes.
