@@ -1,20 +1,29 @@
 use std::env;
 use std::io;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use atto_ui::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
-use atto_ui::composable::{Component, VStack};
+use atto_ui::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable, VStack,
+};
 use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
@@ -63,6 +72,102 @@ impl TerminalWindowSession {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+enum CommandContextMenuAction {
+    Rerun,
+    CopyCommand,
+    CopyOutput,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CommandContextState {
+    menu_id: WindowId,
+    block_index: usize,
+}
+
+struct CommandContextMenuView {
+    action_tx: mpsc::Sender<CommandContextMenuAction>,
+    last_area: Option<Rect>,
+}
+
+impl CommandContextMenuView {
+    fn new(action_tx: mpsc::Sender<CommandContextMenuAction>) -> Self {
+        Self {
+            action_tx,
+            last_area: None,
+        }
+    }
+
+    fn action_for_row(row: u16) -> Option<CommandContextMenuAction> {
+        match row {
+            0 => Some(CommandContextMenuAction::Rerun),
+            1 => Some(CommandContextMenuAction::CopyCommand),
+            2 => Some(CommandContextMenuAction::CopyOutput),
+            _ => None,
+        }
+    }
+}
+
+impl Component for CommandContextMenuView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from("Rerun"),
+                Line::from("Copy command"),
+                Line::from("Copy output"),
+            ]),
+            area,
+        );
+    }
+}
+
+impl EventHandling for CommandContextMenuView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            ..
+        }) = event
+        else {
+            return EventResult::ignored();
+        };
+        let Some(area) = self.last_area else {
+            return EventResult::ignored();
+        };
+        let (local_col, local_row) = match ctx.mouse_coordinate_space {
+            atto_ui::composable::MouseCoordinateSpace::Absolute => {
+                if *column < area.x
+                    || *row < area.y
+                    || *column >= area.x.saturating_add(area.width)
+                    || *row >= area.y.saturating_add(area.height)
+                {
+                    return EventResult::ignored();
+                }
+                (
+                    (*column).saturating_sub(area.x),
+                    (*row).saturating_sub(area.y),
+                )
+            }
+            atto_ui::composable::MouseCoordinateSpace::Local => (*column, *row),
+        };
+        if local_col >= area.width {
+            return EventResult::ignored();
+        }
+        let Some(action) = Self::action_for_row(local_row) else {
+            return EventResult::ignored();
+        };
+        let _ = self.action_tx.send(action);
+        EventResult::consumed()
+    }
+}
+
+impl Layout for CommandContextMenuView {}
+impl Scrollable for CommandContextMenuView {}
+impl FocusNav for CommandContextMenuView {}
+atto_ui::impl_component_default_traits!(CommandContextMenuView => DynamicTree);
 
 fn build_status_view(lines: &[Binding<String>]) -> Box<dyn Component> {
     let mut stack = VStack::new();
@@ -233,6 +338,116 @@ fn restart_terminal_view(
     Ok(true)
 }
 
+fn close_command_context_menu(desktop: &mut Desktop, context: &mut Option<CommandContextState>) {
+    if let Some(context) = context.take() {
+        desktop.wm.close(context.menu_id);
+    }
+}
+
+fn command_block_at_mouse(
+    desktop: &Desktop,
+    session: &TerminalWindowSession,
+    mouse: &MouseEvent,
+) -> Option<usize> {
+    let inner = desktop.wm.window(session.id)?.inner_rect();
+    if mouse.column < inner.x
+        || mouse.row < inner.y
+        || mouse.column >= inner.x.saturating_add(inner.width)
+        || mouse.row >= inner.y.saturating_add(inner.height)
+    {
+        return None;
+    }
+    let row = mouse.row.saturating_sub(inner.y);
+    let col = mouse.column.saturating_sub(inner.x);
+    let position = session.handle.selection_position_for_view_cell(row, col);
+    session.handle.command_block_index_at_position(position)
+}
+
+fn command_context_menu_rect(screen: Rect, mouse: &MouseEvent) -> Rect {
+    let width = 18.min(screen.width.max(1));
+    let height = 5.min(screen.height.max(1));
+    Rect {
+        x: mouse.column.min(screen.width.saturating_sub(width)),
+        y: mouse.row.min(screen.height.saturating_sub(height)),
+        width,
+        height,
+    }
+}
+
+fn open_command_context_menu(
+    desktop: &mut Desktop,
+    session: &TerminalWindowSession,
+    screen: Rect,
+    mouse: &MouseEvent,
+    action_tx: &mpsc::Sender<CommandContextMenuAction>,
+    context: &mut Option<CommandContextState>,
+) -> bool {
+    close_command_context_menu(desktop, context);
+    let Some(block_index) = command_block_at_mouse(desktop, session, mouse) else {
+        return false;
+    };
+    let _ = session.handle.select_command_block_output(block_index);
+    let menu_id = desktop.add_window(
+        Window::new(
+            WindowKind::Tooltip,
+            "Command",
+            command_context_menu_rect(screen, mouse),
+            Box::new(CommandContextMenuView::new(action_tx.clone())),
+        )
+        .with_min_size(18, 5),
+        screen,
+    );
+    *context = Some(CommandContextState {
+        menu_id,
+        block_index,
+    });
+    true
+}
+
+fn apply_command_context_action(
+    desktop: &mut Desktop,
+    session: &TerminalWindowSession,
+    context: &mut Option<CommandContextState>,
+    action: CommandContextMenuAction,
+) {
+    let Some(active) = *context else {
+        return;
+    };
+    match action {
+        CommandContextMenuAction::Rerun => {
+            session.handle.rerun_command_block(active.block_index);
+        }
+        CommandContextMenuAction::CopyCommand => {
+            session
+                .handle
+                .copy_command_block_command(active.block_index);
+        }
+        CommandContextMenuAction::CopyOutput => {
+            session.handle.copy_command_block_output(active.block_index);
+        }
+    }
+    close_command_context_menu(desktop, context);
+}
+
+fn is_right_mouse_down(event: &Event) -> Option<&MouseEvent> {
+    match event {
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) => {
+            Some(mouse)
+        }
+        _ => None,
+    }
+}
+
+fn is_non_right_mouse_down(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left | MouseButton::Middle),
+            ..
+        })
+    )
+}
+
 fn process_status_text(session: &TerminalWindowSession) -> String {
     let state = if session.command.is_none() {
         "NONE".to_string()
@@ -257,7 +472,12 @@ fn copy_status_text(session: &TerminalWindowSession) -> String {
         .copied_text()
         .unwrap_or_default()
         .replace('\n', "\\n");
-    format!("COPYMODE={mode} COPY={copied}")
+    let selected = session
+        .handle
+        .selected_text()
+        .unwrap_or_default()
+        .replace('\n', "\\n");
+    format!("COPYMODE={mode} COPY={copied} SEL={selected}")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -320,6 +540,8 @@ fn main() -> Result<()> {
 
     let menu_action = Binding::new("NONE".to_string());
     let menu = build_menu(&menu_action);
+    let (command_menu_tx, command_menu_rx) = mpsc::channel();
+    let mut command_context: Option<CommandContextState> = None;
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
@@ -412,6 +634,24 @@ fn main() -> Result<()> {
         let res = desktop.handle_event(&ev, screen);
         if let DesktopAction::CloseWindow(id) = res.action {
             desktop.wm.close(id);
+        }
+        if let Some(mouse) = is_right_mouse_down(&ev) {
+            open_command_context_menu(
+                &mut desktop,
+                &term_session,
+                screen,
+                mouse,
+                &command_menu_tx,
+                &mut command_context,
+            );
+        }
+        let mut handled_context_action = false;
+        while let Ok(action) = command_menu_rx.try_recv() {
+            handled_context_action = true;
+            apply_command_context_action(&mut desktop, &term_session, &mut command_context, action);
+        }
+        if !handled_context_action && is_non_right_mouse_down(&ev) {
+            close_command_context_menu(&mut desktop, &mut command_context);
         }
         if is_plain_restart_key(&ev) {
             restart_terminal_view(&mut desktop, &mut term_session)?;

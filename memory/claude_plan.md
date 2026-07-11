@@ -1,27 +1,23 @@
 # Execution Plan
 
-## Current task
+## Current objective
+Complete exactly the first incomplete task listed in `TODO.md`, then stop after marking it done and committing the changes.
 
-- First incomplete TODO task: **M5.3 第 2 层 呈现【外壳层】**
-- Requirement: Use component-layer `command_blocks()` data in the shell layer to render command block presentation: separators/background for command output and red markers for failed commands (`exit != 0`).
-- Scope boundary: Complete only M5.3. Do not proceed to M5.4 interaction/navigation or later tasks.
+Selected task: `M5.4 第 2 层 交互【外壳层】` — command-level navigation with `Ctrl+Up/Down`, command-output selection granularity, and right-click command actions for rerun/copy command/copy output.
 
 ## Steps
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Inspect only the files and context needed for that task, including `PLAN.md` only if the task or dependency structure requires it.
+3. Implement the task fully, avoiding workarounds or unrelated changes.
+4. Run the required validation in order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required by the task.
+5. Fix any observed unscheduled failures or add the minimum prerequisite task to `TODO.md` if a blocker prevents completion.
+6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling its completion record; update this plan file at major milestones.
+7. Commit all changes for this task with a clear message and the required co-author trailer.
 
-1. Inspect the command block snapshot API and existing terminal rendering/test fixtures.
-2. Locate the outer shell/demo surfaces that own terminal windows and have access to `TerminalHandle::command_blocks()`.
-3. Add a presentation mechanism that can render command block separators, output-region background, and failed-command red markers without changing behavior when no command blocks exist.
-4. Add focused tests for semantic command block presentation, including success and failure blocks.
-5. Run `cargo fmt`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and the relevant test suite.
-6. Mark M5.3 `[DONE]` in `TODO.md` with completion and validation details.
-7. Commit the M5.3 changes and stop.
-
-## Progress
-
-- Identified M5.3 as the first incomplete task.
-- Confirmed the latest commit completed M5.2, which is the prerequisite for this task.
-- Added opt-in OSC 133 command-block presentation support with separator glyphs, output-row background styling, and failed-command markers.
-- Enabled command-block presentation in the terminal viewer and PTY shell fixture.
-- Added targeted unit and PTY tests for command-block presentation.
-- Completed formatting, focused tests, clippy, and the full workspace test suite successfully.
-- Marked M5.3 as `[DONE]` in `TODO.md` with completion and validation details.
+## Implementation notes for M5.4
+1. [DONE] Add precise OSC 133 marker column tracking while keeping existing row-based command block fields available.
+2. [DONE] Add `TerminalHandle` methods for command-block lookup, navigation, output selection, command/output copying, and rerun input.
+3. [DONE] Wire the PTY shell fixture to handle `Ctrl+Up/Down` and right-click command context actions, exposing status text for deterministic tests.
+4. [DONE] Apply the same command interaction wiring to the interactive terminal viewer example.
+5. [DONE] Add targeted unit and PTY tests for command navigation, whole-output selection/copy, and right-click rerun/copy actions.
+6. [DONE] Run formatting, linting, targeted tests, then the workspace test suite if code changed. Formatting, clippy, targeted terminal regressions, and the full workspace test suite have passed.

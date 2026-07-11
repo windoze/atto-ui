@@ -1183,3 +1183,74 @@ fn terminal_command_block_presentation_marks_semantic_rows() {
     assert_eq!(marker.symbol(), "!");
     assert_eq!(marker.fg, failure_fg);
 }
+
+#[test]
+fn terminal_command_block_actions_use_marker_columns() {
+    let terminal = TerminalEmulator::new().without_system_clipboard();
+    let handle = terminal.handle();
+    handle.process_output_str(
+        "\x1b]133;A\x07$ \x1b]133;B\x07echo hi\r\n\
+         \x1b]133;C\x07hi\r\n\
+         \x1b]133;D;0\x07",
+    );
+
+    let index = handle
+        .command_block_index_at_position(TerminalSelectionPosition::new(1, 0))
+        .expect("output row belongs to command block");
+    assert_eq!(
+        handle.copy_command_block_command(index).as_deref(),
+        Some("echo hi")
+    );
+    assert_eq!(
+        handle.copy_command_block_output(index).as_deref(),
+        Some("hi")
+    );
+    assert_eq!(handle.copied_text().as_deref(), Some("hi"));
+    assert_eq!(
+        handle.select_command_block_output(index),
+        Some(atto_ui_terminal::TerminalSelectionRange {
+            start: TerminalSelectionPosition::new(1, 0),
+            end: TerminalSelectionPosition::new(2, 0),
+        })
+    );
+    assert_eq!(handle.selected_text().as_deref(), Some("hi\n"));
+
+    assert!(handle.rerun_command_block(index));
+    assert_eq!(handle.take_input(), b"echo hi\n");
+}
+
+#[test]
+fn terminal_ctrl_arrows_navigate_command_blocks_without_forwarding() {
+    let theme = Theme::dark();
+    let mut widget = TerminalEmulator::new();
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(24, 4)).expect("terminal");
+
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 24, 4), context(&theme)))
+        .expect("draw initial size");
+    for index in 0..6 {
+        handle.process_output_str(&format!(
+            "\x1b]133;A\x07$ \x1b]133;B\x07cmd{index}\r\n\
+             \x1b]133;C\x07out{index}\r\n\
+             \x1b]133;D;0\x07"
+        ));
+    }
+    assert_eq!(widget.scroll_offset().1, 9);
+
+    let result = widget.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+        context(&theme),
+    );
+    assert!(result.is_consumed());
+    assert_eq!(handle.take_input(), b"");
+    assert_eq!(widget.scroll_offset().1, 8);
+
+    let result = widget.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
+        context(&theme),
+    );
+    assert!(result.is_consumed());
+    assert_eq!(handle.take_input(), b"");
+    assert_eq!(widget.scroll_offset().1, 9);
+}

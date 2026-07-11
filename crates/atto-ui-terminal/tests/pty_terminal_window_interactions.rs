@@ -78,6 +78,15 @@ fn drag_left_with_mods(
         .expect("mouse release");
 }
 
+fn right_click(host: &mut PtyTestHost, x: u16, y: u16) {
+    let x = x.saturating_add(1);
+    let y = y.saturating_add(1);
+    host.send_str(&format!("\x1b[<2;{x};{y}M"))
+        .expect("right mouse press");
+    host.send_str(&format!("\x1b[<2;{x};{y}m"))
+        .expect("right mouse release");
+}
+
 fn parse_rect_field(line: &str, key: &str) -> Option<Rect> {
     let needle = format!("{key}=");
     let start = line.find(&needle)? + needle.len();
@@ -558,6 +567,47 @@ fn pty_terminal_command_block_presentation_marks_failed_commands() {
     wait_for_text(&host, "boom");
     wait_for_text(&host, "────");
     wait_for_text(&host, "!");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_command_context_menu_copies_output_and_reruns() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
+        "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
+        "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "RESULT");
+    wait_for_text(&host, "CAP=ON");
+
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy command");
+    wait_for_text(&host, "SEL=RESULT");
+    let (copy_command_x, copy_command_y) = wait_for_text_position(&host, "Copy command");
+    host.click(copy_command_x, copy_command_y)
+        .expect("copy command");
+    wait_for_text(&host, "COPY=echo AGAIN");
+
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy output");
+    let (copy_output_x, copy_output_y) = wait_for_text_position(&host, "Copy output");
+    host.click(copy_output_x, copy_output_y)
+        .expect("copy output");
+    wait_for_text(&host, "COPY=RESULT");
+
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+    let (rerun_x, rerun_y) = wait_for_text_position(&host, "Rerun");
+    host.click(rerun_x, rerun_y).expect("rerun command");
+    wait_for_text(&host, "RERUN=echo AGAIN");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

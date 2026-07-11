@@ -5,12 +5,20 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
     run_crossterm_desktop_with_actions,
+};
+use atto_ui::composable::{
+    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable,
 };
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
@@ -30,6 +38,14 @@ enum TerminalViewerAction {
     ToggleMaximizeFocused,
     CloseFocused,
     FocusWindow(WindowId),
+    CommandContext(CommandContextMenuAction),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CommandContextMenuAction {
+    Rerun,
+    CopyCommand,
+    CopyOutput,
 }
 
 struct TerminalWindowSession {
@@ -49,6 +65,98 @@ impl TerminalWindowSession {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+struct CommandContextState {
+    menu_id: WindowId,
+    terminal_id: WindowId,
+    block_index: usize,
+}
+
+struct CommandContextMenuView {
+    action_tx: mpsc::Sender<TerminalViewerAction>,
+    last_area: Option<Rect>,
+}
+
+impl CommandContextMenuView {
+    fn new(action_tx: mpsc::Sender<TerminalViewerAction>) -> Self {
+        Self {
+            action_tx,
+            last_area: None,
+        }
+    }
+
+    fn action_for_row(row: u16) -> Option<CommandContextMenuAction> {
+        match row {
+            0 => Some(CommandContextMenuAction::Rerun),
+            1 => Some(CommandContextMenuAction::CopyCommand),
+            2 => Some(CommandContextMenuAction::CopyOutput),
+            _ => None,
+        }
+    }
+}
+
+impl Component for CommandContextMenuView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        self.last_area = Some(area);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from("Rerun"),
+                Line::from("Copy command"),
+                Line::from("Copy output"),
+            ]),
+            area,
+        );
+    }
+}
+
+impl EventHandling for CommandContextMenuView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        let Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            ..
+        }) = event
+        else {
+            return EventResult::ignored();
+        };
+        let Some(area) = self.last_area else {
+            return EventResult::ignored();
+        };
+        let (local_col, local_row) = match ctx.mouse_coordinate_space {
+            atto_ui::composable::MouseCoordinateSpace::Absolute => {
+                if *column < area.x
+                    || *row < area.y
+                    || *column >= area.x.saturating_add(area.width)
+                    || *row >= area.y.saturating_add(area.height)
+                {
+                    return EventResult::ignored();
+                }
+                (
+                    (*column).saturating_sub(area.x),
+                    (*row).saturating_sub(area.y),
+                )
+            }
+            atto_ui::composable::MouseCoordinateSpace::Local => (*column, *row),
+        };
+        if local_col >= area.width {
+            return EventResult::ignored();
+        }
+        let Some(action) = Self::action_for_row(local_row) else {
+            return EventResult::ignored();
+        };
+        let _ = self
+            .action_tx
+            .send(TerminalViewerAction::CommandContext(action));
+        EventResult::consumed()
+    }
+}
+
+impl Layout for CommandContextMenuView {}
+impl Scrollable for CommandContextMenuView {}
+impl FocusNav for CommandContextMenuView {}
+atto_ui::impl_component_default_traits!(CommandContextMenuView => DynamicTree);
 
 fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
     MenuBar::new(vec![
@@ -260,6 +368,121 @@ fn restart_focused_terminal(
     restart_terminal_window(desktop, session, command, command_args)
 }
 
+fn close_command_context_menu(desktop: &mut Desktop, context: &mut Option<CommandContextState>) {
+    if let Some(context) = context.take() {
+        desktop.wm.close(context.menu_id);
+    }
+}
+
+fn command_block_at_mouse(
+    desktop: &Desktop,
+    sessions: &[TerminalWindowSession],
+    mouse: &MouseEvent,
+) -> Option<(WindowId, usize)> {
+    for session in sessions {
+        let inner = desktop.wm.window(session.id)?.inner_rect();
+        if mouse.column < inner.x
+            || mouse.row < inner.y
+            || mouse.column >= inner.x.saturating_add(inner.width)
+            || mouse.row >= inner.y.saturating_add(inner.height)
+        {
+            continue;
+        }
+        let row = mouse.row.saturating_sub(inner.y);
+        let col = mouse.column.saturating_sub(inner.x);
+        let position = session.handle.selection_position_for_view_cell(row, col);
+        if let Some(block_index) = session.handle.command_block_index_at_position(position) {
+            return Some((session.id, block_index));
+        }
+    }
+    None
+}
+
+fn command_context_menu_rect(screen: Rect, mouse: &MouseEvent) -> Rect {
+    let width = 18.min(screen.width.max(1));
+    let height = 5.min(screen.height.max(1));
+    Rect {
+        x: mouse.column.min(screen.width.saturating_sub(width)),
+        y: mouse.row.min(screen.height.saturating_sub(height)),
+        width,
+        height,
+    }
+}
+
+fn open_command_context_menu(
+    desktop: &mut Desktop,
+    sessions: &[TerminalWindowSession],
+    screen: Rect,
+    mouse: &MouseEvent,
+    action_tx: &mpsc::Sender<TerminalViewerAction>,
+    context: &mut Option<CommandContextState>,
+) -> bool {
+    close_command_context_menu(desktop, context);
+    let Some((terminal_id, block_index)) = command_block_at_mouse(desktop, sessions, mouse) else {
+        return false;
+    };
+    if let Some(session) = sessions.iter().find(|session| session.id == terminal_id) {
+        let _ = session.handle.select_command_block_output(block_index);
+    }
+    let menu_id = desktop.add_window(
+        Window::new(
+            WindowKind::Tooltip,
+            "Command",
+            command_context_menu_rect(screen, mouse),
+            Box::new(CommandContextMenuView::new(action_tx.clone())),
+        )
+        .with_min_size(18, 5),
+        screen,
+    );
+    *context = Some(CommandContextState {
+        menu_id,
+        terminal_id,
+        block_index,
+    });
+    true
+}
+
+fn apply_command_context_action(
+    desktop: &mut Desktop,
+    sessions: &[TerminalWindowSession],
+    context: &mut Option<CommandContextState>,
+    action: CommandContextMenuAction,
+) {
+    let Some(active) = *context else {
+        return;
+    };
+    let Some(session) = sessions
+        .iter()
+        .find(|session| session.id == active.terminal_id)
+    else {
+        close_command_context_menu(desktop, context);
+        return;
+    };
+    match action {
+        CommandContextMenuAction::Rerun => {
+            session.handle.rerun_command_block(active.block_index);
+        }
+        CommandContextMenuAction::CopyCommand => {
+            session
+                .handle
+                .copy_command_block_command(active.block_index);
+        }
+        CommandContextMenuAction::CopyOutput => {
+            session.handle.copy_command_block_output(active.block_index);
+        }
+    }
+    close_command_context_menu(desktop, context);
+}
+
+fn is_right_mouse_down(event: &Event) -> Option<&MouseEvent> {
+    match event {
+        Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) => {
+            Some(mouse)
+        }
+        _ => None,
+    }
+}
+
 fn spawn_terminal_window(
     desktop: &mut Desktop,
     screen: Rect,
@@ -355,6 +578,9 @@ fn main() -> Result<()> {
     let terminal_sessions_for_actions = Rc::clone(&terminal_sessions);
     let terminal_sessions_for_tick = Rc::clone(&terminal_sessions);
     let terminal_sessions_for_event = Rc::clone(&terminal_sessions);
+    let command_context: Rc<RefCell<Option<CommandContextState>>> = Rc::new(RefCell::new(None));
+    let command_context_for_actions = Rc::clone(&command_context);
+    let command_context_for_event = Rc::clone(&command_context);
 
     run_crossterm_desktop_with_actions(
         config,
@@ -413,6 +639,15 @@ fn main() -> Result<()> {
                             desktop.wm.focus(id);
                         }
                     }
+                    TerminalViewerAction::CommandContext(action) => {
+                        let sessions = terminal_sessions.borrow();
+                        apply_command_context_action(
+                            desktop,
+                            &sessions,
+                            &mut command_context_for_actions.borrow_mut(),
+                            action,
+                        );
+                    }
                 }
 
                 let mut sessions = terminal_sessions.borrow_mut();
@@ -432,7 +667,18 @@ fn main() -> Result<()> {
         {
             let command = command.clone();
             let command_args = command_args.clone();
-            move |desktop: &mut Desktop, ev, _screen, _result| {
+            move |desktop: &mut Desktop, ev, screen, _result| {
+                if let Some(mouse) = is_right_mouse_down(ev) {
+                    let sessions = terminal_sessions_for_event.borrow();
+                    open_command_context_menu(
+                        desktop,
+                        &sessions,
+                        screen,
+                        mouse,
+                        &action_tx_for_event,
+                        &mut command_context_for_event.borrow_mut(),
+                    );
+                }
                 if is_plain_restart_key(ev) {
                     let mut sessions = terminal_sessions_for_event.borrow_mut();
                     let restarted =

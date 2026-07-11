@@ -192,9 +192,13 @@ mod tests {
             shared.command_marks[0],
             TerminalCommandBlock {
                 prompt_start: Some(0),
+                prompt_start_col: Some(0),
                 command_start: Some(0),
+                command_start_col: Some(9),
                 output_start: Some(1),
+                output_start_col: Some(0),
                 end: Some(2),
+                end_col: Some(0),
                 exit_code: Some(7),
                 cwd: Some("/tmp/project one".to_string()),
             }
@@ -214,7 +218,9 @@ mod tests {
             shared.command_marks[0],
             TerminalCommandBlock {
                 prompt_start: Some(1),
+                prompt_start_col: Some(0),
                 end: Some(1),
+                end_col: Some(0),
                 exit_code: Some(0),
                 ..TerminalCommandBlock::default()
             }
@@ -461,12 +467,20 @@ impl TerminalCopyModeState {
 pub struct TerminalCommandBlock {
     /// Absolute terminal row where the prompt started.
     pub prompt_start: Option<usize>,
+    /// Terminal column where the prompt-start marker was observed.
+    pub prompt_start_col: Option<u16>,
     /// Absolute terminal row where the command text started.
     pub command_start: Option<usize>,
+    /// Terminal column where the command-start marker was observed.
+    pub command_start_col: Option<u16>,
     /// Absolute terminal row where command output started.
     pub output_start: Option<usize>,
+    /// Terminal column where the output-start marker was observed.
+    pub output_start_col: Option<u16>,
     /// Absolute terminal row where the command finished.
     pub end: Option<usize>,
+    /// Terminal column where the command-finished marker was observed.
+    pub end_col: Option<u16>,
     /// Command-level exit code reported by OSC 133 `D`, if present.
     pub exit_code: Option<i32>,
     /// Current working directory reported by OSC 7 for this block.
@@ -474,9 +488,10 @@ pub struct TerminalCommandBlock {
 }
 
 impl TerminalCommandBlock {
-    fn at_prompt(row: usize, cwd: Option<String>) -> Self {
+    fn at_prompt(row: usize, col: u16, cwd: Option<String>) -> Self {
         Self {
             prompt_start: Some(row),
+            prompt_start_col: Some(col),
             cwd,
             ..Self::default()
         }
@@ -489,6 +504,33 @@ impl TerminalCommandBlock {
     fn has_command_activity(&self) -> bool {
         self.command_start.is_some() || self.output_start.is_some()
     }
+
+    fn anchor_row(&self) -> Option<usize> {
+        self.prompt_start
+            .or(self.command_start)
+            .or(self.output_start)
+            .or(self.end)
+    }
+
+    fn last_row(&self) -> Option<usize> {
+        [
+            self.prompt_start,
+            self.command_start,
+            self.output_start,
+            self.end,
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+    }
+
+    fn contains_row(&self, row: usize) -> bool {
+        let Some(start) = self.anchor_row() else {
+            return false;
+        };
+        let end = self.last_row().unwrap_or(start);
+        row >= start && row <= end
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -497,7 +539,11 @@ enum TerminalCallbackEvent {
     WindowIconName(String),
     AudibleBell,
     ClipboardCopy(TerminalClipboardCopy),
-    UnhandledOsc { params: Vec<Vec<u8>>, row: usize },
+    UnhandledOsc {
+        params: Vec<Vec<u8>>,
+        row: usize,
+        col: u16,
+    },
 }
 
 #[derive(Default)]
@@ -538,9 +584,11 @@ impl vt100::Callbacks for TerminalCallbacks {
     }
 
     fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        let (row, col) = current_absolute_position_for_screen(screen);
         self.events.push(TerminalCallbackEvent::UnhandledOsc {
             params: params.iter().map(|param| param.to_vec()).collect(),
-            row: current_absolute_row_for_screen(screen),
+            row,
+            col,
         });
     }
 }
@@ -558,13 +606,13 @@ fn terminal_parser(rows: u16, cols: u16, scrollback_len: usize) -> TerminalParse
     vt100::Parser::new_with_callbacks(rows, cols, scrollback_len, TerminalCallbacks::default())
 }
 
-fn current_absolute_row_for_screen(screen: &mut vt100::Screen) -> usize {
+fn current_absolute_position_for_screen(screen: &mut vt100::Screen) -> (usize, u16) {
     let current_scrollback = screen.scrollback();
     screen.set_scrollback(usize::MAX);
     let max_scrollback = screen.scrollback();
     screen.set_scrollback(current_scrollback);
-    let row = screen.cursor_position().0;
-    max_scrollback.saturating_add(usize::from(row))
+    let (row, col) = screen.cursor_position();
+    (max_scrollback.saturating_add(usize::from(row)), col)
 }
 
 fn string_from_terminal_bytes(bytes: &[u8]) -> String {
@@ -666,6 +714,12 @@ struct CommandRowPresentation {
     failed_marker: bool,
 }
 
+#[derive(Clone, Copy)]
+enum CommandBlockTextKind {
+    Command,
+    Output,
+}
+
 fn command_row_presentation(blocks: &[TerminalCommandBlock], row: usize) -> CommandRowPresentation {
     let mut presentation = CommandRowPresentation::default();
     for block in blocks {
@@ -735,6 +789,13 @@ fn command_failure_style(theme: &Theme) -> Style {
         .named_style("terminal-command-failure")
         .or_else(|| theme.named_style("status-segment-error"))
         .unwrap_or_else(|| Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+}
+
+fn trim_terminal_block_text(mut text: String) -> Option<String> {
+    while text.ends_with('\n') || text.ends_with('\r') {
+        text.pop();
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 struct TerminalShared {
@@ -858,8 +919,8 @@ impl TerminalShared {
                         dispatches.push(TerminalCallbackDispatch::ClipboardCopy(callback, copy));
                     }
                 }
-                TerminalCallbackEvent::UnhandledOsc { params, row } => {
-                    if let Some(block) = self.apply_unhandled_osc(&params, row)
+                TerminalCallbackEvent::UnhandledOsc { params, row, col } => {
+                    if let Some(block) = self.apply_unhandled_osc(&params, row, col)
                         && let Some(callback) = self.on_command_finished.clone()
                     {
                         dispatches.push(TerminalCallbackDispatch::CommandFinished(callback, block));
@@ -874,9 +935,12 @@ impl TerminalShared {
         &mut self,
         params: &[Vec<u8>],
         row: usize,
+        col: u16,
     ) -> Option<TerminalCommandBlock> {
         match params {
-            [kind, rest @ ..] if kind.as_slice() == b"133" => self.apply_osc133_marker(rest, row),
+            [kind, rest @ ..] if kind.as_slice() == b"133" => {
+                self.apply_osc133_marker(rest, row, col)
+            }
             [kind, cwd] if kind.as_slice() == b"7" => {
                 if let Some(cwd) = parse_osc7_cwd(cwd) {
                     self.current_cwd = Some(cwd.clone());
@@ -894,30 +958,34 @@ impl TerminalShared {
         &mut self,
         params: &[Vec<u8>],
         row: usize,
+        col: u16,
     ) -> Option<TerminalCommandBlock> {
         let marker = params.first().and_then(|marker| marker.first()).copied()?;
         match marker {
             b'A' => {
-                self.record_prompt_start(row);
+                self.record_prompt_start(row, col);
                 None
             }
             b'B' => {
                 let cwd = self.current_cwd.clone();
-                let block = self.open_command_block(row, cwd);
+                let block = self.open_command_block(row, col, cwd);
                 block.command_start = Some(row);
+                block.command_start_col = Some(col);
                 None
             }
             b'C' => {
                 let cwd = self.current_cwd.clone();
-                let block = self.open_command_block(row, cwd);
+                let block = self.open_command_block(row, col, cwd);
                 block.output_start = Some(row);
+                block.output_start_col = Some(col);
                 None
             }
             b'D' => {
                 let exit_code = params.get(1).and_then(|code| parse_osc133_exit_code(code));
                 let cwd = self.current_cwd.clone();
-                let block = self.open_command_block(row, cwd);
+                let block = self.open_command_block(row, col, cwd);
                 block.end = Some(row);
+                block.end_col = Some(col);
                 block.exit_code = exit_code;
                 Some(block.clone())
             }
@@ -925,20 +993,26 @@ impl TerminalShared {
         }
     }
 
-    fn record_prompt_start(&mut self, row: usize) {
+    fn record_prompt_start(&mut self, row: usize, col: u16) {
         let cwd = self.current_cwd.clone();
         match self.command_marks.last_mut() {
             Some(block) if block.is_open() && !block.has_command_activity() => {
                 block.prompt_start = Some(row);
+                block.prompt_start_col = Some(col);
                 block.cwd = cwd;
             }
             _ => self
                 .command_marks
-                .push(TerminalCommandBlock::at_prompt(row, cwd)),
+                .push(TerminalCommandBlock::at_prompt(row, col, cwd)),
         }
     }
 
-    fn open_command_block(&mut self, row: usize, cwd: Option<String>) -> &mut TerminalCommandBlock {
+    fn open_command_block(
+        &mut self,
+        row: usize,
+        col: u16,
+        cwd: Option<String>,
+    ) -> &mut TerminalCommandBlock {
         let needs_new_block = self
             .command_marks
             .last()
@@ -946,6 +1020,7 @@ impl TerminalShared {
         if needs_new_block {
             self.command_marks.push(TerminalCommandBlock {
                 prompt_start: Some(row),
+                prompt_start_col: Some(col),
                 cwd,
                 ..TerminalCommandBlock::default()
             });
@@ -1023,6 +1098,141 @@ impl TerminalShared {
         let range = self.selection.range()?;
         let max_scrollback = self.max_scrollback();
         selected_text_from_screen(self.parser.screen_mut(), max_scrollback, range)
+    }
+
+    fn command_block_index_at_position(
+        &self,
+        position: TerminalSelectionPosition,
+    ) -> Option<usize> {
+        self.command_marks
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, block)| block.contains_row(position.row))
+            .map(|(index, _)| index)
+    }
+
+    fn scroll_to_command_block(&mut self, index: usize) -> bool {
+        let Some(anchor_row) = self
+            .command_marks
+            .get(index)
+            .and_then(TerminalCommandBlock::anchor_row)
+        else {
+            return false;
+        };
+        let max = self.max_scrollback();
+        let target_top = anchor_row.min(max);
+        let desired = max.saturating_sub(target_top);
+        if self.parser.screen().scrollback() == desired {
+            return false;
+        }
+        self.parser.screen_mut().set_scrollback(desired);
+        true
+    }
+
+    fn scroll_to_previous_command_block(&mut self) -> Option<usize> {
+        let max = self.max_scrollback();
+        let current_top = visible_top_row(max, self.parser.screen().scrollback());
+        let target = if self.parser.screen().scrollback() == 0 {
+            self.command_marks
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, block)| block.anchor_row().is_some_and(|row| row < max))
+        } else {
+            self.command_marks
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, block)| block.anchor_row().is_some_and(|row| row < current_top))
+        };
+        let (index, _) = target?;
+        self.scroll_to_command_block(index).then_some(index)
+    }
+
+    fn scroll_to_next_command_block(&mut self) -> Option<usize> {
+        let max = self.max_scrollback();
+        let current_top = visible_top_row(max, self.parser.screen().scrollback());
+        let (index, _) = self
+            .command_marks
+            .iter()
+            .enumerate()
+            .find(|(_, block)| block.anchor_row().is_some_and(|row| row > current_top))?;
+        self.scroll_to_command_block(index).then_some(index)
+    }
+
+    fn select_command_block_output(&mut self, index: usize) -> Option<TerminalSelectionRange> {
+        let range = self.command_block_text_range(index, CommandBlockTextKind::Output)?;
+        self.selection.start_keyboard(range.start);
+        self.selection.update(range.end);
+        Some(range)
+    }
+
+    fn copy_command_block_text(
+        &mut self,
+        index: usize,
+        kind: CommandBlockTextKind,
+    ) -> Option<String> {
+        let text = self.command_block_text(index, kind)?;
+        self.copy_buffer = Some(text.clone());
+        Some(text)
+    }
+
+    fn command_block_rerun_bytes(&mut self, index: usize) -> Option<Vec<u8>> {
+        let command = self.command_block_text(index, CommandBlockTextKind::Command)?;
+        let mut bytes = command.into_bytes();
+        bytes.push(b'\n');
+        Some(bytes)
+    }
+
+    fn command_block_text(&mut self, index: usize, kind: CommandBlockTextKind) -> Option<String> {
+        let range = self.command_block_text_range(index, kind)?;
+        let max_scrollback = self.max_scrollback();
+        let text = selected_text_from_screen(self.parser.screen_mut(), max_scrollback, range)?;
+        trim_terminal_block_text(text)
+    }
+
+    fn command_block_text_range(
+        &mut self,
+        index: usize,
+        kind: CommandBlockTextKind,
+    ) -> Option<TerminalSelectionRange> {
+        let block = self.command_marks.get(index)?.clone();
+        let (rows, cols) = self.parser.screen().size();
+        let max_scrollback = self.max_scrollback();
+        let bottom_row = max_scrollback
+            .saturating_add(usize::from(rows))
+            .saturating_sub(1);
+        match kind {
+            CommandBlockTextKind::Command => {
+                let start_row = block.command_start.or(block.prompt_start)?;
+                let start_col = if block.command_start.is_some() {
+                    block.command_start_col.unwrap_or(0)
+                } else {
+                    block.prompt_start_col.unwrap_or(0)
+                };
+                let end_row = block.output_start.or(block.end)?;
+                let end_col = if block.output_start.is_some() {
+                    block.output_start_col.unwrap_or(cols)
+                } else {
+                    block.end_col.unwrap_or(cols)
+                };
+                TerminalSelectionRange::new(
+                    TerminalSelectionPosition::new(start_row, start_col),
+                    TerminalSelectionPosition::new(end_row, end_col),
+                )
+            }
+            CommandBlockTextKind::Output => {
+                let start_row = block.output_start?;
+                let start_col = block.output_start_col.unwrap_or(0);
+                let end_row = block.end.unwrap_or(bottom_row);
+                let end_col = block.end_col.unwrap_or(cols);
+                TerminalSelectionRange::new(
+                    TerminalSelectionPosition::new(start_row, start_col),
+                    TerminalSelectionPosition::new(end_row, end_col),
+                )
+            }
+        }
     }
 
     fn current_copy_mode_position(&mut self) -> TerminalSelectionPosition {
@@ -1194,6 +1404,9 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     if event.kind == KeyEventKind::Release {
         return CapturedKeyAction::Consumed;
     }
+    if handle_command_navigation_key(shared, event) {
+        return CapturedKeyAction::Consumed;
+    }
     if shared.prefix_pending {
         shared.prefix_pending = false;
         if let Some(command) = shared.prefix_command_for_event(event) {
@@ -1210,6 +1423,17 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     encode_key_event(shared.parser.screen(), event)
         .map(CapturedKeyAction::Dispatch)
         .unwrap_or(CapturedKeyAction::Consumed)
+}
+
+fn handle_command_navigation_key(shared: &mut TerminalShared, event: KeyEvent) -> bool {
+    if event.kind == KeyEventKind::Release || event.modifiers != KeyModifiers::CONTROL {
+        return false;
+    }
+    match event.code {
+        KeyCode::Up => shared.scroll_to_previous_command_block().is_some(),
+        KeyCode::Down => shared.scroll_to_next_command_block().is_some(),
+        _ => false,
+    }
 }
 
 fn handle_copy_mode_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
@@ -1947,6 +2171,9 @@ impl TerminalEmulator {
             return false;
         }
         let mut shared = self.shared.lock();
+        if handle_command_navigation_key(&mut shared, event) {
+            return true;
+        }
         let max = shared.max_scrollback();
         let current = shared.parser.screen().scrollback();
         let rows = shared.parser.screen().size().0 as usize;
@@ -2598,6 +2825,65 @@ impl TerminalHandle {
     /// Returns OSC 133/7 command blocks observed in terminal output.
     pub fn command_blocks(&self) -> Vec<TerminalCommandBlock> {
         self.shared.lock().command_marks.clone()
+    }
+
+    /// Returns the command block index covering an absolute terminal position.
+    pub fn command_block_index_at_position(
+        &self,
+        position: TerminalSelectionPosition,
+    ) -> Option<usize> {
+        self.shared.lock().command_block_index_at_position(position)
+    }
+
+    /// Scrolls so the previous command block is visible at the top of the viewport.
+    pub fn scroll_to_previous_command_block(&self) -> Option<usize> {
+        self.shared.lock().scroll_to_previous_command_block()
+    }
+
+    /// Scrolls so the next command block is visible at the top of the viewport.
+    pub fn scroll_to_next_command_block(&self) -> Option<usize> {
+        self.shared.lock().scroll_to_next_command_block()
+    }
+
+    /// Selects the complete output range for a command block.
+    pub fn select_command_block_output(&self, index: usize) -> Option<TerminalSelectionRange> {
+        self.shared.lock().select_command_block_output(index)
+    }
+
+    /// Copies the command text for a command block into the terminal-local copy buffer.
+    pub fn copy_command_block_command(&self, index: usize) -> Option<String> {
+        let text = {
+            self.shared
+                .lock()
+                .copy_command_block_text(index, CommandBlockTextKind::Command)
+        };
+        if let Some(text) = &text {
+            dispatch_system_clipboard_copy(&self.shared, text);
+        }
+        text
+    }
+
+    /// Copies the output text for a command block into the terminal-local copy buffer.
+    pub fn copy_command_block_output(&self, index: usize) -> Option<String> {
+        let text = {
+            self.shared
+                .lock()
+                .copy_command_block_text(index, CommandBlockTextKind::Output)
+        };
+        if let Some(text) = &text {
+            dispatch_system_clipboard_copy(&self.shared, text);
+        }
+        text
+    }
+
+    /// Sends a command block's command text back to the subprocess as a new command.
+    pub fn rerun_command_block(&self, index: usize) -> bool {
+        let bytes = { self.shared.lock().command_block_rerun_bytes(index) };
+        let Some(bytes) = bytes else {
+            return false;
+        };
+        dispatch_input(&self.shared, &bytes);
+        true
     }
 
     /// Returns the exit code for the most recently completed command block, if reported.

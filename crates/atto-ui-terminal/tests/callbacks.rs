@@ -153,9 +153,13 @@ fn terminal_command_blocks_are_queryable_and_report_finished_callback() {
     let handle = terminal.handle();
     let expected = TerminalCommandBlock {
         prompt_start: Some(0),
+        prompt_start_col: Some(0),
         command_start: Some(0),
+        command_start_col: Some(7),
         output_start: Some(1),
+        output_start_col: Some(0),
         end: Some(2),
+        end_col: Some(0),
         exit_code: Some(42),
         cwd: Some("/tmp/project one".to_string()),
     };
