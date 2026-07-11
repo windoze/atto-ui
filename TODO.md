@@ -22,7 +22,9 @@
 - [x] **[DONE] M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
   - 完成记录（2026-07-11）：补强 `callbacks` 集成测试，新增真实 `/bin/sh` 子进程输出 OSC 2 title、BEL、OSC 52 clipboard 并以指定退出码结束的回归用例；与既有 `process_exit` 测试共同覆盖退出码报告、`is_running()` 翻转、`on_exit` 触发一次、title/bell/clipboard 回调与 handle 状态可观察。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-terminal --test callbacks --test process_exit`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
+- [x] **[DONE] M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
+  - 完成记录（2026-07-11）：复核 `atto-ui-terminal` 生命周期与 callback 桥接实现，确认 crate 继续 `#![forbid(unsafe_code)]` 且无 unsafe 使用；退出状态记录幂等、`on_exit` 与 `on_close` 解耦，callback 事件在锁外派发；`new_with_callbacks` 覆盖默认初始化与 scrollback parser 重建路径，未破坏 capture、bracketed paste、mouse forwarding 或本地 scrollback 行为。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 
 ## 阶段 M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）
 
