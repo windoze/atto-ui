@@ -51,6 +51,12 @@ impl TerminalSelectionState {
         self.dragging = true;
     }
 
+    pub(crate) fn start_keyboard(&mut self, position: TerminalSelectionPosition) {
+        self.anchor = Some(position);
+        self.focus = Some(position);
+        self.dragging = false;
+    }
+
     pub(crate) fn update(&mut self, position: TerminalSelectionPosition) {
         if self.anchor.is_some() {
             self.focus = Some(position);

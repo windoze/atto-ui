@@ -82,7 +82,8 @@ mod tests {
             prefix_shortcut: default_prefix_shortcut(),
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
-            copy_mode: false,
+            copy_mode: None,
+            copy_buffer: None,
             selection: TerminalSelectionState::default(),
             dsr_tail: Vec::new(),
         }
@@ -258,6 +259,21 @@ impl TerminalPrefixBinding {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct TerminalCopyModeState {
+    cursor: TerminalSelectionPosition,
+    selecting: bool,
+}
+
+impl TerminalCopyModeState {
+    fn new(cursor: TerminalSelectionPosition) -> Self {
+        Self {
+            cursor,
+            selecting: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum TerminalCallbackEvent {
     WindowTitle(String),
     WindowIconName(String),
@@ -340,7 +356,8 @@ struct TerminalShared {
     prefix_shortcut: TerminalShortcut,
     prefix_bindings: Vec<TerminalPrefixBinding>,
     prefix_pending: bool,
-    copy_mode: bool,
+    copy_mode: Option<TerminalCopyModeState>,
+    copy_buffer: Option<String>,
     selection: TerminalSelectionState,
     dsr_tail: Vec<u8>,
 }
@@ -350,6 +367,7 @@ impl TerminalShared {
         self.capture = capture;
         if !capture {
             self.prefix_pending = false;
+            self.copy_mode = None;
         }
     }
 
@@ -457,6 +475,183 @@ impl TerminalShared {
         let offset = max.saturating_sub(y);
         self.set_scrollback_offset(offset);
     }
+
+    fn enter_copy_mode(&mut self) {
+        let cursor = self.current_copy_mode_position();
+        self.copy_mode = Some(TerminalCopyModeState::new(cursor));
+        self.prefix_pending = false;
+        self.selection.clear();
+        self.ensure_copy_mode_cursor_visible();
+    }
+
+    fn cancel_copy_mode(&mut self) {
+        self.copy_mode = None;
+        self.selection.clear();
+    }
+
+    fn finish_copy_mode_copy(&mut self) {
+        if let Some(text) = self.selected_text() {
+            self.copy_buffer = Some(text);
+        }
+        self.copy_mode = None;
+        self.selection.clear();
+    }
+
+    fn selected_text(&mut self) -> Option<String> {
+        let range = self.selection.range()?;
+        let max_scrollback = self.max_scrollback();
+        selected_text_from_screen(self.parser.screen_mut(), max_scrollback, range)
+    }
+
+    fn current_copy_mode_position(&mut self) -> TerminalSelectionPosition {
+        let max_scrollback = self.max_scrollback();
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        let (row, col) = screen.cursor_position();
+        position_for_view_cell(
+            max_scrollback,
+            screen.scrollback(),
+            rows,
+            cols,
+            row.min(rows.saturating_sub(1)),
+            col.min(cols),
+        )
+    }
+
+    fn begin_copy_mode_selection(&mut self) {
+        let Some(cursor) = self.copy_mode.as_ref().map(|mode| mode.cursor) else {
+            return;
+        };
+        self.selection.start_keyboard(cursor);
+        if let Some(mode) = &mut self.copy_mode {
+            mode.selecting = true;
+        }
+    }
+
+    fn move_copy_mode_cursor(&mut self, row_delta: isize, col_delta: isize) -> bool {
+        let Some(cursor) = self.copy_mode.as_ref().map(|mode| mode.cursor) else {
+            return false;
+        };
+        let row = if row_delta.is_negative() {
+            cursor.row.saturating_sub(row_delta.unsigned_abs())
+        } else {
+            cursor.row.saturating_add(row_delta as usize)
+        };
+        let col = if col_delta.is_negative() {
+            cursor
+                .col
+                .saturating_sub(col_delta.unsigned_abs().min(u16::MAX as usize) as u16)
+        } else {
+            cursor
+                .col
+                .saturating_add((col_delta as usize).min(u16::MAX as usize) as u16)
+        };
+        self.set_copy_mode_cursor(TerminalSelectionPosition::new(row, col))
+    }
+
+    fn set_copy_mode_cursor(&mut self, position: TerminalSelectionPosition) -> bool {
+        let position = self.clamp_copy_mode_position(position);
+        let Some(mode) = &mut self.copy_mode else {
+            return false;
+        };
+        if mode.cursor == position {
+            return false;
+        }
+        mode.cursor = position;
+        if mode.selecting {
+            self.selection.update(position);
+        }
+        self.ensure_copy_mode_cursor_visible();
+        true
+    }
+
+    fn move_copy_mode_cursor_to_column(&mut self, col: u16) -> bool {
+        let Some(cursor) = self.copy_mode.as_ref().map(|mode| mode.cursor) else {
+            return false;
+        };
+        self.set_copy_mode_cursor(TerminalSelectionPosition::new(cursor.row, col))
+    }
+
+    fn move_copy_mode_cursor_by_page(&mut self, page_delta: isize) -> bool {
+        let rows = self.parser.screen().size().0.max(1) as isize;
+        self.move_copy_mode_cursor(page_delta.saturating_mul(rows), 0)
+    }
+
+    fn clamp_copy_mode_position(
+        &mut self,
+        position: TerminalSelectionPosition,
+    ) -> TerminalSelectionPosition {
+        let max_scrollback = self.max_scrollback();
+        let screen = self.parser.screen();
+        let (rows, cols) = screen.size();
+        let last_row = max_scrollback.saturating_add(usize::from(rows.saturating_sub(1)));
+        TerminalSelectionPosition::new(position.row.min(last_row), position.col.min(cols))
+    }
+
+    fn ensure_copy_mode_cursor_visible(&mut self) {
+        let Some(cursor) = self.copy_mode.as_ref().map(|mode| mode.cursor) else {
+            return;
+        };
+        let max_scrollback = self.max_scrollback();
+        let screen = self.parser.screen();
+        let (rows, _) = screen.size();
+        if rows == 0 {
+            return;
+        }
+        let current = screen.scrollback();
+        let top = visible_top_row(max_scrollback, current);
+        let height = usize::from(rows);
+        let bottom = top.saturating_add(height.saturating_sub(1));
+        let desired = if cursor.row < top {
+            max_scrollback.saturating_sub(cursor.row)
+        } else if cursor.row > bottom {
+            max_scrollback.saturating_sub(cursor.row.saturating_sub(height.saturating_sub(1)))
+        } else {
+            current
+        };
+        if desired != current {
+            self.parser
+                .screen_mut()
+                .set_scrollback(desired.min(max_scrollback));
+        }
+    }
+
+    fn scroll_copy_mode_view(&mut self, line_delta: isize) -> bool {
+        if self.copy_mode.is_none() {
+            return false;
+        }
+        let max = self.max_scrollback();
+        let current = self.parser.screen().scrollback();
+        let desired = if line_delta.is_negative() {
+            current.saturating_sub(line_delta.unsigned_abs())
+        } else {
+            current.saturating_add(line_delta as usize).min(max)
+        };
+        if desired != current {
+            self.parser.screen_mut().set_scrollback(desired);
+            self.clamp_copy_mode_cursor_to_visible();
+            return true;
+        }
+        false
+    }
+
+    fn clamp_copy_mode_cursor_to_visible(&mut self) {
+        let Some(cursor) = self.copy_mode.as_ref().map(|mode| mode.cursor) else {
+            return;
+        };
+        let max_scrollback = self.max_scrollback();
+        let screen = self.parser.screen();
+        let (rows, _) = screen.size();
+        if rows == 0 {
+            return;
+        }
+        let top = visible_top_row(max_scrollback, screen.scrollback());
+        let bottom = top.saturating_add(usize::from(rows.saturating_sub(1)));
+        let row = cursor.row.clamp(top, bottom);
+        if row != cursor.row {
+            let _ = self.set_copy_mode_cursor(TerminalSelectionPosition::new(row, cursor.col));
+        }
+    }
 }
 
 enum CapturedKeyAction {
@@ -466,6 +661,9 @@ enum CapturedKeyAction {
 }
 
 fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
+    if shared.copy_mode.is_some() {
+        return handle_copy_mode_key(shared, event);
+    }
     if shared.release_shortcut.matches(event) {
         shared.set_capture(false);
         return CapturedKeyAction::Consumed;
@@ -491,6 +689,67 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
         .unwrap_or(CapturedKeyAction::Consumed)
 }
 
+fn handle_copy_mode_key(shared: &mut TerminalShared, event: KeyEvent) -> CapturedKeyAction {
+    if event.kind == KeyEventKind::Release {
+        return CapturedKeyAction::Consumed;
+    }
+    match event.code {
+        KeyCode::Esc => {
+            shared.cancel_copy_mode();
+        }
+        KeyCode::Enter => {
+            shared.finish_copy_mode_copy();
+        }
+        KeyCode::Up => {
+            let _ = shared.move_copy_mode_cursor(-1, 0);
+        }
+        KeyCode::Down => {
+            let _ = shared.move_copy_mode_cursor(1, 0);
+        }
+        KeyCode::Left => {
+            let _ = shared.move_copy_mode_cursor(0, -1);
+        }
+        KeyCode::Right => {
+            let _ = shared.move_copy_mode_cursor(0, 1);
+        }
+        KeyCode::PageUp => {
+            let _ = shared.move_copy_mode_cursor_by_page(-1);
+        }
+        KeyCode::PageDown => {
+            let _ = shared.move_copy_mode_cursor_by_page(1);
+        }
+        KeyCode::Home => {
+            let _ = shared.move_copy_mode_cursor_to_column(0);
+        }
+        KeyCode::End => {
+            let cols = shared.parser.screen().size().1;
+            let _ = shared.move_copy_mode_cursor_to_column(cols);
+        }
+        KeyCode::Char(ch) if event.modifiers == KeyModifiers::NONE => {
+            match ch.to_ascii_lowercase() {
+                'q' => shared.cancel_copy_mode(),
+                'v' | ' ' => shared.begin_copy_mode_selection(),
+                'y' => shared.finish_copy_mode_copy(),
+                'h' => {
+                    let _ = shared.move_copy_mode_cursor(0, -1);
+                }
+                'j' => {
+                    let _ = shared.move_copy_mode_cursor(1, 0);
+                }
+                'k' => {
+                    let _ = shared.move_copy_mode_cursor(-1, 0);
+                }
+                'l' => {
+                    let _ = shared.move_copy_mode_cursor(0, 1);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    CapturedKeyAction::Consumed
+}
+
 fn handle_prefix_command(
     shared: &mut TerminalShared,
     command: TerminalPrefixCommand,
@@ -506,7 +765,7 @@ fn handle_prefix_command(
             CapturedKeyAction::Component(ComponentAction::ToggleMaximizeWindow)
         }
         TerminalPrefixCommand::EnterCopyMode => {
-            shared.copy_mode = true;
+            shared.enter_copy_mode();
             CapturedKeyAction::Consumed
         }
         TerminalPrefixCommand::SendPrefix => encode_prefix_literal(shared)
@@ -794,7 +1053,8 @@ impl TerminalEmulator {
             prefix_shortcut: default_prefix_shortcut(),
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
-            copy_mode: false,
+            copy_mode: None,
+            copy_buffer: None,
             selection: TerminalSelectionState::default(),
             dsr_tail: Vec::with_capacity(4),
         };
@@ -1155,6 +1415,23 @@ impl TerminalEmulator {
             _ => false,
         }
     }
+
+    fn handle_copy_mode_mouse(&mut self, event: MouseEvent) -> bool {
+        let mut shared = self.shared.lock();
+        if shared.copy_mode.is_none() {
+            return false;
+        }
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                let _ = shared.scroll_copy_mode_view(self.scroll_step as isize);
+            }
+            MouseEventKind::ScrollDown => {
+                let _ = shared.scroll_copy_mode_view(-(self.scroll_step as isize));
+            }
+            _ => {}
+        }
+        true
+    }
 }
 
 impl Default for TerminalEmulator {
@@ -1188,6 +1465,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
             process.resize_if_needed(rows, cols);
         }
         let selection_range = shared.selection.range();
+        let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
         let max_scrollback = shared.max_scrollback();
         let screen = shared.parser.screen_mut();
         let visible_top = visible_top_row(max_scrollback, screen.scrollback());
@@ -1225,6 +1503,13 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                     .any(|(start, end)| x >= *start && x < *end)
                 {
                     ctx.theme.selection
+                } else {
+                    style
+                };
+                let style = if copy_mode_cursor.is_some_and(|cursor| {
+                    absolute_row == cursor.row && x == cursor.col.min(area.width.saturating_sub(1))
+                }) {
+                    style.add_modifier(Modifier::REVERSED)
                 } else {
                     style
                 };
@@ -1405,6 +1690,10 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                 }
                 drop(shared);
 
+                if self.handle_copy_mode_mouse(*m) {
+                    return EventResult::consumed();
+                }
+
                 if self.handle_local_mouse_selection(*m, ctx.mouse_coordinate_space) {
                     return EventResult::consumed();
                 }
@@ -1549,11 +1838,23 @@ impl TerminalHandle {
         self.shared.lock().prefix_bindings.clone()
     }
 
-    /// Returns whether the prefix command table has entered copy-mode.
-    ///
-    /// M4 expands this placeholder into selection/navigation behavior.
+    /// Returns whether copy-mode is currently active.
     pub fn copy_mode(&self) -> bool {
-        self.shared.lock().copy_mode
+        self.shared.lock().copy_mode.is_some()
+    }
+
+    /// Returns the current copy-mode cursor position, if copy-mode is active.
+    pub fn copy_mode_cursor(&self) -> Option<TerminalSelectionPosition> {
+        self.shared
+            .lock()
+            .copy_mode
+            .as_ref()
+            .map(|mode| mode.cursor)
+    }
+
+    /// Returns the last text copied from copy-mode.
+    pub fn copied_text(&self) -> Option<String> {
+        self.shared.lock().copy_buffer.clone()
     }
 
     /// Starts a terminal text selection at an absolute scrollback/screen position.
@@ -1592,9 +1893,7 @@ impl TerminalHandle {
     /// Returns text currently covered by the active selection.
     pub fn selected_text(&self) -> Option<String> {
         let mut shared = self.shared.lock();
-        let range = shared.selection.range()?;
-        let max_scrollback = shared.max_scrollback();
-        selected_text_from_screen(shared.parser.screen_mut(), max_scrollback, range)
+        shared.selected_text()
     }
 
     /// Returns the latest OSC 0/2 window title, if one has been observed.

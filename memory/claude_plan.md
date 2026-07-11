@@ -1,14 +1,23 @@
 # Execution Plan
 
-I will follow `TODO.md` as the authoritative task list and complete only the first task whose heading is not prefixed with `[DONE]`.
+This file records the actionable execution plan and progress log for the current invocation. It intentionally summarizes reasoning at a high level rather than exposing private chain-of-thought.
 
-Current task: `M4.2 鼠标本地框选` — implement local terminal mouse selection so `Shift+drag` selects locally when mouse reporting is enabled, plain drag is forwarded to the subprocess, and drag selects locally when mouse reporting is disabled. Also fix wasted-click recapture around `capture_on_click`.
+## Plan
 
-1. Read `TODO.md` to identify the first incomplete task and its requirements.
-2. Check the latest commit message only for unfinished work directly relevant to that task.
-3. Inspect `atto-ui-terminal` terminal mouse handling, selection state, PTY fixtures, and relevant tests.
-4. Implement local mouse selection and mouse-reporting forwarding rules without changing unrelated terminal behavior. **Done:** terminal component mouse handling now starts/updates/finishes local selection for plain drag without mouse reporting and for Shift+drag with mouse reporting; plain mouse-reporting drags still forward to the subprocess, and capture-on-click recapture continues processing the original click.
-5. Add or update targeted tests for selection start/update/end, mouse-reporting forwarding, and capture-on-click behavior. **Done:** `input_encoding` now covers plain local drag selection, mouse-reporting plain forwarding, mouse-reporting Shift local selection, and recapture click forwarding.
-6. Run formatting, clippy with warnings denied, and the relevant/full test suite as required. **Done:** `cargo fmt --all`, `cargo test -p atto-ui-terminal --test input_encoding -- --nocapture`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed.
-7. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling in its completion record. **Done:** `M4.2` is marked complete with implementation and validation notes.
-8. Commit all changes for this task with a descriptive message and stop. **Next:** review final status and create the task commit.
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Check the latest commit message for any explicitly unfinished issue directly relevant to that selected task.
+3. Inspect only the files and task context needed to implement the selected task.
+4. Implement the task completely, avoiding workarounds or scope narrowing.
+5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the required targeted/full tests according to `TODO.md`.
+6. If validation reveals an unscheduled failure, fix it or add the minimum prerequisite task before completing the current task.
+7. Update `TODO.md` by prefixing the completed task title with `[DONE]` and filling its completion record. Update `PLAN.md` only if phase-level sequencing changed.
+8. Commit all changes for this invocation with a clear task-specific message, including the required co-author trailer.
+9. Stop after completing exactly one task.
+
+## Progress
+
+- Started invocation and recorded the initial execution plan.
+- Identified the first incomplete task in `TODO.md`: `M4.3 copy-mode`. The latest commit completed `M4.2` and does not mention an unfinished issue that preempts `M4.3`.
+- Implementation approach: replace the placeholder copy-mode flag with modal state tracking a copy cursor and active keyboard selection; route copy-mode keys before subprocess forwarding; keep mouse wheel events local while in copy-mode; expose copied text for validation; add focused unit/PTY coverage.
+- Implemented copy-mode state, keyboard selection/copy/cancel handling, local copy-mode wheel consumption, copy cursor rendering, observable copied text, focused tests, and PTY fixture status coverage.
+- Validation passed with formatting, clippy, focused copy-mode tests, the new PTY copy-mode regression, and the full workspace test suite. `TODO.md` now marks `M4.3` as `[DONE]`.

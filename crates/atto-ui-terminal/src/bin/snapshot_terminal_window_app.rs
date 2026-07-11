@@ -242,6 +242,20 @@ fn process_status_text(session: &TerminalWindowSession) -> String {
     format!("PROC={state} RESTARTS={}", session.restart_count)
 }
 
+fn copy_status_text(session: &TerminalWindowSession) -> String {
+    let mode = if session.handle.copy_mode() {
+        "ON"
+    } else {
+        "OFF"
+    };
+    let copied = session
+        .handle
+        .copied_text()
+        .unwrap_or_default()
+        .replace('\n', "\\n");
+    format!("COPYMODE={mode} COPY={copied}")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_status_lines(
     desktop: &Desktop,
@@ -277,7 +291,11 @@ fn update_status_lines(
         "OFF"
     };
     menu_line.set(format!("MENU={} ACTIVE={menu_state}", menu_action.get()));
-    process_line.set(process_status_text(term_session));
+    process_line.set(format!(
+        "{} {}",
+        process_status_text(term_session),
+        copy_status_text(term_session)
+    ));
 }
 
 fn main() -> Result<()> {

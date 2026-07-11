@@ -238,6 +238,26 @@ fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
 }
 
 #[test]
+fn pty_terminal_copy_mode_selects_and_copies_text() {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    wait_for_text(&host, "CAP=ON");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("[").expect("enter copy-mode");
+    wait_for_text(&host, "COPYMODE=ON");
+
+    host.send_str("kvllly").expect("copy first three chars");
+    wait_for_text(&host, "COPYMODE=OFF COPY=TTY");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");

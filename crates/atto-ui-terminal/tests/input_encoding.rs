@@ -545,10 +545,11 @@ fn terminal_prefix_command_table_runtime_replacement_clears_pending_prefix() {
 }
 
 #[test]
-fn terminal_prefix_command_table_enters_copy_mode_placeholder() {
+fn terminal_prefix_command_table_enters_copy_mode() {
     let theme = Theme::dark();
     let mut terminal = TerminalEmulator::new();
     let handle = terminal.handle();
+    handle.process_output_str("alpha");
 
     terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
     let result = terminal.handle_event(
@@ -558,6 +559,135 @@ fn terminal_prefix_command_table_enters_copy_mode_placeholder() {
 
     assert!(result.is_consumed());
     assert_eq!(result.action, ComponentAction::None);
+    assert!(handle.copy_mode());
+    assert_eq!(
+        handle.copy_mode_cursor(),
+        Some(TerminalSelectionPosition::new(0, 5))
+    );
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_copy_mode_selects_and_copies_with_vi_keys() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+
+    for key in [
+        ctrl_key('b'),
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+    ] {
+        terminal.handle_event(&Event::Key(key), context(&theme));
+    }
+
+    assert!(!handle.copy_mode());
+    assert_eq!(handle.copied_text().as_deref(), Some("alpha"));
+    assert_eq!(handle.selection_range(), None);
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_copy_mode_selects_and_copies_with_arrow_keys_and_enter() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+
+    for key in [
+        ctrl_key('b'),
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    ] {
+        terminal.handle_event(&Event::Key(key), context(&theme));
+    }
+
+    assert!(!handle.copy_mode());
+    assert_eq!(handle.copied_text().as_deref(), Some("alpha"));
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_copy_mode_cancel_clears_selection_without_forwarding() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str("alpha beta");
+
+    for key in [
+        ctrl_key('b'),
+        KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    ] {
+        terminal.handle_event(&Event::Key(key), context(&theme));
+    }
+
+    assert!(!handle.copy_mode());
+    assert_eq!(handle.selected_text(), None);
+    assert_eq!(handle.copied_text(), None);
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_copy_mode_q_cancels_without_forwarding() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE)),
+        context(&theme),
+    );
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        context(&theme),
+    );
+
+    assert!(!handle.copy_mode());
+    assert_eq!(handle.take_input(), b"");
+}
+
+#[test]
+fn terminal_copy_mode_wheel_stays_local_even_with_mouse_reporting() {
+    let theme = Theme::dark();
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+    handle.process_output_str(
+        format!(
+            "{}alpha beta",
+            mouse_mode_sequence(MouseProtocol::ButtonMotion, MouseEncoding::Sgr)
+        )
+        .as_str(),
+    );
+
+    terminal.handle_event(&Event::Key(ctrl_key('b')), context(&theme));
+    terminal.handle_event(
+        &Event::Key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE)),
+        context(&theme),
+    );
+    let wheel = mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE);
+    let result = terminal.handle_event(&Event::Mouse(wheel), context(&theme));
+
+    assert!(result.is_consumed());
     assert!(handle.copy_mode());
     assert_eq!(handle.take_input(), b"");
 }
