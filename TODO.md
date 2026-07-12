@@ -152,7 +152,9 @@
 - [x] **[DONE] M7.5 配置生效接线** - 组件层各写死项（scrollback、色板、release 快捷键 `terminal.rs:121`、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。
   - 完成记录（2026-07-12）：终端组件新增 `TerminalConfig` 运行时应用路径，scrollback 长度、ANSI/默认色板、release 快捷键、前缀键、alternate-screen 滚轮开关/步长/发送键、shell integration 与默认光标形状均可从配置初始化并通过 `TerminalHandle::apply_config` 更新已有实例。`TerminalPaneGroup` 同步接入配置，现有 pane 与 pane-level 前缀处理会随配置更新；terminal viewer 与 PTY window fixture 使用同一配置 binding 创建、重启和 split 新 pane，并在设置窗口 Apply/Save 后用 dirty observer 将改动应用到所有存活终端。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal terminal_config -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_apply_config_updates_live_terminal -- --nocapture`、`cargo test -p atto-ui-terminal pane_group_apply_config_updates_prefix_shortcut --lib -- --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
+- [x] **[DONE] M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
+  - 完成记录（2026-07-12）：补齐终端配置界面的 M7.6 PTY 端到端覆盖；新增测试通过 File → Settings 打开设置窗口，真实编辑 scrollback、prefix key 与 ANSI palette 值，Save 后验证 live terminal scrollback/prefix/palette 已应用，旧前缀不再触发菜单、新前缀立即生效，且保存的配置在重启 fixture 后继续保留并影响渲染。补充 PTY cursor-shape 覆盖，真实子进程输出 DECSCUSR 序列后验证 block/underline/bar 状态与 bar glyph 渲染。为 PTY fixture 增加仅测试用的 live config 状态行，并为 `atto-ui-test-host` 增加 cell inverse/underline 查询以支持样式断言。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_settings_apply_save_and_reload_runtime_config pty_terminal_cursor_shape_sequences_render_in_window_app --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M7.R Review** - 复核配置默认值不改变既有行为、配置持久化格式向后兼容、界面对无效输入有校验，验证通过。
 
 ## 收尾

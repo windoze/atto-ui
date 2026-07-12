@@ -792,6 +792,57 @@ fn copy_status_text(session: &TerminalWindowSession) -> String {
     format!("COPYMODE={mode} COPY={copied} SEL={selected}")
 }
 
+fn shortcut_status_text(code: KeyCode, modifiers: KeyModifiers) -> String {
+    let mut parts = Vec::new();
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        parts.push("ctrl".to_string());
+    }
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        parts.push("shift".to_string());
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        parts.push("alt".to_string());
+    }
+    let key = match code {
+        KeyCode::Char(ch) => ch.to_ascii_lowercase().to_string(),
+        KeyCode::F(n) => format!("f{n}"),
+        KeyCode::Enter => "enter".to_string(),
+        KeyCode::Esc => "escape".to_string(),
+        KeyCode::Up => "up".to_string(),
+        KeyCode::Down => "down".to_string(),
+        KeyCode::Left => "left".to_string(),
+        KeyCode::Right => "right".to_string(),
+        other => format!("{other:?}").to_ascii_lowercase(),
+    };
+    parts.push(key);
+    parts.join("+")
+}
+
+fn cursor_shape_status_text(handle: &TerminalHandle) -> &'static str {
+    match handle.cursor_shape() {
+        atto_ui_terminal::TerminalCursorShape::Block => "block",
+        atto_ui_terminal::TerminalCursorShape::Underline => "underline",
+        atto_ui_terminal::TerminalCursorShape::Bar => "bar",
+    }
+}
+
+fn config_status_text(config: &TerminalConfig, session: &TerminalWindowSession) -> String {
+    let Some(handle) = session.active_handle() else {
+        return format!(
+            "CFG_SCROLL=- CFG_PREFIX=- CFG_ANSI0={} CFG_CURSOR=-",
+            config.palette.ansi[0].as_str()
+        );
+    };
+    let prefix = handle.prefix_shortcut();
+    format!(
+        "CFG_SCROLL={} CFG_PREFIX={} CFG_ANSI0={} CFG_CURSOR={}",
+        handle.scrollback_len(),
+        shortcut_status_text(prefix.code, prefix.modifiers),
+        config.palette.ansi[0].as_str(),
+        cursor_shape_status_text(&handle)
+    )
+}
+
 fn pane_status_text(session: &TerminalWindowSession) -> String {
     let panes = session.panes.panes();
     let active = session
@@ -852,6 +903,7 @@ fn window_status_text(
 #[allow(clippy::too_many_arguments)]
 fn update_status_lines(
     desktop: &Desktop,
+    terminal_config: &TerminalConfig,
     term_session: &TerminalWindowSession,
     extra_sessions: &[TerminalWindowSession],
     tools_id: WindowId,
@@ -860,6 +912,7 @@ fn update_status_lines(
     rect_line: &Binding<String>,
     pane_line: &Binding<String>,
     process_line: &Binding<String>,
+    config_line: &Binding<String>,
 ) {
     let term_id = term_session.id;
     let focused = match desktop.wm.focused() {
@@ -900,6 +953,7 @@ fn update_status_lines(
         copy_status_text(term_session),
         session_status_text(term_session)
     ));
+    config_line.set(config_status_text(terminal_config, term_session));
 }
 
 fn main() -> Result<()> {
@@ -938,12 +992,14 @@ fn main() -> Result<()> {
     let rect_line = Binding::new(String::new());
     let pane_line = Binding::new(String::new());
     let process_line = Binding::new(String::new());
+    let config_line = Binding::new(String::new());
 
     let status_view = build_status_view(&[
         focus_line.clone(),
         rect_line.clone(),
         pane_line.clone(),
         process_line.clone(),
+        config_line.clone(),
     ]);
 
     let tools_rect = Rect {
@@ -952,11 +1008,14 @@ fn main() -> Result<()> {
         width: 22.min(work.width.saturating_sub(55)).max(14),
         height: 10.min(work.height.saturating_sub(6)).max(7),
     };
+    let status_height = if work.height >= 25 { 7 } else { 6 };
     let status_rect = Rect {
         x: work.x.saturating_add(2),
-        y: work.y.saturating_add(work.height.saturating_sub(6)),
+        y: work
+            .y
+            .saturating_add(work.height.saturating_sub(status_height)),
         width: work.width.saturating_sub(4).max(10),
-        height: 6.min(work.height.saturating_sub(1)).max(4),
+        height: status_height.min(work.height.saturating_sub(1)).max(4),
     };
 
     let mut term_session = spawn_terminal_window(
@@ -1004,6 +1063,7 @@ fn main() -> Result<()> {
         refresh_windows_menu(&mut desktop);
         update_status_lines(
             &desktop,
+            &terminal_config.get(),
             &term_session,
             &extra_sessions,
             tools_id,
@@ -1012,6 +1072,7 @@ fn main() -> Result<()> {
             &rect_line,
             &pane_line,
             &process_line,
+            &config_line,
         );
 
         terminal.draw(|f| desktop.draw(f))?;

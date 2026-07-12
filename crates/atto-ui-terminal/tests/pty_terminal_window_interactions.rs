@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_terminal::TerminalConfig;
+use atto_ui_terminal::{TerminalConfig, TerminalShortcutConfig};
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
@@ -48,12 +48,41 @@ fn find_text_position(screen: &str, needle: &str) -> Option<(u16, u16)> {
     None
 }
 
+fn find_last_text_position(screen: &str, needle: &str) -> Option<(u16, u16)> {
+    for (row, line) in screen.lines().enumerate() {
+        if let Some(byte_idx) = line.rfind(needle) {
+            let col = UnicodeWidthStr::width(&line[..byte_idx]);
+            return Some((col as u16, row as u16));
+        }
+    }
+    None
+}
+
 fn wait_for_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
     wait_for_text(host, needle);
     let screen = host.screen_contents().unwrap_or_default();
     find_text_position(&screen, needle).unwrap_or_else(|| {
         panic!("expected to find {needle:?} in screen\n--- screen ---\n{screen}")
     })
+}
+
+fn wait_for_last_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
+    wait_for_text(host, needle);
+    let screen = host.screen_contents().unwrap_or_default();
+    find_last_text_position(&screen, needle).unwrap_or_else(|| {
+        panic!("expected to find {needle:?} in screen\n--- screen ---\n{screen}")
+    })
+}
+
+fn replace_settings_textbox(host: &mut PtyTestHost, title: &str, value: &str) {
+    let (x, y) = wait_for_last_text_position(host, title);
+    host.click(x.saturating_add(1), y.saturating_add(1))
+        .unwrap_or_else(|e| panic!("click textbox {title:?}: {e}"));
+    thread::sleep(Duration::from_millis(40));
+    host.send_ctrl('u')
+        .unwrap_or_else(|e| panic!("clear textbox {title:?}: {e}"));
+    host.send_str(value)
+        .unwrap_or_else(|e| panic!("type textbox {title:?}: {e}"));
 }
 
 fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
@@ -68,6 +97,21 @@ fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
     }
     panic!(
         "expected to find {needle:?} after scrolling\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
+fn wait_for_cell_fgcolor(host: &PtyTestHost, x: u16, y: u16, expected: vt100::Color) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if host.cell_fgcolor(x, y).unwrap_or(vt100::Color::Default) == expected {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let actual = host.cell_fgcolor(x, y).unwrap_or(vt100::Color::Default);
+    panic!(
+        "expected cell ({x},{y}) fg {expected:?}, got {actual:?}\n--- screen ---\n{}",
         host.screen_contents().unwrap_or_default()
     );
 }
@@ -876,6 +920,164 @@ fn pty_terminal_file_menu_opens_settings_window_and_saves_config() {
     assert!(saved.scrollback_len > 0);
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pty_terminal_settings_apply_save_and_reload_runtime_config() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root =
+        std::path::PathBuf::from(format!("/tmp/aui-term-settings-runtime-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create settings temp dir");
+    let config_path = root.join("terminal.yaml");
+    let config_arg = config_path.to_string_lossy().into_owned();
+    let script = concat!(
+        "stty -echo; ",
+        "printf '\\033[30mPAL0\\033[0m\\n'; ",
+        "while IFS= read -r line; do printf '\\033[30m%s\\033[0m\\n' \"$line\"; done"
+    );
+
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["--config", &config_arg, "/bin/sh", "-c", script],
+        120,
+        36,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    wait_for_text(&host, "PAL0");
+    click_file_menu_item(&mut host, "Settings");
+    wait_for_text(&host, "Terminal Settings");
+
+    replace_settings_textbox(&mut host, "Scrollback", "13");
+    replace_settings_textbox(&mut host, "Ctrl+letter", "ctrl+a");
+    wheel_down_until_text(&mut host, 60, 18, "ANSI palette");
+    replace_settings_textbox(&mut host, "Color", "#12ab34");
+    wheel_down_until_text(&mut host, 60, 18, "Save");
+
+    let (save_x, save_y) = wait_for_text_position(&host, "Save");
+    host.click(save_x, save_y).expect("click save");
+    wait_for_file(&config_path);
+    wait_for_text(&host, "CFG_SCROLL=13 CFG_PREFIX=ctrl+a CFG_ANSI0=#12ab34");
+
+    host.send_str("\x1b").expect("close settings");
+    wait_for_text(&host, "FOCUS=TERM");
+    host.click(5, 5).expect("recapture terminal");
+    wait_for_text(&host, "CAP=ON");
+
+    host.send_str("PAL1\n").expect("request palette probe");
+    let (pal_x, pal_y) = wait_for_text_position(&host, "PAL1");
+    wait_for_cell_fgcolor(&host, pal_x, pal_y, vt100::Color::Rgb(0x12, 0xab, 0x34));
+
+    host.send_ctrl('b').expect("old prefix");
+    send_f10(&mut host);
+    assert_text_absent_for(&host, "Ping", Duration::from_millis(250));
+    host.send_ctrl('a').expect("new prefix");
+    send_f10(&mut host);
+    wait_for_text(&host, "Ping");
+    host.send_str("\x1b").expect("close menu");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+
+    let saved = TerminalConfig::load_path(&config_path).expect("load saved config");
+    assert_eq!(saved.scrollback_len, 13);
+    assert_eq!(
+        saved.prefix_key,
+        TerminalShortcutConfig::control_letter('a')
+    );
+    assert_eq!(saved.palette.ansi[0].as_str(), "#12ab34");
+
+    let mut reloaded = PtyTestHost::spawn(
+        bin,
+        &["--config", &config_arg, "/bin/sh", "-c", script],
+        120,
+        36,
+    )
+    .expect("spawn reloaded PTY app");
+
+    wait_for_text(
+        &reloaded,
+        "CFG_SCROLL=13 CFG_PREFIX=ctrl+a CFG_ANSI0=#12ab34",
+    );
+    let (pal_x, pal_y) = wait_for_text_position(&reloaded, "PAL0");
+    wait_for_cell_fgcolor(&reloaded, pal_x, pal_y, vt100::Color::Rgb(0x12, 0xab, 0x34));
+    reloaded.send_ctrl('a').expect("reloaded prefix");
+    send_f10(&mut reloaded);
+    wait_for_text(&reloaded, "Ping");
+
+    reloaded.send_ctrl('q').expect("quit reloaded app");
+    reloaded
+        .wait_for_exit(Duration::from_secs(2))
+        .expect("clean reloaded exit");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pty_terminal_cursor_shape_sequences_render_in_window_app() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "printf 'B\\033[1G\\033[2 q'; ",
+        "sleep 2; ",
+        "printf '\\033[4 q'; ",
+        "sleep 2; ",
+        "printf '\\033[6 q'; ",
+        "sleep 20",
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 90, 28).expect("spawn PTY app");
+
+    wait_for_text(&host, "B");
+    let (cursor_x, cursor_y) = wait_for_text_position(&host, "B");
+    wait_for_text(&host, "CFG_CURSOR=block");
+    assert!(
+        host.cell_inverse(cursor_x, cursor_y)
+            .expect("block cursor inverse"),
+        "block cursor should render with reverse video\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+
+    wait_for_text(&host, "CFG_CURSOR=underline");
+    assert!(
+        host.cell_underlined(cursor_x, cursor_y)
+            .expect("underline cursor underline"),
+        "underline cursor should render with underline\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+    assert!(
+        !host
+            .cell_inverse(cursor_x, cursor_y)
+            .expect("underline cursor inverse"),
+        "underline cursor should not keep reverse-video block styling"
+    );
+
+    wait_for_text(&host, "CFG_CURSOR=bar");
+    assert_eq!(
+        host.cell_contents(cursor_x, cursor_y)
+            .expect("bar cursor cell"),
+        "▏"
+    );
+    assert!(
+        !host
+            .cell_underlined(cursor_x, cursor_y)
+            .expect("bar cursor underline"),
+        "bar cursor should not keep underline styling"
+    );
+    assert!(
+        !host
+            .cell_inverse(cursor_x, cursor_y)
+            .expect("bar cursor inverse"),
+        "bar cursor should not keep reverse-video block styling"
+    );
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
 }
 
 fn assert_osc_title_updates_window_title_and_windows_menu(osc: &str, expected_title: &str) {

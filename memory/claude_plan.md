@@ -1,29 +1,26 @@
-# Autonomous Task Execution Plan
+# M7.6 execution plan
 
-## Current objective
-Complete exactly the first incomplete task in `TODO.md`, update task bookkeeping, validate the work, commit the resulting changes, and stop.
+Current task source: `TODO.md`.
 
-## Execution steps
-1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished issues directly relevant to that task.
-3. Inspect the files and tests relevant to the selected task.
-4. Implement the task as written, without narrowing scope or using workarounds.
-5. Run formatting, linting, and the relevant tests, escalating to the full required suite when appropriate.
-6. If an unscheduled test failure or blocking prerequisite is found, update `TODO.md` with the minimum prerequisite task and stop after committing that bookkeeping.
-7. If implementation succeeds, prefix the task title in `TODO.md` with `[DONE]`, update its completion record, and update `PLAN.md` only if the phase-level plan changed.
-8. Commit all changes for this task with a clear task-scoped message and the required co-author trailer.
+First incomplete task: `M7.6 测试` - add PTY coverage for opening the terminal configuration UI, changing scrollback/prefix key/color palette and applying those changes, verifying persistence after restart, and checking cursor shape rendering from vt100 sequences.
 
-## Progress log
-- Initialized plan before inspecting project tasks.
-- Identified first incomplete task: M7.5 配置生效接线.
-- Next: inspect terminal config, terminal emulator hard-coded settings, and settings apply/save wiring.
-- Implemented component-level TerminalConfig application for scrollback, palette, release/prefix shortcuts, alternate-screen scroll keys/step/enabled state, shell integration, and default cursor shape.
-- Wired TerminalPaneGroup and both terminal app shells to apply changed settings bindings to live terminal panes and to build new/restarted panes from the active config.
-- Added targeted tests for live config application, palette rendering, and pane-prefix config propagation.
-- Validation completed: formatting, workspace clippy, targeted terminal config tests, and full workspace tests passed.
-- Marked M7.5 as [DONE] in TODO.md with completion and validation notes.
-- Next: review diff, commit all task changes, then stop.
-- Spot-check found one constructor field still using an enum default; corrected it to use the computed runtime config.
-- Re-ran formatting, workspace clippy, targeted config tests, and the full workspace test suite successfully after the correction.
-- Added a validation guard before pane-group live config mutation and reran formatting, clippy, targeted tests, and the full workspace test suite successfully.
-- Ran `cargo fmt --all -- --check` successfully and updated the TODO validation record; only documentation/bookkeeping changed after the last full test run.
+Latest commit context: `a33d29e [M7.5] Wire terminal config into runtime`, directly relevant because M7.6 validates the runtime configuration wiring added there.
+
+Planned steps:
+1. Inspect the M7 configuration implementation, terminal viewer fixtures, and existing PTY tests to find the intended UI controls, status probes, and test helpers.
+2. Add targeted PTY tests that exercise the already-implemented config window through user-visible paths rather than internal shortcuts where feasible.
+3. If testability gaps block the specified checks, add minimal fixture/status hooks consistent with existing test patterns instead of changing production behavior.
+4. Run `cargo fmt --all`, then `cargo clippy --workspace --all-targets -- -D warnings`, then targeted PTY tests, and finally `cargo test --workspace --all-targets` because M7.6 is a test/code task.
+5. Update `TODO.md` by prefixing M7.6 with `[DONE]` and recording implementation/validation details.
+6. Commit all changes for M7.6 with a clear message and the required co-author trailer, then stop.
+
+Progress:
+- Created this plan after identifying M7.6 as the first incomplete task.
+- Inspected the M7 settings view, snapshot terminal window app, PTY host helpers, and existing PTY tests.
+- Planned a fixture-only status line that reports live terminal scrollback/prefix/cursor plus persisted ANSI palette, and PTY cell style helpers for cursor rendering assertions.
+- Implemented PTY host cell style helpers, snapshot fixture config status reporting, and new M7.6 PTY tests for settings apply/save/reload plus cursor shape rendering.
+- Fixed the initial test-driving issues by scrolling to the actual ANSI palette controls and recapturing the terminal before probing live palette behavior after settings close.
+- Targeted M7.6 PTY tests now pass.
+- Fixed a 24-row fixture regression by making the extra config status line visible only when the terminal window fixture has enough vertical space; the full `pty_terminal_window_interactions` test file now passes.
+- Full validation completed successfully with formatting check, workspace clippy, and full workspace tests.
+- Marked M7.6 as `[DONE]` in `TODO.md` with completion and validation notes.
