@@ -20,6 +20,11 @@ impl ChatPanel {
             height: Size::Content,
             ..LayoutParams::default()
         };
+        let input = if let Some(cancel) = list.streaming_cancel_controller() {
+            input.on_streaming_interrupt(move || cancel.request_current())
+        } else {
+            input
+        };
 
         let mut view = VStack::new()
             .with_spacing(1)

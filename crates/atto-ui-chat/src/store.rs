@@ -5,9 +5,9 @@ use std::sync::{Arc, RwLock};
 use atto_ui::reactive::{Binding, Property};
 
 use crate::message::{
-    ApprovalOption, ChatBlock, ChatBlockId, ChatMessage, ChatMessageId, ChatMessageMeta,
-    ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus, TaskTranscriptItem, TodoItem,
-    ToolResultBlock, ToolStatus,
+    ApprovalAction, ApprovalOption, ChatBlock, ChatBlockId, ChatError, ChatMessage, ChatMessageId,
+    ChatMessageMeta, ChatTurnStatus, EditDecision, PlanDecision, PlanItem, TaskStatus,
+    TaskTranscriptItem, TodoItem, ToolResultBlock, ToolStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -15,8 +15,17 @@ pub struct ChatMessageStore {
     messages: Property<Vec<ChatMessage>>,
     next_id: Arc<AtomicU64>,
     next_block_id: Arc<AtomicU64>,
+    branch_generation: Arc<AtomicU64>,
     versions: Arc<ChatMessageVersions>,
 }
+
+/// Opaque marker for the current chat branch.
+///
+/// Hosts can capture a token before starting a streaming generation and use
+/// `push_if_branch_current` to avoid appending late messages after an edit,
+/// retry, or fork has moved the transcript to a new branch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChatBranchToken(u64);
 
 #[derive(Debug)]
 struct ChatMessageVersions {
@@ -97,6 +106,21 @@ impl ChatMessageVersions {
         }
     }
 
+    fn retain_registered(
+        &self,
+        message_ids: &HashSet<ChatMessageId>,
+        block_ids: &HashSet<ChatBlockId>,
+    ) {
+        self.messages
+            .write()
+            .expect("message version lock poisoned")
+            .retain(|id, _| message_ids.contains(id));
+        self.blocks
+            .write()
+            .expect("block version lock poisoned")
+            .retain(|id, _| block_ids.contains(id));
+    }
+
     fn bump_message(&self, id: ChatMessageId) {
         let version = self.next_version();
         self.messages
@@ -136,6 +160,7 @@ impl ChatMessageStore {
             messages: Property::new(Vec::new()),
             next_id: Arc::new(AtomicU64::new(1)),
             next_block_id: Arc::new(AtomicU64::new(1)),
+            branch_generation: Arc::new(AtomicU64::new(1)),
             versions: Arc::new(ChatMessageVersions::new()),
         }
     }
@@ -153,8 +178,56 @@ impl ChatMessageStore {
         if self.messages.with(|items| items == &messages) {
             return;
         }
+        self.bump_branch_generation();
         self.versions.replace_all(&messages);
         self.messages.set(messages);
+    }
+
+    /// Removes the target message and every later message, returning the removed suffix.
+    pub fn truncate_from(&self, message_id: ChatMessageId) -> Option<Vec<ChatMessage>> {
+        let mut removed = None;
+        let mut retained_message_ids = HashSet::new();
+        let mut retained_block_ids = HashSet::new();
+        let changed = self.messages.update_if(|items| {
+            let Some(index) = items.iter().position(|message| message.id == message_id) else {
+                return false;
+            };
+            self.bump_branch_generation();
+            removed = Some(items.split_off(index));
+            (retained_message_ids, retained_block_ids) = registered_ids(items);
+            true
+        });
+        if changed {
+            self.versions
+                .retain_registered(&retained_message_ids, &retained_block_ids);
+        }
+        removed
+    }
+
+    /// Keeps the target message as the fork point and removes every later message.
+    pub fn fork_at(&self, message_id: ChatMessageId) -> Option<Vec<ChatMessage>> {
+        let mut removed = None;
+        let mut retained_message_ids = HashSet::new();
+        let mut retained_block_ids = HashSet::new();
+        let changed = self.messages.update_if(|items| {
+            let Some(index) = items.iter().position(|message| message.id == message_id) else {
+                return false;
+            };
+            let start = index.saturating_add(1);
+            if start >= items.len() {
+                removed = Some(Vec::new());
+                return false;
+            }
+            self.bump_branch_generation();
+            removed = Some(items.split_off(start));
+            (retained_message_ids, retained_block_ids) = registered_ids(items);
+            true
+        });
+        if changed {
+            self.versions
+                .retain_registered(&retained_message_ids, &retained_block_ids);
+        }
+        removed
     }
 
     pub fn next_message_id(&self) -> ChatMessageId {
@@ -167,11 +240,44 @@ impl ChatMessageStore {
         ChatBlockId::new(id)
     }
 
+    /// Returns a token representing the current transcript branch.
+    pub fn branch_token(&self) -> ChatBranchToken {
+        ChatBranchToken(self.branch_generation.load(Ordering::Acquire))
+    }
+
+    /// Returns whether a previously captured branch token is still current.
+    pub fn is_branch_current(&self, token: ChatBranchToken) -> bool {
+        self.branch_generation.load(Ordering::Acquire) == token.0
+    }
+
     pub fn push(&self, message: ChatMessage) {
         self.bump_next_ids(std::slice::from_ref(&message));
         self.versions
             .register_messages(std::slice::from_ref(&message));
         self.messages.update(|items| items.push(message));
+    }
+
+    /// Appends a message only if no edit/retry/fork has changed branches since
+    /// the caller captured `token`.
+    pub fn push_if_branch_current(&self, token: ChatBranchToken, message: ChatMessage) -> bool {
+        let registered = message.clone();
+        let changed = self.messages.update_if(|items| {
+            if self.branch_generation.load(Ordering::Acquire) != token.0 {
+                return false;
+            }
+            items.push(message);
+            true
+        });
+        if changed {
+            self.bump_next_ids(std::slice::from_ref(&registered));
+            self.versions
+                .register_messages(std::slice::from_ref(&registered));
+            if self.with_message(registered.id, |_| ()).is_none() {
+                let (message_ids, block_ids) = self.messages.with(|items| registered_ids(items));
+                self.versions.retain_registered(&message_ids, &block_ids);
+            }
+        }
+        changed
     }
 
     pub fn prepend(&self, message: ChatMessage) {
@@ -285,6 +391,62 @@ impl ChatMessageStore {
             self.versions.bump_message_and_blocks(id, &block_ids);
         }
         found
+    }
+
+    /// Cancels a currently streaming turn and invalidates branch tokens captured before the cancel.
+    pub fn cancel_streaming_turn(&self, id: ChatMessageId) -> bool {
+        let mut block_ids = Vec::new();
+        let changed = self.messages.update_if(|items| {
+            let Some(item) = items
+                .iter_mut()
+                .find(|item| item.id == id && item.status.is_streaming())
+            else {
+                return false;
+            };
+            item.set_turn_status(ChatTurnStatus::Canceled);
+            block_ids = item
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ChatBlock::Text(_) | ChatBlock::Thinking(_) => Some(block.id()),
+                    _ => None,
+                })
+                .collect();
+            true
+        });
+        if changed {
+            self.bump_branch_generation();
+            self.versions.bump_message_and_blocks(id, &block_ids);
+        }
+        changed
+    }
+
+    /// Fails a currently streaming turn and invalidates branch tokens captured before the failure.
+    pub fn fail_streaming_turn(&self, id: ChatMessageId, error: ChatError) -> bool {
+        let mut block_ids = Vec::new();
+        let changed = self.messages.update_if(|items| {
+            let Some(item) = items
+                .iter_mut()
+                .find(|item| item.id == id && item.status.is_streaming())
+            else {
+                return false;
+            };
+            item.set_turn_status(ChatTurnStatus::Failed(error));
+            block_ids = item
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ChatBlock::Text(_) | ChatBlock::Thinking(_) => Some(block.id()),
+                    _ => None,
+                })
+                .collect();
+            true
+        });
+        if changed {
+            self.bump_branch_generation();
+            self.versions.bump_message_and_blocks(id, &block_ids);
+        }
+        changed
     }
 
     pub fn set_meta(&self, id: ChatMessageId, meta: ChatMessageMeta) -> bool {
@@ -431,18 +593,20 @@ impl ChatMessageStore {
             let Some(approval) = &mut tool.approval else {
                 return false;
             };
-            let Some(next_status) = approval
+            let Some(option) = approval
                 .options
                 .iter()
                 .find(|option| option.id == option_id)
-                .map(approval_option_status)
+                .cloned()
             else {
                 return false;
             };
+            let next_status = approval_option_status(&option);
+            let resolution = option.resolution();
             found_approval = true;
             let mut changed = false;
-            if approval.resolved.as_deref() != Some(option_id.as_str()) {
-                approval.resolved = Some(option_id);
+            if approval.resolved.as_ref() != Some(&resolution) {
+                approval.resolved = Some(resolution);
                 changed = true;
             }
 
@@ -627,6 +791,10 @@ impl ChatMessageStore {
         bump_counter(&self.next_id, next_message_id);
         bump_counter(&self.next_block_id, next_block_id);
     }
+
+    fn bump_branch_generation(&self) {
+        self.branch_generation.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 fn max_nested_block_id(block: &ChatBlock) -> u64 {
@@ -637,6 +805,18 @@ fn max_nested_block_id(block: &ChatBlock) -> u64 {
         }
     }
     max_id
+}
+
+fn registered_ids(messages: &[ChatMessage]) -> (HashSet<ChatMessageId>, HashSet<ChatBlockId>) {
+    let message_ids = messages
+        .iter()
+        .map(|message| message.id)
+        .collect::<HashSet<_>>();
+    let block_ids = messages
+        .iter()
+        .flat_map(|message| message.blocks.iter().map(ChatBlock::id))
+        .collect::<HashSet<_>>();
+    (message_ids, block_ids)
 }
 
 fn find_block_mut(messages: &mut [ChatMessage], id: ChatBlockId) -> Option<&mut ChatBlock> {
@@ -658,6 +838,7 @@ fn set_block_id(block: &mut ChatBlock, id: ChatBlockId) {
         ChatBlock::Todo(block) => block.id = id,
         ChatBlock::Attachment(block) => block.id = id,
         ChatBlock::Notice(block) => block.id = id,
+        ChatBlock::Compact(block) => block.id = id,
         ChatBlock::Artifact(block) => block.id = id,
     }
 }
@@ -669,22 +850,10 @@ fn bump_counter(counter: &AtomicU64, next: u64) {
 }
 
 fn approval_option_status(option: &ApprovalOption) -> ToolStatus {
-    let id = option.id.trim().to_ascii_lowercase();
-    let label = option.label.trim().to_ascii_lowercase();
-    if is_deny_approval_option(&id) || is_deny_approval_option(&label) {
-        ToolStatus::Canceled
-    } else {
-        ToolStatus::Running
+    match option.action {
+        ApprovalAction::Allow => ToolStatus::Running,
+        ApprovalAction::Deny => ToolStatus::Canceled,
     }
-}
-
-fn is_deny_approval_option(value: &str) -> bool {
-    value == "no"
-        || value.contains("deny")
-        || value.contains("reject")
-        || value.contains("decline")
-        || value.contains("cancel")
-        || value.contains("stop")
 }
 
 fn tool_status_can_advance(current: ToolStatus, next: ToolStatus) -> bool {
@@ -705,9 +874,10 @@ impl Default for ChatMessageStore {
 mod tests {
     use super::*;
     use crate::message::{
-        ApprovalOption, ApprovalRequest, ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock,
-        TaskStatus, TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput,
-        ToolOutput, ToolUseBlock,
+        ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
+        ChatErrorKind, ChatRole, DiffBlock, DiffData, PlanBlock, TaskBlock, TaskStatus,
+        TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoState, ToolInput, ToolOutput,
+        ToolUseBlock,
     };
 
     fn block_id_for(
@@ -763,6 +933,29 @@ mod tests {
                 _ => panic!("expected tool result block"),
             })
             .expect("tool result block should exist")
+    }
+
+    fn approval_resolution_for(
+        store: &ChatMessageStore,
+        id: ChatBlockId,
+    ) -> Option<ApprovalResolution> {
+        store
+            .with_block(id, |block| match block {
+                ChatBlock::ToolUse(tool) => tool
+                    .approval
+                    .as_ref()
+                    .and_then(|approval| approval.resolved.clone()),
+                _ => panic!("expected tool use block"),
+            })
+            .expect("tool use block should exist")
+    }
+
+    fn message_ids(store: &ChatMessageStore) -> Vec<ChatMessageId> {
+        store
+            .messages()
+            .into_iter()
+            .map(|message| message.id)
+            .collect()
     }
 
     #[test]
@@ -874,6 +1067,303 @@ mod tests {
     }
 
     #[test]
+    fn truncate_from_first_message_removes_all_messages_and_versions() {
+        let store = ChatMessageStore::new();
+        let first_id = ChatMessageId::new(1);
+        let second_id = ChatMessageId::new(2);
+        let third_id = ChatMessageId::new(3);
+        store.push(ChatMessage::text(first_id, ChatRole::User, "one"));
+        store.push(ChatMessage::text(second_id, ChatRole::Assistant, "two"));
+        store.push(ChatMessage::text(third_id, ChatRole::User, "three"));
+        let first_block_id = block_id_for(&store, first_id, |block| {
+            matches!(block, ChatBlock::Text(_))
+        });
+        let third_block_id = block_id_for(&store, third_id, |block| {
+            matches!(block, ChatBlock::Text(_))
+        });
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store
+            .truncate_from(first_id)
+            .expect("first message should truncate");
+
+        assert_eq!(message_ids(&store), Vec::<ChatMessageId>::new());
+        assert_eq!(
+            removed.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![first_id, second_id, third_id]
+        );
+        assert!(binding.check_dirty(&mut observer));
+        assert_eq!(store.message_version(first_id), 0);
+        assert_eq!(store.block_version(first_block_id), 0);
+        assert_eq!(store.message_version(third_id), 0);
+        assert_eq!(store.block_version(third_block_id), 0);
+    }
+
+    #[test]
+    fn truncate_from_middle_preserves_prefix_versions_and_next_ids() {
+        let store = ChatMessageStore::new();
+        let ids = (0..4).map(|_| store.next_message_id()).collect::<Vec<_>>();
+        for id in &ids {
+            store.push(ChatMessage::text(
+                *id,
+                ChatRole::Assistant,
+                format!("message {}", id.0),
+            ));
+        }
+        let kept_block_id =
+            block_id_for(&store, ids[1], |block| matches!(block, ChatBlock::Text(_)));
+        let removed_block_id =
+            block_id_for(&store, ids[2], |block| matches!(block, ChatBlock::Text(_)));
+        let kept_message_version = store.message_version(ids[1]);
+        let kept_block_version = store.block_version(kept_block_id);
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store
+            .truncate_from(ids[2])
+            .expect("middle message should truncate");
+
+        assert_eq!(message_ids(&store), vec![ids[0], ids[1]]);
+        assert_eq!(
+            removed.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![ids[2], ids[3]]
+        );
+        assert!(binding.check_dirty(&mut observer));
+        assert_eq!(store.message_version(ids[1]), kept_message_version);
+        assert_eq!(store.block_version(kept_block_id), kept_block_version);
+        assert_eq!(store.message_version(ids[2]), 0);
+        assert_eq!(store.block_version(removed_block_id), 0);
+        assert_eq!(store.next_message_id(), ChatMessageId::new(5));
+    }
+
+    #[test]
+    fn truncate_from_last_message_removes_only_tail_message() {
+        let store = ChatMessageStore::new();
+        let first_id = ChatMessageId::new(10);
+        let second_id = ChatMessageId::new(11);
+        let third_id = ChatMessageId::new(12);
+        store.push(ChatMessage::text(first_id, ChatRole::User, "one"));
+        store.push(ChatMessage::text(second_id, ChatRole::Assistant, "two"));
+        store.push(ChatMessage::text(third_id, ChatRole::Assistant, "three"));
+        let third_block_id = block_id_for(&store, third_id, |block| {
+            matches!(block, ChatBlock::Text(_))
+        });
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store
+            .truncate_from(third_id)
+            .expect("last message should truncate");
+
+        assert_eq!(message_ids(&store), vec![first_id, second_id]);
+        assert_eq!(
+            removed.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![third_id]
+        );
+        assert!(binding.check_dirty(&mut observer));
+        assert_eq!(store.message_version(third_id), 0);
+        assert_eq!(store.block_version(third_block_id), 0);
+    }
+
+    #[test]
+    fn fork_at_middle_keeps_anchor_and_removes_later_messages() {
+        let store = ChatMessageStore::new();
+        let first_id = ChatMessageId::new(20);
+        let anchor_id = ChatMessageId::new(21);
+        let removed_id = ChatMessageId::new(22);
+        store.push(ChatMessage::text(first_id, ChatRole::User, "one"));
+        store.push(ChatMessage::text(anchor_id, ChatRole::Assistant, "two"));
+        store.push(ChatMessage::text(removed_id, ChatRole::User, "three"));
+        let anchor_block_id = block_id_for(&store, anchor_id, |block| {
+            matches!(block, ChatBlock::Text(_))
+        });
+        let removed_block_id = block_id_for(&store, removed_id, |block| {
+            matches!(block, ChatBlock::Text(_))
+        });
+        let anchor_message_version = store.message_version(anchor_id);
+        let anchor_block_version = store.block_version(anchor_block_id);
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store.fork_at(anchor_id).expect("anchor should fork");
+
+        assert_eq!(message_ids(&store), vec![first_id, anchor_id]);
+        assert_eq!(
+            removed.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![removed_id]
+        );
+        assert!(binding.check_dirty(&mut observer));
+        assert_eq!(store.message_version(anchor_id), anchor_message_version);
+        assert_eq!(store.block_version(anchor_block_id), anchor_block_version);
+        assert_eq!(store.message_version(removed_id), 0);
+        assert_eq!(store.block_version(removed_block_id), 0);
+    }
+
+    #[test]
+    fn fork_at_last_message_noops_without_dirty() {
+        let store = ChatMessageStore::new();
+        let first_id = ChatMessageId::new(30);
+        let last_id = ChatMessageId::new(31);
+        store.push(ChatMessage::text(first_id, ChatRole::User, "one"));
+        store.push(ChatMessage::text(last_id, ChatRole::Assistant, "two"));
+        let last_block_id =
+            block_id_for(&store, last_id, |block| matches!(block, ChatBlock::Text(_)));
+        let last_message_version = store.message_version(last_id);
+        let last_block_version = store.block_version(last_block_id);
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store
+            .fork_at(last_id)
+            .expect("last message should be a fork point");
+
+        assert!(removed.is_empty());
+        assert_eq!(message_ids(&store), vec![first_id, last_id]);
+        assert!(!binding.check_dirty(&mut observer));
+        assert_eq!(store.message_version(last_id), last_message_version);
+        assert_eq!(store.block_version(last_block_id), last_block_version);
+        assert!(store.fork_at(ChatMessageId::new(999)).is_none());
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
+    fn truncate_from_missing_message_noops_without_dirty_or_branch_change() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(ChatMessage::text(message_id, ChatRole::Assistant, "seed"));
+        let token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store.truncate_from(ChatMessageId::new(999));
+
+        assert!(removed.is_none());
+        assert_eq!(message_ids(&store), vec![message_id]);
+        assert!(!binding.check_dirty(&mut observer));
+        assert!(store.is_branch_current(token));
+    }
+
+    #[test]
+    fn branch_token_blocks_late_pushes_after_truncate_fork_or_replace() {
+        let store = ChatMessageStore::new();
+        let first_id = store.next_message_id();
+        let second_id = store.next_message_id();
+        store.push(ChatMessage::text(first_id, ChatRole::User, "prompt"));
+        store.push(ChatMessage::text(second_id, ChatRole::Assistant, "old"));
+        let initial = store.branch_token();
+
+        assert!(store.truncate_from(second_id).is_some());
+        assert!(!store.is_branch_current(initial));
+        assert!(!store.push_if_branch_current(
+            initial,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "stale")
+        ));
+        assert_eq!(message_ids(&store), vec![first_id]);
+
+        let fork_token = store.branch_token();
+        let third_id = store.next_message_id();
+        store.push(ChatMessage::text(third_id, ChatRole::Assistant, "branch"));
+        assert!(store.fork_at(first_id).is_some());
+        assert!(!store.is_branch_current(fork_token));
+        assert!(!store.push_if_branch_current(
+            fork_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late fork")
+        ));
+        assert_eq!(message_ids(&store), vec![first_id]);
+
+        let replace_token = store.branch_token();
+        store.replace_all(vec![ChatMessage::text(
+            ChatMessageId::new(100),
+            ChatRole::System,
+            "replacement",
+        )]);
+        assert!(!store.is_branch_current(replace_token));
+        assert!(!store.push_if_branch_current(
+            replace_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late replace")
+        ));
+        assert_eq!(message_ids(&store), vec![ChatMessageId::new(100)]);
+    }
+
+    #[test]
+    fn current_branch_token_allows_pushes_before_branch_changes() {
+        let store = ChatMessageStore::new();
+        let token = store.branch_token();
+        let message_id = store.next_message_id();
+
+        assert!(store.push_if_branch_current(
+            token,
+            ChatMessage::text(message_id, ChatRole::Assistant, "fresh")
+        ));
+
+        assert_eq!(message_ids(&store), vec![message_id]);
+        assert!(store.is_branch_current(token));
+    }
+
+    #[test]
+    fn truncate_from_streaming_turn_removes_streaming_blocks_and_versions() {
+        let store = ChatMessageStore::new();
+        let user_id = ChatMessageId::new(40);
+        let streaming_id = ChatMessageId::new(41);
+        let later_id = ChatMessageId::new(42);
+        let text_id = ChatBlockId::new(410);
+        let thinking_id = ChatBlockId::new(411);
+        store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
+        store.push(
+            ChatMessage::new(
+                streaming_id,
+                ChatRole::Assistant,
+                vec![
+                    ChatBlock::Text(TextBlock {
+                        id: text_id,
+                        markdown: "partial".to_string(),
+                        streaming: false,
+                    }),
+                    ChatBlock::Thinking(ThinkingBlock {
+                        id: thinking_id,
+                        markdown: "reasoning".to_string(),
+                        streaming: false,
+                        collapsed: true,
+                    }),
+                ],
+            )
+            .with_status(ChatTurnStatus::Streaming),
+        );
+        store.push(ChatMessage::text(later_id, ChatRole::Assistant, "stale"));
+        let branch_token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        let removed = store
+            .truncate_from(streaming_id)
+            .expect("streaming turn should truncate");
+
+        assert_eq!(message_ids(&store), vec![user_id]);
+        assert_eq!(
+            removed.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![streaming_id, later_id]
+        );
+        assert_eq!(removed[0].status, ChatTurnStatus::Streaming);
+        assert!(matches!(&removed[0].blocks[0], ChatBlock::Text(block) if block.streaming));
+        assert!(matches!(&removed[0].blocks[1], ChatBlock::Thinking(block) if block.streaming));
+        assert!(binding.check_dirty(&mut observer));
+        assert!(store.with_block(text_id, |_| ()).is_none());
+        assert!(store.with_block(thinking_id, |_| ()).is_none());
+        assert_eq!(store.message_version(streaming_id), 0);
+        assert_eq!(store.block_version(text_id), 0);
+        assert_eq!(store.block_version(thinking_id), 0);
+        assert!(!store.append_text_delta(text_id, " late"));
+        assert!(!store.set_turn_status(streaming_id, ChatTurnStatus::Complete));
+        assert!(!store.push_if_branch_current(
+            branch_token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late push")
+        ));
+        assert_eq!(message_ids(&store), vec![user_id]);
+        assert!(!binding.check_dirty(&mut observer));
+    }
+
+    #[test]
     fn append_text_delta_noops_without_dirty_for_empty_or_non_text() {
         let store = ChatMessageStore::new();
         let text_message_id = store.next_message_id();
@@ -931,6 +1421,75 @@ mod tests {
         assert!(store.set_meta(message_id, meta.clone()));
         assert!(binding.check_dirty(&mut observer));
         assert_eq!(store.messages()[0].meta, meta);
+    }
+
+    #[test]
+    fn cancel_streaming_turn_marks_canceled_and_invalidates_branch() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "partial")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(store.cancel_streaming_turn(message_id));
+        assert!(!store.cancel_streaming_turn(message_id));
+
+        assert!(!store.is_branch_current(token));
+        assert!(binding.check_dirty(&mut observer));
+        let messages = store.messages();
+        assert_eq!(messages[0].status, ChatTurnStatus::Canceled);
+        assert!(matches!(&messages[0].blocks[0], ChatBlock::Text(block) if !block.streaming));
+        assert!(!store.push_if_branch_current(
+            token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late")
+        ));
+        assert_eq!(store.messages().len(), 1);
+    }
+
+    #[test]
+    fn fail_streaming_turn_marks_failed_and_invalidates_branch() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "partial")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let token = store.branch_token();
+        let binding = store.binding();
+        let mut observer = binding.dirty_observer();
+
+        assert!(
+            store.fail_streaming_turn(
+                message_id,
+                ChatError::new(ChatErrorKind::Network, "stream disconnected")
+                    .with_detail("connection closed before [DONE]")
+            )
+        );
+        assert!(!store.fail_streaming_turn(
+            message_id,
+            ChatError::new(ChatErrorKind::Network, "duplicate")
+        ));
+
+        assert!(!store.is_branch_current(token));
+        assert!(binding.check_dirty(&mut observer));
+        let messages = store.messages();
+        assert_eq!(
+            messages[0].status,
+            ChatTurnStatus::Failed(
+                ChatError::new(ChatErrorKind::Network, "stream disconnected")
+                    .with_detail("connection closed before [DONE]")
+            )
+        );
+        assert!(matches!(&messages[0].blocks[0], ChatBlock::Text(block) if !block.streaming));
+        assert!(!store.push_if_branch_current(
+            token,
+            ChatMessage::text(store.next_message_id(), ChatRole::Assistant, "late")
+        ));
+        assert_eq!(store.messages().len(), 1);
     }
 
     #[test]
@@ -1019,14 +1578,8 @@ mod tests {
                         id: "approval-1".to_string(),
                         prompt: "Run command?".to_string(),
                         options: vec![
-                            ApprovalOption {
-                                id: "allow".to_string(),
-                                label: "Allow".to_string(),
-                            },
-                            ApprovalOption {
-                                id: "deny".to_string(),
-                                label: "Deny".to_string(),
-                            },
+                            ApprovalOption::allow_once("allow", "Allow"),
+                            ApprovalOption::deny("deny", "Deny"),
                         ],
                         resolved: None,
                     }),
@@ -1157,10 +1710,7 @@ mod tests {
                 approval: Some(ApprovalRequest {
                     id: "approval-deny".to_string(),
                     prompt: "Run command?".to_string(),
-                    options: vec![ApprovalOption {
-                        id: "deny".to_string(),
-                        label: "Deny".to_string(),
-                    }],
+                    options: vec![ApprovalOption::deny("deny", "Deny")],
                     resolved: None,
                 }),
                 collapsed: false,
@@ -1170,5 +1720,87 @@ mod tests {
         assert!(store.resolve_approval(approval_id, "deny"));
 
         assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Canceled);
+    }
+
+    #[test]
+    fn resolve_approval_records_structured_action_and_level() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let approval_id = ChatBlockId::new(21);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: approval_id,
+                call_id: "call-project".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("cargo test".to_string()),
+                status: ToolStatus::Pending,
+                approval: Some(ApprovalRequest {
+                    id: "approval-project".to_string(),
+                    prompt: "Run project command?".to_string(),
+                    options: vec![ApprovalOption::allow_project(
+                        "allow_project",
+                        "Allow for project",
+                    )],
+                    resolved: None,
+                }),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.resolve_approval(approval_id, "allow_project"));
+
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Running);
+        assert_eq!(
+            approval_resolution_for(&store, approval_id),
+            Some(ApprovalResolution {
+                option_id: "allow_project".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Project,
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_approval_uses_explicit_action_instead_of_label_heuristics() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let approval_id = ChatBlockId::new(22);
+        store.push(ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::ToolUse(ToolUseBlock {
+                id: approval_id,
+                call_id: "call-structured".to_string(),
+                name: "bash".to_string(),
+                input: ToolInput::Text("cargo clippy".to_string()),
+                status: ToolStatus::Pending,
+                approval: Some(ApprovalRequest {
+                    id: "approval-structured".to_string(),
+                    prompt: "Run structured command?".to_string(),
+                    options: vec![ApprovalOption::new(
+                        "remember",
+                        "Stop asking for this command",
+                        ApprovalAction::Allow,
+                        ApprovalLevel::Always,
+                    )],
+                    resolved: None,
+                }),
+                collapsed: false,
+            })],
+        ));
+
+        assert!(store.resolve_approval(approval_id, "remember"));
+
+        assert_eq!(tool_status_for(&store, approval_id), ToolStatus::Running);
+        assert_eq!(
+            approval_resolution_for(&store, approval_id),
+            Some(ApprovalResolution {
+                option_id: "remember".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Always,
+            })
+        );
     }
 }

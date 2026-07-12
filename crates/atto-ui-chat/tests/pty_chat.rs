@@ -36,6 +36,48 @@ fn find_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
     })
 }
 
+fn find_last_text_position(host: &PtyTestHost, needle: &str) -> Option<(u16, u16)> {
+    let contents = host.screen_contents().ok()?;
+    let mut found = None;
+    for (y, line) in contents.lines().enumerate() {
+        for (byte_idx, _) in line.match_indices(needle) {
+            let x = UnicodeWidthStr::width(&line[..byte_idx]);
+            found = Some((
+                x.min(u16::MAX as usize) as u16,
+                y.min(u16::MAX as usize) as u16,
+            ));
+        }
+    }
+    found
+}
+
+fn wait_for_disclosure_text(
+    host: &mut PtyTestHost,
+    title: &str,
+    needle: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if screen.contains(needle) {
+            return Ok(());
+        }
+        if screen
+            .lines()
+            .any(|line| line.contains('▶') && line.contains(title))
+            && let Some((x, y)) = find_text_position(host, title)
+        {
+            host.click(x, y)?;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(anyhow::anyhow!(
+        "timed out waiting for text {needle:?} in disclosure {title:?}.\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    ))
+}
+
 fn find_close_button_on_title_row(host: &PtyTestHost, title: &str) -> Option<(u16, u16)> {
     let contents = host.screen_contents().ok()?;
     contents.lines().enumerate().find_map(|(y, line)| {
@@ -103,6 +145,149 @@ fn chat_input_modes_submit_callbacks() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_slash_completion_filters_selects_accepts_and_closes() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--input-completion"], 100, 30)?;
+
+    host.wait_for_text("COMPLETION-READY", Duration::from_secs(2))?;
+
+    host.send_str("/")?;
+    host.wait_for_text("COMMAND-MODEL", Duration::from_secs(2))?;
+    host.wait_for_text("COMMAND-MERGE", Duration::from_secs(2))?;
+    host.wait_for_text("COMMAND-CLEAR", Duration::from_secs(2))?;
+    host.send_str("m")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("/m"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-CLEAR"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("/merge ready"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MERGE"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=/merge ready", Duration::from_secs(2))?;
+
+    host.send_str("/")?;
+    host.send_str("cl")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("COMMAND-CLEAR"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MODEL"))
+                && snapshot.iter().all(|line| !line.contains("COMMAND-MERGE"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text(
+        "SLASH_COMMAND: id=clear label=/clear",
+        Duration::from_secs(2),
+    )?;
+
+    host.send_str("/")?;
+    host.wait_for_text("COMMAND-MODEL", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| snapshot.iter().all(|line| !line.contains("COMMAND-MODEL")),
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_mention_completion_inserts_file_and_closes() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--input-completion"], 100, 30)?;
+
+    host.wait_for_text("COMPLETION-READY", Duration::from_secs(2))?;
+
+    host.send_str("open @")?;
+    host.wait_for_text("FILE-CARGO", Duration::from_secs(2))?;
+    host.send_str("ca")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("open @ca"))
+                && snapshot.iter().any(|line| line.contains("FILE-CARGO"))
+                && snapshot.iter().all(|line| !line.contains("FILE-LIB"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("open @Cargo.toml"))
+                && snapshot.iter().all(|line| !line.contains("FILE-CARGO"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=open @Cargo.toml", Duration::from_secs(2))?;
+
+    host.send_str("inspect @")?;
+    host.wait_for_text("FILE-LIB", Duration::from_secs(2))?;
+    host.send_str("sr")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("inspect @sr"))
+                && snapshot.iter().any(|line| line.contains("FILE-LIB"))
+                && snapshot.iter().any(|line| line.contains("FILE-MAIN"))
+        },
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
+    host.wait_for_screen(
+        |snapshot| snapshot.iter().all(|line| !line.contains("FILE-LIB")),
+        Duration::from_secs(2),
+    )?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_input_queues_text_while_streaming_and_sends_after_prompt() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--input-queue"], 100, 30)?;
+
+    host.wait_for_text("QUEUE-STREAMING-START", Duration::from_secs(2))?;
+    host.wait_for_text(
+        "Streaming... Enter queues new messages",
+        Duration::from_secs(2),
+    )?;
+
+    host.send_str("queued one")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("Queued 1 message while streaming", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "SUBMIT: text=queued one", Duration::from_millis(250));
+
+    host.send_str("1")?;
+    host.wait_for_text(
+        "Queued 1 message; press Enter to send next",
+        Duration::from_secs(2),
+    )?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text("SUBMIT: text=queued one", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_textarea_multiline_history_and_kill_ring() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
@@ -148,6 +333,29 @@ fn chat_textarea_multiline_history_and_kill_ring() -> anyhow::Result<()> {
     host.send_ctrl('y')?;
     host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
     host.wait_for_text("SUBMIT: text=killme", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_multiline_paste_normalizes_and_submits() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--multiline-paste"], 100, 28)?;
+
+    host.wait_for_text("MULTILINE-PASTE-READY", Duration::from_secs(2))?;
+    host.send_paste("ML-A\r\n  ML-B  \n\n\t \n")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("ML-A"))
+                && snapshot.iter().any(|line| line.contains("ML-B"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+    host.wait_for_text(r#"PASTE_SUBMIT: "ML-A\n  ML-B  ""#, Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())
@@ -278,13 +486,22 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     host.wait_for_text("[~]", Duration::from_secs(2))?;
     host.wait_for_text("TOOL-START", Duration::from_secs(2))?;
 
-    host.send_str("1")?;
-    host.wait_for_text("TOOL-OUTPUT-1", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Char('1'), KeyModifiers::NONE)?;
+    host.key_with_mods(KeyCode::Char('2'), KeyModifiers::NONE)?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-1",
+        Duration::from_secs(2),
+    )?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-2",
+        Duration::from_secs(2),
+    )?;
 
-    host.send_str("2")?;
-    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
-
-    host.send_str("3")?;
+    host.key_with_mods(KeyCode::Char('3'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -302,9 +519,14 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
     )?;
 
     host.click(x, y)?;
-    host.wait_for_text("TOOL-OUTPUT-2", Duration::from_secs(2))?;
+    wait_for_disclosure_text(
+        &mut host,
+        "Tool result: tool-1",
+        "TOOL-OUTPUT-2",
+        Duration::from_secs(2),
+    )?;
 
-    host.send_str("4")?;
+    host.key_with_mods(KeyCode::Char('4'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -314,7 +536,7 @@ fn chat_tool_call_disclosure_streams_status_and_toggles() -> anyhow::Result<()> 
         Duration::from_secs(2),
     )?;
 
-    host.send_str("5")?;
+    host.key_with_mods(KeyCode::Char('5'), KeyModifiers::NONE)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -369,6 +591,61 @@ fn chat_inline_approval_buttons_emit_and_lock() -> anyhow::Result<()> {
 }
 
 #[test]
+fn chat_p6_approval_levels_emit_and_lock_project_scope() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p6-approval-compact"], 100, 30)?;
+
+    host.wait_for_text("Approval: Run P6-APPROVAL-COMMAND?", Duration::from_secs(2))?;
+    host.wait_for_text("Once", Duration::from_secs(2))?;
+    host.wait_for_text("Always", Duration::from_secs(2))?;
+    host.wait_for_text("Project", Duration::from_secs(2))?;
+    host.wait_for_text("Deny", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Project").expect("project approval button");
+    host.click(x, y)?;
+
+    host.wait_for_text(
+        "APPROVED: approval-p6/project action=allow",
+        Duration::from_secs(2),
+    )?;
+    host.wait_for_text("level=project", Duration::from_secs(2))?;
+
+    for _ in 0..6 {
+        host.wheel_up(8, 10)?;
+        thread::sleep(Duration::from_millis(25));
+        if host.screen_contents()?.contains("[x] Project") {
+            break;
+        }
+    }
+    host.wait_for_text("[x] Project", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "Deny", Duration::from_millis(250));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p6_compact_block_renders_tokens_and_summary() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p6-approval-compact"], 100, 30)?;
+
+    host.wait_for_text("Context compact: Complete", Duration::from_secs(2))?;
+    host.wait_for_text("Tokens: 12000 -> 3500 (8500 saved)", Duration::from_secs(2))?;
+    host.wait_for_text("Summary: P6-COMPACT-SUMMARY", Duration::from_secs(2))?;
+    host.wait_for_text("P6-COMPACT-DETAIL", Duration::from_secs(2))?;
+    assert_text_absent_for(
+        &host,
+        "Info: P6-COMPACT-SUMMARY",
+        Duration::from_millis(250),
+    );
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
 fn chat_inline_diff_buttons_emit_and_lock() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
@@ -389,6 +666,67 @@ fn chat_inline_diff_buttons_emit_and_lock() -> anyhow::Result<()> {
     )?;
     host.wait_for_text("[x] Accepted", Duration::from_secs(2))?;
     assert_text_absent_for(&host, "Reject", Duration::from_millis(250));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_syntax_diff_highlights_context_and_preserves_semantic_lines() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--syntax-diff"], 100, 28)?;
+
+    host.wait_for_text("Diff: src/syntax_diff.rs (pending)", Duration::from_secs(2))?;
+    host.wait_for_text("fn syntax_diff", Duration::from_secs(2))?;
+    host.wait_for_text("let stable_value = 0;", Duration::from_secs(2))?;
+    host.wait_for_text("-    let old_value = 1;", Duration::from_secs(2))?;
+    host.wait_for_text("+    let new_value = 42;", Duration::from_secs(2))?;
+    host.wait_for_text("+    println!(\"DIFF-SYNTAX\");", Duration::from_secs(2))?;
+
+    let (context_keyword_x, context_keyword_y) =
+        find_text_position(&host, "let stable_value").expect("context keyword position");
+    let (context_value_x, context_value_y) =
+        find_text_position(&host, "stable_value").expect("context variable position");
+    assert_eq!(context_keyword_y, context_value_y);
+    assert_ne!(
+        host.cell_fgcolor(context_keyword_x, context_keyword_y)?,
+        host.cell_fgcolor(context_value_x, context_value_y)?,
+        "context diff payload should receive syntax-level coloring"
+    );
+
+    let (add_prefix_x, add_y) =
+        find_text_position(&host, "+    let new_value").expect("addition prefix position");
+    let (add_keyword_x, add_keyword_y) =
+        find_text_position(&host, "let new_value").expect("addition keyword position");
+    assert_eq!(add_y, add_keyword_y);
+    let addition_fg = host.cell_fgcolor(add_prefix_x, add_y)?;
+    assert_eq!(
+        host.cell_fgcolor(add_keyword_x, add_keyword_y)?,
+        addition_fg,
+        "addition syntax spans should preserve the semantic foreground"
+    );
+    assert_eq!(
+        host.cell_bgcolor(add_keyword_x, add_keyword_y)?,
+        host.cell_bgcolor(add_prefix_x, add_y)?,
+        "addition syntax spans should preserve the semantic background"
+    );
+
+    let (remove_prefix_x, remove_y) =
+        find_text_position(&host, "-    let old_value").expect("removal prefix position");
+    let (remove_keyword_x, remove_keyword_y) =
+        find_text_position(&host, "let old_value").expect("removal keyword position");
+    assert_eq!(remove_y, remove_keyword_y);
+    let removal_fg = host.cell_fgcolor(remove_prefix_x, remove_y)?;
+    assert_eq!(
+        host.cell_fgcolor(remove_keyword_x, remove_keyword_y)?,
+        removal_fg,
+        "removal syntax spans should preserve the semantic foreground"
+    );
+    assert_ne!(
+        addition_fg, removal_fg,
+        "addition and removal lines should keep distinct semantic colors"
+    );
 
     host.send_ctrl('q')?;
     Ok(())
@@ -527,7 +865,7 @@ fn chat_todo_panel_renders_and_updates_state() -> anyhow::Result<()> {
 fn chat_turn_header_renders_meta_and_structured_error() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
-    let mut host = PtyTestHost::spawn(bin, &["--turn-meta-error"], 110, 34)?;
+    let mut host = PtyTestHost::spawn(bin, &["--turn-meta-error"], 110, 40)?;
 
     host.wait_for_text("model: claude-sonnet-test", Duration::from_secs(2))?;
     host.wait_for_text("usage: 1234 input/56 output", Duration::from_secs(2))?;
@@ -550,9 +888,15 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 
     host.wait_for_text("ACTION-USER-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("ACTION-ASSISTANT-MESSAGE", Duration::from_secs(2))?;
+    host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("Retry", Duration::from_secs(2))?;
     host.wait_for_text("Regenerate", Duration::from_secs(2))?;
     host.wait_for_text("Copy block", Duration::from_secs(2))?;
+
+    for _ in 0..6 {
+        host.wheel_up(5, 6)?;
+    }
+    host.wait_for_text("Edit", Duration::from_secs(2))?;
 
     let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("copy target body");
     host.click(x, y)?;
@@ -561,15 +905,27 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
 
     let (x, y) = find_text_position(&host, "Copy").expect("copy action");
     host.click(x, y)?;
-    host.wait_for_text("MESSAGE_ACTION: 1/copy", Duration::from_secs(2))?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("MESSAGE_ACTION: 1/copy") && !line.contains("copy_block"))
+        },
+        Duration::from_secs(2),
+    )?;
 
     let (x, y) = find_text_position(&host, "Edit").expect("edit user action");
     host.click(x, y)?;
     host.wait_for_text("MESSAGE_ACTION: 1/edit_user", Duration::from_secs(2))?;
 
-    let (x, y) = find_text_position(&host, "Retry").expect("retry action");
+    for _ in 0..6 {
+        host.wheel_down(5, 20)?;
+    }
+    host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
+
+    let (x, y) = find_last_text_position(&host, "Retry").expect("retry action");
     host.click(x, y)?;
-    host.wait_for_text("MESSAGE_ACTION: 2/retry", Duration::from_secs(2))?;
+    host.wait_for_text("MESSAGE_ACTION: 3/retry", Duration::from_secs(2))?;
 
     let (x, y) = find_text_position(&host, "Regenerate").expect("regenerate action");
     host.click(x, y)?;
@@ -578,6 +934,223 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
     let (x, y) = find_text_position(&host, "Copy block").expect("copy block action");
     host.click(x, y)?;
     host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p3_edit_resubmit_truncates_old_branch() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--edit-resubmit"], 100, 28)?;
+
+    host.wait_for_text("P3-EDIT-USER-OLD", Duration::from_secs(2))?;
+    host.wait_for_text("P3-EDIT-OLD-ASSISTANT", Duration::from_secs(2))?;
+    host.wait_for_text("P3-EDIT-OLD-TAIL", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Edit").expect("edit action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .filter(|line| line.contains("P3-EDIT-USER-OLD"))
+                .count()
+                >= 2
+        },
+        Duration::from_secs(2),
+    )?;
+
+    let (x, y) = find_last_text_position(&host, "P3-EDIT-USER-OLD").expect("edit draft");
+    host.click(x, y)?;
+    host.send_ctrl('u')?;
+    host.send_str("P3-EDIT-USER-NEW")?;
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
+
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("P3-EDIT-ASSISTANT-NEW removed=3"))
+                && snapshot
+                    .iter()
+                    .any(|line| line.contains("P3-EDIT-USER-NEW"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-OLD-ASSISTANT"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-OLD-TAIL"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-EDIT-USER-OLD"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-EDIT-OLD-ASSISTANT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p3_retry_resubmit_truncates_assistant_turn() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--retry-resubmit"], 100, 28)?;
+
+    host.wait_for_text("P3-RETRY-ASSISTANT-OLD", Duration::from_secs(2))?;
+    host.wait_for_text("P3-RETRY-OLD-TAIL", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Retry").expect("retry action");
+    host.click(x, y)?;
+
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .any(|line| line.contains("P3-RETRY-ASSISTANT-NEW: retry"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-RETRY-ASSISTANT-OLD"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-RETRY-OLD-TAIL"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-RETRY-OLD-TAIL", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p3_fork_at_hides_old_branch() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--fork-at"], 100, 28)?;
+
+    host.wait_for_text("P3-FORK-ANCHOR", Duration::from_secs(2))?;
+    host.wait_for_text("P3-FORK-OLD-ASSISTANT", Duration::from_secs(2))?;
+    host.wait_for_text("P3-FORK-OLD-TAIL", Duration::from_secs(2))?;
+
+    host.send_str("1")?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot.iter().any(|line| line.contains("P3-FORK-ANCHOR"))
+                && snapshot
+                    .iter()
+                    .any(|line| line.contains("P3-FORK-ASSISTANT-NEW removed=2"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-FORK-OLD-ASSISTANT"))
+                && snapshot
+                    .iter()
+                    .all(|line| !line.contains("P3-FORK-OLD-TAIL"))
+        },
+        Duration::from_secs(2),
+    )?;
+    assert_text_absent_for(&host, "P3-FORK-OLD-ASSISTANT", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p5_search_jumps_between_offscreen_matches() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-search"], 100, 30)?;
+
+    host.wait_for_text("P5-SEARCH-TAIL", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-FIRST", Duration::from_millis(120));
+
+    let (x, y) = find_text_position(&host, "P5-SEARCH-TAIL").expect("search list focus target");
+    host.click(x, y)?;
+    host.send_ctrl('r')?;
+    host.send_str("target")?;
+    host.wait_for_text("Search: target (1/2)", Duration::from_secs(2))?;
+    host.wait_for_text("P5-SEARCH-TARGET-FIRST", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-SECOND", Duration::from_millis(120));
+
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
+    host.wait_for_text("Search: target (2/2)", Duration::from_secs(2))?;
+    host.wait_for_text("P5-SEARCH-TARGET-SECOND", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-SEARCH-TARGET-FIRST", Duration::from_millis(120));
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p5_turn_fold_collapses_and_expands() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-fold-quote"], 100, 28)?;
+
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Info: P5-FOLD-QUOTE-NOTICE", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Collapse").expect("collapse action");
+    host.click(x, y)?;
+    host.wait_for_text("Collapsed · 2 blocks hidden", Duration::from_secs(2))?;
+    assert_text_absent_for(&host, "P5-FOLD-QUOTE-BODY", Duration::from_millis(120));
+    assert_text_absent_for(
+        &host,
+        "Info: P5-FOLD-QUOTE-NOTICE",
+        Duration::from_millis(120),
+    );
+
+    let (x, y) = find_text_position(&host, "Expand").expect("expand action");
+    host.click(x, y)?;
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Info: P5-FOLD-QUOTE-NOTICE", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_p5_quote_reply_attaches_and_removes_references() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--p5-fold-quote"], 100, 28)?;
+
+    host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
+    host.wait_for_text("Quote", Duration::from_secs(2))?;
+    host.wait_for_text("Quote block", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "Quote").expect("turn quote action");
+    host.click(x, y)?;
+    host.wait_for_text("Quote: Assistant #1", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "[Remove]").expect("turn reference remove action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .all(|line| !line.contains("Quote: Assistant #1"))
+        },
+        Duration::from_secs(2),
+    )?;
+
+    let (x, y) = find_text_position(&host, "Quote block").expect("block quote action");
+    host.click(x, y)?;
+    host.wait_for_text("Quote: Block #1001", Duration::from_secs(2))?;
+
+    let (x, y) = find_text_position(&host, "[Remove]").expect("block reference remove action");
+    host.click(x, y)?;
+    host.wait_for_screen(
+        |snapshot| {
+            snapshot
+                .iter()
+                .all(|line| !line.contains("Quote: Block #1001"))
+        },
+        Duration::from_secs(2),
+    )?;
 
     host.send_ctrl('q')?;
     Ok(())
@@ -627,6 +1200,22 @@ fn chat_streaming_cancel_button_emits_and_marks_turn_canceled() -> anyhow::Resul
 
     let (x, y) = find_text_position(&host, "Cancel").expect("cancel action");
     host.click(x, y)?;
+
+    host.wait_for_text("CANCELLED: 1", Duration::from_secs(2))?;
+    host.wait_for_text("canceled", Duration::from_secs(2))?;
+
+    host.send_ctrl('q')?;
+    Ok(())
+}
+
+#[test]
+fn chat_streaming_escape_emits_and_marks_turn_canceled() -> anyhow::Result<()> {
+    let _guard = chat_pty_lock();
+    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
+    let mut host = PtyTestHost::spawn(bin, &["--cancel-action"], 100, 28)?;
+
+    host.wait_for_text("CANCEL-STREAMING-MESSAGE", Duration::from_secs(2))?;
+    host.key_with_mods(KeyCode::Esc, KeyModifiers::NONE)?;
 
     host.wait_for_text("CANCELLED: 1", Duration::from_secs(2))?;
     host.wait_for_text("canceled", Duration::from_secs(2))?;

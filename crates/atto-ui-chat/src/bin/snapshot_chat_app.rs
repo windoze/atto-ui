@@ -28,8 +28,9 @@ use atto_ui_chat::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
     ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta,
-    ChatMessageStore, ChatPanel, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision,
+    ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId, ChatMessageList,
+    ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
+    CompactBlock, CompactStatus, DiffBlock, DiffData, EditAndResubmitEvent, EditDecision,
     EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
     PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
     TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
@@ -42,6 +43,7 @@ fn main() -> Result<()> {
     execute!(
         stdout,
         EnterAlternateScreen,
+        event::EnableBracketedPaste,
         event::EnableMouseCapture,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
         cursor::Show
@@ -60,15 +62,25 @@ fn main() -> Result<()> {
     let long_tool_output = args.iter().any(|arg| arg == "--long-tool-output");
     let inline_approval = args.iter().any(|arg| arg == "--inline-approval");
     let inline_diff = args.iter().any(|arg| arg == "--inline-diff");
+    let syntax_diff = args.iter().any(|arg| arg == "--syntax-diff");
     let plan_mode = args.iter().any(|arg| arg == "--plan-mode");
     let nested_task = args.iter().any(|arg| arg == "--nested-task");
     let thinking_notice = args.iter().any(|arg| arg == "--thinking-notice");
     let todo_panel = args.iter().any(|arg| arg == "--todo-panel");
     let turn_meta_error = args.iter().any(|arg| arg == "--turn-meta-error");
     let message_actions = args.iter().any(|arg| arg == "--message-actions");
+    let edit_resubmit = args.iter().any(|arg| arg == "--edit-resubmit");
+    let retry_resubmit = args.iter().any(|arg| arg == "--retry-resubmit");
+    let fork_at = args.iter().any(|arg| arg == "--fork-at");
+    let input_queue = args.iter().any(|arg| arg == "--input-queue");
     let cancel_action = args.iter().any(|arg| arg == "--cancel-action");
+    let multiline_paste = args.iter().any(|arg| arg == "--multiline-paste");
     let responsive_layout = args.iter().any(|arg| arg == "--responsive-layout");
     let text_selection = args.iter().any(|arg| arg == "--text-selection");
+    let input_completion = args.iter().any(|arg| arg == "--input-completion");
+    let p5_search = args.iter().any(|arg| arg == "--p5-search");
+    let p5_fold_quote = args.iter().any(|arg| arg == "--p5-fold-quote");
+    let p6_approval_compact = args.iter().any(|arg| arg == "--p6-approval-compact");
     let menu = MenuBar::new(vec![MenuSpec::new(
         "File",
         vec![
@@ -89,14 +101,37 @@ fn main() -> Result<()> {
     let mut long_tool_result_id = None;
     let mut todo_block_id = None;
     let mut task_block_id = None;
-    let tool_block_ids = if responsive_layout {
+    let mut fork_anchor_id = None;
+    let mut input_queue_stream_id = None;
+    let tool_block_ids = if p5_search {
+        seed_p5_search_messages(&store);
+        None
+    } else if p5_fold_quote {
+        seed_p5_fold_quote_messages(&store);
+        None
+    } else if input_completion {
+        seed_input_completion_messages(&store);
+        None
+    } else if multiline_paste {
+        seed_multiline_paste_messages(&store);
+        None
+    } else if input_queue {
+        input_queue_stream_id = Some(seed_input_queue_messages(&store));
+        None
+    } else if responsive_layout {
         seed_responsive_layout_messages(&store);
+        None
+    } else if p6_approval_compact {
+        seed_p6_approval_compact_messages(&store);
         None
     } else if inline_approval {
         seed_inline_approval_messages(&store);
         None
     } else if inline_diff {
         seed_inline_diff_messages(&store);
+        None
+    } else if syntax_diff {
+        seed_syntax_diff_messages(&store);
         None
     } else if plan_mode {
         seed_plan_mode_messages(&store);
@@ -112,6 +147,15 @@ fn main() -> Result<()> {
         None
     } else if turn_meta_error {
         seed_turn_meta_error_messages(&store);
+        None
+    } else if edit_resubmit {
+        seed_edit_resubmit_messages(&store);
+        None
+    } else if retry_resubmit {
+        seed_retry_resubmit_messages(&store);
+        None
+    } else if fork_at {
+        fork_anchor_id = Some(seed_fork_at_messages(&store));
         None
     } else if message_actions {
         seed_message_action_messages(&store);
@@ -163,14 +207,24 @@ fn main() -> Result<()> {
         || block_mapping
         || inline_approval
         || inline_diff
+        || syntax_diff
         || plan_mode
         || nested_task
         || thinking_notice
         || todo_block_id.is_some()
         || turn_meta_error
+        || edit_resubmit
+        || retry_resubmit
+        || fork_at
         || message_actions
         || text_selection
         || cancel_action
+        || multiline_paste
+        || input_queue
+        || input_completion
+        || p5_search
+        || p5_fold_quote
+        || p6_approval_compact
         || long_tool_result_id.is_some()
         || tool_block_ids.is_some()
         || artifact_link
@@ -189,10 +243,17 @@ fn main() -> Result<()> {
     };
 
     let input_handle = ChatInputHandle::new();
+    if input_queue {
+        input_handle.streaming_binding().set(true);
+    }
+    if input_completion {
+        input_handle.set_slash_commands(input_completion_slash_commands());
+    }
     let load_counter = Arc::new(AtomicU64::new(0));
     let open_artifacts: EventQueue<ArtifactId> = EventQueue::new();
     let approvals: EventQueue<ApprovalDecision> = EventQueue::new();
     let edit_decisions: EventQueue<EditDecisionEvent> = EventQueue::new();
+    let edit_resubmit_events: EventQueue<EditAndResubmitEvent> = EventQueue::new();
     let plan_decisions: EventQueue<PlanDecisionEvent> = EventQueue::new();
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
@@ -219,8 +280,9 @@ fn main() -> Result<()> {
         .on_plan_decision({
             let plan_decisions = plan_decisions.clone();
             move |decision| plan_decisions.push(decision)
-        })
-        .on_load_more({
+        });
+    if !message_actions && !p5_search && !p5_fold_quote {
+        list = list.on_load_more({
             let store = store.clone();
             let counter = load_counter.clone();
             move || {
@@ -237,10 +299,17 @@ fn main() -> Result<()> {
                 store.prepend_many(older);
             }
         });
-    if message_actions || text_selection {
+    }
+    if message_actions || text_selection || retry_resubmit {
         list = list.on_message_action({
             let message_action_events = message_action_events.clone();
             move |action| message_action_events.push(action)
+        });
+    }
+    if edit_resubmit {
+        list = list.on_edit_and_resubmit(&input_handle, {
+            let edit_resubmit_events = edit_resubmit_events.clone();
+            move |event| edit_resubmit_events.push(event)
         });
     }
     if cancel_action {
@@ -249,10 +318,17 @@ fn main() -> Result<()> {
             move |message_id| cancel_events.push(message_id)
         });
     }
-    let input_panel = input_handle.panel().on_submit({
+    if p5_fold_quote {
+        list = list.with_quote_replies(&input_handle);
+    }
+    let mut input_panel = input_handle.panel().on_submit({
         let store = store.clone();
         move |response| {
-            let text = submit_response_text(response);
+            let text = if multiline_paste {
+                multiline_paste_response_text(response)
+            } else {
+                submit_response_text(response)
+            };
             store.push(ChatMessage::text(
                 store.next_message_id(),
                 ChatRole::System,
@@ -260,6 +336,20 @@ fn main() -> Result<()> {
             ));
         }
     });
+    if input_completion {
+        input_panel = input_panel
+            .on_slash_command({
+                let store = store.clone();
+                move |command| {
+                    store.push(ChatMessage::text(
+                        store.next_message_id(),
+                        ChatRole::System,
+                        format!("SLASH_COMMAND: id={} label={}", command.id, command.label),
+                    ));
+                }
+            })
+            .mention_provider(|_| input_completion_mention_candidates());
+    }
     let panel = ChatPanel::new(list, input_panel);
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
@@ -267,14 +357,29 @@ fn main() -> Result<()> {
     let work = Desktop::layout(screen).work_area;
     let window_height = if block_mapping {
         40
-    } else if long_tool_output || turn_meta_error {
+    } else if turn_meta_error {
+        34
+    } else if long_tool_output {
         28
+    } else if tool_call {
+        22
+    } else if message_actions {
+        30
     } else if inline_approval
         || inline_diff
+        || syntax_diff
         || plan_mode
-        || message_actions
         || text_selection
+        || edit_resubmit
+        || retry_resubmit
+        || fork_at
         || cancel_action
+        || multiline_paste
+        || input_queue
+        || input_completion
+        || p5_search
+        || p5_fold_quote
+        || p6_approval_compact
     {
         24
     } else if nested_task {
@@ -434,57 +539,88 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            match cmd {
-                'a' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-1",
-                    ));
-                    continue;
+            if let Some(anchor_id) = fork_anchor_id
+                && cmd == '1'
+            {
+                let removed_count = store.fork_at(anchor_id).map_or(0, |removed| removed.len());
+                store.push(ChatMessage::text(
+                    store.next_message_id(),
+                    ChatRole::Assistant,
+                    format!("P3-FORK-ASSISTANT-NEW removed={removed_count}"),
+                ));
+                continue;
+            }
+
+            if let Some(message_id) = input_queue_stream_id
+                && cmd == '1'
+            {
+                store.set_turn_status(message_id, ChatTurnStatus::Complete);
+                input_handle.streaming_binding().set(false);
+                continue;
+            }
+
+            if !input_completion
+                && !multiline_paste
+                && !input_queue
+                && !edit_resubmit
+                && !retry_resubmit
+                && !fork_at
+                && !p5_search
+                && !p5_fold_quote
+                && !p6_approval_compact
+            {
+                match cmd {
+                    'a' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-1",
+                        ));
+                        continue;
+                    }
+                    'b' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-2",
+                        ));
+                        continue;
+                    }
+                    'd' => {
+                        store.push(ChatMessage::text(
+                            store.next_message_id(),
+                            ChatRole::Assistant,
+                            "FOLLOW-3",
+                        ));
+                        continue;
+                    }
+                    'c' => {
+                        input_handle.selection_binding().set(0);
+                        input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
+                            "请选择一种回应方式",
+                            vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
+                        )));
+                        continue;
+                    }
+                    'f' => {
+                        input_handle.selection_binding().set(0);
+                        input_handle.set_mode(ChatInputMode::Confirm(
+                            ChatConfirmInputConfig::new("是否继续执行?")
+                                .yes_label("继续")
+                                .no_label("停止"),
+                        ));
+                        continue;
+                    }
+                    't' => {
+                        input_handle.draft_binding().set(String::new());
+                        input_handle.set_mode(ChatInputMode::text(
+                            "Message",
+                            Some("Type a message...".into()),
+                        ));
+                        continue;
+                    }
+                    _ => {}
                 }
-                'b' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-2",
-                    ));
-                    continue;
-                }
-                'd' => {
-                    store.push(ChatMessage::text(
-                        store.next_message_id(),
-                        ChatRole::Assistant,
-                        "FOLLOW-3",
-                    ));
-                    continue;
-                }
-                'c' => {
-                    input_handle.selection_binding().set(0);
-                    input_handle.set_mode(ChatInputMode::Choice(ChatChoiceInputConfig::new(
-                        "请选择一种回应方式",
-                        vec!["简短回复".into(), "详细解释".into(), "给出示例".into()],
-                    )));
-                    continue;
-                }
-                'f' => {
-                    input_handle.selection_binding().set(0);
-                    input_handle.set_mode(ChatInputMode::Confirm(
-                        ChatConfirmInputConfig::new("是否继续执行?")
-                            .yes_label("继续")
-                            .no_label("停止"),
-                    ));
-                    continue;
-                }
-                't' => {
-                    input_handle.draft_binding().set(String::new());
-                    input_handle.set_mode(ChatInputMode::text(
-                        "Message",
-                        Some("Type a message...".into()),
-                    ));
-                    continue;
-                }
-                _ => {}
             }
         }
 
@@ -503,7 +639,13 @@ fn main() -> Result<()> {
             store.push(ChatMessage::text(
                 store.next_message_id(),
                 ChatRole::System,
-                format!("APPROVED: {}/{}", decision.approval_id, decision.option_id),
+                format!(
+                    "APPROVED: {}/{} action={} level={}",
+                    decision.approval_id,
+                    decision.option_id,
+                    decision.action.as_str(),
+                    decision.level.as_str()
+                ),
             ));
         }
 
@@ -517,6 +659,20 @@ fn main() -> Result<()> {
                     decision.block_id.0,
                     edit_decision_event_label(decision.decision)
                 ),
+            ));
+        }
+
+        for event in edit_resubmit_events.drain() {
+            let removed_count = event.removed_messages.len();
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::User,
+                format!("P3-EDIT-USER-NEW: {}", event.edited_text),
+            ));
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("P3-EDIT-ASSISTANT-NEW removed={removed_count}"),
             ));
         }
 
@@ -534,11 +690,27 @@ fn main() -> Result<()> {
         }
 
         for action in message_action_events.drain() {
-            input_handle.draft_binding().set(format!(
-                "MESSAGE_ACTION: {}/{}",
-                action.message_id.0,
-                message_action_label(&action.kind)
-            ));
+            if retry_resubmit
+                && matches!(
+                    action.kind,
+                    MessageActionKind::Retry | MessageActionKind::Regenerate
+                )
+            {
+                store.push(ChatMessage::text(
+                    store.next_message_id(),
+                    ChatRole::Assistant,
+                    format!(
+                        "P3-RETRY-ASSISTANT-NEW: {}",
+                        message_action_label(&action.kind)
+                    ),
+                ));
+            } else {
+                input_handle.draft_binding().set(format!(
+                    "MESSAGE_ACTION: {}/{}",
+                    action.message_id.0,
+                    message_action_label(&action.kind)
+                ));
+            }
         }
 
         for message_id in cancel_events.drain() {
@@ -568,6 +740,7 @@ fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         PopKeyboardEnhancementFlags,
+        event::DisableBracketedPaste,
         LeaveAlternateScreen,
         event::DisableMouseCapture
     )?;
@@ -611,6 +784,89 @@ fn seed_messages(store: &ChatMessageStore, count: u64) {
         let message = ChatMessage::text(store.next_message_id(), sender, format!("MSG-{idx:02}"));
         store.push(message);
     }
+}
+
+fn seed_p5_search_messages(store: &ChatMessageStore) {
+    for idx in 0..34u64 {
+        let text = match idx {
+            2 => "P5-SEARCH-TARGET-FIRST".to_string(),
+            27 => "P5-SEARCH-TARGET-SECOND".to_string(),
+            33 => "P5-SEARCH-TAIL".to_string(),
+            _ => format!("P5-SEARCH-FILLER-{idx:02}"),
+        };
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            text,
+        ));
+    }
+}
+
+fn seed_p5_fold_quote_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![
+            ChatBlock::Text(TextBlock {
+                id: snapshot_block_id(id, 0),
+                markdown: "P5-FOLD-QUOTE-BODY".to_string(),
+                streaming: false,
+            }),
+            ChatBlock::Notice(NoticeBlock {
+                id: snapshot_block_id(id, 1),
+                level: NoticeLevel::Info,
+                text: "P5-FOLD-QUOTE-NOTICE".to_string(),
+            }),
+        ],
+    ));
+}
+
+fn seed_input_completion_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "COMPLETION-READY",
+    ));
+}
+
+fn seed_multiline_paste_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "MULTILINE-PASTE-READY",
+    ));
+}
+
+fn seed_input_queue_messages(store: &ChatMessageStore) -> ChatMessageId {
+    let id = store.next_message_id();
+    store.push(
+        ChatMessage::text(id, ChatRole::Assistant, "QUEUE-STREAMING-START")
+            .with_status(ChatTurnStatus::Streaming),
+    );
+    id
+}
+
+fn input_completion_slash_commands() -> Vec<ChatSlashCommand> {
+    vec![
+        ChatSlashCommand::new("/model")
+            .detail("COMMAND-MODEL")
+            .replacement("/model claude-sonnet"),
+        ChatSlashCommand::new("/merge")
+            .detail("COMMAND-MERGE")
+            .replacement("/merge ready"),
+        ChatSlashCommand::new("/clear")
+            .detail("COMMAND-CLEAR")
+            .submit_on_accept(),
+    ]
+}
+
+fn input_completion_mention_candidates() -> Vec<ChatMentionCandidate> {
+    vec![
+        ChatMentionCandidate::new("Cargo.toml").detail("FILE-CARGO"),
+        ChatMentionCandidate::new("src/lib.rs").detail("FILE-LIB"),
+        ChatMentionCandidate::new("src/main.rs").detail("FILE-MAIN"),
+    ]
 }
 
 fn seed_responsive_layout_messages(store: &ChatMessageStore) {
@@ -663,22 +919,53 @@ fn seed_inline_approval_messages(store: &ChatMessageStore) {
                 id: "approval-inline".to_string(),
                 prompt: "Run INLINE-APPROVAL-COMMAND?".to_string(),
                 options: vec![
-                    ApprovalOption {
-                        id: "allow_once".to_string(),
-                        label: "Allow once".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "allow_always".to_string(),
-                        label: "Allow always".to_string(),
-                    },
-                    ApprovalOption {
-                        id: "deny".to_string(),
-                        label: "Deny".to_string(),
-                    },
+                    ApprovalOption::allow_once("allow_once", "Allow once"),
+                    ApprovalOption::allow_always("allow_always", "Allow always"),
+                    ApprovalOption::deny("deny", "Deny"),
                 ],
                 resolved: None,
             }),
             collapsed: false,
+        })],
+    ));
+}
+
+fn seed_p6_approval_compact_messages(store: &ChatMessageStore) {
+    let approval_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        approval_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::ToolUse(ToolUseBlock {
+            id: snapshot_block_id(approval_id, 0),
+            call_id: "call-p6-approval".to_string(),
+            name: "p6_approval".to_string(),
+            input: ToolInput::Text("P6-APPROVAL-COMMAND".to_string()),
+            status: ToolStatus::Pending,
+            approval: Some(ApprovalRequest {
+                id: "approval-p6".to_string(),
+                prompt: "Run P6-APPROVAL-COMMAND?".to_string(),
+                options: vec![
+                    ApprovalOption::allow_once("once", "Once"),
+                    ApprovalOption::allow_always("always", "Always"),
+                    ApprovalOption::allow_project("project", "Project"),
+                    ApprovalOption::deny("deny", "Deny"),
+                ],
+                resolved: None,
+            }),
+            collapsed: false,
+        })],
+    ));
+
+    let compact_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        compact_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Compact(CompactBlock {
+            id: snapshot_block_id(compact_id, 0),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "P6-COMPACT-SUMMARY\nP6-COMPACT-DETAIL".to_string(),
         })],
     ));
 }
@@ -693,6 +980,34 @@ fn seed_inline_diff_messages(store: &ChatMessageStore) {
             path: "src/inline_diff.rs".to_string(),
             diff: DiffData {
                 unified: "@@ inline diff\n-OLD-INLINE-DIFF\n+NEW-INLINE-DIFF".to_string(),
+            },
+            decision: EditDecision::Pending,
+        })],
+    ));
+}
+
+fn seed_syntax_diff_messages(store: &ChatMessageStore) {
+    let id = store.next_message_id();
+    store.push(ChatMessage::new(
+        id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Diff(DiffBlock {
+            id: snapshot_block_id(id, 0),
+            path: "src/syntax_diff.rs".to_string(),
+            diff: DiffData {
+                unified: concat!(
+                    "diff --git a/src/syntax_diff.rs b/src/syntax_diff.rs\n",
+                    "--- a/src/syntax_diff.rs\n",
+                    "+++ b/src/syntax_diff.rs\n",
+                    "@@ -1,5 +1,6 @@\n",
+                    " fn syntax_diff() {\n",
+                    "     let stable_value = 0;\n",
+                    "-    let old_value = 1;\n",
+                    "+    let new_value = 42;\n",
+                    "+    println!(\"DIFF-SYNTAX\");\n",
+                    " }",
+                )
+                .to_string(),
             },
             decision: EditDecision::Pending,
         })],
@@ -882,6 +1197,62 @@ fn seed_turn_meta_error_messages(store: &ChatMessageStore) {
     store.push(error_message);
 }
 
+fn seed_edit_resubmit_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::User,
+        "P3-EDIT-USER-OLD",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-EDIT-OLD-ASSISTANT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-EDIT-OLD-TAIL",
+    ));
+}
+
+fn seed_retry_resubmit_messages(store: &ChatMessageStore) {
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::User,
+        "P3-RETRY-USER-PROMPT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-RETRY-ASSISTANT-OLD",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-RETRY-OLD-TAIL",
+    ));
+}
+
+fn seed_fork_at_messages(store: &ChatMessageStore) -> ChatMessageId {
+    let anchor_id = store.next_message_id();
+    store.push(ChatMessage::text(
+        anchor_id,
+        ChatRole::User,
+        "P3-FORK-ANCHOR",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::Assistant,
+        "P3-FORK-OLD-ASSISTANT",
+    ));
+    store.push(ChatMessage::text(
+        store.next_message_id(),
+        ChatRole::System,
+        "P3-FORK-OLD-TAIL",
+    ));
+    anchor_id
+}
+
 fn seed_message_action_messages(store: &ChatMessageStore) {
     let user_id = store.next_message_id();
     store.push(ChatMessage::text(
@@ -897,6 +1268,17 @@ fn seed_message_action_messages(store: &ChatMessageStore) {
         vec![ChatBlock::Text(TextBlock {
             id: snapshot_block_id(assistant_id, 0),
             markdown: "ACTION-ASSISTANT-MESSAGE".to_string(),
+            streaming: false,
+        })],
+    ));
+
+    let retry_assistant_id = store.next_message_id();
+    store.push(ChatMessage::new(
+        retry_assistant_id,
+        ChatRole::Assistant,
+        vec![ChatBlock::Text(TextBlock {
+            id: snapshot_block_id(retry_assistant_id, 0),
+            markdown: "ACTION-ASSISTANT-RETRY-MESSAGE".to_string(),
             streaming: false,
         })],
     ));
@@ -1190,5 +1572,12 @@ fn submit_response_text(response: ChatInputResponse) -> String {
             format!("SUBMIT: choice index={index} label={label}")
         }
         ChatInputResponse::Custom(text) => format!("SUBMIT: custom={text}"),
+    }
+}
+
+fn multiline_paste_response_text(response: ChatInputResponse) -> String {
+    match response {
+        ChatInputResponse::Text(text) => format!("PASTE_SUBMIT: {text:?}"),
+        other => submit_response_text(other),
     }
 }

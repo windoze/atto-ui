@@ -3,12 +3,17 @@
 const assert = require('node:assert/strict')
 const {
   Button,
+  ChatApprovalOption,
+  ChatApprovalRequest,
+  ChatCompactBlock,
   ChatInputMode,
+  ChatMentionCandidate,
   ChatInputPanel,
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatSlashCommand,
   ChatTaskBlock,
   ChatTaskTranscriptItem,
   ChatTextMessage,
@@ -169,6 +174,7 @@ const multiBlockMessage = ChatMessage(2, [
     collapsed: true,
   }),
   ChatNoticeBlock(2002, 'warning', 'context compacted'),
+  ChatCompactBlock(2005, 'complete', { beforeTokens: 12000, afterTokens: 3500, summary: 'kept current task context' }),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 12, output: 34 }, elapsed_ms: 56, stop_reason: 'tool_use' } })
 assert.deepStrictEqual(multiBlockMessage, {
   id: 2,
@@ -188,11 +194,31 @@ assert.deepStrictEqual(multiBlockMessage, {
       collapsed: true,
     },
     { type: 'notice', block_id: 2002, level: 'warning', text: 'context compacted' },
+    { type: 'compact', block_id: 2005, status: 'complete', before_tokens: 12000, after_tokens: 3500, summary: 'kept current task context' },
   ],
+})
+
+const approval = ChatApprovalRequest('approval-1', 'Run command?', [
+  ChatApprovalOption('allow_once', 'Allow', { action: 'allow', level: 'once' }),
+  ChatApprovalOption('allow_project', 'Allow project', { action: 'allow', level: 'project' }),
+  ChatApprovalOption('deny', 'Deny', { action: 'deny', level: 'once' }),
+], { resolved: 'allow_project', resolvedAction: 'allow', resolvedLevel: 'project' })
+assert.deepStrictEqual(approval, {
+  id: 'approval-1',
+  prompt: 'Run command?',
+  options: [
+    { id: 'allow_once', label: 'Allow', action: 'allow', level: 'once' },
+    { id: 'allow_project', label: 'Allow project', action: 'allow', level: 'project' },
+    { id: 'deny', label: 'Deny', action: 'deny', level: 'once' },
+  ],
+  resolved: 'allow_project',
+  resolved_action: 'allow',
+  resolved_level: 'project',
 })
 
 assert.deepStrictEqual(ChatToolCallMessage(3, 'bash', {
   input: ChatToolJsonInput({ command: 'cargo test' }),
+  approval,
   output: 'ok',
   outputKind: 'markdown',
   toolStatus: 'done',
@@ -201,7 +227,7 @@ assert.deepStrictEqual(ChatToolCallMessage(3, 'bash', {
   role: 'assistant',
   status: 'complete',
   blocks: [
-    { type: 'tool_use', block_id: 3001, call_id: 'tool-3', name: 'bash', input: { json: { command: 'cargo test' } }, status: 'done' },
+    { type: 'tool_use', block_id: 3001, call_id: 'tool-3', name: 'bash', input: { json: { command: 'cargo test' } }, status: 'done', approval },
     { type: 'tool_result', block_id: 3002, call_id: 'tool-3', ok: true, output: { markdown: 'ok' } },
   ],
 })
@@ -220,8 +246,49 @@ assert.deepStrictEqual(choiceMode, {
   options: ['A', 'B'],
 })
 
-assert.deepStrictEqual(ChatInputPanel({ mode: choiceMode, draft: 'A', onSubmit: 'atto:callback:9' }), {
+const slashCommand = ChatSlashCommand('/clear', {
+  id: 'clear',
+  detail: 'Clear the conversation',
+  action: 'submit',
+})
+assert.deepStrictEqual(slashCommand, {
+  id: 'clear',
+  label: '/clear',
+  detail: 'Clear the conversation',
+  action: 'submit',
+})
+
+const mentionCandidate = ChatMentionCandidate('src/lib.rs', {
+  id: 'src-lib',
+  detail: 'file',
+  replacement: '@src/lib.rs ',
+})
+assert.deepStrictEqual(mentionCandidate, {
+  id: 'src-lib',
+  label: 'src/lib.rs',
+  detail: 'file',
+  replacement: '@src/lib.rs ',
+})
+
+assert.deepStrictEqual(ChatInputPanel({
+  mode: choiceMode,
+  draft: 'A',
+  slashCommands: [slashCommand],
+  mentionCandidates: [mentionCandidate],
+  onSubmit: 'atto:callback:9',
+  onSlashCommand: 'atto:callback:11',
+  onMentionQuery: 'atto:callback:12',
+}), {
   type: 'ChatInputPanel',
-  props: { mode: choiceMode, draft: 'A' },
-  events: { submit: 'atto:callback:9' },
+  props: {
+    mode: choiceMode,
+    draft: 'A',
+    slash_commands: [slashCommand],
+    mention_candidates: [mentionCandidate],
+  },
+  events: {
+    submit: 'atto:callback:9',
+    slash_command: 'atto:callback:11',
+    mention_query: 'atto:callback:12',
+  },
 })

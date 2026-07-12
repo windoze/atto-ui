@@ -67,9 +67,9 @@ tick()
 1. `ATTO_UI_NATIVE_LIBRARY_PATH`
 2. `NAPI_RS_NATIVE_LIBRARY_PATH`
 3. A local `atto_ui_node.<platform>.node` next to the package
-4. `@atto-ui/core-<platform>` / `@atto-ui/node-<platform>` optional packages
-5. `@atto-ui/node`
-6. The workspace fallback at `crates/atto-ui-node` (local development)
+4. The workspace fallback at `crates/atto-ui-node` (local development)
+5. `@atto-ui/core-<platform>` / `@atto-ui/node-<platform>` optional packages
+6. `@atto-ui/node`
 
 ## Docs
 

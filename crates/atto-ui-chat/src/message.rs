@@ -245,6 +245,7 @@ pub enum ChatBlock {
     Todo(TodoBlock),
     Attachment(AttachmentBlock),
     Notice(NoticeBlock),
+    Compact(CompactBlock),
     Artifact(ArtifactBlock),
 }
 
@@ -261,6 +262,7 @@ impl ChatBlock {
             ChatBlock::Todo(block) => block.id,
             ChatBlock::Attachment(block) => block.id,
             ChatBlock::Notice(block) => block.id,
+            ChatBlock::Compact(block) => block.id,
             ChatBlock::Artifact(block) => block.id,
         }
     }
@@ -312,13 +314,127 @@ pub struct ApprovalRequest {
     pub id: String,
     pub prompt: String,
     pub options: Vec<ApprovalOption>,
-    pub resolved: Option<String>,
+    pub resolved: Option<ApprovalResolution>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ApprovalAction {
+    #[default]
+    Allow,
+    Deny,
+}
+
+impl ApprovalAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApprovalAction::Allow => "allow",
+            ApprovalAction::Deny => "deny",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ApprovalLevel {
+    #[default]
+    Once,
+    Always,
+    Project,
+}
+
+impl ApprovalLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApprovalLevel::Once => "once",
+            ApprovalLevel::Always => "always",
+            ApprovalLevel::Project => "project",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalResolution {
+    pub option_id: String,
+    pub action: ApprovalAction,
+    pub level: ApprovalLevel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalOption {
     pub id: String,
     pub label: String,
+    pub action: ApprovalAction,
+    pub level: ApprovalLevel,
+}
+
+impl ApprovalOption {
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        action: ApprovalAction,
+        level: ApprovalLevel,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            action,
+            level,
+        }
+    }
+
+    pub fn allow_once(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(id, label, ApprovalAction::Allow, ApprovalLevel::Once)
+    }
+
+    pub fn allow_always(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(id, label, ApprovalAction::Allow, ApprovalLevel::Always)
+    }
+
+    pub fn allow_project(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(id, label, ApprovalAction::Allow, ApprovalLevel::Project)
+    }
+
+    pub fn deny(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::new(id, label, ApprovalAction::Deny, ApprovalLevel::Once)
+    }
+
+    pub fn from_legacy(id: impl Into<String>, label: impl Into<String>) -> Self {
+        let id = id.into();
+        let label = label.into();
+        let normalized = format!("{} {}", id, label).to_ascii_lowercase();
+        let action = if is_legacy_deny_approval_option(&normalized) {
+            ApprovalAction::Deny
+        } else {
+            ApprovalAction::Allow
+        };
+        let level = if normalized.contains("project") || normalized.contains("workspace") {
+            ApprovalLevel::Project
+        } else if normalized.contains("always")
+            || normalized.contains("don't ask")
+            || normalized.contains("dont ask")
+        {
+            ApprovalLevel::Always
+        } else {
+            ApprovalLevel::Once
+        };
+        Self::new(id, label, action, level)
+    }
+
+    pub fn resolution(&self) -> ApprovalResolution {
+        ApprovalResolution {
+            option_id: self.id.clone(),
+            action: self.action,
+            level: self.level,
+        }
+    }
+}
+
+fn is_legacy_deny_approval_option(value: &str) -> bool {
+    value.split_whitespace().any(|part| part == "no")
+        || value.contains("deny")
+        || value.contains("reject")
+        || value.contains("decline")
+        || value.contains("cancel")
+        || value.contains("stop")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -464,6 +580,36 @@ pub enum NoticeLevel {
     Info,
     Warning,
     Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompactBlock {
+    pub id: ChatBlockId,
+    pub status: CompactStatus,
+    pub before_tokens: Option<u64>,
+    pub after_tokens: Option<u64>,
+    pub summary: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactStatus {
+    Pending,
+    Running,
+    Complete,
+    Failed,
+    Canceled,
+}
+
+impl CompactStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CompactStatus::Pending => "pending",
+            CompactStatus::Running => "running",
+            CompactStatus::Complete => "complete",
+            CompactStatus::Failed => "failed",
+            CompactStatus::Canceled => "canceled",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -623,6 +769,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn approval_option_from_legacy_infers_action_and_level() {
+        let once = ApprovalOption::from_legacy("allow_once", "Allow once");
+        assert_eq!(once.action, ApprovalAction::Allow);
+        assert_eq!(once.level, ApprovalLevel::Once);
+
+        let always = ApprovalOption::from_legacy("allow_always", "Allow always");
+        assert_eq!(always.action, ApprovalAction::Allow);
+        assert_eq!(always.level, ApprovalLevel::Always);
+
+        let project = ApprovalOption::from_legacy("allow_project", "Allow for project");
+        assert_eq!(project.action, ApprovalAction::Allow);
+        assert_eq!(project.level, ApprovalLevel::Project);
+
+        let deny = ApprovalOption::from_legacy("no", "No");
+        assert_eq!(deny.action, ApprovalAction::Deny);
+        assert_eq!(deny.level, ApprovalLevel::Once);
+    }
+
+    #[test]
     fn chat_block_id_is_available_for_every_block_kind() {
         let blocks = vec![
             ChatBlock::Text(TextBlock {
@@ -645,10 +810,7 @@ mod tests {
                 approval: Some(ApprovalRequest {
                     id: "approval-1".to_string(),
                     prompt: "Run command?".to_string(),
-                    options: vec![ApprovalOption {
-                        id: "allow".to_string(),
-                        label: "Allow".to_string(),
-                    }],
+                    options: vec![ApprovalOption::allow_once("allow", "Allow")],
                     resolved: None,
                 }),
                 collapsed: false,
@@ -709,8 +871,15 @@ mod tests {
                 level: NoticeLevel::Warning,
                 text: "context compacted".to_string(),
             }),
-            ChatBlock::Artifact(ArtifactBlock {
+            ChatBlock::Compact(CompactBlock {
                 id: ChatBlockId::new(11),
+                status: CompactStatus::Complete,
+                before_tokens: Some(12_000),
+                after_tokens: Some(3_500),
+                summary: "kept recent edits".to_string(),
+            }),
+            ChatBlock::Artifact(ArtifactBlock {
+                id: ChatBlockId::new(12),
                 kind: ArtifactKind::Diff,
                 anchor: ArtifactId::new("artifact-1"),
                 title: "patch".to_string(),
@@ -719,7 +888,22 @@ mod tests {
 
         let ids = blocks.iter().map(ChatBlock::id).collect::<Vec<_>>();
 
-        assert_eq!(ids, (1..=11).map(ChatBlockId::new).collect::<Vec<_>>());
+        assert_eq!(ids, (1..=12).map(ChatBlockId::new).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn compact_status_strings_are_stable() {
+        let cases = [
+            (CompactStatus::Pending, "pending"),
+            (CompactStatus::Running, "running"),
+            (CompactStatus::Complete, "complete"),
+            (CompactStatus::Failed, "failed"),
+            (CompactStatus::Canceled, "canceled"),
+        ];
+
+        for (status, expected) in cases {
+            assert_eq!(status.as_str(), expected);
+        }
     }
 
     #[test]

@@ -68,6 +68,76 @@ path = "demos/11-apphost-step/main.rs"
 name = "demo-12-tab-view"
 path = "demos/12-tab-view/main.rs"
 
+[[bin]]
+name = "snapshot_app"
+path = "src/bin/snapshot_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_async_app"
+path = "src/bin/snapshot_async_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_clipboard_app"
+path = "src/bin/snapshot_clipboard_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_disclosure_app"
+path = "src/bin/snapshot_disclosure_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_foreach_scroll_app"
+path = "src/bin/snapshot_foreach_scroll_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_hscroll_app"
+path = "src/bin/snapshot_hscroll_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_rich_text_app"
+path = "src/bin/snapshot_rich_text_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_scroll_app"
+path = "src/bin/snapshot_scroll_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_splitter_scrollbars_app"
+path = "src/bin/snapshot_splitter_scrollbars_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_styled_label_app"
+path = "src/bin/snapshot_styled_label_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_tab_overflow_app"
+path = "src/bin/snapshot_tab_overflow_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_typeahead_app"
+path = "src/bin/snapshot_typeahead_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_virtual_scroll_app"
+path = "src/bin/snapshot_virtual_scroll_app.rs"
+test = false
+
+[[bin]]
+name = "snapshot_wide_overlap_app"
+path = "src/bin/snapshot_wide_overlap_app.rs"
+test = false
+
 [workspace]
 members = [
     "crates/atto-ui-test-host",
@@ -81,5 +151,6 @@ members = [
     "crates/atto-ui-python",
     "crates/atto-ui-node",
     "crates/atto-ui-file-tree",
+    "crates/atto-agent-app",
     "crates/atto-editor-app",
 ]

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::layout::Rect;
 
 use crate::composable::scroll::ScrollbarDrag;
-use crate::composable::{ComponentId, DragSource, DropFeedback};
+use crate::composable::{ComponentId, DragSource, DropFeedback, EventResult};
 
 use super::{DockSide, Window, WindowId};
 
@@ -17,6 +17,7 @@ pub enum WindowManagerInputMode {
 pub struct WindowManagerAction {
     pub consumed: bool,
     pub close: Option<WindowId>,
+    pub component_result: Option<(WindowId, EventResult)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -2,9 +2,13 @@ import { createElement, type ReactElement, type ReactNode } from 'react'
 import {
   ChatInputMode as chatInputModeValue,
   fileTreeNodeValue,
+  type ChatMentionCandidateInput,
+  type ChatMentionContext,
   type ChatInputModeInput,
   type ChatInputModeOptions,
   type ChatMessageInput,
+  type ChatSlashCommandAction,
+  type ChatSlashCommandInput,
   type EdgeInsetsSpec,
   type FileTreeIconLike,
   type FileTreeNodeLike,
@@ -327,11 +331,25 @@ export interface ChatInputPanelHostProps {
   readonly draft?: string
   readonly custom?: string
   readonly history?: readonly string[]
+  readonly slash_commands?: readonly ChatSlashCommandInput[]
+  readonly mention_candidates?: readonly ChatMentionCandidateInput[]
   readonly selection?: number
   readonly enabled?: boolean
   readonly clear_on_submit?: boolean
   readonly onSubmit?: AttoUiEventHandler
+  readonly onSlash_command?: AttoUiEventHandler
+  readonly onMention_query?: AttoUiEventHandler
 }
+
+export type ChatSlashCommandHandler = (
+  command: ChatSlashCommandInput,
+  event: AttoUiCallbackEvent,
+) => void
+
+export type ChatMentionQueryHandler = (
+  context: ChatMentionContext,
+  event: AttoUiCallbackEvent,
+) => void
 
 export interface ChatInputPanelProps extends LayoutProps {
   /**
@@ -342,11 +360,17 @@ export interface ChatInputPanelProps extends LayoutProps {
   readonly draft?: string
   readonly custom?: string
   readonly history?: readonly string[]
+  readonly slashCommands?: readonly ChatSlashCommandInput[]
+  readonly mentionCandidates?: readonly ChatMentionCandidateInput[]
   readonly selection?: number
   readonly enabled?: boolean
   readonly clearOnSubmit?: boolean
   /** Fired when the user submits. Payload is a map (text / choice / custom). */
   readonly onSubmit?: AttoUiEventHandler
+  /** Fired when a submit-action slash command is accepted. */
+  readonly onSlashCommand?: ChatSlashCommandHandler
+  /** Fired when an `@` mention query changes; update `mentionCandidates` in response. */
+  readonly onMentionQuery?: ChatMentionQueryHandler
 }
 
 function resolveInputMode(
@@ -363,16 +387,34 @@ function resolveInputMode(
 
 /** Chat input panel wrapper supporting text / choice / confirm modes. */
 export function ChatInputPanel(props: ChatInputPanelProps): ReactElement {
-  const { mode, draft, custom, history, selection, enabled, clearOnSubmit, onSubmit, layout } = props
+  const {
+    mode,
+    draft,
+    custom,
+    history,
+    slashCommands,
+    mentionCandidates,
+    selection,
+    enabled,
+    clearOnSubmit,
+    onSubmit,
+    onSlashCommand,
+    onMentionQuery,
+    layout,
+  } = props
   return hostElement('chatInputPanel', {
     mode: resolveInputMode(mode),
     draft,
     custom,
     history,
+    slash_commands: slashCommands,
+    mention_candidates: mentionCandidates,
     selection,
     enabled,
     clear_on_submit: clearOnSubmit,
     onSubmit,
+    onSlash_command: slashCommandHandler(onSlashCommand),
+    onMention_query: mentionQueryHandler(onMentionQuery),
     layout,
   })
 }
@@ -486,6 +528,34 @@ function fileTreeDeleteHandler(onDelete: FileTreeDeleteHandler | undefined): Att
   }
 }
 
+function slashCommandHandler(onSlashCommand: ChatSlashCommandHandler | undefined): AttoUiEventHandler | undefined {
+  if (onSlashCommand === undefined) return undefined
+  return (event) => {
+    const map = mapPayload('ChatInputPanel slash_command', event)
+    onSlashCommand({
+      id: optionalStringField(map, 'id'),
+      label: stringField(map, 'label'),
+      detail: optionalStringField(map, 'detail'),
+      replacement: optionalStringField(map, 'replacement'),
+      action: slashCommandActionField(map),
+    }, event)
+  }
+}
+
+function mentionQueryHandler(onMentionQuery: ChatMentionQueryHandler | undefined): AttoUiEventHandler | undefined {
+  if (onMentionQuery === undefined) return undefined
+  return (event) => {
+    const map = mapPayload('ChatInputPanel mention_query', event)
+    onMentionQuery({
+      draft: stringField(map, 'draft'),
+      query: stringField(map, 'query'),
+      cursor: numberField(map, 'cursor'),
+      replacement_start: numberField(map, 'replacement_start'),
+      replacement_end: numberField(map, 'replacement_end'),
+    }, event)
+  }
+}
+
 function mapPayload(componentName: string, event: AttoUiCallbackEvent): Record<string, unknown> {
   const payload = event.payload
   if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
@@ -502,6 +572,16 @@ function numberField(map: Record<string, unknown>, key: string): number {
 function stringField(map: Record<string, unknown>, key: string): string {
   const value = map[key]
   return typeof value === 'string' ? value : ''
+}
+
+function optionalStringField(map: Record<string, unknown>, key: string): string | undefined {
+  const value = map[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function slashCommandActionField(map: Record<string, unknown>): ChatSlashCommandAction | undefined {
+  const value = optionalStringField(map, 'action')
+  return value === 'insert' || value === 'submit' ? value : undefined
 }
 
 function childrenLabel(children: PrimitiveLabel | undefined): string | undefined {

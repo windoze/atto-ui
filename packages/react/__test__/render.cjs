@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const React = require('react')
-const { Window, render } = require('../dist')
+const { Window, render, useChatMessages } = require('../dist')
 
 function findNode(node, id) {
   if (node.id === id) return node
@@ -127,6 +127,49 @@ async function main() {
   eventHandle.host.sendEvent(eventHandle.windowId, { type: 'key', key: 'enter' })
   await waitFor(() => findNode(eventHandle.host.snapshot().tree, 'event-render-1')?.text === 'Count: 1')
   eventHandle.stop()
+
+  function LegacyApprovalInference() {
+    const store = useChatMessages([
+      {
+        id: 1,
+        role: 'assistant',
+        status: 'complete',
+        blocks: [
+          {
+            type: 'tool_use',
+            block_id: 101,
+            call_id: 'call-legacy-approval',
+            name: 'bash',
+            input: { text: 'cargo test' },
+            status: 'pending',
+            approval: {
+              id: 'approval-legacy',
+              prompt: 'Run command?',
+              options: [{ id: 'no_thanks', label: 'No thanks' }],
+            },
+          },
+        ],
+      },
+    ])
+    const didResolve = React.useRef(false)
+    React.useEffect(() => {
+      if (didResolve.current) return
+      didResolve.current = true
+      store.resolveApproval(101, 'no_thanks')
+    }, [store])
+    const tool = store.messages[0].blocks[0]
+    const approval = tool.approval
+    return React.createElement('label', {
+      text: `Legacy approval: ${tool.status} ${approval.resolved_action ?? 'none'} ${approval.resolved_level ?? 'none'}`,
+    })
+  }
+
+  const approvalHandle = render(
+    React.createElement(LegacyApprovalInference),
+    { headless: true, cols: 50, rows: 14, idPrefix: 'approval-render' },
+  )
+  await waitFor(() => findNodeByText(approvalHandle.host.snapshot().tree, 'Legacy approval: canceled deny once'))
+  approvalHandle.stop()
 
   handle.stop()
   handle.stop()

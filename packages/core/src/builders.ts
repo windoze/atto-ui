@@ -220,6 +220,10 @@ export type ChatPlanDecision = 'pending' | 'accepted' | 'rejected'
 export type ChatTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
 export type ChatTodoState = 'pending' | 'in_progress' | 'done'
 export type ChatNoticeLevel = 'info' | 'warning' | 'error'
+export type ChatCompactStatus = 'pending' | 'running' | 'complete' | 'failed' | 'canceled'
+export type ChatApprovalAction = 'allow' | 'deny'
+export type ChatApprovalLevel = 'once' | 'always' | 'project'
+export type ChatSlashCommandAction = 'insert' | 'submit'
 
 export interface ChatError {
   readonly kind: ChatErrorKind
@@ -275,6 +279,8 @@ export type ChatToolInput = ChatToolTextInput | ChatToolJsonInput
 export interface ChatApprovalOption {
   readonly id: string
   readonly label: string
+  readonly action?: ChatApprovalAction
+  readonly level?: ChatApprovalLevel
 }
 
 export interface ChatApprovalRequest {
@@ -282,6 +288,17 @@ export interface ChatApprovalRequest {
   readonly prompt: string
   readonly options: readonly ChatApprovalOption[]
   readonly resolved?: string
+  readonly resolved_action?: ChatApprovalAction
+  readonly resolved_level?: ChatApprovalLevel
+}
+
+export interface ChatApprovalDecisionPayload {
+  readonly message_id: number
+  readonly block_id: number
+  readonly approval_id: string
+  readonly option_id: string
+  readonly action: ChatApprovalAction
+  readonly level: ChatApprovalLevel
 }
 
 export interface ChatToolUseBlock extends ChatBlockBase {
@@ -371,6 +388,14 @@ export interface ChatNoticeBlock extends ChatBlockBase {
   readonly text: string
 }
 
+export interface ChatCompactBlock extends ChatBlockBase {
+  readonly type: 'compact'
+  readonly status: ChatCompactStatus
+  readonly before_tokens?: number | null
+  readonly after_tokens?: number | null
+  readonly summary: string
+}
+
 export interface ChatArtifactBlock extends ChatBlockBase {
   readonly type: 'artifact'
   readonly kind: ChatArtifactKind
@@ -389,6 +414,7 @@ export type ChatBlockInput =
   | ChatTodoBlock
   | ChatAttachmentBlock
   | ChatNoticeBlock
+  | ChatCompactBlock
   | ChatArtifactBlock
 
 export interface ChatMessageInput {
@@ -397,6 +423,29 @@ export interface ChatMessageInput {
   readonly status: ChatTurnStatus
   readonly meta?: ChatMessageMeta
   readonly blocks: readonly ChatBlockInput[]
+}
+
+export interface ChatSlashCommandInput {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+  readonly action?: ChatSlashCommandAction
+}
+
+export interface ChatMentionCandidateInput {
+  readonly id?: string
+  readonly label: string
+  readonly detail?: string | null
+  readonly replacement?: string
+}
+
+export interface ChatMentionContext {
+  readonly draft: string
+  readonly query: string
+  readonly cursor: number
+  readonly replacement_start: number
+  readonly replacement_end: number
 }
 
 export interface MarkdownViewerOptions extends BuilderBaseOptions {
@@ -481,6 +530,17 @@ export interface ChatToolUseBlockOptions {
   readonly collapsed?: boolean
 }
 
+export interface ChatApprovalOptionOptions {
+  readonly action?: ChatApprovalAction
+  readonly level?: ChatApprovalLevel
+}
+
+export interface ChatApprovalRequestOptions {
+  readonly resolved?: string
+  readonly resolvedAction?: ChatApprovalAction
+  readonly resolvedLevel?: ChatApprovalLevel
+}
+
 export interface ChatToolResultBlockOptions {
   readonly ok?: boolean
   readonly exitCode?: number
@@ -501,6 +561,12 @@ export interface ChatTaskBlockOptions {
   readonly summary?: string
   readonly transcript?: readonly ChatTaskTranscriptItem[]
   readonly collapsed?: boolean
+}
+
+export interface ChatCompactBlockOptions {
+  readonly beforeTokens?: number | null
+  readonly afterTokens?: number | null
+  readonly summary?: string
 }
 
 export interface ChatTextMessageOptions extends ChatMessageBaseOptions, ChatTextBlockOptions {
@@ -567,14 +633,31 @@ export interface ChatInputModeOptions {
 
 export type ChatInputModeInput = ComponentValueMap
 
+export interface ChatSlashCommandOptions {
+  readonly id?: string
+  readonly detail?: string | null
+  readonly replacement?: string
+  readonly action?: ChatSlashCommandAction
+}
+
+export interface ChatMentionCandidateOptions {
+  readonly id?: string
+  readonly detail?: string | null
+  readonly replacement?: string
+}
+
 export interface ChatInputPanelOptions extends BuilderBaseOptions, EnabledOptions {
   readonly mode?: ChatInputModeInput
   readonly draft?: string
   readonly custom?: string
   readonly history?: readonly string[]
+  readonly slashCommands?: readonly ChatSlashCommandInput[]
+  readonly mentionCandidates?: readonly ChatMentionCandidateInput[]
   readonly selection?: number
   readonly clearOnSubmit?: boolean
   readonly onSubmit?: CallbackHandle
+  readonly onSlashCommand?: CallbackHandle
+  readonly onMentionQuery?: CallbackHandle
 }
 
 /** Build a raw runtime component spec for custom or less common component types. */
@@ -957,6 +1040,35 @@ export function ChatToolDiffOutput(diff: string): ChatToolDiffOutput {
   return { diff }
 }
 
+export function ChatApprovalOption(
+  id: string,
+  label: string,
+  options: ChatApprovalOptionOptions = {},
+): ChatApprovalOption {
+  return compactRecord({
+    id,
+    label,
+    action: options.action,
+    level: options.level,
+  }) as unknown as ChatApprovalOption
+}
+
+export function ChatApprovalRequest(
+  id: string,
+  prompt: string,
+  options: readonly ChatApprovalOption[],
+  requestOptions: ChatApprovalRequestOptions = {},
+): ChatApprovalRequest {
+  return compactRecord({
+    id,
+    prompt,
+    options,
+    resolved: requestOptions.resolved,
+    resolved_action: requestOptions.resolvedAction,
+    resolved_level: requestOptions.resolvedLevel,
+  }) as unknown as ChatApprovalRequest
+}
+
 export function ChatToolUseBlock(
   blockId: number,
   callId: string,
@@ -1062,6 +1174,21 @@ export function ChatAttachmentBlock(
 
 export function ChatNoticeBlock(blockId: number, level: ChatNoticeLevel, text: string): ChatNoticeBlock {
   return compactRecord({ type: 'notice', block_id: blockId, level, text }) as unknown as ChatNoticeBlock
+}
+
+export function ChatCompactBlock(
+  blockId: number,
+  status: ChatCompactStatus,
+  options: ChatCompactBlockOptions = {},
+): ChatCompactBlock {
+  return compactRecord({
+    type: 'compact',
+    block_id: blockId,
+    status,
+    before_tokens: options.beforeTokens,
+    after_tokens: options.afterTokens,
+    summary: options.summary ?? '',
+  }) as unknown as ChatCompactBlock
 }
 
 export function ChatArtifactBlock(
@@ -1170,16 +1297,47 @@ export function ChatInputMode(mode = 'text', options: ChatInputModeOptions = {})
   }) ?? {}
 }
 
+export function ChatSlashCommand(
+  label: string,
+  options: ChatSlashCommandOptions = {},
+): ChatSlashCommandInput {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+    action: options.action,
+  }) as unknown as ChatSlashCommandInput
+}
+
+export function ChatMentionCandidate(
+  label: string,
+  options: ChatMentionCandidateOptions = {},
+): ChatMentionCandidateInput {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+  }) as unknown as ChatMentionCandidateInput
+}
+
 export function ChatInputPanel(options: ChatInputPanelOptions = {}): ComponentSpec {
   return makeSpec('ChatInputPanel', options.id, {
     mode: options.mode ?? ChatInputMode(),
     draft: options.draft,
     custom: options.custom,
     history: options.history,
+    slash_commands: options.slashCommands,
+    mention_candidates: options.mentionCandidates,
     selection: options.selection,
     enabled: enabledValue(options),
     clear_on_submit: options.clearOnSubmit,
-  }, events(options.events, { submit: options.onSubmit }))
+  }, events(options.events, {
+    submit: options.onSubmit,
+    slash_command: options.onSlashCommand,
+    mention_query: options.onMentionQuery,
+  }))
 }
 
 function makeSpec(

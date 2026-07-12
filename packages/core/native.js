@@ -6,8 +6,8 @@ const { join, resolve } = require('node:path')
 
 const loadErrors = []
 
-// Load the napi binding from a user override, packaged binary, optional platform package,
-// or the workspace crate used during local development.
+// Load the napi binding from a user override, packaged binary, workspace crate
+// used during local development, optional platform package, or raw node package.
 function loadNative() {
   for (const override of [
     process.env.ATTO_UI_NATIVE_LIBRARY_PATH,
@@ -27,13 +27,17 @@ function loadNative() {
       if (loaded) return loaded
     }
 
+    const workspaceBinding = resolve(__dirname, '../../crates/atto-ui-node')
+    const workspaceLoaded = tryRequire(workspaceBinding)
+    if (workspaceLoaded) return workspaceLoaded
+
     for (const packageName of [`@atto-ui/core-${triple}`, `@atto-ui/node-${triple}`]) {
       const loaded = tryRequire(packageName)
       if (loaded) return loaded
     }
   }
 
-  for (const request of ['@atto-ui/node', resolve(__dirname, '../../crates/atto-ui-node')]) {
+  for (const request of ['@atto-ui/node']) {
     const loaded = tryRequire(request)
     if (loaded) return loaded
   }

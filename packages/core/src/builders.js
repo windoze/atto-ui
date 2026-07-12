@@ -349,6 +349,26 @@ function ChatToolDiffOutput(diff) {
   return { diff }
 }
 
+function ChatApprovalOption(id, label, options = {}) {
+  return compactRecord({
+    id,
+    label,
+    action: options.action,
+    level: options.level,
+  }) ?? {}
+}
+
+function ChatApprovalRequest(id, prompt, options, requestOptions = {}) {
+  return compactRecord({
+    id,
+    prompt,
+    options,
+    resolved: requestOptions.resolved,
+    resolved_action: requestOptions.resolvedAction,
+    resolved_level: requestOptions.resolvedLevel,
+  }) ?? {}
+}
+
 function ChatToolUseBlock(blockId, callId, name, options = {}) {
   return compactRecord({
     type: 'tool_use',
@@ -425,6 +445,17 @@ function ChatAttachmentBlock(blockId, name, options = {}) {
 
 function ChatNoticeBlock(blockId, level, text) {
   return compactRecord({ type: 'notice', block_id: blockId, level, text }) ?? {}
+}
+
+function ChatCompactBlock(blockId, status, options = {}) {
+  return compactRecord({
+    type: 'compact',
+    block_id: blockId,
+    status,
+    before_tokens: options.beforeTokens,
+    after_tokens: options.afterTokens,
+    summary: options.summary ?? '',
+  }) ?? {}
 }
 
 function ChatArtifactBlock(blockId, options) {
@@ -515,16 +546,41 @@ function ChatInputMode(mode = 'text', options = {}) {
   }) ?? {}
 }
 
+function ChatSlashCommand(label, options = {}) {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+    action: options.action,
+  }) ?? {}
+}
+
+function ChatMentionCandidate(label, options = {}) {
+  return compactRecord({
+    id: options.id,
+    label,
+    detail: options.detail,
+    replacement: options.replacement,
+  }) ?? {}
+}
+
 function ChatInputPanel(options = {}) {
   return makeSpec('ChatInputPanel', options.id, {
     mode: options.mode ?? ChatInputMode(),
     draft: options.draft,
     custom: options.custom,
     history: options.history,
+    slash_commands: options.slashCommands,
+    mention_candidates: options.mentionCandidates,
     selection: options.selection,
     enabled: enabledValue(options),
     clear_on_submit: options.clearOnSubmit,
-  }, events(options.events, { submit: options.onSubmit }))
+  }, events(options.events, {
+    submit: options.onSubmit,
+    slash_command: options.onSlashCommand,
+    mention_query: options.onMentionQuery,
+  }))
 }
 
 function makeSpec(type, id, props, eventInput, children) {
@@ -701,6 +757,8 @@ module.exports = {
   ChatToolAnsiOutput,
   ChatToolMarkdownOutput,
   ChatToolDiffOutput,
+  ChatApprovalOption,
+  ChatApprovalRequest,
   ChatToolUseBlock,
   ChatToolResultBlock,
   ChatDiffBlock,
@@ -710,6 +768,7 @@ module.exports = {
   ChatTodoBlock,
   ChatAttachmentBlock,
   ChatNoticeBlock,
+  ChatCompactBlock,
   ChatArtifactBlock,
   ChatTextMessage,
   ChatFileMessage,
@@ -717,5 +776,7 @@ module.exports = {
   ChatArtifactMessage,
   ChatMessageList,
   ChatInputMode,
+  ChatSlashCommand,
+  ChatMentionCandidate,
   ChatInputPanel,
 }

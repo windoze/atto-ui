@@ -1,5 +1,6 @@
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 
+use crate::syntax::SyntaxClass;
 use atto_ui::theme::Theme;
 
 use super::MarkdownShared;
@@ -15,6 +16,7 @@ pub(super) struct MarkdownStyles {
     pub(super) list_bullet: Style,
     pub(super) code_inline: Style,
     pub(super) code_block: Style,
+    pub(super) syntax: SyntaxStyles,
     pub(super) table_border: Style,
     pub(super) table_border_glyphs: TableBorderGlyphs,
     pub(super) table_header: Style,
@@ -77,6 +79,7 @@ impl MarkdownStyles {
                     .unwrap_or(theme.widget.accent),
             ),
             code_block: base.patch(theme.named_style("markdown-code-block").unwrap_or(base)),
+            syntax: SyntaxStyles::from_theme(theme),
             table_border: theme
                 .named_style("markdown-table-border")
                 .unwrap_or(theme.widget.dim),
@@ -97,6 +100,77 @@ impl MarkdownStyles {
                     .named_style("markdown-mark")
                     .unwrap_or(theme.widget.dim),
             ),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SyntaxStyles {
+    text: Style,
+    comment: Style,
+    string: Style,
+    keyword: Style,
+    function: Style,
+    ty: Style,
+    number: Style,
+    constant: Style,
+    variable: Style,
+    operator: Style,
+    punctuation: Style,
+}
+
+impl SyntaxStyles {
+    fn from_theme(theme: &Theme) -> Self {
+        Self {
+            text: theme
+                .named_style("markdown-syntax-text")
+                .unwrap_or_default(),
+            comment: theme
+                .named_style("markdown-syntax-comment")
+                .unwrap_or(Style::default().fg(Color::DarkGray)),
+            string: theme
+                .named_style("markdown-syntax-string")
+                .unwrap_or(Style::default().fg(Color::LightGreen)),
+            keyword: theme
+                .named_style("markdown-syntax-keyword")
+                .unwrap_or(Style::default().fg(Color::LightMagenta)),
+            function: theme
+                .named_style("markdown-syntax-function")
+                .unwrap_or(Style::default().fg(Color::LightCyan)),
+            ty: theme
+                .named_style("markdown-syntax-type")
+                .unwrap_or(Style::default().fg(Color::Yellow)),
+            number: theme
+                .named_style("markdown-syntax-number")
+                .unwrap_or(Style::default().fg(Color::LightYellow)),
+            constant: theme
+                .named_style("markdown-syntax-constant")
+                .unwrap_or(Style::default().fg(Color::LightYellow)),
+            variable: theme
+                .named_style("markdown-syntax-variable")
+                .unwrap_or_default(),
+            operator: theme
+                .named_style("markdown-syntax-operator")
+                .unwrap_or(Style::default().fg(Color::LightBlue)),
+            punctuation: theme
+                .named_style("markdown-syntax-punctuation")
+                .unwrap_or(Style::default().fg(Color::Gray)),
+        }
+    }
+
+    pub(super) fn style_for(&self, class: SyntaxClass) -> Style {
+        match class {
+            SyntaxClass::Text => self.text,
+            SyntaxClass::Comment => self.comment,
+            SyntaxClass::String => self.string,
+            SyntaxClass::Keyword => self.keyword,
+            SyntaxClass::Function => self.function,
+            SyntaxClass::Type => self.ty,
+            SyntaxClass::Number => self.number,
+            SyntaxClass::Constant => self.constant,
+            SyntaxClass::Variable => self.variable,
+            SyntaxClass::Operator => self.operator,
+            SyntaxClass::Punctuation => self.punctuation,
         }
     }
 }

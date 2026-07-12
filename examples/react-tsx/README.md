@@ -24,9 +24,7 @@ From the repository root, build the native binding and the React package once:
 
 ```sh
 # 1. Build the native N-API binding (creates atto_ui_node.<platform>.node)
-cd crates/atto-ui-node
-npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
-cd ../..
+npm run build --prefix crates/atto-ui-node
 
 # 2. Build the React package (emits packages/react/dist)
 npm install --prefix packages/react

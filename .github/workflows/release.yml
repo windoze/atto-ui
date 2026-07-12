@@ -59,7 +59,7 @@ jobs:
 
       - name: Build native Node binding
         working-directory: crates/atto-ui-node
-        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform
+        run: npm run build
 
       - name: Typecheck core package
         run: npm exec --yes --package=typescript@5.9.3 -- tsc -p packages/core/tsconfig.json --noEmit
@@ -84,7 +84,7 @@ jobs:
 
       - name: Place npm artifacts
         working-directory: crates/atto-ui-node
-        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .
+        run: npm run npm:artifacts
 
       - name: Dry-run npm packages
         run: |
@@ -135,7 +135,7 @@ jobs:
 
       - name: Build native package
         working-directory: crates/atto-ui-node
-        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi build --platform --release --target ${{ matrix.rust-target }}
+        run: npm run build -- --release --target ${{ matrix.rust-target }}
 
       - name: Upload native artifact
         uses: actions/upload-artifact@v4
@@ -171,7 +171,7 @@ jobs:
 
       - name: Place platform artifacts
         working-directory: crates/atto-ui-node
-        run: npm exec --yes --package=@napi-rs/cli@3.1.5 -- napi artifacts --npm-dir npm --output-dir .
+        run: npm run npm:artifacts
 
       - name: Install React dependencies
         run: npm install --prefix packages/react --ignore-scripts --no-save @atto-ui/core@file:../core

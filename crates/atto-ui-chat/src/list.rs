@@ -13,9 +13,11 @@ use atto_ui::composable::{
     Scrollable, ScrollbarVisibility, Size, Spacer, Text, VStack,
 };
 use atto_ui::reactive::{Binding, DirtyObserver};
+use atto_ui::theme::Theme;
 use atto_ui::widgets::{Button, Disclosure, DisclosureStatus};
 use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
 use atto_ui_markdown::MarkdownViewer;
+use atto_ui_markdown::syntax::{HighlightedLine, SyntaxClass, highlight_code_block};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -27,16 +29,17 @@ use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dynamic::{messages_to_component_value, parse_messages_value};
+use crate::input::{ChatInputHandle, ChatInputReference, ChatTextSubmitInterceptor};
 use crate::message::{
-    ApprovalOption, ApprovalRequest, ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock,
-    ChatAlignment, ChatBlock, ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId,
-    ChatMessageMeta, ChatRole, ChatTurnStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
+    ApprovalAction, ApprovalLevel, ApprovalOption, ApprovalRequest, ApprovalResolution,
+    ArtifactBlock, ArtifactId, ArtifactKind, AttachmentBlock, ChatAlignment, ChatBlock,
+    ChatBlockId, ChatErrorKind, ChatMessage, ChatMessageId, ChatMessageMeta, ChatRole,
+    ChatTurnStatus, CompactBlock, CompactStatus, DiffBlock, DiffData, EditDecision, NoticeBlock,
     NoticeLevel, PlanBlock, PlanDecision, PlanItem, StopReason, TaskBlock, TaskStatus,
     TaskTranscriptItem, TextBlock, ThinkingBlock, TodoBlock, TodoItem, TodoState, ToolInput,
     ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
 use crate::store::ChatMessageStore;
-use crate::viewer::diff_line_style;
 
 const DEFAULT_IN_PROGRESS_SUFFIX: &str = " ▍";
 /// Fraction (percent of list width) a message bubble may occupy; the rest is an
@@ -48,9 +51,37 @@ const ANSI_OUTPUT_EXPAND_LABEL: &str = "展开全部";
 type ArtifactOpenCallback = Arc<dyn Fn(ArtifactId) + Send + Sync>;
 type ApprovalCallback = Arc<dyn Fn(ApprovalDecision) + Send + Sync>;
 type EditDecisionCallback = Arc<dyn Fn(EditDecisionEvent) + Send + Sync>;
+type EditAndResubmitCallback = Arc<dyn Fn(EditAndResubmitEvent) + Send + Sync>;
 type PlanDecisionCallback = Arc<dyn Fn(PlanDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
+
+#[derive(Clone)]
+pub(crate) struct StreamingCancelController {
+    store: ChatMessageStore,
+    callback: CancelCallback,
+}
+
+impl StreamingCancelController {
+    fn new(store: ChatMessageStore, callback: CancelCallback) -> Self {
+        Self { store, callback }
+    }
+
+    pub(crate) fn request_current(&self) -> bool {
+        let Some(message_id) = latest_streaming_message_id(&self.store) else {
+            return false;
+        };
+        self.request(message_id)
+    }
+
+    fn request(&self, message_id: ChatMessageId) -> bool {
+        if !self.store.cancel_streaming_turn(message_id) {
+            return false;
+        }
+        (self.callback)(message_id);
+        true
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalDecision {
@@ -58,6 +89,8 @@ pub struct ApprovalDecision {
     pub block_id: ChatBlockId,
     pub approval_id: String,
     pub option_id: String,
+    pub action: ApprovalAction,
+    pub level: ApprovalLevel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,8 +109,18 @@ pub struct PlanDecisionEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageAction {
+    /// For Retry/Regenerate, the target assistant turn has already been
+    /// truncated when this action is emitted.
     pub message_id: ChatMessageId,
     pub kind: MessageActionKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditAndResubmitEvent {
+    pub message_id: ChatMessageId,
+    pub original_text: String,
+    pub edited_text: String,
+    pub removed_messages: Vec<ChatMessage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +130,87 @@ pub enum MessageActionKind {
     Regenerate,
     EditUser,
     CopyBlock(ChatBlockId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingUserEdit {
+    message_id: ChatMessageId,
+    original_text: String,
+}
+
+#[derive(Clone)]
+struct EditAndResubmitController {
+    store: ChatMessageStore,
+    pending: Binding<Option<PendingUserEdit>>,
+    input_draft: Binding<String>,
+    callback: EditAndResubmitCallback,
+}
+
+impl EditAndResubmitController {
+    fn new(
+        store: ChatMessageStore,
+        input_draft: Binding<String>,
+        callback: EditAndResubmitCallback,
+    ) -> Self {
+        Self {
+            store,
+            pending: Binding::new(None),
+            input_draft,
+            callback,
+        }
+    }
+
+    fn begin_edit(&self, message_id: ChatMessageId, original_text: String) -> bool {
+        self.pending.set(Some(PendingUserEdit {
+            message_id,
+            original_text: original_text.clone(),
+        }));
+        self.input_draft.set(original_text);
+        true
+    }
+
+    fn submit_edit(&self, edited_text: String) -> bool {
+        let Some(pending) = self.pending.get() else {
+            return false;
+        };
+        let Some(removed_messages) = self.store.truncate_from(pending.message_id) else {
+            self.pending.set(None);
+            return true;
+        };
+        self.pending.set(None);
+        (self.callback)(EditAndResubmitEvent {
+            message_id: pending.message_id,
+            original_text: pending.original_text,
+            edited_text,
+            removed_messages,
+        });
+        true
+    }
+}
+
+#[derive(Clone)]
+struct QuoteReplyController {
+    references: Binding<Vec<ChatInputReference>>,
+}
+
+impl QuoteReplyController {
+    fn new(references: Binding<Vec<ChatInputReference>>) -> Self {
+        Self { references }
+    }
+
+    fn attach(&self, reference: ChatInputReference) {
+        self.references.update(|items| {
+            let key = (reference.message_id, reference.block_id);
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item| (item.message_id, item.block_id) == key)
+            {
+                *existing = reference;
+            } else {
+                items.push(reference);
+            }
+        });
+    }
 }
 
 #[derive(Clone)]
@@ -99,9 +223,12 @@ struct ChatMessageListConfig {
     spacing: Binding<u16>,
     padding: Binding<EdgeInsets>,
     scroll_config: Binding<ScrollConfig>,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    edit_and_resubmit: Option<EditAndResubmitController>,
+    quote_replies: Option<QuoteReplyController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
@@ -109,22 +236,63 @@ struct ChatMessageListConfig {
 
 #[derive(Clone)]
 struct ChatMessageRowConfig {
+    store: ChatMessageStore,
     wrap_width: Option<u16>,
     responsive_wrap_width: Binding<Option<u16>>,
     in_progress_suffix: String,
     show_timestamps: bool,
     bubble_width_percent: u16,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
     on_open_artifact: Option<ArtifactOpenCallback>,
     on_approve: Option<ApprovalCallback>,
     on_edit_decision: Option<EditDecisionCallback>,
+    edit_and_resubmit: Option<EditAndResubmitController>,
+    quote_replies: Option<QuoteReplyController>,
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SearchMatch {
+    row_id: ChatRowId,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SearchState {
+    active: bool,
+    query: String,
+    matches: Vec<SearchMatch>,
+    active_index: Option<usize>,
+    restore_scroll: Option<(u16, u16)>,
+}
+
+impl SearchState {
+    fn active_match(&self) -> Option<&SearchMatch> {
+        self.active_index.and_then(|idx| self.matches.get(idx))
+    }
+
+    fn status_label(&self) -> String {
+        let count = self.matches.len();
+        let position = self.active_index.map_or(0, |idx| idx.saturating_add(1));
+        let suffix = if self.query.is_empty() {
+            "type to search".to_string()
+        } else if count == 0 {
+            "no matches".to_string()
+        } else {
+            format!("{position}/{count}")
+        };
+        format!(
+            "Search: {} ({suffix})  Enter/Down next  Up prev  Esc close",
+            self.query
+        )
+    }
+}
+
 pub struct ChatMessageList {
     store: ChatMessageStore,
     messages: Binding<Vec<ChatMessage>>,
+    message_ids: Vec<ChatMessageId>,
     row_keys: Binding<Vec<ChatRowKey>>,
     list: ScrollContainer,
     virtual_control: VirtualChatRowsControl,
@@ -135,11 +303,13 @@ pub struct ChatMessageList {
     follow_tail: bool,
     suppress_auto_scroll_once: bool,
     pending_scroll_to_bottom: bool,
+    search: SearchState,
     messages_observer: DirtyObserver,
 }
 
 impl ChatMessageList {
     pub fn new(store: ChatMessageStore) -> Self {
+        let collapsed_turns = Binding::new(HashSet::new());
         let config = ChatMessageListConfig {
             wrap_width: None,
             responsive_wrap_width: Binding::new(None),
@@ -149,21 +319,29 @@ impl ChatMessageList {
             spacing: 1u16.into(),
             padding: EdgeInsets::symmetric(0, 1).into(),
             scroll_config: ScrollConfig::default().into(),
+            collapsed_turns: collapsed_turns.clone(),
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            edit_and_resubmit: None,
+            quote_replies: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
-        let row_keys = Binding::new(messages.with(|messages| row_keys_from_messages(messages)));
+        let message_ids = messages.with(|messages| message_ids_from_messages(messages));
+        let collapsed = collapsed_turns.get();
+        let row_keys = Binding::new(
+            messages.with(|messages| row_keys_from_messages_with_collapsed(messages, &collapsed)),
+        );
         let (list, virtual_control) = build_list(row_keys.clone(), store.clone(), &config);
         let messages_observer = messages.dirty_observer();
         Self {
             store,
             messages,
+            message_ids,
             row_keys,
             list,
             virtual_control,
@@ -174,6 +352,7 @@ impl ChatMessageList {
             follow_tail: true,
             suppress_auto_scroll_once: false,
             pending_scroll_to_bottom: has_initial_messages,
+            search: SearchState::default(),
             messages_observer,
         }
     }
@@ -267,6 +446,30 @@ impl ChatMessageList {
         self
     }
 
+    pub fn on_edit_and_resubmit<F>(mut self, input: &ChatInputHandle, callback: F) -> Self
+    where
+        F: Fn(EditAndResubmitEvent) + Send + Sync + 'static,
+    {
+        let controller = EditAndResubmitController::new(
+            self.store.clone(),
+            input.draft_binding(),
+            Arc::new(callback),
+        );
+        let submit_controller = controller.clone();
+        input.set_text_submit_interceptor(ChatTextSubmitInterceptor::new(move |text| {
+            submit_controller.submit_edit(text)
+        }));
+        self.config.edit_and_resubmit = Some(controller);
+        self.rebuild_list();
+        self
+    }
+
+    pub fn with_quote_replies(mut self, input: &ChatInputHandle) -> Self {
+        self.config.quote_replies = Some(QuoteReplyController::new(input.references_binding()));
+        self.rebuild_list();
+        self
+    }
+
     pub fn on_plan_decision<F>(mut self, callback: F) -> Self
     where
         F: Fn(PlanDecisionEvent) + Send + Sync + 'static,
@@ -276,6 +479,11 @@ impl ChatMessageList {
         self
     }
 
+    /// Register per-message action callbacks.
+    ///
+    /// Retry/Regenerate callbacks run after the target assistant turn and its
+    /// suffix have been truncated, so hosts should use the action as a signal
+    /// to start a fresh generation from the retained prefix.
     pub fn on_message_action<F>(mut self, callback: F) -> Self
     where
         F: Fn(MessageAction) + Send + Sync + 'static,
@@ -292,6 +500,13 @@ impl ChatMessageList {
         self.config.on_cancel = Some(Arc::new(callback));
         self.rebuild_list();
         self
+    }
+
+    pub(crate) fn streaming_cancel_controller(&self) -> Option<StreamingCancelController> {
+        self.config
+            .on_cancel
+            .clone()
+            .map(|callback| StreamingCancelController::new(self.store.clone(), callback))
     }
 
     pub fn auto_scroll(mut self, enabled: bool) -> Self {
@@ -317,14 +532,17 @@ impl ChatMessageList {
     }
 
     fn rebuild_list(&mut self) {
-        self.row_keys.set(
-            self.messages
-                .with(|messages| row_keys_from_messages(messages)),
-        );
+        self.row_keys.set(self.current_row_keys());
         let (list, virtual_control) =
             build_list(self.row_keys.clone(), self.store.clone(), &self.config);
         self.list = list;
         self.virtual_control = virtual_control;
+    }
+
+    fn current_row_keys(&self) -> Vec<ChatRowKey> {
+        let collapsed = self.config.collapsed_turns.get();
+        self.messages
+            .with(|messages| row_keys_from_messages_with_collapsed(messages, &collapsed))
     }
 
     fn maybe_trigger_load_more(&mut self) -> bool {
@@ -358,16 +576,39 @@ impl ChatMessageList {
         if !self.messages.check_dirty(&mut self.messages_observer) {
             return;
         }
-        self.row_keys.set(
-            self.messages
-                .with(|messages| row_keys_from_messages(messages)),
-        );
+        let next_message_ids = self
+            .messages
+            .with(|messages| message_ids_from_messages(messages));
+        self.prune_collapsed_turns(&next_message_ids);
+        let next_row_keys = self.current_row_keys();
+        let branch_rewritten = message_ids_rewrite_branch(&self.message_ids, &next_message_ids);
+        self.message_ids = next_message_ids;
+        self.row_keys.set(next_row_keys);
+        if self.search.active {
+            self.suppress_auto_scroll_once = false;
+            self.refresh_search_matches();
+            self.queue_active_search_match_scroll();
+            return;
+        }
         if self.suppress_auto_scroll_once {
             self.suppress_auto_scroll_once = false;
             return;
         }
-        if self.auto_scroll && self.follow_tail {
+        if self.auto_scroll && (self.follow_tail || branch_rewritten) {
+            if branch_rewritten {
+                self.follow_tail = true;
+            }
             self.pending_scroll_to_bottom = true;
+        }
+    }
+
+    fn prune_collapsed_turns(&self, live_message_ids: &[ChatMessageId]) {
+        let live = live_message_ids.iter().copied().collect::<HashSet<_>>();
+        let mut collapsed = self.config.collapsed_turns.get();
+        let before = collapsed.len();
+        collapsed.retain(|message_id| live.contains(message_id));
+        if collapsed.len() != before {
+            self.config.collapsed_turns.set(collapsed);
         }
     }
 
@@ -403,6 +644,150 @@ impl ChatMessageList {
                 self.config.padding.get(),
                 self.config.bubble_width_percent,
             ));
+    }
+
+    fn start_search(&mut self) -> EventResult {
+        self.search.active = true;
+        self.search.query.clear();
+        self.search.restore_scroll = Some(self.list.scroll_offset());
+        self.refresh_search_matches();
+        EventResult::changed()
+    }
+
+    fn exit_search(&mut self) -> EventResult {
+        if !self.search.active {
+            return EventResult::ignored();
+        }
+        let restore = self.search.restore_scroll.take();
+        self.search = SearchState::default();
+        if let Some((x, y)) = restore {
+            self.list.set_scroll_offset(x, y);
+            self.sync_follow_tail_from_scroll();
+        }
+        EventResult::changed()
+    }
+
+    fn refresh_search_matches(&mut self) {
+        let row_keys = self.row_keys.get();
+        let query = self.search.query.clone();
+        self.search.matches = self
+            .messages
+            .with(|messages| collect_search_matches(messages, &row_keys, &query, &self.config));
+        self.search.active_index = (!self.search.matches.is_empty()).then_some(0);
+    }
+
+    fn update_search_query(&mut self, query: String) -> EventResult {
+        if self.search.query == query {
+            return EventResult::consumed();
+        }
+        self.search.query = query;
+        self.refresh_search_matches();
+        self.queue_active_search_match_scroll();
+        EventResult::changed()
+    }
+
+    fn move_search_match(&mut self, forward: bool) -> EventResult {
+        let len = self.search.matches.len();
+        if len == 0 {
+            return EventResult::consumed();
+        }
+        let current = self
+            .search
+            .active_index
+            .unwrap_or(0)
+            .min(len.saturating_sub(1));
+        let next = if forward {
+            current.saturating_add(1) % len
+        } else if current == 0 {
+            len.saturating_sub(1)
+        } else {
+            current.saturating_sub(1)
+        };
+        self.search.active_index = Some(next);
+        self.queue_active_search_match_scroll();
+        EventResult::changed()
+    }
+
+    fn queue_active_search_match_scroll(&mut self) {
+        let Some(row_id) = self
+            .search
+            .active_match()
+            .map(|search_match| search_match.row_id)
+        else {
+            return;
+        };
+        self.virtual_control.scroll_to_row_on_next_layout(row_id);
+        self.pending_scroll_to_bottom = false;
+        self.follow_tail = false;
+        self.load_more_armed = true;
+    }
+
+    fn handle_search_event(&mut self, event: &Event) -> Option<EventResult> {
+        if is_search_shortcut(event) {
+            if self.search.active {
+                return Some(self.move_search_match(true));
+            }
+            return Some(self.start_search());
+        }
+
+        if !self.search.active {
+            return None;
+        }
+
+        let Event::Key(key) = event else {
+            return None;
+        };
+        if matches!(key.kind, KeyEventKind::Release) {
+            return Some(EventResult::ignored());
+        }
+
+        match key.code {
+            KeyCode::Esc => Some(self.exit_search()),
+            KeyCode::Enter | KeyCode::Down | KeyCode::Tab | KeyCode::PageDown => {
+                Some(self.move_search_match(true))
+            }
+            KeyCode::Up | KeyCode::BackTab | KeyCode::PageUp => Some(self.move_search_match(false)),
+            KeyCode::Backspace => {
+                let mut query = self.search.query.clone();
+                query.pop();
+                Some(self.update_search_query(query))
+            }
+            KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(self.update_search_query(String::new()))
+            }
+            KeyCode::Char(ch) if search_input_modifiers_allow_text(key.modifiers) => {
+                let mut query = self.search.query.clone();
+                query.push(ch);
+                Some(self.update_search_query(query))
+            }
+            _ => Some(EventResult::consumed()),
+        }
+    }
+
+    fn draw_search_state(&self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if !self.search.active || area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if !self.search.query.is_empty() {
+            apply_search_highlights(
+                frame.buffer_mut(),
+                area,
+                &self.search.query,
+                search_match_style(),
+            );
+        }
+
+        let label = fit_to_display_width(&self.search.status_label(), area.width as usize);
+        let status_area = Rect {
+            y: area.y.saturating_add(area.height.saturating_sub(1)),
+            height: 1,
+            ..area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(label, ctx.theme.widget.focused)),
+            status_area,
+        );
     }
 }
 
@@ -498,6 +883,7 @@ impl ::atto_ui::composable::Component for ChatMessageList {
         self.track_message_changes();
         self.queue_pending_scroll_to_bottom();
         self.list.draw(frame, area, ctx);
+        self.draw_search_state(frame, area, ctx);
     }
 }
 
@@ -587,6 +973,9 @@ impl ::atto_ui::composable::DynamicTree for ChatMessageList {}
 impl ::atto_ui::composable::EventHandling for ChatMessageList {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
         self.track_message_changes();
+        if let Some(res) = self.handle_search_event(event) {
+            return res;
+        }
         let before_scroll_y = self.list.scroll_offset().1;
         let mut res = self.list.handle_event(event, ctx);
         if self.list.scroll_offset().1 != before_scroll_y {
@@ -594,6 +983,14 @@ impl ::atto_ui::composable::EventHandling for ChatMessageList {
         }
         if self.maybe_trigger_load_more() && matches!(res.action, ComponentAction::None) {
             self.sync_follow_tail_from_scroll();
+            res = EventResult::changed();
+        }
+        if !res.is_consumed()
+            && is_escape_press(event)
+            && self
+                .streaming_cancel_controller()
+                .is_some_and(|controller| controller.request_current())
+        {
             res = EventResult::changed();
         }
         res
@@ -606,14 +1003,18 @@ fn build_list(
     config: &ChatMessageListConfig,
 ) -> (ScrollContainer, VirtualChatRowsControl) {
     let row_config = ChatMessageRowConfig {
+        store: store.clone(),
         wrap_width: config.wrap_width,
         responsive_wrap_width: config.responsive_wrap_width.clone(),
         in_progress_suffix: config.in_progress_suffix.clone(),
         show_timestamps: config.show_timestamps,
         bubble_width_percent: config.bubble_width_percent,
+        collapsed_turns: config.collapsed_turns.clone(),
         on_open_artifact: config.on_open_artifact.clone(),
         on_approve: config.on_approve.clone(),
         on_edit_decision: config.on_edit_decision.clone(),
+        edit_and_resubmit: config.edit_and_resubmit.clone(),
+        quote_replies: config.quote_replies.clone(),
         on_plan_decision: config.on_plan_decision.clone(),
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
@@ -632,9 +1033,130 @@ fn build_list(
     (list, control)
 }
 
+fn latest_streaming_message_id(store: &ChatMessageStore) -> Option<ChatMessageId> {
+    store
+        .messages()
+        .iter()
+        .rev()
+        .find(|message| message.status.is_streaming())
+        .map(|message| message.id)
+}
+
+fn is_escape_press(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Esc,
+            kind,
+            ..
+        }) if !matches!(kind, KeyEventKind::Release)
+    )
+}
+
+fn is_search_shortcut(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Char('r' | 'R'),
+            modifiers,
+            kind,
+            ..
+        }) if modifiers.contains(KeyModifiers::CONTROL) && !matches!(kind, KeyEventKind::Release)
+    )
+}
+
+fn search_input_modifiers_allow_text(modifiers: KeyModifiers) -> bool {
+    !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+}
+
+fn search_match_style() -> Style {
+    Style::default().fg(Color::Black).bg(Color::Yellow)
+}
+
+fn apply_search_highlights(buf: &mut Buffer, area: Rect, query: &str, style: Style) {
+    if query.is_empty() || area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    for dy in 0..area.height {
+        let row = rendered_row_from_buffer(buf, area, dy);
+        for (start, end) in search_match_display_ranges(&row.text, query) {
+            for (start, end) in selected_cell_ranges_for_line(&row.text, start, end) {
+                for dx in start..end.min(area.width) {
+                    let x = area.x.saturating_add(dx);
+                    let y = area.y.saturating_add(dy);
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(style);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn search_match_display_ranges(text: &str, query: &str) -> Vec<(u16, u16)> {
+    find_case_insensitive_byte_ranges(text, query)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            let start_col = UnicodeWidthStr::width(&text[..start]).min(u16::MAX as usize) as u16;
+            let end_col = UnicodeWidthStr::width(&text[..end]).min(u16::MAX as usize) as u16;
+            (start_col < end_col).then_some((start_col, end_col))
+        })
+        .collect()
+}
+
+fn find_case_insensitive_byte_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::new();
+    let mut byte_idx = 0usize;
+    while byte_idx < text.len() {
+        if !text.is_char_boundary(byte_idx) {
+            byte_idx = byte_idx.saturating_add(1);
+            continue;
+        }
+        if let Some(end) = case_insensitive_match_end(text, byte_idx, query) {
+            ranges.push((byte_idx, end));
+            byte_idx = end.max(byte_idx.saturating_add(1));
+        } else {
+            byte_idx = next_char_boundary(text, byte_idx);
+        }
+    }
+    ranges
+}
+
+fn case_insensitive_match_end(text: &str, start: usize, query: &str) -> Option<usize> {
+    let mut text_chars = text[start..].chars();
+    let mut end = start;
+    for query_ch in query.chars() {
+        let text_ch = text_chars.next()?;
+        if text_ch != query_ch && !text_ch.eq_ignore_ascii_case(&query_ch) {
+            return None;
+        }
+        end = end.saturating_add(text_ch.len_utf8());
+    }
+    Some(end)
+}
+
+fn next_char_boundary(text: &str, start: usize) -> usize {
+    text[start..]
+        .chars()
+        .next()
+        .map_or(text.len(), |ch| start.saturating_add(ch.len_utf8()))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VirtualScrollAdjustment {
     ToBottom,
+    ToRow {
+        row_id: ChatRowId,
+    },
+    ToOffset {
+        x: u16,
+        y: u16,
+    },
     PreserveYAfterContentHeightChange {
         previous_content_height: u16,
         previous_scroll_y: u16,
@@ -658,6 +1180,16 @@ impl VirtualChatRowsControl {
     fn scroll_to_bottom_on_next_layout(&self) {
         self.pending_scroll_adjustment
             .set(Some(VirtualScrollAdjustment::ToBottom));
+    }
+
+    fn scroll_to_row_on_next_layout(&self, row_id: ChatRowId) {
+        self.pending_scroll_adjustment
+            .set(Some(VirtualScrollAdjustment::ToRow { row_id }));
+    }
+
+    fn scroll_to_offset_on_next_layout(&self, x: u16, y: u16) {
+        self.pending_scroll_adjustment
+            .set(Some(VirtualScrollAdjustment::ToOffset { x, y }));
     }
 
     fn preserve_scroll_y_after_next_layout(
@@ -705,6 +1237,7 @@ struct VirtualChatRowsContent {
     last_layout: Vec<VirtualRowLayout>,
     focused_row: Option<ChatRowId>,
     captured_row: Option<ChatRowId>,
+    turn_restore_offsets: HashMap<ChatMessageId, (u16, u16)>,
     last_area: Option<Rect>,
 }
 
@@ -727,6 +1260,7 @@ impl VirtualChatRowsContent {
             last_layout: Vec::new(),
             focused_row: None,
             captured_row: None,
+            turn_restore_offsets: HashMap::new(),
             last_area: None,
         }
     }
@@ -739,6 +1273,34 @@ impl VirtualChatRowsContent {
                 EdgeInsets::ZERO,
                 self.config.bubble_width_percent,
             ));
+    }
+
+    fn sync_turn_collapse_change(
+        &mut self,
+        previous: &HashSet<ChatMessageId>,
+        scroll_offset: (u16, u16),
+    ) {
+        let current = self.config.collapsed_turns.get();
+        if &current == previous {
+            return;
+        }
+
+        let messages = self.store.messages();
+        self.row_keys
+            .set(row_keys_from_messages_with_collapsed(&messages, &current));
+        if let Some(message_id) = changed_turn_id(previous, &current) {
+            if current.contains(&message_id) {
+                self.turn_restore_offsets.insert(message_id, scroll_offset);
+                self.control
+                    .scroll_to_row_on_next_layout(ChatRowId::Header(message_id));
+            } else if let Some((x, y)) = self.turn_restore_offsets.remove(&message_id) {
+                self.control.scroll_to_offset_on_next_layout(x, y);
+            } else {
+                self.control
+                    .scroll_to_row_on_next_layout(ChatRowId::Header(message_id));
+            }
+            self.focused_row = Some(ChatRowId::Header(message_id));
+        }
     }
 
     fn rebuild_layout(&mut self, viewport_width: u16) -> (u16, u16) {
@@ -779,7 +1341,14 @@ impl VirtualChatRowsContent {
 
     fn row_version(&self, key: &ChatRowKey) -> u64 {
         match key.row_ref() {
-            ChatRowRef::Header(message_id) => self.store.message_version(message_id),
+            ChatRowRef::Header {
+                message_id,
+                collapsed,
+            } => self
+                .store
+                .message_version(message_id)
+                .saturating_mul(2)
+                .saturating_add(u64::from(collapsed)),
             ChatRowRef::Block(block_id) | ChatRowRef::PendingToolResult(block_id) => {
                 self.store.block_version(block_id)
             }
@@ -803,17 +1372,29 @@ impl VirtualChatRowsContent {
         let scroll = host.scroll_offset();
         let viewport = host.viewport_size();
         let content = host.content_size();
-        let target_y = match adjustment {
-            VirtualScrollAdjustment::ToBottom => content.1.saturating_sub(viewport.1),
+        let (target_x, target_y) = match adjustment {
+            VirtualScrollAdjustment::ToBottom => (scroll.x, content.1.saturating_sub(viewport.1)),
+            VirtualScrollAdjustment::ToRow { row_id } => {
+                let Some(row) = self.row_layout_by_id(row_id) else {
+                    self.control.pending_scroll_adjustment.set(None);
+                    return;
+                };
+                (scroll.x, centered_scroll_y_for_row(&row, viewport.1))
+            }
+            VirtualScrollAdjustment::ToOffset { x, y } => {
+                let max_x = content.0.saturating_sub(viewport.0);
+                let max_y = content.1.saturating_sub(viewport.1);
+                (x.min(max_x), y.min(max_y))
+            }
             VirtualScrollAdjustment::PreserveYAfterContentHeightChange {
                 previous_content_height,
                 previous_scroll_y,
             } => {
                 let inserted_height = content.1.saturating_sub(previous_content_height);
-                previous_scroll_y.saturating_add(inserted_height)
+                (scroll.x, previous_scroll_y.saturating_add(inserted_height))
             }
         };
-        host.set_scroll_offset(scroll.x, target_y);
+        host.set_scroll_offset(target_x, target_y);
         self.control.pending_scroll_adjustment.set(None);
     }
 
@@ -1023,9 +1604,12 @@ impl VirtualChatRowsContent {
 
 impl ScrollContent for VirtualChatRowsContent {
     fn is_focusable(&self) -> bool {
-        self.config.on_open_artifact.is_some()
+        self.store.messages().iter().any(has_turn_collapse_control)
+            || self.config.on_open_artifact.is_some()
             || self.config.on_approve.is_some()
             || self.config.on_edit_decision.is_some()
+            || self.config.edit_and_resubmit.is_some()
+            || self.config.quote_replies.is_some()
             || self.config.on_message_action.is_some()
             || self.config.on_cancel.is_some()
     }
@@ -1046,10 +1630,16 @@ impl ScrollContent for VirtualChatRowsContent {
     ) -> EventResult {
         self.rebuild_layout(ctx.info.viewport_size.0);
         let _ = self.realize_visible_rows(ctx.info.scroll_offset.y, ctx.info.viewport_size.1);
-        match event {
+        let previous_collapsed = self.config.collapsed_turns.get();
+        let result = match event {
             Event::Mouse(mouse) => self.handle_mouse_event(mouse, ctx),
             _ => self.handle_keyboard_event(event, ctx),
-        }
+        };
+        self.sync_turn_collapse_change(
+            &previous_collapsed,
+            (ctx.info.scroll_offset.x, ctx.info.scroll_offset.y),
+        );
+        result
     }
 
     fn draw(
@@ -1121,6 +1711,14 @@ fn row_intersects(row_y: u16, row_h: u16, visible_start: u16, visible_end: u16) 
     row_y < visible_end && row_y.saturating_add(row_h) > visible_start
 }
 
+fn centered_scroll_y_for_row(row: &VirtualRowLayout, viewport_h: u16) -> u16 {
+    if viewport_h == 0 || row.height >= viewport_h {
+        return row.y;
+    }
+    row.y
+        .saturating_sub(viewport_h.saturating_sub(row.height) / 2)
+}
+
 fn estimate_row_height(
     key: &ChatRowKey,
     store: &ChatMessageStore,
@@ -1129,7 +1727,9 @@ fn estimate_row_height(
 ) -> u16 {
     store
         .with_message(key.message_id(), |message| match key {
-            ChatRowKey::Header { .. } => estimate_header_row_height(message, config),
+            ChatRowKey::Header { collapsed, .. } => {
+                estimate_header_row_height(message, config, *collapsed)
+            }
             ChatRowKey::Block { block_id, .. } => {
                 let block = find_block(message, *block_id);
                 estimate_block_row_height(block, config, viewport_width)
@@ -1146,7 +1746,9 @@ fn estimate_placeholder_row_height(
 ) -> u16 {
     let message = key.placeholder();
     match key {
-        ChatRowKey::Header { .. } => estimate_header_row_height(&message, config),
+        ChatRowKey::Header { collapsed, .. } => {
+            estimate_header_row_height(&message, config, *collapsed)
+        }
         ChatRowKey::Block { block_id, .. } => {
             estimate_block_row_height(find_block(&message, *block_id), config, viewport_width)
         }
@@ -1154,10 +1756,13 @@ fn estimate_placeholder_row_height(
     }
 }
 
-fn estimate_header_row_height(message: &ChatMessage, config: &ChatMessageRowConfig) -> u16 {
-    let mut bubble_height = line_count(&turn_header_label(message));
-    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
-    if config.on_message_action.is_some() || show_cancel {
+fn estimate_header_row_height(
+    message: &ChatMessage,
+    config: &ChatMessageRowConfig,
+    collapsed: bool,
+) -> u16 {
+    let mut bubble_height = line_count(&turn_header_label_for_row(message, collapsed));
+    if has_turn_action_row(message, config) {
         bubble_height = bubble_height.saturating_add(2);
     }
 
@@ -1194,6 +1799,10 @@ fn estimate_block_row_height(
         | Some(ChatBlock::Notice(_))
         | Some(ChatBlock::Artifact(_))
         | None => 1,
+        Some(ChatBlock::Compact(compact)) => compact_display_lines(compact)
+            .len()
+            .max(1)
+            .min(u16::MAX as usize) as u16,
         Some(ChatBlock::ToolUse(tool)) => estimate_disclosure_height(
             !tool.collapsed,
             tool_use_details_desired_height(&ToolUseDetails::from(tool)),
@@ -1458,6 +2067,7 @@ fn draw_component_region_local(
 enum ChatRowKey {
     Header {
         message_id: ChatMessageId,
+        collapsed: bool,
     },
     Block {
         message_id: ChatMessageId,
@@ -1486,7 +2096,10 @@ enum ChatRowId {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChatRowRef {
-    Header(ChatMessageId),
+    Header {
+        message_id: ChatMessageId,
+        collapsed: bool,
+    },
     Block(ChatBlockId),
     PendingToolResult(ChatBlockId),
 }
@@ -1528,6 +2141,12 @@ enum ChatBlockKindTag {
         level: NoticeLevel,
         text: String,
     },
+    Compact {
+        status: CompactStatus,
+        before_tokens: Option<u64>,
+        after_tokens: Option<u64>,
+        summary: String,
+    },
     Artifact {
         kind: ArtifactKind,
         anchor: ArtifactId,
@@ -1540,7 +2159,7 @@ impl Identifiable for ChatRowKey {
 
     fn id(&self) -> Self::Id {
         match self {
-            ChatRowKey::Header { message_id } => ChatRowId::Header(*message_id),
+            ChatRowKey::Header { message_id, .. } => ChatRowId::Header(*message_id),
             ChatRowKey::Block {
                 message_id,
                 block_id,
@@ -1564,7 +2183,7 @@ impl Identifiable for ChatRowKey {
 impl ChatRowKey {
     fn message_id(&self) -> ChatMessageId {
         match self {
-            ChatRowKey::Header { message_id }
+            ChatRowKey::Header { message_id, .. }
             | ChatRowKey::Block { message_id, .. }
             | ChatRowKey::PendingToolResult { message_id, .. } => *message_id,
         }
@@ -1572,7 +2191,13 @@ impl ChatRowKey {
 
     fn row_ref(&self) -> ChatRowRef {
         match self {
-            ChatRowKey::Header { message_id } => ChatRowRef::Header(*message_id),
+            ChatRowKey::Header {
+                message_id,
+                collapsed,
+            } => ChatRowRef::Header {
+                message_id: *message_id,
+                collapsed: *collapsed,
+            },
             ChatRowKey::Block { block_id, .. } => ChatRowRef::Block(*block_id),
             ChatRowKey::PendingToolResult { tool_use_id, .. } => {
                 ChatRowRef::PendingToolResult(*tool_use_id)
@@ -1670,6 +2295,18 @@ fn placeholder_block(block_id: ChatBlockId, kind_tag: &ChatBlockKindTag) -> Opti
             level: *level,
             text: text.clone(),
         })),
+        ChatBlockKindTag::Compact {
+            status,
+            before_tokens,
+            after_tokens,
+            summary,
+        } => Some(ChatBlock::Compact(CompactBlock {
+            id: block_id,
+            status: *status,
+            before_tokens: *before_tokens,
+            after_tokens: *after_tokens,
+            summary: summary.clone(),
+        })),
         ChatBlockKindTag::Artifact {
             kind,
             anchor,
@@ -1691,7 +2328,36 @@ struct ToolResultRowCandidate {
     kind_tag: ChatBlockKindTag,
 }
 
+fn message_ids_from_messages(messages: &[ChatMessage]) -> Vec<ChatMessageId> {
+    messages.iter().map(|message| message.id).collect()
+}
+
+fn message_ids_rewrite_branch(previous: &[ChatMessageId], next: &[ChatMessageId]) -> bool {
+    if previous.is_empty() || previous == next {
+        return false;
+    }
+    if next.starts_with(previous) || next.ends_with(previous) {
+        return false;
+    }
+    true
+}
+
+fn changed_turn_id(
+    previous: &HashSet<ChatMessageId>,
+    current: &HashSet<ChatMessageId>,
+) -> Option<ChatMessageId> {
+    previous.symmetric_difference(current).copied().next()
+}
+
+#[cfg(test)]
 fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
+    row_keys_from_messages_with_collapsed(messages, &HashSet::new())
+}
+
+fn row_keys_from_messages_with_collapsed(
+    messages: &[ChatMessage],
+    collapsed_turns: &HashSet<ChatMessageId>,
+) -> Vec<ChatRowKey> {
     let result_candidates = collect_tool_result_candidates(messages);
     let mut paired_results = HashSet::new();
     let mut rows = Vec::new();
@@ -1699,6 +2365,7 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
 
     for message in messages {
         let mut header_inserted = false;
+        let turn_collapsed = collapsed_turns.contains(&message.id);
         for block in &message.blocks {
             let block_order = order;
             order = order.saturating_add(1);
@@ -1707,7 +2374,21 @@ fn row_keys_from_messages(messages: &[ChatMessage]) -> Vec<ChatRowKey> {
                 continue;
             }
 
-            ensure_message_header(&mut rows, &mut header_inserted, message.id);
+            ensure_message_header(&mut rows, &mut header_inserted, message.id, turn_collapsed);
+            if turn_collapsed {
+                if let ChatBlock::ToolUse(tool) = block
+                    && let Some(result) = matching_tool_result_candidate(
+                        &result_candidates,
+                        &paired_results,
+                        &tool.call_id,
+                        block_order,
+                    )
+                {
+                    paired_results.insert(result.block_id);
+                }
+                continue;
+            }
+
             rows.push(block_row_key(message.id, block));
 
             if let ChatBlock::ToolUse(tool) = block {
@@ -1775,11 +2456,15 @@ fn ensure_message_header(
     rows: &mut Vec<ChatRowKey>,
     header_inserted: &mut bool,
     message_id: ChatMessageId,
+    collapsed: bool,
 ) {
     if *header_inserted {
         return;
     }
-    rows.push(ChatRowKey::Header { message_id });
+    rows.push(ChatRowKey::Header {
+        message_id,
+        collapsed,
+    });
     *header_inserted = true;
 }
 
@@ -1838,6 +2523,18 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
             level: *level,
             text: text.clone(),
         },
+        ChatBlock::Compact(CompactBlock {
+            status,
+            before_tokens,
+            after_tokens,
+            summary,
+            ..
+        }) => ChatBlockKindTag::Compact {
+            status: *status,
+            before_tokens: *before_tokens,
+            after_tokens: *after_tokens,
+            summary: summary.clone(),
+        },
         ChatBlock::Artifact(ArtifactBlock {
             kind,
             anchor,
@@ -1851,6 +2548,123 @@ fn block_kind_tag(block: &ChatBlock) -> ChatBlockKindTag {
     }
 }
 
+fn collect_search_matches(
+    messages: &[ChatMessage],
+    row_keys: &[ChatRowKey],
+    query: &str,
+    config: &ChatMessageListConfig,
+) -> Vec<SearchMatch> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    for key in row_keys {
+        let text = searchable_text_for_row(messages, key, config);
+        let count = find_case_insensitive_byte_ranges(&text, query).len();
+        matches.extend((0..count).map(|_| SearchMatch { row_id: key.id() }));
+    }
+    matches
+}
+
+fn searchable_text_for_row(
+    messages: &[ChatMessage],
+    key: &ChatRowKey,
+    config: &ChatMessageListConfig,
+) -> String {
+    let Some(message) = messages
+        .iter()
+        .find(|message| message.id == key.message_id())
+    else {
+        return String::new();
+    };
+
+    match key {
+        ChatRowKey::Header { collapsed, .. } => turn_header_label_for_row(message, *collapsed),
+        ChatRowKey::Block { block_id, .. } => find_block(message, *block_id)
+            .map(|block| searchable_text_for_block(block, config))
+            .unwrap_or_default(),
+        ChatRowKey::PendingToolResult { call_id, .. } => pending_tool_result_title(call_id),
+    }
+}
+
+fn searchable_text_for_block(block: &ChatBlock, config: &ChatMessageListConfig) -> String {
+    match block {
+        ChatBlock::Text(text) => searchable_markdown(&text.markdown, text.streaming, config),
+        ChatBlock::Thinking(thinking) => {
+            let mut lines = vec!["Thinking".to_string()];
+            if !thinking.collapsed {
+                lines.push(searchable_markdown(&thinking.markdown, false, config));
+            }
+            lines.join("\n")
+        }
+        ChatBlock::Attachment(attachment) => {
+            attachment_label(&attachment.name, attachment.url.as_deref())
+        }
+        ChatBlock::ToolUse(tool) => searchable_tool_use(tool),
+        ChatBlock::ToolResult(result) => searchable_tool_result(result),
+        ChatBlock::Diff(diff) => format!("{}\n{}", diff_block_title(diff), diff.diff.unified),
+        ChatBlock::Plan(plan) => {
+            let mut lines = vec![plan_block_title(plan.decision)];
+            lines.extend(plan_display_lines(&plan.items));
+            lines.join("\n")
+        }
+        ChatBlock::Task(task) => {
+            if task.collapsed {
+                task_block_title(task)
+            } else {
+                task_display_lines(&TaskDetails::from(task)).join("\n")
+            }
+        }
+        ChatBlock::Todo(todo) => todo_display_lines(&todo.items).join("\n"),
+        ChatBlock::Notice(notice) => notice_label(notice.level, &notice.text),
+        ChatBlock::Compact(compact) => compact_display_lines(compact).join("\n"),
+        ChatBlock::Artifact(artifact) => {
+            format!("Artifact {}: {}", artifact.kind.label(), artifact.title)
+        }
+    }
+}
+
+fn searchable_markdown(markdown: &str, streaming: bool, config: &ChatMessageListConfig) -> String {
+    let mut content = markdown.to_string();
+    if streaming && !config.in_progress_suffix.is_empty() {
+        content.push_str(&config.in_progress_suffix);
+    }
+    content
+}
+
+fn searchable_tool_use(tool: &ToolUseBlock) -> String {
+    let mut lines = vec![tool.name.clone()];
+    if tool.collapsed {
+        return lines.join("\n");
+    }
+    lines.extend(tool_input_detail_lines(&tool.input));
+    if let Some(approval) = &tool.approval {
+        lines.push(format!("Approval: {}", approval.prompt));
+        if let Some(resolved) = &approval.resolved {
+            lines.push(approval_resolved_label(approval, resolved));
+        } else if approval.options.is_empty() {
+            lines.push("No approval options".to_string());
+        } else {
+            lines.extend(
+                approval
+                    .options
+                    .iter()
+                    .map(|option| approval_option_button_label(approval, option)),
+            );
+        }
+    }
+    lines.join("\n")
+}
+
+fn searchable_tool_result(result: &ToolResultBlock) -> String {
+    let mut lines = vec![tool_result_title(result)];
+    if !result.collapsed {
+        lines.push(result.output.as_text().to_string());
+    }
+    lines.join("\n")
+}
+
 #[derive(Default)]
 struct ChatMessageRowBindings {
     header: Option<Binding<String>>,
@@ -1861,6 +2675,7 @@ struct ChatMessageRowBindings {
     plan_items: Option<Binding<Vec<PlanItem>>>,
     task_details: Option<Binding<TaskDetails>>,
     todo_items: Option<Binding<Vec<TodoItem>>>,
+    compact: Option<Binding<CompactBlock>>,
     tool_use: Option<Binding<ToolUseDetails>>,
     tool_output: Option<Binding<String>>,
     disclosure_status: Option<Binding<DisclosureStatus>>,
@@ -1887,11 +2702,11 @@ impl ChatMessageRow {
                 build_row_view(&message, &key, &config)
             });
         let last_message_version = match row_ref {
-            ChatRowRef::Header(message_id) => store.message_version(message_id),
+            ChatRowRef::Header { message_id, .. } => store.message_version(message_id),
             ChatRowRef::Block(_) | ChatRowRef::PendingToolResult(_) => 0,
         };
         let last_block_version = match row_ref {
-            ChatRowRef::Header(_) => 0,
+            ChatRowRef::Header { .. } => 0,
             ChatRowRef::Block(block_id) => store.block_version(block_id),
             ChatRowRef::PendingToolResult(tool_use_id) => store.block_version(tool_use_id),
         };
@@ -1908,20 +2723,23 @@ impl ChatMessageRow {
 
     fn sync_body_bindings(&self) {
         match self.row_ref {
-            ChatRowRef::Header(message_id) => self.sync_header_bindings(message_id),
+            ChatRowRef::Header {
+                message_id,
+                collapsed,
+            } => self.sync_header_bindings(message_id, collapsed),
             ChatRowRef::Block(block_id) => self.sync_block_bindings(block_id),
             ChatRowRef::PendingToolResult(tool_use_id) => self.sync_block_bindings(tool_use_id),
         }
     }
 
-    fn sync_header_bindings(&self, message_id: ChatMessageId) {
+    fn sync_header_bindings(&self, message_id: ChatMessageId, collapsed: bool) {
         let version = self.store.message_version(message_id);
         if version == self.last_message_version.get() {
             return;
         }
         self.store.with_message(message_id, |message| {
             if let Some(binding) = &self.body_bindings.header {
-                binding.set(turn_header_label(message));
+                binding.set(turn_header_label_for_row(message, collapsed));
             }
             if let Some(binding) = &self.body_bindings.turn_status {
                 binding.set(message.status.clone());
@@ -1975,6 +2793,12 @@ impl ChatMessageRow {
                 binding.set(items);
             }
 
+            if let Some(binding) = &self.body_bindings.compact
+                && let Some(compact) = block_compact_for_render(block)
+            {
+                binding.set(compact);
+            }
+
             if let Some(binding) = &self.body_bindings.tool_use
                 && let Some(details) = block_tool_use_for_render(block)
             {
@@ -2003,8 +2827,8 @@ fn build_row_view(
     };
 
     match key {
-        ChatRowKey::Header { .. } => {
-            let (bubble, mut bindings) = build_aligned_turn_header(message, config);
+        ChatRowKey::Header { collapsed, .. } => {
+            let (bubble, mut bindings) = build_aligned_turn_header(message, config, *collapsed);
             if config.show_timestamps
                 && let Some(ts) = &message.meta.timestamp
             {
@@ -2082,6 +2906,13 @@ fn block_task_details_for_render(block: &ChatBlock) -> Option<TaskDetails> {
 fn block_todo_items_for_render(block: &ChatBlock) -> Option<Vec<TodoItem>> {
     match block {
         ChatBlock::Todo(todo) => Some(todo.items.clone()),
+        _ => None,
+    }
+}
+
+fn block_compact_for_render(block: &ChatBlock) -> Option<CompactBlock> {
+    match block {
+        ChatBlock::Compact(compact) => Some(compact.clone()),
         _ => None,
     }
 }
@@ -2197,8 +3028,9 @@ where
 fn build_aligned_turn_header(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
+    collapsed: bool,
 ) -> (HStack, ChatMessageRowBindings) {
-    let (bubble, bindings) = build_turn_header(message, config);
+    let (bubble, bindings) = build_turn_header(message, config, collapsed);
     let row = align_bubble(
         bubble,
         message.role.alignment(),
@@ -2250,8 +3082,9 @@ fn build_aligned_pending_tool_result(
 fn build_turn_header(
     message: &ChatMessage,
     config: &ChatMessageRowConfig,
+    collapsed: bool,
 ) -> (VStack, ChatMessageRowBindings) {
-    let header_label = Binding::new(turn_header_label(message));
+    let header_label = Binding::new(turn_header_label_for_row(message, collapsed));
     let turn_status = Binding::new(message.status.clone());
     let header = Text::new(String::new()).text(header_label.clone()).style(
         Style::default()
@@ -2267,13 +3100,7 @@ fn build_turn_header(
         .with_spacing(1)
         .child_with_layout(header, content_layout);
 
-    if let Some(actions) = turn_action_row(
-        message.id,
-        &message.role,
-        turn_status.clone(),
-        &config.on_message_action,
-        &config.on_cancel,
-    ) {
+    if let Some(actions) = turn_action_row(message, turn_status.clone(), config) {
         bubble = bubble.child_with_layout(actions, content_layout);
     }
 
@@ -2307,8 +3134,7 @@ fn build_block_bubble(
         .child_with_layout(body, content_layout);
 
     if let Some(block) = block
-        && let Some(actions) =
-            block_copy_action_row(message_id, block.id(), &config.on_message_action)
+        && let Some(actions) = block_action_row(message_id, block, config)
     {
         bubble = bubble.child_with_layout(actions, content_layout);
     }
@@ -2316,22 +3142,55 @@ fn build_block_bubble(
     (bubble, body_bindings)
 }
 
+fn has_turn_action_row(message: &ChatMessage, config: &ChatMessageRowConfig) -> bool {
+    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
+    has_turn_collapse_control(message)
+        || show_cancel
+        || config.quote_replies.is_some()
+        || config.on_message_action.is_some()
+        || (config.edit_and_resubmit.is_some() && editable_user_message_text(message).is_some())
+}
+
+fn has_turn_collapse_control(message: &ChatMessage) -> bool {
+    !message.blocks.is_empty()
+}
+
 fn turn_action_row(
-    message_id: ChatMessageId,
-    role: &ChatRole,
+    message: &ChatMessage,
     turn_status: Binding<ChatTurnStatus>,
-    on_message_action: &Option<MessageActionCallback>,
-    on_cancel: &Option<CancelCallback>,
+    config: &ChatMessageRowConfig,
 ) -> Option<HStack> {
-    let show_cancel = on_cancel.is_some() && turn_status.get().is_streaming();
-    if on_message_action.is_none() && !show_cancel {
+    let show_cancel = config.on_cancel.is_some() && turn_status.get().is_streaming();
+    let editable_text = config
+        .edit_and_resubmit
+        .as_ref()
+        .and_then(|_| editable_user_message_text(message));
+    if config.on_message_action.is_none()
+        && editable_text.is_none()
+        && !show_cancel
+        && config.quote_replies.is_none()
+        && !has_turn_collapse_control(message)
+    {
         return None;
     }
     let mut row = HStack::new().with_spacing(1);
-    if show_cancel && let Some(callback) = on_cancel.clone() {
-        let label = "Cancel";
+    if has_turn_collapse_control(message) {
+        let collapsed = config.collapsed_turns.get().contains(&message.id);
+        let label = if collapsed { "Expand" } else { "Collapse" };
         row = row.child_with_layout(
-            streaming_cancel_button(label, message_id, turn_status, callback),
+            turn_collapse_button(label, message.id, collapsed, config.collapsed_turns.clone()),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    if show_cancel && let Some(callback) = config.on_cancel.clone() {
+        let label = "Cancel";
+        let controller = StreamingCancelController::new(config.store.clone(), callback);
+        row = row.child_with_layout(
+            streaming_cancel_button(label, message.id, turn_status, controller),
             LayoutParams {
                 width: Size::Content,
                 height: Size::Content,
@@ -2339,10 +3198,35 @@ fn turn_action_row(
             },
         );
     }
-    if let Some(callback) = on_message_action.clone() {
-        for (label, kind) in turn_action_specs(role) {
+    if let Some(controller) = config.quote_replies.clone() {
+        let label = "Quote";
+        row = row.child_with_layout(
+            quote_message_button(label, message, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    if let Some(callback) = config.on_message_action.clone() {
+        for (label, kind) in turn_action_specs(&message.role) {
+            if matches!(kind, MessageActionKind::EditUser)
+                && let (Some(controller), Some(original_text)) =
+                    (config.edit_and_resubmit.clone(), editable_text.clone())
+            {
+                row = row.child_with_layout(
+                    edit_and_resubmit_button(label, message.id, original_text, controller),
+                    LayoutParams {
+                        width: Size::Fixed(button_width_for_label(label)),
+                        height: Size::Content,
+                        ..LayoutParams::default()
+                    },
+                );
+                continue;
+            }
             row = row.child_with_layout(
-                message_action_button(label, message_id, kind, callback.clone()),
+                turn_message_action_button(label, message.id, kind, config, callback.clone()),
                 LayoutParams {
                     width: Size::Fixed(button_width_for_label(label)),
                     height: Size::Content,
@@ -2350,8 +3234,35 @@ fn turn_action_row(
                 },
             );
         }
+    } else if let (Some(controller), Some(original_text)) =
+        (config.edit_and_resubmit.clone(), editable_text)
+    {
+        let label = "Edit";
+        row = row.child_with_layout(
+            edit_and_resubmit_button(label, message.id, original_text, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
     }
     Some(row)
+}
+
+fn editable_user_message_text(message: &ChatMessage) -> Option<String> {
+    if !matches!(message.role, ChatRole::User) {
+        return None;
+    }
+    let parts = message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ChatBlock::Text(text) => Some(text.markdown.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> {
@@ -2369,26 +3280,43 @@ fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> 
     }
 }
 
-fn block_copy_action_row(
+fn block_action_row(
     message_id: ChatMessageId,
-    block_id: ChatBlockId,
-    on_message_action: &Option<MessageActionCallback>,
+    block: &ChatBlock,
+    config: &ChatMessageRowConfig,
 ) -> Option<HStack> {
-    let callback = on_message_action.clone()?;
-    let label = "Copy block";
-    Some(HStack::new().child_with_layout(
-        message_action_button(
-            label,
-            message_id,
-            MessageActionKind::CopyBlock(block_id),
-            callback,
-        ),
-        LayoutParams {
-            width: Size::Fixed(button_width_for_label(label)),
-            height: Size::Content,
-            ..LayoutParams::default()
-        },
-    ))
+    if config.on_message_action.is_none() && config.quote_replies.is_none() {
+        return None;
+    }
+    let mut row = HStack::new().with_spacing(1);
+    if let Some(callback) = config.on_message_action.clone() {
+        let label = "Copy block";
+        row = row.child_with_layout(
+            message_action_button(
+                label,
+                message_id,
+                MessageActionKind::CopyBlock(block.id()),
+                callback,
+            ),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    if let Some(controller) = config.quote_replies.clone() {
+        let label = "Quote block";
+        row = row.child_with_layout(
+            quote_block_button(label, message_id, block, controller),
+            LayoutParams {
+                width: Size::Fixed(button_width_for_label(label)),
+                height: Size::Content,
+                ..LayoutParams::default()
+            },
+        );
+    }
+    Some(row)
 }
 
 fn message_action_button(
@@ -2401,16 +3329,185 @@ fn message_action_button(
     Button::new(label).on_click(move || callback(action.clone()))
 }
 
+fn quote_message_button(
+    label: &'static str,
+    message: &ChatMessage,
+    controller: QuoteReplyController,
+) -> Button {
+    let reference = quote_message_reference(message);
+    Button::new(label).on_click(move || controller.attach(reference.clone()))
+}
+
+fn quote_block_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    block: &ChatBlock,
+    controller: QuoteReplyController,
+) -> Button {
+    let reference = quote_block_reference(message_id, block);
+    Button::new(label).on_click(move || controller.attach(reference.clone()))
+}
+
+fn quote_message_reference(message: &ChatMessage) -> ChatInputReference {
+    ChatInputReference::new(
+        message.id,
+        format!("{} #{}", message.role.label(), message.id.0),
+        quote_message_preview(message),
+    )
+}
+
+fn quote_block_reference(message_id: ChatMessageId, block: &ChatBlock) -> ChatInputReference {
+    ChatInputReference::new(
+        message_id,
+        format!("Block #{}", block.id().0),
+        quote_block_preview(block),
+    )
+    .block_id(block.id())
+}
+
+fn quote_message_preview(message: &ChatMessage) -> String {
+    let preview = message
+        .blocks
+        .iter()
+        .map(quote_block_preview)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    compact_quote_preview(&preview)
+}
+
+fn quote_block_preview(block: &ChatBlock) -> String {
+    let raw = match block {
+        ChatBlock::Text(block) => block.markdown.clone(),
+        ChatBlock::Thinking(block) => block.markdown.clone(),
+        ChatBlock::ToolUse(block) => format!("Tool {} ({:?})", block.name, block.status),
+        ChatBlock::ToolResult(block) => block.output.as_text().to_string(),
+        ChatBlock::Diff(block) => block.diff.unified.clone(),
+        ChatBlock::Plan(block) => block
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+        ChatBlock::Task(block) => {
+            if block.summary.trim().is_empty() {
+                block.title.clone()
+            } else {
+                format!("{} - {}", block.title, block.summary)
+            }
+        }
+        ChatBlock::Todo(block) => block
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+        ChatBlock::Attachment(block) => format!("Attachment {}", block.name),
+        ChatBlock::Notice(block) => block.text.clone(),
+        ChatBlock::Compact(block) => compact_display_lines(block).join(" "),
+        ChatBlock::Artifact(block) => format!("Artifact {}", block.title),
+    };
+    compact_quote_preview(&raw)
+}
+
+fn compact_quote_preview(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 160;
+    let mut compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > MAX_PREVIEW_CHARS {
+        compact = compact.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        compact.push_str("...");
+    }
+    compact
+}
+
+fn turn_collapse_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    collapsed: bool,
+    collapsed_turns: Binding<HashSet<ChatMessageId>>,
+) -> Button {
+    Button::new(label).on_click(move || {
+        set_turn_collapsed(&collapsed_turns, message_id, !collapsed);
+    })
+}
+
+fn set_turn_collapsed(
+    collapsed_turns: &Binding<HashSet<ChatMessageId>>,
+    message_id: ChatMessageId,
+    collapsed: bool,
+) {
+    let mut next = collapsed_turns.get();
+    let changed = if collapsed {
+        next.insert(message_id)
+    } else {
+        next.remove(&message_id)
+    };
+    if changed {
+        collapsed_turns.set(next);
+    }
+}
+
+fn turn_message_action_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    kind: MessageActionKind,
+    config: &ChatMessageRowConfig,
+    callback: MessageActionCallback,
+) -> Button {
+    if matches!(
+        kind,
+        MessageActionKind::Retry | MessageActionKind::Regenerate
+    ) {
+        retry_or_regenerate_button(label, message_id, kind, config.store.clone(), callback)
+    } else {
+        message_action_button(label, message_id, kind, callback)
+    }
+}
+
+fn retry_or_regenerate_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    kind: MessageActionKind,
+    store: ChatMessageStore,
+    callback: MessageActionCallback,
+) -> Button {
+    let action = MessageAction { message_id, kind };
+    Button::new(label).on_click(move || {
+        let is_assistant = store
+            .with_message(message_id, |message| {
+                matches!(message.role, ChatRole::Assistant)
+            })
+            .unwrap_or(false);
+        if is_assistant && store.truncate_from(message_id).is_some() {
+            callback(action.clone());
+        }
+    })
+}
+
+fn edit_and_resubmit_button(
+    label: &'static str,
+    message_id: ChatMessageId,
+    original_text: String,
+    controller: EditAndResubmitController,
+) -> Button {
+    Button::new(label).on_click(move || {
+        let _ = controller.begin_edit(message_id, original_text.clone());
+    })
+}
+
 fn streaming_cancel_button(
     label: &'static str,
     message_id: ChatMessageId,
     status: Binding<ChatTurnStatus>,
-    callback: CancelCallback,
+    controller: StreamingCancelController,
 ) -> StreamingCancelButton {
+    let button_controller = controller.clone();
     StreamingCancelButton {
         label,
         status,
-        button: Button::new(label).on_click(move || callback(message_id)),
+        button: Button::new(label).on_click(move || {
+            let _ = button_controller.request(message_id);
+        }),
     }
 }
 
@@ -2494,6 +3591,21 @@ fn turn_header_label(message: &ChatMessage) -> String {
 
     append_turn_meta_lines(&mut label, &message.meta);
     label
+}
+
+fn turn_header_label_for_row(message: &ChatMessage, collapsed: bool) -> String {
+    let mut label = turn_header_label(message);
+    if collapsed {
+        label.push('\n');
+        label.push_str(&collapsed_turn_placeholder(message));
+    }
+    label
+}
+
+fn collapsed_turn_placeholder(message: &ChatMessage) -> String {
+    let count = message.blocks.len();
+    let noun = if count == 1 { "block" } else { "blocks" };
+    format!("Collapsed · {count} {noun} hidden")
 }
 
 fn append_turn_meta_lines(label: &mut String, meta: &ChatMessageMeta) {
@@ -2910,6 +4022,8 @@ fn build_tool_use_details_stack(
                 block_id,
                 approval_id: approval.id.clone(),
                 option_id: option.id.clone(),
+                action: option.action,
+                level: option.level,
             };
             let callback = on_approve.clone();
             button = button.on_click(move || {
@@ -2936,21 +4050,75 @@ fn build_tool_use_details_stack(
 }
 
 fn approval_option_button_label(approval: &ApprovalRequest, option: &ApprovalOption) -> String {
-    match approval.resolved.as_deref() {
-        Some(resolved) if resolved == option.id => format!("[x] {}", option.label),
-        Some(_) => format!("[ ] {}", option.label),
-        None => option.label.clone(),
+    let label = approval_option_display_label(option);
+    match approval.resolved.as_ref() {
+        Some(resolved) if resolved.option_id == option.id => format!("[x] {label}"),
+        Some(_) => format!("[ ] {label}"),
+        None => label,
     }
 }
 
-fn approval_resolved_label(approval: &ApprovalRequest, resolved: &str) -> String {
+fn approval_resolved_label(approval: &ApprovalRequest, resolved: &ApprovalResolution) -> String {
     let label = approval
         .options
         .iter()
-        .find(|option| option.id == resolved)
+        .find(|option| option.id == resolved.option_id)
         .map(|option| option.label.as_str())
-        .unwrap_or(resolved);
+        .unwrap_or(resolved.option_id.as_str());
+    let label = approval_label_with_scope(label, resolved.action, resolved.level);
     format!("[x] {label}")
+}
+
+fn approval_option_display_label(option: &ApprovalOption) -> String {
+    approval_label_with_scope(&option.label, option.action, option.level)
+}
+
+fn approval_label_with_scope(label: &str, action: ApprovalAction, level: ApprovalLevel) -> String {
+    if approval_label_mentions_scope(label, action, level) {
+        label.to_string()
+    } else {
+        format!("{label} · {}", approval_scope_label(action, level))
+    }
+}
+
+fn approval_scope_label(action: ApprovalAction, level: ApprovalLevel) -> &'static str {
+    match (action, level) {
+        (ApprovalAction::Allow, ApprovalLevel::Once) => "once",
+        (ApprovalAction::Allow, ApprovalLevel::Always) => "always",
+        (ApprovalAction::Allow, ApprovalLevel::Project) => "project",
+        (ApprovalAction::Deny, ApprovalLevel::Once) => "deny",
+        (ApprovalAction::Deny, ApprovalLevel::Always) => "deny always",
+        (ApprovalAction::Deny, ApprovalLevel::Project) => "deny project",
+    }
+}
+
+fn approval_label_mentions_scope(
+    label: &str,
+    action: ApprovalAction,
+    level: ApprovalLevel,
+) -> bool {
+    let normalized = label.to_ascii_lowercase();
+    match action {
+        ApprovalAction::Allow => match level {
+            ApprovalLevel::Once => {
+                normalized.contains("once")
+                    || normalized.contains("one-time")
+                    || normalized.contains("one time")
+            }
+            ApprovalLevel::Always => normalized.contains("always"),
+            ApprovalLevel::Project => {
+                normalized.contains("project") || normalized.contains("workspace")
+            }
+        },
+        ApprovalAction::Deny => {
+            normalized.split_whitespace().any(|part| part == "no")
+                || normalized.contains("deny")
+                || normalized.contains("reject")
+                || normalized.contains("decline")
+                || normalized.contains("cancel")
+                || normalized.contains("stop")
+        }
+    }
 }
 
 fn button_width_for_label(label: &str) -> u16 {
@@ -3076,6 +4244,7 @@ impl ::atto_ui::composable::Layout for ToolUseDetailsView {
 struct DiffDecisionView {
     title: Option<String>,
     diff: Binding<String>,
+    path: Option<String>,
     message_id: ChatMessageId,
     block_id: ChatBlockId,
     decision: EditDecision,
@@ -3090,6 +4259,7 @@ impl DiffDecisionView {
     fn new(
         title: Option<String>,
         diff: impl Into<Binding<String>>,
+        path: Option<String>,
         message_id: ChatMessageId,
         block_id: ChatBlockId,
         decision: EditDecision,
@@ -3098,6 +4268,7 @@ impl DiffDecisionView {
         Self {
             title,
             diff: diff.into(),
+            path,
             message_id,
             block_id,
             decision,
@@ -3109,13 +4280,13 @@ impl DiffDecisionView {
         }
     }
 
-    fn diff_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+    fn diff_lines(&self, base: Style, title_style: Style, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(title) = &self.title {
             lines.push(Line::styled(title.clone(), title_style));
         }
         let diff = self.diff.get();
-        lines.extend(diff_display_lines(&diff, base));
+        lines.extend(diff_display_lines(&diff, base, self.path.as_deref(), theme));
         lines
     }
 
@@ -3225,8 +4396,12 @@ impl Component for DiffDecisionView {
                 ..area
             };
             frame.render_widget(
-                Paragraph::new(self.diff_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
-                    .scroll((0, self.scroll_x)),
+                Paragraph::new(self.diff_lines(
+                    ctx.theme.widget.normal,
+                    ctx.theme.widget.dim,
+                    ctx.theme,
+                ))
+                .scroll((0, self.scroll_x)),
                 diff_area,
             );
         }
@@ -3638,6 +4813,7 @@ enum ChatMessageBody {
     Diff(DiffDecisionView),
     Plan(PlanDecisionView),
     Todo(TodoListView),
+    Compact(CompactBlockView),
     Artifact(ArtifactLink),
     CopyTarget(BlockCopyTarget),
 }
@@ -3751,6 +4927,7 @@ impl ChatMessageBody {
                     ChatMessageBody::Diff(DiffDecisionView::new(
                         Some(diff_block_title(diff)),
                         content.clone(),
+                        Some(diff.path.clone()),
                         message_id,
                         diff.id,
                         diff.decision,
@@ -3810,6 +4987,16 @@ impl ChatMessageBody {
                 ),
                 ChatMessageRowBindings::default(),
             ),
+            Some(ChatBlock::Compact(compact)) => {
+                let compact = Binding::new(compact.clone());
+                (
+                    ChatMessageBody::Compact(CompactBlockView::new(compact.clone())),
+                    ChatMessageRowBindings {
+                        compact: Some(compact),
+                        ..ChatMessageRowBindings::default()
+                    },
+                )
+            }
             Some(ChatBlock::Artifact(ArtifactBlock {
                 kind,
                 anchor,
@@ -3875,6 +5062,64 @@ fn notice_color(level: NoticeLevel) -> Color {
         NoticeLevel::Info => Color::Cyan,
         NoticeLevel::Warning => Color::Yellow,
         NoticeLevel::Error => Color::Red,
+    }
+}
+
+fn compact_display_lines(block: &CompactBlock) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Context compact: {}",
+        compact_status_label(block.status)
+    )];
+    if let Some(tokens) = compact_token_label(block.before_tokens, block.after_tokens) {
+        lines.push(format!("Tokens: {tokens}"));
+    }
+    append_compact_summary_lines(&mut lines, &block.summary);
+    lines
+}
+
+fn compact_token_label(before_tokens: Option<u64>, after_tokens: Option<u64>) -> Option<String> {
+    match (before_tokens, after_tokens) {
+        (Some(before), Some(after)) => {
+            let saved = before.saturating_sub(after);
+            Some(format!("{before} -> {after} ({saved} saved)"))
+        }
+        (Some(before), None) => Some(format!("before {before}")),
+        (None, Some(after)) => Some(format!("after {after}")),
+        (None, None) => None,
+    }
+}
+
+fn append_compact_summary_lines(lines: &mut Vec<String>, summary: &str) {
+    let summary = summary.trim_end();
+    if summary.trim().is_empty() {
+        return;
+    }
+    for (idx, line) in summary.lines().enumerate() {
+        if idx == 0 {
+            lines.push(format!("Summary: {line}"));
+        } else {
+            lines.push(format!("  {line}"));
+        }
+    }
+}
+
+fn compact_status_label(status: CompactStatus) -> &'static str {
+    match status {
+        CompactStatus::Pending => "Pending",
+        CompactStatus::Running => "Running",
+        CompactStatus::Complete => "Complete",
+        CompactStatus::Failed => "Failed",
+        CompactStatus::Canceled => "Canceled",
+    }
+}
+
+fn compact_status_color(status: CompactStatus) -> Color {
+    match status {
+        CompactStatus::Pending => Color::Cyan,
+        CompactStatus::Running => Color::Yellow,
+        CompactStatus::Complete => Color::Green,
+        CompactStatus::Failed => Color::Red,
+        CompactStatus::Canceled => Color::DarkGray,
     }
 }
 
@@ -4197,6 +5442,11 @@ fn append_task_block_lines(lines: &mut Vec<String>, block: &ChatBlock, indent: u
                 notice_label(notice.level, &notice.text)
             ));
         }
+        ChatBlock::Compact(compact) => {
+            for line in compact_display_lines(compact) {
+                lines.push(format!("{prefix}{line}"));
+            }
+        }
         ChatBlock::Artifact(artifact) => lines.push(format!(
             "{prefix}Artifact {}: {}",
             artifact.kind.label(),
@@ -4233,7 +5483,7 @@ fn tool_output_component(
                     .vertical_scrollbar(ScrollbarVisibility::Never)
             }),
         ),
-        ToolOutput::Diff(_) => Box::new(DiffView::new(None, content)),
+        ToolOutput::Diff(_) => Box::new(DiffView::new(None, content, None)),
     }
 }
 
@@ -4323,27 +5573,29 @@ fn component_value_compact(value: &ComponentValue) -> String {
 struct DiffView {
     title: Option<String>,
     diff: Binding<String>,
+    path: Option<String>,
     scroll_x: u16,
     viewport: (u16, u16),
 }
 
 impl DiffView {
-    fn new(title: Option<String>, diff: impl Into<Binding<String>>) -> Self {
+    fn new(title: Option<String>, diff: impl Into<Binding<String>>, path: Option<String>) -> Self {
         Self {
             title,
             diff: diff.into(),
+            path,
             scroll_x: 0,
             viewport: (0, 0),
         }
     }
 
-    fn display_lines(&self, base: Style, title_style: Style) -> Vec<Line<'static>> {
+    fn display_lines(&self, base: Style, title_style: Style, theme: &Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         if let Some(title) = &self.title {
             lines.push(Line::styled(title.clone(), title_style));
         }
         let diff = self.diff.get();
-        lines.extend(diff_display_lines(&diff, base));
+        lines.extend(diff_display_lines(&diff, base, self.path.as_deref(), theme));
         lines
     }
 
@@ -4392,8 +5644,12 @@ impl Component for DiffView {
             return;
         }
         frame.render_widget(
-            Paragraph::new(self.display_lines(ctx.theme.widget.normal, ctx.theme.widget.dim))
-                .scroll((0, self.scroll_x)),
+            Paragraph::new(self.display_lines(
+                ctx.theme.widget.normal,
+                ctx.theme.widget.dim,
+                ctx.theme,
+            ))
+            .scroll((0, self.scroll_x)),
             area,
         );
     }
@@ -4504,6 +5760,72 @@ impl ::atto_ui::composable::DynamicTree for TodoListView {}
 impl ::atto_ui::composable::EventHandling for TodoListView {}
 
 impl ::atto_ui::composable::Layout for TodoListView {
+    fn min_width(&self) -> u16 {
+        1
+    }
+
+    fn min_height(&self) -> u16 {
+        1
+    }
+
+    fn desired_width(&self) -> Option<u16> {
+        Some(max_line_width(&self.display_lines()))
+    }
+
+    fn desired_height(&self) -> Option<u16> {
+        Some(self.display_lines().len().min(u16::MAX as usize) as u16)
+    }
+}
+
+struct CompactBlockView {
+    block: Binding<CompactBlock>,
+}
+
+impl CompactBlockView {
+    fn new(block: impl Into<Binding<CompactBlock>>) -> Self {
+        Self {
+            block: block.into(),
+        }
+    }
+
+    fn display_lines(&self) -> Vec<String> {
+        self.block.with(compact_display_lines)
+    }
+}
+
+impl Component for CompactBlockView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let block = self.block.get();
+        let lines = compact_display_lines(&block)
+            .into_iter()
+            .enumerate()
+            .map(|(idx, line)| {
+                if idx == 0 {
+                    Line::styled(
+                        line,
+                        Style::default()
+                            .fg(compact_status_color(block.status))
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Line::styled(line, ctx.theme.widget.dim)
+                }
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl ::atto_ui::composable::DragAndDrop for CompactBlockView {}
+impl ::atto_ui::composable::Scrollable for CompactBlockView {}
+impl ::atto_ui::composable::FocusNav for CompactBlockView {}
+impl ::atto_ui::composable::DynamicTree for CompactBlockView {}
+impl ::atto_ui::composable::EventHandling for CompactBlockView {}
+
+impl ::atto_ui::composable::Layout for CompactBlockView {
     fn min_width(&self) -> u16 {
         1
     }
@@ -4733,13 +6055,296 @@ fn add_signed_u16(value: u16, delta: i16) -> u16 {
     }
 }
 
-fn diff_display_lines(diff: &str, base: Style) -> Vec<Line<'static>> {
+fn diff_display_lines(
+    diff: &str,
+    base: Style,
+    explicit_path: Option<&str>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     if diff.is_empty() {
         return vec![Line::styled(String::new(), base)];
     }
-    diff.lines()
-        .map(|line| Line::styled(line.to_string(), diff_line_style(line, base)))
+
+    let metas = classify_diff_lines(diff, explicit_path);
+    let highlighted = highlight_diff_payloads(&metas);
+
+    metas
+        .iter()
+        .enumerate()
+        .map(|(idx, meta)| {
+            diff_render_line(
+                meta,
+                base,
+                theme,
+                highlighted.get(idx).and_then(Option::as_ref),
+            )
+        })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffLineKind {
+    FileHeader,
+    Hunk,
+    Addition,
+    Removal,
+    Context,
+    Other,
+}
+
+struct DiffLineMeta<'a> {
+    text: &'a str,
+    kind: DiffLineKind,
+    payload: Option<&'a str>,
+    hint: Option<String>,
+    section: usize,
+}
+
+fn classify_diff_lines<'a>(diff: &'a str, explicit_path: Option<&str>) -> Vec<DiffLineMeta<'a>> {
+    let explicit_hint = explicit_path.and_then(normalize_diff_path);
+    let mut current_hint = explicit_hint.clone();
+    let mut in_hunk = false;
+    let mut section = 0usize;
+    let mut metas = Vec::new();
+    let raw_lines = diff.lines().collect::<Vec<_>>();
+
+    // Use hunk state plus adjacent ---/+++ pairs so deleted payloads like "--- foo" stay red.
+    for (idx, line) in raw_lines.iter().enumerate() {
+        let line = *line;
+        let prev = idx
+            .checked_sub(1)
+            .and_then(|idx| raw_lines.get(idx))
+            .copied();
+        let next = raw_lines.get(idx + 1).copied();
+        let starts_file_header_pair =
+            line.starts_with("--- ") && next.is_some_and(|next| next.starts_with("+++ "));
+        let follows_file_header_pair =
+            line.starts_with("+++ ") && prev.is_some_and(|prev| prev.starts_with("--- "));
+
+        let (kind, payload) = if line.starts_with("diff --git ") {
+            in_hunk = false;
+            section = section.saturating_add(1);
+            if explicit_hint.is_none()
+                && let Some(path) = diff_git_new_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::Other, None)
+        } else if line.starts_with("@@") {
+            in_hunk = true;
+            (DiffLineKind::Hunk, None)
+        } else if starts_file_header_pair || (!in_hunk && line.starts_with("--- ")) {
+            in_hunk = false;
+            section = section.saturating_add(1);
+            if explicit_hint.is_none()
+                && let Some(path) = diff_header_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::FileHeader, None)
+        } else if follows_file_header_pair || (!in_hunk && line.starts_with("+++ ")) {
+            in_hunk = false;
+            if explicit_hint.is_none()
+                && let Some(path) = diff_header_path(line)
+            {
+                current_hint = Some(path);
+            }
+            (DiffLineKind::FileHeader, None)
+        } else if let Some(payload) = line.strip_prefix('+') {
+            (DiffLineKind::Addition, Some(payload))
+        } else if let Some(payload) = line.strip_prefix('-') {
+            (DiffLineKind::Removal, Some(payload))
+        } else if let Some(payload) = line.strip_prefix(' ') {
+            (DiffLineKind::Context, Some(payload))
+        } else {
+            (DiffLineKind::Other, None)
+        };
+
+        metas.push(DiffLineMeta {
+            text: line,
+            kind,
+            payload,
+            hint: payload.and_then(|_| current_hint.clone()),
+            section,
+        });
+    }
+
+    metas
+}
+
+fn highlight_diff_payloads(metas: &[DiffLineMeta<'_>]) -> Vec<Option<HighlightedLine>> {
+    let mut highlighted_by_line = vec![None; metas.len()];
+    let mut payload_indices = metas
+        .iter()
+        .enumerate()
+        .filter(|(_, meta)| meta.payload.is_some())
+        .peekable();
+
+    // Highlight per file section/path to avoid carrying parser state across unrelated files.
+    while let Some((start_idx, start_meta)) = payload_indices.next() {
+        let Some(hint) = start_meta.hint.as_deref() else {
+            continue;
+        };
+        let section = start_meta.section;
+        let mut run_indices = vec![start_idx];
+
+        while let Some((_, next_meta)) = payload_indices.peek()
+            && next_meta.section == section
+            && next_meta.hint.as_deref() == Some(hint)
+        {
+            let (idx, _) = payload_indices.next().expect("peeked payload");
+            run_indices.push(idx);
+        }
+
+        let source = run_indices
+            .iter()
+            .filter_map(|idx| metas[*idx].payload)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Some(lines) = highlight_code_block(Some(hint), &source)
+            .filter(|lines| lines.len() == run_indices.len())
+        else {
+            continue;
+        };
+
+        for (idx, line) in run_indices.into_iter().zip(lines) {
+            highlighted_by_line[idx] = Some(line);
+        }
+    }
+
+    highlighted_by_line
+}
+
+fn diff_render_line(
+    meta: &DiffLineMeta<'_>,
+    base: Style,
+    theme: &Theme,
+    highlighted: Option<&HighlightedLine>,
+) -> Line<'static> {
+    let line_style = diff_line_style_for_kind(meta.kind, base);
+    let Some(payload) = meta.payload else {
+        return Line::styled(meta.text.to_string(), line_style);
+    };
+    let Some(highlighted) = highlighted else {
+        return Line::styled(meta.text.to_string(), line_style);
+    };
+
+    let mut spans = vec![Span::styled(diff_prefix_for_kind(meta.kind), line_style)];
+    let preserve_semantic_colors =
+        matches!(meta.kind, DiffLineKind::Addition | DiffLineKind::Removal);
+    if highlighted.spans.is_empty() && !payload.is_empty() {
+        spans.push(Span::styled(payload.to_string(), line_style));
+    } else {
+        spans.extend(highlighted.spans.iter().map(|span| {
+            let syntax = diff_syntax_style(span.class, theme);
+            Span::styled(
+                span.text.clone(),
+                compose_diff_syntax_style(line_style, syntax, preserve_semantic_colors),
+            )
+        }));
+    }
+
+    let mut line = Line::from(spans);
+    line.style = line_style;
+    line
+}
+
+fn diff_line_style_for_kind(kind: DiffLineKind, base: Style) -> Style {
+    match kind {
+        DiffLineKind::Hunk => base.fg(Color::Yellow),
+        DiffLineKind::FileHeader => base.fg(Color::Cyan),
+        DiffLineKind::Addition => base.fg(Color::Green),
+        DiffLineKind::Removal => base.fg(Color::Red),
+        DiffLineKind::Context | DiffLineKind::Other => base,
+    }
+}
+
+fn diff_prefix_for_kind(kind: DiffLineKind) -> &'static str {
+    match kind {
+        DiffLineKind::Addition => "+",
+        DiffLineKind::Removal => "-",
+        DiffLineKind::Context => " ",
+        DiffLineKind::FileHeader | DiffLineKind::Hunk | DiffLineKind::Other => "",
+    }
+}
+
+fn compose_diff_syntax_style(
+    line_style: Style,
+    syntax_style: Style,
+    preserve_semantic_colors: bool,
+) -> Style {
+    let mut style = line_style.patch(syntax_style);
+    if preserve_semantic_colors {
+        // Syntax spans may add modifiers, but +/- foreground/background remain semantic.
+        style.fg = line_style.fg;
+        style.bg = line_style.bg;
+    }
+    style
+}
+
+fn diff_syntax_style(class: SyntaxClass, theme: &Theme) -> Style {
+    match class {
+        SyntaxClass::Text => theme
+            .named_style("markdown-syntax-text")
+            .unwrap_or_default(),
+        SyntaxClass::Comment => theme
+            .named_style("markdown-syntax-comment")
+            .unwrap_or(Style::default().fg(Color::DarkGray)),
+        SyntaxClass::String => theme
+            .named_style("markdown-syntax-string")
+            .unwrap_or(Style::default().fg(Color::LightGreen)),
+        SyntaxClass::Keyword => theme
+            .named_style("markdown-syntax-keyword")
+            .unwrap_or(Style::default().fg(Color::LightMagenta)),
+        SyntaxClass::Function => theme
+            .named_style("markdown-syntax-function")
+            .unwrap_or(Style::default().fg(Color::LightCyan)),
+        SyntaxClass::Type => theme
+            .named_style("markdown-syntax-type")
+            .unwrap_or(Style::default().fg(Color::Yellow)),
+        SyntaxClass::Number => theme
+            .named_style("markdown-syntax-number")
+            .unwrap_or(Style::default().fg(Color::LightYellow)),
+        SyntaxClass::Constant => theme
+            .named_style("markdown-syntax-constant")
+            .unwrap_or(Style::default().fg(Color::LightYellow)),
+        SyntaxClass::Variable => theme
+            .named_style("markdown-syntax-variable")
+            .unwrap_or_default(),
+        SyntaxClass::Operator => theme
+            .named_style("markdown-syntax-operator")
+            .unwrap_or(Style::default().fg(Color::LightBlue)),
+        SyntaxClass::Punctuation => theme
+            .named_style("markdown-syntax-punctuation")
+            .unwrap_or(Style::default().fg(Color::Gray)),
+    }
+}
+
+fn diff_git_new_path(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("diff --git ")?;
+    rest.split_whitespace().nth(1).and_then(normalize_diff_path)
+}
+
+fn diff_header_path(line: &str) -> Option<String> {
+    let raw = line
+        .strip_prefix("--- ")
+        .or_else(|| line.strip_prefix("+++ "))?;
+    normalize_diff_path(raw)
+}
+
+fn normalize_diff_path(raw: &str) -> Option<String> {
+    let path = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .trim_matches('"');
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
+
+    (!path.is_empty() && path != "/dev/null").then(|| path.to_string())
 }
 
 fn line_count(text: &str) -> u16 {
@@ -4922,6 +6527,7 @@ impl ::atto_ui::composable::Component for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Plan(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Todo(view) => view.draw(frame, area, ctx),
+            ChatMessageBody::Compact(view) => view.draw(frame, area, ctx),
             ChatMessageBody::Artifact(view) => view.draw(frame, area, ctx),
             ChatMessageBody::CopyTarget(view) => view.draw(frame, area, ctx),
         }
@@ -4939,6 +6545,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_width(),
             ChatMessageBody::Plan(view) => view.min_width(),
             ChatMessageBody::Todo(view) => view.min_width(),
+            ChatMessageBody::Compact(view) => view.min_width(),
             ChatMessageBody::Artifact(view) => view.min_width(),
             ChatMessageBody::CopyTarget(view) => view.min_width(),
         }
@@ -4952,6 +6559,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.min_height(),
             ChatMessageBody::Plan(view) => view.min_height(),
             ChatMessageBody::Todo(view) => view.min_height(),
+            ChatMessageBody::Compact(view) => view.min_height(),
             ChatMessageBody::Artifact(view) => view.min_height(),
             ChatMessageBody::CopyTarget(view) => view.min_height(),
         }
@@ -4965,6 +6573,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_width(),
             ChatMessageBody::Plan(view) => view.desired_width(),
             ChatMessageBody::Todo(view) => view.desired_width(),
+            ChatMessageBody::Compact(view) => view.desired_width(),
             ChatMessageBody::Artifact(view) => view.desired_width(),
             ChatMessageBody::CopyTarget(view) => view.desired_width(),
         }
@@ -4978,6 +6587,7 @@ impl ::atto_ui::composable::Layout for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.desired_height(),
             ChatMessageBody::Plan(view) => view.desired_height(),
             ChatMessageBody::Todo(view) => view.desired_height(),
+            ChatMessageBody::Compact(view) => view.desired_height(),
             ChatMessageBody::Artifact(view) => view.desired_height(),
             ChatMessageBody::CopyTarget(view) => view.desired_height(),
         }
@@ -4993,6 +6603,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.is_scrollable(),
             ChatMessageBody::Plan(view) => view.is_scrollable(),
             ChatMessageBody::Todo(view) => view.is_scrollable(),
+            ChatMessageBody::Compact(view) => view.is_scrollable(),
             ChatMessageBody::Artifact(view) => view.is_scrollable(),
             ChatMessageBody::CopyTarget(view) => view.is_scrollable(),
         }
@@ -5006,6 +6617,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.content_size(),
             ChatMessageBody::Plan(view) => view.content_size(),
             ChatMessageBody::Todo(view) => view.content_size(),
+            ChatMessageBody::Compact(view) => view.content_size(),
             ChatMessageBody::Artifact(view) => view.content_size(),
             ChatMessageBody::CopyTarget(view) => view.content_size(),
         }
@@ -5019,6 +6631,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.viewport_size(),
             ChatMessageBody::Plan(view) => view.viewport_size(),
             ChatMessageBody::Todo(view) => view.viewport_size(),
+            ChatMessageBody::Compact(view) => view.viewport_size(),
             ChatMessageBody::Artifact(view) => view.viewport_size(),
             ChatMessageBody::CopyTarget(view) => view.viewport_size(),
         }
@@ -5032,6 +6645,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.scroll_config(),
             ChatMessageBody::Plan(view) => view.scroll_config(),
             ChatMessageBody::Todo(view) => view.scroll_config(),
+            ChatMessageBody::Compact(view) => view.scroll_config(),
             ChatMessageBody::Artifact(view) => view.scroll_config(),
             ChatMessageBody::CopyTarget(view) => view.scroll_config(),
         }
@@ -5045,6 +6659,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.scroll_offset(),
             ChatMessageBody::Plan(view) => view.scroll_offset(),
             ChatMessageBody::Todo(view) => view.scroll_offset(),
+            ChatMessageBody::Compact(view) => view.scroll_offset(),
             ChatMessageBody::Artifact(view) => view.scroll_offset(),
             ChatMessageBody::CopyTarget(view) => view.scroll_offset(),
         }
@@ -5058,6 +6673,7 @@ impl ::atto_ui::composable::Scrollable for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Plan(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Todo(view) => view.set_scroll_offset(x, y),
+            ChatMessageBody::Compact(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::Artifact(view) => view.set_scroll_offset(x, y),
             ChatMessageBody::CopyTarget(view) => view.set_scroll_offset(x, y),
         }
@@ -5073,6 +6689,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.is_focusable(),
             ChatMessageBody::Plan(view) => view.is_focusable(),
             ChatMessageBody::Todo(view) => view.is_focusable(),
+            ChatMessageBody::Compact(view) => view.is_focusable(),
             ChatMessageBody::Artifact(view) => view.is_focusable(),
             ChatMessageBody::CopyTarget(view) => view.is_focusable(),
         }
@@ -5086,6 +6703,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.focus_first(),
             ChatMessageBody::Plan(view) => view.focus_first(),
             ChatMessageBody::Todo(view) => view.focus_first(),
+            ChatMessageBody::Compact(view) => view.focus_first(),
             ChatMessageBody::Artifact(view) => view.focus_first(),
             ChatMessageBody::CopyTarget(view) => view.focus_first(),
         }
@@ -5099,6 +6717,7 @@ impl ::atto_ui::composable::FocusNav for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.focus_last(),
             ChatMessageBody::Plan(view) => view.focus_last(),
             ChatMessageBody::Todo(view) => view.focus_last(),
+            ChatMessageBody::Compact(view) => view.focus_last(),
             ChatMessageBody::Artifact(view) => view.focus_last(),
             ChatMessageBody::CopyTarget(view) => view.focus_last(),
         }
@@ -5116,6 +6735,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_capture(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_capture(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_capture(event, ctx),
         }
@@ -5129,6 +6749,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event_bubble(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event_bubble(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event_bubble(event, ctx),
         }
@@ -5142,6 +6763,7 @@ impl ::atto_ui::composable::EventHandling for ChatMessageBody {
             ChatMessageBody::Diff(view) => view.handle_event(event, ctx),
             ChatMessageBody::Plan(view) => view.handle_event(event, ctx),
             ChatMessageBody::Todo(view) => view.handle_event(event, ctx),
+            ChatMessageBody::Compact(view) => view.handle_event(event, ctx),
             ChatMessageBody::Artifact(view) => view.handle_event(event, ctx),
             ChatMessageBody::CopyTarget(view) => view.handle_event(event, ctx),
         }
@@ -5840,7 +7462,7 @@ fn mouse_row_in_area(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::sync::{Arc, Mutex};
 
     use atto_ui::composable::{
@@ -5988,14 +7610,18 @@ mod tests {
 
     fn row_config_for_tests() -> ChatMessageRowConfig {
         ChatMessageRowConfig {
+            store: ChatMessageStore::new(),
             wrap_width: None,
             responsive_wrap_width: Binding::new(None),
             in_progress_suffix: DEFAULT_IN_PROGRESS_SUFFIX.to_string(),
             show_timestamps: false,
             bubble_width_percent: DEFAULT_BUBBLE_WIDTH_PERCENT,
+            collapsed_turns: Binding::new(HashSet::new()),
             on_open_artifact: None,
             on_approve: None,
             on_edit_decision: None,
+            edit_and_resubmit: None,
+            quote_replies: None,
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
@@ -6060,6 +7686,350 @@ mod tests {
                 kind: MessageActionKind::CopyBlock(block_id),
             }]
         );
+    }
+
+    #[test]
+    fn quote_message_button_attaches_turn_reference() {
+        let input = ChatInputHandle::new();
+        let controller = QuoteReplyController::new(input.references_binding());
+        let message =
+            ChatMessage::text(ChatMessageId::new(70), ChatRole::Assistant, "hello\nthere");
+        let mut button = quote_message_button("Quote", &message, controller);
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            input.references(),
+            vec![ChatInputReference::new(
+                ChatMessageId::new(70),
+                "Assistant #70",
+                "hello there",
+            )]
+        );
+    }
+
+    #[test]
+    fn quote_block_button_attaches_block_reference() {
+        let input = ChatInputHandle::new();
+        let controller = QuoteReplyController::new(input.references_binding());
+        let block = ChatBlock::Text(TextBlock {
+            id: ChatBlockId::new(71_001),
+            markdown: "block quote body".to_string(),
+            streaming: false,
+        });
+        let mut button =
+            quote_block_button("Quote block", ChatMessageId::new(71), &block, controller);
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            input.references(),
+            vec![ChatInputReference::new(
+                ChatMessageId::new(71),
+                "Block #71001",
+                "block quote body",
+            )
+            .block_id(ChatBlockId::new(71_001))]
+        );
+    }
+
+    #[test]
+    fn retry_and_regenerate_buttons_truncate_assistant_before_callback() {
+        for (kind, label) in [
+            (MessageActionKind::Retry, "Retry"),
+            (MessageActionKind::Regenerate, "Regenerate"),
+        ] {
+            let store = ChatMessageStore::new();
+            let user_id = store.next_message_id();
+            let assistant_id = store.next_message_id();
+            let later_id = store.next_message_id();
+            store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
+            store.push(ChatMessage::text(
+                assistant_id,
+                ChatRole::Assistant,
+                "old answer",
+            ));
+            store.push(ChatMessage::text(later_id, ChatRole::System, "old suffix"));
+            let mut config = row_config_for_tests();
+            config.store = store.clone();
+            let observations = Arc::new(Mutex::new(Vec::new()));
+            let captured = observations.clone();
+            let store_for_callback = store.clone();
+            let expected_kind = kind.clone();
+            let mut button = turn_message_action_button(
+                label,
+                assistant_id,
+                kind,
+                &config,
+                Arc::new(move |action| {
+                    let visible_ids = store_for_callback
+                        .messages()
+                        .iter()
+                        .map(|message| message.id)
+                        .collect::<Vec<_>>();
+                    captured
+                        .lock()
+                        .expect("observations lock")
+                        .push((action, visible_ids));
+                }),
+            );
+            let theme = Theme::dark();
+
+            button.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+
+            assert_eq!(
+                store
+                    .messages()
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<Vec<_>>(),
+                vec![user_id]
+            );
+            assert_eq!(
+                *observations.lock().expect("observations lock"),
+                vec![(
+                    MessageAction {
+                        message_id: assistant_id,
+                        kind: expected_kind,
+                    },
+                    vec![user_id]
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn retry_and_regenerate_buttons_ignore_non_assistant_or_missing_target() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
+        let mut config = row_config_for_tests();
+        config.store = store.clone();
+        let actions = Arc::new(Mutex::new(Vec::new()));
+        let captured = actions.clone();
+        let callback: MessageActionCallback = Arc::new(move |action| {
+            captured.lock().expect("actions lock").push(action);
+        });
+        let theme = Theme::dark();
+        let mut user_retry = turn_message_action_button(
+            "Retry",
+            user_id,
+            MessageActionKind::Retry,
+            &config,
+            callback.clone(),
+        );
+        let mut missing_regenerate = turn_message_action_button(
+            "Regenerate",
+            ChatMessageId::new(999),
+            MessageActionKind::Regenerate,
+            &config,
+            callback,
+        );
+
+        user_retry.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        missing_regenerate.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(
+            store
+                .messages()
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![user_id]
+        );
+        assert!(actions.lock().expect("actions lock").is_empty());
+    }
+
+    #[test]
+    fn editable_user_message_text_extracts_only_user_text_blocks() {
+        let user_id = ChatMessageId::new(60);
+        let user = ChatMessage::new(
+            user_id,
+            ChatRole::User,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(60_001),
+                    markdown: "first".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Attachment(AttachmentBlock {
+                    id: ChatBlockId::new(60_002),
+                    name: "notes.md".to_string(),
+                    url: None,
+                    mime: None,
+                }),
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(60_003),
+                    markdown: "second".to_string(),
+                    streaming: false,
+                }),
+            ],
+        );
+        let assistant = ChatMessage::text(ChatMessageId::new(61), ChatRole::Assistant, "answer");
+        let attachment_only = ChatMessage::new(
+            ChatMessageId::new(62),
+            ChatRole::User,
+            vec![ChatBlock::Attachment(AttachmentBlock {
+                id: ChatBlockId::new(62_001),
+                name: "image.png".to_string(),
+                url: None,
+                mime: None,
+            })],
+        );
+
+        assert_eq!(
+            editable_user_message_text(&user),
+            Some("first\n\nsecond".to_string())
+        );
+        assert_eq!(editable_user_message_text(&assistant), None);
+        assert_eq!(editable_user_message_text(&attachment_only), None);
+    }
+
+    #[test]
+    fn edit_and_resubmit_refills_input_truncates_and_emits_event() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        let assistant_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "old prompt"));
+        store.push(ChatMessage::text(
+            assistant_id,
+            ChatRole::Assistant,
+            "old answer",
+        ));
+        let input = ChatInputHandle::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, move |event| {
+            captured.lock().expect("events lock").push(event);
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let theme = Theme::dark();
+        let mut panel = input.panel();
+
+        assert!(controller.begin_edit(user_id, "old prompt".to_string()));
+        assert_eq!(input.draft_binding().get(), "old prompt");
+        input.draft_binding().set("edited prompt".to_string());
+
+        let result = panel.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(input.draft_binding().get(), "");
+        assert!(store.messages().is_empty());
+        let events = events.lock().expect("events lock");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].message_id, user_id);
+        assert_eq!(events[0].original_text, "old prompt");
+        assert_eq!(events[0].edited_text, "edited prompt");
+        assert_eq!(
+            events[0]
+                .removed_messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![user_id, assistant_id]
+        );
+    }
+
+    #[test]
+    fn edit_submit_consumes_pending_edit_when_target_was_removed() {
+        let store = ChatMessageStore::new();
+        let user_id = store.next_message_id();
+        let assistant_id = store.next_message_id();
+        store.push(ChatMessage::text(user_id, ChatRole::User, "old prompt"));
+        store.push(ChatMessage::text(
+            assistant_id,
+            ChatRole::Assistant,
+            "old answer",
+        ));
+        let input = ChatInputHandle::new();
+        let edit_events = Arc::new(Mutex::new(Vec::new()));
+        let ordinary_submits = Arc::new(Mutex::new(0usize));
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, {
+            let edit_events = edit_events.clone();
+            move |event| edit_events.lock().expect("events lock").push(event)
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let mut panel = input.panel().on_submit({
+            let ordinary_submits = ordinary_submits.clone();
+            move |_| {
+                *ordinary_submits.lock().expect("ordinary submits lock") += 1;
+            }
+        });
+        let theme = Theme::dark();
+
+        assert!(controller.begin_edit(user_id, "old prompt".to_string()));
+        assert!(store.truncate_from(user_id).is_some());
+        input.draft_binding().set("edited prompt".to_string());
+
+        let result = panel.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(result, EventResult::submitted());
+        assert_eq!(input.draft_binding().get(), "");
+        assert!(store.messages().is_empty());
+        assert!(edit_events.lock().expect("events lock").is_empty());
+        assert_eq!(*ordinary_submits.lock().expect("ordinary submits lock"), 0);
+    }
+
+    #[test]
+    fn edit_button_uses_dedicated_resubmit_controller_when_configured() {
+        let store = ChatMessageStore::new();
+        let input = ChatInputHandle::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let list = ChatMessageList::new(store.clone()).on_edit_and_resubmit(&input, {
+            let events = events.clone();
+            move |event| events.lock().expect("events lock").push(event)
+        });
+        let controller = list
+            .config
+            .edit_and_resubmit
+            .clone()
+            .expect("edit controller should be registered");
+        let mut button = edit_and_resubmit_button(
+            "Edit",
+            ChatMessageId::new(70),
+            "draft text".to_string(),
+            controller,
+        );
+        let theme = Theme::dark();
+
+        button.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(input.draft_binding().get(), "draft text");
+        assert!(events.lock().expect("events lock").is_empty());
     }
 
     #[test]
@@ -6168,15 +8138,19 @@ mod tests {
     #[test]
     fn streaming_cancel_button_emits_only_while_streaming() {
         let message_id = ChatMessageId::new(60);
+        let store = ChatMessageStore::new();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
         let status = Binding::new(ChatTurnStatus::Streaming);
         let canceled = Arc::new(Mutex::new(Vec::new()));
         let captured = canceled.clone();
-        let mut button = streaming_cancel_button(
-            "Cancel",
-            message_id,
-            status.clone(),
+        let controller = StreamingCancelController::new(
+            store.clone(),
             Arc::new(move |id| captured.lock().expect("cancel lock").push(id)),
         );
+        let mut button = streaming_cancel_button("Cancel", message_id, status.clone(), controller);
         let theme = Theme::dark();
 
         assert!(button.is_focusable());
@@ -6185,6 +8159,7 @@ mod tests {
             component_context(&theme),
         );
         assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+        assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
 
         status.set(ChatTurnStatus::Canceled);
         assert!(!button.is_focusable());
@@ -6193,6 +8168,399 @@ mod tests {
             component_context(&theme),
         );
         assert_eq!(*canceled.lock().expect("cancel lock"), vec![message_id]);
+    }
+
+    #[test]
+    fn streaming_cancel_controller_marks_canceled_before_callback() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(
+            ChatMessage::text(message_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let captured = observations.clone();
+        let store_for_callback = store.clone();
+        let controller = StreamingCancelController::new(
+            store.clone(),
+            Arc::new(move |id| {
+                let status = store_for_callback.messages()[0].status.clone();
+                captured
+                    .lock()
+                    .expect("observations lock")
+                    .push((id, status));
+            }),
+        );
+
+        assert!(controller.request(message_id));
+        assert!(!controller.request(message_id));
+
+        assert_eq!(store.messages()[0].status, ChatTurnStatus::Canceled);
+        assert_eq!(
+            *observations.lock().expect("observations lock"),
+            vec![(message_id, ChatTurnStatus::Canceled)]
+        );
+    }
+
+    #[test]
+    fn list_escape_cancels_latest_streaming_turn_once() {
+        let store = ChatMessageStore::new();
+        let first_id = store.next_message_id();
+        let current_id = store.next_message_id();
+        store.push(ChatMessage::text(first_id, ChatRole::User, "prompt"));
+        store.push(
+            ChatMessage::text(current_id, ChatRole::Assistant, "streaming")
+                .with_status(ChatTurnStatus::Streaming),
+        );
+        let canceled = Arc::new(Mutex::new(Vec::new()));
+        let captured = canceled.clone();
+        let mut list = ChatMessageList::new(store.clone()).on_cancel(move |id| {
+            captured.lock().expect("cancel lock").push(id);
+        });
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 10);
+
+        let first = list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let second = list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        assert_eq!(first, EventResult::changed());
+        assert_eq!(second, EventResult::ignored());
+        assert_eq!(*canceled.lock().expect("cancel lock"), vec![current_id]);
+        assert_eq!(store.messages()[1].status, ChatTurnStatus::Canceled);
+    }
+
+    #[test]
+    fn turn_collapse_button_toggles_collapsed_state() {
+        let message_id = ChatMessageId::new(90);
+        let collapsed_turns = Binding::new(HashSet::new());
+        let theme = Theme::dark();
+
+        let mut collapse =
+            turn_collapse_button("Collapse", message_id, false, collapsed_turns.clone());
+        collapse.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert!(collapsed_turns.get().contains(&message_id));
+
+        let mut expand = turn_collapse_button("Expand", message_id, true, collapsed_turns.clone());
+        expand.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        assert!(!collapsed_turns.get().contains(&message_id));
+    }
+
+    #[test]
+    fn row_keys_for_collapsed_turn_keep_only_header() {
+        let message_id = ChatMessageId::new(91);
+        let message = ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(91_001),
+                    markdown: "TURN-BODY".to_string(),
+                    streaming: false,
+                }),
+                ChatBlock::Notice(NoticeBlock {
+                    id: ChatBlockId::new(91_002),
+                    level: NoticeLevel::Info,
+                    text: "TURN-NOTICE".to_string(),
+                }),
+            ],
+        );
+        let collapsed = HashSet::from([message_id]);
+
+        let keys = row_keys_from_messages_with_collapsed(&[message], &collapsed);
+
+        assert_eq!(keys.len(), 1);
+        assert!(matches!(
+            keys[0],
+            ChatRowKey::Header {
+                message_id: id,
+                collapsed: true,
+            } if id == message_id
+        ));
+    }
+
+    #[test]
+    fn chat_turn_fold_hides_blocks_and_shows_placeholder() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        store.push(ChatMessage::text(
+            message_id,
+            ChatRole::Assistant,
+            "TURN-FOLD-BODY",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 8);
+        assert!(initial.iter().any(|line| line.contains("Collapse")));
+        assert!(initial.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (collapsed, _) = draw_component_snapshot(&mut list, 80, 8);
+
+        assert!(list.config.collapsed_turns.get().contains(&message_id));
+        assert!(collapsed.iter().any(|line| line.contains("Expand")));
+        assert!(
+            collapsed
+                .iter()
+                .any(|line| line.contains("Collapsed · 1 block hidden"))
+        );
+        assert!(!collapsed.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (expanded, _) = draw_component_snapshot(&mut list, 80, 8);
+
+        assert!(!list.config.collapsed_turns.get().contains(&message_id));
+        assert!(expanded.iter().any(|line| line.contains("Collapse")));
+        assert!(expanded.iter().any(|line| line.contains("TURN-FOLD-BODY")));
+    }
+
+    #[test]
+    fn expanding_turn_restores_pre_collapse_scroll_offset() {
+        let store = ChatMessageStore::new();
+        let message_id = store.next_message_id();
+        let blocks = (0..8)
+            .map(|idx| {
+                ChatBlock::Text(TextBlock {
+                    id: ChatBlockId::new(92_000 + idx),
+                    markdown: format!("RESTORE-BODY-{idx}"),
+                    streaming: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        store.push(ChatMessage::new(message_id, ChatRole::Assistant, blocks));
+        for idx in 0..10 {
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("TAIL-{idx}"),
+            ));
+        }
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 80, 6);
+        list.set_scroll_offset(0, 2);
+        list.sync_follow_tail_from_scroll();
+        let restore_y = list.scroll_offset().1;
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        draw_chat_list(&mut list, 80, 6);
+        assert!(list.config.collapsed_turns.get().contains(&message_id));
+
+        list.set_scroll_offset(0, 0);
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        draw_chat_list(&mut list, 80, 6);
+
+        assert!(!list.config.collapsed_turns.get().contains(&message_id));
+        assert_eq!(list.scroll_offset().1, restore_y);
+    }
+
+    #[test]
+    fn chat_search_opens_filters_and_highlights_visible_matches() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "alpha needle 你",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "needle".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 60, 6);
+        let (row, col) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| line.find("needle").map(|col| (row, col)))
+            .expect("search match should be visible");
+
+        assert!(list.search.active);
+        assert_eq!(list.search.query, "needle");
+        assert_eq!(list.search.matches.len(), 1);
+        assert_eq!(bgs[row][col], Color::Yellow);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Search: needle (1/1)"))
+        );
+    }
+
+    #[test]
+    fn chat_search_highlights_wide_character_match_cells() {
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "prefix 你 suffix",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 60, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 60, 6);
+        let (row, byte_col) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.contains("prefix")
+                    .then(|| line.find('你').map(|col| (row, col)))
+                    .flatten()
+            })
+            .expect("wide search match should be visible");
+        let col = UnicodeWidthStr::width(&lines[row][..byte_col]);
+
+        assert_eq!(
+            search_match_display_ranges("prefix 你 suffix", "你"),
+            vec![(7, 9)]
+        );
+        assert_ne!(bgs[row][col.saturating_sub(1)], Color::Yellow);
+        assert_eq!(bgs[row][col], Color::Yellow);
+        assert_ne!(bgs[row][col.saturating_add(2)], Color::Yellow);
+    }
+
+    #[test]
+    fn chat_search_next_previous_jump_to_offscreen_matches() {
+        let store = ChatMessageStore::new();
+        for idx in 0..32 {
+            let text = match idx {
+                1 => "TARGET-FIRST".to_string(),
+                28 => "TARGET-SECOND".to_string(),
+                _ => format!("message-{idx:02}"),
+            };
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                text,
+            ));
+        }
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 50, 6);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "target".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+        let (first, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(first.iter().any(|line| line.contains("TARGET-FIRST")));
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (second, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(second.iter().any(|line| line.contains("TARGET-SECOND")));
+        assert!(!second.iter().any(|line| line.contains("TARGET-FIRST")));
+        assert!(list.scroll_offset().1 > 0);
+        assert!(!list.is_following_tail());
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (previous, _) = draw_component_snapshot(&mut list, 50, 6);
+        assert!(previous.iter().any(|line| line.contains("TARGET-FIRST")));
+    }
+
+    #[test]
+    fn chat_search_escape_restores_scroll_and_clears_overlay() {
+        let store = store_with_text_messages(30);
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "RESTORE-TARGET",
+        ));
+        let mut list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false);
+        let theme = Theme::dark();
+        draw_chat_list(&mut list, 50, 6);
+        list.set_scroll_offset(0, 4);
+        list.sync_follow_tail_from_scroll();
+        let restore_y = list.scroll_offset().1;
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            component_context(&theme),
+        );
+        for ch in "restore-target".chars() {
+            list.handle_event(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                component_context(&theme),
+            );
+        }
+        draw_chat_list(&mut list, 50, 6);
+        assert!(list.scroll_offset().1 > restore_y);
+
+        list.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            component_context(&theme),
+        );
+        let (lines, bgs) = draw_component_bg_snapshot(&mut list, 50, 6);
+
+        assert!(!list.search.active);
+        assert_eq!(list.scroll_offset().1, restore_y);
+        assert!(!lines.iter().any(|line| line.contains("Search:")));
+        assert!(bgs.iter().flatten().all(|bg| *bg != Color::Yellow));
     }
 
     #[test]
@@ -6209,6 +8577,45 @@ mod tests {
 
         list.scroll_to_bottom();
         draw_chat_list(&mut list, 40, 6);
+        assert!(list.is_following_tail());
+        assert_eq!(list.scroll_offset().1, list.max_scroll_y());
+    }
+
+    #[test]
+    fn branch_truncate_restores_tail_following_after_user_scrolled_up() {
+        let store = store_with_text_messages(40);
+        let mut list = ChatMessageList::new(store.clone()).show_timestamps(false);
+        draw_chat_list(&mut list, 40, 6);
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+        assert!(!list.is_following_tail());
+
+        assert!(store.truncate_from(ChatMessageId::new(30)).is_some());
+        draw_chat_list(&mut list, 40, 6);
+
+        assert!(list.is_following_tail());
+        assert_eq!(list.scroll_offset().1, list.max_scroll_y());
+    }
+
+    #[test]
+    fn branch_tail_rewrite_restores_tail_following_even_when_row_count_matches() {
+        let store = store_with_text_messages(40);
+        let mut list = ChatMessageList::new(store.clone()).show_timestamps(false);
+        draw_chat_list(&mut list, 40, 6);
+        list.set_scroll_offset(0, 0);
+        list.sync_follow_tail_from_scroll();
+        assert!(!list.is_following_tail());
+
+        assert!(store.fork_at(ChatMessageId::new(25)).is_some());
+        for idx in 0..15 {
+            store.push(ChatMessage::text(
+                store.next_message_id(),
+                ChatRole::Assistant,
+                format!("NEW-{idx:02}"),
+            ));
+        }
+        draw_chat_list(&mut list, 40, 6);
+
         assert!(list.is_following_tail());
         assert_eq!(list.scroll_offset().1, list.max_scroll_y());
     }
@@ -6315,6 +8722,96 @@ mod tests {
             assert!(lines[0].starts_with(expected));
             assert_eq!(colors[0][0], color);
         }
+    }
+
+    #[test]
+    fn compact_display_lines_include_status_tokens_and_summary() {
+        let block = CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "kept task details\nremoved stale tool output".to_string(),
+        };
+
+        assert_eq!(
+            compact_display_lines(&block),
+            vec![
+                "Context compact: Complete".to_string(),
+                "Tokens: 12000 -> 3500 (8500 saved)".to_string(),
+                "Summary: kept task details".to_string(),
+                "  removed stale tool output".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn compact_body_renders_progress_tokens_summary_with_distinct_style() {
+        let config = row_config_for_tests();
+        let block = ChatBlock::Compact(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "COMPACT-SUMMARY".to_string(),
+        });
+        let (mut body, _) =
+            ChatMessageBody::from_block(ChatMessageId::new(1), Some(&block), &config);
+
+        let (lines, colors) = draw_component_snapshot(&mut body, 60, 3);
+
+        assert!(lines[0].starts_with("Context compact: Complete"));
+        assert!(lines[1].starts_with("Tokens: 12000 -> 3500 (8500 saved)"));
+        assert!(lines[2].starts_with("Summary: COMPACT-SUMMARY"));
+        assert_eq!(colors[0][0], Color::Green);
+        assert_ne!(lines[0].trim_start(), "Info: COMPACT-SUMMARY");
+    }
+
+    #[test]
+    fn compact_view_updates_from_binding() {
+        let binding = Binding::new(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Running,
+            before_tokens: Some(9_000),
+            after_tokens: None,
+            summary: "STARTING".to_string(),
+        });
+        let mut view = CompactBlockView::new(binding.clone());
+
+        let (initial, _) = draw_component_snapshot(&mut view, 60, 3);
+        assert!(initial[0].starts_with("Context compact: Running"));
+        assert!(initial[1].starts_with("Tokens: before 9000"));
+
+        binding.set(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(9_000),
+            after_tokens: Some(4_000),
+            summary: "DONE".to_string(),
+        });
+
+        let (updated, _) = draw_component_snapshot(&mut view, 60, 3);
+        assert!(updated[0].starts_with("Context compact: Complete"));
+        assert!(updated[1].starts_with("Tokens: 9000 -> 4000 (5000 saved)"));
+        assert!(updated[2].starts_with("Summary: DONE"));
+    }
+
+    #[test]
+    fn compact_block_is_searchable() {
+        let list = ChatMessageList::new(ChatMessageStore::new());
+        let block = ChatBlock::Compact(CompactBlock {
+            id: ChatBlockId::new(5),
+            status: CompactStatus::Complete,
+            before_tokens: Some(12_000),
+            after_tokens: Some(3_500),
+            summary: "SEARCHABLE-COMPACT-SUMMARY".to_string(),
+        });
+
+        let text = searchable_text_for_block(&block, &list.config);
+
+        assert!(text.contains("Context compact: Complete"));
+        assert!(text.contains("Tokens: 12000 -> 3500"));
+        assert!(text.contains("SEARCHABLE-COMPACT-SUMMARY"));
     }
 
     #[test]
@@ -6511,7 +9008,7 @@ mod tests {
             .show_timestamps(false)
             .auto_scroll(false);
 
-        let (initial, _) = draw_component_snapshot(&mut list, 80, 10);
+        let (initial, _) = draw_component_snapshot(&mut list, 80, 12);
         assert!(initial.iter().any(|line| line.contains("Status: running")));
         assert!(initial.iter().any(|line| line.contains("NESTED-SEARCH")));
 
@@ -6528,7 +9025,7 @@ mod tests {
                 })],
             }]
         ));
-        let (updated, _) = draw_component_snapshot(&mut list, 80, 10);
+        let (updated, _) = draw_component_snapshot(&mut list, 80, 12);
         assert!(updated.iter().any(|line| line.contains("Status: complete")));
         assert!(updated.iter().any(|line| line.contains("SUBAGENT-DONE")));
         assert!(updated.iter().any(|line| line.contains("NESTED-FINAL")));
@@ -6795,10 +9292,7 @@ mod tests {
             approval: Some(ApprovalRequest {
                 id: "approval-1".to_string(),
                 prompt: "Run tests?".to_string(),
-                options: vec![ApprovalOption {
-                    id: "allow_always".to_string(),
-                    label: "Allow always".to_string(),
-                }],
+                options: vec![ApprovalOption::allow_always("allow_always", "Allow always")],
                 resolved: None,
             }),
         };
@@ -6826,6 +9320,8 @@ mod tests {
                 block_id,
                 approval_id: "approval-1".to_string(),
                 option_id: "allow_always".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Always,
             }]
         );
 
@@ -6834,14 +9330,15 @@ mod tests {
             approval: Some(ApprovalRequest {
                 id: "approval-1".to_string(),
                 prompt: "Run tests?".to_string(),
-                options: vec![ApprovalOption {
-                    id: "allow_always".to_string(),
-                    label: "Allow always".to_string(),
-                }],
-                resolved: Some("allow_always".to_string()),
+                options: vec![ApprovalOption::allow_always("allow_always", "Allow always")],
+                resolved: Some(ApprovalResolution {
+                    option_id: "allow_always".to_string(),
+                    action: ApprovalAction::Allow,
+                    level: ApprovalLevel::Always,
+                }),
             }),
         };
-        let locked_view = ToolUseDetailsView::new(
+        let mut locked_view = ToolUseDetailsView::new(
             Binding::new(locked),
             message_id,
             block_id,
@@ -6849,6 +9346,57 @@ mod tests {
         );
 
         assert!(!locked_view.is_focusable());
+        let (lines, _) = draw_component_snapshot(&mut locked_view, 80, 6);
+        assert!(lines.iter().any(|line| line.contains("[x] Allow always")));
+    }
+
+    #[test]
+    fn approval_options_render_structured_permission_levels() {
+        let approval = ApprovalRequest {
+            id: "approval-levels".to_string(),
+            prompt: "Run command?".to_string(),
+            options: vec![
+                ApprovalOption::allow_once("once", "Grant"),
+                ApprovalOption::allow_always("always", "Remember"),
+                ApprovalOption::allow_project("project", "Trust repo"),
+                ApprovalOption::deny("deny", "Block"),
+            ],
+            resolved: None,
+        };
+
+        assert_eq!(
+            approval
+                .options
+                .iter()
+                .map(|option| approval_option_button_label(&approval, option))
+                .collect::<Vec<_>>(),
+            vec![
+                "Grant · once",
+                "Remember · always",
+                "Trust repo · project",
+                "Block · deny",
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_approval_renders_selected_structured_level() {
+        let approval = ApprovalRequest {
+            id: "approval-levels".to_string(),
+            prompt: "Run command?".to_string(),
+            options: vec![ApprovalOption::allow_project("project", "Trust repo")],
+            resolved: Some(ApprovalResolution {
+                option_id: "project".to_string(),
+                action: ApprovalAction::Allow,
+                level: ApprovalLevel::Project,
+            }),
+        };
+        let resolved = approval.resolved.as_ref().expect("resolved approval");
+
+        assert_eq!(
+            approval_resolved_label(&approval, resolved),
+            "[x] Trust repo · project"
+        );
     }
 
     #[test]
@@ -6860,6 +9408,7 @@ mod tests {
         let mut view = DiffDecisionView::new(
             Some("Diff: src/lib.rs (pending)".to_string()),
             Binding::new("+new".to_string()),
+            Some("src/lib.rs".to_string()),
             message_id,
             block_id,
             EditDecision::Pending,
@@ -6888,6 +9437,7 @@ mod tests {
         let locked_view = DiffDecisionView::new(
             Some("Diff: src/lib.rs (accepted)".to_string()),
             Binding::new("+new".to_string()),
+            Some("src/lib.rs".to_string()),
             message_id,
             block_id,
             EditDecision::Accepted,
@@ -6987,11 +9537,74 @@ mod tests {
 
     #[test]
     fn diff_display_lines_reuses_unified_diff_styles() {
-        let lines = diff_display_lines("+added\n-removed\n@@ hunk", Style::default());
+        let theme = Theme::dark();
+        let lines = diff_display_lines("+added\n-removed\n@@ hunk", Style::default(), None, &theme);
 
         assert_eq!(lines[0].style.fg, Some(Color::Green));
         assert_eq!(lines[1].style.fg, Some(Color::Red));
         assert_eq!(lines[2].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn diff_display_lines_highlights_payload_from_explicit_path() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines(
+            " fn main() {",
+            Style::default(),
+            Some("src/main.rs"),
+            &theme,
+        );
+        let keyword = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "fn")
+            .expect("rust keyword span");
+
+        assert_eq!(line_text(&lines[0]), " fn main() {");
+        assert_eq!(lines[0].spans[0].content.as_ref(), " ");
+        assert_eq!(keyword.style.fg, Some(Color::LightMagenta));
+    }
+
+    #[test]
+    fn diff_display_lines_preserves_addition_semantics_over_syntax() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines(
+            "+fn main() {}",
+            Style::default(),
+            Some("src/main.rs"),
+            &theme,
+        );
+        let keyword = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "fn")
+            .expect("rust keyword span");
+
+        assert_eq!(lines[0].style.fg, Some(Color::Green));
+        assert_eq!(keyword.style.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn diff_display_lines_infers_payload_language_from_headers() {
+        let theme = Theme::dark();
+        let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n fn main() {}";
+        let lines = diff_display_lines(diff, Style::default(), None, &theme);
+        let context = lines
+            .iter()
+            .find(|line| line_text(line) == " fn main() {}")
+            .expect("context payload line");
+
+        assert!(context.spans.iter().any(|span| {
+            span.content.as_ref() == "fn" && span.style.fg == Some(Color::LightMagenta)
+        }));
+    }
+
+    #[test]
+    fn diff_display_lines_keeps_dash_payloads_in_hunks_as_removals() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines("@@ -1 +1 @@\n--- payload", Style::default(), None, &theme);
+
+        assert_eq!(lines[1].style.fg, Some(Color::Red));
     }
 
     #[test]
@@ -7019,7 +9632,7 @@ mod tests {
 
     #[test]
     fn diff_view_renders_horizontal_scroll_offset() {
-        let mut view = DiffView::new(None, Binding::new("+0123456789".to_string()));
+        let mut view = DiffView::new(None, Binding::new("+0123456789".to_string()), None);
 
         assert!(draw_component_line(&mut view, 6, 1).starts_with("+0123"));
         view.set_scroll_offset(3, 0);
@@ -7218,7 +9831,7 @@ mod tests {
         assert_eq!(keys.len(), 3);
         assert!(matches!(
             &keys[0],
-            ChatRowKey::Header { message_id } if *message_id == id
+            ChatRowKey::Header { message_id, .. } if *message_id == id
         ));
         assert!(matches!(
             &keys[1],
@@ -7328,7 +9941,7 @@ mod tests {
         ));
         assert!(!keys
             .iter()
-            .any(|key| matches!(key, ChatRowKey::Header { message_id } if *message_id == result_message_id)));
+            .any(|key| matches!(key, ChatRowKey::Header { message_id, .. } if *message_id == result_message_id)));
     }
 
     #[test]

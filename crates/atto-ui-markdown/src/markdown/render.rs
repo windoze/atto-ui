@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 
+use crate::syntax::HighlightedSpan;
 use atto_ui::composable::{ScrollContentContext, ScrollOffset, scrollbar_layout_1d};
 use atto_ui::theme::Theme;
 
@@ -248,18 +249,34 @@ fn draw_code_block(
         }
 
         let code_line_idx = content_scroll.y.saturating_add(local_line);
-        let line = code
-            .lines
-            .get(code_line_idx as usize)
-            .cloned()
-            .unwrap_or_default();
         fill_line(frame, content_x, screen_y, viewport_w, code_style);
-        let (segment, _) = slice_by_width(&line, content_scroll.x, viewport_w);
-        let styled = vec![StyledSpan {
-            text: segment,
-            style: code_style,
-        }];
-        draw_spans_with_scroll(frame, content_x, screen_y, viewport_w, &styled, 0);
+        if let Some(highlighted_line) = code
+            .highlighted_lines
+            .as_ref()
+            .and_then(|lines| lines.get(code_line_idx as usize))
+        {
+            let styled = syntax_styled_spans(&highlighted_line.spans, code_style, styles);
+            draw_spans_with_scroll(
+                frame,
+                content_x,
+                screen_y,
+                viewport_w,
+                &styled,
+                content_scroll.x,
+            );
+        } else {
+            let line = code
+                .lines
+                .get(code_line_idx as usize)
+                .cloned()
+                .unwrap_or_default();
+            let (segment, _) = slice_by_width(&line, content_scroll.x, viewport_w);
+            let styled = vec![StyledSpan {
+                text: segment,
+                style: code_style,
+            }];
+            draw_spans_with_scroll(frame, content_x, screen_y, viewport_w, &styled, 0);
+        }
 
         if embedded.show_v {
             let Some(layout) = v_layout else {
@@ -636,6 +653,20 @@ fn styled_spans(spans: &[InlineSpan], base: Style, styles: &MarkdownStyles) -> V
         });
     }
     out
+}
+
+fn syntax_styled_spans(
+    spans: &[HighlightedSpan],
+    base: Style,
+    styles: &MarkdownStyles,
+) -> Vec<StyledSpan> {
+    spans
+        .iter()
+        .map(|span| StyledSpan {
+            text: span.text.clone(),
+            style: base.patch(styles.syntax.style_for(span.class)),
+        })
+        .collect()
 }
 
 fn base_style_for_block(style: &TextBlockStyle, styles: &MarkdownStyles) -> Style {

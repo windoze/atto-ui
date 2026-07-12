@@ -17,6 +17,13 @@ async function main() {
 
   const host = new core.AppHost({ headless: true, cols: 52, rows: 14, tickRate: 0 })
   try {
+    const chatInputSchema = host.schemas().find((schema) => schema.type_name === 'ChatInputPanel')
+    assert.ok(chatInputSchema, 'ChatInputPanel schema should be registered')
+    assert.ok(chatInputSchema.properties.some((property) => property.name === 'slash_commands'))
+    assert.ok(chatInputSchema.properties.some((property) => property.name === 'mention_candidates'))
+    assert.ok(chatInputSchema.events.some((event) => event.name === 'slash_command'))
+    assert.ok(chatInputSchema.events.some((event) => event.name === 'mention_query'))
+
     const callback = host.allocCallback()
     const windowId = host.addDynamicWindow(
       'Runtime Compat',

@@ -1,12 +1,17 @@
 import {
   AppHost,
   Button,
+  ChatApprovalOption,
+  ChatApprovalRequest,
+  ChatCompactBlock,
   ChatInputMode,
+  ChatMentionCandidate,
   ChatInputPanel,
   ChatMessage,
   ChatMessageList,
   ChatNoticeBlock,
   ChatPlanBlock,
+  ChatSlashCommand,
   ChatTaskBlock,
   ChatTaskTranscriptItem,
   ChatTextMessage,
@@ -23,6 +28,11 @@ import {
   child,
   tab,
   type CallbackInvocation,
+  type ChatApprovalAction,
+  type ChatApprovalDecisionPayload,
+  type ChatApprovalLevel,
+  type ChatMentionContext,
+  type ChatCompactStatus,
   type ComponentSpec,
   type ComponentValue,
   type DesktopSnapshot,
@@ -103,18 +113,50 @@ const chatMessage = ChatMessage(2, [
     transcript: [ChatTaskTranscriptItem('assistant', [ChatTextMessage(20, 'nested').blocks[0]])],
   }),
   ChatNoticeBlock(2002, 'info', 'ready'),
+  ChatCompactBlock(2005, 'complete', { beforeTokens: 12000, afterTokens: 3500, summary: 'kept edits' }),
 ], { role: 'custom:agent', meta: { model: 'atto-test', usage: { input: 1, output: 2 } } })
+const approvalAction: ChatApprovalAction = 'allow'
+const approvalLevel: ChatApprovalLevel = 'project'
+const compactStatus: ChatCompactStatus = 'running'
+const approval = ChatApprovalRequest('approval-1', 'Run command?', [
+  ChatApprovalOption('allow_project', 'Allow project', { action: approvalAction, level: approvalLevel }),
+], { resolved: 'allow_project', resolvedAction: approvalAction, resolvedLevel: approvalLevel })
+const approvalPayload: ChatApprovalDecisionPayload = {
+  message_id: 1,
+  block_id: 1001,
+  approval_id: 'approval-1',
+  option_id: 'allow_project',
+  action: approvalAction,
+  level: approvalLevel,
+}
 const chatToolMessage = ChatToolCallMessage(3, 'bash', {
   input: ChatToolJsonInput({ command: 'cargo test' }),
   output: 'ok',
   toolStatus: 'done',
+  approval,
 })
 const chatListSpec: ComponentSpec = ChatMessageList({
   messages: [ChatTextMessage(1, 'hello', { role: 'user' }), chatMessage, chatToolMessage],
   onLoadMore: 'atto:callback:7',
   onPlanDecision: 'atto:callback:9',
 })
-const chatInputSpec: ComponentSpec = ChatInputPanel({ mode: ChatInputMode(), onSubmit: 'atto:callback:8' })
+const command = ChatSlashCommand('/clear', { id: 'clear', action: 'submit' })
+const mention = ChatMentionCandidate('src/lib.rs', { replacement: '@src/lib.rs ' })
+const mentionContext: ChatMentionContext = {
+  draft: 'open @sr',
+  query: 'sr',
+  cursor: 8,
+  replacement_start: 5,
+  replacement_end: 8,
+}
+const chatInputSpec: ComponentSpec = ChatInputPanel({
+  mode: ChatInputMode(),
+  slashCommands: [command],
+  mentionCandidates: [mention],
+  onSubmit: 'atto:callback:8',
+  onSlashCommand: 'atto:callback:10',
+  onMentionQuery: 'atto:callback:11',
+})
 
 // @ts-expect-error callback handles must be strings from AppHost.allocCallback().
 Button({ label: 'Bad', onClick: 1 })
@@ -140,6 +182,12 @@ void terminalSpec
 void fileTreeSpec
 void chatMode
 void chatMessage
+void compactStatus
+void approval
+void approvalPayload
 void chatToolMessage
 void chatListSpec
+void command
+void mention
+void mentionContext
 void chatInputSpec
