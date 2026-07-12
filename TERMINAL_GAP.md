@@ -2,21 +2,34 @@
 
 面向目标：将 `crates/atto-ui-terminal` 的 `terminal_viewer` demo 扩展为**全功能多窗口终端 app**。
 
-本文档从两层梳理现状与缺口：
+本文档从两层梳理最初现状与缺口：
 - **组件层**：`TerminalEmulator` (`src/terminal.rs`, ~1300 行) —— vt100 模拟器芯。
 - **外壳层**：`terminal_viewer.rs` (~280 行 demo) —— 多窗口/菜单外壳。
 
-## 现状小结
+> 状态更新（2026-07-12）：本文列出的 P0-P3 缺口已按 `TODO.md` 的 M1-M7 任务闭合。本文继续保留为设计背景与验收索引；当前实现状态以 `TODO.md` 的 `[DONE]` 完成记录为准。
 
-组件层的“终端芯”已相当扎实：PTY spawn、reader 线程、按键/鼠标 ANSI 编码、scrollback、DSR 光标查询响应、bracketed paste、capture/release 快捷键、宽字符渲染、鼠标协议转发均已就绪。外壳层已具备菜单、new/close/minimize/maximize、窗口列表切换。
+## 当前闭合状态
 
-缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**。
+| 缺口组 | 状态 | 闭合里程碑 |
+|---|---|---|
+| P0 进程生命周期、死窗口、callbacks/OSC | 已闭合 | M1-M2 |
+| P1 标题联动、选择复制、剪贴板、OSC 133/7、滚动分流、前缀键 | 已闭合 | M2-M5 |
+| P2 分屏、会话管理、spawn 环境 | 已闭合 | M6 |
+| P3 光标/keypad、配置模型与设置界面 | 已闭合 | M7 |
+
+## 历史现状小结
+
+组件层的“终端芯”在计划启动前已具备：PTY spawn、reader 线程、按键/鼠标 ANSI 编码、scrollback、DSR 光标查询响应、bracketed paste、capture/release 快捷键、宽字符渲染、鼠标协议转发。外壳层已具备菜单、new/close/minimize/maximize、窗口列表切换。
+
+当时缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**；这些缺口现已闭合。
 
 ---
 
 ## P0 — 硬缺陷，外壳绕不过去（必须先做）
 
 ### P0.1 进程生命周期没有闭环 【组件层】
+> 状态：已闭合（M1.1/M1.2/M1.R）。组件记录进程级 `ExitStatus`，发布 `on_exit`，并通过 `TerminalHandle::is_running()` / `exit_status()` 暴露运行状态。
+
 - reader 线程读到 EOF 仅 `break` (`terminal.rs:461-467`)，`child` 从不 `try_wait()`。shell `exit` 后窗口变成一个**死画面**：无退出码、不触发回调、不自动关窗。
 - `on_close` 目前只在 `Drop` 时触发 (`terminal.rs:777-783`)。进程已死但组件仍存活时，外壳无从感知。
 - 缺 `is_running()` / `exit_status()` 查询接口供外壳轮询。
@@ -26,6 +39,8 @@
 - `TerminalHandle` 暴露 `is_running()` / `exit_status()`。
 
 ### P0.2 死窗口不回收 【外壳层】
+> 状态：已闭合（M2.1/M6.2）。外壳 tick 路径检测退出状态，显示退出提示并支持按 `R` 按原 session spec/cwd 重启。
+
 - 承接 P0.1：shell 退出后 demo 没有任何回收逻辑（未接退出回调，tick 里也不轮询进程状态）。
 - 全功能 app 必须做到：exit 即关窗，或原地显示 `[Process exited: code N — press R to restart]`。
 
@@ -33,6 +48,8 @@
 - 在 tick 回调或退出回调中检测进程退出，按策略关窗 / 显示退出提示。
 
 ### P0.3 窗口标题 / OSC 全丢弃 【组件层 + 外壳层】
+> 状态：已闭合（M1.3/M2.2/M4.6）。parser callback 桥接 title/icon/bell/OSC 52，窗口标题与 Windows 菜单同步，剪贴板路径可观察并可接系统 clipboard。
+
 - vt100 0.16 支持 `Parser::new_with_callbacks`，可接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard`。但 `TerminalEmulator::new()` 用的是裸 `Parser::new` (`terminal.rs:351`)，全部回调丢弃。
 - 后果：shell/vim 设置的标题 (`OSC 0/2`) 拿不到 → 窗口标题永远是静态 "Terminal N"；响铃、OSC 52 剪贴板写入全部静默丢弃。
 
@@ -45,9 +62,13 @@
 ## P1 — 全功能终端的核心体验
 
 ### P1.1 窗口标题联动 【外壳层】
+> 状态：已闭合（M2.2/M2.3）。OSC 0/2 标题会同步到 `Window.title`，Windows 菜单窗口列表使用最新标题。
+
 - 即便组件暴露了标题（P0.3），demo 也需把它同步到 `Window.title`，并刷新 Windows 菜单里的窗口列表。
 
 ### P1.2 文本选择 / 复制 【组件层 + 外壳层】
+> 状态：已闭合（M4.1-M4.4/M4.R）。统一 selection 状态机同时服务鼠标框选和 copy-mode，支持宽字符命中、选区高亮、文本提取、内部 copy buffer 与粘贴回子进程。
+
 - 组件把鼠标 down 一律当作 recapture 或转发给子进程 (`terminal.rs:747-770`)，无法框选屏幕文本复制。
 - CLAUDE.md 记录 chat 组件已有文本选择，可参考其实现。
 - **前置设计**：见下方「escape 机制设计决策」——选择/复制必须先解决“捕获态下如何脱出去做本地选择”的通路问题。
@@ -88,12 +109,15 @@
 > 注：早期草案曾定 `Ctrl+Shift+C` 直达进 copy-mode，现已**废弃**——零散 chord 有自身碰撞风险，且 `Ctrl+Shift` 在传统终端不可靠；统一收进 P1.6 的前缀（`前缀 + [`）。
 
 ### P1.3 剪贴板打通 【组件层 + 外壳层】
+> 状态：已闭合（M4.4/M4.6）。选择与 copy-mode 复制写入组件内部 buffer，可通过前缀粘贴回子进程；系统剪贴板后端与 OSC 52 路径已接入且可禁用/替换。
+
 - 粘贴已支持 bracketed paste (`terminal.rs:719-737`)，但缺“复制出去”的路径（依赖 P1.2 的选择 + P0.3 的 clipboard 回调）。
 - **分期落地**：
   - *首版*：选择 → 组件内部 copy buffer + 粘贴回子进程，先让选择/高亮/命中测试这套核心逻辑落地并过 PTY 测试，避免一次把 `arboard` 跨平台依赖 + OSC 52 桥接塞进同一个 PR。
   - *后续*：接系统剪贴板（`arboard`）与 OSC 52（依赖 P0.3 的 `copy_to_clipboard` 回调），可做成 OSC 52 优先、`arboard` 兜底。
 
 ### P1.4 语义提示符标记（shell integration / OSC 133 · OSC 7）
+> 状态：已闭合（M5.1-M5.6/M5.R）。组件层感知 OSC 133/7 并暴露命令块，第 2 层呈现/交互和第 3 层可选 shell integration 注入均已实现且相互解耦。
 
 **目标**：让终端能把 scrollback 精确切成「提示符 / 用户命令 / 命令输出」三段，从而支持命令级导航（跳到上/下一条命令）、整条命令输出的一键选择/复制、命令失败高亮、命令级退出码、以及会话继承 cwd。
 
@@ -132,6 +156,7 @@
 **优先级**：整体作为 P1 的可选增强，依赖 P0.3 的 callbacks 改造。第 1 层可与 P0.3 顺带落地（改动小、零依赖）；第 2、3 层按体验需求排期，互不阻塞。
 
 ### P1.5 alt screen / 全屏应用的滚动分流 【组件层】
+> 状态：已闭合（M4.5/M4.7/M4.R）。滚轮按 mouse reporting、alternate screen、主屏本地 scrollback 的三级树分流，copy-mode 内滚轮/方向键始终本地消费。
 
 **问题**：当前滚动全建立在 `screen.set_scrollback(offset)` 上（`handle_scrollback_wheel`/`handle_scrollback_key`，`terminal.rs:499/521`）。但 vt100 的 alt grid scrollback 恒为 0（`grid::new(size, 0)`，`screen.rs:76`），进入 vim/less/htop/tmux 后往上滚 `set_scrollback` 永远返回 0、毫无反应。根因：alt screen 是临时全屏画布，本就无历史；用户滚轮在两种模式下期望的是**根本不同**的两件事：
 
@@ -176,6 +201,7 @@
 **改动点 / 归属**：纯组件层，与 P1.2 的鼠标处理重写是同一片代码，顺手一起做。当前滚轮转发被绑在 `capture` 态里、scrollback 又不分主屏/alt——需在滚轮分支前置这棵三级决策树。alternate scroll 的键位（方向键 ×3 / `Ctrl+U`·`Ctrl+D`）与默认开关可做成配置项（呼应 P3.2），倾向默认方向键 ×3（vim/less/emacs 都吃）。
 
 ### P1.6 捕获态下的外壳快捷键通路（tmux 式前缀键）【组件层 + 外壳层】
+> 状态：已闭合（M3.1-M3.5/M3.R）。默认 `Ctrl+B` 前缀、可配置前缀键与命令表、typed `ComponentAction` 桥接、copy-mode 入口和字面前缀转义均已实现。
 
 **问题**：capture 态下，终端组件把除 `release_shortcut` 外的**所有键编码转发给子进程并返回 `consumed`**（`terminal.rs:701-712`）。而 Desktop 的事件路由是「focused view 先吃 → WM → Desktop 全局快捷键」（`desktop.rs:664-680` 再到 `749`），全局快捷键排在**最后**。两者叠加的后果：**capture 态下 `F10` / `Ctrl+W` 等外壳快捷键被终端组件在第一步吞掉转发给 shell，永远到不了 Desktop——外壳操作在终端捕获时失效。** 且这是**双向**难题：既要让外壳能从终端里拿出快捷键，又要让子进程仍能收到它需要的 `F10` / `Ctrl+W`。
 
@@ -205,15 +231,21 @@
 ## P2 — 多形态窗口与会话管理
 
 ### P2.1 分屏 / 标签页 【外壳层】
+> 状态：已闭合（M6.1/M6.R）。`TerminalPaneGroup` 在单个 WM 窗口内维护 pane 树、active pane、split layout、pane-level focus/capture 和 resize 传播。
+
 - “全功能多窗口终端”通常要 tmux 式 split panes 或 tab，目前只有 WM 浮动窗口一种形态。
 - 可基于现有 `VStack`/`HStack`/`Grid` 布局在单窗口内做 split。
 
 ### P2.2 会话管理 【外壳层】
+> 状态：已闭合（M6.2/M6.4/M6.R）。窗口持有独立 `TerminalSessionSpec`，支持 shell/command 新建入口、死会话重启、OSC 7 cwd 继承和每窗口 profile/cwd。
+
 - 无“新建时选 shell/命令”入口。
 - 无重启已死会话（配合 P0.1 的 `exit_status`）。
 - 无每窗口独立 cwd / profile。
 
 ### P2.3 spawn 环境细节 【组件层】
+> 状态：已闭合（M6.3/M6.R）。spawn 设置 `TERM=xterm-256color`、`COLORTERM=truecolor`、显式 cwd，并提供主动 resize API 与清理路径。
+
 - `spawn_command` 未设 `TERM` / `COLORTERM`，无初始 `cwd` (`terminal.rs:435-489`)。
 - resize 仅在 `draw` 中被动触发 (`terminal.rs:566-568`)，可考虑显式 resize 接口。
 
@@ -222,15 +254,21 @@
 ## P3 — 渲染保真度与配置面
 
 ### P3.1 光标形状 / keypad 模式 【组件层】
+> 状态：已闭合（M7.1/M7.2）。DECSCUSR block/underline/bar 光标渲染与 `application_keypad()` 输入编码均已接入。
+
 - 光标渲染是 REVERSED 涂格 (`terminal.rs:603-612`)，忽略 vt100 的光标形状（block/bar/underline）。
 - DECCKM (`application_cursor`) 已接，但 `application_keypad()` 未接。
 
 ### P3.2 配置入口 【外壳层】
+> 状态：已闭合（M7.3-M7.6/M7.R）。`TerminalConfig`、JSON/YAML 持久化、设置窗口、live apply/save/reload，以及 scrollback/prefix/palette/release/alt-scroll/session/shell-integration/cursor 配置均已接线。
+
 - scrollback 长度、色板、release 快捷键均写死，无设置入口。
 
 ---
 
 ## 落地顺序建议
+
+> 当前状态：以下建议已按 M1 → M7 全部落地，详细完成记录见 `TODO.md`。
 
 1. **P0.1 + P0.3（组件层）** —— 一次性引入 `new_with_callbacks`，同时补进程退出回调与 title/bell/clipboard 桥接。这是组件层的硬缺陷，后续一切依赖它。
 2. **P0.2 + P1.1（外壳层）** —— 死窗口回收 + 标题联动，让多窗口外壳“活”起来。

@@ -13,6 +13,7 @@
 | `crates/atto-ui-node/npm/*` | Platform binary npm packages used by optional dependencies. |
 | `crates/atto-editor-app` | Multi-window terminal editor app with Explorer, tabs, split views, command palette, file/symbol/search pickers, and LSP-backed editor features. |
 | `crates/atto-agent-app` | Single-window TUI agent app built on `atto-ui-chat`, with DeepSeek protocol/client modules, local tools, skills, plan mode, context compaction, and deterministic mock PTY fixtures. |
+| `crates/atto-ui-terminal` | Full-featured terminal emulator component and `terminal_viewer` demo with multi-window sessions, split panes, copy-mode, command blocks, and a visual settings window. |
 
 ## Requirements
 
@@ -42,6 +43,21 @@ The deterministic test target used by PTY tests is available with:
 ```sh
 cargo run --bin snapshot_app
 ```
+
+## Terminal App Quick Start
+
+Launch the full terminal viewer demo with your login shell, or pass a command to make the initial terminal window run that command:
+
+```sh
+cargo run -p atto-ui-terminal --example terminal_viewer
+cargo run -p atto-ui-terminal --example terminal_viewer -- top
+```
+
+The viewer supports floating terminal windows, tmux-style split panes, dead-session restart, OSC title sync, command-block navigation for OSC 133/7 shell integration, local selection/copy-mode, OSC 52/system clipboard integration, alt-screen wheel routing, and a File -> Settings window backed by JSON/YAML `TerminalConfig`.
+
+Key defaults: `Ctrl+B` is the terminal prefix, `Ctrl+B [` enters copy-mode, `Ctrl+B %` / `Ctrl+B "` split panes, `Ctrl+B o` focuses the next pane, and `Ctrl+B F10` opens the menu while capture is active. Without a saved config, `terminal_viewer` uses `Ctrl+Shift+L` to release capture so plain `F10` can reach the menu; saved configs can change the release shortcut.
+
+Configuration is loaded from `ATTO_UI_TERMINAL_CONFIG` when set, then `$XDG_CONFIG_HOME/atto-ui/terminal.yaml`, then `~/.config/atto-ui/terminal.yaml`. See `crates/atto-ui-terminal/README.md` for feature details, config examples, and focused validation commands.
 
 ### Themes
 
@@ -166,6 +182,7 @@ The Deno smoke requires `--allow-read --allow-env --allow-run --allow-ffi`; the 
 ## Documentation
 
 - `docs/NODE_API.md` documents the Node binding, `@atto-ui/core`, React package, component spec shape, events, and runtime compatibility notes.
+- `crates/atto-ui-terminal/README.md` documents the terminal emulator component, full terminal viewer demo, settings model, shortcuts, and terminal-specific validation commands.
 - `docs/RELEASE.md` documents CI coverage, the tag-based npm release workflow, and workspace-only app release scope.
 - `NODE_BINDING.md` is the design record for the Node binding and React host architecture.
 

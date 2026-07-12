@@ -161,5 +161,7 @@
 
 ## 收尾
 
-- [ ] **Docs 更新** - 根据实际实现更新 `TERMINAL_GAP.md`（标注已闭合缺口）、README 或新增终端 app README；更新 `IMPLEMENTATION_PLAN.md` 里程碑状态（见 `AGENTS.md`）。
+- [x] **[DONE] Docs 更新** - 根据实际实现更新 `TERMINAL_GAP.md`（标注已闭合缺口）、README 或新增终端 app README；更新 `IMPLEMENTATION_PLAN.md` 里程碑状态（见 `AGENTS.md`）。
+  - 完成记录（2026-07-12）：`TERMINAL_GAP.md` 已标注 P0-P3 缺口均由 M1-M7 闭合，并为每个历史缺口补充对应闭合里程碑；根 `README.md` 新增 terminal app quick start、配置路径、快捷键与终端 README 链接；新增 `crates/atto-ui-terminal/README.md`，覆盖 terminal viewer 功能、copy-mode/分屏/命令块/设置界面、配置 YAML 示例、组件用法与 focused validation 命令。仓库根目录不存在 `IMPLEMENTATION_PLAN.md`，本轮按当前阶段计划文件 `PLAN.md` 更新 M1-M7 里程碑状态。
+  - 验证：本任务仅修改 Markdown 文档与 `memory/claude_plan.md` 进度文件，未改动编译产物；沿用 M7.R 完成记录中的 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全套通过结果，未重跑全套。
 - [ ] **示例升级** - 把 `terminal_viewer` demo 升级为体现全功能（前缀键、copy-mode、分屏、会话管理、配置界面）的示例。

@@ -4,11 +4,25 @@
 
 上一阶段的 TUI Agent / DeepSeek 接入计划已归档至 [`docs/archive/2026-07-11-tui-agent-deepseek/`](docs/archive/2026-07-11-tui-agent-deepseek/)。
 
-## 现状（2026-07-11）
+## 历史基线（2026-07-11）
 
 组件层的「终端芯」`TerminalEmulator`（`crates/atto-ui-terminal/src/terminal.rs`，~1300 行）已相当扎实：PTY spawn、reader 线程、按键/鼠标 ANSI 编码、scrollback、DSR 光标查询响应、bracketed paste、capture/release 快捷键、宽字符渲染、鼠标协议转发均已就绪。外壳层 `examples/terminal_viewer.rs`（~280 行 demo）已具备菜单、new/close/minimize/maximize、窗口列表切换。
 
-缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**。详见 `TERMINAL_GAP.md` 的 P0-P3 分级。
+当时缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**。详见 `TERMINAL_GAP.md` 的 P0-P3 分级。
+
+## 当前状态（2026-07-12）
+
+M1-M7 已全部完成；详细任务级完成记录、验证命令与 review 记录见 [`TODO.md`](TODO.md)。`TERMINAL_GAP.md` 已改为历史缺口分析与闭合索引，当前实现包含：
+
+| 阶段 | 状态 | 结果 |
+|---|---|---|
+| M1 | 已完成 | 进程退出信号、运行状态查询、vt100 callbacks/title/bell/clipboard 桥接。 |
+| M2 | 已完成 | 死窗口退出提示/重启、OSC 标题同步到窗口标题与 Windows 菜单。 |
+| M3 | 已完成 | tmux 式可配置前缀键、命令表、typed shell action 桥接、copy-mode 入口与前缀转义。 |
+| M4 | 已完成 | selection/copy-mode、鼠标本地框选、内部/系统剪贴板、OSC 52、alt-screen 滚轮分流。 |
+| M5 | 已完成 | OSC 133/7 命令块感知、命令级呈现/交互、可选 shell integration 注入。 |
+| M6 | 已完成 | 单窗口 split panes、session profile/cwd 管理、死会话重启、spawn 环境与显式 resize。 |
+| M7 | 已完成 | 光标形状、application keypad、`TerminalConfig`、设置窗口、运行时配置生效与持久化。 |
 
 ## 范围
 
