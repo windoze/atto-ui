@@ -7,8 +7,9 @@ use atto_ui::composable::{
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::{
-    TerminalCommandBlockPresentation, TerminalCursorShape, TerminalEmulator, TerminalPrefixBinding,
-    TerminalPrefixCommand, TerminalSelectionPosition, TerminalShortcut,
+    TerminalColorSpec, TerminalCommandBlockPresentation, TerminalConfig, TerminalCursorShape,
+    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalSelectionPosition,
+    TerminalShortcut, TerminalShortcutConfig, TerminalShortcutModifier,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
@@ -17,7 +18,7 @@ use crossterm::event::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 
 #[derive(Clone, Copy)]
 enum MouseProtocol {
@@ -970,6 +971,83 @@ fn terminal_alternate_screen_wheel_sends_direction_keys() {
 }
 
 #[test]
+fn terminal_config_applies_shortcuts_scrollback_and_alt_scroll() {
+    let theme = Theme::dark();
+    let mut config = TerminalConfig {
+        scrollback_len: 7,
+        prefix_key: TerminalShortcutConfig::control_letter('a'),
+        release_shortcut: TerminalShortcutConfig::new("g", [TerminalShortcutModifier::Control]),
+        ..TerminalConfig::default()
+    };
+    config.alternate_screen_scroll.step = 2;
+    config.alternate_screen_scroll.scroll_up_key = TerminalShortcutConfig::new("pageup", []);
+    config.alternate_screen_scroll.scroll_down_key = TerminalShortcutConfig::new("pagedown", []);
+
+    let mut terminal = TerminalEmulator::from_config(&config).expect("configured terminal");
+    let handle = terminal.handle();
+
+    assert_eq!(handle.scrollback_len(), 7);
+    assert_eq!(
+        handle.prefix_shortcut(),
+        TerminalShortcut::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
+    );
+    assert_eq!(
+        handle.release_shortcut(),
+        TerminalShortcut::new(KeyCode::Char('g'), KeyModifiers::CONTROL)
+    );
+
+    handle.process_output_str("\x1b[?1049h");
+    let up = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(up.is_consumed());
+    assert_eq!(handle.take_input(), b"\x1b[5~\x1b[5~");
+
+    let release = terminal.handle_event(&Event::Key(ctrl_key('g')), context(&theme));
+    assert!(release.is_consumed());
+    assert!(!handle.capture());
+}
+
+#[test]
+fn terminal_apply_config_updates_live_terminal() {
+    let mut config = TerminalConfig {
+        prefix_key: TerminalShortcutConfig::control_letter('z'),
+        ..TerminalConfig::default()
+    };
+    config.alternate_screen_scroll.enabled = false;
+    let mut terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.apply_config(&config).expect("apply config");
+    assert_eq!(
+        handle.prefix_shortcut(),
+        TerminalShortcut::new(KeyCode::Char('z'), KeyModifiers::CONTROL)
+    );
+
+    let theme = Theme::dark();
+    handle.process_output_str("\x1b[?1049h");
+    let result = terminal.handle_event(
+        &Event::Mouse(mouse_event(MouseEventKind::ScrollUp, KeyModifiers::NONE)),
+        context(&theme),
+    );
+    assert!(result.is_consumed());
+    assert_eq!(handle.take_input(), b"");
+
+    assert_eq!(
+        component_key_input_with_terminal(
+            terminal,
+            &[
+                ctrl_key('b'),
+                ctrl_key('z'),
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            ],
+        ),
+        b"\x02\x1ax"
+    );
+}
+
+#[test]
 fn terminal_mouse_reporting_wheel_takes_priority_over_alternate_screen_scroll() {
     let theme = Theme::dark();
     let mut terminal = TerminalEmulator::new();
@@ -1238,6 +1316,35 @@ fn terminal_cursor_shape_sequences_update_rendered_cursor() {
         .expect("default cell");
     assert_eq!(handle.cursor_shape(), TerminalCursorShape::Block);
     assert!(default_block.modifier.contains(Modifier::REVERSED));
+}
+
+#[test]
+fn terminal_config_palette_changes_rendered_colors() {
+    let theme = Theme::dark();
+    let mut config = TerminalConfig::default();
+    config.palette.foreground = Some(TerminalColorSpec::new("#abcdef"));
+    config.palette.background = Some(TerminalColorSpec::new("#010203"));
+    config.palette.ansi[1] = TerminalColorSpec::new("#123456");
+    let mut widget = TerminalEmulator::from_config(&config).expect("configured terminal");
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(4, 1)).expect("terminal");
+
+    handle.process_output_str("\x1b[31mR\x1b[mD");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 1), context(&theme)))
+        .expect("draw configured colors");
+
+    let red = terminal.backend().buffer().cell((0, 0)).expect("red cell");
+    assert_eq!(red.fg, Color::Rgb(0x12, 0x34, 0x56));
+    assert_eq!(red.bg, Color::Rgb(0x01, 0x02, 0x03));
+
+    let default = terminal
+        .backend()
+        .buffer()
+        .cell((1, 0))
+        .expect("default cell");
+    assert_eq!(default.fg, Color::Rgb(0xab, 0xcd, 0xef));
+    assert_eq!(default.bg, Color::Rgb(0x01, 0x02, 0x03));
 }
 
 #[test]

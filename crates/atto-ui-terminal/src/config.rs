@@ -1,7 +1,7 @@
 //! Persistent configuration model for the terminal app.
 //!
-//! The model is intentionally independent from the widget wiring so settings can be edited and
-//! saved before M7.5 applies them to live terminal instances.
+//! The model stays serializable and validation-focused, while runtime conversion helpers feed live
+//! terminal widgets and app settings windows.
 
 use std::collections::BTreeSet;
 use std::env;

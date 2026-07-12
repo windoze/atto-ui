@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::{TerminalEmulator, TerminalHandle, TerminalShortcut};
+use crate::{TerminalConfig, TerminalEmulator, TerminalHandle, TerminalShortcut};
 
 const DIVIDER_THICKNESS: u16 = 1;
 
@@ -50,11 +50,25 @@ pub struct TerminalPaneSnapshot {
     pub handle: TerminalHandle,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct TerminalPaneGroupShared {
     panes: Vec<TerminalPaneSnapshot>,
     active_id: Option<TerminalPaneId>,
+    prefix_shortcut: TerminalShortcut,
     last_error: Option<String>,
+}
+
+impl Default for TerminalPaneGroupShared {
+    fn default() -> Self {
+        Self {
+            panes: Vec::new(),
+            active_id: None,
+            prefix_shortcut: TerminalConfig::default()
+                .prefix_shortcut()
+                .expect("default terminal prefix shortcut must be valid"),
+            last_error: None,
+        }
+    }
 }
 
 /// Handle for inspecting a [`TerminalPaneGroup`] from the surrounding app shell.
@@ -107,6 +121,21 @@ impl TerminalPaneGroupHandle {
     /// Returns and clears the last split creation error.
     pub fn take_last_error(&self) -> Option<String> {
         self.shared.lock().last_error.take()
+    }
+
+    /// Applies terminal configuration to all current panes and pane-level prefix handling.
+    pub fn apply_config(&self, config: &TerminalConfig) -> Result<()> {
+        config.validate()?;
+        let prefix_shortcut = config.prefix_shortcut()?;
+        let panes = {
+            let mut shared = self.shared.lock();
+            shared.prefix_shortcut = prefix_shortcut;
+            shared.panes.clone()
+        };
+        for pane in panes {
+            pane.handle.apply_config(config)?;
+        }
+        Ok(())
     }
 }
 
@@ -190,12 +219,13 @@ impl TerminalPaneGroup {
         let first_id = TerminalPaneId(1);
         let pane = TerminalPane::new(first_id, initial);
         let shared = Arc::new(Mutex::new(TerminalPaneGroupShared::default()));
+        let prefix_shortcut = shared.lock().prefix_shortcut;
         let mut group = Self {
             panes: vec![pane],
             tree: TerminalPaneNode::Leaf(first_id),
             active_id: first_id,
             next_id: 2,
-            prefix_shortcut: TerminalShortcut::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+            prefix_shortcut,
             prefix_pending: false,
             last_area: None,
             last_layouts: Vec::new(),
@@ -217,7 +247,14 @@ impl TerminalPaneGroup {
     pub fn prefix_shortcut(mut self, shortcut: TerminalShortcut) -> Self {
         self.prefix_shortcut = shortcut;
         self.prefix_pending = false;
+        self.shared.lock().prefix_shortcut = shortcut;
         self
+    }
+
+    /// Applies terminal configuration to existing panes and future pane-level prefix handling.
+    pub fn config(self, config: &TerminalConfig) -> Result<Self> {
+        self.handle().apply_config(config)?;
+        Ok(self)
     }
 
     /// Configures how new panes are created when a split command is invoked.
@@ -231,6 +268,14 @@ impl TerminalPaneGroup {
 
     fn active_pane_index(&self) -> Option<usize> {
         self.panes.iter().position(|pane| pane.id == self.active_id)
+    }
+
+    fn sync_prefix_from_shared(&mut self) {
+        let prefix_shortcut = self.shared.lock().prefix_shortcut;
+        if self.prefix_shortcut != prefix_shortcut {
+            self.prefix_shortcut = prefix_shortcut;
+            self.prefix_pending = false;
+        }
     }
 
     fn pane_index(&self, id: TerminalPaneId) -> Option<usize> {
@@ -334,6 +379,7 @@ impl TerminalPaneGroup {
         key: KeyEvent,
         ctx: ComponentContext<'_>,
     ) -> Option<EventResult> {
+        self.sync_prefix_from_shared();
         if !ctx.is_focused || key.kind == KeyEventKind::Release {
             return None;
         }
@@ -719,6 +765,20 @@ fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use atto_ui::theme::Theme;
+    use atto_ui::wm::WindowId;
+
+    fn context(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        }
+    }
 
     #[test]
     fn split_rects_reserve_one_cell_divider() {
@@ -748,5 +808,31 @@ mod tests {
             pane_command_for_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)),
             Some(PaneCommand::FocusNext)
         );
+    }
+
+    #[test]
+    fn pane_group_apply_config_updates_prefix_shortcut() {
+        let theme = Theme::dark();
+        let config = TerminalConfig {
+            prefix_key: crate::TerminalShortcutConfig::control_letter('a'),
+            ..TerminalConfig::default()
+        };
+        config.validate().expect("valid config");
+        let mut group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+
+        handle.apply_config(&config).expect("apply config");
+        let prefix = group.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            context(&theme),
+        );
+        assert!(prefix.is_consumed());
+        let split = group.handle_event(
+            &Event::Key(KeyEvent::new(KeyCode::Char('%'), KeyModifiers::NONE)),
+            context(&theme),
+        );
+
+        assert!(split.is_consumed());
+        assert_eq!(handle.pane_count(), 2);
     }
 }

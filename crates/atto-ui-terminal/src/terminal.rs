@@ -35,9 +35,8 @@ use crate::selection::{
     visible_top_row,
 };
 use crate::session::TerminalSessionSpec;
+use crate::{TerminalAlternateScreenScrollConfig, TerminalConfig, TerminalPaletteConfig};
 
-const DEFAULT_SCROLLBACK_LEN: usize = 2000;
-const DEFAULT_SCROLL_STEP: u16 = 3;
 const DEFAULT_TERM_ENV: &str = "xterm-256color";
 const DEFAULT_COLORTERM_ENV: &str = "truecolor";
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
@@ -99,6 +98,99 @@ impl TerminalShellIntegration {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TerminalRuntimeConfig {
+    scrollback_len: usize,
+    palette: TerminalPalette,
+    release_shortcut: TerminalShortcut,
+    prefix_shortcut: TerminalShortcut,
+    alternate_screen_scroll: TerminalAlternateScreenScroll,
+    shell_integration: TerminalShellIntegration,
+    cursor_shape: TerminalCursorShape,
+}
+
+impl TerminalRuntimeConfig {
+    fn from_config(config: &TerminalConfig) -> Result<Self> {
+        config.validate()?;
+        Ok(Self {
+            scrollback_len: config.scrollback_len,
+            palette: TerminalPalette::from_config(&config.palette)?,
+            release_shortcut: config.release_shortcut()?,
+            prefix_shortcut: config.prefix_shortcut()?,
+            alternate_screen_scroll: TerminalAlternateScreenScroll::from_config(
+                &config.alternate_screen_scroll,
+            )?,
+            shell_integration: config.shell_integration_policy(),
+            cursor_shape: config.cursor.default_shape.into(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TerminalPalette {
+    foreground: Option<Color>,
+    background: Option<Color>,
+    ansi: [Color; 16],
+}
+
+impl TerminalPalette {
+    fn from_config(config: &TerminalPaletteConfig) -> Result<Self> {
+        let ansi = config
+            .ansi
+            .iter()
+            .map(|color| color.to_color())
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .map_err(|_| anyhow!("terminal palette must contain 16 ANSI colors"))?;
+        Ok(Self {
+            foreground: config.foreground_color()?,
+            background: config.background_color()?,
+            ansi,
+        })
+    }
+
+    fn color_for_index(&self, index: u8) -> Color {
+        self.ansi
+            .get(usize::from(index))
+            .copied()
+            .unwrap_or(Color::Indexed(index))
+    }
+}
+
+impl Default for TerminalPalette {
+    fn default() -> Self {
+        TerminalPalette::from_config(&TerminalPaletteConfig::default())
+            .expect("default terminal palette must be valid")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalAlternateScreenScroll {
+    enabled: bool,
+    step: u16,
+    scroll_up_key: TerminalShortcut,
+    scroll_down_key: TerminalShortcut,
+}
+
+impl TerminalAlternateScreenScroll {
+    fn from_config(config: &TerminalAlternateScreenScrollConfig) -> Result<Self> {
+        config.validate()?;
+        Ok(Self {
+            enabled: config.enabled,
+            step: config.step.max(1),
+            scroll_up_key: config.scroll_up_key.to_shortcut()?,
+            scroll_down_key: config.scroll_down_key.to_shortcut()?,
+        })
+    }
+}
+
+impl Default for TerminalAlternateScreenScroll {
+    fn default() -> Self {
+        TerminalAlternateScreenScroll::from_config(&TerminalAlternateScreenScrollConfig::default())
+            .expect("default terminal alternate-screen scroll config must be valid")
+    }
+}
+
 impl TerminalShortcut {
     pub const fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
@@ -123,9 +215,13 @@ mod tests {
     use super::*;
 
     fn test_shared() -> TerminalShared {
+        let runtime_config = TerminalRuntimeConfig::from_config(&TerminalConfig::default())
+            .expect("default terminal config");
         TerminalShared {
-            parser: terminal_parser(24, 80, DEFAULT_SCROLLBACK_LEN),
-            scrollback_len: DEFAULT_SCROLLBACK_LEN,
+            parser: terminal_parser(24, 80, runtime_config.scrollback_len),
+            scrollback_len: runtime_config.scrollback_len,
+            palette: runtime_config.palette,
+            alternate_screen_scroll: runtime_config.alternate_screen_scroll,
             input: VecDeque::new(),
             on_input: None,
             input_forward: None,
@@ -137,7 +233,7 @@ mod tests {
             on_command_finished: None,
             system_clipboard: None,
             pty_resize: None,
-            shell_integration: TerminalShellIntegration::default(),
+            shell_integration: runtime_config.shell_integration,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -148,8 +244,8 @@ mod tests {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
-            release_shortcut: default_release_shortcut(),
-            prefix_shortcut: default_prefix_shortcut(),
+            release_shortcut: runtime_config.release_shortcut,
+            prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: None,
@@ -439,20 +535,6 @@ mod tests {
 
         assert!(error.contains("osc52 failed"));
         assert!(error.contains("arboard failed"));
-    }
-}
-
-fn default_release_shortcut() -> TerminalShortcut {
-    TerminalShortcut {
-        code: KeyCode::Esc,
-        modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    }
-}
-
-fn default_prefix_shortcut() -> TerminalShortcut {
-    TerminalShortcut {
-        code: KeyCode::Char('b'),
-        modifiers: KeyModifiers::CONTROL,
     }
 }
 
@@ -1198,6 +1280,8 @@ fn trim_terminal_block_text(mut text: String) -> Option<String> {
 struct TerminalShared {
     parser: TerminalParser,
     scrollback_len: usize,
+    palette: TerminalPalette,
+    alternate_screen_scroll: TerminalAlternateScreenScroll,
     input: VecDeque<u8>,
     on_input: Option<InputCallback>,
     input_forward: Option<InputCallback>,
@@ -1234,6 +1318,36 @@ struct TerminalShared {
 }
 
 impl TerminalShared {
+    fn apply_runtime_config(&mut self, config: TerminalRuntimeConfig) {
+        if self.scrollback_len != config.scrollback_len {
+            self.scrollback_len = config.scrollback_len;
+            let (rows, cols) = self.parser.screen().size();
+            self.parser = terminal_parser(rows, cols, config.scrollback_len);
+            self.selection.clear();
+            self.copy_mode = None;
+            self.command_marks.clear();
+        }
+        self.palette = config.palette;
+        self.release_shortcut = config.release_shortcut;
+        self.set_prefix_shortcut(config.prefix_shortcut);
+        self.alternate_screen_scroll = config.alternate_screen_scroll;
+        self.shell_integration = config.shell_integration;
+        self.cursor_shape = config.cursor_shape;
+    }
+
+    fn set_scrollback_len(&mut self, len: usize) {
+        if self.scrollback_len == len {
+            return;
+        }
+        let (rows, cols) = self.parser.screen().size();
+        self.scrollback_len = len;
+        self.parser = terminal_parser(rows, cols, len);
+        self.cursor_shape = TerminalCursorShape::default();
+        self.selection.clear();
+        self.copy_mode = None;
+        self.command_marks.clear();
+    }
+
     fn set_capture(&mut self, capture: bool) {
         self.capture = capture;
         if !capture {
@@ -2243,7 +2357,6 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
 pub struct TerminalEmulator {
     shared: Arc<Mutex<TerminalShared>>,
     last_area: Option<Rect>,
-    scroll_step: u16,
     capture_on_click: bool,
     command_block_presentation: TerminalCommandBlockPresentation,
     process: Option<TerminalProcess>,
@@ -2252,10 +2365,14 @@ pub struct TerminalEmulator {
 
 impl TerminalEmulator {
     pub fn new() -> Self {
-        let parser = terminal_parser(24, 80, DEFAULT_SCROLLBACK_LEN);
+        let runtime_config = TerminalRuntimeConfig::from_config(&TerminalConfig::default())
+            .expect("default terminal config must be valid");
+        let parser = terminal_parser(24, 80, runtime_config.scrollback_len);
         let shared = TerminalShared {
             parser,
-            scrollback_len: DEFAULT_SCROLLBACK_LEN,
+            scrollback_len: runtime_config.scrollback_len,
+            palette: runtime_config.palette,
+            alternate_screen_scroll: runtime_config.alternate_screen_scroll,
             input: VecDeque::new(),
             on_input: None,
             input_forward: None,
@@ -2267,7 +2384,7 @@ impl TerminalEmulator {
             on_command_finished: None,
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
             pty_resize: None,
-            shell_integration: TerminalShellIntegration::default(),
+            shell_integration: runtime_config.shell_integration,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -2278,8 +2395,8 @@ impl TerminalEmulator {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
-            release_shortcut: default_release_shortcut(),
-            prefix_shortcut: default_prefix_shortcut(),
+            release_shortcut: runtime_config.release_shortcut,
+            prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
             prefix_pending: false,
             copy_mode: None,
@@ -2287,19 +2404,22 @@ impl TerminalEmulator {
             selection: TerminalSelectionState::default(),
             command_marks: Vec::new(),
             current_cwd: None,
-            cursor_shape: TerminalCursorShape::default(),
+            cursor_shape: runtime_config.cursor_shape,
             dsr_tail: Vec::with_capacity(4),
         };
 
         Self {
             shared: Arc::new(Mutex::new(shared)),
             last_area: None,
-            scroll_step: DEFAULT_SCROLL_STEP,
             capture_on_click: true,
             command_block_presentation: TerminalCommandBlockPresentation::default(),
             process: None,
             on_close: None,
         }
+    }
+
+    pub fn from_config(config: &TerminalConfig) -> Result<Self> {
+        Self::new().config(config)
     }
 
     pub fn handle(&self) -> TerminalHandle {
@@ -2314,14 +2434,13 @@ impl TerminalEmulator {
     }
 
     pub fn scrollback_len(self, len: usize) -> Self {
-        {
-            let mut shared = self.shared.lock();
-            shared.scrollback_len = len;
-            let (rows, cols) = shared.parser.screen().size();
-            shared.parser = terminal_parser(rows, cols, len);
-            shared.cursor_shape = TerminalCursorShape::default();
-        }
+        self.shared.lock().set_scrollback_len(len);
         self
+    }
+
+    pub fn config(self, config: &TerminalConfig) -> Result<Self> {
+        self.handle().apply_config(config)?;
+        Ok(self)
     }
 
     pub fn capture(self, capture: bool) -> Self {
@@ -2367,8 +2486,8 @@ impl TerminalEmulator {
         self
     }
 
-    pub fn scroll_step(mut self, step: u16) -> Self {
-        self.scroll_step = step.max(1);
+    pub fn scroll_step(self, step: u16) -> Self {
+        self.shared.lock().alternate_screen_scroll.step = step.max(1);
         self
     }
 
@@ -2605,8 +2724,9 @@ impl TerminalEmulator {
         }
     }
 
-    fn handle_scrollback_wheel(&mut self, event: MouseEvent, step: u16) -> bool {
+    fn handle_scrollback_wheel(&mut self, event: MouseEvent) -> bool {
         let mut shared = self.shared.lock();
+        let step = shared.alternate_screen_scroll.step;
         let delta = match event.kind {
             MouseEventKind::ScrollUp => -(step as i16),
             MouseEventKind::ScrollDown => step as i16,
@@ -2627,13 +2747,17 @@ impl TerminalEmulator {
         false
     }
 
-    fn handle_alternate_screen_wheel(&mut self, event: MouseEvent, step: u16) -> bool {
-        let key = match event.kind {
-            MouseEventKind::ScrollUp => KeyCode::Up,
-            MouseEventKind::ScrollDown => KeyCode::Down,
+    fn handle_alternate_screen_wheel(&mut self, event: MouseEvent) -> bool {
+        let shared = self.shared.lock();
+        let config = shared.alternate_screen_scroll;
+        if !config.enabled {
+            return false;
+        }
+        let shortcut = match event.kind {
+            MouseEventKind::ScrollUp => config.scroll_up_key,
+            MouseEventKind::ScrollDown => config.scroll_down_key,
             _ => return false,
         };
-        let shared = self.shared.lock();
         let screen = shared.parser.screen();
         if !matches!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None)
             || !screen.alternate_screen()
@@ -2641,12 +2765,13 @@ impl TerminalEmulator {
             return false;
         }
 
-        let Some(key_bytes) = encode_key_event(screen, KeyEvent::new(key, KeyModifiers::NONE))
+        let Some(key_bytes) =
+            encode_key_event(screen, KeyEvent::new(shortcut.code, shortcut.modifiers))
         else {
             return true;
         };
-        let mut bytes = Vec::with_capacity(key_bytes.len() * usize::from(step.max(1)));
-        for _ in 0..step.max(1) {
+        let mut bytes = Vec::with_capacity(key_bytes.len() * usize::from(config.step));
+        for _ in 0..config.step {
             bytes.extend_from_slice(&key_bytes);
         }
         drop(shared);
@@ -2760,12 +2885,13 @@ impl TerminalEmulator {
         if shared.copy_mode.is_none() {
             return false;
         }
+        let step = shared.alternate_screen_scroll.step as isize;
         match event.kind {
             MouseEventKind::ScrollUp => {
-                let _ = shared.scroll_copy_mode_view(self.scroll_step as isize);
+                let _ = shared.scroll_copy_mode_view(step);
             }
             MouseEventKind::ScrollDown => {
-                let _ = shared.scroll_copy_mode_view(-(self.scroll_step as isize));
+                let _ = shared.scroll_copy_mode_view(-step);
             }
             _ => {}
         }
@@ -2805,12 +2931,13 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         };
         let max_scrollback = shared.max_scrollback();
         let cursor_shape = shared.cursor_shape;
+        let palette = shared.palette.clone();
         let screen = shared.parser.screen_mut();
         let visible_top = visible_top_row(max_scrollback, screen.scrollback());
 
         let base_style = ctx.theme.window_bg;
-        let base_fg = base_style.fg;
-        let base_bg = base_style.bg;
+        let base_fg = palette.foreground.or(base_style.fg);
+        let base_bg = palette.background.or(base_style.bg);
         let command_output_style = command_output_style(ctx.theme);
         let command_separator_style = command_separator_style(ctx.theme);
         let command_failure_style = command_failure_style(ctx.theme);
@@ -2843,7 +2970,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                     .unwrap_or(" ");
 
                 let style = cell
-                    .map(|c| cell_style(c, base_fg, base_bg))
+                    .map(|c| cell_style(c, base_fg, base_bg, &palette))
                     .unwrap_or(base_style);
                 let style = if row_presentation.output {
                     style.patch(command_output_style)
@@ -3048,7 +3175,7 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                         shared.set_capture(true);
                     } else {
                         drop(shared);
-                        if self.handle_scrollback_wheel(*m, self.scroll_step) {
+                        if self.handle_scrollback_wheel(*m) {
                             return EventResult::consumed();
                         }
                         return EventResult::ignored();
@@ -3074,10 +3201,10 @@ impl ::atto_ui::composable::EventHandling for TerminalEmulator {
                     return EventResult::consumed();
                 }
                 drop(shared);
-                if self.handle_alternate_screen_wheel(*m, self.scroll_step) {
+                if self.handle_alternate_screen_wheel(*m) {
                     return EventResult::consumed();
                 }
-                if self.handle_scrollback_wheel(*m, self.scroll_step) {
+                if self.handle_scrollback_wheel(*m) {
                     return EventResult::consumed();
                 }
                 EventResult::consumed()
@@ -3165,6 +3292,21 @@ impl TerminalHandle {
 
     pub fn capture(&self) -> bool {
         self.shared.lock().capture
+    }
+
+    /// Applies a validated terminal configuration to this live terminal instance.
+    pub fn apply_config(&self, config: &TerminalConfig) -> Result<()> {
+        let runtime_config = TerminalRuntimeConfig::from_config(config)?;
+        self.shared.lock().apply_runtime_config(runtime_config);
+        Ok(())
+    }
+
+    pub fn set_scrollback_len(&self, len: usize) {
+        self.shared.lock().set_scrollback_len(len);
+    }
+
+    pub fn scrollback_len(&self) -> usize {
+        self.shared.lock().scrollback_len
     }
 
     pub fn set_release_shortcut(&self, shortcut: TerminalShortcut) {
@@ -3548,9 +3690,14 @@ fn mouse_selection_position(
     ))
 }
 
-fn cell_style(cell: &vt100::Cell, base_fg: Option<Color>, base_bg: Option<Color>) -> Style {
-    let mut fg = resolve_color(cell.fgcolor(), base_fg);
-    let mut bg = resolve_color(cell.bgcolor(), base_bg);
+fn cell_style(
+    cell: &vt100::Cell,
+    base_fg: Option<Color>,
+    base_bg: Option<Color>,
+    palette: &TerminalPalette,
+) -> Style {
+    let mut fg = resolve_color(cell.fgcolor(), base_fg, palette);
+    let mut bg = resolve_color(cell.bgcolor(), base_bg, palette);
     if cell.inverse() {
         std::mem::swap(&mut fg, &mut bg);
     }
@@ -3595,33 +3742,15 @@ fn apply_cursor_shape(cell: &mut Cell, shape: TerminalCursorShape) {
     }
 }
 
-fn resolve_color(color: vt100::Color, default: Option<Color>) -> Option<Color> {
+fn resolve_color(
+    color: vt100::Color,
+    default: Option<Color>,
+    palette: &TerminalPalette,
+) -> Option<Color> {
     match color {
         vt100::Color::Default => default,
-        vt100::Color::Idx(i) => Some(color_from_index(i)),
+        vt100::Color::Idx(i) => Some(palette.color_for_index(i)),
         vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
-    }
-}
-
-fn color_from_index(i: u8) -> Color {
-    match i {
-        0 => Color::Black,
-        1 => Color::Red,
-        2 => Color::Green,
-        3 => Color::Yellow,
-        4 => Color::Blue,
-        5 => Color::Magenta,
-        6 => Color::Cyan,
-        7 => Color::Gray,
-        8 => Color::DarkGray,
-        9 => Color::LightRed,
-        10 => Color::LightGreen,
-        11 => Color::LightYellow,
-        12 => Color::LightBlue,
-        13 => Color::LightMagenta,
-        14 => Color::LightCyan,
-        15 => Color::White,
-        _ => Color::Indexed(i),
     }
 }
 

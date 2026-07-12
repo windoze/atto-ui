@@ -1,6 +1,6 @@
 use std::env;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -25,15 +25,15 @@ use atto_ui::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
 use atto_ui::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable, VStack,
 };
-use atto_ui::reactive::Binding;
+use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{
     TerminalCommandBlockPresentation, TerminalConfig, TerminalEmulator, TerminalHandle,
     TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec,
-    TerminalSettingsView, TerminalShortcut, default_terminal_config_path,
-    load_terminal_config_or_default,
+    TerminalSettingsView, TerminalShortcutConfig, TerminalShortcutModifier,
+    default_terminal_config_path, load_terminal_config_or_default,
 };
 
 const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
@@ -127,6 +127,16 @@ fn terminal_window_rect(work: Rect, window_number: usize) -> Rect {
         width: 50.min(work.width.saturating_sub(2)).max(20),
         height: 14.min(work.height.saturating_sub(8)).max(8),
     }
+}
+
+fn load_snapshot_terminal_config(path: Option<&Path>) -> Result<TerminalConfig> {
+    let mut config = load_terminal_config_or_default(path)?;
+    if path.is_none_or(|path| !path.exists()) {
+        config.release_shortcut =
+            TerminalShortcutConfig::new("g", [TerminalShortcutModifier::Control]);
+    }
+    config.validate()?;
+    Ok(config)
 }
 
 struct TerminalWindowSession {
@@ -331,12 +341,9 @@ fn is_plain_restart_key(event: &Event) -> bool {
 fn build_terminal_view(
     spec: Option<&TerminalSessionSpec>,
     pane_number: usize,
+    config: &TerminalConfig,
 ) -> Result<(TerminalEmulator, TerminalHandle)> {
-    let mut terminal = TerminalEmulator::new()
-        .release_shortcut(TerminalShortcut::new(
-            KeyCode::Char('g'),
-            KeyModifiers::CONTROL,
-        ))
+    let mut terminal = TerminalEmulator::from_config(config)?
         .command_block_presentation(TerminalCommandBlockPresentation::enabled())
         .without_system_clipboard();
     if let Some(spec) = spec {
@@ -349,12 +356,19 @@ fn build_terminal_view(
 
 fn build_terminal_pane_group(
     spec: Option<&TerminalSessionSpec>,
+    config: Binding<TerminalConfig>,
 ) -> Result<(TerminalPaneGroup, TerminalPaneGroupHandle)> {
     let spec_owned = spec.cloned();
-    let (terminal, _) = build_terminal_view(spec, 1)?;
-    let group = TerminalPaneGroup::new(terminal).pane_factory(move |pane_number| {
-        build_terminal_view(spec_owned.as_ref(), pane_number).map(|(terminal, _)| terminal)
-    });
+    let initial_config = config.get();
+    let (terminal, _) = build_terminal_view(spec, 1, &initial_config)?;
+    let config_for_factory = config.clone();
+    let group = TerminalPaneGroup::new(terminal)
+        .config(&initial_config)?
+        .pane_factory(move |pane_number| {
+            let config = config_for_factory.get();
+            build_terminal_view(spec_owned.as_ref(), pane_number, &config)
+                .map(|(terminal, _)| terminal)
+        });
     let handle = group.handle();
     Ok((group, handle))
 }
@@ -364,10 +378,11 @@ fn spawn_terminal_window(
     screen: Rect,
     window_number: usize,
     spec: Option<TerminalSessionSpec>,
+    config: Binding<TerminalConfig>,
 ) -> Result<TerminalWindowSession> {
     let work = Desktop::layout(screen).work_area;
     let rect = terminal_window_rect(work, window_number);
-    let (terminal, panes) = build_terminal_pane_group(spec.as_ref())?;
+    let (terminal, panes) = build_terminal_pane_group(spec.as_ref(), config)?;
     let id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -563,6 +578,7 @@ fn refresh_windows_menu(desktop: &mut Desktop) {
 fn restart_terminal_view(
     desktop: &mut Desktop,
     session: &mut TerminalWindowSession,
+    config: Binding<TerminalConfig>,
 ) -> Result<bool> {
     if !session.exit_prompted || desktop.wm.focused() != Some(session.id) {
         return Ok(false);
@@ -571,7 +587,7 @@ fn restart_terminal_view(
         return Ok(false);
     };
 
-    let (terminal, panes) = build_terminal_pane_group(Some(&spec))?;
+    let (terminal, panes) = build_terminal_pane_group(Some(&spec), config)?;
     if !desktop.wm.set_view(session.id, Box::new(terminal)) {
         return Ok(false);
     }
@@ -581,6 +597,30 @@ fn restart_terminal_view(
     desktop.set_title(session.id, terminal_window_title(session.window_number));
     desktop.wm.focus(session.id);
     Ok(true)
+}
+
+fn apply_terminal_config_to_sessions(
+    config: &TerminalConfig,
+    term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
+) -> Result<()> {
+    term_session.panes.apply_config(config)?;
+    for session in extra_sessions {
+        session.panes.apply_config(config)?;
+    }
+    Ok(())
+}
+
+fn apply_terminal_config_if_dirty(
+    config: &Binding<TerminalConfig>,
+    observer: &mut DirtyObserver,
+    term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
+) -> Result<()> {
+    if config.check_dirty(observer) {
+        apply_terminal_config_to_sessions(&config.get(), term_session, extra_sessions)?;
+    }
+    Ok(())
 }
 
 fn close_command_context_menu(desktop: &mut Desktop, context: &mut Option<CommandContextState>) {
@@ -865,9 +905,10 @@ fn update_status_lines(
 fn main() -> Result<()> {
     let session_config = terminal_session_config_from_env_args();
     let terminal_config_path = session_config.terminal_config_path.clone();
-    let terminal_config = Binding::new(load_terminal_config_or_default(
+    let terminal_config = Binding::new(load_snapshot_terminal_config(
         terminal_config_path.as_deref(),
     )?);
+    let mut terminal_config_observer = terminal_config.dirty_observer();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -918,7 +959,13 @@ fn main() -> Result<()> {
         height: 6.min(work.height.saturating_sub(1)).max(4),
     };
 
-    let mut term_session = spawn_terminal_window(&mut desktop, screen, 1, session_config.initial)?;
+    let mut term_session = spawn_terminal_window(
+        &mut desktop,
+        screen,
+        1,
+        session_config.initial,
+        terminal_config.clone(),
+    )?;
     let term_id = term_session.id;
     let mut extra_sessions = Vec::new();
     let mut next_window_number = 2usize;
@@ -948,6 +995,12 @@ fn main() -> Result<()> {
         for session in &extra_sessions {
             sync_terminal_window_title(&mut desktop, session);
         }
+        apply_terminal_config_if_dirty(
+            &terminal_config,
+            &mut terminal_config_observer,
+            &term_session,
+            &extra_sessions,
+        )?;
         refresh_windows_menu(&mut desktop);
         update_status_lines(
             &desktop,
@@ -1003,8 +1056,13 @@ fn main() -> Result<()> {
                     &extra_sessions,
                     &session_config.shell,
                 );
-                let session =
-                    spawn_terminal_window(&mut desktop, screen, next_window_number, Some(spec))?;
+                let session = spawn_terminal_window(
+                    &mut desktop,
+                    screen,
+                    next_window_number,
+                    Some(spec),
+                    terminal_config.clone(),
+                )?;
                 extra_sessions.push(session);
                 next_window_number = next_window_number.saturating_add(1);
                 menu_action.set("SHELL".to_string());
@@ -1016,8 +1074,13 @@ fn main() -> Result<()> {
                     .as_ref()
                     .unwrap_or(&session_config.shell);
                 let spec = spec_for_new_window(&desktop, &term_session, &extra_sessions, base);
-                let session =
-                    spawn_terminal_window(&mut desktop, screen, next_window_number, Some(spec))?;
+                let session = spawn_terminal_window(
+                    &mut desktop,
+                    screen,
+                    next_window_number,
+                    Some(spec),
+                    terminal_config.clone(),
+                )?;
                 extra_sessions.push(session);
                 next_window_number = next_window_number.saturating_add(1);
                 menu_action.set("COMMAND".to_string());
@@ -1036,9 +1099,9 @@ fn main() -> Result<()> {
         }
         if is_plain_restart_key(&ev) {
             sync_all_session_cwds(&mut term_session, &mut extra_sessions);
-            if !restart_terminal_view(&mut desktop, &mut term_session)? {
+            if !restart_terminal_view(&mut desktop, &mut term_session, terminal_config.clone())? {
                 for session in &mut extra_sessions {
-                    if restart_terminal_view(&mut desktop, session)? {
+                    if restart_terminal_view(&mut desktop, session, terminal_config.clone())? {
                         break;
                     }
                 }

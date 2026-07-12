@@ -1,31 +1,29 @@
-# Execution plan
+# Autonomous Task Execution Plan
 
-I will follow `TODO.md` as the source of truth and complete only the first task whose heading is not prefixed with `[DONE]`.
+## Current objective
+Complete exactly the first incomplete task in `TODO.md`, update task bookkeeping, validate the work, commit the resulting changes, and stop.
 
-## Current task
+## Execution steps
+1. Read `TODO.md` to identify the first task whose heading is not prefixed with `[DONE]`.
+2. Check the latest commit message only for unfinished issues directly relevant to that task.
+3. Inspect the files and tests relevant to the selected task.
+4. Implement the task as written, without narrowing scope or using workarounds.
+5. Run formatting, linting, and the relevant tests, escalating to the full required suite when appropriate.
+6. If an unscheduled test failure or blocking prerequisite is found, update `TODO.md` with the minimum prerequisite task and stop after committing that bookkeeping.
+7. If implementation succeeds, prefix the task title in `TODO.md` with `[DONE]`, update its completion record, and update `PLAN.md` only if the phase-level plan changed.
+8. Commit all changes for this task with a clear task-scoped message and the required co-author trailer.
 
-First incomplete task: `M7.4 配置界面`.
-
-Task requirement: add a visual settings window for terminal configuration. It should reuse the declarative layout components (`VStack`/`HStack`/`Grid`) and existing widgets (`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`) to edit grouped configuration values, support immediate preview/apply and save, and be opened from a menu entry.
-
-Latest commit check: the latest commit is `[M7.3] Add terminal configuration model`; it does not explicitly mention unfinished work that must preempt M7.4.
-
-## Steps
-
-1. Inspect the terminal configuration API added by M7.3, the terminal viewer/window fixture menu code, existing widget APIs, and existing settings/dialog patterns.
-2. Design a small settings view model that can edit the M7.3 `TerminalConfig` fields that are safe to expose in this task without changing behavior outside the settings flow.
-3. Add a reusable terminal settings component/window that uses declarative containers and existing widgets for grouped controls.
-4. Wire the settings window into the terminal app menu entry and support Apply/Save actions. Immediate runtime behavior can update the active in-memory config state now; deeper component-wide configuration plumbing remains M7.5.
-5. Add focused tests for the settings model/component behavior and any PTY/menu coverage that belongs to this task.
-6. Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and relevant tests/full workspace tests as required.
-7. Mark M7.4 `[DONE]` in `TODO.md`, record implementation and validation, commit all changes, and stop.
-
-## Progress
-
-- Identified `M7.4 配置界面` as the first incomplete task.
-- Confirmed latest commit is M7.3 and contains no explicit unfinished blocker for M7.4.
-- Added a reusable terminal settings module with a declarative settings view, draft/config conversion, Apply/Save/Reset actions, preview/status text, default config path helpers, and unit tests.
-- Wired the settings window into the interactive terminal viewer and deterministic PTY fixture File menus.
-- Added PTY coverage for opening the settings window from File -> Settings and saving a config file.
-- Validation completed: formatting, focused settings unit tests, settings PTY test, workspace clippy with warnings denied, and full workspace tests all passed.
-- Updated `TODO.md` to mark M7.4 as `[DONE]` with a completion record.
+## Progress log
+- Initialized plan before inspecting project tasks.
+- Identified first incomplete task: M7.5 配置生效接线.
+- Next: inspect terminal config, terminal emulator hard-coded settings, and settings apply/save wiring.
+- Implemented component-level TerminalConfig application for scrollback, palette, release/prefix shortcuts, alternate-screen scroll keys/step/enabled state, shell integration, and default cursor shape.
+- Wired TerminalPaneGroup and both terminal app shells to apply changed settings bindings to live terminal panes and to build new/restarted panes from the active config.
+- Added targeted tests for live config application, palette rendering, and pane-prefix config propagation.
+- Validation completed: formatting, workspace clippy, targeted terminal config tests, and full workspace tests passed.
+- Marked M7.5 as [DONE] in TODO.md with completion and validation notes.
+- Next: review diff, commit all task changes, then stop.
+- Spot-check found one constructor field still using an enum default; corrected it to use the computed runtime config.
+- Re-ran formatting, workspace clippy, targeted config tests, and the full workspace test suite successfully after the correction.
+- Added a validation guard before pane-group live config mutation and reran formatting, clippy, targeted tests, and the full workspace test suite successfully.
+- Ran `cargo fmt --all -- --check` successfully and updated the TODO validation record; only documentation/bookkeeping changed after the last full test run.
