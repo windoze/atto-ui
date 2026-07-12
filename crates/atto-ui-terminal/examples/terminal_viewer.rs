@@ -12,7 +12,7 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
@@ -38,6 +38,7 @@ const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:terminal_viewer:windows:lis
 enum TerminalViewerAction {
     NewShellWindow,
     NewCommandWindow,
+    OpenFeatureGuide,
     OpenSettings,
     Quit,
     FocusNext,
@@ -177,6 +178,31 @@ impl Scrollable for CommandContextMenuView {}
 impl FocusNav for CommandContextMenuView {}
 atto_ui::impl_component_default_traits!(CommandContextMenuView => DynamicTree);
 
+struct FeatureGuideView {
+    lines: Vec<String>,
+}
+
+impl FeatureGuideView {
+    fn new(lines: Vec<String>) -> Self {
+        Self { lines }
+    }
+}
+
+impl Component for FeatureGuideView {
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        let lines: Vec<Line<'_>> = self
+            .lines
+            .iter()
+            .map(|line| Line::from(line.as_str()))
+            .collect();
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    }
+}
+
+atto_ui::impl_component_default_traits!(
+    FeatureGuideView => Layout, Scrollable, FocusNav, DynamicTree, EventHandling
+);
+
 fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
     MenuBar::new(vec![
         MenuSpec::new(
@@ -210,6 +236,18 @@ fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
                     }
                 })
                 .shortcut("q"),
+            ],
+        ),
+        MenuSpec::new(
+            "Help",
+            vec![
+                MenuItem::action("Feature guide", {
+                    let action_tx = action_tx.clone();
+                    move || {
+                        let _ = action_tx.send(TerminalViewerAction::OpenFeatureGuide);
+                    }
+                })
+                .shortcut("?"),
             ],
         ),
         MenuSpec::new(
@@ -314,6 +352,23 @@ fn terminal_window_title(window_number: usize) -> String {
     format!("Terminal {window_number}")
 }
 
+fn demo_command_session_spec() -> TerminalSessionSpec {
+    TerminalSessionSpec::command(
+        "Demo Command",
+        "/bin/sh",
+        vec![
+            "-lc".to_string(),
+            concat!(
+                "printf 'Atto terminal demo command session\\n'; ",
+                "printf 'This profile was launched from File > New command window.\\n'; ",
+                "printf 'It inherits the active terminal cwd, then hands off to your shell.\\n'; ",
+                "exec \"${SHELL:-/bin/sh}\""
+            )
+            .to_string(),
+        ],
+    )
+}
+
 fn is_plain_restart_key(event: &Event) -> bool {
     let Event::Key(key) = event else {
         return false;
@@ -342,6 +397,15 @@ fn seed_terminal_banner(
     handle.process_output_str(&format!(
         "{prefix} %: split right; {prefix} \" split below; {prefix} o: next pane.\r\n"
     ));
+    handle.process_output_str(&format!(
+        "{prefix} [: copy-mode; {prefix} ]: paste copy buffer; {prefix} z: maximize window.\r\n"
+    ));
+    handle.process_output_str(
+        "File > New shell/command: sessions; File > Settings: live config; Help > Feature guide.\r\n",
+    );
+    handle.process_output_str(
+        "Right-click an OSC 133 command block for rerun/copy actions when shell integration is active.\r\n",
+    );
     handle.process_output_str("\x1b[?1000h\x1b[?1006h");
     Ok(())
 }
@@ -708,6 +772,98 @@ fn settings_window_rect(screen: Rect) -> Rect {
     }
 }
 
+fn feature_guide_window_rect(screen: Rect) -> Rect {
+    let work_area = Desktop::layout(screen).work_area;
+    let width = 76.min(work_area.width.saturating_sub(4)).max(44);
+    let height = 18.min(work_area.height.saturating_sub(2)).max(12);
+    Rect {
+        x: work_area
+            .x
+            .saturating_add(work_area.width.saturating_sub(width).saturating_sub(1)),
+        y: work_area.y.saturating_add(1),
+        width,
+        height,
+    }
+}
+
+fn config_path_label(config_path: Option<&Path>) -> String {
+    config_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "default config path unavailable".to_string())
+}
+
+fn feature_guide_lines(
+    config: &TerminalConfig,
+    config_path: Option<&Path>,
+    shell_spec: &TerminalSessionSpec,
+    command_spec: &TerminalSessionSpec,
+) -> Result<Vec<String>> {
+    let prefix = shortcut_label(config.prefix_shortcut()?);
+    let release = shortcut_label(config.release_shortcut()?);
+    Ok(vec![
+        "Atto Terminal Viewer full-feature demo".to_string(),
+        String::new(),
+        format!("Capture: {release} releases keyboard capture; click a terminal to recapture."),
+        format!(
+            "Prefix: {prefix} F10 menu, {prefix} w window mode, {prefix} z maximize, {prefix} {prefix} sends a literal prefix."
+        ),
+        format!(
+            "Copy-mode: {prefix} [ enters; arrows/hjkl move; v or Space starts selection; y or Enter copies; {prefix} ] pastes."
+        ),
+        format!("Splits: {prefix} % splits right, {prefix} \" splits below, {prefix} o or Tab focuses the next pane."),
+        format!(
+            "Sessions: File > New shell window uses profile '{}'; File > New command window uses profile '{}'.",
+            shell_spec.profile(),
+            command_spec.profile()
+        ),
+        "Restart: when a session exits, the terminal shows a dead-process prompt; plain R restarts with that session profile and cwd.".to_string(),
+        "Command blocks: OSC 133/shell-integration marks commands; Ctrl+Up/Down navigates; right-click a block to rerun or copy command/output.".to_string(),
+        format!(
+            "Settings: File > Settings edits scrollback, prefix/release keys, palette, profiles, shell integration, and saves to {}.",
+            config_path_label(config_path)
+        ),
+        "Windows: OSC 0/2 titles update window titles and the Windows > Switch to list.".to_string(),
+        String::new(),
+        "Close this guide to use the terminal; reopen it from Help > Feature guide.".to_string(),
+    ])
+}
+
+fn open_feature_guide_window(
+    desktop: &mut Desktop,
+    screen: Rect,
+    config: &TerminalConfig,
+    config_path: Option<&Path>,
+    shell_spec: &TerminalSessionSpec,
+    command_spec: &TerminalSessionSpec,
+    feature_guide_window_id: &mut Option<WindowId>,
+) -> Result<()> {
+    if let Some(id) = *feature_guide_window_id
+        && (desktop.wm.restore_window(id) || desktop.wm.window(id).is_some())
+    {
+        desktop.wm.focus(id);
+        return Ok(());
+    }
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Floating,
+            "Terminal Feature Guide",
+            feature_guide_window_rect(screen),
+            Box::new(FeatureGuideView::new(feature_guide_lines(
+                config,
+                config_path,
+                shell_spec,
+                command_spec,
+            )?)),
+        )
+        .with_min_size(44, 12),
+        screen,
+    );
+    desktop.wm.focus(id);
+    *feature_guide_window_id = Some(id);
+    Ok(())
+}
+
 fn open_settings_window(
     desktop: &mut Desktop,
     screen: Rect,
@@ -716,7 +872,7 @@ fn open_settings_window(
     settings_window_id: &mut Option<WindowId>,
 ) {
     if let Some(id) = *settings_window_id
-        && desktop.wm.restore_window(id)
+        && (desktop.wm.restore_window(id) || desktop.wm.window(id).is_some())
     {
         desktop.wm.focus(id);
         return;
@@ -789,10 +945,17 @@ fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<Terminal
 fn main() -> Result<()> {
     let argv: Vec<String> = env::args().skip(1).collect();
     let shell_spec = TerminalSessionSpec::shell_from_env();
-    let command_spec = argv.split_first().map(|(program, args)| {
-        TerminalSessionSpec::command("Command", program.clone(), args.to_vec())
-    });
-    let initial_spec = command_spec.clone().unwrap_or_else(|| shell_spec.clone());
+    let command_spec = argv
+        .split_first()
+        .map(|(program, args)| {
+            TerminalSessionSpec::command("Command", program.clone(), args.to_vec())
+        })
+        .unwrap_or_else(demo_command_session_spec);
+    let initial_spec = if argv.is_empty() {
+        shell_spec.clone()
+    } else {
+        command_spec.clone()
+    };
     let terminal_config_path = default_terminal_config_path();
     let terminal_config = Binding::new(load_viewer_terminal_config(
         terminal_config_path.as_deref(),
@@ -810,9 +973,12 @@ fn main() -> Result<()> {
         Rc::new(RefCell::new(Vec::new()));
 
     let initial_spec_for_build = initial_spec.clone();
+    let shell_spec_for_build = shell_spec.clone();
+    let command_spec_for_build = command_spec.clone();
     let action_tx_for_build = action_tx.clone();
     let terminal_sessions_for_build = Rc::clone(&terminal_sessions);
     let terminal_config_for_build = terminal_config.clone();
+    let terminal_config_path_for_build = terminal_config_path.clone();
 
     let action_tx_for_actions = action_tx.clone();
     let action_tx_for_tick = action_tx.clone();
@@ -829,6 +995,9 @@ fn main() -> Result<()> {
     let command_context_for_event = Rc::clone(&command_context);
     let settings_window_id: Rc<RefCell<Option<WindowId>>> = Rc::new(RefCell::new(None));
     let settings_window_id_for_actions = Rc::clone(&settings_window_id);
+    let feature_guide_window_id: Rc<RefCell<Option<WindowId>>> = Rc::new(RefCell::new(None));
+    let feature_guide_window_id_for_build = Rc::clone(&feature_guide_window_id);
+    let feature_guide_window_id_for_actions = Rc::clone(&feature_guide_window_id);
     let terminal_config_for_actions = terminal_config.clone();
     let terminal_config_path_for_actions = terminal_config_path.clone();
 
@@ -846,7 +1015,18 @@ fn main() -> Result<()> {
                 initial_spec_for_build.clone(),
                 terminal_config_for_build.clone(),
             )?;
+            let terminal_id = session.id;
             terminal_sessions_for_build.borrow_mut().push(session);
+            open_feature_guide_window(
+                &mut desktop,
+                screen,
+                &terminal_config_for_build.get(),
+                terminal_config_path_for_build.as_deref(),
+                &shell_spec_for_build,
+                &command_spec_for_build,
+                &mut feature_guide_window_id_for_build.borrow_mut(),
+            )?;
+            desktop.wm.focus(terminal_id);
             refresh_windows_menu(&mut desktop, &action_tx_for_build);
 
             Ok(desktop)
@@ -878,11 +1058,10 @@ fn main() -> Result<()> {
                         next_window_number = next_window_number.saturating_add(1);
                     }
                     TerminalViewerAction::NewCommandWindow => {
-                        let base = command_spec.as_ref().unwrap_or(&shell_spec);
                         let spec = {
                             let mut sessions = terminal_sessions.borrow_mut();
                             sync_session_cwds(&mut sessions);
-                            spec_for_new_window(desktop, &sessions, base)
+                            spec_for_new_window(desktop, &sessions, &command_spec)
                         };
                         let session = spawn_terminal_window(
                             desktop,
@@ -893,6 +1072,17 @@ fn main() -> Result<()> {
                         )?;
                         terminal_sessions.borrow_mut().push(session);
                         next_window_number = next_window_number.saturating_add(1);
+                    }
+                    TerminalViewerAction::OpenFeatureGuide => {
+                        open_feature_guide_window(
+                            desktop,
+                            screen,
+                            &terminal_config_for_actions.get(),
+                            terminal_config_path_for_actions.as_deref(),
+                            &shell_spec,
+                            &command_spec,
+                            &mut feature_guide_window_id_for_actions.borrow_mut(),
+                        )?;
                     }
                     TerminalViewerAction::OpenSettings => {
                         open_settings_window(

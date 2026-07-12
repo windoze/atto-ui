@@ -1,18 +1,27 @@
 # Claude execution plan
 
+I cannot provide private chain-of-thought, but this file records the actionable execution plan and progress for this invocation.
+
 ## Current status
-- Selected first incomplete task from TODO.md: **Docs 更新**.
-- Latest commit is `[M7.R] Complete terminal config review`; it is directly relevant only as the last completed milestone, with no unfinished issue called out in the commit subject.
-- `IMPLEMENTATION_PLAN.md` is not present at the repository root; the active phase plan is `PLAN.md`, so milestone-status updates will be made there.
-- Documentation edits are complete: `TERMINAL_GAP.md`, `PLAN.md`, root `README.md`, new `crates/atto-ui-terminal/README.md`, and the `TODO.md` completion record.
-- Diff whitespace check passed with `git diff --check`; validation commands were not rerun because this task changed documentation/progress files only.
-- I will avoid recording private chain-of-thought; this file will contain an actionable execution plan and progress log.
+
+- Selected first incomplete task from `TODO.md`: **示例升级**.
+- Latest commit is `[Docs] Update terminal app documentation`; it does not mention unfinished work that changes this task's scope.
+- Current direction: upgrade `crates/atto-ui-terminal/examples/terminal_viewer.rs` so the demo visibly showcases the already-implemented full terminal app features, rather than leaving those features discoverable only through hidden shortcuts.
 
 ## Step-by-step plan
-1. Done: Update `TERMINAL_GAP.md` so it clearly records that P0-P3 terminal gaps are closed by M1-M7 and leaves no stale "missing" status as current truth.
-2. Done: Update the root `README.md` with a terminal app quick start and link to terminal-specific docs.
-3. Done: Add `crates/atto-ui-terminal/README.md` documenting the full terminal viewer feature set, shortcuts, configuration file behavior, and validation commands.
-4. Done: Update `PLAN.md` milestone status to show M1-M7 complete and point the detailed completion record to `TODO.md`.
-5. Done: Mark the `Docs 更新` task `[DONE]` in `TODO.md` and record that validation was skipped because this task changes documentation only after the previous full-suite green M7.R run.
-6. Done: Review the Markdown diff for consistency.
-7. Next: Commit the documentation/task updates with the required trailer.
+
+1. Read the existing `terminal_viewer` example and nearby terminal window fixture patterns.
+2. Add an explicit full-feature guide surface to the demo UI, including prefix-key commands, copy-mode, split panes, session management, command-block actions, and settings/config persistence.
+3. Ensure the startup banner also advertises the full feature set from inside the terminal pane.
+4. Build/check the example with the smallest relevant validation, then run formatting, clippy, and workspace tests if code changed.
+5. Mark **示例升级** as `[DONE]` in `TODO.md` with a completion record.
+6. Commit the task changes with the required co-author trailer and stop.
+
+## Progress
+
+- Identified **示例升级** as the first incomplete task.
+- Confirmed the latest commit has no explicit unfinished issue relevant to this task.
+- Reviewed the current `terminal_viewer` implementation; it already wires sessions, splits, copy-mode, command context menus, and settings, so the missing piece is making the demo explicitly present those full-feature paths.
+- Updated `terminal_viewer` with a startup/reopenable feature guide, a Help menu entry, a richer in-terminal banner, a distinct default demo command profile for `File > New command window`, and duplicate-prevention for settings/guide windows.
+- Ran `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`; all passed.
+- Marked **示例升级** as `[DONE]` in `TODO.md` with the completion and validation record.

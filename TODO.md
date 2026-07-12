@@ -164,4 +164,6 @@
 - [x] **[DONE] Docs 更新** - 根据实际实现更新 `TERMINAL_GAP.md`（标注已闭合缺口）、README 或新增终端 app README；更新 `IMPLEMENTATION_PLAN.md` 里程碑状态（见 `AGENTS.md`）。
   - 完成记录（2026-07-12）：`TERMINAL_GAP.md` 已标注 P0-P3 缺口均由 M1-M7 闭合，并为每个历史缺口补充对应闭合里程碑；根 `README.md` 新增 terminal app quick start、配置路径、快捷键与终端 README 链接；新增 `crates/atto-ui-terminal/README.md`，覆盖 terminal viewer 功能、copy-mode/分屏/命令块/设置界面、配置 YAML 示例、组件用法与 focused validation 命令。仓库根目录不存在 `IMPLEMENTATION_PLAN.md`，本轮按当前阶段计划文件 `PLAN.md` 更新 M1-M7 里程碑状态。
   - 验证：本任务仅修改 Markdown 文档与 `memory/claude_plan.md` 进度文件，未改动编译产物；沿用 M7.R 完成记录中的 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全套通过结果，未重跑全套。
-- [ ] **示例升级** - 把 `terminal_viewer` demo 升级为体现全功能（前缀键、copy-mode、分屏、会话管理、配置界面）的示例。
+- [x] **[DONE] 示例升级** - 把 `terminal_viewer` demo 升级为体现全功能（前缀键、copy-mode、分屏、会话管理、配置界面）的示例。
+  - 完成记录（2026-07-12）：`terminal_viewer` 现在启动时显示可关闭的 `Terminal Feature Guide` 浮动窗口，并可通过 Help → Feature guide 重新打开；该指南集中说明 capture/release、前缀键、copy-mode、分屏、会话新建/重启、命令块右键操作、配置界面与 OSC 标题联动。终端 pane 启动 banner 同步补充 copy-mode、内部 copy buffer 粘贴、会话菜单、设置窗口与命令块右键提示。`File > New command window` 在未传入命令参数时改用内置 `Demo Command` profile，区别于默认 shell profile，便于示例直接展示会话管理入口；设置窗口和指南窗口重复打开时会聚焦已有窗口而非创建重复实例。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
