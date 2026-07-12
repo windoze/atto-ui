@@ -123,7 +123,9 @@
 - [x] **[DONE] M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
   - 完成记录（2026-07-12）：新增 `TerminalSessionSpec` 统一描述 terminal session 的 profile、program/args 与窗口 cwd，`TerminalEmulator::spawn_session` 可直接按 spec 启动，`TerminalHandle::current_cwd()` 暴露 M5 OSC 7 观察到的 cwd。`terminal_viewer` 的 File 菜单拆为 New shell window / New command window，新窗口会继承当前窗口已观察到的 cwd；每个 `TerminalWindowSession` 持有自己的 spec，死会话按窗口自己的 profile/cwd 重启，不再依赖全局启动命令。`snapshot_terminal_window_app` 改用同一 spec，并暴露 `SESSION`/`CWD` 状态用于 PTY 覆盖。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal session_spec -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_restart_uses_session_profile_and_osc7_cwd -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
+- [x] **[DONE] M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
+  - 完成记录（2026-07-12）：`TerminalEmulator::spawn_command` 统一准备 PTY 子进程环境，显式设置 `TERM=xterm-256color`、`COLORTERM=truecolor`，并在调用者未指定 cwd 时固定为当前进程 cwd；`TerminalSessionSpec` 的显式 cwd 继续优先生效。新增共享 PTY resize 句柄，`TerminalEmulator::resize` 与 `TerminalHandle::resize` 可主动同步 parser screen 与运行中 PTY 尺寸，`draw` 复用同一路径而不再独占 resize 触发。进程退出或停止时会清理输入转发与 resize 句柄，避免对死 PTY 继续发 resize。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal spawn_command_preparation --lib -- --nocapture`、`cargo test -p atto-ui-terminal --test process_exit -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M6.4 测试** - PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
 - [ ] **M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
 

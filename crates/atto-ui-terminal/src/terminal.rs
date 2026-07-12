@@ -36,6 +36,8 @@ use crate::session::TerminalSessionSpec;
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
+const DEFAULT_TERM_ENV: &str = "xterm-256color";
+const DEFAULT_COLORTERM_ENV: &str = "truecolor";
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
 const COMMAND_FAILURE_SYMBOL: &str = "!";
 static SHELL_INTEGRATION_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -122,6 +124,7 @@ mod tests {
             on_clipboard_copy: None,
             on_command_finished: None,
             system_clipboard: None,
+            pty_resize: None,
             shell_integration: TerminalShellIntegration::default(),
             last_shell_integration_error: None,
             exit_status: None,
@@ -355,6 +358,35 @@ mod tests {
             TerminalShellIntegration::Disabled
         );
         assert_eq!(handle.last_shell_integration_error(), None);
+    }
+
+    #[test]
+    fn spawn_command_preparation_sets_terminal_env_and_default_cwd() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.env("TERM", "host-term");
+        cmd.env("COLORTERM", "host-colorterm");
+
+        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(DEFAULT_TERM_ENV)));
+        assert_eq!(
+            cmd.get_env("COLORTERM"),
+            Some(OsStr::new(DEFAULT_COLORTERM_ENV))
+        );
+        assert_eq!(
+            cmd.get_cwd().and_then(|cwd| cwd.to_str()),
+            env::current_dir().expect("current dir").as_path().to_str()
+        );
+    }
+
+    #[test]
+    fn spawn_command_preparation_preserves_explicit_cwd() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.cwd(OsStr::new("/tmp"));
+
+        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_cwd().and_then(|cwd| cwd.to_str()), Some("/tmp"));
     }
 
     #[test]
@@ -932,6 +964,16 @@ fn create_shell_integration_temp_dir() -> Result<PathBuf> {
     bail!("failed to allocate a unique shell integration temp directory")
 }
 
+fn prepare_spawn_command(cmd: &mut CommandBuilder) -> Result<()> {
+    cmd.env("TERM", DEFAULT_TERM_ENV);
+    cmd.env("COLORTERM", DEFAULT_COLORTERM_ENV);
+    if cmd.get_cwd().is_none() {
+        let cwd = env::current_dir()?;
+        cmd.cwd(cwd.as_os_str());
+    }
+    Ok(())
+}
+
 fn prepare_shell_integration(
     cmd: &mut CommandBuilder,
     integration: TerminalShellIntegration,
@@ -1117,6 +1159,7 @@ struct TerminalShared {
     on_clipboard_copy: Option<ClipboardCopyCallback>,
     on_command_finished: Option<CommandFinishedCallback>,
     system_clipboard: Option<SystemClipboard>,
+    pty_resize: Option<TerminalPtyResize>,
     shell_integration: TerminalShellIntegration,
     last_shell_integration_error: Option<String>,
     exit_status: Option<ExitStatus>,
@@ -1361,6 +1404,15 @@ impl TerminalShared {
 
     fn set_scrollback_offset(&mut self, offset: usize) {
         self.parser.screen_mut().set_scrollback(offset);
+    }
+
+    fn resize_screen(&mut self, rows: u16, cols: u16) -> bool {
+        let screen = self.parser.screen_mut();
+        if screen.size() == (rows, cols) {
+            return false;
+        }
+        screen.set_size(rows, cols);
+        true
     }
 
     fn set_scrollback_from_scroll_offset(&mut self, scroll_offset: u16) {
@@ -1867,30 +1919,46 @@ fn encode_prefix_fallback(shared: &TerminalShared, event: KeyEvent) -> Option<Ve
 
 type PtyChild = Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>;
 
-struct TerminalProcess {
-    master: Box<dyn portable_pty::MasterPty + Send>,
-    child: PtyChild,
-    reader_alive: Arc<AtomicBool>,
-    reader_thread: Option<thread::JoinHandle<()>>,
-    exit_watcher_thread: Option<thread::JoinHandle<()>>,
-    last_size: (u16, u16),
-    _shell_integration_files: Option<TerminalShellIntegrationFiles>,
+#[derive(Clone)]
+struct TerminalPtyResize {
+    master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    last_size: Arc<Mutex<(u16, u16)>>,
 }
 
-impl TerminalProcess {
-    fn resize_if_needed(&mut self, rows: u16, cols: u16) {
-        if self.last_size == (rows, cols) {
-            return;
+impl TerminalPtyResize {
+    fn new(master: Box<dyn portable_pty::MasterPty + Send>, rows: u16, cols: u16) -> Self {
+        Self {
+            master: Arc::new(Mutex::new(master)),
+            last_size: Arc::new(Mutex::new((rows, cols))),
         }
-        let _ = self.master.resize(PtySize {
+    }
+
+    fn resize_if_needed(&self, rows: u16, cols: u16) -> bool {
+        let mut last_size = self.last_size.lock();
+        if *last_size == (rows, cols) {
+            return false;
+        }
+        let _ = self.master.lock().resize(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         });
-        self.last_size = (rows, cols);
+        *last_size = (rows, cols);
+        true
     }
+}
 
+struct TerminalProcess {
+    _pty_resize: TerminalPtyResize,
+    child: PtyChild,
+    reader_alive: Arc<AtomicBool>,
+    reader_thread: Option<thread::JoinHandle<()>>,
+    exit_watcher_thread: Option<thread::JoinHandle<()>>,
+    _shell_integration_files: Option<TerminalShellIntegrationFiles>,
+}
+
+impl TerminalProcess {
     fn record_exit_if_ready(&mut self, shared: &Arc<Mutex<TerminalShared>>) -> bool {
         try_record_child_exit(shared, &self.child)
     }
@@ -1928,6 +1996,7 @@ fn record_exit_status(shared: &Arc<Mutex<TerminalShared>>, status: ExitStatus) {
         shared.exit_status = Some(status.clone());
         shared.process_running = false;
         shared.input_forward = None;
+        shared.pty_resize = None;
         shared.on_exit.clone()
     };
 
@@ -1965,6 +2034,21 @@ fn forward_input(shared: &Arc<Mutex<TerminalShared>>, bytes: &[u8]) {
     if let Some(cb) = cb {
         cb(bytes);
     }
+}
+
+fn resize_terminal(shared: &Arc<Mutex<TerminalShared>>, rows: u16, cols: u16) -> bool {
+    if rows == 0 || cols == 0 {
+        return false;
+    }
+    let (screen_changed, pty_resize) = {
+        let mut shared = shared.lock();
+        let screen_changed = shared.resize_screen(rows, cols);
+        (screen_changed, shared.pty_resize.clone())
+    };
+    let pty_changed = pty_resize
+        .map(|resize| resize.resize_if_needed(rows, cols))
+        .unwrap_or(false);
+    screen_changed || pty_changed
 }
 
 fn dispatch_system_clipboard_copy(shared: &Arc<Mutex<TerminalShared>>, text: &str) {
@@ -2129,6 +2213,7 @@ impl TerminalEmulator {
             on_clipboard_copy: None,
             on_command_finished: None,
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
+            pty_resize: None,
             shell_integration: TerminalShellIntegration::default(),
             last_shell_integration_error: None,
             exit_status: None,
@@ -2167,6 +2252,11 @@ impl TerminalEmulator {
         TerminalHandle {
             shared: Arc::clone(&self.shared),
         }
+    }
+
+    /// Explicitly resizes the parser screen and attached PTY, if a subprocess is running.
+    pub fn resize(&mut self, rows: u16, cols: u16) -> bool {
+        resize_terminal(&self.shared, rows, cols)
     }
 
     pub fn scrollback_len(self, len: usize) -> Self {
@@ -2348,6 +2438,7 @@ impl TerminalEmulator {
 
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, mut cmd: CommandBuilder) -> Result<()> {
+        prepare_spawn_command(&mut cmd)?;
         let shell_integration = { self.shared.lock().shell_integration };
         let shell_integration_files = match prepare_shell_integration(&mut cmd, shell_integration) {
             Ok(files) => {
@@ -2365,6 +2456,7 @@ impl TerminalEmulator {
             let mut shared = self.shared.lock();
             shared.exit_status = None;
             shared.process_running = false;
+            shared.pty_resize = None;
         }
 
         let (rows, cols) = {
@@ -2382,9 +2474,15 @@ impl TerminalEmulator {
 
         let child = pair.slave.spawn_command(cmd)?;
         let child = Arc::new(Mutex::new(child));
-        let writer = pair.master.take_writer()?;
-        let reader = pair.master.try_clone_reader()?;
-        self.shared.lock().process_running = true;
+        let master = pair.master;
+        let writer = master.take_writer()?;
+        let reader = master.try_clone_reader()?;
+        let pty_resize = TerminalPtyResize::new(master, rows, cols);
+        {
+            let mut shared = self.shared.lock();
+            shared.process_running = true;
+            shared.pty_resize = Some(pty_resize.clone());
+        }
 
         let handle = self.handle();
         let shared_for_reader = Arc::clone(&self.shared);
@@ -2428,12 +2526,11 @@ impl TerminalEmulator {
         }));
 
         self.process = Some(TerminalProcess {
-            master: pair.master,
+            _pty_resize: pty_resize,
             child,
             reader_alive,
             reader_thread: Some(reader_thread),
             exit_watcher_thread: Some(exit_watcher_thread),
-            last_size: (rows, cols),
             _shell_integration_files: shell_integration_files,
         });
 
@@ -2446,6 +2543,7 @@ impl TerminalEmulator {
             let mut shared = self.shared.lock();
             shared.input_forward = None;
             shared.process_running = false;
+            shared.pty_resize = None;
         }
         if let Some(mut process) = self.process.take() {
             process.shutdown(&self.shared);
@@ -2636,19 +2734,12 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
             process.record_exit_if_ready(&self.shared);
         }
 
+        let (rows, cols) = (area.height, area.width);
+        self.resize(rows, cols);
+
         let mut shared = self.shared.lock();
         if !ctx.is_focused && shared.capture {
             shared.set_capture(false);
-        }
-        let (rows, cols) = (area.height, area.width);
-        {
-            let screen = shared.parser.screen_mut();
-            if screen.size() != (rows, cols) {
-                screen.set_size(rows, cols);
-            }
-        }
-        if let Some(process) = &mut self.process {
-            process.resize_if_needed(rows, cols);
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
@@ -2995,6 +3086,11 @@ impl TerminalHandle {
     /// Pushes raw input bytes to the terminal input stream.
     pub fn send_input_bytes(&self, bytes: &[u8]) {
         dispatch_input(&self.shared, bytes);
+    }
+
+    /// Explicitly resizes the parser screen and attached PTY, if a subprocess is running.
+    pub fn resize(&self, rows: u16, cols: u16) -> bool {
+        resize_terminal(&self.shared, rows, cols)
     }
 
     /// Returns and clears the queued input bytes.
