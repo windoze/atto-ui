@@ -10,6 +10,7 @@ mod dynamic;
 mod pane;
 mod selection;
 mod session;
+mod settings;
 mod terminal;
 
 pub use config::{
@@ -28,6 +29,10 @@ pub use pane::{
 };
 pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use session::TerminalSessionSpec;
+pub use settings::{
+    TerminalSettingsDraft, TerminalSettingsHandle, TerminalSettingsView,
+    default_terminal_config_path, load_terminal_config_or_default,
+};
 pub use terminal::{
     TerminalClipboardCopy, TerminalCommandBlock, TerminalCommandBlockPresentation,
     TerminalCursorShape, TerminalEmulator, TerminalHandle, TerminalPrefixBinding,

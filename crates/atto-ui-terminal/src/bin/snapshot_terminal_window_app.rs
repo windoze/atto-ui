@@ -30,8 +30,10 @@ use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{
-    TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalPaneGroup,
-    TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec, TerminalShortcut,
+    TerminalCommandBlockPresentation, TerminalConfig, TerminalEmulator, TerminalHandle,
+    TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec,
+    TerminalSettingsView, TerminalShortcut, default_terminal_config_path,
+    load_terminal_config_or_default,
 };
 
 const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
@@ -42,6 +44,7 @@ struct SnapshotSessionConfig {
     initial: Option<TerminalSessionSpec>,
     shell: TerminalSessionSpec,
     command: Option<TerminalSessionSpec>,
+    terminal_config_path: Option<PathBuf>,
 }
 
 fn terminal_session_config_from_env_args() -> SnapshotSessionConfig {
@@ -49,8 +52,13 @@ fn terminal_session_config_from_env_args() -> SnapshotSessionConfig {
     let mut cwd = None;
     let mut profile = "Command".to_string();
     let mut shell_program = None;
+    let mut terminal_config_path = default_terminal_config_path();
     loop {
         match argv.first().map(String::as_str) {
+            Some("--config") if argv.len() >= 2 => {
+                terminal_config_path = Some(PathBuf::from(argv.remove(1)));
+                argv.remove(0);
+            }
             Some("--cwd") if argv.len() >= 2 => {
                 cwd = Some(PathBuf::from(argv.remove(1)));
                 argv.remove(0);
@@ -99,6 +107,7 @@ fn terminal_session_config_from_env_args() -> SnapshotSessionConfig {
         initial,
         shell,
         command,
+        terminal_config_path,
     }
 }
 
@@ -277,6 +286,12 @@ fn build_menu(menu_action: &Binding<String>) -> MenuBar {
                 MenuItem::action("New command window", move || {
                     menu_action_cb.set("NEW_COMMAND".to_string());
                 }),
+                MenuItem::action("Settings", {
+                    let menu_action_cb = menu_action.clone();
+                    move || {
+                        menu_action_cb.set("SETTINGS".to_string());
+                    }
+                }),
             ],
         ),
         MenuSpec::new(
@@ -364,6 +379,46 @@ fn spawn_terminal_window(
     );
     desktop.wm.focus(id);
     Ok(TerminalWindowSession::new(id, window_number, panes, spec))
+}
+
+fn settings_window_rect(screen: Rect) -> Rect {
+    let work = Desktop::layout(screen).work_area;
+    let width = 70.min(work.width.saturating_sub(4)).max(40);
+    let height = 20.min(work.height.saturating_sub(2)).max(12);
+    Rect {
+        x: work.x + work.width.saturating_sub(width) / 2,
+        y: work.y + work.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+fn open_settings_window(
+    desktop: &mut Desktop,
+    screen: Rect,
+    config: Binding<TerminalConfig>,
+    config_path: Option<PathBuf>,
+    settings_window_id: &mut Option<WindowId>,
+) {
+    if let Some(id) = *settings_window_id
+        && desktop.wm.restore_window(id)
+    {
+        desktop.wm.focus(id);
+        return;
+    }
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Terminal Settings",
+            settings_window_rect(screen),
+            Box::new(TerminalSettingsView::new(config, config_path)),
+        )
+        .with_min_size(40, 12),
+        screen,
+    );
+    desktop.wm.focus(id);
+    *settings_window_id = Some(id);
 }
 
 fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSession) -> bool {
@@ -809,6 +864,10 @@ fn update_status_lines(
 
 fn main() -> Result<()> {
     let session_config = terminal_session_config_from_env_args();
+    let terminal_config_path = session_config.terminal_config_path.clone();
+    let terminal_config = Binding::new(load_terminal_config_or_default(
+        terminal_config_path.as_deref(),
+    )?);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -827,6 +886,7 @@ fn main() -> Result<()> {
     let menu = build_menu(&menu_action);
     let (command_menu_tx, command_menu_rx) = mpsc::channel();
     let mut command_context: Option<CommandContextState> = None;
+    let mut settings_window_id: Option<WindowId> = None;
 
     let mut desktop = Desktop::new(Theme::dark(), menu);
 
@@ -912,6 +972,9 @@ fn main() -> Result<()> {
         let res = desktop.handle_event(&ev, screen);
         if let DesktopAction::CloseWindow(id) = res.action {
             desktop.wm.close(id);
+            if settings_window_id == Some(id) {
+                settings_window_id = None;
+            }
         }
         if let Some(mouse) = is_right_mouse_down(&ev) {
             open_command_context_menu(
@@ -958,6 +1021,16 @@ fn main() -> Result<()> {
                 extra_sessions.push(session);
                 next_window_number = next_window_number.saturating_add(1);
                 menu_action.set("COMMAND".to_string());
+            }
+            "SETTINGS" => {
+                open_settings_window(
+                    &mut desktop,
+                    screen,
+                    terminal_config.clone(),
+                    terminal_config_path.clone(),
+                    &mut settings_window_id,
+                );
+                menu_action.set("SETTINGS_OPEN".to_string());
             }
             _ => {}
         }

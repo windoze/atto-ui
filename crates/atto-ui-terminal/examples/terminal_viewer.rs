@@ -21,11 +21,14 @@ use atto_ui::app::{
 use atto_ui::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable,
 };
+use atto_ui::reactive::Binding;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{
-    TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalPaneGroup,
-    TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec, TerminalShortcut,
+    TerminalCommandBlockPresentation, TerminalConfig, TerminalEmulator, TerminalHandle,
+    TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec,
+    TerminalSettingsView, TerminalShortcut, default_terminal_config_path,
+    load_terminal_config_or_default,
 };
 
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:terminal_viewer:windows";
@@ -35,6 +38,7 @@ const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:terminal_viewer:windows:lis
 enum TerminalViewerAction {
     NewShellWindow,
     NewCommandWindow,
+    OpenSettings,
     Quit,
     FocusNext,
     MinimizeFocused,
@@ -192,6 +196,13 @@ fn build_menu(action_tx: mpsc::Sender<TerminalViewerAction>) -> MenuBar {
                     }
                 })
                 .shortcut("c"),
+                MenuItem::action("Settings", {
+                    let action_tx = action_tx.clone();
+                    move || {
+                        let _ = action_tx.send(TerminalViewerAction::OpenSettings);
+                    }
+                })
+                .shortcut(","),
                 MenuItem::action("Quit", {
                     let action_tx = action_tx.clone();
                     move || {
@@ -607,6 +618,46 @@ fn spawn_terminal_window(
     Ok(TerminalWindowSession::new(id, panes, window_number, spec))
 }
 
+fn settings_window_rect(screen: Rect) -> Rect {
+    let work_area = Desktop::layout(screen).work_area;
+    let width = 76.min(work_area.width.saturating_sub(4)).max(40);
+    let height = 22.min(work_area.height.saturating_sub(2)).max(12);
+    Rect {
+        x: work_area.x + work_area.width.saturating_sub(width) / 2,
+        y: work_area.y + work_area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    }
+}
+
+fn open_settings_window(
+    desktop: &mut Desktop,
+    screen: Rect,
+    config: Binding<TerminalConfig>,
+    config_path: Option<PathBuf>,
+    settings_window_id: &mut Option<WindowId>,
+) {
+    if let Some(id) = *settings_window_id
+        && desktop.wm.restore_window(id)
+    {
+        desktop.wm.focus(id);
+        return;
+    }
+
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Terminal Settings",
+            settings_window_rect(screen),
+            Box::new(TerminalSettingsView::new(config, config_path)),
+        )
+        .with_min_size(40, 12),
+        screen,
+    );
+    desktop.wm.focus(id);
+    *settings_window_id = Some(id);
+}
+
 fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<TerminalViewerAction>) {
     if desktop.menu.is_active() {
         return;
@@ -664,6 +715,10 @@ fn main() -> Result<()> {
         TerminalSessionSpec::command("Command", program.clone(), args.to_vec())
     });
     let initial_spec = command_spec.clone().unwrap_or_else(|| shell_spec.clone());
+    let terminal_config_path = default_terminal_config_path();
+    let terminal_config = Binding::new(load_terminal_config_or_default(
+        terminal_config_path.as_deref(),
+    )?);
 
     let config = CrosstermAppConfig::default()
         .tick_rate(Duration::from_millis(16))
@@ -687,6 +742,10 @@ fn main() -> Result<()> {
     let command_context: Rc<RefCell<Option<CommandContextState>>> = Rc::new(RefCell::new(None));
     let command_context_for_actions = Rc::clone(&command_context);
     let command_context_for_event = Rc::clone(&command_context);
+    let settings_window_id: Rc<RefCell<Option<WindowId>>> = Rc::new(RefCell::new(None));
+    let settings_window_id_for_actions = Rc::clone(&settings_window_id);
+    let terminal_config_for_actions = terminal_config.clone();
+    let terminal_config_path_for_actions = terminal_config_path.clone();
 
     run_crossterm_desktop_with_actions(
         config,
@@ -734,6 +793,15 @@ fn main() -> Result<()> {
                             spawn_terminal_window(desktop, screen, next_window_number, spec)?;
                         terminal_sessions.borrow_mut().push(session);
                         next_window_number = next_window_number.saturating_add(1);
+                    }
+                    TerminalViewerAction::OpenSettings => {
+                        open_settings_window(
+                            desktop,
+                            screen,
+                            terminal_config_for_actions.clone(),
+                            terminal_config_path_for_actions.clone(),
+                            &mut settings_window_id_for_actions.borrow_mut(),
+                        );
                     }
                     TerminalViewerAction::Quit => return Ok(AppControl::Exit),
                     TerminalViewerAction::FocusNext => desktop.wm.focus_next(),

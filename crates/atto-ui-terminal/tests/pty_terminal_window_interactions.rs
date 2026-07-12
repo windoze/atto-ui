@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use atto_ui_terminal::TerminalConfig;
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
@@ -53,6 +54,33 @@ fn wait_for_text_position(host: &PtyTestHost, needle: &str) -> (u16, u16) {
     find_text_position(&screen, needle).unwrap_or_else(|| {
         panic!("expected to find {needle:?} in screen\n--- screen ---\n{screen}")
     })
+}
+
+fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if screen.contains(needle) {
+            return;
+        }
+        host.wheel_down(x, y).expect("wheel down");
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!(
+        "expected to find {needle:?} after scrolling\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
+fn wait_for_file(path: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("expected file {} to be written", path.display());
 }
 
 fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
@@ -812,6 +840,40 @@ fn pty_terminal_file_menu_creates_shell_and_command_in_focused_cwd() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pty_terminal_file_menu_opens_settings_window_and_saves_config() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root = std::path::PathBuf::from(format!("/tmp/aui-term-settings-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create settings temp dir");
+    let config_path = root.join("terminal.yaml");
+    let config_arg = config_path.to_string_lossy().into_owned();
+    let mut host =
+        PtyTestHost::spawn(bin, &["--config", &config_arg], 100, 32).expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    click_file_menu_item(&mut host, "Settings");
+    wait_for_text(&host, "Terminal Settings");
+    wait_for_text(&host, "Scrollback rows");
+    wheel_down_until_text(&mut host, 50, 16, "Palette");
+    wheel_down_until_text(&mut host, 50, 16, "Session");
+    wheel_down_until_text(&mut host, 50, 16, "Save");
+
+    let (save_x, save_y) = wait_for_text_position(&host, "Save");
+    host.click(save_x, save_y).expect("click save");
+    wait_for_file(&config_path);
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+
+    let saved = TerminalConfig::load_path(&config_path).expect("load saved config");
+    assert!(saved.scrollback_len > 0);
 
     let _ = fs::remove_dir_all(root);
 }
