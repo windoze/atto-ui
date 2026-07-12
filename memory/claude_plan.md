@@ -29,3 +29,4 @@
 - Added a focused regression test proving OSC 133 `D` updates command-level status without setting process-level `exit_status()`.
 - Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted callbacks regression, and `cargo test --workspace --all-targets`.
 - Updated `TODO.md` to mark `M5.R Review` as `[DONE]` with review and validation notes.
+- Commit created: `[M5.R] Review terminal command markers`.
