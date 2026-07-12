@@ -38,10 +38,17 @@ const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:snapshot-window:windows";
 const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:snapshot-window:windows:list";
 
-fn terminal_session_from_env_args() -> Option<TerminalSessionSpec> {
+struct SnapshotSessionConfig {
+    initial: Option<TerminalSessionSpec>,
+    shell: TerminalSessionSpec,
+    command: Option<TerminalSessionSpec>,
+}
+
+fn terminal_session_config_from_env_args() -> SnapshotSessionConfig {
     let mut argv: Vec<String> = env::args().skip(1).collect();
     let mut cwd = None;
     let mut profile = "Command".to_string();
+    let mut shell_program = None;
     loop {
         match argv.first().map(String::as_str) {
             Some("--cwd") if argv.len() >= 2 => {
@@ -52,25 +59,70 @@ fn terminal_session_from_env_args() -> Option<TerminalSessionSpec> {
                 profile = argv.remove(1);
                 argv.remove(0);
             }
+            Some("--shell-program") if argv.len() >= 2 => {
+                shell_program = Some(argv.remove(1));
+                argv.remove(0);
+            }
             _ => break,
         }
     }
 
-    let mut spec = if let Some((program, args)) = argv.split_first() {
-        TerminalSessionSpec::command(profile, program.clone(), args.to_vec())
-    } else if cwd.is_some() {
-        TerminalSessionSpec::shell_from_env()
+    let mut shell = if let Some(program) = shell_program {
+        TerminalSessionSpec::new("Shell", program, Vec::new())
     } else {
-        return None;
+        TerminalSessionSpec::shell_from_env()
     };
-    if let Some(cwd) = cwd {
-        spec.set_cwd(cwd);
+
+    if let Some(cwd) = cwd.clone() {
+        shell.set_cwd(cwd);
     }
-    Some(spec)
+
+    let command = if let Some((program, args)) = argv.split_first() {
+        let mut spec = TerminalSessionSpec::command(profile, program.clone(), args.to_vec());
+        if let Some(cwd) = cwd {
+            spec.set_cwd(cwd);
+        }
+        Some(spec)
+    } else {
+        None
+    };
+
+    let initial = if let Some(spec) = command.clone() {
+        Some(spec)
+    } else if shell.cwd().is_some() {
+        Some(shell.clone())
+    } else {
+        None
+    };
+
+    SnapshotSessionConfig {
+        initial,
+        shell,
+        command,
+    }
+}
+
+fn terminal_window_title(window_number: usize) -> String {
+    if window_number == 1 {
+        DEFAULT_TERMINAL_TITLE.to_string()
+    } else {
+        format!("Terminal {window_number}")
+    }
+}
+
+fn terminal_window_rect(work: Rect, window_number: usize) -> Rect {
+    let index = window_number.saturating_sub(1) as u16;
+    Rect {
+        x: work.x.saturating_add(2 + (index.saturating_mul(2) % 8)),
+        y: work.y.saturating_add(2 + (index % 5)),
+        width: 50.min(work.width.saturating_sub(2)).max(20),
+        height: 14.min(work.height.saturating_sub(8)).max(8),
+    }
 }
 
 struct TerminalWindowSession {
     id: WindowId,
+    window_number: usize,
     panes: TerminalPaneGroupHandle,
     spec: Option<TerminalSessionSpec>,
     exit_prompted: bool,
@@ -80,11 +132,13 @@ struct TerminalWindowSession {
 impl TerminalWindowSession {
     fn new(
         id: WindowId,
+        window_number: usize,
         panes: TerminalPaneGroupHandle,
         spec: Option<TerminalSessionSpec>,
     ) -> Self {
         Self {
             id,
+            window_number,
             panes,
             spec,
             exit_prompted: false,
@@ -207,9 +261,23 @@ fn build_menu(menu_action: &Binding<String>) -> MenuBar {
     MenuBar::new(vec![
         MenuSpec::new(
             "File",
-            vec![MenuItem::action("Ping", move || {
-                menu_action_cb.set("PING".to_string());
-            })],
+            vec![
+                MenuItem::action("Ping", {
+                    let menu_action_cb = menu_action_cb.clone();
+                    move || {
+                        menu_action_cb.set("PING".to_string());
+                    }
+                }),
+                MenuItem::action("New shell window", {
+                    let menu_action_cb = menu_action_cb.clone();
+                    move || {
+                        menu_action_cb.set("NEW_SHELL".to_string());
+                    }
+                }),
+                MenuItem::action("New command window", move || {
+                    menu_action_cb.set("NEW_COMMAND".to_string());
+                }),
+            ],
         ),
         MenuSpec::new(
             "Windows",
@@ -276,6 +344,28 @@ fn build_terminal_pane_group(
     Ok((group, handle))
 }
 
+fn spawn_terminal_window(
+    desktop: &mut Desktop,
+    screen: Rect,
+    window_number: usize,
+    spec: Option<TerminalSessionSpec>,
+) -> Result<TerminalWindowSession> {
+    let work = Desktop::layout(screen).work_area;
+    let rect = terminal_window_rect(work, window_number);
+    let (terminal, panes) = build_terminal_pane_group(spec.as_ref())?;
+    let id = desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            terminal_window_title(window_number),
+            rect,
+            Box::new(terminal),
+        ),
+        screen,
+    );
+    desktop.wm.focus(id);
+    Ok(TerminalWindowSession::new(id, window_number, panes, spec))
+}
+
 fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSession) -> bool {
     if session.spec.is_none()
         || session.exit_prompted
@@ -315,6 +405,43 @@ fn sync_session_cwd_from_active_pane(session: &mut TerminalWindowSession) -> boo
     }
     spec.set_cwd(cwd);
     true
+}
+
+fn sync_all_session_cwds(
+    term_session: &mut TerminalWindowSession,
+    extra_sessions: &mut [TerminalWindowSession],
+) -> bool {
+    let mut changed = sync_session_cwd_from_active_pane(term_session);
+    for session in extra_sessions {
+        changed |= sync_session_cwd_from_active_pane(session);
+    }
+    changed
+}
+
+fn focused_session_cwd(
+    desktop: &Desktop,
+    term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
+) -> Option<PathBuf> {
+    let focused = desktop.wm.focused()?;
+    std::iter::once(term_session)
+        .chain(extra_sessions.iter())
+        .find(|session| session.id == focused)
+        .and_then(|session| session.spec.as_ref())
+        .and_then(|spec| spec.cwd().map(PathBuf::from))
+}
+
+fn spec_for_new_window(
+    desktop: &Desktop,
+    term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
+    base: &TerminalSessionSpec,
+) -> TerminalSessionSpec {
+    let mut spec = base.clone();
+    if let Some(cwd) = focused_session_cwd(desktop, term_session, extra_sessions) {
+        spec.set_cwd(cwd);
+    }
+    spec
 }
 
 fn sync_terminal_window_title(desktop: &mut Desktop, session: &TerminalWindowSession) -> bool {
@@ -396,7 +523,7 @@ fn restart_terminal_view(
     session.panes = panes;
     session.exit_prompted = false;
     session.restart_count = session.restart_count.saturating_add(1);
-    desktop.set_title(session.id, DEFAULT_TERMINAL_TITLE);
+    desktop.set_title(session.id, terminal_window_title(session.window_number));
     desktop.wm.focus(session.id);
     Ok(true)
 }
@@ -588,10 +715,50 @@ fn pane_status_text(session: &TerminalWindowSession) -> String {
     format!("PANES={} ACTIVE={} PANE_RECTS={rects}", panes.len(), active)
 }
 
+fn window_status_text(
+    desktop: &Desktop,
+    term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
+) -> String {
+    let sessions = std::iter::once(term_session).chain(extra_sessions.iter());
+    let mut terminal_count = 0usize;
+    let mut focused_session = None;
+    let focused = desktop.wm.focused();
+    for session in sessions {
+        if find_window_rect(desktop, session.id).is_none() {
+            continue;
+        }
+        terminal_count = terminal_count.saturating_add(1);
+        if Some(session.id) == focused {
+            focused_session = Some(session);
+        }
+    }
+
+    let Some(session) = focused_session else {
+        return format!("TERMS={terminal_count} FOCUS_TERM=NONE FOCUS_PROFILE=- FOCUS_CWD=-");
+    };
+    let profile = session
+        .spec
+        .as_ref()
+        .map(|spec| spec.profile())
+        .unwrap_or("NONE");
+    let cwd = session
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.cwd())
+        .and_then(|cwd| cwd.to_str())
+        .unwrap_or("-");
+    format!(
+        "TERMS={terminal_count} FOCUS_TERM={} FOCUS_PROFILE={profile} FOCUS_CWD={cwd}",
+        session.window_number
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_status_lines(
     desktop: &Desktop,
     term_session: &TerminalWindowSession,
+    extra_sessions: &[TerminalWindowSession],
     tools_id: WindowId,
     menu_action: &Binding<String>,
     focus_line: &Binding<String>,
@@ -615,7 +782,10 @@ fn update_status_lines(
     } else {
         "OFF"
     };
-    focus_line.set(format!("FOCUS={focused} CAP={capture}"));
+    focus_line.set(format!(
+        "FOCUS={focused} CAP={capture} {}",
+        window_status_text(desktop, term_session, extra_sessions)
+    ));
 
     let menu_state = if desktop.menu.is_active() {
         "ON"
@@ -638,7 +808,7 @@ fn update_status_lines(
 }
 
 fn main() -> Result<()> {
-    let terminal_spec = terminal_session_from_env_args();
+    let session_config = terminal_session_config_from_env_args();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -675,14 +845,6 @@ fn main() -> Result<()> {
         process_line.clone(),
     ]);
 
-    let (term_view, term_panes) = build_terminal_pane_group(terminal_spec.as_ref())?;
-
-    let term_rect = Rect {
-        x: work.x.saturating_add(2),
-        y: work.y.saturating_add(2),
-        width: 50.min(work.width.saturating_sub(2)).max(20),
-        height: 14.min(work.height.saturating_sub(8)).max(8),
-    };
     let tools_rect = Rect {
         x: work.x.saturating_add(55),
         y: work.y.saturating_add(3),
@@ -696,16 +858,10 @@ fn main() -> Result<()> {
         height: 6.min(work.height.saturating_sub(1)).max(4),
     };
 
-    let term_id = desktop.add_window(
-        Window::new(
-            WindowKind::Normal,
-            DEFAULT_TERMINAL_TITLE,
-            term_rect,
-            Box::new(term_view),
-        ),
-        screen,
-    );
-    let mut term_session = TerminalWindowSession::new(term_id, term_panes, terminal_spec.clone());
+    let mut term_session = spawn_terminal_window(&mut desktop, screen, 1, session_config.initial)?;
+    let term_id = term_session.id;
+    let mut extra_sessions = Vec::new();
+    let mut next_window_number = 2usize;
     let tools_id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -724,12 +880,19 @@ fn main() -> Result<()> {
 
     loop {
         show_exit_prompt_if_needed(&desktop, &mut term_session);
-        sync_session_cwd_from_active_pane(&mut term_session);
+        for session in &mut extra_sessions {
+            show_exit_prompt_if_needed(&desktop, session);
+        }
+        sync_all_session_cwds(&mut term_session, &mut extra_sessions);
         sync_terminal_window_title(&mut desktop, &term_session);
+        for session in &extra_sessions {
+            sync_terminal_window_title(&mut desktop, session);
+        }
         refresh_windows_menu(&mut desktop);
         update_status_lines(
             &desktop,
             &term_session,
+            &extra_sessions,
             tools_id,
             &menu_action,
             &focus_line,
@@ -768,9 +931,45 @@ fn main() -> Result<()> {
         if !handled_context_action && is_non_right_mouse_down(&ev) {
             close_command_context_menu(&mut desktop, &mut command_context);
         }
+        match menu_action.get().as_str() {
+            "NEW_SHELL" => {
+                sync_all_session_cwds(&mut term_session, &mut extra_sessions);
+                let spec = spec_for_new_window(
+                    &desktop,
+                    &term_session,
+                    &extra_sessions,
+                    &session_config.shell,
+                );
+                let session =
+                    spawn_terminal_window(&mut desktop, screen, next_window_number, Some(spec))?;
+                extra_sessions.push(session);
+                next_window_number = next_window_number.saturating_add(1);
+                menu_action.set("SHELL".to_string());
+            }
+            "NEW_COMMAND" => {
+                sync_all_session_cwds(&mut term_session, &mut extra_sessions);
+                let base = session_config
+                    .command
+                    .as_ref()
+                    .unwrap_or(&session_config.shell);
+                let spec = spec_for_new_window(&desktop, &term_session, &extra_sessions, base);
+                let session =
+                    spawn_terminal_window(&mut desktop, screen, next_window_number, Some(spec))?;
+                extra_sessions.push(session);
+                next_window_number = next_window_number.saturating_add(1);
+                menu_action.set("COMMAND".to_string());
+            }
+            _ => {}
+        }
         if is_plain_restart_key(&ev) {
-            sync_session_cwd_from_active_pane(&mut term_session);
-            restart_terminal_view(&mut desktop, &mut term_session)?;
+            sync_all_session_cwds(&mut term_session, &mut extra_sessions);
+            if !restart_terminal_view(&mut desktop, &mut term_session)? {
+                for session in &mut extra_sessions {
+                    if restart_terminal_view(&mut desktop, session)? {
+                        break;
+                    }
+                }
+            }
         }
 
         if let Event::Key(KeyEvent {

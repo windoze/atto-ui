@@ -1,24 +1,30 @@
 # Execution Plan
 
-I will keep this file updated as a concise execution plan and progress log for the current invocation. I will not record private chain-of-thought, but I will record decisions, key observations, and completed steps so progress is auditable.
+## Scope
+- Follow `TODO.md` as the authoritative ordered task list.
+- Complete only the first task whose heading is not prefixed with `[DONE]`, then stop.
+- Keep `PLAN.md` unchanged unless phase-level sequencing, dependencies, assumptions, or completion criteria change.
 
 ## Steps
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Inspect the latest commit only for unfinished work directly relevant to that task.
+3. Read the relevant implementation and tests for the selected task.
+4. Implement the task with minimal, focused changes.
+5. Run `cargo fmt`, then `cargo clippy --all-targets -- -D warnings`, then the required tests, using the full suite only when needed.
+6. If unscheduled test failures or blocking spec mismatches appear, fix them or add the minimum prerequisite task in `TODO.md` and stop.
+7. Mark the task title `[DONE]` in `TODO.md` and update its completion record.
+8. Inspect git status/diff/log, commit all intended changes with a clear task-specific message, then stop.
 
-1. Read `TODO.md` first and identify the first task whose heading is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Inspect the selected task requirements, dependencies, and validation instructions.
-4. Implement the selected task completely, or if a concrete blocker prevents correct implementation, add the minimum prerequisite task in `TODO.md` and stop after committing that bookkeeping.
-5. Run required formatting, linting, and tests in the requested order: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full test suite as required.
-6. Update `TODO.md` by prefixing the completed task heading with `[DONE]` and filling its completion record. Update `PLAN.md` only if phase-level sequencing or criteria change.
-7. Commit all changes for this task with a clear task-specific message, then stop without starting the next task.
-
-## Progress
-
-- Invocation started.
-- Initial plan written before inspecting project files.
-- Read `TODO.md`; first incomplete task is `M6.3 spawn 环境`.
-- Scope for this invocation: set subprocess `TERM` / `COLORTERM`, apply initial cwd for spawned sessions/commands, add an explicit terminal resize API so resize is not only performed from `draw`, validate, update `TODO.md`, commit, and stop.
-- Implemented spawn preparation (`TERM`, `COLORTERM`, default cwd), shared PTY resize plumbing, `TerminalEmulator::resize`, and `TerminalHandle::resize`.
-- Added tests for command preparation, actual spawn environment/cwd/initial size, and live PTY resize.
-- Validation passed: `cargo fmt --all`, targeted `atto-ui-terminal` spawn/process tests, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`.
-- Updated `TODO.md` to mark `M6.3` as `[DONE]` with completion and validation notes. No `PLAN.md` change was needed because phase-level sequencing did not change.
+## Progress Log
+- Created initial execution plan before project inspection.
+- Identified first incomplete task: `M6.4 测试` in `TODO.md`.
+- Current task scope: add PTY coverage for in-window split layout, dead session restart, and new shell/command creation landing in the specified cwd.
+- Latest commit `[M6.3] Configure terminal spawn environment` has no directly relevant unfinished note.
+- Existing PTY tests already cover split-pane layout and dead/restarted sessions; the remaining M6.4 gap is menu-driven new shell/command session creation with cwd inheritance/selection in the PTY fixture.
+- Implemented fixture support for File menu `New shell window` / `New command window`, extra terminal sessions, focused-session cwd inheritance, and a status line exposing terminal count/focused profile/cwd.
+- Added PTY coverage for creating command and shell windows from the File menu and verifying both subprocesses start in the OSC7-observed cwd.
+- Targeted PTY test initially failed because the long temporary cwd wrapped inside the fixed-width terminal pane; adjust the test to use shorter temp paths rather than weakening the behavior check.
+- Full test run found a fixture regression: adding a fifth status line hides the existing `FOCUS=... CAP=...` line at 80x24. Fix by keeping the original four status lines and appending new window status to the focus line.
+- Added temp-dir cleanup to the new PTY test so reruns cannot inherit a stale counter from a failed prior run.
+- Final verification passed after the cleanup change: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`, `cargo fmt --all -- --check`, and `cargo test --workspace --all-targets`.
+- Next step: mark `M6.4 测试` as `[DONE]` in `TODO.md` with the completion record, then commit the task changes.

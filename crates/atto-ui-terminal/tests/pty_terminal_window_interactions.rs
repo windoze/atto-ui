@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::process;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -184,6 +185,12 @@ fn terminal_border_is_flush_left(screen: &str) -> bool {
 
 fn send_f10(host: &mut PtyTestHost) {
     host.send_str("\x1b[21~").expect("F10");
+}
+
+fn click_file_menu_item(host: &mut PtyTestHost, label: &str) {
+    host.click(1, 0).expect("open File menu");
+    let (x, y) = wait_for_text_position(host, label);
+    host.click(x, y).expect("click File menu item");
 }
 
 #[test]
@@ -719,6 +726,88 @@ fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
     host.send_str("r").expect("restart terminal process");
     wait_for_text(&host, "RESTARTS=1");
     wait_for_text(&host, &format!("RUN=2 PWD={observed_cwd}"));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pty_terminal_file_menu_creates_shell_and_command_in_focused_cwd() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root = std::path::PathBuf::from(format!("/tmp/a{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let initial_cwd = root.join("i");
+    let observed_cwd = root.join("o");
+    fs::create_dir_all(&initial_cwd).expect("create initial cwd");
+    fs::create_dir_all(&observed_cwd).expect("create observed cwd");
+    let shell_script = root.join("s");
+    fs::write(
+        &shell_script,
+        "#!/bin/sh\nprintf 'SHELL_PWD=%s\\r\\n' \"$PWD\"\nsleep 10\n",
+    )
+    .expect("write shell wrapper");
+    let mut permissions = fs::metadata(&shell_script)
+        .expect("shell wrapper metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&shell_script, permissions).expect("make shell wrapper executable");
+
+    let counter = root.join("c");
+    let initial_cwd = fs::canonicalize(initial_cwd)
+        .expect("canonicalize initial cwd")
+        .to_string_lossy()
+        .into_owned();
+    let observed_cwd = fs::canonicalize(observed_cwd)
+        .expect("canonicalize observed cwd")
+        .to_string_lossy()
+        .into_owned();
+    let shell_script = fs::canonicalize(shell_script)
+        .expect("canonicalize shell wrapper")
+        .to_string_lossy()
+        .into_owned();
+    let counter = counter.to_string_lossy().into_owned();
+    let script = format!(
+        "n=$(cat '{counter}' 2>/dev/null || echo 0); \
+         n=$((n+1)); printf '%s' \"$n\" > '{counter}'; \
+         printf '\\033]7;file://{observed_cwd}\\007'; \
+         printf 'COMMAND_RUN=%s PWD=%s\\r\\n' \"$n\" \"$PWD\"; \
+         sleep 10"
+    );
+
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &[
+            "--shell-program",
+            &shell_script,
+            "--profile",
+            "Project",
+            "--cwd",
+            &initial_cwd,
+            "/bin/sh",
+            "-c",
+            script.as_str(),
+        ],
+        140,
+        32,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, &format!("COMMAND_RUN=1 PWD={initial_cwd}"));
+    wait_for_text(&host, &format!("SESSION=Project CWD={observed_cwd}"));
+
+    click_file_menu_item(&mut host, "New command window");
+    wait_for_text(&host, &format!("COMMAND_RUN=2 PWD={observed_cwd}"));
+    wait_for_text(&host, "TERMS=2 FOCUS_TERM=2 FOCUS_PROFILE=Project");
+    wait_for_text(&host, &format!("FOCUS_CWD={observed_cwd}"));
+
+    click_file_menu_item(&mut host, "New shell window");
+    wait_for_text(&host, &format!("SHELL_PWD={observed_cwd}"));
+    wait_for_text(&host, "TERMS=3 FOCUS_TERM=3 FOCUS_PROFILE=Shell");
+    wait_for_text(&host, &format!("FOCUS_CWD={observed_cwd}"));
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
