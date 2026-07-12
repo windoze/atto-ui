@@ -1,9 +1,18 @@
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
+
+static PTY_WINDOW_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn pty_window_test_guard() -> MutexGuard<'static, ()> {
+    PTY_WINDOW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn wait_for_text(host: &PtyTestHost, needle: &str) {
     host.wait_for_text(needle, Duration::from_secs(5))
@@ -117,6 +126,54 @@ fn rects_from_screen(screen: &str) -> Option<(Option<Rect>, Option<Rect>)> {
     Some((term, tools))
 }
 
+fn parse_pane_rects_from_screen(screen: &str) -> Option<Vec<(u64, Rect)>> {
+    let line = find_line_with(screen, "PANES=")?;
+    let start = line.find("PANE_RECTS=")? + "PANE_RECTS=".len();
+    let token = line[start..].split_whitespace().next()?;
+    let mut rects = Vec::new();
+    for entry in token.split(';') {
+        let Some((id, rect)) = entry.split_once(':') else {
+            continue;
+        };
+        let id = id
+            .trim_matches(|ch: char| !ch.is_ascii_digit())
+            .parse()
+            .ok()?;
+        let rect = rect.trim_matches(|ch: char| !(ch.is_ascii_digit() || ch == ','));
+        let parts: Vec<&str> = rect.split(',').collect();
+        if parts.len() != 4 {
+            continue;
+        }
+        rects.push((
+            id,
+            Rect {
+                x: parts[0].parse().ok()?,
+                y: parts[1].parse().ok()?,
+                width: parts[2].parse().ok()?,
+                height: parts[3].parse().ok()?,
+            },
+        ));
+    }
+    Some(rects)
+}
+
+fn wait_for_pane_rects(host: &PtyTestHost, count: usize) -> Vec<(u64, Rect)> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if let Some(rects) = parse_pane_rects_from_screen(&screen)
+            && rects.len() >= count
+        {
+            return rects;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected at least {count} pane rects\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
 fn terminal_border_is_flush_left(screen: &str) -> bool {
     screen
         .lines()
@@ -128,7 +185,80 @@ fn send_f10(host: &mut PtyTestHost) {
 }
 
 #[test]
+fn pty_terminal_prefix_splits_panes_inside_one_window() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut host = PtyTestHost::spawn(bin, &[], 90, 28).expect("spawn PTY app");
+
+    wait_for_text(&host, "FOCUS=TERM");
+    wait_for_text(&host, "CAP=ON");
+    wait_for_text(&host, "PANES=1 ACTIVE=1");
+
+    let screen = host.screen_contents().unwrap_or_default();
+    let (term_before, tools_before) = rects_from_screen(&screen).expect("read rects before split");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("%").expect("split right");
+    wait_for_text(&host, "PANES=2 ACTIVE=2");
+    wait_for_text(&host, "TTY READY PANE=2");
+
+    let pane_rects = wait_for_pane_rects(&host, 2);
+    let left = pane_rects
+        .iter()
+        .find(|(id, _)| *id == 1)
+        .map(|(_, rect)| *rect)
+        .expect("left pane rect");
+    let right = pane_rects
+        .iter()
+        .find(|(id, _)| *id == 2)
+        .map(|(_, rect)| *rect)
+        .expect("right pane rect");
+    assert!(
+        right.x > left.x,
+        "right split should place pane 2 after pane 1"
+    );
+    assert_eq!(left.y, right.y);
+    assert_eq!(left.height, right.height);
+
+    let screen = host.screen_contents().unwrap_or_default();
+    let (term_after, tools_after) = rects_from_screen(&screen).expect("read rects after split");
+    assert_eq!(
+        term_before, term_after,
+        "pane split must not resize the outer terminal window"
+    );
+    assert_eq!(
+        tools_before, tools_after,
+        "pane split must not disturb sibling floating windows"
+    );
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("o").expect("next pane");
+    wait_for_text(&host, "PANES=2 ACTIVE=1");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("\"").expect("split below");
+    wait_for_text(&host, "PANES=3 ACTIVE=3");
+    wait_for_text(&host, "TTY READY PANE=3");
+
+    let (_, tools_rect) = rects_from_screen(&host.screen_contents().unwrap_or_default())
+        .expect("read tools rect after split below");
+    let tools_rect = tools_rect.expect("tools rect");
+    host.click(
+        tools_rect.x.saturating_add(2),
+        tools_rect.y.saturating_add(2),
+    )
+    .expect("focus tools window");
+    wait_for_text(&host, "FOCUS=TOOLS");
+    wait_for_text(&host, "PANES=3 ACTIVE=3");
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn pty_terminal_does_not_intercept_outside_mouse() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -222,6 +352,7 @@ fn pty_terminal_does_not_intercept_outside_mouse() {
 
 #[test]
 fn pty_terminal_prefix_commands_drive_desktop_chrome() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -278,6 +409,7 @@ fn pty_terminal_prefix_commands_drive_desktop_chrome() {
 
 #[test]
 fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = concat!(
         "stty raw -echo; ",
@@ -302,6 +434,7 @@ fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
 
 #[test]
 fn pty_terminal_copy_mode_selects_and_copies_text() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -322,6 +455,7 @@ fn pty_terminal_copy_mode_selects_and_copies_text() {
 
 #[test]
 fn pty_terminal_mouse_drag_selection_copies_text_without_mouse_reporting() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -339,6 +473,7 @@ fn pty_terminal_mouse_drag_selection_copies_text_without_mouse_reporting() {
 
 #[test]
 fn pty_terminal_shift_drag_selection_copies_text_with_mouse_reporting() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = "printf '\\033[?1000h\\033[?1006hSHIFT PICK\\r\\n'; sleep 10";
     let mut host =
@@ -357,6 +492,7 @@ fn pty_terminal_shift_drag_selection_copies_text_with_mouse_reporting() {
 
 #[test]
 fn pty_terminal_local_copy_buffer_pastes_to_subprocess() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = concat!(
         "stty raw -echo; ",
@@ -414,6 +550,7 @@ fn assert_wheel_probe(label: &str, mode_sequence: &str, min_input_bytes: u8, exp
 
 #[test]
 fn pty_terminal_app_like_wheel_routing_uses_expected_branch() {
+    let _guard = pty_window_test_guard();
     const ALT_SCREEN: &str = r"\033[?1049h";
     const MOUSE_REPORTING: &str = r"\033[?1000h\033[?1006h";
     const ALT_SCREEN_MOUSE_REPORTING: &str = r"\033[?1049h\033[?1000h\033[?1006h";
@@ -439,6 +576,7 @@ fn pty_terminal_app_like_wheel_routing_uses_expected_branch() {
 
 #[test]
 fn pty_terminal_main_screen_wheel_uses_local_scrollback() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = "for i in 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do printf 'MAIN-%s\\r\\n' \"$i\"; done; sleep 10";
     let mut host =
@@ -458,6 +596,7 @@ fn pty_terminal_main_screen_wheel_uses_local_scrollback() {
 
 #[test]
 fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -506,6 +645,7 @@ fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
 
 #[test]
 fn pty_terminal_dead_process_prompts_and_restarts() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut host = PtyTestHost::spawn(
         bin,
@@ -549,12 +689,14 @@ fn assert_osc_title_updates_window_title_and_windows_menu(osc: &str, expected_ti
 
 #[test]
 fn pty_terminal_osc_zero_and_two_titles_update_window_title_and_windows_menu() {
+    let _guard = pty_window_test_guard();
     assert_osc_title_updates_window_title_and_windows_menu("0", "OSC Unified Shell");
     assert_osc_title_updates_window_title_and_windows_menu("2", "OSC Project Shell");
 }
 
 #[test]
 fn pty_terminal_command_block_presentation_marks_failed_commands() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = concat!(
         "printf '\\033]133;A\\007$ false\\033]133;B\\007\\r\\n'; ",
@@ -575,6 +717,7 @@ fn pty_terminal_command_block_presentation_marks_failed_commands() {
 
 #[test]
 fn pty_terminal_ctrl_arrows_navigate_command_blocks() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let mut script = "printf 'NAV-SCRIPT-READY\\r\\n'; IFS= read -r _; ".to_string();
     for index in 0..18 {
@@ -610,6 +753,7 @@ fn pty_terminal_ctrl_arrows_navigate_command_blocks() {
 
 #[test]
 fn pty_terminal_command_context_menu_copies_output_and_reruns() {
+    let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
     let script = concat!(
         "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",

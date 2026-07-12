@@ -1,32 +1,28 @@
-# Claude Execution Plan
+# 执行计划
 
-## Scope
+## 当前约束
+- 以 `TODO.md` 为唯一任务顺序与完成状态来源。
+- 只完成第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
+- 在执行过程中如计划变化、关键步骤完成或遇到阻塞，及时更新本文件。
+- 本文件记录可审计的执行计划与进度摘要，不包含隐藏思维链。
 
-- Source of truth: `TODO.md` determines the first incomplete task and its requirements.
-- Current invocation goal: complete exactly the first incomplete task, validate it, update `TODO.md`, commit the result, then stop.
-- Planning note: this file records the actionable plan, decisions, blockers, and progress updates. It does not include private chain-of-thought.
+## 步骤
+1. 读取 `TODO.md`，识别第一个未完成任务及其验证要求。
+2. 检查最新提交信息，确认是否有与该任务直接相关的未完成事项。
+3. 按任务要求阅读相关源码与测试，避免进行无关历史问题扫查。
+4. 如任务可直接完成，实施最小正确修改；如存在具体阻塞，按要求更新 `TODO.md` 并停止。
+5. 运行格式化、clippy 与相关测试；需要完整验证时运行完整测试套件并设置合理超时。
+6. 更新 `TODO.md`：给完成任务标题加 `[DONE]`，填写完成记录与验证结果。
+7. 检查 git 状态与差异，提交本次任务涉及的所有变更。
+8. 停止，不继续下一个任务。
 
-## Step-by-Step Plan
-
-1. Read `TODO.md` first and identify the first task whose title is not prefixed with `[DONE]`.
-2. Check the latest commit message only for unfinished work directly relevant to that selected task.
-3. Read the selected task details, dependencies, validation requirements, and completion-record expectations.
-4. Inspect only the code and tests needed to understand and implement that task.
-5. Implement the smallest correct change that fully satisfies the selected task, without workarounds or scope narrowing.
-6. If a concrete blocker or prerequisite is discovered, update `TODO.md` with the minimum prerequisite task in dependency order, keep the current task incomplete, commit that bookkeeping, and stop.
-7. Run validation in the required order after code changes: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, then the relevant/full tests as required by the task.
-8. If validation reveals unscheduled failures, fix them if in scope or add minimum prerequisite/follow-up tasks before marking the current task done.
-9. Mark the completed task title in `TODO.md` with `[DONE]` and update its completion record with implementation and validation notes.
-10. Inspect git status, diff, and recent log; stage only intended files; commit with a descriptive task-based message.
-11. Stop after the commit and do not begin the next task.
-
-## Progress Log
-
-- Plan initialized before reading project task files or running commands.
-- Selected first incomplete task from `TODO.md`: `M5.R Review`.
-- Review scope: verify M5 layer separation, confirm command-level exit codes remain distinct from process-level exit status, run required validation, update `TODO.md`, commit, then stop.
-- Review finding: implementation keeps OSC 133 command exit codes in `TerminalCommandBlock::exit_code`/`last_exit_code()` and process exits in `exit_status`/`on_exit`; no implementation change needed.
-- Added a focused regression test proving OSC 133 `D` updates command-level status without setting process-level `exit_status()`.
-- Validation passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, targeted callbacks regression, and `cargo test --workspace --all-targets`.
-- Updated `TODO.md` to mark `M5.R Review` as `[DONE]` with review and validation notes.
-- Commit created: `[M5.R] Review terminal command markers`.
+## 进度
+- 已读取 `TODO.md`，首个未完成任务为 `M6.1 分屏`：在单个终端窗口内实现 tmux 式 split panes，并与既有 WM 浮动窗口并存。
+- 最新提交 `5646558 [M5.R] Update execution log` 未指向 M6.1 的直接未完成缺陷。
+- 已读取 `PLAN.md`、终端组件、终端 viewer、PTY fixture、窗口管理事件分发与既有 PTY 测试。
+- 实现方案：新增终端 pane 容器组件，在单个 `Window` view 内维护 pane 树、布局和焦点；容器拦截默认 `Ctrl+B` pane 命令（`%` 左右分屏、`"` 上下分屏、`o`/Tab 切换），未命中的前缀组合回放给当前 `TerminalEmulator`，保留已有终端前缀命令。
+- 下一步编码：新增 `pane` 模块和导出类型，替换 demo/PTY fixture 的单终端 view，补充 M6.1 PTY 覆盖与完成记录。
+- 已完成初版编码与 PTY 测试补充；首次 clippy 暴露两个风格级 lint，正在修正后重跑验证。
+- 复跑窗口 PTY 测试时发现默认并发会触发 `openpty` 资源竞争；已在该 PTY 测试文件内加入串行锁，并禁用 fixture 的真实系统剪贴板后端以避免宿主剪贴板日志干扰断言。
+- M6.1 实现已完成：新增 `TerminalPaneGroup`、接入 demo/PTY fixture、补充 pane split PTY 覆盖，并在 `TODO.md` 标记 `[DONE]`。
+- 最终验证通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo test --workspace --all-targets`。

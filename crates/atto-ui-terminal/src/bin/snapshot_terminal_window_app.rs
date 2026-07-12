@@ -29,7 +29,8 @@ use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{
-    TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalShortcut,
+    TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalPaneGroup,
+    TerminalPaneGroupHandle, TerminalPaneId, TerminalShortcut,
 };
 
 const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
@@ -55,21 +56,25 @@ impl TerminalCommand {
 
 struct TerminalWindowSession {
     id: WindowId,
-    handle: TerminalHandle,
+    panes: TerminalPaneGroupHandle,
     command: Option<TerminalCommand>,
     exit_prompted: bool,
     restart_count: u32,
 }
 
 impl TerminalWindowSession {
-    fn new(id: WindowId, handle: TerminalHandle, command: Option<TerminalCommand>) -> Self {
+    fn new(id: WindowId, panes: TerminalPaneGroupHandle, command: Option<TerminalCommand>) -> Self {
         Self {
             id,
-            handle,
+            panes,
             command,
             exit_prompted: false,
             restart_count: 0,
         }
+    }
+
+    fn active_handle(&self) -> Option<TerminalHandle> {
+        self.panes.active_terminal_handle()
     }
 }
 
@@ -83,6 +88,7 @@ enum CommandContextMenuAction {
 #[derive(Clone, Copy, Debug)]
 struct CommandContextState {
     menu_id: WindowId,
+    pane_id: TerminalPaneId,
     block_index: usize,
 }
 
@@ -222,19 +228,33 @@ fn is_plain_restart_key(event: &Event) -> bool {
 
 fn build_terminal_view(
     command: Option<&TerminalCommand>,
+    pane_number: usize,
 ) -> Result<(TerminalEmulator, TerminalHandle)> {
     let mut terminal = TerminalEmulator::new()
         .release_shortcut(TerminalShortcut::new(
             KeyCode::Char('g'),
             KeyModifiers::CONTROL,
         ))
-        .command_block_presentation(TerminalCommandBlockPresentation::enabled());
+        .command_block_presentation(TerminalCommandBlockPresentation::enabled())
+        .without_system_clipboard();
     if let Some(command) = command {
         terminal.spawn_process(&command.program, &command.args)?;
     }
     let handle = terminal.handle();
-    handle.process_output_str("TTY READY\r\n");
+    handle.process_output_str(&format!("TTY READY PANE={pane_number}\r\n"));
     Ok((terminal, handle))
+}
+
+fn build_terminal_pane_group(
+    command: Option<&TerminalCommand>,
+) -> Result<(TerminalPaneGroup, TerminalPaneGroupHandle)> {
+    let command_owned = command.cloned();
+    let (terminal, _) = build_terminal_view(command, 1)?;
+    let group = TerminalPaneGroup::new(terminal).pane_factory(move |pane_number| {
+        build_terminal_view(command_owned.as_ref(), pane_number).map(|(terminal, _)| terminal)
+    });
+    let handle = group.handle();
+    Ok((group, handle))
 }
 
 fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSession) -> bool {
@@ -244,12 +264,15 @@ fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSes
     {
         return false;
     }
-    let Some(status) = session.handle.exit_status() else {
+    let Some(handle) = session.active_handle() else {
+        return false;
+    };
+    let Some(status) = handle.exit_status() else {
         return false;
     };
 
-    session.handle.set_capture(false);
-    session.handle.process_output_str(&format!(
+    handle.set_capture(false);
+    handle.process_output_str(&format!(
         "\r\n[Process exited: code {} — press R to restart]\r\n",
         status.exit_code()
     ));
@@ -258,7 +281,10 @@ fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSes
 }
 
 fn sync_terminal_window_title(desktop: &mut Desktop, session: &TerminalWindowSession) -> bool {
-    let Some(title) = session.handle.window_title() else {
+    let Some(handle) = session.active_handle() else {
+        return false;
+    };
+    let Some(title) = handle.window_title() else {
         return false;
     };
     let current_title = desktop.wm.window(session.id).map(|w| w.title.get());
@@ -326,11 +352,11 @@ fn restart_terminal_view(
         return Ok(false);
     };
 
-    let (terminal, handle) = build_terminal_view(Some(&command))?;
+    let (terminal, panes) = build_terminal_pane_group(Some(&command))?;
     if !desktop.wm.set_view(session.id, Box::new(terminal)) {
         return Ok(false);
     }
-    session.handle = handle;
+    session.panes = panes;
     session.exit_prompted = false;
     session.restart_count = session.restart_count.saturating_add(1);
     desktop.set_title(session.id, DEFAULT_TERMINAL_TITLE);
@@ -348,7 +374,7 @@ fn command_block_at_mouse(
     desktop: &Desktop,
     session: &TerminalWindowSession,
     mouse: &MouseEvent,
-) -> Option<usize> {
+) -> Option<(TerminalPaneId, usize)> {
     let inner = desktop.wm.window(session.id)?.inner_rect();
     if mouse.column < inner.x
         || mouse.row < inner.y
@@ -357,10 +383,16 @@ fn command_block_at_mouse(
     {
         return None;
     }
-    let row = mouse.row.saturating_sub(inner.y);
-    let col = mouse.column.saturating_sub(inner.x);
-    let position = session.handle.selection_position_for_view_cell(row, col);
-    session.handle.command_block_index_at_position(position)
+    let pane = session
+        .panes
+        .pane_at_screen_position(mouse.column, mouse.row)?;
+    let rect = pane.rect?;
+    let row = mouse.row.saturating_sub(rect.y);
+    let col = mouse.column.saturating_sub(rect.x);
+    let position = pane.handle.selection_position_for_view_cell(row, col);
+    pane.handle
+        .command_block_index_at_position(position)
+        .map(|block_index| (pane.id, block_index))
 }
 
 fn command_context_menu_rect(screen: Rect, mouse: &MouseEvent) -> Rect {
@@ -383,10 +415,17 @@ fn open_command_context_menu(
     context: &mut Option<CommandContextState>,
 ) -> bool {
     close_command_context_menu(desktop, context);
-    let Some(block_index) = command_block_at_mouse(desktop, session, mouse) else {
+    let Some((pane_id, block_index)) = command_block_at_mouse(desktop, session, mouse) else {
         return false;
     };
-    let _ = session.handle.select_command_block_output(block_index);
+    if let Some(pane) = session
+        .panes
+        .panes()
+        .into_iter()
+        .find(|pane| pane.id == pane_id)
+    {
+        let _ = pane.handle.select_command_block_output(block_index);
+    }
     let menu_id = desktop.add_window(
         Window::new(
             WindowKind::Tooltip,
@@ -399,6 +438,7 @@ fn open_command_context_menu(
     );
     *context = Some(CommandContextState {
         menu_id,
+        pane_id,
         block_index,
     });
     true
@@ -413,17 +453,24 @@ fn apply_command_context_action(
     let Some(active) = *context else {
         return;
     };
+    let Some(pane) = session
+        .panes
+        .panes()
+        .into_iter()
+        .find(|pane| pane.id == active.pane_id)
+    else {
+        close_command_context_menu(desktop, context);
+        return;
+    };
     match action {
         CommandContextMenuAction::Rerun => {
-            session.handle.rerun_command_block(active.block_index);
+            pane.handle.rerun_command_block(active.block_index);
         }
         CommandContextMenuAction::CopyCommand => {
-            session
-                .handle
-                .copy_command_block_command(active.block_index);
+            pane.handle.copy_command_block_command(active.block_index);
         }
         CommandContextMenuAction::CopyOutput => {
-            session.handle.copy_command_block_output(active.block_index);
+            pane.handle.copy_command_block_output(active.block_index);
         }
     }
     close_command_context_menu(desktop, context);
@@ -449,11 +496,12 @@ fn is_non_right_mouse_down(event: &Event) -> bool {
 }
 
 fn process_status_text(session: &TerminalWindowSession) -> String {
+    let handle = session.active_handle();
     let state = if session.command.is_none() {
         "NONE".to_string()
-    } else if session.handle.is_running() {
+    } else if handle.as_ref().is_some_and(TerminalHandle::is_running) {
         "RUNNING".to_string()
-    } else if let Some(status) = session.handle.exit_status() {
+    } else if let Some(status) = handle.as_ref().and_then(TerminalHandle::exit_status) {
         format!("EXITED code={}", status.exit_code())
     } else {
         "STOPPED".to_string()
@@ -462,22 +510,37 @@ fn process_status_text(session: &TerminalWindowSession) -> String {
 }
 
 fn copy_status_text(session: &TerminalWindowSession) -> String {
-    let mode = if session.handle.copy_mode() {
-        "ON"
-    } else {
-        "OFF"
+    let Some(handle) = session.active_handle() else {
+        return "COPYMODE=OFF COPY= SEL=".to_string();
     };
-    let copied = session
-        .handle
+    let mode = if handle.copy_mode() { "ON" } else { "OFF" };
+    let copied = handle
         .copied_text()
         .unwrap_or_default()
         .replace('\n', "\\n");
-    let selected = session
-        .handle
+    let selected = handle
         .selected_text()
         .unwrap_or_default()
         .replace('\n', "\\n");
     format!("COPYMODE={mode} COPY={copied} SEL={selected}")
+}
+
+fn pane_status_text(session: &TerminalWindowSession) -> String {
+    let panes = session.panes.panes();
+    let active = session
+        .panes
+        .active_pane_id()
+        .map(|id| id.raw().to_string())
+        .unwrap_or_else(|| "NONE".to_string());
+    let rects = panes
+        .iter()
+        .map(|pane| {
+            let rect = rect_text(pane.rect);
+            format!("{}:{rect}", pane.id.raw())
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    format!("PANES={} ACTIVE={} PANE_RECTS={rects}", panes.len(), active)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -488,7 +551,7 @@ fn update_status_lines(
     menu_action: &Binding<String>,
     focus_line: &Binding<String>,
     rect_line: &Binding<String>,
-    menu_line: &Binding<String>,
+    pane_line: &Binding<String>,
     process_line: &Binding<String>,
 ) {
     let term_id = term_session.id;
@@ -498,23 +561,29 @@ fn update_status_lines(
         Some(_) => "OTHER",
         None => "NONE",
     };
-    let capture = if term_session.handle.capture() {
+    let capture = if term_session
+        .active_handle()
+        .as_ref()
+        .is_some_and(TerminalHandle::capture)
+    {
         "ON"
     } else {
         "OFF"
     };
     focus_line.set(format!("FOCUS={focused} CAP={capture}"));
 
-    let term_rect = rect_text(find_window_rect(desktop, term_id));
-    let tools_rect = rect_text(find_window_rect(desktop, tools_id));
-    rect_line.set(format!("RECT TERM={term_rect} TOOLS={tools_rect}"));
-
     let menu_state = if desktop.menu.is_active() {
         "ON"
     } else {
         "OFF"
     };
-    menu_line.set(format!("MENU={} ACTIVE={menu_state}", menu_action.get()));
+    let term_rect = rect_text(find_window_rect(desktop, term_id));
+    let tools_rect = rect_text(find_window_rect(desktop, tools_id));
+    rect_line.set(format!(
+        "RECT TERM={term_rect} TOOLS={tools_rect} MENU={} ACTIVE={menu_state}",
+        menu_action.get()
+    ));
+    pane_line.set(pane_status_text(term_session));
     process_line.set(format!(
         "{} {}",
         process_status_text(term_session),
@@ -550,17 +619,17 @@ fn main() -> Result<()> {
 
     let focus_line = Binding::new(String::new());
     let rect_line = Binding::new(String::new());
-    let menu_line = Binding::new(String::new());
+    let pane_line = Binding::new(String::new());
     let process_line = Binding::new(String::new());
 
     let status_view = build_status_view(&[
         focus_line.clone(),
         rect_line.clone(),
-        menu_line.clone(),
+        pane_line.clone(),
         process_line.clone(),
     ]);
 
-    let (term_view, term_handle) = build_terminal_view(terminal_command.as_ref())?;
+    let (term_view, term_panes) = build_terminal_pane_group(terminal_command.as_ref())?;
 
     let term_rect = Rect {
         x: work.x.saturating_add(2),
@@ -591,7 +660,7 @@ fn main() -> Result<()> {
         screen,
     );
     let mut term_session =
-        TerminalWindowSession::new(term_id, term_handle, terminal_command.clone());
+        TerminalWindowSession::new(term_id, term_panes, terminal_command.clone());
     let tools_id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -619,7 +688,7 @@ fn main() -> Result<()> {
             &menu_action,
             &focus_line,
             &rect_line,
-            &menu_line,
+            &pane_line,
             &process_line,
         );
 
