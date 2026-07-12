@@ -15,7 +15,7 @@
 7. Mark the task title `[DONE]` in `TODO.md` and update its completion record.
 8. Inspect git status/diff/log, commit all intended changes with a clear task-specific message, then stop.
 
-## Progress Log
+## Previous Progress Log
 - Created initial execution plan before project inspection.
 - Identified first incomplete task: `M6.4 测试` in `TODO.md`.
 - Current task scope: add PTY coverage for in-window split layout, dead session restart, and new shell/command creation landing in the specified cwd.
@@ -28,3 +28,12 @@
 - Added temp-dir cleanup to the new PTY test so reruns cannot inherit a stale counter from a failed prior run.
 - Final verification passed after the cleanup change: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`, `cargo fmt --all -- --check`, and `cargo test --workspace --all-targets`.
 - Next step: mark `M6.4 测试` as `[DONE]` in `TODO.md` with the completion record, then commit the task changes.
+
+## Current Invocation Progress
+- Plan file refreshed before code execution or repository commands.
+- Selected first incomplete task: `M6.R Review`.
+- Latest commit is `[M6.4] Add terminal session PTY coverage`; it does not mention unfinished work that changes this task.
+- Inspection scope: `TerminalPaneGroup` split/focus/layout forwarding, terminal resize/spawn paths, `TerminalSessionSpec`, terminal viewer/snapshot shell session wiring, and existing M6 process/PTY tests.
+- Review found no blocking issue requiring a prerequisite task or code change.
+- Validation completed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed.
+- `TODO.md` now marks `M6.R Review` as `[DONE]` with completion notes.

@@ -129,7 +129,9 @@
 - [x] **[DONE] M6.4 测试** - PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
   - 完成记录（2026-07-12）：补齐 M6 PTY 覆盖闭环；保留并复跑单窗口内 `Ctrl+B %`/`Ctrl+B "` 分屏布局、pane 焦点切换且不扰动外层浮动窗口的回归测试，以及死会话退出提示、释放 capture、按 `R` 用 session profile/OSC7 cwd 重启的回归测试。扩展 `snapshot_terminal_window_app` 的 File 菜单，支持 `New shell window` / `New command window`，并在状态行暴露终端窗口数量、焦点窗口 profile/cwd；新增 PTY 用例通过菜单分别创建 command 与 shell 窗口，验证两者都按焦点 session 观察到的 OSC7 cwd 启动。
   - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
+- [x] **[DONE] M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
+  - 完成记录（2026-07-12）：复核 M6 分屏、会话与 spawn 环境实现，确认 `TerminalPaneGroup` 在单窗口内维护稳定 pane 树与 active pane，draw/layout 路径按 pane rect 将焦点、鼠标坐标与 resize 传播到对应 `TerminalEmulator`，pane 切换只更新 active pane capture，不扰动外层 WM 浮动窗口。确认 `TerminalWindowSession`/`TerminalSessionSpec` 在 viewer 与 PTY fixture 中按窗口持有 profile/program/args/cwd，死会话重启、新建 shell/command 窗口均复用当前窗口观察到的 OSC 7 cwd；`spawn_command` 会覆盖宿主污染的 `TERM`/`COLORTERM` 为终端默认值，并保留显式 cwd 优先级与显式 resize 句柄清理。
+  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 
 ## 阶段 M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
 
