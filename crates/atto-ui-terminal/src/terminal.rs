@@ -13,7 +13,8 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail, ensure};
 use base64::Engine;
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, ExitStatus, PtySize, native_pty_system};
@@ -3636,6 +3637,14 @@ fn encode_key_event(screen: &vt100::Screen, event: KeyEvent) -> Option<Vec<u8>> 
 
     let mut out = Vec::new();
 
+    if screen.application_keypad()
+        && is_keypad_event(event)
+        && let Some(seq) = encode_application_keypad_key(event.code, mods)
+    {
+        out.extend_from_slice(seq.as_bytes());
+        return Some(out);
+    }
+
     match event.code {
         KeyCode::Char(c) => {
             if ctrl {
@@ -3718,6 +3727,39 @@ fn encode_key_event(screen: &vt100::Screen, event: KeyEvent) -> Option<Vec<u8>> 
     }
 
     Some(out)
+}
+
+fn is_keypad_event(event: KeyEvent) -> bool {
+    event.state.contains(KeyEventState::KEYPAD) || matches!(event.code, KeyCode::KeypadBegin)
+}
+
+fn encode_application_keypad_key(code: KeyCode, mods: KeyModifiers) -> Option<&'static str> {
+    if modifier_value(mods) != 1 {
+        return None;
+    }
+
+    match code {
+        KeyCode::Char('0') | KeyCode::Insert => Some("\x1bOp"),
+        KeyCode::Char('1') | KeyCode::End => Some("\x1bOq"),
+        KeyCode::Char('2') | KeyCode::Down => Some("\x1bOr"),
+        KeyCode::Char('3') | KeyCode::PageDown => Some("\x1bOs"),
+        KeyCode::Char('4') | KeyCode::Left => Some("\x1bOt"),
+        KeyCode::Char('5') => Some("\x1bOu"),
+        KeyCode::Char('6') | KeyCode::Right => Some("\x1bOv"),
+        KeyCode::Char('7') | KeyCode::Home => Some("\x1bOw"),
+        KeyCode::Char('8') | KeyCode::Up => Some("\x1bOx"),
+        KeyCode::Char('9') | KeyCode::PageUp => Some("\x1bOy"),
+        KeyCode::Char('*') => Some("\x1bOj"),
+        KeyCode::Char('+') => Some("\x1bOk"),
+        KeyCode::Char(',') => Some("\x1bOl"),
+        KeyCode::Char('-') => Some("\x1bOm"),
+        KeyCode::Char('.') | KeyCode::Delete => Some("\x1bOn"),
+        KeyCode::Char('/') => Some("\x1bOo"),
+        KeyCode::Enter => Some("\x1bOM"),
+        KeyCode::Char('=') => Some("\x1bOX"),
+        KeyCode::KeypadBegin => Some("\x1bOE"),
+        _ => None,
+    }
 }
 
 fn encode_cursor_key(screen: &vt100::Screen, suffix: char, mods: KeyModifiers) -> String {

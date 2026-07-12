@@ -11,7 +11,8 @@ use atto_ui_terminal::{
     TerminalPrefixCommand, TerminalSelectionPosition, TerminalShortcut,
 };
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -44,10 +45,14 @@ fn context(theme: &Theme) -> ComponentContext<'_> {
 }
 
 fn key_input_after_output(output: &str, key: KeyCode) -> Vec<u8> {
+    key_event_input_after_output(output, KeyEvent::new(key, KeyModifiers::NONE))
+}
+
+fn key_event_input_after_output(output: &str, key: KeyEvent) -> Vec<u8> {
     let terminal = TerminalEmulator::new();
     let handle = terminal.handle();
     handle.process_output_str(output);
-    handle.send_event(&Event::Key(KeyEvent::new(key, KeyModifiers::NONE)));
+    handle.send_event(&Event::Key(key));
     handle.take_input()
 }
 
@@ -84,6 +89,15 @@ fn component_key_actions(keys: &[KeyEvent]) -> Vec<ComponentAction> {
 
 fn ctrl_key(ch: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
+}
+
+fn keypad_key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new_with_kind_and_state(
+        code,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+        KeyEventState::KEYPAD,
+    )
 }
 
 fn paste_input_after_output(output: &str, text: &str) -> Vec<u8> {
@@ -583,6 +597,86 @@ fn terminal_application_cursor_changes_arrow_key_encoding() {
         b"\x1bOC"
     );
     assert_eq!(key_input_after_output("\x1b[?1h", KeyCode::Left), b"\x1bOD");
+}
+
+#[test]
+fn terminal_application_keypad_changes_keypad_key_encoding() {
+    assert_eq!(
+        key_event_input_after_output("", keypad_key(KeyCode::Char('1'))),
+        b"1"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Char('0'))),
+        b"\x1bOp"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Char('1'))),
+        b"\x1bOq"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Char('5'))),
+        b"\x1bOu"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Char('9'))),
+        b"\x1bOy"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Char('.'))),
+        b"\x1bOn"
+    );
+    assert_eq!(
+        key_event_input_after_output("\x1b=", keypad_key(KeyCode::Enter)),
+        b"\x1bOM"
+    );
+}
+
+#[test]
+fn terminal_application_keypad_uses_keypad_origin_only() {
+    assert_eq!(key_input_after_output("\x1b=", KeyCode::Char('1')), b"1");
+    assert_eq!(key_input_after_output("\x1b=", KeyCode::Up), b"\x1b[A");
+    assert_eq!(
+        key_event_input_after_output("\x1b=\x1b>", keypad_key(KeyCode::Char('1'))),
+        b"1"
+    );
+    assert_eq!(
+        key_event_input_after_output(
+            "\x1b=",
+            KeyEvent::new(KeyCode::KeypadBegin, KeyModifiers::NONE),
+        ),
+        b"\x1bOE"
+    );
+}
+
+#[test]
+fn terminal_application_keypad_encodes_keypad_operator_and_navigation_keys() {
+    let cases = [
+        (KeyCode::Char('/'), b"\x1bOo".as_slice()),
+        (KeyCode::Char('*'), b"\x1bOj"),
+        (KeyCode::Char('+'), b"\x1bOk"),
+        (KeyCode::Char('-'), b"\x1bOm"),
+        (KeyCode::Char(','), b"\x1bOl"),
+        (KeyCode::Char('='), b"\x1bOX"),
+        (KeyCode::Home, b"\x1bOw"),
+        (KeyCode::Up, b"\x1bOx"),
+        (KeyCode::PageUp, b"\x1bOy"),
+        (KeyCode::Left, b"\x1bOt"),
+        (KeyCode::Right, b"\x1bOv"),
+        (KeyCode::End, b"\x1bOq"),
+        (KeyCode::Down, b"\x1bOr"),
+        (KeyCode::PageDown, b"\x1bOs"),
+        (KeyCode::Insert, b"\x1bOp"),
+        (KeyCode::Delete, b"\x1bOn"),
+        (KeyCode::KeypadBegin, b"\x1bOE"),
+    ];
+
+    for (code, expected) in cases {
+        assert_eq!(
+            key_event_input_after_output("\x1b=", keypad_key(code)),
+            expected,
+            "keypad {code:?}"
+        );
+    }
 }
 
 #[test]

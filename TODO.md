@@ -140,7 +140,9 @@
 - [x] **[DONE] M7.1 光标形状** - 光标渲染（`terminal.rs:603-612`）读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。
   - 完成记录（2026-07-12）：终端组件新增 `TerminalCursorShape` 状态，通过 vt100 `unhandled_csi` 回调识别 DECSCUSR (`CSI Ps SP q`) 光标样式序列；`TerminalHandle::cursor_shape()` 可查询当前 shape。渲染路径不再一律对 cursor cell 加 `REVERSED`，而是按 shape 分别渲染 block（reverse video）、underline（UNDERLINED modifier）与 bar（单格 bar glyph），`CSI 0/1/2 q` 保持默认 block 行为以维持既有默认视觉。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_cursor_shape_sequences_update_rendered_cursor -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
+- [x] **[DONE] M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
+  - 完成记录（2026-07-12）：终端输入编码接入 vt100 `Screen::application_keypad()`；当 crossterm 事件带 `KeyEventState::KEYPAD` 且处于 application keypad 模式时，数字键、运算符、Enter、KeypadBegin 以及 num-lock-off 的 keypad 导航键会按 DEC/xterm application keypad SS3 序列发送。普通顶排行数字与非 keypad-origin 方向键保持原有行为，`ESC >` 退出 application keypad 后恢复普通编码。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_application_keypad -- --nocapture`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
 - [ ] **M7.4 配置界面** - 新增可视化**设置窗口**：复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets（`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`）分组编辑各配置项，支持即时预览/应用与保存；从菜单入口打开。
 - [ ] **M7.5 配置生效接线** - 组件层各写死项（scrollback、色板、release 快捷键 `terminal.rs:121`、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。
