@@ -790,6 +790,8 @@ mod tests {
         let config = TerminalConfig::default();
 
         assert_eq!(config.scrollback_len, DEFAULT_TERMINAL_SCROLLBACK_LEN);
+        assert_eq!(config.palette.foreground_color().unwrap(), None);
+        assert_eq!(config.palette.background_color().unwrap(), None);
         assert_eq!(
             config.prefix_shortcut().unwrap(),
             TerminalShortcut::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
@@ -811,8 +813,38 @@ mod tests {
                 .unwrap(),
             TerminalShortcut::new(KeyCode::Up, KeyModifiers::NONE)
         );
-        assert_eq!(config.palette.color_for_index(0).unwrap(), Color::Black);
-        assert_eq!(config.palette.color_for_index(15).unwrap(), Color::White);
+        assert_eq!(
+            config
+                .alternate_screen_scroll
+                .scroll_down_key
+                .to_shortcut()
+                .unwrap(),
+            TerminalShortcut::new(KeyCode::Down, KeyModifiers::NONE)
+        );
+        let expected_palette = [
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::Blue,
+            Color::Magenta,
+            Color::Cyan,
+            Color::Gray,
+            Color::DarkGray,
+            Color::LightRed,
+            Color::LightGreen,
+            Color::LightYellow,
+            Color::LightBlue,
+            Color::LightMagenta,
+            Color::LightCyan,
+            Color::White,
+        ];
+        for (index, expected) in expected_palette.into_iter().enumerate() {
+            assert_eq!(
+                config.palette.color_for_index(index as u8).unwrap(),
+                expected
+            );
+        }
         assert_eq!(
             config.shell_integration_policy(),
             TerminalShellIntegration::Disabled
@@ -832,6 +864,47 @@ mod tests {
                 .unwrap()
                 .command
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn terminal_config_loads_partial_legacy_files_with_defaults() {
+        let minimal = TerminalConfig::from_str("{}", TerminalConfigFormat::Json).unwrap();
+        assert_eq!(minimal, TerminalConfig::default());
+
+        let legacy_json = r#"{
+            "scrollback_len": 1234,
+            "palette": {},
+            "alternate_screen_scroll": {},
+            "sessions": {},
+            "shell_integration": {},
+            "cursor": {},
+            "future_field": true
+        }"#;
+        let config = TerminalConfig::from_str(legacy_json, TerminalConfigFormat::Json).unwrap();
+
+        assert_eq!(config.scrollback_len, 1234);
+        assert_eq!(
+            config.prefix_shortcut().unwrap(),
+            TerminalShortcut::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        );
+        assert_eq!(
+            config.release_shortcut().unwrap(),
+            TerminalShortcut::new(KeyCode::Esc, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        );
+        assert!(config.alternate_screen_scroll.enabled);
+        assert_eq!(
+            config.alternate_screen_scroll.step,
+            DEFAULT_TERMINAL_SCROLL_STEP
+        );
+        assert_eq!(config.palette.color_for_index(1).unwrap(), Color::Red);
+        assert_eq!(
+            TerminalCursorShape::from(config.cursor.default_shape),
+            TerminalCursorShape::Block
+        );
+        assert_eq!(
+            config.sessions.default_profile().unwrap().name,
+            DEFAULT_TERMINAL_PROFILE_NAME
         );
     }
 

@@ -155,7 +155,9 @@
 - [x] **[DONE] M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
   - 完成记录（2026-07-12）：补齐终端配置界面的 M7.6 PTY 端到端覆盖；新增测试通过 File → Settings 打开设置窗口，真实编辑 scrollback、prefix key 与 ANSI palette 值，Save 后验证 live terminal scrollback/prefix/palette 已应用，旧前缀不再触发菜单、新前缀立即生效，且保存的配置在重启 fixture 后继续保留并影响渲染。补充 PTY cursor-shape 覆盖，真实子进程输出 DECSCUSR 序列后验证 block/underline/bar 状态与 bar glyph 渲染。为 PTY fixture 增加仅测试用的 live config 状态行，并为 `atto-ui-test-host` 增加 cell inverse/underline 查询以支持样式断言。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_settings_apply_save_and_reload_runtime_config pty_terminal_cursor_shape_sequences_render_in_window_app --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M7.R Review** - 复核配置默认值不改变既有行为、配置持久化格式向后兼容、界面对无效输入有校验，验证通过。
+- [x] **[DONE] M7.R Review** - 复核配置默认值不改变既有行为、配置持久化格式向后兼容、界面对无效输入有校验，验证通过。
+  - 完成记录（2026-07-12）：复核 M7 配置模型、运行时接线与设置窗口；确认默认 scrollback、Ctrl+B 前缀、Ctrl+Shift+Esc release、alt-screen wheel=3x Up/Down、默认 ANSI 0-15 色板、shell integration 关闭、block 光标与默认 shell profile 均保持 M7 前既有行为。补充回归覆盖：最小/部分旧配置文件缺字段时会通过 serde defaults 保持兼容并忽略未来未知字段；设置界面对非法 prefix、palette color、profile args、scrollback=0 均返回错误，不会更新 live binding，也不会保存无效文件。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --lib terminal_config -- --nocapture`、`cargo test -p atto-ui-terminal --lib terminal_settings -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 
 ## 收尾
 

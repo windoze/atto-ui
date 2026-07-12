@@ -969,6 +969,59 @@ mod tests {
     }
 
     #[test]
+    fn terminal_settings_rejects_invalid_edits_without_mutating_config() {
+        let config = Binding::new(TerminalConfig::default());
+        let original = config.get();
+        let view = TerminalSettingsView::new(config.clone(), None);
+        let handle = view.handle();
+
+        handle.set_prefix_key_text("ctrl+f10");
+        assert!(handle.apply().is_err());
+        assert_eq!(config.get(), original);
+        assert!(handle.status_text().contains("Error"));
+
+        handle.reset_from_applied();
+        handle.set_palette_color_text(0, "not-a-color");
+        assert!(handle.apply().is_err());
+        assert_eq!(config.get(), original);
+        assert!(handle.status_text().contains("Error"));
+
+        handle.reset_from_applied();
+        handle
+            .bindings
+            .profile_args_json
+            .set(r#"["ok", 7]"#.to_string());
+        assert!(handle.apply().is_err());
+        assert_eq!(config.get(), original);
+        assert!(handle.status_text().contains("Error"));
+    }
+
+    #[test]
+    fn terminal_settings_save_rejects_invalid_draft_without_writing_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "atto-ui-terminal-settings-invalid-{}-{unique}.yaml",
+            process::id()
+        ));
+        let config = Binding::new(TerminalConfig::default());
+        let original = config.get();
+        let view = TerminalSettingsView::new(config.clone(), Some(path.clone()));
+        let handle = view.handle();
+
+        handle.set_scrollback_len_text("0");
+
+        assert!(handle.save().is_err());
+        assert_eq!(config.get(), original);
+        assert!(!path.exists());
+        assert!(handle.status_text().contains("Error"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn terminal_settings_save_persists_yaml() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
