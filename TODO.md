@@ -120,7 +120,9 @@
 - [x] **[DONE] M6.1 分屏** - 基于现有组件和功能在单窗口内做 tmux 式 split panes，与既有 WM 浮动窗口形态并存。
   - 完成记录（2026-07-12）：新增 `TerminalPaneGroup` split-pane 容器与可查询 `TerminalPaneGroupHandle`，在单个 `Window` view 内维护 pane 树、布局、active pane 与 pane handle 快照；默认 `Ctrl+B %` 左右分屏、`Ctrl+B "` 上下分屏、`Ctrl+B o`/`Ctrl+B Tab` 切换 pane，未命中的前缀组合会回放给当前 `TerminalEmulator`，保留既有菜单、窗口模式、最大化、copy-mode、前缀转义等终端前缀行为。`terminal_viewer` 与 `snapshot_terminal_window_app` 已切换为 pane 容器，标题联动、退出提示、右键命令块菜单和状态行均按 active/命中 pane 读取 handle；外层 WM 浮动窗口仍保持独立焦点、移动、大小与菜单行为。PTY fixture 额外串行化该窗口交互测试文件，避免默认并发下 `openpty` 资源竞争造成非确定性失败。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
+- [x] **[DONE] M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
+  - 完成记录（2026-07-12）：新增 `TerminalSessionSpec` 统一描述 terminal session 的 profile、program/args 与窗口 cwd，`TerminalEmulator::spawn_session` 可直接按 spec 启动，`TerminalHandle::current_cwd()` 暴露 M5 OSC 7 观察到的 cwd。`terminal_viewer` 的 File 菜单拆为 New shell window / New command window，新窗口会继承当前窗口已观察到的 cwd；每个 `TerminalWindowSession` 持有自己的 spec，死会话按窗口自己的 profile/cwd 重启，不再依赖全局启动命令。`snapshot_terminal_window_app` 改用同一 spec，并暴露 `SESSION`/`CWD` 状态用于 PTY 覆盖。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal session_spec -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_restart_uses_session_profile_and_osc7_cwd -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 - [ ] **M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
 - [ ] **M6.4 测试** - PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
 - [ ] **M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。

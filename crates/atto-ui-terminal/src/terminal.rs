@@ -32,6 +32,7 @@ use crate::selection::{
     position_for_view_cell, selected_cell_ranges_for_screen_row, selected_text_from_screen,
     visible_top_row,
 };
+use crate::session::TerminalSessionSpec;
 
 const DEFAULT_SCROLLBACK_LEN: usize = 2000;
 const DEFAULT_SCROLL_STEP: u16 = 3;
@@ -2340,6 +2341,11 @@ impl TerminalEmulator {
         self.spawn_command(cmd)
     }
 
+    /// Spawns a subprocess from a reusable terminal session spec.
+    pub fn spawn_session(&mut self, session: &TerminalSessionSpec) -> Result<()> {
+        self.spawn_command(session.command_builder())
+    }
+
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, mut cmd: CommandBuilder) -> Result<()> {
         let shell_integration = { self.shared.lock().shell_integration };
@@ -3030,6 +3036,11 @@ impl TerminalHandle {
     /// Returns the last non-fatal shell integration injection error, if any.
     pub fn last_shell_integration_error(&self) -> Option<String> {
         self.shared.lock().last_shell_integration_error.clone()
+    }
+
+    /// Returns the latest cwd reported by OSC 7 shell integration, if any.
+    pub fn current_cwd(&self) -> Option<String> {
+        self.shared.lock().current_cwd.clone()
     }
 
     /// Updates the terminal prefix shortcut. Only plain `Ctrl+<ASCII letter>` is accepted.

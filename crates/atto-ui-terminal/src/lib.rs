@@ -8,6 +8,7 @@
 mod dynamic;
 mod pane;
 mod selection;
+mod session;
 mod terminal;
 
 pub use dynamic::{
@@ -18,6 +19,7 @@ pub use pane::{
     TerminalPaneSplit,
 };
 pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
+pub use session::TerminalSessionSpec;
 pub use terminal::{
     TerminalClipboardCopy, TerminalCommandBlock, TerminalCommandBlockPresentation,
     TerminalEmulator, TerminalHandle, TerminalPrefixBinding, TerminalPrefixCommand,

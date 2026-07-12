@@ -1,5 +1,6 @@
 use std::env;
 use std::io;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -30,44 +31,62 @@ use atto_ui::widgets::Label;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
 use atto_ui_terminal::{
     TerminalCommandBlockPresentation, TerminalEmulator, TerminalHandle, TerminalPaneGroup,
-    TerminalPaneGroupHandle, TerminalPaneId, TerminalShortcut,
+    TerminalPaneGroupHandle, TerminalPaneId, TerminalSessionSpec, TerminalShortcut,
 };
 
 const DEFAULT_TERMINAL_TITLE: &str = "Terminal";
 const WINDOWS_MENU_ID: &str = "atto-ui-terminal:snapshot-window:windows";
 const WINDOWS_MENU_LIST_ID: &str = "atto-ui-terminal:snapshot-window:windows:list";
 
-#[derive(Clone)]
-struct TerminalCommand {
-    program: String,
-    args: Vec<String>,
-}
-
-impl TerminalCommand {
-    fn from_env_args() -> Option<Self> {
-        let mut args = env::args().skip(1);
-        let program = args.next()?;
-        Some(Self {
-            program,
-            args: args.collect(),
-        })
+fn terminal_session_from_env_args() -> Option<TerminalSessionSpec> {
+    let mut argv: Vec<String> = env::args().skip(1).collect();
+    let mut cwd = None;
+    let mut profile = "Command".to_string();
+    loop {
+        match argv.first().map(String::as_str) {
+            Some("--cwd") if argv.len() >= 2 => {
+                cwd = Some(PathBuf::from(argv.remove(1)));
+                argv.remove(0);
+            }
+            Some("--profile") if argv.len() >= 2 => {
+                profile = argv.remove(1);
+                argv.remove(0);
+            }
+            _ => break,
+        }
     }
+
+    let mut spec = if let Some((program, args)) = argv.split_first() {
+        TerminalSessionSpec::command(profile, program.clone(), args.to_vec())
+    } else if cwd.is_some() {
+        TerminalSessionSpec::shell_from_env()
+    } else {
+        return None;
+    };
+    if let Some(cwd) = cwd {
+        spec.set_cwd(cwd);
+    }
+    Some(spec)
 }
 
 struct TerminalWindowSession {
     id: WindowId,
     panes: TerminalPaneGroupHandle,
-    command: Option<TerminalCommand>,
+    spec: Option<TerminalSessionSpec>,
     exit_prompted: bool,
     restart_count: u32,
 }
 
 impl TerminalWindowSession {
-    fn new(id: WindowId, panes: TerminalPaneGroupHandle, command: Option<TerminalCommand>) -> Self {
+    fn new(
+        id: WindowId,
+        panes: TerminalPaneGroupHandle,
+        spec: Option<TerminalSessionSpec>,
+    ) -> Self {
         Self {
             id,
             panes,
-            command,
+            spec,
             exit_prompted: false,
             restart_count: 0,
         }
@@ -227,7 +246,7 @@ fn is_plain_restart_key(event: &Event) -> bool {
 }
 
 fn build_terminal_view(
-    command: Option<&TerminalCommand>,
+    spec: Option<&TerminalSessionSpec>,
     pane_number: usize,
 ) -> Result<(TerminalEmulator, TerminalHandle)> {
     let mut terminal = TerminalEmulator::new()
@@ -237,8 +256,8 @@ fn build_terminal_view(
         ))
         .command_block_presentation(TerminalCommandBlockPresentation::enabled())
         .without_system_clipboard();
-    if let Some(command) = command {
-        terminal.spawn_process(&command.program, &command.args)?;
+    if let Some(spec) = spec {
+        terminal.spawn_session(spec)?;
     }
     let handle = terminal.handle();
     handle.process_output_str(&format!("TTY READY PANE={pane_number}\r\n"));
@@ -246,19 +265,19 @@ fn build_terminal_view(
 }
 
 fn build_terminal_pane_group(
-    command: Option<&TerminalCommand>,
+    spec: Option<&TerminalSessionSpec>,
 ) -> Result<(TerminalPaneGroup, TerminalPaneGroupHandle)> {
-    let command_owned = command.cloned();
-    let (terminal, _) = build_terminal_view(command, 1)?;
+    let spec_owned = spec.cloned();
+    let (terminal, _) = build_terminal_view(spec, 1)?;
     let group = TerminalPaneGroup::new(terminal).pane_factory(move |pane_number| {
-        build_terminal_view(command_owned.as_ref(), pane_number).map(|(terminal, _)| terminal)
+        build_terminal_view(spec_owned.as_ref(), pane_number).map(|(terminal, _)| terminal)
     });
     let handle = group.handle();
     Ok((group, handle))
 }
 
 fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSession) -> bool {
-    if session.command.is_none()
+    if session.spec.is_none()
         || session.exit_prompted
         || find_window_rect(desktop, session.id).is_none()
     {
@@ -277,6 +296,24 @@ fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSes
         status.exit_code()
     ));
     session.exit_prompted = true;
+    true
+}
+
+fn sync_session_cwd_from_active_pane(session: &mut TerminalWindowSession) -> bool {
+    let Some(cwd) = session
+        .active_handle()
+        .and_then(|handle| handle.current_cwd())
+    else {
+        return false;
+    };
+    let Some(spec) = &mut session.spec else {
+        return false;
+    };
+    let cwd = PathBuf::from(cwd);
+    if spec.cwd() == Some(cwd.as_path()) {
+        return false;
+    }
+    spec.set_cwd(cwd);
     true
 }
 
@@ -348,11 +385,11 @@ fn restart_terminal_view(
     if !session.exit_prompted || desktop.wm.focused() != Some(session.id) {
         return Ok(false);
     }
-    let Some(command) = session.command.clone() else {
+    let Some(spec) = session.spec.clone() else {
         return Ok(false);
     };
 
-    let (terminal, panes) = build_terminal_pane_group(Some(&command))?;
+    let (terminal, panes) = build_terminal_pane_group(Some(&spec))?;
     if !desktop.wm.set_view(session.id, Box::new(terminal)) {
         return Ok(false);
     }
@@ -497,7 +534,7 @@ fn is_non_right_mouse_down(event: &Event) -> bool {
 
 fn process_status_text(session: &TerminalWindowSession) -> String {
     let handle = session.active_handle();
-    let state = if session.command.is_none() {
+    let state = if session.spec.is_none() {
         "NONE".to_string()
     } else if handle.as_ref().is_some_and(TerminalHandle::is_running) {
         "RUNNING".to_string()
@@ -507,6 +544,14 @@ fn process_status_text(session: &TerminalWindowSession) -> String {
         "STOPPED".to_string()
     };
     format!("PROC={state} RESTARTS={}", session.restart_count)
+}
+
+fn session_status_text(session: &TerminalWindowSession) -> String {
+    let Some(spec) = &session.spec else {
+        return "SESSION=NONE CWD=-".to_string();
+    };
+    let cwd = spec.cwd().and_then(|cwd| cwd.to_str()).unwrap_or("-");
+    format!("SESSION={} CWD={cwd}", spec.profile())
 }
 
 fn copy_status_text(session: &TerminalWindowSession) -> String {
@@ -585,14 +630,15 @@ fn update_status_lines(
     ));
     pane_line.set(pane_status_text(term_session));
     process_line.set(format!(
-        "{} {}",
+        "{} {} {}",
         process_status_text(term_session),
-        copy_status_text(term_session)
+        copy_status_text(term_session),
+        session_status_text(term_session)
     ));
 }
 
 fn main() -> Result<()> {
-    let terminal_command = TerminalCommand::from_env_args();
+    let terminal_spec = terminal_session_from_env_args();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -629,7 +675,7 @@ fn main() -> Result<()> {
         process_line.clone(),
     ]);
 
-    let (term_view, term_panes) = build_terminal_pane_group(terminal_command.as_ref())?;
+    let (term_view, term_panes) = build_terminal_pane_group(terminal_spec.as_ref())?;
 
     let term_rect = Rect {
         x: work.x.saturating_add(2),
@@ -659,8 +705,7 @@ fn main() -> Result<()> {
         ),
         screen,
     );
-    let mut term_session =
-        TerminalWindowSession::new(term_id, term_panes, terminal_command.clone());
+    let mut term_session = TerminalWindowSession::new(term_id, term_panes, terminal_spec.clone());
     let tools_id = desktop.add_window(
         Window::new(
             WindowKind::Normal,
@@ -679,6 +724,7 @@ fn main() -> Result<()> {
 
     loop {
         show_exit_prompt_if_needed(&desktop, &mut term_session);
+        sync_session_cwd_from_active_pane(&mut term_session);
         sync_terminal_window_title(&mut desktop, &term_session);
         refresh_windows_menu(&mut desktop);
         update_status_lines(
@@ -723,6 +769,7 @@ fn main() -> Result<()> {
             close_command_context_menu(&mut desktop, &mut command_context);
         }
         if is_plain_restart_key(&ev) {
+            sync_session_cwd_from_active_pane(&mut term_session);
             restart_terminal_view(&mut desktop, &mut term_session)?;
         }
 

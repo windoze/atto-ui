@@ -1,3 +1,5 @@
+use std::fs;
+use std::process;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -666,6 +668,63 @@ fn pty_terminal_dead_process_prompts_and_restarts() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root = std::path::PathBuf::from(format!("/tmp/aui-term-{}", process::id()));
+    let initial_cwd = root.join("initial");
+    let observed_cwd = root.join("observed");
+    fs::create_dir_all(&initial_cwd).expect("create initial cwd");
+    fs::create_dir_all(&observed_cwd).expect("create observed cwd");
+    let counter = root.join("count");
+    let initial_cwd = fs::canonicalize(initial_cwd)
+        .expect("canonicalize initial cwd")
+        .to_string_lossy()
+        .into_owned();
+    let observed_cwd = fs::canonicalize(observed_cwd)
+        .expect("canonicalize observed cwd")
+        .to_string_lossy()
+        .into_owned();
+    let counter = counter.to_string_lossy().into_owned();
+    let script = format!(
+        "n=$(cat '{counter}' 2>/dev/null || echo 0); \
+         n=$((n+1)); printf '%s' \"$n\" > '{counter}'; \
+         printf '\\033]7;file://{observed_cwd}\\007'; \
+         printf 'RUN=%s PWD=%s\\r\\n' \"$n\" \"$PWD\"; \
+         exit 4"
+    );
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &[
+            "--profile",
+            "Project",
+            "--cwd",
+            &initial_cwd,
+            "/bin/sh",
+            "-c",
+            script.as_str(),
+        ],
+        100,
+        26,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, &format!("RUN=1 PWD={initial_cwd}"));
+    wait_for_text(&host, "SESSION=Project CWD=");
+    wait_for_text(&host, "[Process exited: code 4");
+
+    host.send_str("r").expect("restart terminal process");
+    wait_for_text(&host, "RESTARTS=1");
+    wait_for_text(&host, &format!("RUN=2 PWD={observed_cwd}"));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
 }
 
 fn assert_osc_title_updates_window_title_and_windows_menu(osc: &str, expected_title: &str) {
