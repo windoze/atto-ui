@@ -111,7 +111,9 @@
 - [x] **[DONE] M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
   - 完成记录（2026-07-12）：补齐 M5 测试覆盖；`callbacks` 新增多命令块 OSC 133/7 状态机与 cwd 更新、未知 OSC 133/非法 OSC 7 降级用例；`input_encoding` 新增无 OSC 标记时命令块导航、选择、复制、重跑接口安全降级用例；PTY window fixture 新增 `Ctrl+↑/↓` 命令级导航端到端覆盖，并复跑既有命令块呈现、右键 Copy command / Copy output / Rerun 覆盖。
   - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_ -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_ctrl_arrows_navigate_command_blocks -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [ ] **M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
+- [x] **[DONE] M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
+  - 完成记录（2026-07-12）：复核 M5 三层实现，确认第 1 层 OSC 133/7 感知始终在组件层 parser callback 中独立记录 `command_marks`，不依赖第 2 层呈现开关或第 3 层 shell integration 注入；第 2 层只通过 `command_blocks()`/handle API 消费已记录语义块；第 3 层默认关闭，注入失败只记录可查询错误并继续按普通 shell 启动。确认命令级退出码保存在 `TerminalCommandBlock::exit_code`/`last_exit_code()`，进程级退出码保存在 `exit_status()`/`on_exit`，两者不会互相覆盖。补充 `terminal_command_exit_code_is_distinct_from_process_exit_status` 回归测试，直接覆盖 OSC 133 `D` 不会设置进程级 `exit_status()`。
+  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test callbacks terminal_command_exit_code_is_distinct_from_process_exit_status -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
 
 ## 阶段 M6 - 分屏 + 会话管理 + spawn 环境（P2）
 

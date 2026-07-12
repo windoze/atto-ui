@@ -190,6 +190,22 @@ fn terminal_command_blocks_are_queryable_and_report_finished_callback() {
 }
 
 #[test]
+fn terminal_command_exit_code_is_distinct_from_process_exit_status() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.process_output_str(
+        "\x1b]133;A\x07$ false\x1b]133;B\x07\r\n\
+         \x1b]133;C\x07boom\r\n\
+         \x1b]133;D;42\x07",
+    );
+
+    assert_eq!(handle.last_exit_code(), Some(42));
+    assert!(handle.exit_status().is_none());
+    assert!(!handle.is_running());
+}
+
+#[test]
 fn terminal_osc133_state_machine_tracks_multiple_blocks_and_cwd_updates() {
     let terminal = TerminalEmulator::new();
     let handle = terminal.handle();
