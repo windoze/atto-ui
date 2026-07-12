@@ -18,6 +18,7 @@ use crossterm::event::{
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, ExitStatus, PtySize, native_pty_system};
 use ratatui::Frame;
+use ratatui::buffer::Cell;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
@@ -40,6 +41,7 @@ const DEFAULT_TERM_ENV: &str = "xterm-256color";
 const DEFAULT_COLORTERM_ENV: &str = "truecolor";
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
 const COMMAND_FAILURE_SYMBOL: &str = "!";
+const CURSOR_BAR_SYMBOL: &str = "▏";
 static SHELL_INTEGRATION_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Keyboard shortcut used to release terminal input capture.
@@ -55,6 +57,15 @@ pub enum TerminalCommandBlockPresentation {
     #[default]
     Disabled,
     Enabled,
+}
+
+/// Shape used for the synthetic terminal cursor rendered into the Ratatui buffer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerminalCursorShape {
+    #[default]
+    Block,
+    Underline,
+    Bar,
 }
 
 impl TerminalCommandBlockPresentation {
@@ -145,6 +156,7 @@ mod tests {
             selection: TerminalSelectionState::default(),
             command_marks: Vec::new(),
             current_cwd: None,
+            cursor_shape: TerminalCursorShape::default(),
             dsr_tail: Vec::new(),
         }
     }
@@ -693,6 +705,7 @@ enum TerminalCallbackEvent {
         row: usize,
         col: u16,
     },
+    CursorShape(TerminalCursorShape),
 }
 
 #[derive(Default)]
@@ -740,6 +753,19 @@ impl vt100::Callbacks for TerminalCallbacks {
             col,
         });
     }
+
+    fn unhandled_csi(
+        &mut self,
+        _: &mut vt100::Screen,
+        i1: Option<u8>,
+        i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        if let Some(shape) = parse_decscusr_cursor_shape(i1, i2, params, c) {
+            self.events.push(TerminalCallbackEvent::CursorShape(shape));
+        }
+    }
 }
 
 enum TerminalCallbackDispatch {
@@ -770,6 +796,28 @@ fn string_from_terminal_bytes(bytes: &[u8]) -> String {
 
 fn parse_osc133_exit_code(bytes: &[u8]) -> Option<i32> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+fn parse_decscusr_cursor_shape(
+    i1: Option<u8>,
+    i2: Option<u8>,
+    params: &[&[u16]],
+    c: char,
+) -> Option<TerminalCursorShape> {
+    if i1 != Some(b' ') || i2.is_some() || c != 'q' {
+        return None;
+    }
+    let style = params
+        .first()
+        .and_then(|param| param.first())
+        .copied()
+        .unwrap_or(0);
+    match style {
+        0..=2 => Some(TerminalCursorShape::Block),
+        3 | 4 => Some(TerminalCursorShape::Underline),
+        5 | 6 => Some(TerminalCursorShape::Bar),
+        _ => None,
+    }
 }
 
 fn parse_osc7_cwd(bytes: &[u8]) -> Option<String> {
@@ -1180,6 +1228,7 @@ struct TerminalShared {
     selection: TerminalSelectionState,
     command_marks: Vec<TerminalCommandBlock>,
     current_cwd: Option<String>,
+    cursor_shape: TerminalCursorShape,
     dsr_tail: Vec<u8>,
 }
 
@@ -1276,6 +1325,9 @@ impl TerminalShared {
                     {
                         dispatches.push(TerminalCallbackDispatch::CommandFinished(callback, block));
                     }
+                }
+                TerminalCallbackEvent::CursorShape(shape) => {
+                    self.cursor_shape = shape;
                 }
             }
         }
@@ -2234,6 +2286,7 @@ impl TerminalEmulator {
             selection: TerminalSelectionState::default(),
             command_marks: Vec::new(),
             current_cwd: None,
+            cursor_shape: TerminalCursorShape::default(),
             dsr_tail: Vec::with_capacity(4),
         };
 
@@ -2265,6 +2318,7 @@ impl TerminalEmulator {
             shared.scrollback_len = len;
             let (rows, cols) = shared.parser.screen().size();
             shared.parser = terminal_parser(rows, cols, len);
+            shared.cursor_shape = TerminalCursorShape::default();
         }
         self
     }
@@ -2749,6 +2803,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
             Vec::new()
         };
         let max_scrollback = shared.max_scrollback();
+        let cursor_shape = shared.cursor_shape;
         let screen = shared.parser.screen_mut();
         let visible_top = visible_top_row(max_scrollback, screen.scrollback());
 
@@ -2839,7 +2894,7 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
                 let dst_x = area.x.saturating_add(cur_col);
                 let dst_y = area.y.saturating_add(cur_row);
                 if let Some(dst) = buf.cell_mut((dst_x, dst_y)) {
-                    dst.set_style(dst.style().add_modifier(Modifier::REVERSED));
+                    apply_cursor_shape(dst, cursor_shape);
                 }
             }
         }
@@ -3137,6 +3192,11 @@ impl TerminalHandle {
     /// Returns the latest cwd reported by OSC 7 shell integration, if any.
     pub fn current_cwd(&self) -> Option<String> {
         self.shared.lock().current_cwd.clone()
+    }
+
+    /// Returns the cursor shape most recently requested through DECSCUSR.
+    pub fn cursor_shape(&self) -> TerminalCursorShape {
+        self.shared.lock().cursor_shape
     }
 
     /// Updates the terminal prefix shortcut. Only plain `Ctrl+<ASCII letter>` is accepted.
@@ -3517,6 +3577,21 @@ fn cell_style(cell: &vt100::Cell, base_fg: Option<Color>, base_bg: Option<Color>
     }
 
     style.add_modifier(mods)
+}
+
+fn apply_cursor_shape(cell: &mut Cell, shape: TerminalCursorShape) {
+    match shape {
+        TerminalCursorShape::Block => {
+            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+        }
+        TerminalCursorShape::Underline => {
+            cell.set_style(cell.style().add_modifier(Modifier::UNDERLINED));
+        }
+        TerminalCursorShape::Bar => {
+            cell.set_symbol(CURSOR_BAR_SYMBOL);
+            cell.set_skip(false);
+        }
+    }
 }
 
 fn resolve_color(color: vt100::Color, default: Option<Color>) -> Option<Color> {

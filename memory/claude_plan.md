@@ -37,3 +37,14 @@
 - Review found no blocking issue requiring a prerequisite task or code change.
 - Validation completed: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` passed.
 - `TODO.md` now marks `M6.R Review` as `[DONE]` with completion notes.
+
+## Current Invocation Progress - M7.1
+- Created/updated the execution plan file before inspecting project tasks.
+- Identified first incomplete task as `M7.1 光标形状`.
+- Latest commit is `[M6.R] Complete terminal split/session review`; it does not mention unfinished M7.1 work.
+- Implemented DECSCUSR (`CSI Ps SP q`) cursor-shape tracking from vt100 unhandled CSI callbacks.
+- Updated terminal rendering so block uses reverse video, underline uses underline styling, and bar uses a one-cell bar glyph instead of always reversing the cursor cell.
+- Added targeted rendering coverage for block, underline, bar, and default cursor shape sequences.
+- Validation completed: `cargo fmt --all`, targeted cursor-shape test, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets` all passed.
+- `TODO.md` now marks `M7.1 光标形状` as `[DONE]` with completion notes.
+- Next step: commit the task changes.

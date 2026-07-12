@@ -7,7 +7,7 @@ use atto_ui::composable::{
 use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::{
-    TerminalCommandBlockPresentation, TerminalEmulator, TerminalPrefixBinding,
+    TerminalCommandBlockPresentation, TerminalCursorShape, TerminalEmulator, TerminalPrefixBinding,
     TerminalPrefixCommand, TerminalSelectionPosition, TerminalShortcut,
 };
 use crossterm::event::{
@@ -16,6 +16,7 @@ use crossterm::event::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 
 #[derive(Clone, Copy)]
 enum MouseProtocol {
@@ -1088,6 +1089,61 @@ fn terminal_draw_resize_updates_parser_snapshot_size() {
         .expect("draw resized area");
     let resized = handle.snapshot();
     assert_eq!((resized.cols, resized.rows), (35, 8));
+}
+
+#[test]
+fn terminal_cursor_shape_sequences_update_rendered_cursor() {
+    let theme = Theme::dark();
+    let mut widget = TerminalEmulator::new();
+    let handle = widget.handle();
+    let mut terminal = Terminal::new(TestBackend::new(4, 2)).expect("terminal");
+
+    handle.process_output_str("\x1b[2 q");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 2), context(&theme)))
+        .expect("draw block cursor");
+    let block = terminal
+        .backend()
+        .buffer()
+        .cell((0, 0))
+        .expect("block cell");
+    assert_eq!(handle.cursor_shape(), TerminalCursorShape::Block);
+    assert!(block.modifier.contains(Modifier::REVERSED));
+
+    handle.process_output_str("\x1b[4 q");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 2), context(&theme)))
+        .expect("draw underline cursor");
+    let underline = terminal
+        .backend()
+        .buffer()
+        .cell((0, 0))
+        .expect("underline cell");
+    assert_eq!(handle.cursor_shape(), TerminalCursorShape::Underline);
+    assert!(underline.modifier.contains(Modifier::UNDERLINED));
+    assert!(!underline.modifier.contains(Modifier::REVERSED));
+
+    handle.process_output_str("\x1b[6 q");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 2), context(&theme)))
+        .expect("draw bar cursor");
+    let bar = terminal.backend().buffer().cell((0, 0)).expect("bar cell");
+    assert_eq!(handle.cursor_shape(), TerminalCursorShape::Bar);
+    assert_eq!(bar.symbol(), "▏");
+    assert!(!bar.modifier.contains(Modifier::REVERSED));
+    assert!(!bar.modifier.contains(Modifier::UNDERLINED));
+
+    handle.process_output_str("\x1b[0 q");
+    terminal
+        .draw(|f| widget.draw(f, Rect::new(0, 0, 4, 2), context(&theme)))
+        .expect("draw default cursor");
+    let default_block = terminal
+        .backend()
+        .buffer()
+        .cell((0, 0))
+        .expect("default cell");
+    assert_eq!(handle.cursor_shape(), TerminalCursorShape::Block);
+    assert!(default_block.modifier.contains(Modifier::REVERSED));
 }
 
 #[test]

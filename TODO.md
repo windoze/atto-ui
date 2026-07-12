@@ -137,7 +137,9 @@
 
 **含用户明确要求的「配置界面」——终端 app 的可视化设置面板。**
 
-- [ ] **M7.1 光标形状** - 光标渲染（`terminal.rs:603-612`）读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。
+- [x] **[DONE] M7.1 光标形状** - 光标渲染（`terminal.rs:603-612`）读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。
+  - 完成记录（2026-07-12）：终端组件新增 `TerminalCursorShape` 状态，通过 vt100 `unhandled_csi` 回调识别 DECSCUSR (`CSI Ps SP q`) 光标样式序列；`TerminalHandle::cursor_shape()` 可查询当前 shape。渲染路径不再一律对 cursor cell 加 `REVERSED`，而是按 shape 分别渲染 block（reverse video）、underline（UNDERLINED modifier）与 bar（单格 bar glyph），`CSI 0/1/2 q` 保持默认 block 行为以维持既有默认视觉。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_cursor_shape_sequences_update_rendered_cursor -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
 - [ ] **M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
 - [ ] **M7.4 配置界面** - 新增可视化**设置窗口**：复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets（`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`）分组编辑各配置项，支持即时预览/应用与保存；从菜单入口打开。
