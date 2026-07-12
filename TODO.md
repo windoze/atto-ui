@@ -143,7 +143,9 @@
 - [x] **[DONE] M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
   - 完成记录（2026-07-12）：终端输入编码接入 vt100 `Screen::application_keypad()`；当 crossterm 事件带 `KeyEventState::KEYPAD` 且处于 application keypad 模式时，数字键、运算符、Enter、KeypadBegin 以及 num-lock-off 的 keypad 导航键会按 DEC/xterm application keypad SS3 序列发送。普通顶排行数字与非 keypad-origin 方向键保持原有行为，`ESC >` 退出 application keypad 后恢复普通编码。
   - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_application_keypad -- --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [ ] **M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
+- [x] **[DONE] M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
+  - 完成记录（2026-07-12）：新增 `atto-ui-terminal` 公开配置 API，提供集中式 `TerminalConfig`，覆盖 scrollback、ANSI 色板、前缀键、release 快捷键、alt screen 滚动分流键位/开关、session profile（shell/command/cwd）、shell integration 注入开关与默认光标形状。配置默认值保持既有行为，并提供 JSON/YAML 解析、格式推断、load/save 持久化、验证与运行时类型转换入口。新增单测覆盖默认值、JSON/YAML roundtrip、无效配置拒绝与 profile 到 `TerminalSessionSpec` 转换。
+  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --lib config -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
 - [ ] **M7.4 配置界面** - 新增可视化**设置窗口**：复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets（`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`）分组编辑各配置项，支持即时预览/应用与保存；从菜单入口打开。
 - [ ] **M7.5 配置生效接线** - 组件层各写死项（scrollback、色板、release 快捷键 `terminal.rs:121`、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。
 - [ ] **M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。

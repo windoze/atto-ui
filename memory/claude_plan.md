@@ -1,27 +1,30 @@
-# Execution Plan
+# Execution plan
 
-I will follow `TODO.md` as the authoritative task list and complete exactly the first task whose title is not prefixed with `[DONE]`.
+I will follow `TODO.md` as the source of truth and complete only the first task whose heading is not prefixed with `[DONE]`.
 
-1. Read `TODO.md` to identify the first incomplete task and its stated validation requirements.
-2. Check the latest commit only for unfinished work directly relevant to that selected task.
-3. Inspect the code paths and tests needed for that task.
-4. Implement the task without changing unrelated behavior or working around specification gaps.
-5. Run formatting, linting, and the relevant test suite in the required order.
-6. If validation exposes an unscheduled failure, fix it or add the minimum prerequisite task in `TODO.md`.
-7. Mark the completed task with `[DONE]` in `TODO.md` and update its completion record.
-8. Commit all changes for this invocation, then stop without starting the next task.
+1. Read `TODO.md` to identify the first incomplete task and its validation requirements.
+2. Check the latest commit message only for directly relevant unfinished work.
+3. Inspect the files required by that task and avoid unrelated triage.
+4. Implement the task completely, or add the minimum prerequisite task if a concrete blocker makes direct completion impossible.
+5. Run formatting, linting, and the relevant/full tests required by the task.
+6. Update `TODO.md` by prefixing the completed task title with `[DONE]` and recording the completion result. Update `PLAN.md` only if phase-level sequencing changed.
+7. Commit all task-related changes with a descriptive message and stop without starting the next task.
 
-## Progress
+## Current task
 
-- Plan refreshed.
-- Read `TODO.md`; selected first incomplete task `M7.2 keypad 模式`.
-- Checked latest commit `9d69d7b [M7.1] Render terminal cursor shapes`; no directly relevant unfinished blocker found.
-- Inspected terminal key encoding, vt100 `application_keypad()`, crossterm keypad-origin state, and existing application cursor tests.
-- Implemented application keypad encoding for crossterm keypad-origin events and added regression tests.
-- Ran `cargo fmt --all`.
-- Ran `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings`; both passed.
-- Ran focused keypad regression tests; they passed.
-- Ran `cargo test --workspace --all-targets`; it passed.
-- Marked `M7.2 keypad 模式` as `[DONE]` in `TODO.md` with the completion and validation record.
-- Tightened `KeypadBegin` handling so the dedicated keypad key works even when crossterm does not attach `KEYPAD` state; rerunning validation.
-- Final validation after the adjustment passed: `cargo fmt --all`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, focused keypad tests, and `cargo test --workspace --all-targets`.
+First incomplete task: `M7.3 配置模型`.
+
+Task-specific steps:
+
+1. Inspect the terminal crate structure, existing terminal constants/options, and `src/theme/config.rs` persistence style.
+2. Add a centralized `TerminalConfig` model covering scrollback length, palette, prefix key, release shortcut, alt-screen scroll behavior, shell/command, cwd/profile, shell-integration injection, and default cursor shape.
+3. Provide behavior-preserving defaults plus JSON/YAML load/save helpers.
+4. Add focused unit tests for defaults, validation, and JSON/YAML roundtrips.
+5. Run formatting, clippy with warnings denied, and tests; fix any failures.
+6. Mark M7.3 `[DONE]` in `TODO.md`, record validation, commit, and stop.
+
+Progress:
+
+- Added the initial `config` module, serde dependencies, public exports, defaults, persistence helpers, validation, and unit coverage for M7.3.
+- Validation completed: formatting, focused config tests, workspace clippy with warnings denied, and full workspace tests passed.
+- `TODO.md` now marks M7.3 as `[DONE]` with a completion record.

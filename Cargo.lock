@@ -295,6 +295,9 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "unicode-width",
  "vt100",
 ]
