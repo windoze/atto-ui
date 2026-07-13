@@ -146,6 +146,23 @@ fn wait_for_file(path: &std::path::Path) {
     panic!("expected file {} to be written", path.display());
 }
 
+/// Writes a default `TerminalConfig` to a fresh temp file and returns
+/// `(temp_root, config_path_arg)`. Tests pass the path via `--config` so the
+/// app never falls back to the developer's `~/.config/atto-ui/terminal.yaml`
+/// (which may enable `close_window_on_shell_exit`, breaking restart-prompt
+/// assertions). Caller is responsible for removing `temp_root`.
+fn isolated_default_config(label: &str) -> (std::path::PathBuf, String) {
+    let root = std::path::PathBuf::from(format!("/tmp/aui-{label}-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create config temp dir");
+    let config_path = root.join("terminal.yaml");
+    TerminalConfig::default()
+        .save_path_infer(&config_path)
+        .expect("write default terminal config");
+    let arg = config_path.to_string_lossy().into_owned();
+    (root, arg)
+}
+
 fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
     let mut cb = 0;
     if mods.contains(KeyModifiers::SHIFT) {
@@ -757,9 +774,16 @@ fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
 fn pty_terminal_dead_process_prompts_and_restarts() {
     let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let (root, config_arg) = isolated_default_config("dead-process");
     let mut host = PtyTestHost::spawn(
         bin,
-        &["/bin/sh", "-c", "printf 'CHILD-RUN\\n'; exit 7"],
+        &[
+            "--config",
+            &config_arg,
+            "/bin/sh",
+            "-c",
+            "printf 'CHILD-RUN\\n'; exit 7",
+        ],
         80,
         24,
     )
@@ -776,6 +800,8 @@ fn pty_terminal_dead_process_prompts_and_restarts() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -839,6 +865,11 @@ fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
         .to_string_lossy()
         .into_owned();
     let counter = counter.to_string_lossy().into_owned();
+    let config_path = root.join("terminal.yaml");
+    TerminalConfig::default()
+        .save_path_infer(&config_path)
+        .expect("write default terminal config");
+    let config_arg = config_path.to_string_lossy().into_owned();
     let script = format!(
         "n=$(cat '{counter}' 2>/dev/null || echo 0); \
          n=$((n+1)); printf '%s' \"$n\" > '{counter}'; \
@@ -849,6 +880,8 @@ fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
     let mut host = PtyTestHost::spawn(
         bin,
         &[
+            "--config",
+            &config_arg,
             "--profile",
             "Project",
             "--cwd",
