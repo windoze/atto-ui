@@ -401,7 +401,7 @@ fn seed_terminal_banner(
         "{prefix} [: copy-mode; {prefix} ]: paste copy buffer; {prefix} z: maximize window.\r\n"
     ));
     handle.process_output_str(
-        "File > New shell/command: sessions; File > Settings: live config; Help > Feature guide.\r\n",
+        "File > New shell/command: sessions; File > Settings: live config including close-on-exit.\r\n",
     );
     handle.process_output_str(
         "Right-click an OSC 133 command block for rerun/copy actions when shell integration is active.\r\n",
@@ -491,8 +491,12 @@ fn spec_for_new_window(
     spec
 }
 
-fn show_exit_prompt_if_needed(session: &mut TerminalWindowSession) -> bool {
-    if session.exit_prompted {
+fn show_exit_prompt_if_needed(
+    desktop: &mut Desktop,
+    session: &mut TerminalWindowSession,
+    config: &TerminalConfig,
+) -> bool {
+    if session.exit_prompted || desktop.wm.window(session.id).is_none() {
         return false;
     }
     let Some(handle) = session.active_handle() else {
@@ -501,6 +505,11 @@ fn show_exit_prompt_if_needed(session: &mut TerminalWindowSession) -> bool {
     let Some(status) = handle.exit_status() else {
         return false;
     };
+
+    if config.close_window_on_shell_exit {
+        desktop.wm.close(session.id);
+        return true;
+    }
 
     handle.set_capture(false);
     handle.process_output_str(&format!(
@@ -512,14 +521,16 @@ fn show_exit_prompt_if_needed(session: &mut TerminalWindowSession) -> bool {
 }
 
 fn update_terminal_exit_prompts(
-    desktop: &Desktop,
+    desktop: &mut Desktop,
     sessions: &mut Vec<TerminalWindowSession>,
+    config: &TerminalConfig,
 ) -> bool {
     prune_terminal_sessions(desktop, sessions);
     let mut changed = false;
-    for session in sessions {
-        changed |= show_exit_prompt_if_needed(session);
+    for session in sessions.iter_mut() {
+        changed |= show_exit_prompt_if_needed(desktop, session, config);
     }
+    prune_terminal_sessions(desktop, sessions);
     changed
 }
 
@@ -816,10 +827,14 @@ fn feature_guide_lines(
             shell_spec.profile(),
             command_spec.profile()
         ),
-        "Restart: when a session exits, the terminal shows a dead-process prompt; plain R restarts with that session profile and cwd.".to_string(),
+        if config.close_window_on_shell_exit {
+            "Shell exit: close-window-on-exit is enabled, so an exited shell closes its terminal window.".to_string()
+        } else {
+            "Restart: when a session exits, the terminal shows a dead-process prompt; plain R restarts with that session profile and cwd.".to_string()
+        },
         "Command blocks: OSC 133/shell-integration marks commands; Ctrl+Up/Down navigates; right-click a block to rerun or copy command/output.".to_string(),
         format!(
-            "Settings: File > Settings edits scrollback, prefix/release keys, palette, profiles, shell integration, and saves to {}.",
+            "Settings: File > Settings edits scrollback, prefix/release keys, palette, profiles, shell integration, close-on-exit, and saves to {}.",
             config_path_label(config_path)
         ),
         "Windows: OSC 0/2 titles update window titles and the Windows > Switch to list.".to_string(),
@@ -1139,7 +1154,7 @@ fn main() -> Result<()> {
         },
         move |desktop: &mut Desktop, _screen: Rect| {
             let mut sessions = terminal_sessions_for_tick.borrow_mut();
-            update_terminal_exit_prompts(desktop, &mut sessions);
+            update_terminal_exit_prompts(desktop, &mut sessions, &terminal_config_for_tick.get());
             {
                 let mut observer = terminal_config_observer_for_tick.borrow_mut();
                 apply_terminal_config_if_dirty(

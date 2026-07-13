@@ -77,6 +77,7 @@ pub struct TerminalSettingsDraft {
     pub profile_cwd: String,
     pub preserved_profiles: Vec<TerminalProfileConfig>,
     pub shell_integration_inject: bool,
+    pub close_window_on_shell_exit: bool,
     pub cursor_shape: TerminalCursorShapeConfig,
 }
 
@@ -121,6 +122,7 @@ impl TerminalSettingsDraft {
                 .unwrap_or_default(),
             preserved_profiles,
             shell_integration_inject: config.shell_integration.inject,
+            close_window_on_shell_exit: config.close_window_on_shell_exit,
             cursor_shape: config.cursor.default_shape,
         }
     }
@@ -186,6 +188,7 @@ impl TerminalSettingsDraft {
             shell_integration: TerminalShellIntegrationConfig {
                 inject: self.shell_integration_inject,
             },
+            close_window_on_shell_exit: self.close_window_on_shell_exit,
             cursor: TerminalCursorConfig {
                 default_shape: self.cursor_shape,
             },
@@ -216,6 +219,7 @@ struct TerminalSettingsBindings {
     profile_cwd: Binding<String>,
     preserved_profiles: Binding<Vec<TerminalProfileConfig>>,
     shell_integration_inject: Binding<bool>,
+    close_window_on_shell_exit: Binding<bool>,
     cursor_shape_index: Binding<usize>,
 }
 
@@ -248,6 +252,7 @@ impl TerminalSettingsBindings {
             profile_cwd: Binding::new(draft.profile_cwd),
             preserved_profiles: Binding::new(draft.preserved_profiles),
             shell_integration_inject: Binding::new(draft.shell_integration_inject),
+            close_window_on_shell_exit: Binding::new(draft.close_window_on_shell_exit),
             cursor_shape_index: Binding::new(cursor_shape_index(draft.cursor_shape)),
         }
     }
@@ -277,6 +282,7 @@ impl TerminalSettingsBindings {
             profile_cwd: self.profile_cwd.get(),
             preserved_profiles: self.preserved_profiles.get(),
             shell_integration_inject: self.shell_integration_inject.get(),
+            close_window_on_shell_exit: self.close_window_on_shell_exit.get(),
             cursor_shape: cursor_shape_from_index(self.cursor_shape_index.get()),
         }
     }
@@ -310,6 +316,8 @@ impl TerminalSettingsBindings {
         self.preserved_profiles.set(draft.preserved_profiles);
         self.shell_integration_inject
             .set(draft.shell_integration_inject);
+        self.close_window_on_shell_exit
+            .set(draft.close_window_on_shell_exit);
         self.cursor_shape_index
             .set(cursor_shape_index(draft.cursor_shape));
     }
@@ -360,6 +368,10 @@ impl TerminalSettingsHandle {
             .set(cursor_shape_index(shape));
     }
 
+    pub fn set_close_window_on_shell_exit(&self, enabled: bool) {
+        self.bindings.close_window_on_shell_exit.set(enabled);
+    }
+
     pub fn apply(&self) -> Result<TerminalConfig> {
         match self.draft().to_config() {
             Ok(config) => {
@@ -408,7 +420,7 @@ impl TerminalSettingsHandle {
     fn preview_text(&self) -> String {
         match self.draft().to_config() {
             Ok(config) => format!(
-                "Preview: scrollback={} prefix={} cursor={} profile={} alt-scroll={}x{}",
+                "Preview: scrollback={} prefix={} cursor={} profile={} alt-scroll={}x{} close-on-exit={}",
                 config.scrollback_len,
                 prefix_key_text(&config.prefix_key),
                 cursor_shape_text(config.cursor.default_shape),
@@ -418,7 +430,12 @@ impl TerminalSettingsHandle {
                 } else {
                     "off"
                 },
-                config.alternate_screen_scroll.step
+                config.alternate_screen_scroll.step,
+                if config.close_window_on_shell_exit {
+                    "on"
+                } else {
+                    "off"
+                }
             ),
             Err(error) => format!("Preview error: {}", first_error_line(&error)),
         }
@@ -697,6 +714,11 @@ fn session_section(handle: &TerminalSettingsHandle) -> VStack {
         .child(Checkbox::new(
             "Inject OSC 133/7 hooks",
             handle.bindings.shell_integration_inject.clone(),
+        ))
+        .child(Label::new("Shell exit"))
+        .child(Checkbox::new(
+            "Close window on shell exit",
+            handle.bindings.close_window_on_shell_exit.clone(),
         ));
 
     VStack::new()
@@ -884,6 +906,146 @@ mod tests {
 
     use super::*;
 
+    use atto_ui::composable::{ComponentContext, MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use atto_ui::theme::Theme;
+    use atto_ui::wm::WindowId;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn settings_ctx(theme: &Theme) -> ComponentContext<'_> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        }
+    }
+
+    fn mouse_at(kind: MouseEventKind, col: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        })
+    }
+
+    fn dump_screen(terminal: &Terminal<TestBackend>, area: Rect) -> String {
+        let buf = terminal.backend().buffer();
+        let mut s = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                s.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Clicks the input line of the field whose title contains `title`, then
+    /// returns the focus cursor row (the row the newly focused TextBox parked
+    /// its cursor at). A correctly routed click lands the cursor on the clicked
+    /// field's own input line.
+    fn click_field_and_cursor_row(
+        view: &mut TerminalSettingsView,
+        terminal: &mut Terminal<TestBackend>,
+        theme: &Theme,
+        area: Rect,
+        title: &str,
+    ) -> Option<u16> {
+        let screen = dump_screen(terminal, area);
+        let (label_row, _) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains(title))?;
+        let click_row = label_row as u16 + 1; // input box line sits below its title
+        view.handle_event(
+            &mouse_at(MouseEventKind::Down(MouseButton::Left), 40, click_row),
+            settings_ctx(theme),
+        );
+        terminal
+            .draw(|f| view.draw(f, area, settings_ctx(theme)))
+            .expect("draw");
+        terminal.get_cursor_position().ok().map(|p| p.y)
+    }
+
+    #[test]
+    fn settings_checkbox_click_must_not_break_later_hit_testing() {
+        let mut view = TerminalSettingsView::from_config(TerminalConfig::default());
+        let theme = Theme::dark();
+
+        // Small viewport forces the scrollable root to clip and scroll.
+        let area = Rect::new(0, 0, 72, 16);
+        let backend = TestBackend::new(72, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        let render = |view: &mut TerminalSettingsView, terminal: &mut Terminal<TestBackend>| {
+            terminal
+                .draw(|f| view.draw(f, area, settings_ctx(&theme)))
+                .expect("draw");
+        };
+
+        // Draw, then scroll to the bottom so the checkbox row is visible.
+        render(&mut view, &mut terminal);
+        let (_cw, ch) = view.content_size();
+        view.set_scroll_offset(0, ch);
+        render(&mut view, &mut terminal);
+
+        // Baseline: clicking the "Cwd" input parks the cursor on the Cwd line.
+        let baseline = click_field_and_cursor_row(&mut view, &mut terminal, &theme, area, "Cwd");
+        let screen = dump_screen(&terminal, area);
+        let cwd_input_row = screen
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("Cwd"))
+            .map(|(r, _)| r as u16 + 1)
+            .expect("Cwd field visible");
+        assert_eq!(
+            baseline,
+            Some(cwd_input_row),
+            "baseline click on Cwd should focus the Cwd input"
+        );
+
+        // Click the "Close window on shell exit" checkbox (down + up).
+        let screen = dump_screen(&terminal, area);
+        let (cb_col, cb_row) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find("Close window on shell exit")
+                    .map(|idx| (idx as u16, row as u16))
+            })
+            .expect("checkbox visible after scroll");
+        view.handle_event(
+            &mouse_at(MouseEventKind::Down(MouseButton::Left), cb_col, cb_row),
+            settings_ctx(&theme),
+        );
+        view.handle_event(
+            &mouse_at(MouseEventKind::Up(MouseButton::Left), cb_col, cb_row),
+            settings_ctx(&theme),
+        );
+        render(&mut view, &mut terminal);
+
+        // The checkbox should have toggled on.
+        assert!(
+            view.handle().draft().close_window_on_shell_exit,
+            "checkbox click should toggle the binding on"
+        );
+
+        // Regression: after the checkbox click, clicking the Cwd input must
+        // still focus the Cwd input — not some other field.
+        let after = click_field_and_cursor_row(&mut view, &mut terminal, &theme, area, "Cwd");
+        assert_eq!(
+            after,
+            Some(cwd_input_row),
+            "after a checkbox click, clicking Cwd must still focus the Cwd input \
+             (got cursor row {after:?}, expected {cwd_input_row})"
+        );
+    }
+
     fn sample_config() -> TerminalConfig {
         TerminalConfig {
             scrollback_len: 4096,
@@ -917,6 +1079,7 @@ mod tests {
                 ],
             },
             shell_integration: TerminalShellIntegrationConfig { inject: true },
+            close_window_on_shell_exit: true,
             cursor: TerminalCursorConfig {
                 default_shape: TerminalCursorShapeConfig::Bar,
             },
@@ -941,6 +1104,7 @@ mod tests {
         handle.set_prefix_key_text("ctrl+a");
         handle.set_palette_color_text(1, "#123456");
         handle.set_cursor_shape(TerminalCursorShapeConfig::Underline);
+        handle.set_close_window_on_shell_exit(true);
 
         let applied = handle.apply().unwrap();
         assert_eq!(applied.scrollback_len, 8192);
@@ -953,6 +1117,7 @@ mod tests {
             applied.cursor.default_shape,
             TerminalCursorShapeConfig::Underline
         );
+        assert!(applied.close_window_on_shell_exit);
         assert_eq!(config.get(), applied);
         assert!(handle.status_text().contains("Applied"));
     }
