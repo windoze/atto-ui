@@ -347,6 +347,33 @@ mod tests {
     }
 
     #[test]
+    fn osc133_zsh_preexec_order_still_captures_command_text() {
+        // Real zsh/bash shell integration emits B (command-start) and C
+        // (output-start) together from preexec/PS0, i.e. AFTER the user pressed
+        // Enter — so both land at the output position, not inline after the
+        // typed command. The typed command lives on the prompt line between A
+        // and the newline. Copy command / Rerun must still recover it.
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo hi\r\n\
+             \x1b]133;B\x07\x1b]133;C\x07hi\r\n\
+             \x1b]133;D;0\x07",
+        );
+
+        let command = handle
+            .copy_command_block_command(0)
+            .expect("command text recoverable");
+        assert_eq!(command, "$ echo hi");
+
+        let output = handle
+            .copy_command_block_output(0)
+            .expect("output text recoverable");
+        assert_eq!(output, "hi");
+    }
+
+    #[test]
     fn osc133_missing_markers_degrade_to_partial_blocks() {
         let terminal = TerminalEmulator::new();
         let handle = terminal.handle();
@@ -1004,11 +1031,19 @@ __atto_ui_precmd() {
   __atto_ui_prompt_seen=1
   __atto_ui_emit_cwd
   printf '\033]133;A\a'
+  # Mark command-start (OSC 133 B) at the end of the prompt so it lands right
+  # before the user's typed command, not on the output line. Appended
+  # idempotently (this runs last in PROMPT_COMMAND) so prompt rebuilds keep it.
+  case "$PS1" in
+    *$'\[\033]133;B\a\]'*) ;;
+    *) PS1="${PS1}"$'\[\033]133;B\a\]' ;;
+  esac
 }
 
-PS0=$'\[\033]133;B\a\033]133;C\a\]'
+# Output-start (OSC 133 C) is emitted after the user submits the command.
+PS0=$'\[\033]133;C\a\]'
 if [ -n "${PROMPT_COMMAND:-}" ]; then
-  PROMPT_COMMAND="__atto_ui_precmd; ${PROMPT_COMMAND}"
+  PROMPT_COMMAND="${PROMPT_COMMAND}; __atto_ui_precmd"
 else
   PROMPT_COMMAND="__atto_ui_precmd"
 fi
@@ -1031,10 +1066,18 @@ __atto_ui_precmd() {
   __atto_ui_prompt_seen=1
   __atto_ui_emit_cwd
   printf '\033]133;A\a'
+  # Mark command-start (OSC 133 B) at the very end of the prompt so it lands
+  # right before the user's typed command, not on the output line. Appended
+  # idempotently after any user/framework precmd (this hook is registered last)
+  # so prompt rebuilds keep the mark.
+  case "$PROMPT" in
+    *$'\033]133;B\a'*) ;;
+    *) PROMPT="${PROMPT}"$'%{\033]133;B\a%}' ;;
+  esac
 }
 
 __atto_ui_preexec() {
-  printf '\033]133;B\a\033]133;C\a'
+  printf '\033]133;C\a'
 }
 
 autoload -Uz add-zsh-hook
@@ -1732,18 +1775,29 @@ impl TerminalShared {
             .saturating_sub(1);
         match kind {
             CommandBlockTextKind::Command => {
-                let start_row = block.command_start.or(block.prompt_start)?;
-                let start_col = if block.command_start.is_some() {
-                    block.command_start_col.unwrap_or(0)
-                } else {
-                    block.prompt_start_col.unwrap_or(0)
-                };
                 let end_row = block.output_start.or(block.end)?;
                 let end_col = if block.output_start.is_some() {
                     block.output_start_col.unwrap_or(cols)
                 } else {
                     block.end_col.unwrap_or(cols)
                 };
+
+                // The command-start marker (OSC 133 `B`) is only a usable start
+                // when it precedes the output-start marker (`C`). Real shell
+                // integrations (zsh preexec, bash PS0) emit `B` and `C` together
+                // *after* the user submits the command, so they land at the same
+                // position and the `B..C` range collapses to empty. In that case
+                // the typed command lives on the prompt line, so fall back to the
+                // prompt-start marker.
+                let command_start = block.command_start.filter(|&cmd_row| {
+                    cmd_row < end_row
+                        || (cmd_row == end_row && block.command_start_col.unwrap_or(0) < end_col)
+                });
+                let (start_row, start_col) = match command_start {
+                    Some(row) => (row, block.command_start_col.unwrap_or(0)),
+                    None => (block.prompt_start?, block.prompt_start_col.unwrap_or(0)),
+                };
+
                 TerminalSelectionRange::new(
                     TerminalSelectionPosition::new(start_row, start_col),
                     TerminalSelectionPosition::new(end_row, end_col),
