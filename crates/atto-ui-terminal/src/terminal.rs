@@ -315,6 +315,60 @@ mod tests {
     }
 
     #[test]
+    fn device_attribute_and_keyboard_queries_are_answered() {
+        let mut shared = test_shared();
+
+        // DA1: both `CSI c` and `CSI 0 c` forms.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[0c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+        // DA2.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[>c"),
+            vec![b"\x1b[>0;0;0c".to_vec()]
+        );
+        // Kitty keyboard-protocol flags query.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[?u"),
+            vec![b"\x1b[?0u".to_vec()]
+        );
+    }
+
+    #[test]
+    fn neovim_startup_query_batch_is_fully_answered() {
+        let mut shared = test_shared();
+
+        // The exact batch Neovim emits on startup (kitty flags, DA1, OSC 11
+        // background query, DSR status). We must answer the keyboard query,
+        // DA1, and DSR — OSC 11 is not a CSI query and is left to the parser.
+        let responses = collect_dsr_responses(&mut shared, b"\x1b[?u\x1b[c\x1b]11;?\x07\x1b[5n");
+        assert_eq!(
+            responses,
+            vec![
+                b"\x1b[?0u".to_vec(),
+                b"\x1b[?62c".to_vec(),
+                b"\x1b[0n".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn da_query_split_across_chunks_is_buffered() {
+        let mut shared = test_shared();
+
+        assert!(collect_dsr_responses(&mut shared, b"\x1b[").is_empty());
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+    }
+
+    #[test]
     fn osc133_and_osc7_record_command_block_marks() {
         let terminal = TerminalEmulator::new();
         let handle = terminal.handle();
@@ -2310,10 +2364,28 @@ fn dispatch_terminal_callback_events(
 }
 
 enum DsrResponse {
-    Cursor { private: bool },
-    Status { private: bool },
+    Cursor {
+        private: bool,
+    },
+    Status {
+        private: bool,
+    },
+    /// Primary Device Attributes (DA1): `CSI c` / `CSI 0 c`.
+    PrimaryDeviceAttributes,
+    /// Secondary Device Attributes (DA2): `CSI > c` / `CSI > 0 c`.
+    SecondaryDeviceAttributes,
+    /// Kitty keyboard-protocol flags query: `CSI ? u`. We do not implement the
+    /// protocol, so we report flags `0`.
+    KittyKeyboardFlags,
 }
 
+/// Scans program output for terminal queries that expect a synchronous reply and
+/// returns the reply byte sequences. Handling these prevents full-screen apps
+/// (notably Neovim) from blocking on a ~1s startup/teardown timeout while they
+/// wait for Device Attributes / keyboard-protocol answers that never arrive.
+///
+/// A trailing partial escape sequence is buffered in `dsr_tail` and re-scanned
+/// on the next chunk.
 fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u8>> {
     if bytes.is_empty() {
         return Vec::new();
@@ -2331,6 +2403,7 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
             idx += 1;
             continue;
         }
+        // Need at least `ESC [` to be a CSI.
         if idx + 1 >= combined.len() {
             tail_start = idx;
             break;
@@ -2339,47 +2412,65 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
             idx += 1;
             continue;
         }
-        if idx + 2 >= combined.len() {
+
+        // Parse the CSI body: an optional leading private marker (`?` or `>`),
+        // then parameter bytes, then a final byte.
+        let mut j = idx + 2;
+        let prefix = match combined.get(j) {
+            None => {
+                tail_start = idx;
+                break;
+            }
+            Some(&b'?') => {
+                j += 1;
+                Some(b'?')
+            }
+            Some(&b'>') => {
+                j += 1;
+                Some(b'>')
+            }
+            Some(_) => None,
+        };
+        let params_start = j;
+        while j < combined.len() && combined[j].is_ascii_digit() {
+            j += 1;
+        }
+        let Some(&final_byte) = combined.get(j) else {
+            // Incomplete sequence; buffer and wait for more input.
             tail_start = idx;
             break;
-        }
+        };
+        let params = &combined[params_start..j];
 
-        match combined[idx + 2] {
-            b'6' | b'5' => {
-                if idx + 3 >= combined.len() {
-                    tail_start = idx;
-                    break;
-                }
-                if combined[idx + 3] == b'n' {
-                    responses.push(match combined[idx + 2] {
-                        b'6' => DsrResponse::Cursor { private: false },
-                        _ => DsrResponse::Status { private: false },
-                    });
-                    idx += 4;
-                    continue;
-                }
+        let matched = match (prefix, final_byte) {
+            // DSR — device status report.
+            (None, b'n') => match params {
+                b"6" => Some(DsrResponse::Cursor { private: false }),
+                b"5" => Some(DsrResponse::Status { private: false }),
+                _ => None,
+            },
+            (Some(b'?'), b'n') => match params {
+                b"6" => Some(DsrResponse::Cursor { private: true }),
+                b"5" => Some(DsrResponse::Status { private: true }),
+                _ => None,
+            },
+            // Primary Device Attributes (DA1): `CSI c` or `CSI 0 c`.
+            (None, b'c') if params.is_empty() || params == b"0" => {
+                Some(DsrResponse::PrimaryDeviceAttributes)
             }
-            b'?' => {
-                if idx + 3 >= combined.len() {
-                    tail_start = idx;
-                    break;
-                }
-                if matches!(combined[idx + 3], b'6' | b'5') {
-                    if idx + 4 >= combined.len() {
-                        tail_start = idx;
-                        break;
-                    }
-                    if combined[idx + 4] == b'n' {
-                        responses.push(match combined[idx + 3] {
-                            b'6' => DsrResponse::Cursor { private: true },
-                            _ => DsrResponse::Status { private: true },
-                        });
-                        idx += 5;
-                        continue;
-                    }
-                }
+            // Secondary Device Attributes (DA2): `CSI > c` or `CSI > 0 c`.
+            (Some(b'>'), b'c') if params.is_empty() || params == b"0" => {
+                Some(DsrResponse::SecondaryDeviceAttributes)
             }
-            _ => {}
+            // Kitty keyboard-protocol flags query: `CSI ? u`.
+            (Some(b'?'), b'u') if params.is_empty() => Some(DsrResponse::KittyKeyboardFlags),
+            _ => None,
+        };
+
+        if let Some(response) = matched {
+            responses.push(response);
+            idx = j + 1;
+            continue;
         }
         idx += 1;
     }
@@ -2411,6 +2502,13 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
                     b"\x1b[0n".to_vec()
                 }
             }
+            // Report as a VT220 with no optional extensions. This is enough to
+            // satisfy programs that gate startup on a DA1 reply.
+            DsrResponse::PrimaryDeviceAttributes => b"\x1b[?62c".to_vec(),
+            // Terminal id 0, firmware version 0, ROM 0 (`CSI > 0 ; 0 ; 0 c`).
+            DsrResponse::SecondaryDeviceAttributes => b"\x1b[>0;0;0c".to_vec(),
+            // Kitty keyboard protocol unsupported: report flags 0.
+            DsrResponse::KittyKeyboardFlags => b"\x1b[?0u".to_vec(),
         })
         .collect()
 }
