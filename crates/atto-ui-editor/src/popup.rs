@@ -730,6 +730,7 @@ fn popup_decorations() -> WindowDecorations {
             maximize: false,
             close: false,
         },
+        backdrop_dim: true,
     }
 }
 

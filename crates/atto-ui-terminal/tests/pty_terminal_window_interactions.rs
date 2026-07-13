@@ -27,6 +27,21 @@ fn wait_for_text_with_timeout(host: &PtyTestHost, needle: &str, timeout: Duratio
         .unwrap_or_else(|e| panic!("wait_for_text {needle:?} failed: {e}"));
 }
 
+fn wait_for_text_absent(host: &PtyTestHost, needle: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if !screen.contains(needle) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected text {needle:?} to disappear within {timeout:?}.\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -1263,6 +1278,52 @@ fn pty_terminal_command_context_menu_copies_output_and_reruns() {
 }
 
 #[test]
+fn pty_terminal_command_context_menu_keyboard_navigation() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
+        "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
+        "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "RESULT");
+    wait_for_text(&host, "CAP=ON");
+
+    // Open the context menu and navigate with the keyboard: Down×2 highlights
+    // "Copy output" (row 2), Enter activates it.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy output");
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)
+        .expect("down");
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)
+        .expect("down");
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)
+        .expect("enter");
+    wait_for_text(&host, "COPY=RESULT");
+
+    // Reopen and activate via mnemonic: 'r' matches "Rerun".
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+    host.send_str("r").expect("mnemonic r");
+    wait_for_text(&host, "RERUN=echo AGAIN");
+
+    // Reopen and dismiss with Esc: the menu must disappear and stay gone.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy command");
+    host.send_str("\x1b").expect("esc");
+    wait_for_text_absent(&host, "Copy command", Duration::from_secs(2));
+    assert_text_absent_for(&host, "Copy command", Duration::from_millis(200));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn repro_toggle_close_on_exit_via_keyboard() {
     let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
@@ -1317,6 +1378,56 @@ fn repro_toggle_close_on_exit_via_keyboard() {
         "app died after apply"
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn repro_viewer_command_context_menu_keyboard_navigation() {
+    // End-to-end against the real `terminal_viewer` example (the binary the user
+    // runs): a right-click on an OSC 133 command block opens a keyboard-navigable
+    // popup menu that highlights, activates, and dismisses correctly.
+    let _guard = pty_window_test_guard();
+    let root = std::path::PathBuf::from(format!("/tmp/aui-viewer-ctx-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("mkdir");
+    let cfg = root.join("terminal.yaml");
+    unsafe {
+        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
+    }
+    let bin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/debug/examples/terminal_viewer"
+    );
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
+        "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
+        "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+
+    wait_for_text(&host, "RESULT");
+    let (x, y) = find_text_position(&host.screen_contents().unwrap_or_default(), "RESULT")
+        .expect("find RESULT");
+
+    // Right-click the command block, then activate "Rerun" via keyboard (Enter
+    // on the default-highlighted first row).
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+    host.send_str("\r").expect("enter");
+    wait_for_text(&host, "RERUN=echo AGAIN");
+
+    // Reopen and dismiss with Esc.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy command");
+    host.send_str("\x1b").expect("esc");
+    wait_for_text_absent(&host, "Copy command", Duration::from_secs(2));
+
+    // App stays responsive to keyboard afterwards.
+    host.send_ctrl('q').ok();
+    host.wait_for_exit(Duration::from_secs(3))
+        .expect("clean exit after context menu");
     let _ = fs::remove_dir_all(root);
 }
 

@@ -84,6 +84,35 @@ pub(super) fn dropdown_size(items: &[MenuItem]) -> (u16, u16) {
     (width, height)
 }
 
+/// Places a popup of size `w`×`h` at `anchor`, clamped horizontally within
+/// `screen` and flipped above the anchor when it would overflow the bottom.
+pub(super) fn clamp_and_flip_anchor(screen: Rect, anchor: (u16, u16), w: u16, h: u16) -> Rect {
+    let (ax, ay) = anchor;
+
+    let max_x = screen
+        .x
+        .saturating_add(screen.width)
+        .saturating_sub(w)
+        .max(screen.x);
+    let x = ax.min(max_x).max(screen.x);
+
+    let bottom = screen.y.saturating_add(screen.height);
+    let y = if ay.saturating_add(h) > bottom && ay >= screen.y.saturating_add(h) {
+        // Flip above the anchor.
+        ay.saturating_sub(h)
+    } else {
+        let max_y = bottom.saturating_sub(h).max(screen.y);
+        ay.min(max_y).max(screen.y)
+    };
+
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
 pub(super) fn menu_titles_start_x(menu_bar_area: Rect) -> u16 {
     menu_bar_area
         .x

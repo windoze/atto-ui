@@ -14,17 +14,12 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
-use ratatui::widgets::Paragraph;
 
-use atto_ui::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec};
-use atto_ui::composable::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable, VStack,
-};
+use atto_ui::app::{Desktop, DesktopAction, MenuBar, MenuItem, MenuSpec, popup_menu_window};
+use atto_ui::composable::{Component, VStack};
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::theme::Theme;
 use atto_ui::widgets::Label;
@@ -184,88 +179,27 @@ struct CommandContextState {
     block_index: usize,
 }
 
-struct CommandContextMenuView {
-    action_tx: mpsc::Sender<CommandContextMenuAction>,
-    last_area: Option<Rect>,
-}
-
-impl CommandContextMenuView {
-    fn new(action_tx: mpsc::Sender<CommandContextMenuAction>) -> Self {
-        Self {
-            action_tx,
-            last_area: None,
+fn command_context_menu_items(action_tx: &mpsc::Sender<CommandContextMenuAction>) -> Vec<MenuItem> {
+    let send = |action: CommandContextMenuAction, tx: mpsc::Sender<CommandContextMenuAction>| {
+        move || {
+            let _ = tx.send(action);
         }
-    }
-
-    fn action_for_row(row: u16) -> Option<CommandContextMenuAction> {
-        match row {
-            0 => Some(CommandContextMenuAction::Rerun),
-            1 => Some(CommandContextMenuAction::CopyCommand),
-            2 => Some(CommandContextMenuAction::CopyOutput),
-            _ => None,
-        }
-    }
+    };
+    vec![
+        MenuItem::action(
+            "Rerun",
+            send(CommandContextMenuAction::Rerun, action_tx.clone()),
+        ),
+        MenuItem::action(
+            "Copy command",
+            send(CommandContextMenuAction::CopyCommand, action_tx.clone()),
+        ),
+        MenuItem::action(
+            "Copy output",
+            send(CommandContextMenuAction::CopyOutput, action_tx.clone()),
+        ),
+    ]
 }
-
-impl Component for CommandContextMenuView {
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from("Rerun"),
-                Line::from("Copy command"),
-                Line::from("Copy output"),
-            ]),
-            area,
-        );
-    }
-}
-
-impl EventHandling for CommandContextMenuView {
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            ..
-        }) = event
-        else {
-            return EventResult::ignored();
-        };
-        let Some(area) = self.last_area else {
-            return EventResult::ignored();
-        };
-        let (local_col, local_row) = match ctx.mouse_coordinate_space {
-            atto_ui::composable::MouseCoordinateSpace::Absolute => {
-                if *column < area.x
-                    || *row < area.y
-                    || *column >= area.x.saturating_add(area.width)
-                    || *row >= area.y.saturating_add(area.height)
-                {
-                    return EventResult::ignored();
-                }
-                (
-                    (*column).saturating_sub(area.x),
-                    (*row).saturating_sub(area.y),
-                )
-            }
-            atto_ui::composable::MouseCoordinateSpace::Local => (*column, *row),
-        };
-        if local_col >= area.width {
-            return EventResult::ignored();
-        }
-        let Some(action) = Self::action_for_row(local_row) else {
-            return EventResult::ignored();
-        };
-        let _ = self.action_tx.send(action);
-        EventResult::consumed()
-    }
-}
-
-impl Layout for CommandContextMenuView {}
-impl Scrollable for CommandContextMenuView {}
-impl FocusNav for CommandContextMenuView {}
-atto_ui::impl_component_default_traits!(CommandContextMenuView => DynamicTree);
 
 fn build_status_view(lines: &[Binding<String>]) -> Box<dyn Component> {
     let mut stack = VStack::new();
@@ -663,17 +597,6 @@ fn command_block_at_mouse(
         .map(|block_index| (pane.id, block_index))
 }
 
-fn command_context_menu_rect(screen: Rect, mouse: &MouseEvent) -> Rect {
-    let width = 18.min(screen.width.max(1));
-    let height = 5.min(screen.height.max(1));
-    Rect {
-        x: mouse.column.min(screen.width.saturating_sub(width)),
-        y: mouse.row.min(screen.height.saturating_sub(height)),
-        width,
-        height,
-    }
-}
-
 fn open_command_context_menu(
     desktop: &mut Desktop,
     session: &TerminalWindowSession,
@@ -695,13 +618,12 @@ fn open_command_context_menu(
         let _ = pane.handle.select_command_block_output(block_index);
     }
     let menu_id = desktop.add_window(
-        Window::new(
-            WindowKind::Tooltip,
+        popup_menu_window(
+            command_context_menu_items(action_tx),
+            (mouse.column, mouse.row),
+            screen,
             "Command",
-            command_context_menu_rect(screen, mouse),
-            Box::new(CommandContextMenuView::new(action_tx.clone())),
-        )
-        .with_min_size(18, 5),
+        ),
         screen,
     );
     *context = Some(CommandContextState {
