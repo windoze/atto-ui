@@ -319,7 +319,6 @@ fn seed_terminal_banner(
     handle.process_output_str(
         "Right-click an OSC 133 command block for rerun/copy actions when shell integration is active.\r\n",
     );
-    handle.process_output_str("\x1b[?1000h\x1b[?1006h");
     Ok(())
 }
 

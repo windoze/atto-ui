@@ -1465,6 +1465,62 @@ fn repro_viewer_command_context_menu_keyboard_navigation() {
 }
 
 #[test]
+fn repro_viewer_right_click_does_not_break_keyboard() {
+    // Regression: right-clicking to open the command context menu must not leak
+    // the mouse escape sequence into the shell, and dismissing the menu must
+    // leave the terminal able to accept keyboard input again. Previously the
+    // demo force-enabled mouse reporting, so the right-click was forwarded to
+    // the shell (corrupting input / flipping zsh into vi mode), and keyboard
+    // capture was not restored after the modal popup closed.
+    let _guard = pty_window_test_guard();
+    let root = std::path::PathBuf::from(format!("/tmp/aui-rc-kbd-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("mkdir");
+    let cfg = root.join("terminal.yaml");
+    // Emit a synthetic OSC 133 command block so a context menu target exists,
+    // without relying on real shell integration.
+    unsafe {
+        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
+    }
+    let bin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/debug/examples/terminal_viewer"
+    );
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo READY\\r\\n'; ",
+        "printf '\\033]133;C\\007READY\\r\\n\\033]133;D;0\\007'; ",
+        "exec /bin/sh -i"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    thread::sleep(Duration::from_millis(800));
+    wait_for_text(&host, "READY");
+
+    // Right-click the command block output to open the context menu.
+    let sc = host.screen_contents().unwrap_or_default();
+    let (x, y) = find_text_position(&sc, "READY").expect("find READY");
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+
+    // Dismiss with Esc, then type a command — it must run intact (no eaten
+    // characters from a leaked mouse/escape sequence).
+    host.send_str("\x1b").ok();
+    thread::sleep(Duration::from_millis(200));
+    host.send_str("echo AFTER\n").ok();
+    wait_for_text(&host, "AFTER");
+    // The command line must show the full "echo AFTER", not a mangled prefix.
+    let screen = host.screen_contents().unwrap_or_default();
+    assert!(
+        screen.contains("echo AFTER"),
+        "typed command should reach the shell intact\n{screen}"
+    );
+
+    host.send_ctrl('q').ok();
+    let _ = host.wait_for_exit(Duration::from_secs(3));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn repro_viewer_checkbox_click_hangs() {
     let _guard = pty_window_test_guard();
     let root = std::path::PathBuf::from(format!("/tmp/aui-hang-{}", process::id()));

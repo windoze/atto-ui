@@ -244,6 +244,7 @@ mod tests {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
+            capture_suspended_by_blur: false,
             release_shortcut: runtime_config.release_shortcut,
             prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
@@ -1347,6 +1348,11 @@ struct TerminalShared {
     last_system_clipboard_text: Option<String>,
     last_system_clipboard_error: Option<String>,
     capture: bool,
+    /// Set when keyboard capture was auto-released because the terminal window
+    /// lost focus (e.g. a modal popup opened). Distinguishes that transient loss
+    /// from an intentional release via the release shortcut, so capture can be
+    /// restored automatically once focus returns.
+    capture_suspended_by_blur: bool,
     release_shortcut: TerminalShortcut,
     prefix_shortcut: TerminalShortcut,
     prefix_bindings: Vec<TerminalPrefixBinding>,
@@ -1980,6 +1986,8 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     }
     if shared.release_shortcut.matches(event) {
         shared.set_capture(false);
+        // Intentional release: do not auto-restore capture on refocus.
+        shared.capture_suspended_by_blur = false;
         return CapturedKeyAction::Consumed;
     }
     if event.kind == KeyEventKind::Release {
@@ -2449,6 +2457,7 @@ impl TerminalEmulator {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
+            capture_suspended_by_blur: false,
             release_shortcut: runtime_config.release_shortcut,
             prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
@@ -2973,8 +2982,20 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         self.resize(rows, cols);
 
         let mut shared = self.shared.lock();
-        if !ctx.is_focused && shared.capture {
-            shared.set_capture(false);
+        if !ctx.is_focused {
+            // Losing focus (e.g. a modal popup opened) auto-releases keyboard
+            // capture. Remember that this was a transient, focus-driven release
+            // so it can be restored when focus returns — unlike an intentional
+            // release via the release shortcut.
+            if shared.capture {
+                shared.set_capture(false);
+                shared.capture_suspended_by_blur = true;
+            }
+        } else if shared.capture_suspended_by_blur {
+            // Focus came back after a focus-driven release: restore capture so
+            // the keyboard keeps working without requiring a click.
+            shared.set_capture(true);
+            shared.capture_suspended_by_blur = false;
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
