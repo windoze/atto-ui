@@ -436,7 +436,11 @@ fn open_settings_window(
     *settings_window_id = Some(id);
 }
 
-fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSession) -> bool {
+fn show_exit_prompt_if_needed(
+    desktop: &mut Desktop,
+    session: &mut TerminalWindowSession,
+    config: &TerminalConfig,
+) -> bool {
     if session.spec.is_none()
         || session.exit_prompted
         || find_window_rect(desktop, session.id).is_none()
@@ -449,6 +453,11 @@ fn show_exit_prompt_if_needed(desktop: &Desktop, session: &mut TerminalWindowSes
     let Some(status) = handle.exit_status() else {
         return false;
     };
+
+    if config.close_window_on_shell_exit {
+        desktop.wm.close(session.id);
+        return true;
+    }
 
     handle.set_capture(false);
     handle.process_output_str(&format!(
@@ -829,17 +838,27 @@ fn cursor_shape_status_text(handle: &TerminalHandle) -> &'static str {
 fn config_status_text(config: &TerminalConfig, session: &TerminalWindowSession) -> String {
     let Some(handle) = session.active_handle() else {
         return format!(
-            "CFG_SCROLL=- CFG_PREFIX=- CFG_ANSI0={} CFG_CURSOR=-",
-            config.palette.ansi[0].as_str()
+            "CFG_SCROLL=- CFG_PREFIX=- CFG_ANSI0={} CFG_CURSOR=- CFG_CLOSE={}",
+            config.palette.ansi[0].as_str(),
+            if config.close_window_on_shell_exit {
+                "on"
+            } else {
+                "off"
+            }
         );
     };
     let prefix = handle.prefix_shortcut();
     format!(
-        "CFG_SCROLL={} CFG_PREFIX={} CFG_ANSI0={} CFG_CURSOR={}",
+        "CFG_SCROLL={} CFG_PREFIX={} CFG_ANSI0={} CFG_CURSOR={} CFG_CLOSE={}",
         handle.scrollback_len(),
         shortcut_status_text(prefix.code, prefix.modifiers),
         config.palette.ansi[0].as_str(),
-        cursor_shape_status_text(&handle)
+        cursor_shape_status_text(&handle),
+        if config.close_window_on_shell_exit {
+            "on"
+        } else {
+            "off"
+        }
     )
 }
 
@@ -1045,9 +1064,10 @@ fn main() -> Result<()> {
     refresh_windows_menu(&mut desktop);
 
     loop {
-        show_exit_prompt_if_needed(&desktop, &mut term_session);
+        let live_config = terminal_config.get();
+        show_exit_prompt_if_needed(&mut desktop, &mut term_session, &live_config);
         for session in &mut extra_sessions {
-            show_exit_prompt_if_needed(&desktop, session);
+            show_exit_prompt_if_needed(&mut desktop, session, &live_config);
         }
         sync_all_session_cwds(&mut term_session, &mut extra_sessions);
         sync_terminal_window_title(&mut desktop, &term_session);
@@ -1063,7 +1083,7 @@ fn main() -> Result<()> {
         refresh_windows_menu(&mut desktop);
         update_status_lines(
             &desktop,
-            &terminal_config.get(),
+            &live_config,
             &term_session,
             &extra_sessions,
             tools_id,

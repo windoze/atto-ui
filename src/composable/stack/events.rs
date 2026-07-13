@@ -200,6 +200,66 @@ impl StackCore {
         None
     }
 
+    /// Translates a mouse event (in `space`) into the local coordinate space of
+    /// the child at `idx`, mirroring the hit-test route's math. A pointer outside
+    /// the child on the low side maps to `u16::MAX` (definitely out of range) so
+    /// the child can still detect a release outside its own bounds.
+    fn translate_to_child(
+        &self,
+        m: MouseEvent,
+        space: MouseCoordinateSpace,
+        idx: usize,
+    ) -> (u16, u16) {
+        let Some(area) = self.last_area else {
+            return (u16::MAX, u16::MAX);
+        };
+
+        // Pointer in area-local space (signed; the pointer may be outside).
+        let (local_x, local_y) = match space {
+            MouseCoordinateSpace::Absolute => (
+                i32::from(m.column) - i32::from(area.x),
+                i32::from(m.row) - i32::from(area.y),
+            ),
+            MouseCoordinateSpace::Local => (i32::from(m.column), i32::from(m.row)),
+        };
+
+        let cfg = self.scroll_config.get();
+        let padding = self.padding.get();
+        let thickness = cfg.scrollbar_thickness.max(1);
+        let scrollbars =
+            super::super::scroll::scrollbars_for_event(area, padding, thickness, self.scrollbars);
+        let content = scrollbars.content;
+
+        let child = &self.children[idx];
+        let bounds = child.bounds();
+        let is_anchored = child.layout.anchor.is_some();
+        let scroll = self.scroll.get();
+
+        let content_x = local_x - i32::from(content.x);
+        let content_y = local_y - i32::from(content.y);
+        let point_x = if is_anchored {
+            content_x
+        } else {
+            content_x + i32::from(scroll.x)
+        };
+        let point_y = if is_anchored {
+            content_y
+        } else {
+            content_y + i32::from(scroll.y)
+        };
+        let child_x = point_x - i32::from(bounds.x);
+        let child_y = point_y - i32::from(bounds.y);
+
+        let clamp = |v: i32| {
+            if (0..=i32::from(u16::MAX)).contains(&v) {
+                v as u16
+            } else {
+                u16::MAX
+            }
+        };
+        (clamp(child_x), clamp(child_y))
+    }
+
     pub(super) fn handle_event_capture_impl(
         &mut self,
         event: &Event,
@@ -260,23 +320,34 @@ impl StackCore {
             return capture;
         }
 
-        if let Event::Mouse(_) = event {
+        if let Event::Mouse(m) = event {
             // Pointer capture: route the event straight to the captured child,
-            // bypassing scrollbar/hit-test. The event keeps absolute coordinates so
-            // the child can tell whether the pointer is inside its own bounds (a
-            // local-converted coordinate would saturate at 0 once outside).
+            // bypassing scrollbar/hit-test. Coordinates are translated into the
+            // child's local space (and forwarded as `Local`) exactly like the
+            // hit-test route below, so capture keeps working when the child was
+            // drawn through the clipped/offscreen path (where its `last_area` is
+            // offscreen-local rather than absolute). A point outside the child
+            // still maps to out-of-range local coordinates, so the child can
+            // detect a release outside its own bounds.
             if let Some(cap_id) = self.captured_child {
                 if let Some(idx) = self.children.iter().position(|c| c.id == cap_id) {
+                    let (child_x, child_y) =
+                        self.translate_to_child(*m, ctx.mouse_coordinate_space, idx);
                     let cap_ctx = ComponentContext {
                         theme: ctx.theme,
                         window_id: ctx.window_id,
                         is_focused: ctx.is_focused && self.focused == Some(cap_id),
                         scrollbar_host: ctx.scrollbar_host.for_child(),
                         tab_mode: ctx.tab_mode.for_child(),
-                        mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+                        mouse_coordinate_space: MouseCoordinateSpace::Local,
                         drag: None,
                     };
-                    let res = self.children[idx].view.handle_event(event, cap_ctx);
+                    let child_event = Event::Mouse(MouseEvent {
+                        column: child_x,
+                        row: child_y,
+                        ..*m
+                    });
+                    let res = self.children[idx].view.handle_event(&child_event, cap_ctx);
                     if matches!(res.capture, Capture::Release) {
                         self.captured_child = None;
                     }

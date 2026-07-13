@@ -19,7 +19,11 @@ fn pty_window_test_guard() -> MutexGuard<'static, ()> {
 }
 
 fn wait_for_text(host: &PtyTestHost, needle: &str) {
-    host.wait_for_text(needle, Duration::from_secs(5))
+    wait_for_text_with_timeout(host, needle, Duration::from_secs(5));
+}
+
+fn wait_for_text_with_timeout(host: &PtyTestHost, needle: &str, timeout: Duration) {
+    host.wait_for_text(needle, timeout)
         .unwrap_or_else(|e| panic!("wait_for_text {needle:?} failed: {e}"));
 }
 
@@ -663,6 +667,9 @@ fn pty_terminal_main_screen_wheel_uses_local_scrollback() {
     let mut host =
         PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
 
+    // CI runners can be slow to flush the full PTY output, so give the final
+    // line a generous timeout before locating it.
+    wait_for_text_with_timeout(&host, "MAIN-30", Duration::from_secs(15));
     let (x, y) = wait_for_text_position(&host, "MAIN-30");
     assert_text_absent_for(&host, "MAIN-00", Duration::from_millis(200));
     for _ in 0..12 {
@@ -679,7 +686,12 @@ fn pty_terminal_main_screen_wheel_uses_local_scrollback() {
 fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
     let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
-    let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
+    let config_path =
+        std::path::PathBuf::from(format!("/tmp/aui-term-shortcuts-{}", process::id()));
+    let _ = fs::remove_file(&config_path);
+    let config_arg = config_path.to_string_lossy().into_owned();
+    let mut host =
+        PtyTestHost::spawn(bin, &["--config", &config_arg], 80, 24).expect("spawn PTY app");
 
     wait_for_text(&host, "FOCUS=TERM");
     wait_for_text(&host, "CAP=ON");
@@ -722,6 +734,8 @@ fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+
+    let _ = fs::remove_file(config_path);
 }
 
 #[test]
@@ -747,6 +761,48 @@ fn pty_terminal_dead_process_prompts_and_restarts() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_close_window_on_shell_exit_closes_terminal_window() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root = std::path::PathBuf::from(format!("/tmp/aui-term-close-on-exit-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create settings temp dir");
+    let config_path = root.join("terminal.yaml");
+    let config = TerminalConfig {
+        close_window_on_shell_exit: true,
+        ..TerminalConfig::default()
+    };
+    config
+        .save_path_infer(&config_path)
+        .expect("write close-on-exit config");
+    let config_arg = config_path.to_string_lossy().into_owned();
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &[
+            "--config",
+            &config_arg,
+            "/bin/sh",
+            "-c",
+            "printf 'CHILD-CLOSE\\n'; sleep 0.2; exit 9",
+        ],
+        90,
+        26,
+    )
+    .expect("spawn PTY app");
+
+    wait_for_text(&host, "TERM=CLOSED");
+    wait_for_text(&host, "TERMS=0 FOCUS_TERM=NONE");
+    wait_for_text(&host, "PROC=EXITED code=9");
+    assert_text_absent_for(&host, "[Process exited:", Duration::from_millis(250));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -906,6 +962,7 @@ fn pty_terminal_file_menu_opens_settings_window_and_saves_config() {
     wait_for_text(&host, "Scrollback rows");
     wheel_down_until_text(&mut host, 50, 16, "Palette");
     wheel_down_until_text(&mut host, 50, 16, "Session");
+    wheel_down_until_text(&mut host, 50, 16, "Close window on shell exit");
     wheel_down_until_text(&mut host, 50, 16, "Save");
 
     let (save_x, save_y) = wait_for_text_position(&host, "Save");
@@ -1203,4 +1260,120 @@ fn pty_terminal_command_context_menu_copies_output_and_reruns() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+}
+
+#[test]
+fn repro_toggle_close_on_exit_via_keyboard() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let root = std::path::PathBuf::from(format!("/tmp/aui-term-repro2-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create settings temp dir");
+    let config_path = root.join("terminal.yaml");
+    let config_arg = config_path.to_string_lossy().into_owned();
+    let mut host =
+        PtyTestHost::spawn(bin, &["--config", &config_arg], 100, 32).expect("spawn PTY app");
+
+    wait_for_text(&host, "TTY READY");
+    click_file_menu_item(&mut host, "Settings");
+    wait_for_text(&host, "Terminal Settings");
+    wheel_down_until_text(&mut host, 50, 16, "Close window on shell exit");
+
+    // Click precisely on the checkbox glyph "[ ]" which sits left of the label.
+    let screen = host.screen_contents().unwrap_or_default();
+    let mut clicked = false;
+    for (row, line) in screen.lines().enumerate() {
+        if line.contains("Close window on shell exit") {
+            // find the "[" preceding this label
+            if let Some(label_idx) = line.find("Close window on shell exit") {
+                let prefix = &line[..label_idx];
+                if let Some(br) = prefix.rfind('[') {
+                    let col = UnicodeWidthStr::width(&line[..br]) as u16 + 1;
+                    eprintln!("clicking checkbox glyph at {col},{row}");
+                    host.click(col, row as u16).expect("click glyph");
+                    clicked = true;
+                }
+            }
+        }
+    }
+    assert!(clicked, "did not locate checkbox glyph\n{screen}");
+    thread::sleep(Duration::from_millis(300));
+    let after = host.screen_contents().unwrap_or_default();
+    eprintln!("--- after checkbox click ---\n{after}");
+    assert!(
+        after.contains("Terminal Settings"),
+        "app died after checkbox click"
+    );
+
+    // Now apply
+    wheel_down_until_text(&mut host, 50, 16, "Apply");
+    let (ax, ay) = wait_for_text_position(&host, "Apply");
+    host.click(ax, ay).expect("click apply");
+    thread::sleep(Duration::from_millis(400));
+    let after_apply = host.screen_contents().unwrap_or_default();
+    eprintln!("--- after apply ---\n{after_apply}");
+    assert!(
+        after_apply.contains("Terminal Settings") || after_apply.contains("CFG_CLOSE=on"),
+        "app died after apply"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn repro_viewer_checkbox_click_hangs() {
+    let _guard = pty_window_test_guard();
+    let root = std::path::PathBuf::from(format!("/tmp/aui-hang-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("mkdir");
+    let cfg = root.join("terminal.yaml");
+    unsafe {
+        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
+    }
+    let bin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/debug/examples/terminal_viewer"
+    );
+    let mut host = PtyTestHost::spawn(bin, &[], 110, 34).expect("spawn viewer");
+    thread::sleep(Duration::from_millis(800));
+
+    host.click(1, 0).ok(); // File menu
+    thread::sleep(Duration::from_millis(200));
+    let m = host.screen_contents().unwrap_or_default();
+    let (sx, sy) = find_text_position(&m, "Settings").expect("find Settings");
+    host.click(sx, sy).ok();
+    thread::sleep(Duration::from_millis(400));
+    for _ in 0..30 {
+        host.wheel_down(55, 16).ok();
+        thread::sleep(Duration::from_millis(20));
+        if host
+            .screen_contents()
+            .unwrap_or_default()
+            .contains("Close window on shell exit")
+        {
+            break;
+        }
+    }
+    let sc = host.screen_contents().unwrap_or_default();
+    let mut clicked = false;
+    for (row, line) in sc.lines().enumerate() {
+        if let Some(li) = line.find("Close window on shell exit") {
+            if let Some(br) = line[..li].rfind('[') {
+                let col = UnicodeWidthStr::width(&line[..br]) as u16 + 1;
+                eprintln!("MOUSE-CLICK checkbox glyph at {col},{row}");
+                host.click(col, row as u16).ok();
+                clicked = true;
+            }
+        }
+    }
+    assert!(clicked, "no glyph found\n{sc}");
+    thread::sleep(Duration::from_millis(300));
+
+    // Responsiveness probe: send quit and REQUIRE clean exit within 3s.
+    host.send_ctrl('q').ok();
+    match host.wait_for_exit(Duration::from_secs(3)) {
+        Ok(()) => eprintln!("APP RESPONSIVE: exited cleanly"),
+        Err(e) => panic!("APP HUNG after mouse-click on checkbox (no response to Ctrl+Q): {e}"),
+    }
+    let _ = fs::remove_dir_all(root);
 }

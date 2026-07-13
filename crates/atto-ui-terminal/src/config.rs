@@ -39,6 +39,8 @@ pub struct TerminalConfig {
     #[serde(default)]
     pub shell_integration: TerminalShellIntegrationConfig,
     #[serde(default)]
+    pub close_window_on_shell_exit: bool,
+    #[serde(default)]
     pub cursor: TerminalCursorConfig,
 }
 
@@ -192,6 +194,7 @@ impl Default for TerminalConfig {
             alternate_screen_scroll: TerminalAlternateScreenScrollConfig::default(),
             sessions: TerminalSessionsConfig::default(),
             shell_integration: TerminalShellIntegrationConfig::default(),
+            close_window_on_shell_exit: false,
             cursor: TerminalCursorConfig::default(),
         }
     }
@@ -849,6 +852,7 @@ mod tests {
             config.shell_integration_policy(),
             TerminalShellIntegration::Disabled
         );
+        assert!(!config.close_window_on_shell_exit);
         assert_eq!(
             TerminalCursorShape::from(config.cursor.default_shape),
             TerminalCursorShape::Block
@@ -902,6 +906,7 @@ mod tests {
             TerminalCursorShape::from(config.cursor.default_shape),
             TerminalCursorShape::Block
         );
+        assert!(!config.close_window_on_shell_exit);
         assert_eq!(
             config.sessions.default_profile().unwrap().name,
             DEFAULT_TERMINAL_PROFILE_NAME
@@ -934,6 +939,7 @@ mod tests {
                 ],
             },
             shell_integration: TerminalShellIntegrationConfig { inject: true },
+            close_window_on_shell_exit: true,
             cursor: TerminalCursorConfig {
                 default_shape: TerminalCursorShapeConfig::Bar,
             },

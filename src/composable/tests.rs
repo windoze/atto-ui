@@ -147,6 +147,189 @@ impl EventHandling for RecordingView {
 
 crate::impl_component_default_traits!(RecordingView => Scrollable, DynamicTree);
 
+/// Models a real Checkbox/Button: requests pointer capture on mouse-down and,
+/// on release, only toggles if the pointer is **inside its own bounds** — using
+/// the coordinate space the parent forwarded (exactly like `Checkbox::hit`).
+/// This bounds check is what breaks if the capture route fails to translate
+/// coordinates into the child's local space.
+#[derive(Clone)]
+struct CapturingView {
+    events: Arc<Mutex<Vec<RecordedEvent>>>,
+    toggled: Arc<Mutex<bool>>,
+    last_area: Arc<Mutex<Option<Rect>>>,
+}
+
+impl CapturingView {
+    fn new(events: Arc<Mutex<Vec<RecordedEvent>>>, toggled: Arc<Mutex<bool>>) -> Self {
+        Self {
+            events,
+            toggled,
+            last_area: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn hit(&self, m: &MouseEvent, space: MouseCoordinateSpace) -> bool {
+        let area = self.last_area.lock().expect("area lock");
+        area.is_some_and(|area| mouse_coords_local_to_area(area, *m, space).is_some())
+    }
+}
+
+impl Component for CapturingView {
+    fn draw(&mut self, _frame: &mut ratatui::Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
+        *self.last_area.lock().expect("area lock") = Some(area);
+    }
+}
+
+impl Layout for CapturingView {
+    fn desired_height(&self) -> Option<u16> {
+        Some(1)
+    }
+}
+
+impl FocusNav for CapturingView {
+    fn is_focusable(&self) -> bool {
+        true
+    }
+}
+
+impl EventHandling for CapturingView {
+    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
+        use crate::composable::Capture;
+        if let Event::Mouse(m) = event {
+            self.events
+                .lock()
+                .expect("events lock")
+                .push(RecordedEvent::Mouse {
+                    column: m.column,
+                    row: m.row,
+                });
+            match m.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    return EventResult::consumed().with_capture(Capture::Request);
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    if self.hit(m, ctx.mouse_coordinate_space) {
+                        *self.toggled.lock().expect("toggle lock") ^= true;
+                        return EventResult::changed().with_capture(Capture::Release);
+                    }
+                    return EventResult::consumed().with_capture(Capture::Release);
+                }
+                _ => return EventResult::consumed(),
+            }
+        }
+        EventResult::ignored()
+    }
+}
+
+crate::impl_component_default_traits!(CapturingView => Scrollable, DynamicTree);
+
+/// Reproduces the settings-dialog checkbox bug at the framework level. A
+/// capturing widget lives inside a section VStack that is tall enough to be
+/// clipped by a scrollable root VStack. Once scrolled, the section renders
+/// through the offscreen (`draw_component_region`) path, so the widget's
+/// `last_area` is offscreen-local, not screen-absolute.
+///
+/// A mouse-down reaches the widget (hit-test route translates coordinates) and
+/// the widget requests capture. The mouse-up then travels the *capture* route,
+/// which must apply the same per-level coordinate translation — otherwise the
+/// widget never sees a usable up, never toggles, and never releases capture.
+#[test]
+fn clipped_captured_child_receives_translated_mouse_up() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let toggled = Arc::new(Mutex::new(false));
+
+    // Section taller than the viewport so it is always drawn clipped/offscreen.
+    // Fillers precede the capturing child so the child sits at a non-zero row
+    // within the section — making the per-level coordinate translation matter.
+    let mut section = VStack::new();
+    for _ in 0..4 {
+        section.add_child_with_layout(
+            Box::new(SizedView::new(1, 1)),
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+    }
+    section.add_child_with_layout(
+        Box::new(CapturingView::new(
+            Arc::clone(&events),
+            Arc::clone(&toggled),
+        )),
+        LayoutParams {
+            height: Size::Fixed(1),
+            ..LayoutParams::default()
+        },
+    );
+    for _ in 0..4 {
+        section.add_child_with_layout(
+            Box::new(SizedView::new(1, 1)),
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+    }
+
+    let mut root = VStack::new().with_scrollable(true);
+    for _ in 0..6 {
+        root.add_child_with_layout(
+            Box::new(SizedView::new(1, 1)),
+            LayoutParams {
+                height: Size::Fixed(1),
+                ..LayoutParams::default()
+            },
+        );
+    }
+    root.add_child_with_layout(Box::new(section), LayoutParams::default());
+
+    let area = Rect::new(0, 0, 20, 6);
+    draw_view(&mut root, area);
+    // Scroll so the section's top is clipped above the viewport: the section is
+    // drawn through the offscreen path with a non-zero source offset, so its
+    // descendants' `last_area` no longer aligns with absolute screen coords.
+    root.set_scroll_offset(0, 8);
+    draw_view(&mut root, area);
+
+    // Find the viewport row where a mouse-down reaches the capturing child.
+    let mut hit_row = None;
+    for row in 0..area.height {
+        events.lock().expect("lock").clear();
+        let _ = root.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            test_context(),
+        );
+        if !events.lock().expect("lock").is_empty() {
+            hit_row = Some(row);
+            break;
+        }
+        // No down landed here; nothing captured, safe to continue.
+    }
+    let row = hit_row.expect("capturing child reachable by mouse-down after scroll");
+
+    // Now deliver the mouse-up. Without translation on the capture route, this
+    // up misses the offscreen-local child and never toggles it.
+    *toggled.lock().expect("lock") = false;
+    let _ = root.handle_event(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 1,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }),
+        test_context(),
+    );
+    assert!(
+        *toggled.lock().expect("toggle lock"),
+        "captured child in a clipped section must receive its mouse-up and toggle"
+    );
+}
+
 fn draw_view(view: &mut dyn Component, area: Rect) {
     let theme = Theme::dark();
     let ctx = ComponentContext {
