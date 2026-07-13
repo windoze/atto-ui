@@ -25,8 +25,12 @@ impl WindowManager {
         let effective_bounds = self.apply_dock_layout(bounds);
         let focused = self.focused();
         let modal = self.active_modal_id();
-        if modal.is_some() {
-            // Dim the desktop behind the modal.
+        // Dim the desktop behind the modal, unless the modal opted out (e.g. a
+        // transient popup/context menu that should not darken the whole screen).
+        let dim_backdrop = modal
+            .and_then(|id| self.window(id))
+            .is_some_and(|w| w.decorations.get().backdrop_dim);
+        if dim_backdrop {
             fill_rect(frame.buffer_mut(), bounds, theme.desktop_dim, ' ');
         }
         let global_drag = self.global_drag.as_ref();

@@ -244,6 +244,7 @@ mod tests {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
+            capture_suspended_by_blur: false,
             release_shortcut: runtime_config.release_shortcut,
             prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
@@ -314,6 +315,60 @@ mod tests {
     }
 
     #[test]
+    fn device_attribute_and_keyboard_queries_are_answered() {
+        let mut shared = test_shared();
+
+        // DA1: both `CSI c` and `CSI 0 c` forms.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[0c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+        // DA2.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[>c"),
+            vec![b"\x1b[>0;0;0c".to_vec()]
+        );
+        // Kitty keyboard-protocol flags query.
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"\x1b[?u"),
+            vec![b"\x1b[?0u".to_vec()]
+        );
+    }
+
+    #[test]
+    fn neovim_startup_query_batch_is_fully_answered() {
+        let mut shared = test_shared();
+
+        // The exact batch Neovim emits on startup (kitty flags, DA1, OSC 11
+        // background query, DSR status). We must answer the keyboard query,
+        // DA1, and DSR — OSC 11 is not a CSI query and is left to the parser.
+        let responses = collect_dsr_responses(&mut shared, b"\x1b[?u\x1b[c\x1b]11;?\x07\x1b[5n");
+        assert_eq!(
+            responses,
+            vec![
+                b"\x1b[?0u".to_vec(),
+                b"\x1b[?62c".to_vec(),
+                b"\x1b[0n".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn da_query_split_across_chunks_is_buffered() {
+        let mut shared = test_shared();
+
+        assert!(collect_dsr_responses(&mut shared, b"\x1b[").is_empty());
+        assert_eq!(
+            collect_dsr_responses(&mut shared, b"c"),
+            vec![b"\x1b[?62c".to_vec()]
+        );
+    }
+
+    #[test]
     fn osc133_and_osc7_record_command_block_marks() {
         let terminal = TerminalEmulator::new();
         let handle = terminal.handle();
@@ -344,6 +399,33 @@ mod tests {
                 cwd: Some("/tmp/project one".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn osc133_zsh_preexec_order_still_captures_command_text() {
+        // Real zsh/bash shell integration emits B (command-start) and C
+        // (output-start) together from preexec/PS0, i.e. AFTER the user pressed
+        // Enter — so both land at the output position, not inline after the
+        // typed command. The typed command lives on the prompt line between A
+        // and the newline. Copy command / Rerun must still recover it.
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo hi\r\n\
+             \x1b]133;B\x07\x1b]133;C\x07hi\r\n\
+             \x1b]133;D;0\x07",
+        );
+
+        let command = handle
+            .copy_command_block_command(0)
+            .expect("command text recoverable");
+        assert_eq!(command, "$ echo hi");
+
+        let output = handle
+            .copy_command_block_output(0)
+            .expect("output text recoverable");
+        assert_eq!(output, "hi");
     }
 
     #[test]
@@ -1004,11 +1086,19 @@ __atto_ui_precmd() {
   __atto_ui_prompt_seen=1
   __atto_ui_emit_cwd
   printf '\033]133;A\a'
+  # Mark command-start (OSC 133 B) at the end of the prompt so it lands right
+  # before the user's typed command, not on the output line. Appended
+  # idempotently (this runs last in PROMPT_COMMAND) so prompt rebuilds keep it.
+  case "$PS1" in
+    *$'\[\033]133;B\a\]'*) ;;
+    *) PS1="${PS1}"$'\[\033]133;B\a\]' ;;
+  esac
 }
 
-PS0=$'\[\033]133;B\a\033]133;C\a\]'
+# Output-start (OSC 133 C) is emitted after the user submits the command.
+PS0=$'\[\033]133;C\a\]'
 if [ -n "${PROMPT_COMMAND:-}" ]; then
-  PROMPT_COMMAND="__atto_ui_precmd; ${PROMPT_COMMAND}"
+  PROMPT_COMMAND="${PROMPT_COMMAND}; __atto_ui_precmd"
 else
   PROMPT_COMMAND="__atto_ui_precmd"
 fi
@@ -1031,10 +1121,18 @@ __atto_ui_precmd() {
   __atto_ui_prompt_seen=1
   __atto_ui_emit_cwd
   printf '\033]133;A\a'
+  # Mark command-start (OSC 133 B) at the very end of the prompt so it lands
+  # right before the user's typed command, not on the output line. Appended
+  # idempotently after any user/framework precmd (this hook is registered last)
+  # so prompt rebuilds keep the mark.
+  case "$PROMPT" in
+    *$'\033]133;B\a'*) ;;
+    *) PROMPT="${PROMPT}"$'%{\033]133;B\a%}' ;;
+  esac
 }
 
 __atto_ui_preexec() {
-  printf '\033]133;B\a\033]133;C\a'
+  printf '\033]133;C\a'
 }
 
 autoload -Uz add-zsh-hook
@@ -1304,6 +1402,11 @@ struct TerminalShared {
     last_system_clipboard_text: Option<String>,
     last_system_clipboard_error: Option<String>,
     capture: bool,
+    /// Set when keyboard capture was auto-released because the terminal window
+    /// lost focus (e.g. a modal popup opened). Distinguishes that transient loss
+    /// from an intentional release via the release shortcut, so capture can be
+    /// restored automatically once focus returns.
+    capture_suspended_by_blur: bool,
     release_shortcut: TerminalShortcut,
     prefix_shortcut: TerminalShortcut,
     prefix_bindings: Vec<TerminalPrefixBinding>,
@@ -1732,18 +1835,29 @@ impl TerminalShared {
             .saturating_sub(1);
         match kind {
             CommandBlockTextKind::Command => {
-                let start_row = block.command_start.or(block.prompt_start)?;
-                let start_col = if block.command_start.is_some() {
-                    block.command_start_col.unwrap_or(0)
-                } else {
-                    block.prompt_start_col.unwrap_or(0)
-                };
                 let end_row = block.output_start.or(block.end)?;
                 let end_col = if block.output_start.is_some() {
                     block.output_start_col.unwrap_or(cols)
                 } else {
                     block.end_col.unwrap_or(cols)
                 };
+
+                // The command-start marker (OSC 133 `B`) is only a usable start
+                // when it precedes the output-start marker (`C`). Real shell
+                // integrations (zsh preexec, bash PS0) emit `B` and `C` together
+                // *after* the user submits the command, so they land at the same
+                // position and the `B..C` range collapses to empty. In that case
+                // the typed command lives on the prompt line, so fall back to the
+                // prompt-start marker.
+                let command_start = block.command_start.filter(|&cmd_row| {
+                    cmd_row < end_row
+                        || (cmd_row == end_row && block.command_start_col.unwrap_or(0) < end_col)
+                });
+                let (start_row, start_col) = match command_start {
+                    Some(row) => (row, block.command_start_col.unwrap_or(0)),
+                    None => (block.prompt_start?, block.prompt_start_col.unwrap_or(0)),
+                };
+
                 TerminalSelectionRange::new(
                     TerminalSelectionPosition::new(start_row, start_col),
                     TerminalSelectionPosition::new(end_row, end_col),
@@ -1926,6 +2040,8 @@ fn handle_captured_key(shared: &mut TerminalShared, event: KeyEvent) -> Captured
     }
     if shared.release_shortcut.matches(event) {
         shared.set_capture(false);
+        // Intentional release: do not auto-restore capture on refocus.
+        shared.capture_suspended_by_blur = false;
         return CapturedKeyAction::Consumed;
     }
     if event.kind == KeyEventKind::Release {
@@ -2248,10 +2364,28 @@ fn dispatch_terminal_callback_events(
 }
 
 enum DsrResponse {
-    Cursor { private: bool },
-    Status { private: bool },
+    Cursor {
+        private: bool,
+    },
+    Status {
+        private: bool,
+    },
+    /// Primary Device Attributes (DA1): `CSI c` / `CSI 0 c`.
+    PrimaryDeviceAttributes,
+    /// Secondary Device Attributes (DA2): `CSI > c` / `CSI > 0 c`.
+    SecondaryDeviceAttributes,
+    /// Kitty keyboard-protocol flags query: `CSI ? u`. We do not implement the
+    /// protocol, so we report flags `0`.
+    KittyKeyboardFlags,
 }
 
+/// Scans program output for terminal queries that expect a synchronous reply and
+/// returns the reply byte sequences. Handling these prevents full-screen apps
+/// (notably Neovim) from blocking on a ~1s startup/teardown timeout while they
+/// wait for Device Attributes / keyboard-protocol answers that never arrive.
+///
+/// A trailing partial escape sequence is buffered in `dsr_tail` and re-scanned
+/// on the next chunk.
 fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u8>> {
     if bytes.is_empty() {
         return Vec::new();
@@ -2269,6 +2403,7 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
             idx += 1;
             continue;
         }
+        // Need at least `ESC [` to be a CSI.
         if idx + 1 >= combined.len() {
             tail_start = idx;
             break;
@@ -2277,47 +2412,65 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
             idx += 1;
             continue;
         }
-        if idx + 2 >= combined.len() {
+
+        // Parse the CSI body: an optional leading private marker (`?` or `>`),
+        // then parameter bytes, then a final byte.
+        let mut j = idx + 2;
+        let prefix = match combined.get(j) {
+            None => {
+                tail_start = idx;
+                break;
+            }
+            Some(&b'?') => {
+                j += 1;
+                Some(b'?')
+            }
+            Some(&b'>') => {
+                j += 1;
+                Some(b'>')
+            }
+            Some(_) => None,
+        };
+        let params_start = j;
+        while j < combined.len() && combined[j].is_ascii_digit() {
+            j += 1;
+        }
+        let Some(&final_byte) = combined.get(j) else {
+            // Incomplete sequence; buffer and wait for more input.
             tail_start = idx;
             break;
-        }
+        };
+        let params = &combined[params_start..j];
 
-        match combined[idx + 2] {
-            b'6' | b'5' => {
-                if idx + 3 >= combined.len() {
-                    tail_start = idx;
-                    break;
-                }
-                if combined[idx + 3] == b'n' {
-                    responses.push(match combined[idx + 2] {
-                        b'6' => DsrResponse::Cursor { private: false },
-                        _ => DsrResponse::Status { private: false },
-                    });
-                    idx += 4;
-                    continue;
-                }
+        let matched = match (prefix, final_byte) {
+            // DSR — device status report.
+            (None, b'n') => match params {
+                b"6" => Some(DsrResponse::Cursor { private: false }),
+                b"5" => Some(DsrResponse::Status { private: false }),
+                _ => None,
+            },
+            (Some(b'?'), b'n') => match params {
+                b"6" => Some(DsrResponse::Cursor { private: true }),
+                b"5" => Some(DsrResponse::Status { private: true }),
+                _ => None,
+            },
+            // Primary Device Attributes (DA1): `CSI c` or `CSI 0 c`.
+            (None, b'c') if params.is_empty() || params == b"0" => {
+                Some(DsrResponse::PrimaryDeviceAttributes)
             }
-            b'?' => {
-                if idx + 3 >= combined.len() {
-                    tail_start = idx;
-                    break;
-                }
-                if matches!(combined[idx + 3], b'6' | b'5') {
-                    if idx + 4 >= combined.len() {
-                        tail_start = idx;
-                        break;
-                    }
-                    if combined[idx + 4] == b'n' {
-                        responses.push(match combined[idx + 3] {
-                            b'6' => DsrResponse::Cursor { private: true },
-                            _ => DsrResponse::Status { private: true },
-                        });
-                        idx += 5;
-                        continue;
-                    }
-                }
+            // Secondary Device Attributes (DA2): `CSI > c` or `CSI > 0 c`.
+            (Some(b'>'), b'c') if params.is_empty() || params == b"0" => {
+                Some(DsrResponse::SecondaryDeviceAttributes)
             }
-            _ => {}
+            // Kitty keyboard-protocol flags query: `CSI ? u`.
+            (Some(b'?'), b'u') if params.is_empty() => Some(DsrResponse::KittyKeyboardFlags),
+            _ => None,
+        };
+
+        if let Some(response) = matched {
+            responses.push(response);
+            idx = j + 1;
+            continue;
         }
         idx += 1;
     }
@@ -2349,6 +2502,13 @@ fn collect_dsr_responses(shared: &mut TerminalShared, bytes: &[u8]) -> Vec<Vec<u
                     b"\x1b[0n".to_vec()
                 }
             }
+            // Report as a VT220 with no optional extensions. This is enough to
+            // satisfy programs that gate startup on a DA1 reply.
+            DsrResponse::PrimaryDeviceAttributes => b"\x1b[?62c".to_vec(),
+            // Terminal id 0, firmware version 0, ROM 0 (`CSI > 0 ; 0 ; 0 c`).
+            DsrResponse::SecondaryDeviceAttributes => b"\x1b[>0;0;0c".to_vec(),
+            // Kitty keyboard protocol unsupported: report flags 0.
+            DsrResponse::KittyKeyboardFlags => b"\x1b[?0u".to_vec(),
         })
         .collect()
 }
@@ -2395,6 +2555,7 @@ impl TerminalEmulator {
             last_system_clipboard_text: None,
             last_system_clipboard_error: None,
             capture: true,
+            capture_suspended_by_blur: false,
             release_shortcut: runtime_config.release_shortcut,
             prefix_shortcut: runtime_config.prefix_shortcut,
             prefix_bindings: default_prefix_bindings(),
@@ -2919,8 +3080,20 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         self.resize(rows, cols);
 
         let mut shared = self.shared.lock();
-        if !ctx.is_focused && shared.capture {
-            shared.set_capture(false);
+        if !ctx.is_focused {
+            // Losing focus (e.g. a modal popup opened) auto-releases keyboard
+            // capture. Remember that this was a transient, focus-driven release
+            // so it can be restored when focus returns — unlike an intentional
+            // release via the release shortcut.
+            if shared.capture {
+                shared.set_capture(false);
+                shared.capture_suspended_by_blur = true;
+            }
+        } else if shared.capture_suspended_by_blur {
+            // Focus came back after a focus-driven release: restore capture so
+            // the keyboard keeps working without requiring a click.
+            shared.set_capture(true);
+            shared.capture_suspended_by_blur = false;
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);

@@ -27,6 +27,21 @@ fn wait_for_text_with_timeout(host: &PtyTestHost, needle: &str, timeout: Duratio
         .unwrap_or_else(|e| panic!("wait_for_text {needle:?} failed: {e}"));
 }
 
+fn wait_for_text_absent(host: &PtyTestHost, needle: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if !screen.contains(needle) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected text {needle:?} to disappear within {timeout:?}.\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
+}
+
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -129,6 +144,23 @@ fn wait_for_file(path: &std::path::Path) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("expected file {} to be written", path.display());
+}
+
+/// Writes a default `TerminalConfig` to a fresh temp file and returns
+/// `(temp_root, config_path_arg)`. Tests pass the path via `--config` so the
+/// app never falls back to the developer's `~/.config/atto-ui/terminal.yaml`
+/// (which may enable `close_window_on_shell_exit`, breaking restart-prompt
+/// assertions). Caller is responsible for removing `temp_root`.
+fn isolated_default_config(label: &str) -> (std::path::PathBuf, String) {
+    let root = std::path::PathBuf::from(format!("/tmp/aui-{label}-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create config temp dir");
+    let config_path = root.join("terminal.yaml");
+    TerminalConfig::default()
+        .save_path_infer(&config_path)
+        .expect("write default terminal config");
+    let arg = config_path.to_string_lossy().into_owned();
+    (root, arg)
 }
 
 fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
@@ -742,9 +774,16 @@ fn pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture() {
 fn pty_terminal_dead_process_prompts_and_restarts() {
     let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let (root, config_arg) = isolated_default_config("dead-process");
     let mut host = PtyTestHost::spawn(
         bin,
-        &["/bin/sh", "-c", "printf 'CHILD-RUN\\n'; exit 7"],
+        &[
+            "--config",
+            &config_arg,
+            "/bin/sh",
+            "-c",
+            "printf 'CHILD-RUN\\n'; exit 7",
+        ],
         80,
         24,
     )
@@ -761,6 +800,8 @@ fn pty_terminal_dead_process_prompts_and_restarts() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -824,6 +865,11 @@ fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
         .to_string_lossy()
         .into_owned();
     let counter = counter.to_string_lossy().into_owned();
+    let config_path = root.join("terminal.yaml");
+    TerminalConfig::default()
+        .save_path_infer(&config_path)
+        .expect("write default terminal config");
+    let config_arg = config_path.to_string_lossy().into_owned();
     let script = format!(
         "n=$(cat '{counter}' 2>/dev/null || echo 0); \
          n=$((n+1)); printf '%s' \"$n\" > '{counter}'; \
@@ -834,6 +880,8 @@ fn pty_terminal_restart_uses_session_profile_and_osc7_cwd() {
     let mut host = PtyTestHost::spawn(
         bin,
         &[
+            "--config",
+            &config_arg,
             "--profile",
             "Project",
             "--cwd",
@@ -1263,6 +1311,52 @@ fn pty_terminal_command_context_menu_copies_output_and_reruns() {
 }
 
 #[test]
+fn pty_terminal_command_context_menu_keyboard_navigation() {
+    let _guard = pty_window_test_guard();
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
+        "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
+        "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 80, 24).expect("spawn PTY app");
+
+    let (x, y) = wait_for_text_position(&host, "RESULT");
+    wait_for_text(&host, "CAP=ON");
+
+    // Open the context menu and navigate with the keyboard: Down×2 highlights
+    // "Copy output" (row 2), Enter activates it.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy output");
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)
+        .expect("down");
+    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)
+        .expect("down");
+    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)
+        .expect("enter");
+    wait_for_text(&host, "COPY=RESULT");
+
+    // Reopen and activate via mnemonic: 'r' matches "Rerun".
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+    host.send_str("r").expect("mnemonic r");
+    wait_for_text(&host, "RERUN=echo AGAIN");
+
+    // Reopen and dismiss with Esc: the menu must disappear and stay gone.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy command");
+    host.send_str("\x1b").expect("esc");
+    wait_for_text_absent(&host, "Copy command", Duration::from_secs(2));
+    assert_text_absent_for(&host, "Copy command", Duration::from_millis(200));
+
+    host.send_ctrl('q').expect("quit");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean exit");
+}
+
+#[test]
 fn repro_toggle_close_on_exit_via_keyboard() {
     let _guard = pty_window_test_guard();
     let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
@@ -1317,6 +1411,112 @@ fn repro_toggle_close_on_exit_via_keyboard() {
         "app died after apply"
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn repro_viewer_command_context_menu_keyboard_navigation() {
+    // End-to-end against the real `terminal_viewer` example (the binary the user
+    // runs): a right-click on an OSC 133 command block opens a keyboard-navigable
+    // popup menu that highlights, activates, and dismisses correctly.
+    let _guard = pty_window_test_guard();
+    let root = std::path::PathBuf::from(format!("/tmp/aui-viewer-ctx-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("mkdir");
+    let cfg = root.join("terminal.yaml");
+    unsafe {
+        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
+    }
+    let bin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/debug/examples/terminal_viewer"
+    );
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
+        "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
+        "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
+        "sleep 10"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+
+    wait_for_text(&host, "RESULT");
+    let (x, y) = find_text_position(&host.screen_contents().unwrap_or_default(), "RESULT")
+        .expect("find RESULT");
+
+    // Right-click the command block, then activate "Rerun" via keyboard (Enter
+    // on the default-highlighted first row).
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+    host.send_str("\r").expect("enter");
+    wait_for_text(&host, "RERUN=echo AGAIN");
+
+    // Reopen and dismiss with Esc.
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Copy command");
+    host.send_str("\x1b").expect("esc");
+    wait_for_text_absent(&host, "Copy command", Duration::from_secs(2));
+
+    // App stays responsive to keyboard afterwards.
+    host.send_ctrl('q').ok();
+    host.wait_for_exit(Duration::from_secs(3))
+        .expect("clean exit after context menu");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn repro_viewer_right_click_does_not_break_keyboard() {
+    // Regression: right-clicking to open the command context menu must not leak
+    // the mouse escape sequence into the shell, and dismissing the menu must
+    // leave the terminal able to accept keyboard input again. Previously the
+    // demo force-enabled mouse reporting, so the right-click was forwarded to
+    // the shell (corrupting input / flipping zsh into vi mode), and keyboard
+    // capture was not restored after the modal popup closed.
+    let _guard = pty_window_test_guard();
+    let root = std::path::PathBuf::from(format!("/tmp/aui-rc-kbd-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("mkdir");
+    let cfg = root.join("terminal.yaml");
+    // Emit a synthetic OSC 133 command block so a context menu target exists,
+    // without relying on real shell integration.
+    unsafe {
+        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
+    }
+    let bin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/debug/examples/terminal_viewer"
+    );
+    let script = concat!(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007echo READY\\r\\n'; ",
+        "printf '\\033]133;C\\007READY\\r\\n\\033]133;D;0\\007'; ",
+        "exec /bin/sh -i"
+    );
+    let mut host =
+        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    thread::sleep(Duration::from_millis(800));
+    wait_for_text(&host, "READY");
+
+    // Right-click the command block output to open the context menu.
+    let sc = host.screen_contents().unwrap_or_default();
+    let (x, y) = find_text_position(&sc, "READY").expect("find READY");
+    right_click(&mut host, x, y);
+    wait_for_text(&host, "Rerun");
+
+    // Dismiss with Esc, then type a command — it must run intact (no eaten
+    // characters from a leaked mouse/escape sequence).
+    host.send_str("\x1b").ok();
+    thread::sleep(Duration::from_millis(200));
+    host.send_str("echo AFTER\n").ok();
+    wait_for_text(&host, "AFTER");
+    // The command line must show the full "echo AFTER", not a mangled prefix.
+    let screen = host.screen_contents().unwrap_or_default();
+    assert!(
+        screen.contains("echo AFTER"),
+        "typed command should reach the shell intact\n{screen}"
+    );
+
+    host.send_ctrl('q').ok();
+    let _ = host.wait_for_exit(Duration::from_secs(3));
     let _ = fs::remove_dir_all(root);
 }
 

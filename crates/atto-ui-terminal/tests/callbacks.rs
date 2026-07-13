@@ -373,3 +373,54 @@ fn terminal_shell_integration_can_be_injected_into_spawned_bash() {
         "injected integration should report at least the completed printf command"
     );
 }
+
+#[test]
+fn injected_bash_command_block_recovers_command_text_without_prompt() {
+    // Regression: with real shell integration, "Copy command" / "Rerun" must
+    // recover the *typed command* (not empty, not the prompt), i.e. the OSC 133
+    // B marker must land at the end of the prompt. Previously B and C were
+    // emitted together after Enter, collapsing the command range to empty.
+    if !Path::new("/bin/bash").exists() {
+        return;
+    }
+
+    let mut terminal =
+        TerminalEmulator::new().shell_integration(TerminalShellIntegration::enabled());
+    let handle = terminal.handle();
+    let mut cmd = CommandBuilder::new("/bin/bash");
+    cmd.env("ATTO_UI_SHELL_INTEGRATION_NO_USER_RC", "1");
+    // A minimal, stable prompt so the recovered command excludes prompt glyphs.
+    cmd.env("PS1", "PROMPT> ");
+    terminal.spawn_command(cmd).expect("spawn integrated bash");
+
+    handle.send_input_bytes(b"echo copy-me\n");
+
+    // Wait for a completed command block whose command text is recoverable.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut command_text = None;
+    while Instant::now() < deadline {
+        if handle
+            .command_blocks()
+            .iter()
+            .any(|block| block.exit_code.is_some())
+            && let Some(text) = handle.copy_command_block_command(0)
+            && text.contains("echo copy-me")
+        {
+            command_text = Some(text);
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    handle.send_input_bytes(b"exit\n");
+
+    let command_text = command_text.expect("command text should be recoverable and non-empty");
+    assert!(
+        command_text.contains("echo copy-me"),
+        "recovered command {command_text:?} should contain the typed command"
+    );
+    assert!(
+        !command_text.contains("PROMPT>"),
+        "recovered command {command_text:?} should not include the prompt"
+    );
+}

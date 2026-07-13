@@ -7,33 +7,16 @@ use crate::wm::WindowId;
 
 use super::MenuCallback;
 use super::layout::{
-    contains, display_label, dropdown_size, explicit_mnemonic, label_mnemonic_or_first,
-    menu_title_width, menu_title_x, menu_titles_start_x, next_menu_title_x,
+    contains, label_mnemonic_or_first, menu_title_width, menu_title_x, menu_titles_start_x,
+    next_menu_title_x,
 };
 use super::minimized::minimized_window_id;
 use super::model::{MenuAction, MenuBar, MenuItem, WindowMenuOp};
+use super::nav::item_mnemonic_or_first;
 use super::window_ops::window_menu_op;
 
 fn char_eq_ignore_case(a: char, b: char) -> bool {
     a == b || a.to_lowercase().to_string() == b.to_lowercase().to_string()
-}
-
-fn single_char_shortcut(shortcut: Option<String>) -> Option<char> {
-    let shortcut = shortcut?;
-    let mut chars = shortcut.chars();
-    match (chars.next(), chars.next()) {
-        (Some(ch), None) => Some(ch),
-        _ => None,
-    }
-}
-
-fn item_mnemonic_or_first(item: &MenuItem) -> Option<char> {
-    let label = item.label.get();
-    item.mnemonic
-        .get()
-        .or_else(|| explicit_mnemonic(&label))
-        .or_else(|| single_char_shortcut(item.shortcut.get()))
-        .or_else(|| display_label(&label).text.trim_start().chars().next())
 }
 
 impl MenuBar {
@@ -275,22 +258,12 @@ impl MenuBar {
     }
 
     fn move_selection(&mut self, delta: i32) {
-        let Some(items) = self.selected_items() else {
-            return;
-        };
-        if items.is_empty() {
+        if self.state.menu_index >= self.menus.len() {
             return;
         }
-        let depth = self.state.stack.len().saturating_sub(1);
-        let cur = self.state.stack[depth] as i32;
-        let mut next = cur + delta;
-        if next < 0 {
-            next = items.len() as i32 - 1;
-        }
-        if next as usize >= items.len() {
-            next = 0;
-        }
-        self.state.stack[depth] = next as usize;
+        // Disjoint field borrows: `menus` (shared) and `state.stack` (mut).
+        let root = &self.menus[self.state.menu_index].items;
+        super::nav::move_in_stack(root, &mut self.state.stack, delta);
     }
 
     fn open_selected_submenu(&mut self) -> bool {
@@ -306,23 +279,12 @@ impl MenuBar {
 
     fn selected_items(&self) -> Option<&[MenuItem]> {
         let menu = self.menus.get(self.state.menu_index)?;
-        let mut items: &[MenuItem] = &menu.items;
-        for &idx in self
-            .state
-            .stack
-            .iter()
-            .take(self.state.stack.len().saturating_sub(1))
-        {
-            let item = items.get(idx)?;
-            items = &item.submenu;
-        }
-        Some(items)
+        super::nav::items_at(&menu.items, &self.state.stack)
     }
 
     fn selected_item(&self) -> Option<&MenuItem> {
-        let items = self.selected_items()?;
-        let idx = *self.state.stack.last().unwrap_or(&0);
-        items.get(idx)
+        let menu = self.menus.get(self.state.menu_index)?;
+        super::nav::item_at(&menu.items, &self.state.stack)
     }
 
     fn activate_selected_item(&mut self) -> MenuAction {
@@ -456,37 +418,15 @@ impl MenuBar {
         let Some(menu) = self.menus.get(self.state.menu_index) else {
             return Vec::new();
         };
-
-        let dropdown_y = menu_bar_area.y.saturating_add(1);
-        let mut origin_x = menu_title_x(
-            &self.menus,
-            menu_titles_start_x(menu_bar_area),
-            self.state.menu_index,
+        let origin = (
+            menu_title_x(
+                &self.menus,
+                menu_titles_start_x(menu_bar_area),
+                self.state.menu_index,
+            ),
+            menu_bar_area.y.saturating_add(1),
         );
-        let mut origin_y = dropdown_y;
-        let mut items: &[MenuItem] = &menu.items;
-
-        let mut levels = Vec::new();
-        for (depth, &selected_idx) in self.state.stack.iter().enumerate() {
-            let (w, h) = dropdown_size(items);
-            let rect = Rect {
-                x: origin_x,
-                y: origin_y,
-                width: w,
-                height: h,
-            };
-            levels.push((rect, items));
-
-            let Some(sel_item) = items.get(selected_idx) else {
-                break;
-            };
-            if depth + 1 < self.state.stack.len() {
-                items = &sel_item.submenu;
-                origin_x = rect.x.saturating_add(rect.width);
-                origin_y = rect.y.saturating_add(1 + selected_idx as u16);
-            }
-        }
-        levels
+        super::nav::levels_from_origin(&menu.items, &self.state.stack, origin)
     }
 
     fn hit_test_menu_title(&self, x: u16, menu_bar_area: Rect) -> Option<usize> {

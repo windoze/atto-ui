@@ -16,11 +16,9 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
-    run_crossterm_desktop_with_actions,
+    popup_menu_window, run_crossterm_desktop_with_actions,
 };
-use atto_ui::composable::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, Scrollable,
-};
+use atto_ui::composable::{Component, ComponentContext};
 use atto_ui::reactive::{Binding, DirtyObserver};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind, WindowState};
@@ -92,91 +90,6 @@ struct CommandContextState {
     pane_id: TerminalPaneId,
     block_index: usize,
 }
-
-struct CommandContextMenuView {
-    action_tx: mpsc::Sender<TerminalViewerAction>,
-    last_area: Option<Rect>,
-}
-
-impl CommandContextMenuView {
-    fn new(action_tx: mpsc::Sender<TerminalViewerAction>) -> Self {
-        Self {
-            action_tx,
-            last_area: None,
-        }
-    }
-
-    fn action_for_row(row: u16) -> Option<CommandContextMenuAction> {
-        match row {
-            0 => Some(CommandContextMenuAction::Rerun),
-            1 => Some(CommandContextMenuAction::CopyCommand),
-            2 => Some(CommandContextMenuAction::CopyOutput),
-            _ => None,
-        }
-    }
-}
-
-impl Component for CommandContextMenuView {
-    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from("Rerun"),
-                Line::from("Copy command"),
-                Line::from("Copy output"),
-            ]),
-            area,
-        );
-    }
-}
-
-impl EventHandling for CommandContextMenuView {
-    fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
-        let Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row,
-            ..
-        }) = event
-        else {
-            return EventResult::ignored();
-        };
-        let Some(area) = self.last_area else {
-            return EventResult::ignored();
-        };
-        let (local_col, local_row) = match ctx.mouse_coordinate_space {
-            atto_ui::composable::MouseCoordinateSpace::Absolute => {
-                if *column < area.x
-                    || *row < area.y
-                    || *column >= area.x.saturating_add(area.width)
-                    || *row >= area.y.saturating_add(area.height)
-                {
-                    return EventResult::ignored();
-                }
-                (
-                    (*column).saturating_sub(area.x),
-                    (*row).saturating_sub(area.y),
-                )
-            }
-            atto_ui::composable::MouseCoordinateSpace::Local => (*column, *row),
-        };
-        if local_col >= area.width {
-            return EventResult::ignored();
-        }
-        let Some(action) = Self::action_for_row(local_row) else {
-            return EventResult::ignored();
-        };
-        let _ = self
-            .action_tx
-            .send(TerminalViewerAction::CommandContext(action));
-        EventResult::consumed()
-    }
-}
-
-impl Layout for CommandContextMenuView {}
-impl Scrollable for CommandContextMenuView {}
-impl FocusNav for CommandContextMenuView {}
-atto_ui::impl_component_default_traits!(CommandContextMenuView => DynamicTree);
 
 struct FeatureGuideView {
     lines: Vec<String>,
@@ -406,7 +319,6 @@ fn seed_terminal_banner(
     handle.process_output_str(
         "Right-click an OSC 133 command block for rerun/copy actions when shell integration is active.\r\n",
     );
-    handle.process_output_str("\x1b[?1000h\x1b[?1006h");
     Ok(())
 }
 
@@ -653,15 +565,26 @@ fn command_block_at_mouse(
     None
 }
 
-fn command_context_menu_rect(screen: Rect, mouse: &MouseEvent) -> Rect {
-    let width = 18.min(screen.width.max(1));
-    let height = 5.min(screen.height.max(1));
-    Rect {
-        x: mouse.column.min(screen.width.saturating_sub(width)),
-        y: mouse.row.min(screen.height.saturating_sub(height)),
-        width,
-        height,
-    }
+fn command_context_menu_items(action_tx: &mpsc::Sender<TerminalViewerAction>) -> Vec<MenuItem> {
+    let send = |action: CommandContextMenuAction, tx: mpsc::Sender<TerminalViewerAction>| {
+        move || {
+            let _ = tx.send(TerminalViewerAction::CommandContext(action));
+        }
+    };
+    vec![
+        MenuItem::action(
+            "Rerun",
+            send(CommandContextMenuAction::Rerun, action_tx.clone()),
+        ),
+        MenuItem::action(
+            "Copy command",
+            send(CommandContextMenuAction::CopyCommand, action_tx.clone()),
+        ),
+        MenuItem::action(
+            "Copy output",
+            send(CommandContextMenuAction::CopyOutput, action_tx.clone()),
+        ),
+    ]
 }
 
 fn open_command_context_menu(
@@ -688,13 +611,12 @@ fn open_command_context_menu(
         let _ = pane.handle.select_command_block_output(block_index);
     }
     let menu_id = desktop.add_window(
-        Window::new(
-            WindowKind::Tooltip,
+        popup_menu_window(
+            command_context_menu_items(action_tx),
+            (mouse.column, mouse.row),
+            screen,
             "Command",
-            command_context_menu_rect(screen, mouse),
-            Box::new(CommandContextMenuView::new(action_tx.clone())),
-        )
-        .with_min_size(18, 5),
+        ),
         screen,
     );
     *context = Some(CommandContextState {
@@ -751,6 +673,50 @@ fn is_right_mouse_down(event: &Event) -> Option<&MouseEvent> {
             Some(mouse)
         }
         _ => None,
+    }
+}
+
+fn non_right_mouse_down(event: &Event) -> Option<&MouseEvent> {
+    match event {
+        Event::Mouse(
+            mouse @ MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left | MouseButton::Middle),
+                ..
+            },
+        ) => Some(mouse),
+        _ => None,
+    }
+}
+
+/// Dismisses the context menu when a non-right click lands outside the menu
+/// window. Clicks inside the menu are handled by the menu view itself (a row
+/// activation closes the window and its action is applied next frame, so the
+/// stored context must survive this call).
+fn dismiss_context_menu_on_outside_click(
+    desktop: &mut Desktop,
+    event: &Event,
+    context: &mut Option<CommandContextState>,
+) {
+    let Some(mouse) = non_right_mouse_down(event) else {
+        return;
+    };
+    let Some(state) = *context else {
+        return;
+    };
+    // If the menu window is gone, the click already activated an item; keep the
+    // context so `on_action` can apply it next frame.
+    let outside = match desktop.wm.window(state.menu_id) {
+        Some(window) => {
+            let rect = window.rect.get();
+            mouse.column < rect.x
+                || mouse.row < rect.y
+                || mouse.column >= rect.x.saturating_add(rect.width)
+                || mouse.row >= rect.y.saturating_add(rect.height)
+        }
+        None => false,
+    };
+    if outside {
+        close_command_context_menu(desktop, context);
     }
 }
 
@@ -1178,6 +1144,12 @@ fn main() -> Result<()> {
                         screen,
                         mouse,
                         &action_tx_for_event,
+                        &mut command_context_for_event.borrow_mut(),
+                    );
+                } else {
+                    dismiss_context_menu_on_outside_click(
+                        desktop,
+                        ev,
                         &mut command_context_for_event.borrow_mut(),
                     );
                 }

@@ -127,6 +127,10 @@ pub struct WindowDecorations {
     pub border: WindowBorderStyle,
     pub shadow: bool,
     pub buttons: WindowButtons,
+    /// When this window is modal, whether the desktop behind it is dimmed.
+    /// Defaults to `true` (standard modal backdrop). Transient popups such as
+    /// context menus set this to `false` so the surrounding UI stays legible.
+    pub backdrop_dim: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +156,7 @@ impl Default for WindowDecorations {
             border: WindowBorderStyle::Normal,
             shadow: true,
             buttons: WindowButtons::default(),
+            backdrop_dim: true,
         }
     }
 }

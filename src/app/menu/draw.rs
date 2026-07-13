@@ -88,34 +88,7 @@ impl MenuBar {
                 width: w,
                 height: h,
             };
-            draw_shadow(frame.buffer_mut(), rect, screen, theme.window_shadow);
-            frame.render_widget(Clear, rect);
-            frame.render_widget(
-                Fill {
-                    style: theme.menu_item,
-                    ch: ' ',
-                },
-                rect,
-            );
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(
-                    theme.menu_item.patch(
-                        theme
-                            .named_style("menu-border")
-                            .unwrap_or(theme.window_border),
-                    ),
-                )
-                .border_set(theme.border_set(false));
-            frame.render_widget(block, rect);
-
-            let inner = Rect {
-                x: rect.x.saturating_add(1),
-                y: rect.y.saturating_add(1),
-                width: rect.width.saturating_sub(2),
-                height: rect.height.saturating_sub(2),
-            };
-            draw_menu_items(frame.buffer_mut(), inner, items, selected_idx, theme);
+            draw_dropdown_column(frame, rect, screen, items, selected_idx, theme);
 
             let Some(sel_item) = items.get(selected_idx) else {
                 break;
@@ -127,6 +100,46 @@ impl MenuBar {
             }
         }
     }
+}
+
+/// Draws one dropdown column (shadow, background fill, border, and menu items)
+/// into `rect`. Shared by the menu-bar dropdown and the standalone popup menu.
+pub(super) fn draw_dropdown_column(
+    frame: &mut Frame<'_>,
+    rect: Rect,
+    screen: Rect,
+    items: &[MenuItem],
+    selected: usize,
+    theme: &Theme,
+) {
+    draw_shadow(frame.buffer_mut(), rect, screen, theme.window_shadow);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Fill {
+            style: theme.menu_item,
+            ch: ' ',
+        },
+        rect,
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(
+            theme.menu_item.patch(
+                theme
+                    .named_style("menu-border")
+                    .unwrap_or(theme.window_border),
+            ),
+        )
+        .border_set(theme.border_set(false));
+    frame.render_widget(block, rect);
+
+    let inner = Rect {
+        x: rect.x.saturating_add(1),
+        y: rect.y.saturating_add(1),
+        width: rect.width.saturating_sub(2),
+        height: rect.height.saturating_sub(2),
+    };
+    draw_menu_items(frame.buffer_mut(), inner, items, selected, theme);
 }
 
 fn draw_menu_items(
