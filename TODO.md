@@ -226,13 +226,15 @@ cargo test --workspace --all-targets
   - 完成记录：新增根 crate bin `atto`（`src/bin/atto.rs`，并在 `Cargo.toml` 注册），作为第一个进程外 IPC 客户端。CLI 通过 `--socket PATH` 或 `ATTO_UI_SOCKET` 选择 Unix socket，复用 M4-1/M4-2 的 `send_protocol_request`、`ProtocolRequest` 与 `ProtocolResponse`，未重新实现协议或绕过 server；支持 `query <tag> <prop>`、`invoke <tag> <action>`、`tree`，其中 `invoke` 覆盖 `click` / `toggle` / `submit` / `input-text` / `select-index` / `custom` 到 `ComponentCommand` 的映射，并提供 `--screen WIDTHxHEIGHT|X,Y,W,H` 给需要屏幕区域的请求。默认输出人类可读结果，`--json` 输出完整协议响应，便于脚本消费与测试断言。新增 `tests/atto_cli.rs` 端到端测试，启动启用 IPC 的 headless `AppHost` fixture，通过真实 `CARGO_BIN_EXE_atto` 进程执行 `query`、`invoke --json`、`query --json` 与 `tree --json`，断言 CLI 能读回 checkbox 状态、通过 socket 翻转 UI binding，并导出包含目标组件和窗口 tag 的 snapshot。
   - 验证：`cargo test -p atto-ui --test atto_cli -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M4-R Review — 第 3 层完整性与正确性复核**
+- [x] **[DONE] M4-R Review — 第 3 层完整性与正确性复核**
   - 复核点：
     1. 协议是「加传输 + 序列化」，**未重新设计语义**——method 与第 2 层 API 一一对应。
     2. 跨线程分发对持有 `Desktop` 的线程安全，无数据竞争；`wait_for` 不阻塞其他请求。
     3. 错误路径（未知 tag / 不支持动作 / 畸形请求）映射到协议 `error` 而非 panic。
     4. socket 路径策略为 M5 `$TMUX` 指向预留。
   - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论。
+  - 完成记录：第 3 层复核通过。`src/protocol.rs` 只定义 JSON-RPC 类可序列化 envelope 与参数 / 结果枚举，`ProtocolMethod::{Query,Invoke,WaitFor,Tree,PropertyNames}` 分别映射第 1/2 层 `DesktopInspector::query`、`invoke`、`wait_for` / `poll_wait_condition`、`export_snapshot` 和 `property_names`，没有在协议层重新定义组件语义。`src/ipc.rs` 的 socket accept / client 线程只负责解析 JSON line 并通过 channel 排队；实际 `DesktopInspector` 调用均在 `IpcServer::drain_pending` 所在 UI 线程持有 `&mut Desktop` 时执行。`wait_for` 请求被保存为 pending wait，并在每帧按 poll interval 调用 `poll_wait_condition`，不会让一个长等待阻塞其他连接的 query / invoke。错误路径复核通过：执行错误统一写入 `ProtocolResponse.error`，新增 IPC 单测覆盖 `property_names` 成功路径、未知 tag 的 `NotFound`、不支持自定义动作的 `ActionNotSupported`，以及无效协议 method 的 `InvalidValue { name: "request", .. }`，均不 panic。socket 路径仍由 `ATTO_UI_SOCKET` / `IpcServerConfig` / 显式 `--socket` 指定，server 绑定策略保留 stale socket 清理与非 socket 文件拒绝逻辑，可供 M5 `$TMUX` 指向同一路径或派生路径。`AppHost` 与 crossterm runner 的 IPC drain 集成点仍在 draw 前每帧执行；`atto` CLI 复用 `send_protocol_request` 与协议类型，没有绕过 server。`rg -n "unsafe" . -g '*.rs'` 未发现实际 `unsafe` 块，M4 相关 crate 仍受 `#![forbid(unsafe_code)]` 约束。
+  - 验证：`cargo test -p atto-ui ipc_server_maps_boundary_failures_to_protocol_errors -- --nocapture`；`cargo test -p atto-ui ipc -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 ---
 

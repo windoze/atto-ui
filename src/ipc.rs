@@ -538,6 +538,19 @@ mod tests {
         rx
     }
 
+    fn send_raw_protocol_line(path: &Path, line: &str) -> io::Result<ProtocolResponse> {
+        let mut stream = UnixStream::connect(path)?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.write_all(line.as_bytes())?;
+        stream.write_all(b"\n")?;
+        stream.flush()?;
+
+        let mut reader = BufReader::new(stream);
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
+        serde_json::from_str(response.trim_end()).map_err(json_error)
+    }
+
     #[test]
     fn ipc_server_queries_and_invokes_on_ui_thread() {
         let socket_path = temp_socket_path("query-invoke");
@@ -583,6 +596,76 @@ mod tests {
             response.result,
             Some(ProtocolResult::Query(ComponentValue::Bool(true)))
         );
+    }
+
+    #[test]
+    fn ipc_server_maps_boundary_failures_to_protocol_errors() {
+        let socket_path = temp_socket_path("errors");
+        let checked = Binding::new(false);
+        let checked_for_window = checked.clone();
+        let mut host = AppHost::new_headless(screen(), move |screen| {
+            let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+            desktop.add_window(
+                Window::new(
+                    WindowKind::Normal,
+                    "IPC",
+                    Rect::new(2, 2, 24, 6),
+                    Box::new(Checkbox::new("Flag", checked_for_window).tag("flag")),
+                )
+                .with_tag("ipc-window"),
+                screen,
+            );
+            Ok(desktop)
+        })
+        .expect("host");
+        host.enable_ipc(&socket_path).expect("enable ipc");
+
+        let names = ProtocolRequest::property_names("names", "flag");
+        let response = drive_until_response(&mut host, spawn_request(socket_path.clone(), names));
+        match response.result {
+            Some(ProtocolResult::PropertyNames(names)) => {
+                assert!(names.iter().any(|name| name == "checked"));
+            }
+            other => panic!("expected property_names result, got {other:?}"),
+        }
+
+        let missing = ProtocolRequest::query(
+            "missing",
+            ComponentTarget::Id("missing".to_string()),
+            "checked",
+        );
+        let response = drive_until_response(&mut host, spawn_request(socket_path.clone(), missing));
+        assert_eq!(
+            response.error,
+            Some(ComponentError::NotFound("missing".to_string()))
+        );
+
+        let unsupported = ProtocolRequest::invoke(
+            "unsupported",
+            protocol_screen(),
+            ComponentTarget::Id("flag".to_string()),
+            ComponentCommand::Custom {
+                name: "nope".to_string(),
+                payload: Vec::new(),
+            },
+        );
+        let response =
+            drive_until_response(&mut host, spawn_request(socket_path.clone(), unsupported));
+        assert_eq!(
+            response.error,
+            Some(ComponentError::ActionNotSupported("nope".to_string()))
+        );
+
+        let response = send_raw_protocol_line(
+            &socket_path,
+            r#"{"id":"bad-method","method":"unknown","params":{}}"#,
+        )
+        .expect("invalid method response");
+        assert_eq!(response.id, ProtocolId::from("bad-method"));
+        assert!(matches!(
+            response.error,
+            Some(ComponentError::InvalidValue { name, .. }) if name == "request"
+        ));
     }
 
     #[test]
