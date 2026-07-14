@@ -1,7 +1,16 @@
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use atto_ui_test_host::PtyTestHost;
+
+static VIRTUAL_SCROLL_PTY_LOCK: Mutex<()> = Mutex::new(());
+
+fn virtual_scroll_pty_lock() -> MutexGuard<'static, ()> {
+    VIRTUAL_SCROLL_PTY_LOCK
+        .lock()
+        .expect("virtual scroll PTY lock poisoned")
+}
 
 fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
@@ -16,6 +25,7 @@ fn assert_text_absent_for(host: &PtyTestHost, needle: &str, timeout: Duration) {
 
 #[test]
 fn pty_virtual_scrolls_with_keyboard_arrows() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
     host.wait_for_text("0008:", Duration::from_secs(2))
@@ -36,6 +46,7 @@ fn pty_virtual_scrolls_with_keyboard_arrows() {
 
 #[test]
 fn pty_virtual_scrolls_with_mouse_wheel() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
     host.wait_for_text("0008:", Duration::from_secs(2))
@@ -56,6 +67,7 @@ fn pty_virtual_scrolls_with_mouse_wheel() {
 
 #[test]
 fn pty_virtual_scrollbar_thumb_drag_scrolls_to_end() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
     host.wait_for_text("Virtual scroll test:", Duration::from_secs(2))
@@ -74,6 +86,7 @@ fn pty_virtual_scrollbar_thumb_drag_scrolls_to_end() {
 
 #[test]
 fn pty_virtual_scrollbar_arrow_buttons_scroll_by_one_line() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
     host.wait_for_text("Virtual scroll test:", Duration::from_secs(2))
@@ -102,6 +115,7 @@ fn pty_virtual_scrollbar_arrow_buttons_scroll_by_one_line() {
 
 #[test]
 fn pty_virtual_horizontal_scrollbar_arrow_button_scrolls_by_one_column() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -128,6 +142,7 @@ fn pty_virtual_horizontal_scrollbar_arrow_button_scrolls_by_one_column() {
 
 #[test]
 fn pty_virtual_horizontal_scrollbar_thumb_drag_scrolls_to_end() {
+    let _guard = virtual_scroll_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_virtual_scroll_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 

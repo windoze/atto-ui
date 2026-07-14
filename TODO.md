@@ -80,7 +80,7 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `DirtySignal` / `DirtySignalSet` 拉模型封装，基于 `DirtyObserver` 为每个 consumer 独立检测变更，不清除全局 dirty 状态；`Property` / `Binding` 新增 `dirty_signal()`。`Component` trait 新增 `dirty_signals()` 默认空实现，`#[derive(ComponentProperties)]` / `#[component_properties]` 自动为组件 `Binding` 属性生成 dirty 信号，`ComponentTag`、`Visibility`、`Border`、`WindowMinSizeView` 等透明 wrapper 显式合并 inner 信号，避免窗口根 wrapper 截断组件树。新增 `DesktopChangeTracker`，由 `DesktopInspector::change_tracker()` 创建，聚合 menu、status segment、window binding 与组件树 binding，并暴露 `changed_since_last_poll()`；`DesktopInspector::refresh_change_tracker()` 可在窗口 / 组件结构变化后刷新信号集合。实现只提供进程内拉模型信号读取，不实现等待循环，不引入 push 订阅，不改变交互和渲染行为。
   - 验证：`cargo test -p atto-ui desktop_change_tracker -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M1-5 进程内读值断言范式 + 示范迁移一例 chat 逻辑测试**
+- [x] **[DONE] M1-5 进程内读值断言范式 + 示范迁移一例 chat 逻辑测试**
   - 上下文：兑现第 1 层独立价值。`crates/atto-ui-chat/tests/pty_chat.rs` 用 `find_text_position`（`:26`，抓屏 + `UnicodeWidthStr` 反算列坐标）和 `wait_for_disclosure_text`（`:54`，`sleep` + 字形 `▶` 推断展开状态）来测逻辑，脆弱且是「OCR 状态」。
   - 实现：
     1. 落地进程内测试范式样板：构造 `Desktop`（含带 `tag` 的 chat 组件）→ `desktop.inspect()` → `get_property`/`property_names` 读 `Binding` 活值断言。放在合适的测试模块（chat crate 的单测或集成测试）。
@@ -88,6 +88,8 @@ cargo test --workspace --all-targets
     3. 若 chat 组件相关节点缺 tag，按 M1-3 约定补标 tag。
   - 明确边界：只迁移**一例**作示范，不要求全量迁移；不得为此改动 chat 组件的交互语义。
   - 验证：迁移后的逻辑测试不含 `find_text_position`/字形推断，改为读值断言；新旧测试均通过；`cargo test -p atto-ui-chat`；全套通过。
+  - 完成记录：新增 `crates/atto-ui-chat/tests/inspect_chat.rs` 作为 chat 进程内读值断言样板：构造带 tagged `ChatInputPanel` 的 `ChatPanel` 与 `Desktop`，通过 `desktop.inspect()` 的 `tree` / `property_names` / `get_property` 断言 chat input 可按 tag 发现，并验证 `mode` 活值从 `text` 更新为 `choice`。`ChatInputPanel` 新增 `with_tag` 与 `DynamicTree::tag()`，只影响 introspection 寻址；`ChatPanel` 透明转发内部 `VStack` 的 `children()` / `children_mut()`，避免外层 chat 根组件截断第 1 层组件寻址，不改变绘制、输入、回调或交互语义。原 `pty_chat.rs` 中输入模式和端到端渲染覆盖保留不删。按测试失败策略，完整测试中发现 `pty_virtual_scrolling` 在 workspace 负载下同文件 PTY fixture 并发启动会出现空屏超时；已为 `tests/pty_virtual_scrolling.rs` 添加文件级互斥锁，修复该整类测试隔离问题。
+  - 验证：`cargo test -p atto-ui-chat chat_input_mode_state_is_readable_through_desktop_inspector -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui --test pty_virtual_scrolling -- --nocapture`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M1-R Review — 第 1 层完整性与正确性复核**
   - 复核点：

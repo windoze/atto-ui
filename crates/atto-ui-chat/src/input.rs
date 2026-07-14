@@ -1211,6 +1211,7 @@ enum ChatInputView {
 }
 
 pub struct ChatInputPanel {
+    tag: Option<String>,
     mode: Binding<ChatInputMode>,
     draft: Binding<String>,
     custom: Binding<String>,
@@ -1298,6 +1299,7 @@ impl ChatInputPanel {
             .title("Files")
             .empty_label("No files");
         let mut panel = Self {
+            tag: None,
             mode: mode.clone(),
             draft: draft.clone(),
             custom: custom.clone(),
@@ -1352,6 +1354,12 @@ impl ChatInputPanel {
         F: Fn(ChatInputResponse) + Send + Sync + 'static,
     {
         self.on_submit = Some(Arc::new(callback));
+        self
+    }
+
+    /// Assigns an introspection tag so tests and scripts can read this panel directly.
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
         self
     }
 
@@ -2196,7 +2204,11 @@ impl ::atto_ui::composable::FocusNav for ChatInputPanel {
     }
 }
 
-impl ::atto_ui::composable::DynamicTree for ChatInputPanel {}
+impl ::atto_ui::composable::DynamicTree for ChatInputPanel {
+    fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
+    }
+}
 
 impl ::atto_ui::composable::EventHandling for ChatInputPanel {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {

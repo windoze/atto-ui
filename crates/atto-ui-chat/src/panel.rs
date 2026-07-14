@@ -1,4 +1,6 @@
-use atto_ui::composable::{ComponentContext, EventResult, FocusNav, LayoutParams, Size, VStack};
+use atto_ui::composable::{
+    ComponentContext, ComponentNode, EventResult, FocusNav, LayoutParams, Size, VStack,
+};
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -66,7 +68,15 @@ impl ::atto_ui::composable::Scrollable for ChatPanel {}
 
 impl ::atto_ui::composable::FocusNav for ChatPanel {}
 
-impl ::atto_ui::composable::DynamicTree for ChatPanel {}
+impl ::atto_ui::composable::DynamicTree for ChatPanel {
+    fn children(&self) -> &[ComponentNode] {
+        self.view.children()
+    }
+
+    fn children_mut(&mut self) -> Option<&mut Vec<ComponentNode>> {
+        self.view.children_mut()
+    }
+}
 
 impl ::atto_ui::composable::EventHandling for ChatPanel {
     fn handle_event(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {
