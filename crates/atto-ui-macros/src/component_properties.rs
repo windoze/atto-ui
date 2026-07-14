@@ -288,6 +288,39 @@ pub fn derive_component_properties_impl(input: TokenStream) -> TokenStream {
         }
     });
 
+    let dirty_signals = binding_fields.iter().map(|field| {
+        let ident = &field.ident;
+        match &field.kind {
+            FieldKind::Binding { .. } => {
+                quote! {
+                    signals.push(self.#ident.dirty_signal());
+                }
+            }
+            FieldKind::OptionBinding { .. } => {
+                quote! {
+                    if let Some(binding) = &self.#ident {
+                        signals.push(binding.dirty_signal());
+                    }
+                }
+            }
+        }
+    });
+
+    let delegate_dirty_signals = delegate_fields.iter().map(|(ident, rwlock_like, _ty)| {
+        if *rwlock_like {
+            quote! {
+                {
+                    let guard = self.#ident.read();
+                    signals.extend(guard.__component_dirty_signals());
+                }
+            }
+        } else {
+            quote! {
+                signals.extend(self.#ident.__component_dirty_signals());
+            }
+        }
+    });
+
     quote! {
         impl #impl_generics #name #ty_generics #where_clause {
             fn __component_property_names(&self) -> Vec<&'static str> {
@@ -320,6 +353,13 @@ pub fn derive_component_properties_impl(input: TokenStream) -> TokenStream {
                 }
                 #(#delegate_set)*
                 Err(::atto_ui::ComponentError::unsupported_property(name))
+            }
+
+            fn __component_dirty_signals(&self) -> Vec<::atto_ui::reactive::DirtySignal> {
+                let mut signals = Vec::new();
+                #(#dirty_signals)*
+                #(#delegate_dirty_signals)*
+                signals
             }
         }
 
@@ -356,6 +396,7 @@ pub fn component_properties_impl(_attr: TokenStream, item: TokenStream) -> Token
     let mut has_props = false;
     let mut has_get = false;
     let mut has_set = false;
+    let mut has_dirty_signals = false;
 
     for item in &item_impl.items {
         if let syn::ImplItem::Fn(func) = item {
@@ -364,6 +405,7 @@ pub fn component_properties_impl(_attr: TokenStream, item: TokenStream) -> Token
                 "property_names" => has_props = true,
                 "get_property" => has_get = true,
                 "set_property" => has_set = true,
+                "dirty_signals" => has_dirty_signals = true,
                 _ => {}
             }
         }
@@ -398,6 +440,14 @@ pub fn component_properties_impl(_attr: TokenStream, item: TokenStream) -> Token
                 value: ::atto_ui::ComponentValue,
             ) -> Result<(), ::atto_ui::ComponentError> {
                 self.__component_set_property(name, value)
+            }
+        });
+    }
+
+    if !has_dirty_signals {
+        extra_items.push(syn::parse_quote! {
+            fn dirty_signals(&self) -> Vec<::atto_ui::reactive::DirtySignal> {
+                self.__component_dirty_signals()
             }
         });
     }

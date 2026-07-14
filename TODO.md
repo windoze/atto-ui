@@ -72,11 +72,13 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `DesktopInspector::untagged_interactive_nodes(screen) -> Vec<InspectNode>` 诊断入口，刷新桌面布局后遍历 `build_desktop_tree` 产物，返回 `id == None` 且可交互的节点副本；`InspectNode` 新增 `focusable` 诊断字段，组件节点由 `Component::is_focusable()` 填充，窗口节点由 `WindowKind::is_focusable()` 填充。交互判定覆盖 `is_focusable()`，以及 `checked` / `text` / `selected` / `selected_index` / `selection` / `value` / `index` / `progress` / `active` 等可读属性名；实现仅用于测试期诊断，不改变事件、寻址、属性读写或渲染行为。新增单测构造已标 tag 的 `Checkbox` 和未标 tag 的 `Checkbox`，并给窗口与容器打 tag，断言诊断结果只包含未标 tag 的 `Checkbox`。
   - 验证：`cargo fmt --all`；`cargo test -p atto-ui untagged_interactive_nodes -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M1-4 变更信号聚合（为 M2 `wait_for` 预留）**
+- [x] **[DONE] M1-4 变更信号聚合（为 M2 `wait_for` 预留）**
   - 上下文：reactive 是拉模型——`DirtyFlag`/`DirtyObserver`（`src/reactive/dirty.rs`），`check_and_clear()`（`:43`）返回自上次以来是否 dirty，`observer()`（`:50`）克隆观察者。第 2 层 `wait_for` 需要一个统一的「UI 是否发生过变更」进程内信号，避免轮询屏幕。
   - 实现：提供一个进程内变更检测封装（建议挂在 `DesktopInspector` 或独立小结构），聚合 desktop 关注的 `DirtyFlag`，暴露 `changed_since_last_poll() -> bool` 之类接口。**只做拉模型聚合**，不引入 push 订阅（`SCRIPTING_LAYERS.md` 第 1 层缺口 4 明确「不强求 push」）。
   - 明确边界：本任务只交付「信号读取」原语；真正的 `wait_for(predicate, timeout)` 循环在 M2-5 实现，此处不写等待循环。
   - 验证：单测：改一个 `Binding` 后聚合信号报告 changed；`mark_clean`/poll 后回落 false；全套通过。
+  - 完成记录：新增 `DirtySignal` / `DirtySignalSet` 拉模型封装，基于 `DirtyObserver` 为每个 consumer 独立检测变更，不清除全局 dirty 状态；`Property` / `Binding` 新增 `dirty_signal()`。`Component` trait 新增 `dirty_signals()` 默认空实现，`#[derive(ComponentProperties)]` / `#[component_properties]` 自动为组件 `Binding` 属性生成 dirty 信号，`ComponentTag`、`Visibility`、`Border`、`WindowMinSizeView` 等透明 wrapper 显式合并 inner 信号，避免窗口根 wrapper 截断组件树。新增 `DesktopChangeTracker`，由 `DesktopInspector::change_tracker()` 创建，聚合 menu、status segment、window binding 与组件树 binding，并暴露 `changed_since_last_poll()`；`DesktopInspector::refresh_change_tracker()` 可在窗口 / 组件结构变化后刷新信号集合。实现只提供进程内拉模型信号读取，不实现等待循环，不引入 push 订阅，不改变交互和渲染行为。
+  - 验证：`cargo test -p atto-ui desktop_change_tracker -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M1-5 进程内读值断言范式 + 示范迁移一例 chat 逻辑测试**
   - 上下文：兑现第 1 层独立价值。`crates/atto-ui-chat/tests/pty_chat.rs` 用 `find_text_position`（`:26`，抓屏 + `UnicodeWidthStr` 反算列坐标）和 `wait_for_disclosure_text`（`:54`，`sleep` + 字形 `▶` 推断展开状态）来测逻辑，脆弱且是「OCR 状态」。

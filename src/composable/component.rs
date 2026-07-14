@@ -5,6 +5,7 @@ use ratatui::style::Style;
 
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
+use crate::reactive::DirtySignal;
 use crate::runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use crate::theme::Theme;
 use crate::wm::WindowId;
@@ -485,6 +486,10 @@ pub trait Component:
         Err(ComponentError::unsupported_property(name))
     }
 
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        Vec::new()
+    }
+
     fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
         EventResult::ignored()
     }
@@ -660,6 +665,10 @@ impl Component for Box<dyn Component> {
 
     fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.as_mut().set_property(name, value)
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        self.as_ref().dirty_signals()
     }
 
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {

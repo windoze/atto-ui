@@ -28,7 +28,8 @@ pub use component_api::{
 };
 pub use composable::{find_by_tag, find_by_tag_mut};
 pub use inspect::{
-    DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode, InspectSnapshot, NodeKind,
+    DesktopChangeTracker, DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode,
+    InspectSnapshot, NodeKind,
 };
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,

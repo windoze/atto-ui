@@ -6,7 +6,7 @@ use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, EventResult, ScrollConfig,
     TitleBarContent, TitleBarContext,
 };
-use crate::reactive::Binding;
+use crate::reactive::{Binding, DirtySignal};
 use crate::{
     CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
     ComponentValueCodec, TreeError, TreeOp,
@@ -82,6 +82,12 @@ impl ::atto_ui::composable::Component for Visibility {
             }
             _ => self.inner.set_property(name, value),
         }
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        let mut signals = self.__component_dirty_signals();
+        signals.extend(self.inner.dirty_signals());
+        signals
     }
 
     fn apply_command(&mut self, action: ComponentCommand) -> EventResult {

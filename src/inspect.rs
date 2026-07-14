@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
 use crate::composable::{Component, EventResult, find_by_tag, find_by_tag_mut};
+use crate::reactive::{DirtySignal, DirtySignalSet};
 use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::{Window, WindowId};
 use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
@@ -110,9 +111,46 @@ pub struct DesktopInspector<'a> {
     desktop: &'a mut Desktop,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DesktopChangeTracker {
+    signals: DirtySignalSet,
+}
+
+impl DesktopChangeTracker {
+    pub fn new(signals: Vec<DirtySignal>) -> Self {
+        Self {
+            signals: DirtySignalSet::new(signals),
+        }
+    }
+
+    pub fn changed_since_last_poll(&mut self) -> bool {
+        self.signals.changed_since_last_poll()
+    }
+
+    pub fn refresh(&mut self, signals: Vec<DirtySignal>) {
+        self.signals.refresh(signals);
+    }
+
+    pub fn signal_count(&self) -> usize {
+        self.signals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signals.is_empty()
+    }
+}
+
 impl<'a> DesktopInspector<'a> {
     pub fn new(desktop: &'a mut Desktop) -> Self {
         Self { desktop }
+    }
+
+    pub fn change_tracker(&self) -> DesktopChangeTracker {
+        DesktopChangeTracker::new(collect_desktop_dirty_signals(self.desktop))
+    }
+
+    pub fn refresh_change_tracker(&self, tracker: &mut DesktopChangeTracker) {
+        tracker.refresh(collect_desktop_dirty_signals(self.desktop));
     }
 
     pub fn tree(&mut self, screen: Rect) -> Result<InspectNode, ComponentError> {
@@ -361,6 +399,55 @@ fn draw_desktop(
         .draw(|f| desktop.draw(f))
         .map_err(ComponentError::render_failed)?;
     Ok(terminal)
+}
+
+fn collect_desktop_dirty_signals(desktop: &Desktop) -> Vec<DirtySignal> {
+    let mut signals = Vec::new();
+    collect_menu_dirty_signals(&desktop.menu, &mut signals);
+    signals.extend(desktop.status.dirty_signals());
+    for window in desktop.wm.windows() {
+        collect_window_dirty_signals(window, &mut signals);
+    }
+    signals
+}
+
+fn collect_menu_dirty_signals(menu: &crate::app::MenuBar, signals: &mut Vec<DirtySignal>) {
+    for spec in menu.menus() {
+        signals.push(spec.title.dirty_signal());
+        collect_menu_item_dirty_signals(&spec.items, signals);
+    }
+}
+
+fn collect_menu_item_dirty_signals(items: &[MenuItem], signals: &mut Vec<DirtySignal>) {
+    for item in items {
+        signals.push(item.label.dirty_signal());
+        signals.push(item.shortcut.dirty_signal());
+        signals.push(item.accelerator.dirty_signal());
+        signals.push(item.mnemonic.dirty_signal());
+        signals.push(item.enabled.dirty_signal());
+        collect_menu_item_dirty_signals(&item.submenu, signals);
+    }
+}
+
+fn collect_window_dirty_signals(window: &Window, signals: &mut Vec<DirtySignal>) {
+    signals.push(window.title.dirty_signal());
+    signals.push(window.rect.dirty_signal());
+    signals.push(window.state.dirty_signal());
+    signals.push(window.dock.dirty_signal());
+    signals.push(window.decorations.dirty_signal());
+    signals.push(window.min_size.dirty_signal());
+    signals.push(window.min_size_mode.dirty_signal());
+    signals.push(window.movable.dirty_signal());
+    signals.push(window.resizable.dirty_signal());
+    signals.push(window.closable.dirty_signal());
+    collect_component_dirty_signals(window.view.as_ref(), signals);
+}
+
+fn collect_component_dirty_signals(view: &dyn Component, signals: &mut Vec<DirtySignal>) {
+    signals.extend(view.dirty_signals());
+    for child in view.children() {
+        collect_component_dirty_signals(child.view.as_ref(), signals);
+    }
 }
 
 fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
@@ -1508,6 +1595,62 @@ mod tests {
         assert_eq!(node.name, "Checkbox");
         assert!(node.focusable);
         assert!(node.properties.contains(&"checked".to_string()));
+    }
+
+    #[test]
+    fn desktop_change_tracker_reports_binding_changes_once() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let text = Binding::new("Hello".to_string());
+        let view = Label::new(text.clone()).tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let mut tracker = desktop.inspect().change_tracker();
+        assert!(!tracker.is_empty());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.set("Updated".to_string());
+        assert!(tracker.changed_since_last_poll());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.mark_clean();
+        assert!(!tracker.changed_since_last_poll());
+    }
+
+    #[test]
+    fn desktop_change_tracker_refreshes_new_binding_sources() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let mut tracker = desktop.inspect().change_tracker();
+        assert!(tracker.is_empty());
+
+        let text = Binding::new("First".to_string());
+        let view = Label::new(text.clone()).tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        desktop.inspect().refresh_change_tracker(&mut tracker);
+        assert!(!tracker.is_empty());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.set("Second".to_string());
+        assert!(tracker.changed_since_last_poll());
+        assert!(!tracker.changed_since_last_poll());
     }
 
     #[test]

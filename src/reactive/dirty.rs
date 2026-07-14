@@ -8,6 +8,19 @@ pub struct DirtyFlag {
     cleaned_version: Arc<AtomicU64>,
 }
 
+/// A per-consumer dirty signal bound to one [`DirtyFlag`].
+#[derive(Clone, Debug)]
+pub struct DirtySignal {
+    flag: DirtyFlag,
+    observer: DirtyObserver,
+}
+
+/// A pull-based collection of dirty signals.
+#[derive(Clone, Debug, Default)]
+pub struct DirtySignalSet {
+    signals: Vec<DirtySignal>,
+}
+
 /// Per-consumer observer for [`DirtyFlag`].
 ///
 /// Unlike [`DirtyFlag::mark_clean`], observers do not clear shared state. This allows multiple
@@ -53,6 +66,11 @@ impl DirtyFlag {
         }
     }
 
+    /// Create a per-consumer signal initialized to the current version.
+    pub fn signal(&self) -> DirtySignal {
+        DirtySignal::new(self.clone())
+    }
+
     /// Returns `true` if the flag changed since the observer last checked, updating the observer.
     pub fn check(&self, observer: &mut DirtyObserver) -> bool {
         let version = self.version.load(Ordering::Acquire);
@@ -62,11 +80,85 @@ impl DirtyFlag {
         observer.last_seen_version = version;
         true
     }
+
+    fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.version, &other.version)
+    }
 }
 
 impl Default for DirtyFlag {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl DirtySignal {
+    pub fn new(flag: DirtyFlag) -> Self {
+        let observer = flag.observer();
+        Self { flag, observer }
+    }
+
+    pub fn changed_since_last_poll(&mut self) -> bool {
+        self.flag.check(&mut self.observer)
+    }
+
+    fn observes(&self, flag: &DirtyFlag) -> bool {
+        self.flag.ptr_eq(flag)
+    }
+}
+
+impl DirtySignalSet {
+    pub fn new(signals: Vec<DirtySignal>) -> Self {
+        let mut set = Self::default();
+        set.refresh(signals);
+        set
+    }
+
+    pub fn from_flags(flags: impl IntoIterator<Item = DirtyFlag>) -> Self {
+        Self::new(flags.into_iter().map(DirtySignal::new).collect())
+    }
+
+    pub fn len(&self) -> usize {
+        self.signals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signals.is_empty()
+    }
+
+    pub fn changed_since_last_poll(&mut self) -> bool {
+        let mut changed = false;
+        for signal in &mut self.signals {
+            changed |= signal.changed_since_last_poll();
+        }
+        changed
+    }
+
+    /// Refresh the tracked flags while preserving observers for existing sources.
+    pub fn refresh_from_flags(&mut self, flags: impl IntoIterator<Item = DirtyFlag>) {
+        self.refresh(flags.into_iter().map(DirtySignal::new));
+    }
+
+    /// Refresh the tracked signals while preserving observers for existing sources.
+    pub fn refresh(&mut self, signals: impl IntoIterator<Item = DirtySignal>) {
+        let mut refreshed = Vec::new();
+        for signal in signals {
+            if let Some(existing) = self
+                .signals
+                .iter()
+                .find(|existing| existing.observes(&signal.flag))
+            {
+                refreshed.push(existing.clone());
+            } else if !refreshed
+                .iter()
+                .any(|existing: &DirtySignal| existing.observes(&signal.flag))
+            {
+                refreshed.push(signal);
+            } else {
+                continue;
+            }
+        }
+        self.signals = refreshed;
     }
 }
 

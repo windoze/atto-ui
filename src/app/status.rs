@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::composable::EventResult;
-use crate::reactive::Binding;
+use crate::reactive::{Binding, DirtySignal};
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -159,6 +159,13 @@ impl StatusBar {
     pub fn clear_segments(&mut self) {
         self.segments.clear();
         self.hit_boxes.lock().clear();
+    }
+
+    pub(crate) fn dirty_signals(&self) -> Vec<DirtySignal> {
+        self.segments
+            .iter()
+            .map(|segment| segment.text.dirty_signal())
+            .collect()
     }
 
     pub fn handle_mouse(&self, event: &MouseEvent, area: Rect) -> EventResult {

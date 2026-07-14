@@ -8,7 +8,7 @@ mod property;
 mod queue;
 mod timer;
 
-pub use dirty::{DirtyFlag, DirtyObserver};
+pub use dirty::{DirtyFlag, DirtyObserver, DirtySignal, DirtySignalSet};
 pub use property::{Binding, Property};
 pub use queue::{EventQueue, drain_channel};
 pub use timer::{

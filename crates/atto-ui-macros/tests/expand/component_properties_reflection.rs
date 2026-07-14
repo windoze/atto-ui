@@ -8,6 +8,9 @@ pub mod reactive {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    #[derive(Clone, Debug)]
+    pub struct DirtySignal;
+
     #[derive(Clone)]
     pub struct Binding<T> {
         value: Rc<RefCell<T>>,
@@ -26,6 +29,10 @@ pub mod reactive {
 
         pub fn set(&self, value: T) {
             *self.value.borrow_mut() = value;
+        }
+
+        pub fn dirty_signal(&self) -> DirtySignal {
+            DirtySignal
         }
     }
 
@@ -144,6 +151,7 @@ pub trait Component {
         name: &str,
         value: ComponentValue,
     ) -> Result<(), ComponentError>;
+    fn dirty_signals(&self) -> Vec<reactive::DirtySignal>;
 }
 
 use reactive::Binding;

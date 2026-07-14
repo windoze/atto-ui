@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use super::dirty::{DirtyFlag, DirtyObserver};
+use super::dirty::{DirtyFlag, DirtyObserver, DirtySignal};
 
 /// A reactive property that tracks changes via a shared [`DirtyFlag`].
 #[derive(Debug)]
@@ -75,6 +75,11 @@ impl<T: Clone + PartialEq> Property<T> {
         self.dirty_flag.observer()
     }
 
+    /// Creates a per-consumer dirty signal initialized to the current version.
+    pub fn dirty_signal(&self) -> DirtySignal {
+        self.dirty_flag.signal()
+    }
+
     /// Returns `true` if the value changed since the observer last checked.
     pub fn check_dirty(&self, observer: &mut DirtyObserver) -> bool {
         self.dirty_flag.check(observer)
@@ -138,6 +143,11 @@ impl<T: Clone + PartialEq> Binding<T> {
     /// Creates a per-consumer dirty observer initialized to the current version.
     pub fn dirty_observer(&self) -> DirtyObserver {
         self.dirty_flag.observer()
+    }
+
+    /// Creates a per-consumer dirty signal initialized to the current version.
+    pub fn dirty_signal(&self) -> DirtySignal {
+        self.dirty_flag.signal()
     }
 
     /// Returns `true` if the value changed since the observer last checked.
