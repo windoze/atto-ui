@@ -924,7 +924,13 @@ fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<Terminal
 }
 
 fn main() -> Result<()> {
-    let argv: Vec<String> = env::args().skip(1).collect();
+    let mut argv: Vec<String> = env::args().skip(1).collect();
+    let mut terminal_config_path = default_terminal_config_path();
+    if argv.first().is_some_and(|arg| arg == "--config") && argv.len() >= 2 {
+        terminal_config_path = Some(PathBuf::from(argv.remove(1)));
+        argv.remove(0);
+    }
+
     let shell_spec = TerminalSessionSpec::shell_from_env();
     let command_spec = argv
         .split_first()
@@ -937,7 +943,6 @@ fn main() -> Result<()> {
     } else {
         command_spec.clone()
     };
-    let terminal_config_path = default_terminal_config_path();
     let terminal_config = Binding::new(load_viewer_terminal_config(
         terminal_config_path.as_deref(),
     )?);

@@ -189,13 +189,15 @@ cargo test --workspace --all-targets
   - 完成记录：新增流式 `TmuxDcsPassthroughDecoder` 并挂入 `TerminalShared`，`TerminalHandle::process_output` 现在会在 vt100 parser / DSR 检测前识别完整 `ESC P tmux; ... ESC \` 包裹，把内层 tmux 转义的 `ESC ESC` 严格还原为 `ESC`，再交给既有原生 OSC 处理链。因此 tmux passthrough 内的 OSC 52 继续复用现有 `TerminalCallbacks::copy_to_clipboard`、`TerminalClipboardCopy`、`on_clipboard_copy` 和可注入 `TerminalSystemClipboard` 后端；OSC 9;4 当前没有专用进度后端，解包后仍按既有未处理 OSC 路径安全忽略。解包器保留跨 `process_output` 分片状态，支持包裹在 PTY 读包边界被拆开；非 `tmux;` DCS、畸形 tmux 包裹和超长未完成控制串不会执行内部 OSC，避免当前 vt100 parser 把 DCS 内嵌 OSC 52 误当作原生剪贴板请求。实现只做解包和转交，不新增剪贴板或进度后端。
   - 验证：`cargo fmt --all`；`cargo test -p atto-ui-terminal tmux_dcs -- --nocapture`；`cargo test -p atto-ui-terminal -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M3-R Review — 第 4 层 L0+L1 复核**
+- [x] **[DONE] M3-R Review — 第 4 层 L0+L1 复核**
   - 复核点：
     1. 环境注入受开关控制，默认关闭时 spawn 行为与现状逐字节一致；开启时 `$TMUX`/`$TMUX_PANE` 格式符合程序探测预期。
     2. DCS passthrough 解包正确还原内层转义，转交现有 OSC 52 / 进度路径，不新造后端；畸形输入健壮降级、不误写剪贴板。
     3. 本阶段**未引入对第 3 层的任何依赖**。
     4. 保持 `#![forbid(unsafe_code)]`。
   - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论与手动验证提示（`cargo run -p atto-ui-terminal --example terminal_viewer`）。
+  - 完成记录：第 4 层 L0+L1 复核通过。M3-1 的 tmux 环境注入仍由 `TerminalTmuxEnvironmentConfig::inject` 控制，默认关闭时不写入 `$TMUX` / `$TMUX_PANE`，只保留既有 `TERM=xterm-256color` 与 `COLORTERM=truecolor` spawn 准备行为；开启时 `$TMUX` 按 `socket_path,pid,session_id`，`$TMUX_PANE` 按 `%pane_id`，且只有 `override_term` 开启时才改用 `tmux-256color`。M3-2 的 `TmuxDcsPassthroughDecoder` 在 vt100 parser 前流式解包 `ESC P tmux; ... ESC \`，严格把内层 `ESC ESC` 还原为 `ESC` 后转交既有 OSC 52 clipboard callback / system clipboard 路径；当前无专用 OSC 9;4 进度后端，因此解包后仍按既有未处理 OSC 路径安全忽略。畸形 tmux DCS、非 tmux DCS 和超长未完成控制串不会执行内部 OSC，不会误写剪贴板。复核未发现 M3 引入 Unix socket、IPC server 或第 3 层协议依赖；`rg unsafe . -g '*.rs'` 未发现实际 `unsafe` 块。按测试失败策略，复核中修复了 `terminal_viewer` repro 测试为传配置路径而使用 `unsafe std::env::set_var` 的问题：`terminal_viewer` 现在支持 `--config <path>`，并作为 bin target 暴露给 PTY 测试使用 `CARGO_BIN_EXE_terminal_viewer`，同时保留 `cargo run -p atto-ui-terminal --example terminal_viewer` 手动入口。手动验证提示：可运行 `cargo run -p atto-ui-terminal --example terminal_viewer` 打开真实终端 viewer，检查默认非 tmux 环境与启用配置后的探测行为。
+  - 验证：`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions repro_viewer -- --nocapture`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 ---
 

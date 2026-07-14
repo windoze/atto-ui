@@ -1,38 +1,51 @@
 # 执行计划
 
-## 当前状态
+## 约束说明
 
-- 本轮目标：只完成 `TODO.md` 中第一个未标记 `[DONE]` 的任务，然后停止。
-- 约束：`TODO.md` 是任务顺序和完成状态的唯一权威来源；`PLAN.md` 仅在阶段级计划变化时更新。
-- 说明：本文件记录可审查的执行计划、关键决策和进度；不会记录不可公开的内部推理细节。
+- 我不会记录完整隐性推理过程；本文件记录可审计的执行计划、关键决策、执行进度和验证结果。
+- `TODO.md` 是任务顺序和完成状态的唯一权威来源。
+- 本次只完成 `TODO.md` 中第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
 
-## 步骤计划
+## 初始步骤
 
-1. 读取 `TODO.md`，按标题是否带有 `[DONE]` 判断第一个未完成任务。
-2. 查看最近提交信息，只判断其是否明确提到与该任务直接相关的未完成问题。
-3. 根据当前任务范围读取相关源码、测试和文档，避免开放式历史问题排查。
-4. 完整实现当前任务；若发现必须先修复的具体前置问题，则把最小前置任务插入 `TODO.md` 并停止。
-5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件。
-6. 若测试失败且未被明确排期，立即修复；无法在当前任务内修复时，将最小修复任务加入 `TODO.md` 并停止。
-7. 完成后在 `TODO.md` 中给当前任务标题加 `[DONE]` 并填写完成记录；仅当阶段计划变化时更新 `PLAN.md`。
-8. 提交所有本任务相关改动，提交信息包含任务编号和清晰说明。
-9. 停止，不处理下一个任务。
+1. 读取 `TODO.md`，定位第一个未完成任务。
+2. 检查最近一次提交信息是否明确提到与该任务直接相关的未完成问题。
+3. 读取该任务相关代码和测试，避免进行无关历史问题扫描。
+4. 按任务要求实施修改；如果发现阻塞当前任务的真实前置问题，则最小化新增前置任务到 `TODO.md`，提交后停止。
+5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件；如仅文档变更且已有可复用绿色结果，则在完成记录中说明跳过原因。
+6. 将完成任务的标题加上 `[DONE]`，更新完成记录；仅在阶段计划发生真实变化时更新 `PLAN.md`。
+7. 提交所有与本任务相关的变更，使用清晰提交信息。
 
-## 进度记录
+## 当前进度
 
-- 已创建初始计划，下一步读取 `TODO.md` 识别第一个未完成任务。
-- 已识别第一个未完成任务：`M3-2 L1 DCS tmux; passthrough 解包 → 原生 OSC`。
-- 下一步检查最近提交是否明确提到与 M3-2 直接相关的未完成问题，然后读取 terminal 输出解析、OSC 52、剪贴板后端和相关测试。
-- 最近提交为 `[M3-1] Add tmux environment probe injection`，未明确留下与 M3-2 直接相关的未完成问题。
-- 下一步重点读取 `crates/atto-ui-terminal/src/terminal.rs` 中 `vt100::Callbacks`、输出解析入口、OSC 52 剪贴板派发，以及 `callbacks.rs` 等现有测试。
-- 方案确定：在 `TerminalShared` 增加 tmux DCS passthrough 解包状态；`TerminalHandle::process_output` 先将输入流通过解包器，完整 `ESC P tmux; ... ESC \` 包裹会把内部 `ESC ESC` 还原成 `ESC`，再交给现有 vt100 parser，因此 OSC 52 继续复用现有 `copy_to_clipboard` / 系统剪贴板后端。
-- 降级策略：非 tmux DCS、缺少 `tmux;` 前缀、或已经判定不是目标包裹的内容不解包、不执行内部 OSC；跨 `process_output` 分片的完整 tmux DCS 会被状态机拼回后处理。
-- 测试计划：新增 callbacks 测试覆盖 tmux DCS 包裹 OSC 52、跨分片包裹、畸形 / 非 tmux DCS 不写剪贴板；保留无包裹 OSC 52 现有回归。
-- 实施调整：当前 vt100 parser 会在原始 DCS 内误执行嵌套 OSC，因此非 tmux DCS 与畸形 tmux DCS 改为作为不可执行控制串安全忽略到 ST，满足“不崩、不误写系统剪贴板”的降级要求；完整 tmux DCS 仍解包后交给原生 OSC 路径。
-- 已完成：`TerminalHandle::process_output` 接入流式 `TmuxDcsPassthroughDecoder`；新增 callbacks 测试覆盖完整解包、跨分片解包、畸形包裹和非 tmux DCS 不触发剪贴板。
-- 已通过聚焦验证：`cargo fmt --all`；`cargo test -p atto-ui-terminal tmux_dcs -- --nocapture`；`cargo test -p atto-ui-terminal -- --nocapture`。
-- 下一步运行通用验收：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、完整 workspace 测试。
-- 已通过通用验收：`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
-- 已完成：`TODO.md` 中 M3-2 已标记 `[DONE]` 并补充完成记录与验证命令。
-- 已通过最终检查：`git diff --check`；待提交文件仅包括 `TODO.md`、`terminal.rs`、`callbacks.rs` 和本计划文件。
-- 下一步提交本任务变更并停止。
+- 已创建本计划文件。
+- 已读取 `TODO.md`，第一个未完成任务为 `M3-R Review — 第 4 层 L0+L1 复核`。
+- 已检查最近提交：`105da4c [M3-2] Unwrap tmux DCS passthrough OSC`。该提交属于 M3-R 直接复核范围，没有发现提交信息中明确声明的未完成问题。
+
+## 当前任务执行计划
+
+1. 复核 M3-1 环境注入实现：确认默认关闭、开启时 `$TMUX` / `$TMUX_PANE` 格式、`TERM` 覆盖开关和 spawn 行为边界。
+2. 复核 M3-2 DCS `tmux;` passthrough 解包实现：确认内层 `ESC ESC` 还原、OSC 52 转交现有剪贴板路径、畸形输入健壮降级。
+3. 检查 M3 阶段没有引入第 3 层 IPC / socket 协议依赖，且 crate 仍保持 `#![forbid(unsafe_code)]`。
+4. 运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+5. 复核通过后，将 `TODO.md` 中 `M3-R` 标记为 `[DONE]`，补完成记录和验证记录。
+6. 提交本次 review 相关变更后停止。
+
+## 复核记录
+
+- M3-1：已确认 `TerminalTmuxEnvironmentConfig` 默认 `inject = false`；`prepare_spawn_command` 默认只保持既有 `TERM=xterm-256color` / `COLORTERM=truecolor` 设置，不注入 `TMUX` / `TMUX_PANE`。开启后 `$TMUX` 使用 `socket_path,pid,session_id`，`$TMUX_PANE` 使用 `%pane_id`，`override_term` 才切换到 `tmux-256color`。
+- M3-2：已确认 `TmuxDcsPassthroughDecoder` 在 `vt100` parser 前流式解包 `ESC P tmux; ... ESC \`，严格将内层 `ESC ESC` 还原为 `ESC`，正常 OSC 52 继续走既有 clipboard callback / system clipboard 后端；畸形 tmux DCS 与非 tmux DCS 不转发内部 OSC，避免误写剪贴板。
+- 边界：未发现 `atto-ui-terminal` 引入 Unix socket、IPC server 或第 3 层协议依赖。
+- 发现并修复：终端 PTY 测试中有三处 `unsafe { std::env::set_var(...) }`。为满足无 unsafe 约束，已给 `terminal_viewer` example 增加 `--config <path>` 参数，并将这些测试改为通过命令行传配置路径；`rg unsafe` 现在只剩 `#![forbid(unsafe_code)]` 声明。
+- 验证发现：完整 `cargo test --workspace --all-targets` 中三处 `terminal_viewer` repro 测试失败，因为测试直接执行 `target/debug/examples/terminal_viewer`，该裸 example 二进制未由 full test 保证重建，运行到旧二进制后把 `--config` 当成子进程命令。
+- 修复：将 `terminal_viewer` 同时声明为 cargo bin target，并把测试改为 `env!("CARGO_BIN_EXE_terminal_viewer")`，确保 full test 使用当前构建产物。为避免 Cargo 对同一路径同时作为 example/bin 发 warning，新增 `src/bin/terminal_viewer.rs` wrapper 并保留 `examples/terminal_viewer.rs` 作为手动入口。
+
+## 验证记录
+
+- `cargo fmt --all`：通过。
+- `cargo fmt --all -- --check`：通过。
+- `cargo clippy --workspace --all-targets -- -D warnings`：通过，无 warning。
+- `cargo test -p atto-ui-terminal --test pty_terminal_window_interactions repro_viewer -- --nocapture`：通过，3 passed。
+- `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`：通过。
+- 已更新 `TODO.md` 中 M3-R 的 `[DONE]` 状态、完成记录、验证记录与手动验证提示。此后仅修改任务记录文档，未改代码，不需要重新运行测试。
+- 下一步：检查 git diff / status 并提交本任务变更。

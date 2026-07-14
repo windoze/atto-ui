@@ -30,3 +30,8 @@ test = false
 name = "snapshot_terminal_window_app"
 path = "src/bin/snapshot_terminal_window_app.rs"
 test = false
+
+[[bin]]
+name = "terminal_viewer"
+path = "src/bin/terminal_viewer.rs"
+test = false

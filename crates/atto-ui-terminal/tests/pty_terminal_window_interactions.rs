@@ -1442,21 +1442,21 @@ fn repro_viewer_command_context_menu_keyboard_navigation() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("mkdir");
     let cfg = root.join("terminal.yaml");
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
     let script = concat!(
         "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
         "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
         "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
         "sleep 10"
     );
-    let mut host =
-        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["--config", &cfg_arg, "/bin/sh", "-c", script],
+        110,
+        34,
+    )
+    .expect("spawn viewer");
 
     wait_for_text(&host, "RESULT");
     let (x, y) = find_text_position(&host.screen_contents().unwrap_or_default(), "RESULT")
@@ -1497,20 +1497,20 @@ fn repro_viewer_right_click_does_not_break_keyboard() {
     let cfg = root.join("terminal.yaml");
     // Emit a synthetic OSC 133 command block so a context menu target exists,
     // without relying on real shell integration.
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
     let script = concat!(
         "printf '\\033]133;A\\007$ \\033]133;B\\007echo READY\\r\\n'; ",
         "printf '\\033]133;C\\007READY\\r\\n\\033]133;D;0\\007'; ",
         "exec /bin/sh -i"
     );
-    let mut host =
-        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["--config", &cfg_arg, "/bin/sh", "-c", script],
+        110,
+        34,
+    )
+    .expect("spawn viewer");
     thread::sleep(Duration::from_millis(800));
     wait_for_text(&host, "READY");
 
@@ -1545,14 +1545,9 @@ fn repro_viewer_checkbox_click_hangs() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("mkdir");
     let cfg = root.join("terminal.yaml");
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
-    let mut host = PtyTestHost::spawn(bin, &[], 110, 34).expect("spawn viewer");
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
+    let mut host = PtyTestHost::spawn(bin, &["--config", &cfg_arg], 110, 34).expect("spawn viewer");
     thread::sleep(Duration::from_millis(800));
 
     host.click(1, 0).ok(); // File menu
