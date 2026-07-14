@@ -108,10 +108,12 @@ cargo test --workspace --all-targets
 
 目标：在第 1 层「读」之上加「触发」和「等待」。核心是补齐叶子组件 `apply_command`，并提供按可序列化设计的进程内 `invoke`/`query`/`wait_for`。依赖 M1。
 
-- [ ] **[TODO] M2-1 Checkbox `apply_command`**
+- [x] **[DONE] M2-1 Checkbox `apply_command`**
   - 上下文：`src/widgets/checkbox.rs`，`#[derive(ComponentProperties)]`（`:17`），`impl Component`（`:74`），已有 `checked: Binding<bool>` 属性可被 `get_property("checked")` 读到。当前 `apply_command` 走 trait 默认实现（`component.rs:488`，返回 `ignored()`），外部触发只能退回合成点击。
   - 实现：实现 `Checkbox::apply_command`，`ComponentCommand::Toggle` 翻转 `checked`、`ComponentCommand::Click` 等价于用户点击（与键盘 Space/Enter 及鼠标点击相同的状态转移与回调触发路径，复用组件内既有的 toggle 逻辑，勿另写一套）。命中返回 `EventResult::consumed()`/合适结果，未命中的命令返回 `ignored()`。
   - 验证：进程内单测：`invoke`/`apply_command(Toggle)` 后 `checked` 的 `Binding` 翻转、`on_toggle` 类回调按既有语义触发；`cargo test -p atto-ui checkbox -- --nocapture`；全套通过。
+  - 完成记录：`Checkbox::apply_command` 现支持 `ComponentCommand::Toggle` 与 `ComponentCommand::Click`。两者在组件启用时复用既有私有 `toggle()` 路径，因此与键盘 Space/Enter 和鼠标释放命中共享同一 `checked` binding 翻转与 `on_change_callback` payload 触发逻辑；命中后返回 `EventResult::changed()`，禁用态及其他命令返回 `EventResult::ignored()`。新增进程内单测覆盖 `Toggle` 连续翻转 binding、`Click` 触发 change callback 且 payload 为新 `checked` 值、禁用态 `Toggle` / `Click` 均 ignored 且不触发回调。
+  - 验证：`cargo test -p atto-ui checkbox -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M2-2 Button `apply_command`**
   - 上下文：`src/widgets/button.rs`，`impl Component`（`:97`）。按钮激活当前靠 Enter/Space/鼠标点击触发 `on_activate` 类回调。

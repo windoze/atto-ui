@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::ComponentCommand;
 use crate::composable::{
     Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
     MouseCoordinateSpace,
@@ -72,6 +73,16 @@ impl Checkbox {
 
 #[component_properties]
 impl Component for Checkbox {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::Click | ComponentCommand::Toggle if self.enabled.get() => {
+                self.toggle();
+                EventResult::changed()
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         let enabled = self.enabled.get();
@@ -171,6 +182,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::runtime::{CallbackHandle, CallbackRegistry};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -266,5 +278,72 @@ mod tests {
         );
         assert!(!checkbox.holding);
         assert!(!checked.get());
+    }
+
+    #[test]
+    fn apply_command_toggle_flips_binding() {
+        let checked = Binding::new(false);
+        let mut checkbox = Checkbox::new("Enabled", checked.clone());
+
+        assert_eq!(
+            checkbox.apply_command(ComponentCommand::Toggle),
+            EventResult::changed()
+        );
+        assert!(checked.get());
+
+        assert_eq!(
+            checkbox.apply_command(ComponentCommand::Toggle),
+            EventResult::changed()
+        );
+        assert!(!checked.get());
+    }
+
+    #[test]
+    fn apply_command_click_emits_change_callback_payload() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let checked = Binding::new(false);
+        let callback = CallbackHandle::new(
+            callbacks.clone(),
+            callback_id,
+            Some("checkbox".into()),
+            "change",
+        );
+        let mut checkbox = Checkbox::new("Enabled", checked.clone()).on_change_callback(callback);
+
+        assert_eq!(
+            checkbox.apply_command(ComponentCommand::Click),
+            EventResult::changed()
+        );
+        assert!(checked.get());
+
+        let events = callbacks.drain();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].callback_id, callback_id);
+        assert_eq!(events[0].target_id.as_deref(), Some("checkbox"));
+        assert_eq!(events[0].event, "change");
+        assert_eq!(events[0].payload, Some(ComponentValue::Bool(true)));
+    }
+
+    #[test]
+    fn apply_command_ignored_when_disabled() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let checked = Binding::new(false);
+        let callback = CallbackHandle::new(callbacks.clone(), callback_id, None, "change");
+        let mut checkbox = Checkbox::new("Disabled", checked.clone())
+            .enabled(false)
+            .on_change_callback(callback);
+
+        assert_eq!(
+            checkbox.apply_command(ComponentCommand::Toggle),
+            EventResult::ignored()
+        );
+        assert_eq!(
+            checkbox.apply_command(ComponentCommand::Click),
+            EventResult::ignored()
+        );
+        assert!(!checked.get());
+        assert!(callbacks.is_empty());
     }
 }

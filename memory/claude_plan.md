@@ -1,42 +1,34 @@
 # 执行计划
 
-## 当前状态
+## 当前目标
 
-- 已读取 `TODO.md`，第一个未完成任务是 `M1-R Review — 第 1 层完整性与正确性复核`。
-- 已检查最新提交：`b08b4fe [M1-5] Add chat inspector assertion sample`。该提交对应已完成的 M1-5，没有明确提出阻塞 M1-R 的未完成问题。
-- 不记录隐藏推理链，只记录可审计的决策、依据、步骤和进度。
+- 按 `TODO.md` 的顺序识别第一个标题未带 `[DONE]` 的任务。
+- 只完成这个第一个未完成任务，验证后更新任务记录并提交，然后停止。
+
+## 约束
+
+- `TODO.md` 是任务状态、顺序、依赖和完成记录的权威来源。
+- `PLAN.md` 只在阶段级计划、依赖或完成标准变化时更新。
+- 若发现会阻塞当前任务的真实缺陷或未排期失败测试，必须修复，或在 `TODO.md` 中加入最小必要前置任务并提交后停止。
+- 不接受缩小范围、绕过规格或任务私有特判作为完成方式。
+- 编辑前先说明将修改的内容；编辑时使用小而集中的补丁。
+- 验证顺序为 `cargo fmt`，`cargo clippy --all-targets -- -D warnings`，然后完整测试；若只有文档变化且已有可复用的绿色完整测试结果，可在完成记录中说明跳过。
 
 ## 步骤计划
 
-1. 复核公共 `find_by_tag` / `find_by_tag_mut` 的 root-first DFS 语义、同名 tag 首个匹配、深层嵌套和 mutable 路径；确认 `inspect.rs` 没有残留重复递归实现。
-2. 复核 `DesktopInspector` 第 1 层只读门面：`tree` / `export_snapshot` / `get_property` / `set_property` / `property_names` 的寻址收敛情况，并确认没有把 M2 动作语义混入第 1 层新增能力。
-3. 复核 `untagged_interactive_nodes` 与 dirty change tracker 均为进程内诊断 / 拉模型信号，不改变事件、绘制或交互语义。
-4. 复核 chat 示例迁移：新增测试应通过 `DesktopInspector` 读属性断言状态，不依赖 `find_text_position`、字形推断或屏幕 OCR；原 PTY 端到端覆盖保留。
-5. 确认 `#![forbid(unsafe_code)]` 仍保留在相关 crate 根。
-6. 运行验证，顺序为：
-   - `cargo fmt`
-   - `cargo clippy --all-targets -- -D warnings`
-   - 完整测试套件，按项目需要使用不超过 30 分钟的超时
-7. 若发现未排期的测试失败，必须修复，或在 `TODO.md` 中排入正确顺序的前置/后续任务，不能把当前任务标记完成。
-8. 完成后更新 `TODO.md`：给 M1-R 标题加 `[DONE]`，并填写复核结论与验证记录；本次若只完成任务复核，不更新 `PLAN.md`。
-9. 检查工作区变更，提交所有与本次任务相关且需要纳入的文件，提交信息包含任务编号和清晰描述。
-10. 提交后停止，不继续处理下一个任务。
+1. 读取 `TODO.md`，确定第一个未完成任务及其验收要求。
+2. 查看最新提交信息，判断是否提到与该任务直接相关的未完成问题。
+3. 根据任务内容只读取必要代码和测试上下文。
+4. 实现当前任务，若发现阻塞性前置问题则按要求更新 `TODO.md` 并停止。
+5. 运行格式化、lint 和相关/完整测试，修复所有未排期失败。
+6. 在 `TODO.md` 中将任务标题加上 `[DONE]`，补全完成记录；仅在阶段计划变化时更新 `PLAN.md`。
+7. 检查工作区变更并提交一次清晰的 Git commit。
+8. 停止，不处理下一个任务。
 
 ## 进度记录
 
-- 计划文件已初始化。
-- 已定位当前任务：M1-R Review。
-- 已完成代码层复核：
-  - `find_by_tag` / `find_by_tag_mut` 是 root-first DFS；`inspect.rs` 中 `component_find` / `component_find_mut` 仅委托公共 API。
-  - `property_names` / `get_property` / `set_property` 的组件路径复用公共寻址；M1 新增只读 / 诊断 / change tracker API 不调用动作语义。
-  - `untagged_interactive_nodes` 基于绘制后的 inspect tree 只读筛选；dirty change tracker 基于 `DirtyObserver` 做 per-consumer 拉模型检测，不清除全局 dirty。
-  - chat 示例测试通过 `DesktopInspector` 读取 `mode` / `draft` 等属性；原 PTY OCR/helper 覆盖仍保留在端到端测试中。
-  - `src/lib.rs` 仍保留 `#![forbid(unsafe_code)]`。
-- 下一步开始验证：`cargo fmt`、`cargo clippy`、完整 workspace test。
-- 验证已完成并通过：
-  - `cargo fmt --all`
-  - `cargo fmt --all -- --check`
-  - `cargo clippy --workspace --all-targets -- -D warnings`
-  - `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`
-- 已更新 `TODO.md`，将 M1-R 标记为 `[DONE]` 并补充完成记录与验证记录。
-- 下一步检查工作区变更并提交。
+- 2026-07-15：已写入初始执行计划，下一步读取 `TODO.md` 和最新提交信息。
+- 2026-07-15：已确定第一个未完成任务为 `M2-1 Checkbox apply_command`。最新提交 `[M1-R] Review layer 1 introspection foundation` 未显示与该任务直接相关的未完成问题。接下来读取 `src/widgets/checkbox.rs`、`src/component_api.rs`、`src/composable/component.rs` 及现有 checkbox 测试，目标是复用既有 checkbox 状态切换/回调路径实现 `Toggle` 与 `Click`，再补进程内测试并运行规定验证。
+- 2026-07-15：已在 `Checkbox::apply_command` 中支持 `ComponentCommand::Toggle` 与 `ComponentCommand::Click`，两者均检查 `enabled` 后复用现有 `toggle()` 路径；禁用态和其他命令返回 `EventResult::ignored()`。已新增进程内单测覆盖 binding 翻转、click change callback payload、禁用态 ignored。
+- 2026-07-15：验证已完成并通过：`cargo test -p atto-ui checkbox -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。下一步更新 `TODO.md` 的 M2-1 完成记录并提交。
+- 2026-07-15：已将 `TODO.md` 中 M2-1 标记为 `[DONE]` 并补完成记录/验证记录。完整测试后仅修改 `TODO.md` 与本计划文件，因此不重新运行测试。已检查 diff/status 并提交为 `[M2-1] Implement checkbox apply command`。
