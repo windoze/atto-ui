@@ -129,10 +129,12 @@ cargo test --workspace --all-targets
   - 完成记录：`TextBox::apply_command` 现支持 `ComponentCommand::InputText`。启用态下该命令复用新增私有 `insert_text_at_cursor` 路径，与 `Event::Paste` 和 Ctrl+V 共享同一状态更新逻辑：若存在选区则先替换选区，然后在当前光标处插入文本，随后通过 `sync_binding_from_buffer()` 更新 `text` binding 并触发 `on_change_callback` payload；命中后返回 `EventResult::changed()`。禁用态及其他命令保持 `EventResult::ignored()`。新增进程内单测覆盖 Unicode / emoji 输入后 `get_property("text")` 可立即读回、在 emoji 后的光标插入不会拆裂 grapheme、禁用态不改 binding 且不触发回调。
   - 验证：`cargo test -p atto-ui textbox -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M2-4 Slider `apply_command`**
+- [x] **[DONE] M2-4 Slider `apply_command`**
   - 上下文：`src/widgets/slider.rs`，`impl Component`（`:186`），有 min/max/value 类属性（见 `inspect.rs:724` 白名单含 `min`/`max`/`progress`）。
   - 实现：为 Slider 选一个语义动作落地——建议复用 `ComponentCommand::SelectIndex(usize)` 或 `Custom` 表示「设为某刻度 / 值」，与键盘左右箭头调值走相同的 clamp / 步进逻辑。在完成记录中写明选用的命令形态（供 M2-5 的 `invoke` 与将来 M4 序列化对齐）。
   - 验证：进程内单测：设值后 `value`/`progress` 属性更新且被 min/max clamp；越界值不 panic；全套通过。
+  - 完成记录：`Slider::apply_command` 现支持 `ComponentCommand::SelectIndex(usize)`。命令语义定义为「从规范化后的 `min` 起按 `abs(step)` 计算第 N 个刻度」，即 `min + index * abs(step)`，再复用既有 `snap_value` / `clamp_value` / `set_value_and_emit` 路径落到合法值并触发 `change` callback payload；禁用态及其他命令返回 `EventResult::ignored()`。`Slider` 同时新增只读虚拟属性 `progress`，按 clamp 后的 `(value - min) / (max - min)` 导出归一化进度，零宽范围返回 `0.0`。新增进程内单测覆盖 `SelectIndex` 正常设值、`value` / `progress` 读值更新、越界 index clamp 到 `max` 且不 panic、反向 min/max 规范化、禁用态 ignored 以及 callback payload。
+  - 验证：`cargo test -p atto-ui slider -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M2-5 进程内语义 API：`invoke` / `query` / `wait_for`**
   - 上下文：`inspect.rs` 已有 `action`/`action_target`（`:167`）与 `get_property`（`:136`），`ComponentTarget`（`component_api.rs:52`）支持 `Id`/`Focused`。本任务把它们收敛成第 2 层稳定语义 API，并新增 `wait_for`。

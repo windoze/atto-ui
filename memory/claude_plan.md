@@ -1,30 +1,44 @@
 # 执行计划
 
-## 约束说明
-- 不记录不可公开的逐字内部推理；记录可审计的判断依据、执行步骤、验证顺序和进度。
-- `TODO.md` 是任务顺序和完成状态的唯一来源；只处理第一个标题未带 `[DONE]` 的任务。
-- 先确认最新提交是否直接提到与当前任务相关的未完成问题；若直接阻塞当前任务，则纳入当前任务或作为前置任务写入 `TODO.md`。
-- 每次只完成一个任务；完成后更新 `TODO.md`、运行规定验证、提交 Git，然后停止。
+## 约束
+
+- 输出、进度记录和最终说明使用中文。
+- `TODO.md` 是任务顺序、任务要求、依赖和完成记录的唯一权威来源。
+- 本次只完成 `TODO.md` 中第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
+- 不做开放式历史问题扫描；只处理当前任务直接相关或测试暴露且未被明确排期的问题。
+- 在修改代码前先阅读相关上下文；手工编辑使用小而集中的补丁。
+- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试套件；如果仅文档变更且已有可复用的绿色结果，再按任务要求记录跳过原因。
 
 ## 初始步骤
-1. 读取 `TODO.md`，定位第一个未完成任务。已完成：当前任务为 `M2-3 TextBox apply_command`。
-2. 查看最新提交信息，仅判断是否存在与该任务直接相关的未完成事项。已完成：最新提交为 `[M2-2] Implement button apply command`，未发现直接阻塞 `M2-3` 的未完成事项。
-3. 阅读当前任务涉及的代码、测试和文档，明确实现边界。已完成：`InputText` 按现有粘贴语义实现为在当前光标处插入，若存在选区则先替换选区；禁用态保持 ignored。
+
+1. 读取 `TODO.md`，按标题是否带 `[DONE]` 判断第一个未完成任务。
+2. 查看最新提交信息，只在其明确提到与当前任务直接相关的未完成事项时纳入当前任务或作为前置任务记录到 `TODO.md`。
+3. 阅读当前任务涉及的计划、代码和测试上下文，确认实现范围和验收要求。
+4. 如发现当前任务被未排期的具体前置问题阻塞，最小化新增前置任务到 `TODO.md`，提交后停止。
 
 ## 执行步骤
-1. 按任务要求实现最小但完整的代码或文档变更。已完成：`TextBox::apply_command(ComponentCommand::InputText)` 复用新私有 `insert_text_at_cursor` helper；`Event::Paste` 和 Ctrl+V 也走同一 helper。
-2. 若发现阻塞当前任务的规格不匹配、已存在缺陷或测试失败，优先修复；无法在本任务内正确修复时，将最小前置任务插入 `TODO.md` 并停止。
-3. 变更过程中在关键节点更新本文件，记录已完成步骤和计划调整。已完成：已补 TextBox 进程内单测，验证全部通过。
-4. 使用小而聚焦的补丁修改文件，并避免回退用户已有改动。
 
-## 验证顺序
-1. 运行 `cargo fmt`。已完成：`cargo fmt --all` 通过。
-2. 运行 `cargo clippy --all-targets -- -D warnings`。已完成：`cargo clippy --workspace --all-targets -- -D warnings` 通过。
-3. 运行完整测试套件，优先使用 `cargo test --all --all-targets`，超时不超过 30 分钟。已完成：`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 通过。
-4. 若本次只改文档且自上次完整绿测后无代码变化，可按任务说明跳过完整测试并在完成记录中注明。
+1. 针对第一个未完成任务做最小但完整的实现。
+2. 为新增或修复行为补充聚焦测试，优先遵循仓库现有 PTY/单元测试模式。
+3. 运行格式化、lint 和必要测试；若出现未排期失败，修复或在 `TODO.md` 中排入正确位置。
+4. 将已完成任务标题加上 `[DONE]`，更新其完成记录，必要时只在阶段级计划变化时更新 `PLAN.md`。
+5. 检查工作区变更，确保不回滚用户已有改动。
+6. 用清晰的任务消息提交本次所有相关变更。
+7. 停止，不继续下一个任务。
 
-## 完成步骤
-1. 在 `TODO.md` 对当前任务标题加 `[DONE]`，并填写完成记录和验证结果。已完成。
-2. 仅当阶段级计划变化时更新 `PLAN.md`。
-3. 检查工作树，提交所有与本任务相关的未提交改动。提交前检查已完成：`git diff --check` 通过，当前变更范围为 `TODO.md`、`memory/claude_plan.md`、`src/widgets/textbox.rs`；下一步执行 Git 提交。
-4. 停止，不继续处理下一个任务。
+## 进度记录
+
+- 已创建初始执行计划，下一步读取 `TODO.md` 并确定第一个未完成任务。
+- 已读取 `TODO.md`，第一个未完成任务是 `M2-4 Slider apply_command`。
+- 最新提交为 `[M2-3] Implement textbox apply command`，未明确提到与 `M2-4` 直接相关的未完成事项。
+- 本任务范围：为 `src/widgets/slider.rs` 实现语义级 `apply_command`，选定并记录命令形态，补充进程内测试，验证 `value` / `progress` 更新、min/max clamp 和越界不 panic。
+- 下一步：阅读 `ComponentCommand`、`Slider` 的现有键盘/鼠标调值路径、属性暴露和相邻组件 `apply_command` 实现，确认应复用的状态转移函数。
+- 已确认 `Slider` 现有调值路径集中在 `snap_value` / `clamp_value` / `set_value_and_emit`；`apply_command` 应复用这些 helper。
+- 命令形态选择：使用 `ComponentCommand::SelectIndex(usize)` 表示「从规范化 min 起按 step 计算的第 N 个刻度」，即 `min + index * abs(step)`，再经现有 snap / clamp 逻辑落到合法值。
+- 验收补充：为 `Slider` 增加只读虚拟属性 `progress`，按 clamp 后的 `(value - min) / (max - min)` 返回 `0.0..=1.0`；这样 `TODO.md` 要求的 `value` / `progress` 读值断言都可覆盖。
+- 已修改 `src/widgets/slider.rs`：新增 `SelectIndex` 语义派发、`progress` 只读属性，以及覆盖正常设值、越界 clamp、反向 min/max、禁用态 ignored 和 callback payload 的进程内测试。
+- 下一步：先运行聚焦的 slider 测试；若通过，再按要求执行 fmt、clippy 和完整 workspace 测试。
+- 聚焦验证已通过：`cargo test -p atto-ui slider -- --nocapture`。
+- 下一步：运行 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`，最后运行完整 `cargo test --workspace --all-targets`。
+- 全部验证已通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
+- 下一步：更新 `TODO.md` 的 `M2-4` 标题为 `[DONE]`，写入完成记录和验证记录，然后检查 diff 并提交。
