@@ -180,12 +180,14 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `TerminalTmuxEnvironmentConfig` 作为持久化配置与 builder / handle 运行时开关，默认 `inject = false`，因此默认不向子进程写入 `$TMUX` / `$TMUX_PANE`，`TERM` 仍保持 `xterm-256color`，`COLORTERM` 仍保持 `truecolor`。开启后 `prepare_spawn_command` 注入 `$TMUX=socket_path,pid,session_id` 与 `$TMUX_PANE=%<pane_id>`；`server_pid` 可显式配置，未配置时使用当前进程 id；`override_term` 可选把 `TERM` 改为 `tmux-256color`。`TerminalEmulator::tmux_environment` 与 `TerminalHandle::{set_tmux_environment,tmux_environment}` 提供 builder / handle 入口；`TerminalConfig`、settings draft 与 YAML/JSON roundtrip 会保留 tmux 配置。实现只注入环境变量，不实现 tmux 子命令，也不在默认关闭时额外清理宿主继承环境；PTY 测试通过 `/usr/bin/env -u TMUX -u TMUX_PANE` 控制外层环境，验证默认关闭为空和开启后可读指定值。
   - 验证：`cargo test -p atto-ui-terminal tmux -- --nocapture`；`cargo test -p atto-ui-terminal terminal_config -- --nocapture`；`cargo test -p atto-ui-terminal terminal_settings_draft_round_trips_config -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M3-2 L1 DCS `tmux;` passthrough 解包 → 原生 OSC**
+- [x] **[DONE] M3-2 L1 DCS `tmux;` passthrough 解包 → 原生 OSC**
   - 上下文：程序在 tmux 里发剪贴板 / 进度会用 DCS passthrough 包裹：`\033Ptmux;<escaped-inner>\033\\`（内层每个 `\033` 被转义成 `\033\033`）。解开后内层通常是 OSC 52 剪贴板（`\033]52;...\a`）或 OSC 9;4 进度。终端已有系统剪贴板后端 `TerminalSystemClipboard`（M4.6，terminal.rs）与 OSC 52 处理路径。
   - 实现：在终端输出解析链中识别 `\033Ptmux;` … `\033\\` 包裹，还原内层转义（`\033\033` → `\033`），把还原出的 OSC 52 走现有剪贴板后端（OSC 52 优先、arboard 兜底）、OSC 9;4 走进度处理（若已有则复用，否则先安全忽略）。
   - 降级：非 tmux DCS、包裹不完整 / 解析失败时不崩、不误写系统剪贴板、原样降级。
   - 明确边界：只做「解包 → 转交已有原生处理」，不新增剪贴板 / 进度后端。
   - 验证：单测 / PTY：`\033Ptmux;\033\033]52;c;<base64>\a\033\\` 被解包并写入剪贴板后端（复用 M4.6 可注入的假后端断言）；畸形包裹不崩;无包裹路径回归不变；`cargo test -p atto-ui-terminal`；全套通过。
+  - 完成记录：新增流式 `TmuxDcsPassthroughDecoder` 并挂入 `TerminalShared`，`TerminalHandle::process_output` 现在会在 vt100 parser / DSR 检测前识别完整 `ESC P tmux; ... ESC \` 包裹，把内层 tmux 转义的 `ESC ESC` 严格还原为 `ESC`，再交给既有原生 OSC 处理链。因此 tmux passthrough 内的 OSC 52 继续复用现有 `TerminalCallbacks::copy_to_clipboard`、`TerminalClipboardCopy`、`on_clipboard_copy` 和可注入 `TerminalSystemClipboard` 后端；OSC 9;4 当前没有专用进度后端，解包后仍按既有未处理 OSC 路径安全忽略。解包器保留跨 `process_output` 分片状态，支持包裹在 PTY 读包边界被拆开；非 `tmux;` DCS、畸形 tmux 包裹和超长未完成控制串不会执行内部 OSC，避免当前 vt100 parser 把 DCS 内嵌 OSC 52 误当作原生剪贴板请求。实现只做解包和转交，不新增剪贴板或进度后端。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-ui-terminal tmux_dcs -- --nocapture`；`cargo test -p atto-ui-terminal -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M3-R Review — 第 4 层 L0+L1 复核**
   - 复核点：

@@ -115,6 +115,114 @@ fn terminal_callbacks_report_clipboard_copy_requests() {
 }
 
 #[test]
+fn terminal_tmux_dcs_passthrough_unwraps_osc52_clipboard_copy() {
+    let (tx, rx) = mpsc::channel();
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new()
+        .system_clipboard(move |text: &str| {
+            copied_for_clipboard
+                .lock()
+                .expect("clipboard lock")
+                .push(text.to_string());
+            Ok(())
+        })
+        .on_clipboard_copy(move |copy| {
+            tx.send(copy.clone()).expect("send clipboard copy");
+        });
+    let handle = terminal.handle();
+    let expected = TerminalClipboardCopy {
+        selector: b"c".to_vec(),
+        data: b"aGVsbG8=".to_vec(),
+    };
+
+    handle.process_output(b"\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\");
+
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(1))
+            .expect("clipboard callback"),
+        expected
+    );
+    assert_eq!(handle.last_clipboard_copy(), Some(expected));
+    assert_eq!(handle.copied_text().as_deref(), Some("hello"));
+    assert_eq!(
+        handle.last_system_clipboard_text().as_deref(),
+        Some("hello")
+    );
+    assert_eq!(handle.last_system_clipboard_error(), None);
+    assert_eq!(copied.lock().expect("clipboard lock").as_slice(), ["hello"]);
+}
+
+#[test]
+fn terminal_tmux_dcs_passthrough_handles_split_packets() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new().system_clipboard(move |text: &str| {
+        copied_for_clipboard
+            .lock()
+            .expect("clipboard lock")
+            .push(text.to_string());
+        Ok(())
+    });
+    let handle = terminal.handle();
+
+    handle.process_output(b"\x1bPtmux;\x1b");
+    assert_eq!(handle.last_clipboard_copy(), None);
+    assert_eq!(handle.last_system_clipboard_text(), None);
+
+    handle.process_output(b"\x1b]52;c;Y2h1bms=\x07\x1b\\");
+
+    assert_eq!(handle.copied_text().as_deref(), Some("chunk"));
+    assert_eq!(
+        handle.last_system_clipboard_text().as_deref(),
+        Some("chunk")
+    );
+    assert_eq!(copied.lock().expect("clipboard lock").as_slice(), ["chunk"]);
+}
+
+#[test]
+fn terminal_malformed_tmux_dcs_passthrough_does_not_sync_clipboard() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new().system_clipboard(move |text: &str| {
+        copied_for_clipboard
+            .lock()
+            .expect("clipboard lock")
+            .push(text.to_string());
+        Ok(())
+    });
+    let handle = terminal.handle();
+
+    handle.process_output(b"\x1bPtmux;\x1b]52;c;bm90LWNvcHk=\x07\x1b\\");
+
+    assert_eq!(handle.last_clipboard_copy(), None);
+    assert_eq!(handle.copied_text(), None);
+    assert_eq!(handle.last_system_clipboard_text(), None);
+    assert!(copied.lock().expect("clipboard lock").is_empty());
+}
+
+#[test]
+fn terminal_non_tmux_dcs_passthrough_does_not_sync_clipboard() {
+    let copied = Arc::new(Mutex::new(Vec::new()));
+    let copied_for_clipboard = Arc::clone(&copied);
+    let terminal = TerminalEmulator::new().system_clipboard(move |text: &str| {
+        copied_for_clipboard
+            .lock()
+            .expect("clipboard lock")
+            .push(text.to_string());
+        Ok(())
+    });
+    let handle = terminal.handle();
+
+    handle.process_output(b"\x1bPnot-tmux;\x1b\x1b]52;c;bm90LWNvcHk=\x07\x1b\\");
+
+    assert_eq!(handle.last_clipboard_copy(), None);
+    assert_eq!(handle.copied_text(), None);
+    assert_eq!(handle.last_system_clipboard_text(), None);
+    assert!(copied.lock().expect("clipboard lock").is_empty());
+}
+
+#[test]
 fn terminal_osc52_non_clipboard_selector_does_not_sync_system_clipboard() {
     let (tx, rx) = mpsc::channel();
     let copied = Arc::new(Mutex::new(Vec::new()));
