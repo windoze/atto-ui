@@ -56,14 +56,11 @@ pub enum ComponentTarget {
     Focused,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComponentError {
     NotFound(String),
     UnsupportedProperty(String),
-    InvalidValue {
-        name: String,
-        expected: &'static str,
-    },
+    InvalidValue { name: String, expected: String },
     ActionNotSupported(String),
     RenderFailed(String),
     Timeout(String),
@@ -78,10 +75,10 @@ impl ComponentError {
         ComponentError::UnsupportedProperty(name.into())
     }
 
-    pub fn invalid_value(name: impl Into<String>, expected: &'static str) -> Self {
+    pub fn invalid_value(name: impl Into<String>, expected: impl Into<String>) -> Self {
         ComponentError::InvalidValue {
             name: name.into(),
-            expected,
+            expected: expected.into(),
         }
     }
 

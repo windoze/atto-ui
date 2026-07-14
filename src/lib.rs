@@ -10,6 +10,7 @@ pub mod dialogs;
 pub mod drawing;
 pub mod fuzzy;
 pub mod inspect;
+pub mod protocol;
 pub mod reactive;
 pub mod runtime;
 pub mod task;

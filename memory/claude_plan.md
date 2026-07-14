@@ -1,51 +1,53 @@
 # 执行计划
 
-## 约束说明
+## 当前目标
 
-- 我不会记录完整隐性推理过程；本文件记录可审计的执行计划、关键决策、执行进度和验证结果。
-- `TODO.md` 是任务顺序和完成状态的唯一权威来源。
-- 本次只完成 `TODO.md` 中第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
+按 `TODO.md` 的权威顺序完成第一个标题尚未带 `[DONE]` 的任务，完成后更新任务记录、运行要求的验证、提交 Git 提交，然后停止，不继续处理下一个任务。
 
-## 初始步骤
+## 关键约束
 
-1. 读取 `TODO.md`，定位第一个未完成任务。
-2. 检查最近一次提交信息是否明确提到与该任务直接相关的未完成问题。
-3. 读取该任务相关代码和测试，避免进行无关历史问题扫描。
-4. 按任务要求实施修改；如果发现阻塞当前任务的真实前置问题，则最小化新增前置任务到 `TODO.md`，提交后停止。
-5. 按要求先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件；如仅文档变更且已有可复用绿色结果，则在完成记录中说明跳过原因。
-6. 将完成任务的标题加上 `[DONE]`，更新完成记录；仅在阶段计划发生真实变化时更新 `PLAN.md`。
-7. 提交所有与本任务相关的变更，使用清晰提交信息。
+- 输出和进度记录使用中文。
+- `TODO.md` 是任务顺序、完成状态、依赖和验证要求的唯一权威来源。
+- 任务只有标题显式带 `[DONE]` 才算完成。
+- 不做开放式历史问题扫描；只处理会阻塞当前任务、破坏当前任务指定行为、或当前执行引入的直接回归。
+- 不通过缩小范围、替换表示方式、临时兼容层或特例绕过规格问题。
+- 如发现未安排的测试失败，必须修复，或在 `TODO.md` 中加入最小必要的前置任务并提交后停止。
+- 常规每任务记录只更新 `TODO.md` 和本文件；仅当阶段级计划变化时才更新 `PLAN.md`。
+- 编辑代码前先说明将要修改的内容；手工文件修改使用小而明确的补丁。
+- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试；完整测试最长 30 分钟。
+- 完成后必须提交 Git 提交，并停止。
 
-## 当前进度
+## 步骤计划
 
-- 已创建本计划文件。
-- 已读取 `TODO.md`，第一个未完成任务为 `M3-R Review — 第 4 层 L0+L1 复核`。
-- 已检查最近提交：`105da4c [M3-2] Unwrap tmux DCS passthrough OSC`。该提交属于 M3-R 直接复核范围，没有发现提交信息中明确声明的未完成问题。
+1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务，并记录任务编号、标题、依赖、要求和验证标准。
+2. 查看最近提交信息，判断是否明确提到与当前任务直接相关的未完成问题；如有，将其纳入当前任务或作为前置任务写入 `TODO.md`。
+3. 只读取与当前任务直接相关的项目文件，理解现有实现、测试结构和局部约定。
+4. 如果当前任务能直接实施，则按现有代码风格完成实现；如果发现具体前置阻塞，则向 `TODO.md` 插入最小必要前置任务，保持当前任务未完成，提交后停止。
+5. 为实现添加或调整聚焦测试，覆盖任务要求和相关边界。
+6. 运行 `cargo fmt`。
+7. 运行 `cargo clippy --all-targets -- -D warnings`，修复所有警告。
+8. 运行完整测试套件，优先使用 `cargo test --all --all-targets` 并设置不超过 30 分钟的超时；如任务自身指定更严格验证，一并执行。
+9. 验证通过后，在 `TODO.md` 中给当前任务标题加 `[DONE]`，并更新完成记录，包含变更摘要、验证命令和结果。
+10. 检查 Git 工作区，确认只包含本次任务相关变更以及需要纳入的既有未提交恢复状态。
+11. 创建清晰的 Git 提交。
+12. 停止，不处理下一个任务。
 
-## 当前任务执行计划
+## 进度记录
 
-1. 复核 M3-1 环境注入实现：确认默认关闭、开启时 `$TMUX` / `$TMUX_PANE` 格式、`TERM` 覆盖开关和 spawn 行为边界。
-2. 复核 M3-2 DCS `tmux;` passthrough 解包实现：确认内层 `ESC ESC` 还原、OSC 52 转交现有剪贴板路径、畸形输入健壮降级。
-3. 检查 M3 阶段没有引入第 3 层 IPC / socket 协议依赖，且 crate 仍保持 `#![forbid(unsafe_code)]`。
-4. 运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-5. 复核通过后，将 `TODO.md` 中 `M3-R` 标记为 `[DONE]`，补完成记录和验证记录。
-6. 提交本次 review 相关变更后停止。
-
-## 复核记录
-
-- M3-1：已确认 `TerminalTmuxEnvironmentConfig` 默认 `inject = false`；`prepare_spawn_command` 默认只保持既有 `TERM=xterm-256color` / `COLORTERM=truecolor` 设置，不注入 `TMUX` / `TMUX_PANE`。开启后 `$TMUX` 使用 `socket_path,pid,session_id`，`$TMUX_PANE` 使用 `%pane_id`，`override_term` 才切换到 `tmux-256color`。
-- M3-2：已确认 `TmuxDcsPassthroughDecoder` 在 `vt100` parser 前流式解包 `ESC P tmux; ... ESC \`，严格将内层 `ESC ESC` 还原为 `ESC`，正常 OSC 52 继续走既有 clipboard callback / system clipboard 后端；畸形 tmux DCS 与非 tmux DCS 不转发内部 OSC，避免误写剪贴板。
-- 边界：未发现 `atto-ui-terminal` 引入 Unix socket、IPC server 或第 3 层协议依赖。
-- 发现并修复：终端 PTY 测试中有三处 `unsafe { std::env::set_var(...) }`。为满足无 unsafe 约束，已给 `terminal_viewer` example 增加 `--config <path>` 参数，并将这些测试改为通过命令行传配置路径；`rg unsafe` 现在只剩 `#![forbid(unsafe_code)]` 声明。
-- 验证发现：完整 `cargo test --workspace --all-targets` 中三处 `terminal_viewer` repro 测试失败，因为测试直接执行 `target/debug/examples/terminal_viewer`，该裸 example 二进制未由 full test 保证重建，运行到旧二进制后把 `--config` 当成子进程命令。
-- 修复：将 `terminal_viewer` 同时声明为 cargo bin target，并把测试改为 `env!("CARGO_BIN_EXE_terminal_viewer")`，确保 full test 使用当前构建产物。为避免 Cargo 对同一路径同时作为 example/bin 发 warning，新增 `src/bin/terminal_viewer.rs` wrapper 并保留 `examples/terminal_viewer.rs` 作为手动入口。
-
-## 验证记录
-
-- `cargo fmt --all`：通过。
-- `cargo fmt --all -- --check`：通过。
-- `cargo clippy --workspace --all-targets -- -D warnings`：通过，无 warning。
-- `cargo test -p atto-ui-terminal --test pty_terminal_window_interactions repro_viewer -- --nocapture`：通过，3 passed。
-- `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`：通过。
-- 已更新 `TODO.md` 中 M3-R 的 `[DONE]` 状态、完成记录、验证记录与手动验证提示。此后仅修改任务记录文档，未改代码，不需要重新运行测试。
-- 下一步：检查 git diff / status 并提交本任务变更。
+- 已创建初始计划文件；下一步读取 `TODO.md` 识别当前任务。
+- 已读取 `TODO.md`，本轮首个未完成任务确定为 `M4-1 协议定义（可序列化请求 / 响应）`。
+- 已检查最近一次提交 `cc51320`，提交主题为 `[M3-R] Review tmux L0 L1 layer`，未明确提到与 `M4-1` 直接相关的未完成问题。
+- 当前未提交变更只有本计划文件；下一步读取 `ComponentCommand` / `ComponentTarget` / `ComponentError`、`DesktopInspector` 的 M2 API 和 crate 导出结构。
+- 已读取相关 API：M2 的 `ComponentCommand`、`ComponentTarget`、`ComponentValue`、`DesktopSnapshot`、`InvokeResult`、`WaitCondition`、`WaitResult` 均已 serde 化；`ComponentError` 尚未 serde 化，`InvalidValue.expected` 当前是 `&'static str`。
+- 实施方案：新增 `src/protocol.rs`，定义 JSON-RPC 类 `ProtocolRequest` / `ProtocolResponse`，请求采用顶层 `id` + `method` + `params` 的 tagged enum，响应采用顶层 `id` + `result` 或 `error`。method 覆盖 `query`、`invoke`、`wait_for`、`tree`、`property_names`。`invoke` / `wait_for` / `tree` 参数包含可序列化 `runtime::Rect` 屏幕区域与毫秒 timeout，供 M4-2 转换为进程内 API 使用。
+- 同步方案：把 `ComponentError::InvalidValue.expected` 改为拥有的 `String`，并为 `ComponentError` 派生 `Serialize` / `Deserialize`，使所有错误变体可直接 roundtrip；构造函数继续接收字符串字面量等 `Into<String>` 输入。
+- 测试方案：在 `src/protocol.rs` 单测中覆盖每种请求 roundtrip、每种成功响应 roundtrip、每种 `ComponentError` 错误响应 roundtrip，并检查响应构造器不会同时设置 `result` 和 `error`。
+- 已实现 `src/protocol.rs`、`ComponentError` serde 化和 `src/lib.rs` 模块导出。
+- 聚焦验证 `cargo test -p atto-ui protocol -- --nocapture` 通过。
+- `cargo fmt --all` 和 `cargo fmt --all -- --check` 通过。
+- `cargo clippy --workspace --all-targets -- -D warnings` 通过，无 warning。
+- 30 分钟超时保护下的完整 `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 通过。
+- 下一步更新 `TODO.md`：将 `M4-1` 标记为 `[DONE]`，补完成记录和验证记录；`PLAN.md` 不需要更新。
+- 已更新 `TODO.md` 中 `M4-1` 的 `[DONE]` 状态、完成记录和验证记录；之后只修改了 Markdown 任务记录，不需要重新运行完整测试。
+- 下一步执行 diff 检查、查看 git status，然后提交本任务变更。
+- 已创建本任务提交，提交信息为 `[M4-1] Define scripting protocol messages`；本轮停止，不继续处理 `M4-2`。

@@ -205,10 +205,12 @@ cargo test --workspace --all-targets
 
 目标：Unix domain socket + 自定义 JSON-RPC 类协议，把第 2 层语义 API 暴露给外部进程。依赖 M2 的可序列化 API 设计（决策 C/D）。
 
-- [ ] **[TODO] M4-1 协议定义（可序列化请求 / 响应）**
+- [x] **[DONE] M4-1 协议定义（可序列化请求 / 响应）**
   - 上下文：M2 的 `invoke`/`query`/`wait_for`/`tree` 入参已按可序列化值设计（`ComponentCommand` `Clone+PartialEq`、`ComponentValue` serde、`DesktopSnapshot` serde 见 `inspect.rs:60`）。
   - 实现：定义 serde 序列化的请求 / 响应枚举（JSON-RPC 类：`id` + `method` + `params` / `result` / `error`），method 覆盖 `query`/`invoke`/`wait_for`/`tree`(export_snapshot)/`property_names`。`error` 映射 `ComponentError`（`component_api.rs:58`）。放在合适模块（建议新 crate 或 `src/` 下新模块，避免污染第 1/2 层）。
   - 验证：单测：每种请求 / 响应 JSON roundtrip；`ComponentError` 各变体可序列化；全套通过。
+  - 完成记录：新增 `src/protocol.rs` 作为第 3 层 IPC 协议定义模块，只定义可序列化数据形状，不引入 socket、传输或 UI 主循环分发逻辑。`ProtocolRequest` 采用 JSON-RPC 类顶层 `{ id, method, params }` 外形，`ProtocolMethod` 覆盖 `query`、`invoke`、`wait_for`、`tree`（对应 `DesktopInspector::export_snapshot`）和 `property_names`；`query` / `property_names` 参数直接对齐第 1/2 层 API，`invoke` / `wait_for` / `tree` 参数使用可序列化 `runtime::Rect` 表达屏幕区域，`wait_for` 使用毫秒整数表达 timeout 与可选 poll interval，避免把进程内 `Duration` 暴露到协议边界。`ProtocolResponse` 采用顶层 `{ id, result }` 或 `{ id, error }`，成功结果由 `ProtocolResult::{Query,Invoke,WaitFor,Tree,PropertyNames}` 区分，对应承载 `ComponentValue`、`InvokeResult`、`WaitResult`、`DesktopSnapshot` 和属性名列表。`ComponentError` 现派生 `Serialize` / `Deserialize`，并将 `InvalidValue.expected` 改为拥有的 `String`，使 `NotFound`、`UnsupportedProperty`、`InvalidValue`、`ActionNotSupported`、`RenderFailed`、`Timeout` 均可直接在协议错误响应中 roundtrip；`invalid_value` 构造函数仍接收字符串字面量等 `Into<String>` 输入。新增单测覆盖所有请求类型 JSON roundtrip、所有成功响应类型 JSON roundtrip，以及所有 `ComponentError` 变体的直接序列化和错误响应 roundtrip。
+  - 验证：`cargo test -p atto-ui protocol -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M4-2 Unix socket server + 主循环请求分发**
   - 上下文：`DesktopInspector` 持 `&mut Desktop`，只能在持有 Desktop 的 UI 线程执行。外部请求需线程安全地转交该线程。
