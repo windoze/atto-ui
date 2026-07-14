@@ -122,10 +122,12 @@ cargo test --workspace --all-targets
   - 完成记录：`Button::apply_command` 现支持 `ComponentCommand::Click` 与 `ComponentCommand::Submit`。启用态下两者都复用既有私有 `trigger()` 路径，因此与键盘 Enter/Space 和鼠标释放命中共享同一 `on_click` 闭包与 `on_click_callback` 触发逻辑，并返回 `EventResult::submitted()`；禁用态及其他命令返回 `EventResult::ignored()`。新增进程内单测覆盖 `Click` 触发 `on_click`、`Submit` 触发 callback handle、禁用态 `Click` / `Submit` 均 ignored 且不触发任何回调。
   - 验证：`cargo test -p atto-ui button -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M2-3 TextBox `apply_command`**
+- [x] **[DONE] M2-3 TextBox `apply_command`**
   - 上下文：`src/widgets/textbox.rs`，`impl Component`（`:135`），基于 `TextBuffer`（Unicode 感知），有 `text` 属性。现有 `inspect.rs` 的 `InputText` 兜底靠合成点击 + `Event::Paste`（`inspect.rs:246-271`）。
   - 实现：`ComponentCommand::InputText(s)` 直接把文本写入缓冲（语义级：设置 / 插入文本，遵循组件既有的粘贴 / 输入路径以保持光标、滚动、Unicode 行为一致），使 `get_property("text")` 随即反映新值。明确定义是「替换全部」还是「在光标处插入」——建议对齐现有 `Event::Paste` 语义（插入）并在完成记录中写明。
   - 验证：进程内单测：`apply_command(InputText("你好👋"))` 后 `text` 属性等于预期、宽字符 / emoji 不裂；全套通过。
+  - 完成记录：`TextBox::apply_command` 现支持 `ComponentCommand::InputText`。启用态下该命令复用新增私有 `insert_text_at_cursor` 路径，与 `Event::Paste` 和 Ctrl+V 共享同一状态更新逻辑：若存在选区则先替换选区，然后在当前光标处插入文本，随后通过 `sync_binding_from_buffer()` 更新 `text` binding 并触发 `on_change_callback` payload；命中后返回 `EventResult::changed()`。禁用态及其他命令保持 `EventResult::ignored()`。新增进程内单测覆盖 Unicode / emoji 输入后 `get_property("text")` 可立即读回、在 emoji 后的光标插入不会拆裂 grapheme、禁用态不改 binding 且不触发回调。
+  - 验证：`cargo test -p atto-ui textbox -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M2-4 Slider `apply_command`**
   - 上下文：`src/widgets/slider.rs`，`impl Component`（`:186`），有 min/max/value 类属性（见 `inspect.rs:724` 白名单含 `min`/`max`/`progress`）。

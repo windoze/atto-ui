@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
 };
@@ -129,10 +130,27 @@ impl TextBox {
         self.binding.set(text);
         self.emit_change();
     }
+
+    fn insert_text_at_cursor(&mut self, text: &str) -> EventResult {
+        self.replace_selection_if_any();
+        self.buffer.insert_str(text);
+        self.sync_binding_from_buffer();
+        self.selection_anchor = None;
+        EventResult::changed()
+    }
 }
 
 #[component_properties]
 impl Component for TextBox {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::InputText(text) if self.enabled.get() => {
+                self.insert_text_at_cursor(&text)
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         if area.height == 0 || area.width == 0 {
@@ -323,13 +341,7 @@ impl EventHandling for TextBox {
                     _ => EventResult::ignored(),
                 }
             }
-            Event::Paste(s) => {
-                self.replace_selection_if_any();
-                self.buffer.insert_str(s);
-                self.sync_binding_from_buffer();
-                self.selection_anchor = None;
-                EventResult::changed()
-            }
+            Event::Paste(s) => self.insert_text_at_cursor(s),
             Event::Key(KeyEvent {
                 code,
                 modifiers,
@@ -365,11 +377,7 @@ impl EventHandling for TextBox {
                     KeyCode::Char('v') if mods.contains(KeyModifiers::CONTROL) => {
                         let text = self.clipboard.get();
                         if !text.is_empty() {
-                            self.replace_selection_if_any();
-                            self.buffer.insert_str(&text);
-                            self.sync_binding_from_buffer();
-                            self.selection_anchor = None;
-                            return EventResult::changed();
+                            return self.insert_text_at_cursor(&text);
                         }
                         EventResult::ignored()
                     }
@@ -756,5 +764,73 @@ mod tests {
             EventResult::ignored()
         );
         assert_eq!(value.get(), "");
+    }
+
+    #[test]
+    fn apply_command_input_text_inserts_unicode_and_updates_text_property() {
+        let callbacks = crate::CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(
+            callbacks.clone(),
+            callback_id,
+            Some("textbox".into()),
+            "change",
+        );
+        let value = Binding::new(String::new());
+        let mut textbox = TextBox::new("Name", value.clone()).on_change_callback(callback);
+        let input = "你好👋".to_string();
+
+        assert_eq!(
+            textbox.apply_command(ComponentCommand::InputText(input.clone())),
+            EventResult::changed()
+        );
+
+        assert_eq!(value.get(), input);
+        assert_eq!(
+            textbox.get_property("text"),
+            Some(ComponentValue::String(input.clone()))
+        );
+
+        let events = callbacks.drain();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].callback_id, callback_id);
+        assert_eq!(events[0].target_id.as_deref(), Some("textbox"));
+        assert_eq!(events[0].event, "change");
+        assert_eq!(events[0].payload, Some(ComponentValue::String(input)));
+    }
+
+    #[test]
+    fn apply_command_input_text_inserts_at_cursor_without_splitting_emoji() {
+        let value = Binding::new("a👋b".to_string());
+        let mut textbox = TextBox::new("Name", value.clone());
+
+        textbox.buffer.move_left();
+        assert_eq!(textbox.buffer.cursor_byte_index(), "a👋".len());
+        assert_eq!(
+            textbox.apply_command(ComponentCommand::InputText("你".into())),
+            EventResult::changed()
+        );
+
+        assert_eq!(value.get(), "a👋你b");
+        assert_eq!(textbox.buffer.cursor_byte_index(), "a👋你".len());
+    }
+
+    #[test]
+    fn apply_command_input_text_ignored_when_disabled() {
+        let callbacks = crate::CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(callbacks.clone(), callback_id, None, "change");
+        let value = Binding::new(String::new());
+        let mut textbox = TextBox::new("Name", value.clone())
+            .enabled(false)
+            .on_change_callback(callback);
+
+        assert_eq!(
+            textbox.apply_command(ComponentCommand::InputText("ignored".into())),
+            EventResult::ignored()
+        );
+
+        assert_eq!(value.get(), "");
+        assert!(callbacks.is_empty());
     }
 }
