@@ -26,6 +26,7 @@ pub use app::{
 pub use component_api::{
     ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget, ComponentValueCodec,
 };
+pub use composable::{find_by_tag, find_by_tag_mut};
 pub use inspect::{
     DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode, InspectSnapshot, NodeKind,
 };

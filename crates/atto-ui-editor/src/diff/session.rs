@@ -414,3 +414,42 @@ fn collapsed_hunk_row(hunk_index: usize, row_count: usize, columns: usize) -> Ro
     }
     Row::new(slots)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{TS_STYLE_FUNCTION, TS_STYLE_KEYWORD};
+
+    #[test]
+    fn projection_cells_receive_simple_rust_syntax_styles() {
+        let text = "fn main() {\n    println!(\"hello\");\n}\n";
+        let mut session = DiffSession::new(
+            text,
+            text,
+            LineDiffConfig::default(),
+            DiffMode::SideBySide,
+            true,
+            EditorSyntaxConfig::SimpleRust,
+        );
+
+        session.report_column_width(0, 80);
+        session.report_column_width(1, 80);
+
+        let slot = session
+            .visible_projection()
+            .rows()
+            .iter()
+            .flat_map(|row| row.slots())
+            .find_map(|slot| match slot {
+                RowSlot::Line { cells, .. } => {
+                    let rendered = cells.iter().map(|cell| cell.ch).collect::<String>();
+                    (rendered == "fn main() {").then_some(cells)
+                }
+                RowSlot::Spacer { .. } => None,
+            })
+            .expect("fn main row should be projected");
+
+        assert!(slot[0].styles.contains(&TS_STYLE_KEYWORD));
+        assert!(slot[3].styles.contains(&TS_STYLE_FUNCTION));
+    }
+}

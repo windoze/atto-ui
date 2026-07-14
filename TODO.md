@@ -47,12 +47,14 @@ cargo test --workspace --all-targets
 
 目标：把分散的寻址收敛成公共 `find_by_tag`，把 `DesktopInspector` 明确为第 1 层门面，兑现「逻辑测试改用读值断言」的独立价值。第 1 层不得依赖第 2/3/4 层。
 
-- [ ] **[TODO] M1-1 公共 `find_by_tag` 寻址 API**
+- [x] **[DONE] M1-1 公共 `find_by_tag` 寻址 API**
   - 上下文：目前寻址实现分散——`src/inspect.rs:1147-1170` 有私有递归 `component_find`/`component_find_mut`，`src/runtime/tree.rs:592` 有私有 `ViewPathIndex`。二者都按 `Component::tag()`（`component.rs:354`，返回 `Option<&str>`）匹配。需要一个公共、纯只读、进程内的寻址入口。
   - 实现：在 composable 层（建议 `src/composable/` 下新增或挂到现有 trait/自由函数）提供 `pub fn find_by_tag<'a>(view: &'a dyn Component, tag: &str) -> Option<&'a dyn Component>` 与 `find_by_tag_mut`，语义同现有 `component_find`（先比自身 `tag()`，再 DFS `children()`/`children_mut()`）。`children_mut()` 返回 `Option<&mut Vec<ComponentNode>>`，遍历 `ComponentNode.view`。
   - 收敛：`src/inspect.rs` 的 `component_find`/`component_find_mut` 改为委托新公共函数，删除重复递归；`component_get_property`/`component_set_property`/`component_action`/`component_exists` 行为不变。
   - 从 `src/lib.rs` 导出该 API（`inspect` 与 composable 的 `pub use` 区域，`lib.rs:8-32`）。
   - 验证：新增单测覆盖「命中根节点」「命中深层嵌套子节点」「未命中返回 None」「同名 tag 返回首个」；`cargo test -p atto-ui find_by_tag -- --nocapture`；确认 `inspect.rs` 既有测试（`inspect_tree_finds_tags` 等）仍通过；全套 fmt/clippy/test 通过。
+  - 完成记录：新增 `src/composable/find.rs`，提供公共 `find_by_tag` / `find_by_tag_mut`，按 root-first DFS 先匹配当前 `Component::tag()`，再遍历 `children()` / `children_mut()` 中的 `ComponentNode.view`；从 `src/composable/mod.rs` 与 `src/lib.rs` 导出；`src/inspect.rs` 的私有 `component_find` / `component_find_mut` 已收敛为委托公共 API，属性读取、属性写入、动作派发和存在性检查行为保持不变。新增测试覆盖根节点命中、深层子节点命中、未命中、同名 tag 返回首个，以及 mutable 同名 tag 首个匹配。按测试失败策略，验证过程中同时修复了 selectable `Text` 拖拽 capture / 释放 / 选区渲染行为，并将多处 PTY 中不可稳定读取的样式 / 颜色断言迁移到进程内 buffer 或状态断言，保留对应 PTY 端到端文本与交互覆盖。
+  - 验证：`cargo test -p atto-ui find_by_tag -- --nocapture`；`cargo test -p atto-ui inspect_tree_finds_tags -- --nocapture`；`cargo fmt --all -- --check`；`CARGO_TARGET_DIR=target/codex cargo clippy --workspace --all-targets -- -D warnings`；`CARGO_TARGET_DIR=target/codex cargo test --workspace --all-targets`。后两条使用独立 `target/codex`，避免与本机 VS Code/rust-analyzer 占用的默认 `target` 锁冲突。
 
 - [ ] **[TODO] M1-2 `DesktopInspector` 收敛为第 1 层门面**
   - 上下文：`DesktopInspector`（`src/inspect.rs:108`）已提供 `tree`/`export_snapshot`/`get_property`/`set_property`/`action`，是第 1 层门面雏形。本任务只做「收敛 + 补只读能力」，不加动作能力（动作属第 2 层 M2）。

@@ -2,15 +2,17 @@ use std::sync::Arc;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::component::{
-    Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace,
+    Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
+    MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -113,9 +115,14 @@ impl Component for Text {
         let style = self.style.unwrap_or(ctx.theme.widget.normal);
         let text = self.text_value();
         if self.selectable.get() {
-            let lines =
-                selectable_text_lines(&text, style, ctx.theme.selection, self.selection.range());
-            frame.render_widget(Paragraph::new(lines), area);
+            draw_selectable_text(
+                frame.buffer_mut(),
+                area,
+                &text,
+                style,
+                ctx.theme.selection.add_modifier(Modifier::REVERSED),
+                self.selection.range(),
+            );
         } else {
             frame.render_widget(Paragraph::new(text).style(style), area);
         }
@@ -147,23 +154,36 @@ impl EventHandling for Text {
         match event {
             Event::Mouse(m) => {
                 let Some(area) = self.last_area else {
-                    return EventResult::ignored();
-                };
-                let Some((local_x, local_y)) =
-                    text_mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
-                else {
+                    if matches!(m.kind, MouseEventKind::Up(MouseButton::Left))
+                        && self.selection.is_active()
+                    {
+                        return EventResult::consumed().with_capture(Capture::Release);
+                    }
                     return EventResult::ignored();
                 };
                 let text = self.text_value();
-                let pos = position_for_point(&text, local_x, local_y);
 
                 match m.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
+                        let Some((local_x, local_y)) =
+                            text_mouse_coords_local_to_area(area, *m, ctx.mouse_coordinate_space)
+                        else {
+                            return EventResult::ignored();
+                        };
+                        let pos = position_for_point(&text, local_x, local_y);
                         self.selection.start(pos);
-                        EventResult::consumed()
+                        EventResult::consumed().with_capture(Capture::Request)
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
                         if self.selection.is_active() {
+                            let Some((local_x, local_y)) = text_mouse_coords_clamped_to_area(
+                                area,
+                                *m,
+                                ctx.mouse_coordinate_space,
+                            ) else {
+                                return EventResult::ignored();
+                            };
+                            let pos = position_for_point(&text, local_x, local_y);
                             self.selection.update(pos);
                             EventResult::consumed()
                         } else {
@@ -172,7 +192,15 @@ impl EventHandling for Text {
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         if self.selection.is_active() {
-                            EventResult::consumed()
+                            if let Some((local_x, local_y)) = text_mouse_coords_clamped_to_area(
+                                area,
+                                *m,
+                                ctx.mouse_coordinate_space,
+                            ) {
+                                let pos = position_for_point(&text, local_x, local_y);
+                                self.selection.update(pos);
+                            }
+                            EventResult::consumed().with_capture(Capture::Release)
                         } else {
                             EventResult::ignored()
                         }
@@ -377,6 +405,26 @@ fn text_mouse_coords_local_to_area(
     }
 }
 
+fn text_mouse_coords_clamped_to_area(
+    area: Rect,
+    m: crossterm::event::MouseEvent,
+    coordinate_space: MouseCoordinateSpace,
+) -> Option<(u16, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+
+    let max_x = area.width;
+    let max_y = area.height.saturating_sub(1);
+    match coordinate_space {
+        MouseCoordinateSpace::Absolute => Some((
+            m.column.saturating_sub(area.x).min(max_x),
+            m.row.saturating_sub(area.y).min(max_y),
+        )),
+        MouseCoordinateSpace::Local => Some((m.column.min(max_x), m.row.min(max_y))),
+    }
+}
+
 fn split_text_lines(text: &str) -> Vec<&str> {
     text.split('\n').collect()
 }
@@ -403,20 +451,42 @@ fn position_for_point(text: &str, x: u16, y: u16) -> TextPosition {
     }
 }
 
-fn selectable_text_lines(
+fn draw_selectable_text(
+    buf: &mut Buffer,
+    area: Rect,
     text: &str,
     base_style: Style,
     selection_style: Style,
     selection: Option<TextSelectionRange>,
-) -> Vec<Line<'static>> {
-    split_text_lines(text)
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    for (row, line) in split_text_lines(text)
         .into_iter()
+        .take(usize::from(area.height))
         .enumerate()
-        .map(|(row, line)| {
-            let selected = selection.and_then(|range| selection_cols_for_line(range, row, line));
-            selectable_line(line, base_style, selection_style, selected)
-        })
-        .collect()
+    {
+        let selected = selection.and_then(|range| selection_cols_for_line(range, row, line));
+        draw_selectable_line(
+            buf,
+            area,
+            row as u16,
+            line,
+            SelectableTextStyles {
+                base: base_style,
+                selection: selection_style,
+            },
+            selected,
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SelectableTextStyles {
+    base: Style,
+    selection: Style,
 }
 
 fn selection_cols_for_line(
@@ -445,31 +515,41 @@ fn selection_cols_for_line(
     (start < end).then_some((start, end))
 }
 
-fn selectable_line(
+fn draw_selectable_line(
+    buf: &mut Buffer,
+    area: Rect,
+    row: u16,
     line: &str,
-    base_style: Style,
-    selection_style: Style,
+    styles: SelectableTextStyles,
     selection_cols: Option<(u16, u16)>,
-) -> Line<'static> {
-    if line.is_empty() {
-        return Line::styled(String::new(), base_style);
+) {
+    let width = area.width;
+    if width == 0 {
+        return;
     }
 
-    let mut spans = Vec::new();
     let mut col: u16 = 0;
     for g in line.graphemes(true) {
         let w = (UnicodeWidthStr::width(g) as u16).max(1);
         let next = col.saturating_add(w);
+        if next > width {
+            break;
+        }
         let selected = selection_cols.is_some_and(|(start, end)| start < next && end > col);
         let style = if selected {
-            selection_style
+            styles.selection
         } else {
-            base_style
+            styles.base
         };
-        spans.push(Span::styled(g.to_string(), style));
+        buf.set_stringn(
+            area.x.saturating_add(col),
+            area.y.saturating_add(row),
+            g,
+            usize::from(width.saturating_sub(col)),
+            style,
+        );
         col = next;
     }
-    Line::from(spans)
 }
 
 fn selected_text_for_range(text: &str, range: TextSelectionRange) -> Option<String> {
@@ -528,7 +608,42 @@ fn display_width(text: &str) -> u16 {
 
 #[cfg(test)]
 mod text_selection_tests {
-    use super::{TextPosition, TextSelectionRange, selected_text_for_range};
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    use super::{Text, TextPosition, TextSelectionRange, selected_text_for_range};
+    use crate::composable::{
+        Capture, Component, ComponentContext, EventHandling, EventOutcome, MouseCoordinateSpace,
+        ScrollbarHost, TabMode,
+    };
+    use crate::theme::Theme;
+    use crate::wm::WindowId;
+
+    fn context<'a>(
+        theme: &'a Theme,
+        mouse_coordinate_space: MouseCoordinateSpace,
+    ) -> ComponentContext<'a> {
+        ComponentContext {
+            theme,
+            window_id: WindowId::default(),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space,
+            drag: None,
+        }
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
 
     #[test]
     fn selected_text_for_range_spans_lines() {
@@ -555,6 +670,77 @@ mod text_selection_tests {
         );
 
         assert_eq!(selected.as_deref(), Some("你"));
+    }
+
+    #[test]
+    fn selectable_text_drag_requests_and_releases_pointer_capture() {
+        let theme = Theme::dark();
+        let mut text = Text::new("alpha beta\ngamma delta\nomega").selectable(true);
+        text.last_area = Some(Rect::new(10, 5, 20, 3));
+
+        let down = text.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 16, 5),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+        assert_eq!(down.outcome, EventOutcome::Consumed);
+        assert_eq!(down.capture, Capture::Request);
+
+        let up = text.handle_event(
+            &mouse(MouseEventKind::Up(MouseButton::Left), 15, 6),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+        assert_eq!(up.outcome, EventOutcome::Consumed);
+        assert_eq!(up.capture, Capture::Release);
+        assert_eq!(text.selected_text().as_deref(), Some("beta\ngamma"));
+    }
+
+    #[test]
+    fn selectable_text_mouse_up_outside_area_still_releases_capture() {
+        let theme = Theme::dark();
+        let mut text = Text::new("alpha beta\ngamma delta\nomega").selectable(true);
+        text.last_area = Some(Rect::new(10, 5, 20, 3));
+
+        let down = text.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 16, 5),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+        assert_eq!(down.capture, Capture::Request);
+
+        let up = text.handle_event(
+            &mouse(MouseEventKind::Up(MouseButton::Left), 80, 20),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+        assert_eq!(up.outcome, EventOutcome::Consumed);
+        assert_eq!(up.capture, Capture::Release);
+    }
+
+    #[test]
+    fn selectable_text_draws_selected_cells_with_distinct_style() {
+        let theme = Theme::dark();
+        let mut text = Text::new("alpha beta\ngamma delta\nomega").selectable(true);
+        text.last_area = Some(Rect::new(0, 0, 20, 3));
+        text.handle_event(
+            &mouse(MouseEventKind::Down(MouseButton::Left), 6, 0),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+        text.handle_event(
+            &mouse(MouseEventKind::Up(MouseButton::Left), 5, 1),
+            context(&theme, MouseCoordinateSpace::Absolute),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(20, 3)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                text.draw(
+                    frame,
+                    Rect::new(0, 0, 20, 3),
+                    context(&theme, MouseCoordinateSpace::Absolute),
+                )
+            })
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+
+        assert_ne!(buffer[(6, 0)].style(), buffer[(0, 0)].style());
     }
 }
 

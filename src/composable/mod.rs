@@ -5,6 +5,7 @@ mod clipped;
 mod component;
 mod component_tag;
 mod drag;
+mod find;
 mod for_each;
 mod geom;
 mod grid;
@@ -37,6 +38,7 @@ pub use drag::{
     DragContext, DragOffer, DragOperation, DragPayload, DragPayloadType, DragSource, DropEffect,
     DropFeedback,
 };
+pub use find::{find_by_tag, find_by_tag_mut};
 pub use for_each::{ForEach, ForEachIdentifiable};
 pub use grid::Grid;
 pub use identifiable::Identifiable;

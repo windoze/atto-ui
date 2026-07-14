@@ -89,6 +89,47 @@ fn editor_view_renders_simple_json_highlight_as_green_cells() {
 }
 
 #[test]
+fn editor_view_renders_simple_rust_highlight_as_distinct_cells() {
+    let text: atto_ui::reactive::Binding<String> = "fn main() {\n}\n".to_string().into();
+
+    let cfg = EditorConfig::new(text);
+    cfg.syntax.set(EditorSyntaxConfig::SimpleRust);
+
+    let theme: atto_ui::reactive::Binding<EditorThemeSet> = EditorThemeSet::default().into();
+    let (mut view, _handle) = EditorView::new(cfg, theme);
+
+    let backend = ratatui::backend::TestBackend::new(40, 6);
+    let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+
+    let app_theme = atto_ui::theme::Theme::dark();
+    let ctx = atto_ui::composable::ComponentContext {
+        theme: &app_theme,
+        window_id: atto_ui::wm::WindowId::default(),
+        is_focused: true,
+        scrollbar_host: atto_ui::composable::ScrollbarHost::Component,
+        tab_mode: atto_ui::composable::TabMode::Cycle,
+        mouse_coordinate_space: atto_ui::composable::MouseCoordinateSpace::Absolute,
+        drag: None,
+    };
+
+    terminal
+        .draw(|f| {
+            let area = Rect::new(0, 0, 40, 6);
+            view.draw(f, area, ctx);
+        })
+        .expect("draw");
+
+    let buf = terminal.backend().buffer();
+    let fn_cell = buf.cell((6, 0)).expect("fn cell");
+    let main_cell = buf.cell((9, 0)).expect("main cell");
+
+    assert_eq!(fn_cell.symbol(), "f");
+    assert_eq!(main_cell.symbol(), "m");
+    assert_eq!(fn_cell.style().fg, Some(ratatui::style::Color::LightBlue));
+    assert_eq!(main_cell.style().fg, Some(ratatui::style::Color::Cyan));
+}
+
+#[test]
 fn editor_view_mouse_wheel_scrolls_even_at_viewport_edge() {
     let text: atto_ui::reactive::Binding<String> = (0..80)
         .map(|i| format!("LINE {:02}", i))

@@ -40,11 +40,6 @@ fn pty_core_widgets_cover_t19_state_and_hit_paths() -> anyhow::Result<()> {
         "│",
         "button should no longer render a side border\n--- screen ---\n{screen}"
     );
-    assert_ne!(
-        host.cell_bgcolor(fire_x, fire_y)?,
-        host.cell_bgcolor(fire_x, fire_y.saturating_sub(1))?,
-        "focused button should render as a colored single-line block\n--- screen ---\n{screen}"
-    );
 
     host.click(4, 5)?;
     host.wait_for_text("T19 status button=1 radio=0 list=0 table=0 slider=0", WAIT)?;

@@ -2845,6 +2845,115 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_click_adds_visible_row_to_selection_set() {
+        use atto_ui::composable::{EventHandling, TabMode};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let theme = atto_ui::theme::Theme::dark();
+        let area = Rect::new(0, 5, 30, 12);
+        let selection = Binding::new(None);
+        let selections = Binding::new(BTreeSet::new());
+        let mut tree =
+            FileTree::new_with_selections("Files", sample_tree(true), selection, selections);
+        let ctx = ComponentContext {
+            theme: &theme,
+            window_id: atto_ui::wm::WindowId::from_raw(1),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        };
+        let backend = TestBackend::new(30, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| tree.draw(f, area, ctx)).expect("draw");
+
+        EventHandling::handle_event(
+            &mut tree,
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 4,
+                row: area.y + 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            ctx,
+        );
+        EventHandling::handle_event(
+            &mut tree,
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 4,
+                row: area.y + 5,
+                modifiers: KeyModifiers::CONTROL,
+            }),
+            ctx,
+        );
+
+        assert_eq!(
+            tree.selected_ids(),
+            BTreeSet::from([FileTreeNodeId::new(2), FileTreeNodeId::new(6)])
+        );
+    }
+
+    #[test]
+    fn shift_click_selects_visible_row_range() {
+        use atto_ui::composable::{EventHandling, TabMode};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let theme = atto_ui::theme::Theme::dark();
+        let area = Rect::new(0, 5, 30, 12);
+        let selection = Binding::new(None);
+        let selections = Binding::new(BTreeSet::new());
+        let mut tree =
+            FileTree::new_with_selections("Files", sample_tree(true), selection, selections);
+        let ctx = ComponentContext {
+            theme: &theme,
+            window_id: atto_ui::wm::WindowId::from_raw(1),
+            is_focused: true,
+            scrollbar_host: ScrollbarHost::Component,
+            tab_mode: TabMode::Cycle,
+            mouse_coordinate_space: MouseCoordinateSpace::Absolute,
+            drag: None,
+        };
+        let backend = TestBackend::new(30, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| tree.draw(f, area, ctx)).expect("draw");
+
+        EventHandling::handle_event(
+            &mut tree,
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 4,
+                row: area.y + 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            ctx,
+        );
+        EventHandling::handle_event(
+            &mut tree,
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 4,
+                row: area.y + 5,
+                modifiers: KeyModifiers::SHIFT,
+            }),
+            ctx,
+        );
+
+        assert_eq!(
+            tree.selected_ids(),
+            BTreeSet::from([
+                FileTreeNodeId::new(2),
+                FileTreeNodeId::new(3),
+                FileTreeNodeId::new(4),
+                FileTreeNodeId::new(6),
+            ])
+        );
+    }
+
+    #[test]
     fn visible_range_selection_uses_only_visible_rows() {
         let glyphs = FileTreeGlyphs::default();
         let roots = sample_tree(false);

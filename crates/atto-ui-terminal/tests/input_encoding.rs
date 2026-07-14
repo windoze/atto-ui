@@ -8,8 +8,8 @@ use atto_ui::theme::Theme;
 use atto_ui::wm::WindowId;
 use atto_ui_terminal::{
     TerminalColorSpec, TerminalCommandBlockPresentation, TerminalConfig, TerminalCursorShape,
-    TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand, TerminalSelectionPosition,
-    TerminalShortcut, TerminalShortcutConfig, TerminalShortcutModifier,
+    TerminalCursorShapeConfig, TerminalEmulator, TerminalPrefixBinding, TerminalPrefixCommand,
+    TerminalSelectionPosition, TerminalShortcut, TerminalShortcutConfig, TerminalShortcutModifier,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
@@ -1016,6 +1016,8 @@ fn terminal_apply_config_updates_live_terminal() {
         ..TerminalConfig::default()
     };
     config.alternate_screen_scroll.enabled = false;
+    config.palette.ansi[1] = TerminalColorSpec::new("#123456");
+    config.cursor.default_shape = TerminalCursorShapeConfig::Underline;
     let mut terminal = TerminalEmulator::new();
     let handle = terminal.handle();
 
@@ -1033,6 +1035,26 @@ fn terminal_apply_config_updates_live_terminal() {
     );
     assert!(result.is_consumed());
     assert_eq!(handle.take_input(), b"");
+
+    handle.process_output_str("\x1b[?1049l\x1b[31mR\x1b[mD");
+    let mut draw_terminal = Terminal::new(TestBackend::new(4, 1)).expect("test terminal");
+    draw_terminal
+        .draw(|f| terminal.draw(f, Rect::new(0, 0, 4, 1), context(&theme)))
+        .expect("draw after live config apply");
+    let red = draw_terminal
+        .backend()
+        .buffer()
+        .cell((0, 0))
+        .expect("red cell");
+    assert_eq!(red.fg, Color::Rgb(0x12, 0x34, 0x56));
+    let cursor = draw_terminal
+        .backend()
+        .buffer()
+        .cell((2, 0))
+        .expect("cursor cell");
+    assert!(cursor.modifier.contains(Modifier::UNDERLINED));
+    assert!(!cursor.modifier.contains(Modifier::REVERSED));
+    assert_eq!(handle.cursor_shape(), TerminalCursorShape::Underline);
 
     assert_eq!(
         component_key_input_with_terminal(

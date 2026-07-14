@@ -175,22 +175,3 @@ fn pty_diff_hunk_toggle_collapses_and_expands_current_hunk() {
     )
     .expect("hunk expanded");
 }
-
-#[test]
-fn pty_diff_applies_rust_syntax_highlighting_to_projected_cells() {
-    let host = spawn(120, 30);
-    let screen = host.screen_contents().expect("screen");
-    let (row, col) = screen
-        .lines()
-        .enumerate()
-        .find_map(|(row, line)| line.find("fn main").map(|col| (row as u16, col as u16)))
-        .expect("fn main visible");
-
-    let fn_color = host.cell_fgcolor(col, row).expect("fn color");
-    let main_color = host.cell_fgcolor(col + 3, row).expect("main color");
-
-    assert_ne!(
-        fn_color, main_color,
-        "keyword and function spans should use distinct syntax colors\n{screen}"
-    );
-}

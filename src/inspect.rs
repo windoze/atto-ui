@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
-use crate::composable::{Component, EventResult};
+use crate::composable::{Component, EventResult, find_by_tag, find_by_tag_mut};
 use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::{Window, WindowId};
 use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
@@ -1145,28 +1145,11 @@ fn focused_component_in_view(view: &mut dyn Component) -> Option<&mut dyn Compon
 }
 
 fn component_find<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
-    if view.tag() == Some(id) {
-        return Some(view);
-    }
-    for child in view.children() {
-        if let Some(found) = component_find(child.view.as_ref(), id) {
-            return Some(found);
-        }
-    }
-    None
+    find_by_tag(view, id)
 }
 
 fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a mut dyn Component> {
-    if view.tag() == Some(id) {
-        return Some(view);
-    }
-    let children = view.children_mut()?;
-    for child in children {
-        if let Some(found) = component_find_mut(child.view.as_mut(), id) {
-            return Some(found);
-        }
-    }
-    None
+    find_by_tag_mut(view, id)
 }
 
 #[cfg(test)]
