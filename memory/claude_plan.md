@@ -1,29 +1,30 @@
-# 执行计划
+执行计划（初始）
 
-## 当前状态
-- 本轮目标：按照 `TODO.md` 的顺序完成第一个未完成任务，然后停止。
-- 约束：`TODO.md` 是任务顺序、要求、依赖和完成记录的唯一权威来源；只完成一个任务；完成后必须更新 `TODO.md` 并提交 Git。
-- 说明：这里记录的是可公开的执行思路、计划和进度，不包含不可见的内部推理细节。
-- 已识别当前任务：`M2-6 用 wait_for / invoke 迁移一批 chat 逻辑测试`。
-- 最新提交：`f195d6c [M2-5] Add in-process semantic scripting API`，与当前任务直接相关，作为本任务可用前置能力处理。
+当前约束：
+- 使用中文记录进度和对用户输出。
+- `TODO.md` 是任务顺序、完成状态和验收要求的唯一权威来源。
+- 本轮只完成第一个标题未带 `[DONE]` 的任务，完成后提交并停止。
+- 在修改代码前先理解当前任务、相关实现和测试；若发现当前任务被具体缺陷阻塞，优先修复阻塞项，或将最小必要前置任务写入 `TODO.md` 后提交并停止。
+- 不做开放式历史问题扫描，不跳过 review 类任务，不用 workaround 代替规格实现。
 
-## 步骤计划
-1. 读取 `TODO.md`，按标题是否带有 `[DONE]` 判断第一个未完成任务。
-2. 查看最新提交信息，确认是否有与该任务直接相关的未完成事项；仅在其阻塞当前任务时纳入范围或写入 `TODO.md` 作为前置任务。
-3. 阅读当前任务涉及的项目文档和代码区域，确定实现边界、测试要求和依赖。
-4. 实现当前任务；如果发现阻塞性规格不匹配或必须新增前置任务，则更新 `TODO.md`，提交后停止。
-5. 按要求运行 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`，再运行完整测试套件；发现未调度失败时必须修复或写入 `TODO.md`。
-6. 完成后将当前任务标题加上 `[DONE]`，补充完成记录；只有阶段级计划变化时才更新 `PLAN.md`。
-7. 提交所有相关变更，提交信息包含任务编号和明确动作。
-8. 停止，不继续处理下一项任务。
+步骤计划：
+1. 读取 `TODO.md`，严格按标题 `[DONE]` 前缀识别第一个未完成任务。
+2. 检查最新提交信息，仅在它明确提到与当前任务直接相关的未完成问题时纳入当前任务或写入前置任务。
+3. 阅读当前任务涉及的计划、代码和测试上下文，确认需求、依赖和验收命令。
+4. 如任务可直接实施，进行小范围、分步代码修改；修改前在本文件追加实际编辑计划。
+5. 先运行 `cargo fmt`，再运行 `cargo clippy --all-targets -- -D warnings`，最后运行完整测试套件（若仅文档变更且有可复用绿色结果，则按要求记录跳过原因）。
+6. 若测试失败且未被后续任务明确安排，立即修复或在 `TODO.md` 中增加最小必要前置任务，并保持当前任务未完成。
+7. 完成后更新 `TODO.md`：在任务标题前加 `[DONE]`，并更新 completion record；仅当阶段级计划变化时修改 `PLAN.md`。
+8. 检查 git diff，提交本轮所有相关改动，提交信息包含任务编号和实际完成内容。
+9. 停止，不继续处理下一项任务。
 
-## 进度记录
-- 已创建本计划文件，下一步读取 `TODO.md` 识别第一个未完成任务。
-- 已读取 `TODO.md` 并确认第一个未完成任务为 `M2-6`；下一步读取 `crates/atto-ui-chat/tests/pty_chat.rs`、现有 inspect chat 测试和 chat 组件实现。
-- 已实现 `ChatInputPanel` 的语义 `InputText` / `SelectIndex` / `Submit` 命令，复用现有文本粘贴、selection clamp 和 `emit_response` 路径。
-- 已新增进程内 inspect 测试，使用 `invoke` / `wait_for` / `wait_for_predicate` 覆盖 text submit、choice/confirm submit、streaming queue。
-- 已删除两段被迁移的 PTY 纯逻辑用例，保留模式渲染、补全、滚动和消息列表端到端 PTY 覆盖。
-- 聚焦验证已通过：`cargo test -p atto-ui-chat --test inspect_chat -- --nocapture`、`cargo test -p atto-ui-chat --test pty_chat -- --nocapture`、`cargo test -p atto-ui-chat`。
-- 仓库级验证已通过：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
-- 在收紧 `ChatInputPanel::supports_command` 为当前 mode 感知后，已重新通过：`cargo test -p atto-ui-chat --test inspect_chat -- --nocapture`、`cargo test -p atto-ui-chat`、`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
-- 已将 `TODO.md` 中 `M2-6` 标记为 `[DONE]` 并补充完成记录与验证记录；`PLAN.md` 未改动，因为阶段级计划无变化。
+进度记录：
+- 初始计划已创建，下一步读取 `TODO.md`。
+- 已读取 `TODO.md`，第一个标题未带 `[DONE]` 的任务是 `M2-R Review — 第 2 层完整性与正确性复核`。
+- 下一步检查最新提交信息是否明确提到与 M2-R 直接相关的未完成问题；随后复核 M2 实现与测试。
+- 最新提交 `[M2-6] Migrate chat logic tests to semantic API` 未声明直接相关的未完成事项。
+- 已复核 M2 关键实现：四个叶子组件的 `apply_command` 与键盘/鼠标路径复用同一状态函数；`invoke` 语义优先且返回可观测 dispatch；`query` 复用第 1 层属性读取；`wait_for` 使用进程内 `WaitCondition::PropertyEquals` 循环，不读取屏幕字符。
+- 已复核 wrapper 转发与层级依赖：tag/border/visibility/runtime/min-size 等透明包装会转发 `supports_command` / `apply_command`；M2 代码未发现第 3/4 层依赖。下一步执行格式化、lint 和完整测试。
+- 验证已通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
+- 下一步更新 `TODO.md`，将 `M2-R Review` 标记为 `[DONE]` 并写入复核结论与验证记录。
+- 已更新 `TODO.md`：`M2-R Review` 标题改为 `[DONE]`，完成记录和验证记录已写入。下一步提交本轮改动。

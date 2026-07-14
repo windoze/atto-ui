@@ -155,7 +155,7 @@ cargo test --workspace --all-targets
   - 完成记录：`ChatInputPanel` 现按当前 input mode 声明并支持第 2 层语义 `ComponentCommand::InputText` / `SelectIndex` / `Submit`，让可执行命令通过 `DesktopInspector::invoke` 走 `InvokeDispatch::Semantic`。`InputText` 复用既有 `handle_text_paste` / `TextArea::replace_byte_range` 路径，保持多行粘贴归一化、光标和 draft binding 行为一致；`SelectIndex` 复用 choice / confirm 的既有 selection clamp 规则；`Submit` 复用 `emit_response`，因此 text / choice / confirm 提交、streaming queue、清空 draft/custom 与回调仍走原状态转移路径。新增 `crates/atto-ui-chat/tests/inspect_chat.rs` 进程内迁移覆盖：通过 tagged `ChatInputPanel` 构造 `Desktop`，使用 `invoke` / `wait_for(PropertyEquals)` / `wait_for_predicate` 验证 text submit、choice/confirm selection+submit、streaming queue 释放，不依赖 PTY 坐标、`find_text_position`、字形推断或裸 `sleep` 轮询。`crates/atto-ui-chat/tests/pty_chat.rs` 删除已迁移的提交回调与 input queue 纯逻辑用例，保留 input mode 渲染烟测、补全、滚动、消息列表、approval、tool disclosure 等 PTY 端到端覆盖。
   - 验证：`cargo test -p atto-ui-chat --test inspect_chat -- --nocapture`；`cargo test -p atto-ui-chat --test pty_chat -- --nocapture`；`cargo test -p atto-ui-chat`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M2-R Review — 第 2 层完整性与正确性复核**
+- [x] **[DONE] M2-R Review — 第 2 层完整性与正确性复核**
   - 复核点：
     1. 四个叶子组件（Checkbox/Button/TextBox/Slider）的 `apply_command` 与各自既有鼠标 / 键盘交互**走同一状态转移与回调路径**，无重复 / 分叉逻辑；禁用态正确 `ignored()`。
     2. `invoke` 语义优先、坐标兜底，且路径可观测；`query` 与第 1 层 `get_property` 语义一致。
@@ -163,6 +163,8 @@ cargo test --workspace --all-targets
     4. API 入参可序列化（为 M4 铺路），无引用 / 闭包泄漏到边界（`wait_for` predicate 例外并记录）。
     5. 第 2 层不依赖第 3/4 层。
   - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论。
+  - 完成记录：第 2 层复核通过。`Checkbox`、`Button`、`TextBox`、`Slider` 的 `apply_command` 均与既有键盘 / 鼠标路径复用同一状态转移与回调函数：checkbox 复用 `toggle()`，button 复用 `trigger()`，textbox 复用插入 / paste 路径，slider 复用 `set_value_and_emit` 的 clamp / step / callback 逻辑；禁用态均返回 `EventResult::ignored()` 且不触发回调。`DesktopInspector::invoke` 按 menu/window/component 三段式语义优先派发，语义不可用时保留坐标 / paste 兜底，并通过 `InvokeDispatch::{Semantic, CoordinateFallback, Unsupported}` 暴露路径；`query` 与第 1 层 `get_property` 对齐，`wait_for` 使用进程内 `WaitCondition::PropertyEquals` 循环 draw / dirty signal / query，不轮询屏幕字符，超时返回 `ComponentError::Timeout`。M2 API 入参保持可序列化值形状（`ComponentTarget`、`ComponentCommand`、属性名字符串、`ComponentValue`、`WaitCondition`），`wait_for_predicate` 作为进程内闭包便利入口留在 M2 边界并已记录为 M4 例外；M2 实现未引入第 3/4 层依赖。chat 迁移后的 `inspect_chat.rs` 使用 `invoke` / `wait_for` / 读值断言，原 PTY 文件中保留的坐标 helper 仅用于端到端渲染 / 交互覆盖。
+  - 验证：`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 ---
 
