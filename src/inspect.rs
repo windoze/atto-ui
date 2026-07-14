@@ -32,6 +32,7 @@ pub struct InspectNode {
     pub type_id: String,
     pub bounds: Option<Rect>,
     pub properties: Vec<String>,
+    pub focusable: bool,
     pub window_id: Option<WindowId>,
     pub children: Vec<InspectNode>,
 }
@@ -157,6 +158,15 @@ impl<'a> DesktopInspector<'a> {
             return Ok(names);
         }
         Err(ComponentError::not_found(id))
+    }
+
+    /// Returns interactive nodes that cannot be targeted by tag-based scripts.
+    pub fn untagged_interactive_nodes(&mut self, screen: Rect) -> Vec<InspectNode> {
+        let _ = draw_desktop(self.desktop, screen);
+        let tree = build_desktop_tree(self.desktop, screen);
+        let mut nodes = Vec::new();
+        collect_untagged_interactive_nodes(&tree, &mut nodes);
+        nodes
     }
 
     pub fn set_property(
@@ -362,6 +372,7 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
         type_id: "Desktop".to_string(),
         bounds: Some(screen),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -374,6 +385,7 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
         type_id: "StatusBar".to_string(),
         bounds: Some(layout.status_bar),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     });
@@ -393,6 +405,7 @@ fn build_menu_tree(menu: &crate::app::MenuBar, layout: DesktopLayout) -> Inspect
         type_id: "MenuBar".to_string(),
         bounds: Some(layout.menu_bar),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -410,6 +423,7 @@ fn build_menu_spec_tree(menu: &MenuSpec) -> InspectNode {
         type_id: "Menu".to_string(),
         bounds: None,
         properties: vec!["title".to_string()],
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -427,6 +441,7 @@ fn build_menu_item_tree(item: &MenuItem) -> InspectNode {
         type_id: "MenuItem".to_string(),
         bounds: None,
         properties: vec!["label".to_string(), "enabled".to_string()],
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -450,6 +465,7 @@ fn build_window_tree(window: &Window) -> InspectNode {
             "state".to_string(),
             "kind".to_string(),
         ],
+        focusable: window.kind.is_focusable(),
         window_id: Some(window.id),
         children: Vec::new(),
     };
@@ -471,6 +487,7 @@ fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId)
             .into_iter()
             .map(|s| s.to_string())
             .collect(),
+        focusable: view.is_focusable(),
         window_id: Some(window_id),
         children: Vec::new(),
     };
@@ -482,6 +499,39 @@ fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId)
     }
 
     node
+}
+
+fn collect_untagged_interactive_nodes(node: &InspectNode, nodes: &mut Vec<InspectNode>) {
+    if node.id.is_none() && is_interactive_inspect_node(node) {
+        nodes.push(node.clone());
+    }
+
+    for child in &node.children {
+        collect_untagged_interactive_nodes(child, nodes);
+    }
+}
+
+fn is_interactive_inspect_node(node: &InspectNode) -> bool {
+    node.focusable
+        || node
+            .properties
+            .iter()
+            .any(|name| is_interactive_component_property(name))
+}
+
+fn is_interactive_component_property(name: &str) -> bool {
+    matches!(
+        name,
+        "active"
+            | "checked"
+            | "index"
+            | "progress"
+            | "selected"
+            | "selected_index"
+            | "selection"
+            | "text"
+            | "value"
+    )
 }
 
 fn build_desktop_snapshot_tree(desktop: &Desktop, screen: Rect) -> DesktopSnapshotNode {
@@ -1208,7 +1258,9 @@ fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a m
 mod tests {
     use super::*;
     use crate::app::MenuBar;
-    use crate::composable::{ComponentTagExt, Label, TabView, TableView, Visibility};
+    use crate::composable::{
+        Checkbox, ComponentTagExt, Label, TabView, TableView, VStack, Visibility,
+    };
     use crate::reactive::Binding;
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
@@ -1425,6 +1477,37 @@ mod tests {
             inspector.property_names("missing"),
             Err(ComponentError::NotFound("missing".to_string()))
         );
+    }
+
+    #[test]
+    fn untagged_interactive_nodes_reports_only_interactive_nodes_without_tags() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = VStack::new()
+            .child(Checkbox::new("Tagged", Binding::new(false)).tag("tagged_checkbox"))
+            .child(Checkbox::new("Missing tag", Binding::new(false)))
+            .tag("root_stack");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Checks",
+            Rect::new(1, 1, 32, 8),
+            Box::new(view),
+        )
+        .with_tag("checks_window");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let nodes = inspector.untagged_interactive_nodes(screen);
+
+        assert_eq!(nodes.len(), 1);
+        let node = &nodes[0];
+        assert_eq!(node.kind, NodeKind::Component);
+        assert_eq!(node.id, None);
+        assert_eq!(node.name, "Checkbox");
+        assert!(node.focusable);
+        assert!(node.properties.contains(&"checked".to_string()));
     }
 
     #[test]

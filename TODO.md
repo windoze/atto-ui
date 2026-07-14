@@ -64,11 +64,13 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `DesktopInspector::property_names(id)` 只读门面，按 menu、window、component 三段式查找；menu/window 路径返回与现有 `get_property` 可读属性一致的属性名集合，component 路径复用 `Component::property_names()` 并通过 M1-1 的公共 `find_by_tag` 委托链寻址。`action` / `action_by_id` 未改动，仍保留第 2 层边界；`export_snapshot` 继续做全树导出，不引入按组件 id 的新寻址逻辑。新增单测覆盖 menu spec、menu item、window、component 四类属性名读取，以及未知 id 返回 `ComponentError::NotFound`。
   - 验证：`cargo test -p atto-ui inspect_property_names -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M1-3 tag 覆盖诊断辅助**
+- [x] **[DONE] M1-3 tag 覆盖诊断辅助**
   - 上下文：`tag`/`id` 是 `Option`（`component.rs:354` 返回 `Option<&str>`），未标 tag 的节点不可寻址。约定「可脚本 / 可测组件必须显式标 tag」，需要一个诊断工具来发现漏标。
   - 实现：在 `DesktopInspector` 上加 `untagged_interactive_nodes(screen) -> Vec<InspectNode>`（或返回轻量描述），遍历 `build_desktop_tree`（`inspect.rs:343`）产物，筛出「可交互但 `id` 为 `None`」的节点。判定「可交互」：`property_names()` 含 `checked`/`text`/`selected`/`value`/`selection` 等交互属性之一，或 `is_focusable()` 为真（参考 `inspect.rs:724` 的 `is_snapshot_component_property` 白名单）。
   - 定位：这是诊断辅助（测试期使用），不是运行时强制；不改变任何交互行为。
   - 验证：单测构造含「标了 tag 的 Checkbox」+「未标 tag 的 Checkbox」的 Desktop，断言诊断只列出后者；全套通过。
+  - 完成记录：新增 `DesktopInspector::untagged_interactive_nodes(screen) -> Vec<InspectNode>` 诊断入口，刷新桌面布局后遍历 `build_desktop_tree` 产物，返回 `id == None` 且可交互的节点副本；`InspectNode` 新增 `focusable` 诊断字段，组件节点由 `Component::is_focusable()` 填充，窗口节点由 `WindowKind::is_focusable()` 填充。交互判定覆盖 `is_focusable()`，以及 `checked` / `text` / `selected` / `selected_index` / `selection` / `value` / `index` / `progress` / `active` 等可读属性名；实现仅用于测试期诊断，不改变事件、寻址、属性读写或渲染行为。新增单测构造已标 tag 的 `Checkbox` 和未标 tag 的 `Checkbox`，并给窗口与容器打 tag，断言诊断结果只包含未标 tag 的 `Checkbox`。
+  - 验证：`cargo fmt --all`；`cargo test -p atto-ui untagged_interactive_nodes -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M1-4 变更信号聚合（为 M2 `wait_for` 预留）**
   - 上下文：reactive 是拉模型——`DirtyFlag`/`DirtyObserver`（`src/reactive/dirty.rs`），`check_and_clear()`（`:43`）返回自上次以来是否 dirty，`observer()`（`:50`）克隆观察者。第 2 层 `wait_for` 需要一个统一的「UI 是否发生过变更」进程内信号，避免轮询屏幕。
