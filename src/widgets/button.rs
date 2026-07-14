@@ -8,6 +8,7 @@ use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::ComponentCommand;
 use crate::composable::{
     Capture, Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout,
     MouseCoordinateSpace,
@@ -95,6 +96,16 @@ impl Button {
 
 #[component_properties]
 impl Component for Button {
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::Click | ComponentCommand::Submit if self.enabled.get() => {
+                self.trigger();
+                EventResult::submitted()
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         if area.width == 0 || area.height == 0 {
@@ -371,6 +382,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use crate::composable::{MouseCoordinateSpace, ScrollbarHost, TabMode};
+    use crate::runtime::{CallbackHandle, CallbackRegistry};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -606,5 +618,71 @@ mod tests {
             EventResult::ignored()
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn apply_command_click_triggers_on_click() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_button = Arc::clone(&calls);
+        let mut button = Button::new("OK").on_click(move || {
+            calls_for_button.fetch_add(1, Ordering::SeqCst);
+        });
+
+        assert_eq!(
+            button.apply_command(ComponentCommand::Click),
+            EventResult::submitted()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn apply_command_submit_emits_callback_handle() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(
+            callbacks.clone(),
+            callback_id,
+            Some("button".into()),
+            "click",
+        );
+        let mut button = Button::new("OK").on_click_callback(callback);
+
+        assert_eq!(
+            button.apply_command(ComponentCommand::Submit),
+            EventResult::submitted()
+        );
+
+        let events = callbacks.drain();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].callback_id, callback_id);
+        assert_eq!(events[0].target_id.as_deref(), Some("button"));
+        assert_eq!(events[0].event, "click");
+        assert_eq!(events[0].payload, None);
+    }
+
+    #[test]
+    fn apply_command_ignored_when_disabled() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(callbacks.clone(), callback_id, None, "click");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_button = Arc::clone(&calls);
+        let mut button = Button::new("OK")
+            .enabled(false)
+            .on_click(move || {
+                calls_for_button.fetch_add(1, Ordering::SeqCst);
+            })
+            .on_click_callback(callback);
+
+        assert_eq!(
+            button.apply_command(ComponentCommand::Click),
+            EventResult::ignored()
+        );
+        assert_eq!(
+            button.apply_command(ComponentCommand::Submit),
+            EventResult::ignored()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(callbacks.is_empty());
     }
 }

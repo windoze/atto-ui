@@ -115,10 +115,12 @@ cargo test --workspace --all-targets
   - 完成记录：`Checkbox::apply_command` 现支持 `ComponentCommand::Toggle` 与 `ComponentCommand::Click`。两者在组件启用时复用既有私有 `toggle()` 路径，因此与键盘 Space/Enter 和鼠标释放命中共享同一 `checked` binding 翻转与 `on_change_callback` payload 触发逻辑；命中后返回 `EventResult::changed()`，禁用态及其他命令返回 `EventResult::ignored()`。新增进程内单测覆盖 `Toggle` 连续翻转 binding、`Click` 触发 change callback 且 payload 为新 `checked` 值、禁用态 `Toggle` / `Click` 均 ignored 且不触发回调。
   - 验证：`cargo test -p atto-ui checkbox -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M2-2 Button `apply_command`**
+- [x] **[DONE] M2-2 Button `apply_command`**
   - 上下文：`src/widgets/button.rs`，`impl Component`（`:97`）。按钮激活当前靠 Enter/Space/鼠标点击触发 `on_activate` 类回调。
   - 实现：`ComponentCommand::Click`/`Submit` 触发与用户激活相同的回调路径；不改变禁用态语义（禁用时应 `ignored()`）。
   - 验证：进程内单测：`apply_command(Click)` 触发激活回调、禁用按钮 `ignored()` 且不触发回调；全套通过。
+  - 完成记录：`Button::apply_command` 现支持 `ComponentCommand::Click` 与 `ComponentCommand::Submit`。启用态下两者都复用既有私有 `trigger()` 路径，因此与键盘 Enter/Space 和鼠标释放命中共享同一 `on_click` 闭包与 `on_click_callback` 触发逻辑，并返回 `EventResult::submitted()`；禁用态及其他命令返回 `EventResult::ignored()`。新增进程内单测覆盖 `Click` 触发 `on_click`、`Submit` 触发 callback handle、禁用态 `Click` / `Submit` 均 ignored 且不触发任何回调。
+  - 验证：`cargo test -p atto-ui button -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M2-3 TextBox `apply_command`**
   - 上下文：`src/widgets/textbox.rs`，`impl Component`（`:135`），基于 `TextBuffer`（Unicode 感知），有 `text` 属性。现有 `inspect.rs` 的 `InputText` 兜底靠合成点击 + `Event::Paste`（`inspect.rs:246-271`）。
