@@ -1,51 +1,42 @@
-# Claude 执行计划
+# 执行计划
 
-## 当前约束
-- 先读取 TODO.md，按文件中第一个未以 [DONE] 标记的任务执行。
-- 每次只完成一个任务，完成后更新 TODO.md、验证、提交并停止。
-- 如遇阻塞，不用变通方案；在 TODO.md 中加入最小必要前置任务并提交后停止。
-- PLAN.md 只在阶段级计划变化时更新。
+## 当前状态
 
-## 初始计划
-1. 读取 TODO.md，确定第一个未完成任务，并检查任务的依赖、验证要求和完成记录要求。
-2. 检查最新提交信息，只判断它是否明确提到与当前任务直接相关的未完成问题。
-3. 根据当前任务读取最小必要的代码和测试上下文。
-4. 实现当前任务或处理直接阻塞当前任务的前置问题。
-5. 运行 cargo fmt、cargo clippy --all-targets -- -D warnings，再运行必要测试；若代码变更影响面较大，运行完整测试套件。
-6. 更新 TODO.md：给完成任务标题加 [DONE]，补充完成记录；仅在阶段级变化时更新 PLAN.md。
-7. 检查 git diff，提交本次任务相关的所有未提交变更。
-8. 停止，不继续下一个 TODO 任务。
+- 已读取 `TODO.md`，第一个未完成任务是 `M1-R Review — 第 1 层完整性与正确性复核`。
+- 已检查最新提交：`b08b4fe [M1-5] Add chat inspector assertion sample`。该提交对应已完成的 M1-5，没有明确提出阻塞 M1-R 的未完成问题。
+- 不记录隐藏推理链，只记录可审计的决策、依据、步骤和进度。
 
-## 进度
-- 已读取 TODO.md，确定第一个未完成任务为 `M1-5 进程内读值断言范式 + 示范迁移一例 chat 逻辑测试`。
-- 已检查最新提交 `14e8dc5 [M1-4] Add desktop change tracker`，未发现直接关联 M1-5 的未完成问题；初始未提交变更只有本计划文件。
-- 已定位示范迁移目标：把 `pty_chat.rs` 中输入模式状态依赖屏幕文字判断的一例，补成进程内 `DesktopInspector` 读 `ChatInputPanel.mode` / `property_names` 的断言样板。
-- 已实现 `ChatInputPanel::with_tag` 与 `DynamicTree::tag()`，并让 `ChatPanel` 透明转发内部 `VStack` 的 `children()` / `children_mut()`，使 Desktop introspection 可按 tag 找到 chat input。
-- 已新增 `crates/atto-ui-chat/tests/inspect_chat.rs`，构造带 tagged chat input 的 `Desktop`，通过 `desktop.inspect()` 读取属性并断言 mode 从 `text` 更新为 `choice`。
-- 聚焦测试 `cargo test -p atto-ui-chat chat_input_mode_state_is_readable_through_desktop_inspector -- --nocapture` 已通过；修复了一个 unused import warning。
-- `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings` 已通过。
-- `cargo test -p atto-ui-chat` 已通过，覆盖新增 `inspect_chat.rs` 和既有 `pty_chat.rs`。
-- 完整 workspace 测试失败于 `atto-ui --test pty_virtual_scrolling`，6 个用例均在初始 `wait_for_text` 超时且屏幕为空。该失败未在 TODO 中显式排期，按测试失败策略必须修复或排期后才能完成 M1-5。
+## 步骤计划
 
-## 当前阻塞处理计划
-1. 单独复现 `cargo test -p atto-ui --test pty_virtual_scrolling -- --nocapture`，判断失败是否稳定。
-2. 阅读 `tests/pty_virtual_scrolling.rs` 与对应 snapshot app，确认是否存在同一 PTY fixture 并发运行导致空屏的隔离缺口。
-3. 若是测试隔离问题，采用和 chat PTY 测试一致的文件级互斥锁，修复整类同文件 PTY 并发失败；若是实际 app 渲染问题，定位并修复对应渲染/启动路径。
-4. 重跑该测试文件，再重跑完整 workspace 测试。
+1. 复核公共 `find_by_tag` / `find_by_tag_mut` 的 root-first DFS 语义、同名 tag 首个匹配、深层嵌套和 mutable 路径；确认 `inspect.rs` 没有残留重复递归实现。
+2. 复核 `DesktopInspector` 第 1 层只读门面：`tree` / `export_snapshot` / `get_property` / `set_property` / `property_names` 的寻址收敛情况，并确认没有把 M2 动作语义混入第 1 层新增能力。
+3. 复核 `untagged_interactive_nodes` 与 dirty change tracker 均为进程内诊断 / 拉模型信号，不改变事件、绘制或交互语义。
+4. 复核 chat 示例迁移：新增测试应通过 `DesktopInspector` 读属性断言状态，不依赖 `find_text_position`、字形推断或屏幕 OCR；原 PTY 端到端覆盖保留。
+5. 确认 `#![forbid(unsafe_code)]` 仍保留在相关 crate 根。
+6. 运行验证，顺序为：
+   - `cargo fmt`
+   - `cargo clippy --all-targets -- -D warnings`
+   - 完整测试套件，按项目需要使用不超过 30 分钟的超时
+7. 若发现未排期的测试失败，必须修复，或在 `TODO.md` 中排入正确顺序的前置/后续任务，不能把当前任务标记完成。
+8. 完成后更新 `TODO.md`：给 M1-R 标题加 `[DONE]`，并填写复核结论与验证记录；本次若只完成任务复核，不更新 `PLAN.md`。
+9. 检查工作区变更，提交所有与本次任务相关且需要纳入的文件，提交信息包含任务编号和清晰描述。
+10. 提交后停止，不继续处理下一个任务。
 
-## 阻塞处理进展
-- 单独运行 `cargo test -p atto-ui --test pty_virtual_scrolling -- --nocapture` 已通过，说明 virtual scrolling 功能路径本身未失败。
-- 已在 `tests/pty_virtual_scrolling.rs` 添加文件级 `VIRTUAL_SCROLL_PTY_LOCK`，序列化同一 snapshot PTY fixture 的 6 个测试，修复完整套件负载下并发启动空屏超时的隔离缺口。
-- `cargo fmt --all && cargo test -p atto-ui --test pty_virtual_scrolling -- --nocapture` 已通过。
-- 修复后复跑 `cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 已通过。
-- 修复后完整测试 `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 已通过。
-- 下一步更新 `TODO.md`：将 M1-5 标为 `[DONE]`，补完成记录和验证记录；`PLAN.md` 不需要更新，因为阶段级计划未变化。
+## 进度记录
 
-## 当前任务具体计划
-1. 检查最新提交信息与工作区状态，只确认是否存在直接关联 `M1-5` 的未完成问题。
-2. 阅读 `crates/atto-ui-chat/tests/pty_chat.rs`、chat crate 结构和相关组件源码，找出一个适合从 PTY/OCR/字形推断迁移到进程内 `DesktopInspector` 读值断言的逻辑用例。
-3. 检查目标 chat 组件是否已有稳定 `tag` 和可读属性；如缺少，按 M1-3 约定补标 tag 或暴露现有 `Binding` 属性，不改变交互语义。
-4. 新增或改写一例进程内逻辑测试：构造 `Desktop` 或 chat 根组件，调用 `desktop.inspect()`，通过 `property_names` / `get_property` 读取活值断言；保留原 PTY 中真正覆盖渲染 / 端到端行为的部分。
-5. 运行聚焦测试 `cargo test -p atto-ui-chat`，再按要求运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
-6. 更新 `TODO.md`：给 `M1-5` 标题加 `[DONE]`，补完成记录和验证命令；仅当阶段计划变化时才更新 `PLAN.md`。
-7. 检查 diff 并提交本次任务所有相关变更，然后停止。
+- 计划文件已初始化。
+- 已定位当前任务：M1-R Review。
+- 已完成代码层复核：
+  - `find_by_tag` / `find_by_tag_mut` 是 root-first DFS；`inspect.rs` 中 `component_find` / `component_find_mut` 仅委托公共 API。
+  - `property_names` / `get_property` / `set_property` 的组件路径复用公共寻址；M1 新增只读 / 诊断 / change tracker API 不调用动作语义。
+  - `untagged_interactive_nodes` 基于绘制后的 inspect tree 只读筛选；dirty change tracker 基于 `DirtyObserver` 做 per-consumer 拉模型检测，不清除全局 dirty。
+  - chat 示例测试通过 `DesktopInspector` 读取 `mode` / `draft` 等属性；原 PTY OCR/helper 覆盖仍保留在端到端测试中。
+  - `src/lib.rs` 仍保留 `#![forbid(unsafe_code)]`。
+- 下一步开始验证：`cargo fmt`、`cargo clippy`、完整 workspace test。
+- 验证已完成并通过：
+  - `cargo fmt --all`
+  - `cargo fmt --all -- --check`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`
+- 已更新 `TODO.md`，将 M1-R 标记为 `[DONE]` 并补充完成记录与验证记录。
+- 下一步检查工作区变更并提交。

@@ -91,7 +91,7 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `crates/atto-ui-chat/tests/inspect_chat.rs` 作为 chat 进程内读值断言样板：构造带 tagged `ChatInputPanel` 的 `ChatPanel` 与 `Desktop`，通过 `desktop.inspect()` 的 `tree` / `property_names` / `get_property` 断言 chat input 可按 tag 发现，并验证 `mode` 活值从 `text` 更新为 `choice`。`ChatInputPanel` 新增 `with_tag` 与 `DynamicTree::tag()`，只影响 introspection 寻址；`ChatPanel` 透明转发内部 `VStack` 的 `children()` / `children_mut()`，避免外层 chat 根组件截断第 1 层组件寻址，不改变绘制、输入、回调或交互语义。原 `pty_chat.rs` 中输入模式和端到端渲染覆盖保留不删。按测试失败策略，完整测试中发现 `pty_virtual_scrolling` 在 workspace 负载下同文件 PTY fixture 并发启动会出现空屏超时；已为 `tests/pty_virtual_scrolling.rs` 添加文件级互斥锁，修复该整类测试隔离问题。
   - 验证：`cargo test -p atto-ui-chat chat_input_mode_state_is_readable_through_desktop_inspector -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo test -p atto-ui-chat`；`cargo test -p atto-ui --test pty_virtual_scrolling -- --nocapture`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M1-R Review — 第 1 层完整性与正确性复核**
+- [x] **[DONE] M1-R Review — 第 1 层完整性与正确性复核**
   - 复核点：
     1. 公共 `find_by_tag` 语义与旧 `component_find` 一致（含同名 tag、深层嵌套、mut 路径），`inspect.rs` 无残留重复递归。
     2. `DesktopInspector` 只读门面自洽，未混入第 2 层动作能力；第 1 层代码**不依赖** `apply_command` 的语义派发、不依赖第 2/3/4 层模块。
@@ -99,6 +99,8 @@ cargo test --workspace --all-targets
     4. 示范迁移的测试确实脱离了 OCR / 字形推断，且未误删渲染 / 端到端覆盖。
     5. 保持 `#![forbid(unsafe_code)]`。
   - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全套通过；在完成记录中列出复核结论。
+  - 完成记录：第 1 层复核通过。公共 `find_by_tag` / `find_by_tag_mut` 保持 root-first DFS 语义，覆盖根节点、深层子节点、未命中、同名 tag 首个匹配和 mutable 路径；`inspect.rs` 中 `component_find` / `component_find_mut` 只保留对公共 API 的委托。`DesktopInspector::property_names` 与既有 `get_property` / `set_property` 组件路径均复用公共寻址；M1 新增的 `property_names`、`untagged_interactive_nodes`、`change_tracker` / `refresh_change_tracker` 不依赖 `apply_command` 语义派发，也不引入第 2/3/4 层依赖。tag 覆盖诊断基于绘制后的 inspect tree 只读筛选未标 tag 的交互节点；dirty change tracker 基于 `DirtyObserver` 做 per-consumer 拉模型检测，不清除全局 dirty 状态、不改变交互行为。chat 示例迁移通过 `DesktopInspector` 的 `tree` / `property_names` / `get_property` 读取 `ChatInputPanel` 的 `mode` 活值，不依赖 `find_text_position`、字形 `▶` 推断或屏幕 OCR；原 `pty_chat.rs` 的渲染 / 端到端覆盖保留。`src/lib.rs` 仍保留 `#![forbid(unsafe_code)]`。
+  - 验证：`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 ---
 
