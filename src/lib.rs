@@ -33,7 +33,9 @@ pub use inspect::{
     DesktopChangeTracker, DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode,
     InspectSnapshot, InvokeDispatch, InvokeResult, NodeKind, WaitCondition, WaitResult,
 };
-pub use ipc::{IPC_SOCKET_ENV, IpcServer, IpcServerConfig, send_protocol_request};
+pub use ipc::{
+    IPC_SOCKET_ENV, IpcMethodHandler, IpcServer, IpcServerConfig, send_protocol_request,
+};
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,
     ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,

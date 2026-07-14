@@ -7,6 +7,7 @@
 
 mod config;
 mod dynamic;
+mod ipc;
 mod pane;
 mod selection;
 mod session;
@@ -24,6 +25,7 @@ pub use config::{
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,
 };
+pub use ipc::{TerminalPaneIpc, terminal_pane_ipc_handler};
 pub use pane::{
     TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalPaneSnapshot,
     TerminalPaneSplit,

@@ -313,6 +313,27 @@ fn print_human_result(result: ProtocolResult) -> Result<()> {
                 println!("{name}");
             }
         }
+        ProtocolResult::SendKeys(result) => {
+            println!(
+                "pane_id={} byte_count={}",
+                result.pane_id, result.byte_count
+            );
+        }
+        ProtocolResult::CapturePane(result) => {
+            println!("{}", result.text());
+        }
+        ProtocolResult::ListPanes(panes) => {
+            for pane in panes {
+                let rect = pane
+                    .rect
+                    .map(|rect| format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height))
+                    .unwrap_or_else(|| "-".to_string());
+                println!(
+                    "pane_id={} index={} active={} rect={}",
+                    pane.pane_id, pane.index, pane.is_active, rect
+                );
+            }
+        }
     }
     Ok(())
 }

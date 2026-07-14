@@ -32,6 +32,10 @@ pub const IPC_SOCKET_ENV: &str = "ATTO_UI_SOCKET";
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(10);
 const DEFAULT_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// Optional UI-thread method hook for protocol extensions owned by downstream crates.
+pub type IpcMethodHandler = dyn FnMut(&mut Desktop, &ProtocolMethod) -> Result<Option<ProtocolResult>, ComponentError>
+    + Send;
+
 /// Configuration for binding an IPC server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IpcServerConfig {
@@ -80,6 +84,7 @@ pub struct IpcServer {
     shutdown: Arc<AtomicBool>,
     listener_thread: Option<JoinHandle<()>>,
     pending_waits: Vec<PendingWait>,
+    method_handler: Option<Box<IpcMethodHandler>>,
 }
 
 impl IpcServer {
@@ -114,12 +119,28 @@ impl IpcServer {
             shutdown,
             listener_thread: Some(listener_thread),
             pending_waits: Vec::new(),
+            method_handler: None,
         })
     }
 
     /// Returns the socket path this server is listening on.
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+
+    /// Registers an extension dispatcher that runs on the UI thread.
+    pub fn set_method_handler<F>(&mut self, handler: F)
+    where
+        F: FnMut(&mut Desktop, &ProtocolMethod) -> Result<Option<ProtocolResult>, ComponentError>
+            + Send
+            + 'static,
+    {
+        self.method_handler = Some(Box::new(handler));
+    }
+
+    /// Removes the currently registered extension dispatcher, if any.
+    pub fn clear_method_handler(&mut self) {
+        self.method_handler = None;
     }
 
     /// Drains queued requests on the UI thread and sends protocol responses.
@@ -137,7 +158,12 @@ impl IpcServer {
                 self.start_wait(desktop, fallback_screen, id, params, ui.response_tx);
             }
             method => {
-                let response = execute_immediate_method(desktop, id, method);
+                let response = execute_immediate_method(
+                    desktop,
+                    id,
+                    method,
+                    self.method_handler.as_deref_mut(),
+                );
                 let _ = ui.response_tx.send(response);
             }
         }
@@ -367,6 +393,7 @@ fn execute_immediate_method(
     desktop: &mut Desktop,
     id: ProtocolId,
     method: ProtocolMethod,
+    method_handler: Option<&mut IpcMethodHandler>,
 ) -> ProtocolResponse {
     let result = match method {
         ProtocolMethod::Query(params) => DesktopInspector::new(desktop)
@@ -396,11 +423,47 @@ fn execute_immediate_method(
         ProtocolMethod::WaitFor(_) => Err(ComponentError::render_failed(
             "wait_for must be scheduled as a pending IPC request",
         )),
+        method @ (ProtocolMethod::SendKeys(_)
+        | ProtocolMethod::CapturePane(_)
+        | ProtocolMethod::ListPanes(_)) => {
+            execute_extension_method(desktop, &method, method_handler)
+        }
     };
 
     match result {
         Ok(result) => ProtocolResponse::success(id, result),
         Err(err) => ProtocolResponse::error(id, err),
+    }
+}
+
+fn execute_extension_method(
+    desktop: &mut Desktop,
+    method: &ProtocolMethod,
+    method_handler: Option<&mut IpcMethodHandler>,
+) -> Result<ProtocolResult, ComponentError> {
+    let Some(handler) = method_handler else {
+        return Err(ComponentError::action_not_supported(protocol_method_name(
+            method,
+        )));
+    };
+    match handler(desktop, method)? {
+        Some(result) => Ok(result),
+        None => Err(ComponentError::action_not_supported(protocol_method_name(
+            method,
+        ))),
+    }
+}
+
+fn protocol_method_name(method: &ProtocolMethod) -> &'static str {
+    match method {
+        ProtocolMethod::Query(_) => "query",
+        ProtocolMethod::Invoke(_) => "invoke",
+        ProtocolMethod::WaitFor(_) => "wait_for",
+        ProtocolMethod::Tree(_) => "tree",
+        ProtocolMethod::PropertyNames(_) => "property_names",
+        ProtocolMethod::SendKeys(_) => "send_keys",
+        ProtocolMethod::CapturePane(_) => "capture_pane",
+        ProtocolMethod::ListPanes(_) => "list_panes",
     }
 }
 
@@ -666,6 +729,23 @@ mod tests {
             response.error,
             Some(ComponentError::InvalidValue { name, .. }) if name == "request"
         ));
+    }
+
+    #[test]
+    fn ipc_server_reports_extension_methods_unsupported_without_handler() {
+        let socket_path = temp_socket_path("extension-unsupported");
+        let mut host = AppHost::new_headless(screen(), move |_screen| {
+            Ok(Desktop::new(Theme::dark(), MenuBar::new(vec![])))
+        })
+        .expect("host");
+        host.enable_ipc(&socket_path).expect("enable ipc");
+
+        let request = ProtocolRequest::send_keys("send", 1, b"input".to_vec());
+        let response = drive_until_response(&mut host, spawn_request(socket_path, request));
+        assert_eq!(
+            response.error,
+            Some(ComponentError::ActionNotSupported("send_keys".to_string()))
+        );
     }
 
     #[test]

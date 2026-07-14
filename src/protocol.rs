@@ -115,6 +115,33 @@ impl ProtocolRequest {
             }),
         }
     }
+
+    /// Build a `send_keys` request for a terminal pane.
+    pub fn send_keys(id: impl Into<ProtocolId>, pane_id: u64, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::SendKeys(SendKeysParams {
+                pane_id,
+                bytes: bytes.into(),
+            }),
+        }
+    }
+
+    /// Build a `capture_pane` request for a terminal pane snapshot.
+    pub fn capture_pane(id: impl Into<ProtocolId>, pane_id: u64) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::CapturePane(CapturePaneParams { pane_id }),
+        }
+    }
+
+    /// Build a `list_panes` request for the registered terminal pane group.
+    pub fn list_panes(id: impl Into<ProtocolId>) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::ListPanes(ListPanesParams {}),
+        }
+    }
 }
 
 /// Supported method names and their typed parameter payloads.
@@ -126,6 +153,9 @@ pub enum ProtocolMethod {
     WaitFor(WaitForParams),
     Tree(TreeParams),
     PropertyNames(PropertyNamesParams),
+    SendKeys(SendKeysParams),
+    CapturePane(CapturePaneParams),
+    ListPanes(ListPanesParams),
 }
 
 /// Parameters for `query`.
@@ -164,6 +194,23 @@ pub struct TreeParams {
 pub struct PropertyNamesParams {
     pub id: String,
 }
+
+/// Parameters for `send_keys`, addressed by terminal pane id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendKeysParams {
+    pub pane_id: u64,
+    pub bytes: Vec<u8>,
+}
+
+/// Parameters for `capture_pane`, addressed by terminal pane id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapturePaneParams {
+    pub pane_id: u64,
+}
+
+/// Parameters for `list_panes`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListPanesParams {}
 
 /// Top-level response envelope: `{ id, result }` or `{ id, error }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -214,6 +261,43 @@ pub enum ProtocolResult {
     WaitFor(WaitResult),
     Tree(DesktopSnapshot),
     PropertyNames(Vec<String>),
+    SendKeys(SendKeysResult),
+    CapturePane(CapturePaneResult),
+    ListPanes(Vec<PaneInfo>),
+}
+
+/// Success payload for `send_keys`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendKeysResult {
+    pub pane_id: u64,
+    pub byte_count: usize,
+}
+
+/// Serializable snapshot returned by `capture_pane`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapturePaneResult {
+    pub pane_id: u64,
+    pub lines: Vec<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub scrollback: usize,
+}
+
+impl CapturePaneResult {
+    /// Returns the captured pane contents as newline-joined text.
+    pub fn text(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
+/// One terminal pane entry returned by `list_panes`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneInfo {
+    pub pane_id: u64,
+    pub index: usize,
+    pub is_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rect: Option<Rect>,
 }
 
 #[cfg(test)]
@@ -283,6 +367,9 @@ mod tests {
             ),
             ProtocolRequest::tree(4, screen()),
             ProtocolRequest::property_names(5, "input"),
+            ProtocolRequest::send_keys(6, 7, b"echo hi\n".to_vec()),
+            ProtocolRequest::capture_pane(7, 8),
+            ProtocolRequest::list_panes(8),
         ];
 
         for request in requests {
@@ -315,6 +402,32 @@ mod tests {
             ProtocolResponse::success(
                 5,
                 ProtocolResult::PropertyNames(vec!["text".to_string(), "selection".to_string()]),
+            ),
+            ProtocolResponse::success(
+                6,
+                ProtocolResult::SendKeys(SendKeysResult {
+                    pane_id: 7,
+                    byte_count: 8,
+                }),
+            ),
+            ProtocolResponse::success(
+                7,
+                ProtocolResult::CapturePane(CapturePaneResult {
+                    pane_id: 8,
+                    lines: vec!["READY".to_string(), "echo hi".to_string()],
+                    cols: 80,
+                    rows: 24,
+                    scrollback: 1,
+                }),
+            ),
+            ProtocolResponse::success(
+                8,
+                ProtocolResult::ListPanes(vec![PaneInfo {
+                    pane_id: 9,
+                    index: 0,
+                    is_active: true,
+                    rect: Some(screen()),
+                }]),
             ),
         ];
 

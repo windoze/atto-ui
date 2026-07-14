@@ -242,10 +242,12 @@ cargo test --workspace --all-targets
 
 目标：把 tmux 接口面翻译成第 3 层调用（shim 为 client，非新协议），并补全本地 pane 体验。依赖 M4。
 
-- [ ] **[TODO] M5-1 send-keys / capture-pane 映射**
+- [x] **[DONE] M5-1 send-keys / capture-pane 映射**
   - 上下文：`TerminalHandle::send_input_bytes`（`terminal.rs:3443`）= send-keys 载体，`snapshot`（`:3738`）= capture-pane 载体，`TerminalPaneGroupHandle`（`pane.rs:76`）暴露 `panes()`/`active_pane`/`pane_at_screen_position`。
   - 实现：在第 3 层协议 / server 侧提供 `send-keys`/`capture-pane`/`list-panes` 语义方法，映射到上述 handle。pane 寻址用 pane id（`TerminalPaneId`，`pane.rs:25`）。
   - 验证：集成测试：经第 3 层 send-keys 把字节送入目标 pane 的子进程、capture-pane 取回该 pane 屏幕快照；全套通过。
+  - 完成记录：核心 `src/protocol.rs` 新增 `send_keys`、`capture_pane`、`list_panes` 三个可序列化方法及 `SendKeysResult`、`CapturePaneResult`、`PaneInfo` 成功载荷，协议 roundtrip 测试覆盖新增请求 / 响应。核心 `IpcServer` 新增 UI 线程扩展分发器，保留 `DesktopInspector` 原有方法分发；pane 方法在未注册处理器时返回显式 `ActionNotSupported`，不静默成功、不 panic。`atto-ui-terminal` 新增 `TerminalPaneIpc` / `terminal_pane_ipc_handler`，把 `send_keys` 映射到目标 pane 的 `TerminalHandle::send_input_bytes`，把 `capture_pane` 映射到 `TerminalHandle::snapshot()`，把 `list_panes` 映射到 `TerminalPaneGroupHandle::panes()`；pane 寻址使用 `TerminalPaneId::raw()` 的协议值，若注册多个 pane group 且出现重复 pane id，则返回 `InvalidValue`，避免把请求误投到任意 pane。`atto` CLI 对新增响应类型补了人类可读输出，保持 bin 编译完整。新增 `crates/atto-ui-terminal/tests/ipc_pane.rs`，覆盖第 3 层 IPC list/capture，并用真实 `/bin/sh` 子进程验证 `send_keys` 字节经 socket 进入目标 pane 后能由 `capture_pane` 读回回显。
+  - 验证：`cargo test -p atto-ui protocol -- --nocapture`；`cargo test -p atto-ui ipc_server_reports_extension_methods_unsupported_without_handler -- --nocapture`；`cargo test -p atto-ui-terminal --test ipc_pane -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M5-2 pane 管理命令映射**
   - 上下文：`TerminalPaneGroup`（`pane.rs:203`）已支持 `Ctrl+B %`/`"` 分屏、`o`/Tab 切焦点。tmux `split-window`/`select-pane -LRUD`/`list-panes`/`break-pane`/`display-popup` 需映射到原生 pane 与 `WindowManager`。
