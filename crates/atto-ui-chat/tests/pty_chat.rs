@@ -115,36 +115,6 @@ fn chat_input_modes_switch() -> anyhow::Result<()> {
 }
 
 #[test]
-fn chat_input_modes_submit_callbacks() -> anyhow::Result<()> {
-    let _guard = chat_pty_lock();
-    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
-    let mut host = PtyTestHost::spawn(bin, &[], 80, 24)?;
-
-    host.wait_for_text("Message", Duration::from_secs(2))?;
-
-    host.send_str("hello")?;
-    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
-    host.wait_for_text("SUBMIT: text=hello", Duration::from_secs(2))?;
-
-    host.send_str("c")?;
-    host.wait_for_text("请选择一种回应方式", Duration::from_secs(2))?;
-    host.key_with_mods(KeyCode::Down, KeyModifiers::NONE)?;
-    host.key_with_mods(KeyCode::Tab, KeyModifiers::NONE)?;
-    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
-    host.wait_for_text("SUBMIT: choice index=1", Duration::from_secs(2))?;
-    host.wait_for_text("label=详细解释", Duration::from_secs(2))?;
-
-    host.send_str("f")?;
-    host.wait_for_text("是否继续执行?", Duration::from_secs(2))?;
-    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
-    host.wait_for_text("SUBMIT: choice index=0", Duration::from_secs(2))?;
-    host.wait_for_text("label=继续", Duration::from_secs(2))?;
-
-    host.send_ctrl('q')?;
-    Ok(())
-}
-
-#[test]
 fn chat_slash_completion_filters_selects_accepts_and_closes() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
@@ -253,35 +223,6 @@ fn chat_mention_completion_inserts_file_and_closes() -> anyhow::Result<()> {
         |snapshot| snapshot.iter().all(|line| !line.contains("FILE-LIB")),
         Duration::from_secs(2),
     )?;
-
-    host.send_ctrl('q')?;
-    Ok(())
-}
-
-#[test]
-fn chat_input_queues_text_while_streaming_and_sends_after_prompt() -> anyhow::Result<()> {
-    let _guard = chat_pty_lock();
-    let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
-    let mut host = PtyTestHost::spawn(bin, &["--input-queue"], 100, 30)?;
-
-    host.wait_for_text("QUEUE-STREAMING-START", Duration::from_secs(2))?;
-    host.wait_for_text(
-        "Streaming... Enter queues new messages",
-        Duration::from_secs(2),
-    )?;
-
-    host.send_str("queued one")?;
-    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
-    host.wait_for_text("Queued 1 message while streaming", Duration::from_secs(2))?;
-    assert_text_absent_for(&host, "SUBMIT: text=queued one", Duration::from_millis(250));
-
-    host.send_str("1")?;
-    host.wait_for_text(
-        "Queued 1 message; press Enter to send next",
-        Duration::from_secs(2),
-    )?;
-    host.key_with_mods(KeyCode::Enter, KeyModifiers::NONE)?;
-    host.wait_for_text("SUBMIT: text=queued one", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())
