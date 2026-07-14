@@ -146,6 +146,19 @@ impl<'a> DesktopInspector<'a> {
         Err(ComponentError::not_found(id))
     }
 
+    pub fn property_names(&mut self, id: &str) -> Result<Vec<String>, ComponentError> {
+        if let Some(names) = menu_property_names(&self.desktop.menu, id) {
+            return Ok(names);
+        }
+        if let Some(names) = window_property_names(&self.desktop.wm, id) {
+            return Ok(names);
+        }
+        if let Some(names) = component_property_names(&self.desktop.wm, id) {
+            return Ok(names);
+        }
+        Err(ComponentError::not_found(id))
+    }
+
     pub fn set_property(
         &mut self,
         id: &str,
@@ -856,6 +869,19 @@ fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option
     }
 }
 
+fn menu_property_names(menu: &crate::app::MenuBar, id: &str) -> Option<Vec<String>> {
+    if menu_find_spec(menu, id).is_some() {
+        return Some(vec!["title".to_string()]);
+    }
+    menu_find_item(menu, id).map(|_| {
+        vec![
+            "label".to_string(),
+            "shortcut".to_string(),
+            "enabled".to_string(),
+        ]
+    })
+}
+
 fn menu_set_property(
     menu: &mut crate::app::MenuBar,
     id: &str,
@@ -1002,6 +1028,17 @@ fn window_get_property(
     }
 }
 
+fn window_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
+    window_find(wm, id).map(|_| {
+        vec![
+            "title".to_string(),
+            "rect".to_string(),
+            "state".to_string(),
+            "kind".to_string(),
+        ]
+    })
+}
+
 fn window_set_property(
     wm: &mut crate::wm::WindowManager,
     id: &str,
@@ -1074,6 +1111,21 @@ fn component_get_property(
     for window in wm.windows() {
         if let Some(found) = component_find(window.view.as_ref(), id) {
             return found.get_property(name);
+        }
+    }
+    None
+}
+
+fn component_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
+    for window in wm.windows() {
+        if let Some(found) = component_find(window.view.as_ref(), id) {
+            return Some(
+                found
+                    .property_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            );
         }
     }
     None
@@ -1309,6 +1361,70 @@ mod tests {
         assert!(!table.properties.contains_key("headers"));
         assert!(!table.properties.contains_key("rows"));
         assert!(!table.properties.contains_key("title"));
+    }
+
+    #[test]
+    fn inspect_property_names_resolves_menu_window_and_component_ids() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![
+            MenuSpec::new(
+                "File",
+                vec![MenuItem::action("Open", || {}).with_tag("menu_open")],
+            )
+            .with_tag("menu_file"),
+        ]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = Label::new("Hello").tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        )
+        .with_tag("win1");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+
+        assert_eq!(
+            inspector.property_names("menu_file").expect("menu spec"),
+            vec!["title".to_string()]
+        );
+        assert_eq!(
+            inspector.property_names("menu_open").expect("menu item"),
+            vec![
+                "label".to_string(),
+                "shortcut".to_string(),
+                "enabled".to_string(),
+            ]
+        );
+        assert_eq!(
+            inspector.property_names("win1").expect("window"),
+            vec![
+                "title".to_string(),
+                "rect".to_string(),
+                "state".to_string(),
+                "kind".to_string(),
+            ]
+        );
+
+        let component_names = inspector.property_names("label").expect("component");
+        assert!(component_names.contains(&"text".to_string()));
+        assert!(component_names.contains(&"enabled".to_string()));
+    }
+
+    #[test]
+    fn inspect_property_names_unknown_id_returns_not_found() {
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let mut inspector = desktop.inspect();
+
+        assert_eq!(
+            inspector.property_names("missing"),
+            Err(ComponentError::NotFound("missing".to_string()))
+        );
     }
 
     #[test]

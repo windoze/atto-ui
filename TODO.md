@@ -56,11 +56,13 @@ cargo test --workspace --all-targets
   - 完成记录：新增 `src/composable/find.rs`，提供公共 `find_by_tag` / `find_by_tag_mut`，按 root-first DFS 先匹配当前 `Component::tag()`，再遍历 `children()` / `children_mut()` 中的 `ComponentNode.view`；从 `src/composable/mod.rs` 与 `src/lib.rs` 导出；`src/inspect.rs` 的私有 `component_find` / `component_find_mut` 已收敛为委托公共 API，属性读取、属性写入、动作派发和存在性检查行为保持不变。新增测试覆盖根节点命中、深层子节点命中、未命中、同名 tag 返回首个，以及 mutable 同名 tag 首个匹配。按测试失败策略，验证过程中同时修复了 selectable `Text` 拖拽 capture / 释放 / 选区渲染行为，并将多处 PTY 中不可稳定读取的样式 / 颜色断言迁移到进程内 buffer 或状态断言，保留对应 PTY 端到端文本与交互覆盖。
   - 验证：`cargo test -p atto-ui find_by_tag -- --nocapture`；`cargo test -p atto-ui inspect_tree_finds_tags -- --nocapture`；`cargo fmt --all -- --check`；`CARGO_TARGET_DIR=target/codex cargo clippy --workspace --all-targets -- -D warnings`；`CARGO_TARGET_DIR=target/codex cargo test --workspace --all-targets`。后两条使用独立 `target/codex`，避免与本机 VS Code/rust-analyzer 占用的默认 `target` 锁冲突。
 
-- [ ] **[TODO] M1-2 `DesktopInspector` 收敛为第 1 层门面**
+- [x] **[DONE] M1-2 `DesktopInspector` 收敛为第 1 层门面**
   - 上下文：`DesktopInspector`（`src/inspect.rs:108`）已提供 `tree`/`export_snapshot`/`get_property`/`set_property`/`action`，是第 1 层门面雏形。本任务只做「收敛 + 补只读能力」，不加动作能力（动作属第 2 层 M2）。
   - 实现：补 `property_names(id) -> Result<Vec<String>, ComponentError>`（复用 `Component::property_names`，跨 menu/window/component 三类查找，风格对齐现有 `get_property` 的三段式 `menu_/window_/component_`）；`get_property`/`set_property`/`export_snapshot` 的组件寻址改用 M1-1 的公共 `find_by_tag`。保持 `#![forbid(unsafe_code)]`。
   - 明确边界：不改动 `action`/`action_by_id`（那是第 2 层要增强的入口），本任务范围仅只读门面。
   - 验证：新增单测覆盖 `property_names("some-tag")` 返回该组件属性名集合、未知 tag 返回 `ComponentError::NotFound`；既有 `export_snapshot_*` / `inspect_can_*` 测试不回归；全套通过。
+  - 完成记录：新增 `DesktopInspector::property_names(id)` 只读门面，按 menu、window、component 三段式查找；menu/window 路径返回与现有 `get_property` 可读属性一致的属性名集合，component 路径复用 `Component::property_names()` 并通过 M1-1 的公共 `find_by_tag` 委托链寻址。`action` / `action_by_id` 未改动，仍保留第 2 层边界；`export_snapshot` 继续做全树导出，不引入按组件 id 的新寻址逻辑。新增单测覆盖 menu spec、menu item、window、component 四类属性名读取，以及未知 id 返回 `ComponentError::NotFound`。
+  - 验证：`cargo test -p atto-ui inspect_property_names -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M1-3 tag 覆盖诊断辅助**
   - 上下文：`tag`/`id` 是 `Option`（`component.rs:354` 返回 `Option<&str>`），未标 tag 的节点不可寻址。约定「可脚本 / 可测组件必须显式标 tag」，需要一个诊断工具来发现漏标。
