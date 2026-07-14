@@ -357,6 +357,10 @@ impl Component for WindowMinSizeView {
         signals
     }
 
+    fn supports_command(&self, action: &::atto_ui::ComponentCommand) -> bool {
+        self.inner.supports_command(action)
+    }
+
     fn apply_command(&mut self, action: ::atto_ui::ComponentCommand) -> EventResult {
         self.inner.apply_command(action)
     }

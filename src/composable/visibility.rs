@@ -90,6 +90,10 @@ impl ::atto_ui::composable::Component for Visibility {
         signals
     }
 
+    fn supports_command(&self, action: &ComponentCommand) -> bool {
+        self.inner.supports_command(action)
+    }
+
     fn apply_command(&mut self, action: ComponentCommand) -> EventResult {
         if !self.visible.get() {
             return EventResult::ignored();

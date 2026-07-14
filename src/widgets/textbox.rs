@@ -142,6 +142,10 @@ impl TextBox {
 
 #[component_properties]
 impl Component for TextBox {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::InputText(_))
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::InputText(text) if self.enabled.get() => {

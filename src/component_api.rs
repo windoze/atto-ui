@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock as ParkingRwLock;
 use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
 
 use crate::composable::EdgeInsets;
 use crate::runtime::{ComponentValue, PropertyMeta, Rect as RuntimeRect};
@@ -39,7 +40,7 @@ impl<T: ComponentPropertySchema> ComponentPropertySchema for std::sync::RwLock<T
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ComponentCommand {
     Click,
     Toggle,
@@ -49,7 +50,7 @@ pub enum ComponentCommand {
     Custom { name: String, payload: Vec<u8> },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComponentTarget {
     Id(String),
     Focused,
@@ -65,6 +66,7 @@ pub enum ComponentError {
     },
     ActionNotSupported(String),
     RenderFailed(String),
+    Timeout(String),
 }
 
 impl ComponentError {
@@ -89,6 +91,10 @@ impl ComponentError {
 
     pub(crate) fn render_failed(err: impl ToString) -> Self {
         ComponentError::RenderFailed(err.to_string())
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        ComponentError::Timeout(message.into())
     }
 }
 

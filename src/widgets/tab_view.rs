@@ -500,6 +500,10 @@ impl Component for TabView {
         true
     }
 
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::SelectIndex(_))
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::SelectIndex(idx) => self.set_selection(idx),

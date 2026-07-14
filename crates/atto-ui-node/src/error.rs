@@ -23,6 +23,7 @@ pub fn component_error(error: ComponentError) -> Error {
         }
         ComponentError::ActionNotSupported(name) => format!("action not supported: {name}"),
         ComponentError::RenderFailed(message) => format!("render failed: {message}"),
+        ComponentError::Timeout(message) => format!("timeout: {message}"),
     };
     Error::new(Status::GenericFailure, message)
 }

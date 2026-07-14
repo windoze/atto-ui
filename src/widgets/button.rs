@@ -96,6 +96,10 @@ impl Button {
 
 #[component_properties]
 impl Component for Button {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::Click | ComponentCommand::Submit)
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::Click | ComponentCommand::Submit if self.enabled.get() => {

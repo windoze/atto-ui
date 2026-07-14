@@ -393,6 +393,10 @@ impl Component for ComponentTree {
         self.view.set_property(name, value)
     }
 
+    fn supports_command(&self, command: &crate::ComponentCommand) -> bool {
+        self.view.supports_command(command)
+    }
+
     fn apply_command(&mut self, command: crate::ComponentCommand) -> EventResult {
         self.view.apply_command(command)
     }

@@ -74,6 +74,10 @@ impl Component for ComponentTag {
         self.inner.dirty_signals()
     }
 
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        self.inner.supports_command(command)
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         self.inner.apply_command(command)
     }

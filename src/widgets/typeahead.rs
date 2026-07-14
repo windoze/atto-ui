@@ -333,6 +333,15 @@ impl TypeAhead {
 
 #[component_properties]
 impl Component for TypeAhead {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(
+            command,
+            ComponentCommand::InputText(_)
+                | ComponentCommand::SelectIndex(_)
+                | ComponentCommand::Submit
+        )
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::InputText(value) => self.set_query_text(value),
@@ -716,6 +725,10 @@ impl CommandPalette {
 
 #[component_properties]
 impl Component for CommandPalette {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        self.inner.supports_command(command)
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         self.inner.apply_command(command)
     }

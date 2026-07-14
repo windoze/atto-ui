@@ -203,6 +203,10 @@ impl Slider {
 
 #[component_properties]
 impl Component for Slider {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::SelectIndex(_))
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         let mut names = self.__component_property_names();
         names.push("progress");

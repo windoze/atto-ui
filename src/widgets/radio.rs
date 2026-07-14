@@ -88,6 +88,10 @@ impl RadioGroup {
 
 #[component_properties]
 impl Component for RadioGroup {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::SelectIndex(_))
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::SelectIndex(idx) => {

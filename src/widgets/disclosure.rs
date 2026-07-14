@@ -395,6 +395,10 @@ impl Disclosure {
 
 #[component_properties]
 impl Component for Disclosure {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::Toggle)
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::Toggle if self.enabled.get() => self.toggle(),

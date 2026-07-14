@@ -29,7 +29,7 @@ pub use component_api::{
 pub use composable::{find_by_tag, find_by_tag_mut};
 pub use inspect::{
     DesktopChangeTracker, DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode,
-    InspectSnapshot, NodeKind,
+    InspectSnapshot, InvokeDispatch, InvokeResult, NodeKind, WaitCondition, WaitResult,
 };
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,

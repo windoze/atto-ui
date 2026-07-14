@@ -136,7 +136,7 @@ cargo test --workspace --all-targets
   - 完成记录：`Slider::apply_command` 现支持 `ComponentCommand::SelectIndex(usize)`。命令语义定义为「从规范化后的 `min` 起按 `abs(step)` 计算第 N 个刻度」，即 `min + index * abs(step)`，再复用既有 `snap_value` / `clamp_value` / `set_value_and_emit` 路径落到合法值并触发 `change` callback payload；禁用态及其他命令返回 `EventResult::ignored()`。`Slider` 同时新增只读虚拟属性 `progress`，按 clamp 后的 `(value - min) / (max - min)` 导出归一化进度，零宽范围返回 `0.0`。新增进程内单测覆盖 `SelectIndex` 正常设值、`value` / `progress` 读值更新、越界 index clamp 到 `max` 且不 panic、反向 min/max 规范化、禁用态 ignored 以及 callback payload。
   - 验证：`cargo test -p atto-ui slider -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M2-5 进程内语义 API：`invoke` / `query` / `wait_for`**
+- [x] **[DONE] M2-5 进程内语义 API：`invoke` / `query` / `wait_for`**
   - 上下文：`inspect.rs` 已有 `action`/`action_target`（`:167`）与 `get_property`（`:136`），`ComponentTarget`（`component_api.rs:52`）支持 `Id`/`Focused`。本任务把它们收敛成第 2 层稳定语义 API，并新增 `wait_for`。
   - 实现：
     1. `invoke(target, action)`：语义级派发。目标组件实现了 `apply_command` 就走语义派发（M2-1..M2-4）；未实现才退回坐标注入兜底（`inspect.rs:222-278` 的现有逻辑保留）。返回值要能区分「语义派发成功」vs「退回坐标」以便可观测。
@@ -144,6 +144,8 @@ cargo test --workspace --all-targets
     3. `wait_for(predicate, timeout)`：进程内循环——推进 UI（draw / tick）→ 用 M1-4 变更信号或直接重查 `predicate`（对 `query` 结果判定）→ 未成立则继续到超时。**替代 chat helper 的 `sleep` 轮询屏幕**。predicate 建议接受 `&mut DesktopInspector` 或以 `(target, prop, 期望值)` 表达以便将来序列化。
     4. **可序列化约束**：`invoke`/`query`/`wait_for` 的入参（target、action、prop、期望值）都用第 3 层能直接序列化的值（`ComponentCommand` 已 `Clone+PartialEq`，`ComponentValue` 已 serde）。在完成记录中确认无进程内独有的闭包 / 引用泄漏到 API 边界（`wait_for` 的 predicate 闭包属例外，M4 时再定序列化表达）。
   - 验证：进程内单测：`invoke("checkbox", Toggle)` 直接翻转 `Binding` 且可观测到「走了语义派发」而非坐标；`wait_for` 能等到由后台 / 定时驱动的状态成立、且超时返回错误不挂死；全套通过。
+  - 完成记录：新增第 2 层进程内语义入口 `DesktopInspector::invoke` / `query` / `wait_for` / `wait_for_with_interval` / `wait_for_predicate`。`invoke` 返回 `InvokeResult { dispatch, result }`，可观测 `InvokeDispatch::Semantic`、`CoordinateFallback` 与 `Unsupported`；Id 目标按 menu/window/component 三段式语义优先派发，未实现 Click/Toggle/Submit/InputText 时才退回既有坐标/粘贴注入兜底，Focused 目标走进程内语义派发。为区分默认 ignored 与禁用态有意 ignored，`Component` trait 新增 `supports_command(&ComponentCommand)`，四个 M2 叶子组件以及既有 `apply_command` 组件、透明 wrapper、runtime wrapper 均声明或转发支持关系，避免 wrapped/tagged 组件误走坐标兜底。`query(target, prop)` 对齐第 1 层 `get_property`，并支持 Focused 组件查询。`wait_for` 使用 `WaitCondition::PropertyEquals { target, property, expected }` 这一可序列化形状循环 draw / 刷新 dirty signal / 重查属性，成功返回读到的值和 poll 次数，超时返回新增 `ComponentError::Timeout`；`wait_for_predicate` 作为进程内闭包便利 API 保留在 M2 层，不进入可序列化边界。`ComponentCommand` / `ComponentTarget` 以及 invoke / wait 结果类型已 serde 化，为 M4 协议层复用预留。
+  - 验证：`cargo test -p atto-ui invoke_ -- --nocapture`；`cargo test -p atto-ui wait_for_ -- --nocapture`；`cargo test -p atto-ui query_matches -- --nocapture`；`cargo fmt --all`；`cargo fmt --all -- --check`；`git diff --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M2-6 用 `wait_for` / `invoke` 迁移一批 chat 逻辑测试**
   - 上下文：延续 M1-5，把 `pty_chat.rs`（`crates/atto-ui-chat/tests/pty_chat.rs`）中依赖 `sleep` 轮询（`:22`/`:73` 等多处 `thread::sleep`）+ 字形推断的一批逻辑用例，迁到 `wait_for` + 读值断言。

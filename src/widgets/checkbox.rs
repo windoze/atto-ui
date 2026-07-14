@@ -73,6 +73,10 @@ impl Checkbox {
 
 #[component_properties]
 impl Component for Checkbox {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::Click | ComponentCommand::Toggle)
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::Click | ComponentCommand::Toggle if self.enabled.get() => {
