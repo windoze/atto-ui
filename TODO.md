@@ -1,169 +1,240 @@
-# TODO：全功能多窗口终端 App
+# TODO：脚本化 / Introspection 控制平面
 
-执行计划见 [`PLAN.md`](PLAN.md)，缺口分析见 [`TERMINAL_GAP.md`](TERMINAL_GAP.md)。
+执行计划见 [`PLAN.md`](PLAN.md)，分层设计见 [`SCRIPTING_LAYERS.md`](SCRIPTING_LAYERS.md)。
 
-上一阶段 TUI Agent / DeepSeek 计划已归档至 [`docs/archive/2026-07-11-tui-agent-deepseek/`](docs/archive/2026-07-11-tui-agent-deepseek/)。
+上一阶段「全功能多窗口终端 App」计划（M1-M7）已归档至 [`docs/archive/2026-07-12-terminal-app/`](docs/archive/2026-07-12-terminal-app/)。
 
-通用验收：每个阶段完成后至少运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。终端交互优先走 PTY 快照（`snapshot_terminal_app` / `snapshot_terminal_window_app` + `pty_terminal_*`），不依赖真实交互终端。
+## 使用约定
 
-代码位置速查：组件层 `crates/atto-ui-terminal/src/terminal.rs`（~1300 行），外壳层 demo `crates/atto-ui-terminal/examples/terminal_viewer.rs`，PTY fixture `src/bin/snapshot_terminal_app.rs` / `snapshot_terminal_window_app.rs`。
+- 任务按实现顺序编号：`M<阶段>-<序号>`，例如 `M1-1` 是阶段 1 第 1 个任务。
+- 每个任务标题保留 `[TODO]` 标记；完成后由 coding agent 改为 `[DONE]` 并在任务下补「完成记录」与「验证」两行（沿用归档 TODO 的格式）。
+- 每阶段结尾有独立的 `M<n>-R Review` 任务，负责复核本阶段正确性与完整性。
 
-## 阶段 M1 - 进程生命周期 + Callbacks 基础（P0.1 + P0.3 组件层）
+## 通用验收
 
-- [x] **[DONE] M1.1 进程退出信号** - reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`，`terminal.rs:461-467` / `terminal.rs:777-783`）。
-  - 完成记录（2026-07-11）：在 `TerminalShared` 中记录进程 `ExitStatus`，新增独立于 `on_close` 的 `on_exit(status)` 回调；reader EOF、draw-time `try_wait()` 轮询和生命周期 watcher 均可幂等发布退出状态。新增 `process_exit` 集成测试覆盖退出码回调只触发一次，以及无子进程 drop 时只触发 `on_close`。
-  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M1.2 运行状态查询接口** - `TerminalHandle` 暴露 `is_running()` / `exit_status()` 供外壳轮询。
-  - 完成记录（2026-07-11）：在 `TerminalShared` 中维护 subprocess running 状态，`TerminalHandle::is_running()` 可轮询当前子进程是否仍存活，`TerminalHandle::exit_status()` 可读取最近一次记录的 `ExitStatus`。新进程启动会清空旧退出状态并标记运行中，进程自然退出时复用 M1.1 的退出记录路径翻转为非运行，显式 `stop_process()` 也会清除运行态。
-  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M1.3 new_with_callbacks 改造** - `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`（替换 `terminal.rs:351` 的裸 `Parser::new`），桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。
-  - 完成记录（2026-07-11）：`TerminalEmulator` 的 parser 初始化与 scrollback 重建路径均改为 `vt100::Parser::new_with_callbacks`，新增 callback bridge 捕获 OSC 0/1/2 标题与图标名、BEL audible bell、OSC 52 clipboard copy 请求，写入 `TerminalShared` 并通过 `TerminalHandle` 查询接口与注册回调暴露。新增 `TerminalClipboardCopy` 公共事件类型与 `callbacks` 测试覆盖 handle 状态和回调可观察性。
-  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M1.4 测试** - 单测/PTY 覆盖 shell `exit` 后报告退出码、`is_running()` 翻转、`on_exit` 触发；title/bell/clipboard 回调可被观察到。
-  - 完成记录（2026-07-11）：补强 `callbacks` 集成测试，新增真实 `/bin/sh` 子进程输出 OSC 2 title、BEL、OSC 52 clipboard 并以指定退出码结束的回归用例；与既有 `process_exit` 测试共同覆盖退出码报告、`is_running()` 翻转、`on_exit` 触发一次、title/bell/clipboard 回调与 handle 状态可观察。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo test -p atto-ui-terminal --test callbacks --test process_exit`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M1.R Review** - 复核退出信号与 callbacks 桥接无 unsafe、不破坏既有 capture/paste/scrollback 路径，全套验证通过。
-  - 完成记录（2026-07-11）：复核 `atto-ui-terminal` 生命周期与 callback 桥接实现，确认 crate 继续 `#![forbid(unsafe_code)]` 且无 unsafe 使用；退出状态记录幂等、`on_exit` 与 `on_close` 解耦，callback 事件在锁外派发；`new_with_callbacks` 覆盖默认初始化与 scrollback parser 重建路径，未破坏 capture、bracketed paste、mouse forwarding 或本地 scrollback 行为。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
+每个任务完成后至少运行：
 
-## 阶段 M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+```
 
-- [x] **[DONE] M2.1 死窗口回收** - 在 tick 或 `on_exit` 检测进程退出，按策略关窗，或原地显示 `[Process exited: code N — press R to restart]`。
-  - 完成记录（2026-07-11）：终端 viewer 与 PTY window fixture 增加外壳层 session tracking；tick 轮询发现子进程退出后会释放 terminal capture、原地写入 `[Process exited: code N — press R to restart]` 提示，并在 focused dead terminal 上按 plain `R` 时替换为新的 `TerminalEmulator` 并按原命令重启。fixture 支持通过参数启动真实子进程并暴露 `PROC`/`RESTARTS` 状态，新增 PTY 回归覆盖退出提示与 R 重启入口。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_dead_process_prompts_and_restarts --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M2.2 标题联动** - 把组件暴露的标题（M1.3）同步到 `Window.title`，刷新 Windows 菜单窗口列表。
-  - 完成记录（2026-07-11）：终端 viewer 与 PTY window fixture 在 UI tick/action 路径轮询 `TerminalHandle::window_title()`，将 OSC 0/2 暴露的标题同步到对应 `Window.title`，并在刷新 Windows 菜单窗口列表前使用当前窗口标题作为菜单项来源。终端重启时恢复默认窗口标题，避免旧进程标题滞留。新增 PTY 回归覆盖子进程输出 OSC 2 后标题栏更新，并在 Windows → Switch to 菜单中显示更新后的窗口标题。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_osc_title_updates_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M2.3 测试** - PTY 覆盖 shell 退出后窗口回收/退出提示与 R 重启入口；`OSC 0/2` 标题联动到窗口标题与菜单。
-  - 完成记录（2026-07-11）：补齐 `pty_terminal_window_interactions` 中的 M2 PTY 覆盖；保留 shell 子进程退出后显示退出提示、释放 capture、按 `R` 重启并更新 `RESTARTS` 的回归测试；将标题联动测试扩展为同时覆盖 OSC 0 与 OSC 2，确认窗口标题和 Windows → Switch to 菜单项同步更新。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_dead_process_prompts_and_restarts pty_terminal_osc_zero_and_two_titles_update_window_title_and_windows_menu --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M2.R Review** - 复核回收策略不误杀存活窗口、标题联动线程安全，验证通过。
-  - 完成记录（2026-07-11）：复核终端 viewer、PTY window fixture 与 `TerminalHandle` 状态流，确认死窗口回收只在组件记录到 `exit_status()` 后释放 capture 并显示退出提示，不基于焦点/标题等启发式关闭或误杀仍存活窗口；重启路径会替换 view、刷新 handle 并恢复默认标题。标题联动通过 `TerminalHandle::window_title()` 克隆共享状态后，在 UI tick/action 线程调用 `Desktop::set_title` 与刷新 Windows 菜单，callback 事件在 terminal shared 锁外派发，未引入跨线程 UI 变更。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
+第 1/2 层逻辑测试优先走**进程内**读值断言（构造 `Desktop` → `desktop.inspect()`），不经 PTY；第 4 层终端交互走 PTY 快照。全套 `cargo test --workspace` 在本机约需较长时间，聚焦验证可先跑相关 crate/测试文件，最终务必全套通过。
 
-## 阶段 M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
+## 代码位置速查
 
-- [x] **[DONE] M3.1 前缀态状态机** - capture 分支（`terminal.rs:701-712`）收到前缀键进入前缀态（不转发），下一个键查前缀命令表；未命中按策略连同前缀发子进程或吞掉。
-  - 完成记录（2026-07-11）：在 `TerminalShared` 中新增默认 `Ctrl+B` 前缀键与 pending 状态；capture 态收到前缀键时只进入 pending、不转发给子进程；下一次非 release 按键先走前缀命令 hook（M3.3 填充命令表），未命中时按 lossless fallback 将已暂存前缀与当前按键编码后一并发给子进程。Tab/BackTab 的 capture hook 也复用同一状态机，capture 释放或失焦会清除 pending 前缀，避免悬挂状态污染后续输入。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M3.2 可配置前缀键** - 默认 `Ctrl+B`，约束为 plain `Ctrl+<字母>`；前缀键可配置（暂用组件字段，M7 接入配置模型）。
-  - 完成记录（2026-07-11）：新增终端前缀键配置入口，`TerminalEmulator::prefix_key` / `prefix_shortcut` 与 `TerminalHandle::set_prefix_shortcut` 均校验并规范化为 plain `Ctrl+<ASCII letter>`，默认保持 `Ctrl+B`；重配前缀键会清除 pending 前缀态，fallback 转发使用当前配置。动态组件 schema 暂时暴露 `prefix_key` 字段，供 M7 配置模型接线前使用。补充 input encoding 回归覆盖默认前缀、可配置 `Ctrl+A`、大小写规范化、非法修饰符/非字母拒绝与非前缀键继续转发。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M3.3 前缀命令表** - `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode（占位，M4 实现选择）、`前缀 + 前缀` 转义一个字面前缀给子进程。
-  - 完成记录（2026-07-11）：终端 capture 态新增前缀命令表；默认/配置前缀后，`前缀+F10` 通过 typed `ComponentAction` 激活菜单，`前缀+w` 切换窗口管理模式，`前缀+z` 最大化/还原当前窗口，`前缀+[` 进入 copy-mode 占位状态供 M4 扩展，`前缀+前缀` 只向子进程发送一个字面前缀。未命中命令继续沿用 lossless fallback，把前缀和后续键一并转发给子进程。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_prefix_commands_drive_desktop_chrome -- --nocapture`、`cargo test -p atto-ui --lib component_action_can_ -- --nocapture`、`cargo test --workspace --all-targets` 均通过；完成记录/计划文档更新后仅改动 Markdown，未重跑全套。
-- [x] **[DONE] M3.4 事件派发桥接** - 复核并收敛 M3.3 引入的 typed `ComponentAction` 外壳命令桥接（替代 raw-key `EventResult::ignored()` 冒泡，避免 `前缀+w/z` 无法对应现有全局快捷键），确保 focused view、pointer capture、tooltip view、`send_event_to_window` 等路径语义一致，modal 仍阻断外壳命令。
-  - 完成记录（2026-07-12）：收敛 typed `ComponentAction` 到统一 desktop bridge，`WindowManagerAction` 可携带组件结果并由 `Desktop` 统一处理 close/menu/window-mode/maximize 等外壳命令；focused view、titlebar、pointer capture、tooltip hit-test、drag/drop 和 `send_event_to_window` 均复用同一处理路径。modal 激活时 shell command 类组件动作会被消费并清理 which-key，不会激活菜单、窗口模式或最大化外壳状态。
-  - 验证：`cargo test -p atto-ui --lib component_action -- --nocapture`、`cargo test -p atto-ui --lib modal -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M3.5 测试** - PTY 覆盖 capture 态 `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + 前缀` 字面前缀到子进程；非终端窗口快捷键仍直达、capture 释放后 `F10` 直达。
-  - 完成记录（2026-07-12）：保留并复跑既有 `pty_terminal_prefix_commands_drive_desktop_chrome` 覆盖 capture 态 `前缀+F10` 激活菜单与 `前缀+w` 进入窗口模式；新增 PTY 子进程 raw-byte 回归，验证 `前缀+前缀` 只向子进程发送单个字面 `Ctrl+B`（`BYTE=02`）；新增非终端 Tools 窗口焦点下 `F10` 直达菜单，以及终端 capture 释放后 `F10` 直达菜单的回归覆盖。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_prefix_commands_drive_desktop_chrome pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M3.R Review** - 复核前缀不吞掉子进程需要的键（可靠转义）、命令表可配置、双向 escape 收敛为单一前缀，验证通过。
-  - 完成记录（2026-07-12）：复核 M3 前缀键状态机、typed `ComponentAction` 派发桥接与 PTY 覆盖，确认前缀后未命中的可编码按键会按 lossless fallback 连同前缀转发给子进程，`前缀+前缀` 始终绕过命令表并只发送一个字面前缀。补齐发现的命令表配置缺口：新增 `TerminalPrefixBinding`，`TerminalEmulator` / `TerminalHandle` 均可替换整张前缀命令表或增量替换单个绑定，默认 `F10`/`w`/`z`/`[` 行为保持不变，运行时替换会清除 pending 前缀态避免旧配置污染后续输入。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_prefix_commands_drive_desktop_chrome pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess pty_terminal_global_shortcuts_reach_non_terminal_and_released_capture --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
+| 主题 | 位置 |
+|---|---|
+| 第 1 层门面 `DesktopInspector` | `src/inspect.rs`（`component_find`/`component_find_mut` 在 `1147-1170`） |
+| `Component` trait（寻址/属性/动作方法） | `src/composable/component.rs`：`tag()` `354`、`property_names()` `476`、`get_property` `480`、`set_property` `484`、`apply_command` `488`、`children()` `358`、`children_mut()` `362` |
+| `ComponentTag` / `.tag()` 扩展 | `src/composable/component_tag.rs`（`ComponentTag` `18`、`ComponentTagExt` `43`） |
+| 动作 / 目标 / 值类型 | `src/component_api.rs`：`ComponentCommand` `42`、`ComponentTarget` `52`、`ComponentError` `58`、`ComponentValueCodec` `9` |
+| `#[derive(ComponentProperties)]` 宏 | `crates/atto-ui-macros/src/component_properties.rs` |
+| 叶子控件 | `src/widgets/{checkbox,button,textbox,slider}.rs`（均已 `#[derive(ComponentProperties)]`，`impl Component` 分别在 `74/97/135/186` 行附近） |
+| 已实现 `apply_command` 的参考 | `src/widgets/{disclosure,list,table,radio,tab_view,typeahead}.rs`、`src/composable/{visibility,border,scroll_container/mod}.rs` |
+| reactive 变更信号 | `src/reactive/dirty.rs`（`DirtyFlag` `6`、`DirtyObserver` `16`、`check_and_clear` `43`、`observer` `50`） |
+| runtime 私有寻址 | `src/runtime/tree.rs`（`ViewPathIndex` `592`） |
+| PTY 测试宿主 | `crates/atto-ui-test-host/src/`（`PtyTestHost` API 见 `lib`；`wait_for_text`/`wait_for_screen` 已有） |
+| chat OCR 痛点 helper（迁移对象） | `crates/atto-ui-chat/tests/pty_chat.rs`（`find_text_position` `26`、`wait_for_disclosure_text` `54`） |
+| 终端 spawn / handle | `crates/atto-ui-terminal/src/terminal.rs`：`spawn_command` `2775`、`send_input_bytes` `3443`、`resize` `3448`、`is_running` `3728`、`exit_status` `3733`、`snapshot` `3738` |
+| 终端系统剪贴板后端 | `crates/atto-ui-terminal/src/terminal.rs`（`TerminalSystemClipboard`，M4.6 引入，供 L1 复用） |
+| 终端分屏引擎 | `crates/atto-ui-terminal/src/pane.rs`（`TerminalPaneGroup` `203`、`TerminalPaneGroupHandle` `76`） |
 
-## 阶段 M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）
+---
 
-- [x] **[DONE] M4.1 selection 状态机** - 新增统一 selection 状态机：选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。可参考 chat 组件已有文本选择实现。
-  - 完成记录（2026-07-12）：新增 `selection` 模块，提供基于 scrollback+visible screen 绝对坐标的 `TerminalSelectionPosition` / `TerminalSelectionRange`、统一 anchor/focus selection 状态机、可复用的 visible-cell 命中测试、宽字符感知的高亮 cell range，以及从 vt100 `Screen` 提取选中文本的核心逻辑。`TerminalShared` 接入 selection 状态，`TerminalEmulator` draw 路径按主题 selection 样式渲染选区，`TerminalHandle` 暴露 `begin_selection` / `update_selection` / `clear_selection` / `selection_range` / `selection_position_for_view_cell` / `selected_text`，供后续鼠标框选与 copy-mode 键盘入口共享。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_selection -- --nocapture`、`cargo test -p atto-ui-terminal selection -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.2 鼠标本地框选** - 子进程开鼠标报告时 `Shift+拖拽`=本地框选、不按=转发；未开鼠标报告时直接拖拽即框选（修掉 `capture_on_click` recapture 浪费点击，`terminal.rs:747-770`）。
-  - 完成记录（2026-07-12）：终端组件 mouse handling 接入 M4.1 selection 状态机；未开启子进程鼠标报告时 plain 左键拖拽会本地开始/更新/结束 selection，开启鼠标报告时 plain 左键 down/drag/up 继续按协议转发给子进程，`Shift+`左键拖拽改走本地 selection 且不转发。selection 状态新增 dragging/finish 语义，避免鼠标释放后后续 drag 继续污染已完成选区；鼠标焦点 recapture 不再吞掉原始点击，`capture_on_click` 重新捕获后同一个 down 事件会继续执行本地 selection 或子进程 mouse forwarding。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.3 copy-mode** - 经 `前缀 + [`（M3.3）进入；方向键与 hjkl、起选 `v`/`Space`、复制 `y`/`Enter`、`Esc`/`q` 取消；copy-mode 内滚轮/方向键永远本地 scrollback 导航。
-  - 完成记录（2026-07-12）：将 M3 的 copy-mode 占位标记替换为真实 modal 状态，进入时初始化本地 copy cursor 并清理旧 selection；copy-mode 内方向键、hjkl、PageUp/PageDown、Home/End 均只移动本地 cursor/scrollback，不再转发给子进程；`v`/`Space` 使用统一 selection 状态机起选，`y`/`Enter` 将选中文本写入组件内部 copy buffer 并退出，`Esc`/`q` 取消并清理 selection。copy-mode 鼠标滚轮在子进程启用 mouse reporting 时也被本地消费，避免泄漏到子进程。PTY fixture 状态行暴露 copy-mode/copy buffer 以覆盖端到端交互。
-  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_copy_mode -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_prefix_command_table_enters_copy_mode -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_copy_mode_selects_and_copies_text --nocapture`、`cargo test --workspace --all-targets`、`cargo fmt --all -- --check` 均通过。
-- [x] **[DONE] M4.4 剪贴板（首版）** - 选择 → 组件内部 copy buffer + 粘贴回子进程（bracketed paste 已支持，`terminal.rs:719-737`），先让选择/高亮/命中测试核心逻辑落地过 PTY。
-  - 完成记录（2026-07-12）：终端组件首版剪贴板保持纯组件内部 copy buffer，不引入系统剪贴板依赖；copy-mode 的 `y`/`Enter` 继续写入 buffer，鼠标本地框选在释放左键时自动把选中文本写入 buffer。新增 `TerminalHandle::copy_selection()` 与 `paste_copied_text()`，并在默认前缀命令表中加入 `前缀+]` 粘贴内部 buffer；粘贴统一复用 bracketed paste 编码路径，子进程开启 bracketed paste 时自动包裹 `\x1b[200~` / `\x1b[201~`。新增单测覆盖鼠标选区入 buffer、handle/prefix 粘贴与 bracketed paste；新增 PTY 回归验证 copy-mode 复制后的内部 buffer 可通过 `前缀+]` 粘贴到真实子进程。
-  - 验证：`cargo test -p atto-ui-terminal --test input_encoding -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_local_copy_buffer_pastes_to_subprocess -- --nocapture`、`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.5 alt screen 滚动分流** - 滚轮分支前置三级决策树：`mouse_protocol_mode() != None` → 转发 SGR 滚轮（已有 `encode_mouse_event` 64/65，`terminal.rs:1266`）；`alternate_screen()` → alternate scroll 翻方向键（默认 ×3）发子进程；else → 本地 `set_scrollback`（现有逻辑，`terminal.rs:499/521`）。不用 `application_cursor()`/清屏启发式。
-  - 完成记录（2026-07-12）：终端 capture 态鼠标滚轮路径补齐三级分流；子进程启用 mouse reporting 时继续优先经 `encode_mouse_event` 转发滚轮事件，alternate screen 且未启用 mouse reporting 时将竖向滚轮转换为默认 3 次 Up/Down 方向键输入并发往子进程，主屏幕仍沿用本地 scrollback 调整，不使用 `application_cursor()` 或清屏状态作为分流条件。新增 `input_encoding` 回归覆盖 alternate screen 滚轮方向键、mouse reporting 优先级和主屏本地 scrollback。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.6 剪贴板（后续，可选）** - 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1.3 `copy_to_clipboard` 回调），OSC 52 优先、`arboard` 兜底。可拆独立 PR。
-  - 完成记录（2026-07-12）：终端组件新增可配置 `TerminalSystemClipboard` 后端，默认复制路径先向宿主发送 OSC 52，再通过 `arboard` 尝试原生系统剪贴板兜底；测试可注入假后端或禁用真实剪贴板写入。selection、鼠标框选释放、copy-mode `y`/`Enter` 均继续写入组件内部 copy buffer，并同步到配置的系统剪贴板后端。OSC 52 `copy_to_clipboard` 回调现在会解析标准 clipboard selector 的 base64/UTF-8 payload，更新 `last_clipboard_copy`、内部 copy buffer 和系统剪贴板；非标准 selector 保持可观察回调但不误写系统 clipboard。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks --test input_encoding terminal_ -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.7 测试** - PTY 覆盖鼠标框选/复制、copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf `--height` 滚轮各落正确分支、主屏 scrollback 仍正常。
-  - 完成记录（2026-07-12）：补齐 `pty_terminal_window_interactions` 的 M4 PTY 覆盖；新增鼠标 plain drag 在无 mouse reporting 时本地框选并复制、`Shift+drag` 在子进程启用 mouse reporting 时仍本地框选并复制的回归测试。新增 app-like 滚轮分流 PTY probe，分别覆盖 vim mouse on、htop、fzf `--height` 这类 mouse reporting 优先转发 SGR wheel，vim mouse off、less 这类 alternate screen 无 mouse reporting 转换为 3 次方向键，以及主屏无 mouse reporting 时滚轮仍走本地 scrollback。既有 copy-mode 选择复制与内部 copy buffer 粘贴 PTY 覆盖一并复跑。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M4.R Review** - 复核 selection 命中测试对宽字符正确、滚动分流三级树覆盖残余类靠 copy-mode 兜底、剪贴板首版不引入跨平台依赖，验证通过。
-  - 完成记录（2026-07-12）：复核 M4 selection、copy-mode、滚轮分流与剪贴板实现；补齐并修复宽字符选区文本提取在只命中宽字符左/右半格时无法复制字符的问题，使高亮命中测试与实际 copied text 保持一致。确认滚轮分流仍按 mouse reporting 优先、alternate screen 转方向键、主屏本地 scrollback 的三级树执行，copy-mode 内滚轮/方向键继续本地消费。剪贴板首版核心仍保持组件内部 copy buffer；M4.6 系统剪贴板能力集中在可替换/可禁用的 `TerminalSystemClipboard` 后端。
-  - 验证：`cargo test -p atto-ui-terminal selected_text_expands_partial_wide_character_cells -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_mouse_selection_copies_wide_character_from_either_cell -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
+## 阶段 M1 - 第 1 层 introspection（地基）
 
-## 阶段 M5 - 语义提示符标记（P1.4，OSC 133/7）
+目标：把分散的寻址收敛成公共 `find_by_tag`，把 `DesktopInspector` 明确为第 1 层门面，兑现「逻辑测试改用读值断言」的独立价值。第 1 层不得依赖第 2/3/4 层。
 
-三层互相独立，不混在一起实现。
+- [ ] **[TODO] M1-1 公共 `find_by_tag` 寻址 API**
+  - 上下文：目前寻址实现分散——`src/inspect.rs:1147-1170` 有私有递归 `component_find`/`component_find_mut`，`src/runtime/tree.rs:592` 有私有 `ViewPathIndex`。二者都按 `Component::tag()`（`component.rs:354`，返回 `Option<&str>`）匹配。需要一个公共、纯只读、进程内的寻址入口。
+  - 实现：在 composable 层（建议 `src/composable/` 下新增或挂到现有 trait/自由函数）提供 `pub fn find_by_tag<'a>(view: &'a dyn Component, tag: &str) -> Option<&'a dyn Component>` 与 `find_by_tag_mut`，语义同现有 `component_find`（先比自身 `tag()`，再 DFS `children()`/`children_mut()`）。`children_mut()` 返回 `Option<&mut Vec<ComponentNode>>`，遍历 `ComponentNode.view`。
+  - 收敛：`src/inspect.rs` 的 `component_find`/`component_find_mut` 改为委托新公共函数，删除重复递归；`component_get_property`/`component_set_property`/`component_action`/`component_exists` 行为不变。
+  - 从 `src/lib.rs` 导出该 API（`inspect` 与 composable 的 `pub use` 区域，`lib.rs:8-32`）。
+  - 验证：新增单测覆盖「命中根节点」「命中深层嵌套子节点」「未命中返回 None」「同名 tag 返回首个」；`cargo test -p atto-ui find_by_tag -- --nocapture`；确认 `inspect.rs` 既有测试（`inspect_tree_finds_tags` 等）仍通过；全套 fmt/clippy/test 通过。
 
-- [x] **[DONE] M5.1 第 1 层 感知与信号【组件层】** - 与 M1.3 共用 callbacks，接 `unhandled_osc`（vt100 透传 `[b"133", b"A"]` / `[b"133", b"D", b"0"]` / `[b"7", b"file://..."]`），推进小状态机记 `command_marks: Vec<CommandBlock>`（prompt_start/command_start/output_start/end 行号、exit_code、cwd，行号用 vt100 绝对行/scrollback 坐标）。**无需 fork vt100。**
-  - 完成记录（2026-07-12）：终端组件复用 M1.3 的 `new_with_callbacks` 通道，实现 `vt100::Callbacks::unhandled_osc` 捕获未处理 OSC 参数；新增内部 `CommandBlock` 状态机与 `command_marks`/`current_cwd` 状态，支持 OSC 133 `A`/`B`/`C`/`D` 记录 prompt、command、output、end 的 vt100 scrollback 绝对行坐标和命令级退出码，并支持 OSC 7 `file://...` cwd 解析与 percent decode。无 OSC 标记的普通输出保持降级为空状态，不依赖 shell integration 注入，也未 fork vt100。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal osc133 -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.2 第 1 层 查询接口** - `TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished(status)` 回调；无标记时退回普通 scrollback 不崩。
-  - 完成记录（2026-07-12）：新增公开 `TerminalCommandBlock` 快照类型并从 crate root 导出，`TerminalHandle::command_blocks()` 可读取 OSC 133/7 记录到的命令块列表，`TerminalHandle::last_exit_code()` 返回最近完成命令块的命令级退出码；新增 `TerminalEmulator::on_command_finished(...)` 回调，在 OSC 133 `D` 完成命令块时于锁外派发完成块快照。无 shell integration/OSC 标记的普通输出保持 `command_blocks()` 为空、`last_exit_code()` 为 `None`，不影响普通 scrollback。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_command_block -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.3 第 2 层 呈现【外壳层】** - 命令块分隔线/输出区底色、失败命令（exit≠0）标红标记。仅依赖第 1 层 `command_blocks()`。
-  - 完成记录（2026-07-12）：新增可选 `TerminalCommandBlockPresentation` 命令块呈现模式，终端外壳层 `terminal_viewer` 与 `snapshot_terminal_window_app` 显式启用；渲染时仅依据 M5.2 暴露的 OSC 133 命令块行号，在 prompt 行空白区绘制命令块分隔线、为 output 行套用主题驱动底色，并在 exit code 非 0 的命令块结束行绘制红色失败标记。无命令块或未启用呈现时保持既有终端渲染行为。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block_presentation_marks_semantic_rows -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command_block_presentation_marks_failed_commands -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.4 第 2 层 交互【外壳层】** - 命令级导航（`Ctrl+↑/↓` 跳上/下一条命令）、选择粒度升级到整条命令输出、右键「重跑/复制命令/复制输出」。
-  - 完成记录（2026-07-12）：终端命令块记录补充 OSC 133 marker 列坐标，保留既有行号查询的同时支持精确提取命令文本与输出文本。`TerminalHandle` 新增命令块命中、上一条/下一条命令导航、整条输出选区、复制命令、复制输出与重跑命令接口；`Ctrl+↑/↓` 在存在命令块时本地滚动到相邻命令且不转发给子进程，无标记时继续降级为普通输入路径。终端 window fixture 与 `terminal_viewer` 接入右键 Command 菜单，支持 Rerun / Copy command / Copy output，并在打开菜单时把选区提升为整条命令输出。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_ctrl_arrows_navigate_command_blocks_without_forwarding -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_command_context_menu_copies_output_and_reruns --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.5 第 3 层 shell integration【配置面】** - 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时（配合 M6.3 spawn 环境）按 shell 类型注入 integration 脚本，注入开关进配置。第 1/2 层不得硬依赖注入成功。
-  - 完成记录（2026-07-12）：新增默认关闭的 `TerminalShellIntegration` 配置面，组件 builder、`TerminalHandle` 与动态组件 schema 均可读写开关；默认零侵入路径继续只消费用户 shell 已发出的 OSC 133/7 标记，无标记时第 1/2 层仍降级为普通 scrollback。开启后，`spawn_command` 会对支持的交互式 bash/zsh 启动注入临时 shell integration 脚本，生成 OSC 133/7 标记；非交互式 `-c` 等命令和不支持的 shell 保持原样。注入脚本临时文件随进程生命周期清理，注入失败会记录到 handle 可查询错误并继续按未注入命令启动，避免第 1/2 层硬依赖第 3 层成功。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal shell_integration -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.6 测试** - 单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机、无标记降级；PTY 覆盖第 2 层导航与命令级复制（如实现）。
-  - 完成记录（2026-07-12）：补齐 M5 测试覆盖；`callbacks` 新增多命令块 OSC 133/7 状态机与 cwd 更新、未知 OSC 133/非法 OSC 7 降级用例；`input_encoding` 新增无 OSC 标记时命令块导航、选择、复制、重跑接口安全降级用例；PTY window fixture 新增 `Ctrl+↑/↓` 命令级导航端到端覆盖，并复跑既有命令块呈现、右键 Copy command / Copy output / Rerun 覆盖。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test callbacks terminal_ -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_command_block -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_command -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_ctrl_arrows_navigate_command_blocks -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M5.R Review** - 复核三层解耦（第 1 层不依赖第 2/3 层）、命令级退出码区别于进程级退出码，验证通过。
-  - 完成记录（2026-07-12）：复核 M5 三层实现，确认第 1 层 OSC 133/7 感知始终在组件层 parser callback 中独立记录 `command_marks`，不依赖第 2 层呈现开关或第 3 层 shell integration 注入；第 2 层只通过 `command_blocks()`/handle API 消费已记录语义块；第 3 层默认关闭，注入失败只记录可查询错误并继续按普通 shell 启动。确认命令级退出码保存在 `TerminalCommandBlock::exit_code`/`last_exit_code()`，进程级退出码保存在 `exit_status()`/`on_exit`，两者不会互相覆盖。补充 `terminal_command_exit_code_is_distinct_from_process_exit_status` 回归测试，直接覆盖 OSC 133 `D` 不会设置进程级 `exit_status()`。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test callbacks terminal_command_exit_code_is_distinct_from_process_exit_status -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
+- [ ] **[TODO] M1-2 `DesktopInspector` 收敛为第 1 层门面**
+  - 上下文：`DesktopInspector`（`src/inspect.rs:108`）已提供 `tree`/`export_snapshot`/`get_property`/`set_property`/`action`，是第 1 层门面雏形。本任务只做「收敛 + 补只读能力」，不加动作能力（动作属第 2 层 M2）。
+  - 实现：补 `property_names(id) -> Result<Vec<String>, ComponentError>`（复用 `Component::property_names`，跨 menu/window/component 三类查找，风格对齐现有 `get_property` 的三段式 `menu_/window_/component_`）；`get_property`/`set_property`/`export_snapshot` 的组件寻址改用 M1-1 的公共 `find_by_tag`。保持 `#![forbid(unsafe_code)]`。
+  - 明确边界：不改动 `action`/`action_by_id`（那是第 2 层要增强的入口），本任务范围仅只读门面。
+  - 验证：新增单测覆盖 `property_names("some-tag")` 返回该组件属性名集合、未知 tag 返回 `ComponentError::NotFound`；既有 `export_snapshot_*` / `inspect_can_*` 测试不回归；全套通过。
 
-## 阶段 M6 - 分屏 + 会话管理 + spawn 环境（P2）
+- [ ] **[TODO] M1-3 tag 覆盖诊断辅助**
+  - 上下文：`tag`/`id` 是 `Option`（`component.rs:354` 返回 `Option<&str>`），未标 tag 的节点不可寻址。约定「可脚本 / 可测组件必须显式标 tag」，需要一个诊断工具来发现漏标。
+  - 实现：在 `DesktopInspector` 上加 `untagged_interactive_nodes(screen) -> Vec<InspectNode>`（或返回轻量描述），遍历 `build_desktop_tree`（`inspect.rs:343`）产物，筛出「可交互但 `id` 为 `None`」的节点。判定「可交互」：`property_names()` 含 `checked`/`text`/`selected`/`value`/`selection` 等交互属性之一，或 `is_focusable()` 为真（参考 `inspect.rs:724` 的 `is_snapshot_component_property` 白名单）。
+  - 定位：这是诊断辅助（测试期使用），不是运行时强制；不改变任何交互行为。
+  - 验证：单测构造含「标了 tag 的 Checkbox」+「未标 tag 的 Checkbox」的 Desktop，断言诊断只列出后者；全套通过。
 
-- [x] **[DONE] M6.1 分屏** - 基于现有组件和功能在单窗口内做 tmux 式 split panes，与既有 WM 浮动窗口形态并存。
-  - 完成记录（2026-07-12）：新增 `TerminalPaneGroup` split-pane 容器与可查询 `TerminalPaneGroupHandle`，在单个 `Window` view 内维护 pane 树、布局、active pane 与 pane handle 快照；默认 `Ctrl+B %` 左右分屏、`Ctrl+B "` 上下分屏、`Ctrl+B o`/`Ctrl+B Tab` 切换 pane，未命中的前缀组合会回放给当前 `TerminalEmulator`，保留既有菜单、窗口模式、最大化、copy-mode、前缀转义等终端前缀行为。`terminal_viewer` 与 `snapshot_terminal_window_app` 已切换为 pane 容器，标题联动、退出提示、右键命令块菜单和状态行均按 active/命中 pane 读取 handle；外层 WM 浮动窗口仍保持独立焦点、移动、大小与菜单行为。PTY fixture 额外串行化该窗口交互测试文件，避免默认并发下 `openpty` 资源竞争造成非确定性失败。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M6.2 会话管理** - 新建时选 shell/命令入口；重启已死会话（配合 M1.2 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。
-  - 完成记录（2026-07-12）：新增 `TerminalSessionSpec` 统一描述 terminal session 的 profile、program/args 与窗口 cwd，`TerminalEmulator::spawn_session` 可直接按 spec 启动，`TerminalHandle::current_cwd()` 暴露 M5 OSC 7 观察到的 cwd。`terminal_viewer` 的 File 菜单拆为 New shell window / New command window，新窗口会继承当前窗口已观察到的 cwd；每个 `TerminalWindowSession` 持有自己的 spec，死会话按窗口自己的 profile/cwd 重启，不再依赖全局启动命令。`snapshot_terminal_window_app` 改用同一 spec，并暴露 `SESSION`/`CWD` 状态用于 PTY 覆盖。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal session_spec -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_restart_uses_session_profile_and_osc7_cwd -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M6.3 spawn 环境** - `spawn_command`（`terminal.rs:435-489`）设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发，`terminal.rs:566-568`）。
-  - 完成记录（2026-07-12）：`TerminalEmulator::spawn_command` 统一准备 PTY 子进程环境，显式设置 `TERM=xterm-256color`、`COLORTERM=truecolor`，并在调用者未指定 cwd 时固定为当前进程 cwd；`TerminalSessionSpec` 的显式 cwd 继续优先生效。新增共享 PTY resize 句柄，`TerminalEmulator::resize` 与 `TerminalHandle::resize` 可主动同步 parser screen 与运行中 PTY 尺寸，`draw` 复用同一路径而不再独占 resize 触发。进程退出或停止时会清理输入转发与 resize 句柄，避免对死 PTY 继续发 resize。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal spawn_command_preparation --lib -- --nocapture`、`cargo test -p atto-ui-terminal --test process_exit -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M6.4 测试** - PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
-  - 完成记录（2026-07-12）：补齐 M6 PTY 覆盖闭环；保留并复跑单窗口内 `Ctrl+B %`/`Ctrl+B "` 分屏布局、pane 焦点切换且不扰动外层浮动窗口的回归测试，以及死会话退出提示、释放 capture、按 `R` 用 session profile/OSC7 cwd 重启的回归测试。扩展 `snapshot_terminal_window_app` 的 File 菜单，支持 `New shell window` / `New command window`，并在状态行暴露终端窗口数量、焦点窗口 profile/cwd；新增 PTY 用例通过菜单分别创建 command 与 shell 窗口，验证两者都按焦点 session 观察到的 OSC7 cwd 启动。
-  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M6.R Review** - 复核分屏焦点/尺寸传播正确、会话 profile 与 spawn 环境不泄漏宿主变量污染，验证通过。
-  - 完成记录（2026-07-12）：复核 M6 分屏、会话与 spawn 环境实现，确认 `TerminalPaneGroup` 在单窗口内维护稳定 pane 树与 active pane，draw/layout 路径按 pane rect 将焦点、鼠标坐标与 resize 传播到对应 `TerminalEmulator`，pane 切换只更新 active pane capture，不扰动外层 WM 浮动窗口。确认 `TerminalWindowSession`/`TerminalSessionSpec` 在 viewer 与 PTY fixture 中按窗口持有 profile/program/args/cwd，死会话重启、新建 shell/command 窗口均复用当前窗口观察到的 OSC 7 cwd；`spawn_command` 会覆盖宿主污染的 `TERM`/`COLORTERM` 为终端默认值，并保留显式 cwd 优先级与显式 resize 句柄清理。
-  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
+- [ ] **[TODO] M1-4 变更信号聚合（为 M2 `wait_for` 预留）**
+  - 上下文：reactive 是拉模型——`DirtyFlag`/`DirtyObserver`（`src/reactive/dirty.rs`），`check_and_clear()`（`:43`）返回自上次以来是否 dirty，`observer()`（`:50`）克隆观察者。第 2 层 `wait_for` 需要一个统一的「UI 是否发生过变更」进程内信号，避免轮询屏幕。
+  - 实现：提供一个进程内变更检测封装（建议挂在 `DesktopInspector` 或独立小结构），聚合 desktop 关注的 `DirtyFlag`，暴露 `changed_since_last_poll() -> bool` 之类接口。**只做拉模型聚合**，不引入 push 订阅（`SCRIPTING_LAYERS.md` 第 1 层缺口 4 明确「不强求 push」）。
+  - 明确边界：本任务只交付「信号读取」原语；真正的 `wait_for(predicate, timeout)` 循环在 M2-5 实现，此处不写等待循环。
+  - 验证：单测：改一个 `Binding` 后聚合信号报告 changed；`mark_clean`/poll 后回落 false；全套通过。
 
-## 阶段 M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
+- [ ] **[TODO] M1-5 进程内读值断言范式 + 示范迁移一例 chat 逻辑测试**
+  - 上下文：兑现第 1 层独立价值。`crates/atto-ui-chat/tests/pty_chat.rs` 用 `find_text_position`（`:26`，抓屏 + `UnicodeWidthStr` 反算列坐标）和 `wait_for_disclosure_text`（`:54`，`sleep` + 字形 `▶` 推断展开状态）来测逻辑，脆弱且是「OCR 状态」。
+  - 实现：
+    1. 落地进程内测试范式样板：构造 `Desktop`（含带 `tag` 的 chat 组件）→ `desktop.inspect()` → `get_property`/`property_names` 读 `Binding` 活值断言。放在合适的测试模块（chat crate 的单测或集成测试）。
+    2. **示范迁移一例**：挑 `pty_chat.rs` 中一个「断言的是逻辑 / 状态而非渲染」的用例（如 disclosure 展开态、某值是否更新），改写为进程内读值断言版本；保留（不删除）原 PTY 用例中真正测渲染 / 端到端的部分。
+    3. 若 chat 组件相关节点缺 tag，按 M1-3 约定补标 tag。
+  - 明确边界：只迁移**一例**作示范，不要求全量迁移；不得为此改动 chat 组件的交互语义。
+  - 验证：迁移后的逻辑测试不含 `find_text_position`/字形推断，改为读值断言；新旧测试均通过；`cargo test -p atto-ui-chat`；全套通过。
 
-**含用户明确要求的「配置界面」——终端 app 的可视化设置面板。**
+- [ ] **[TODO] M1-R Review — 第 1 层完整性与正确性复核**
+  - 复核点：
+    1. 公共 `find_by_tag` 语义与旧 `component_find` 一致（含同名 tag、深层嵌套、mut 路径），`inspect.rs` 无残留重复递归。
+    2. `DesktopInspector` 只读门面自洽，未混入第 2 层动作能力；第 1 层代码**不依赖** `apply_command` 的语义派发、不依赖第 2/3/4 层模块。
+    3. tag 覆盖诊断与变更信号聚合均为进程内、纯读、不改变交互行为。
+    4. 示范迁移的测试确实脱离了 OCR / 字形推断，且未误删渲染 / 端到端覆盖。
+    5. 保持 `#![forbid(unsafe_code)]`。
+  - 验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全套通过；在完成记录中列出复核结论。
 
-- [x] **[DONE] M7.1 光标形状** - 光标渲染（`terminal.rs:603-612`）读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。
-  - 完成记录（2026-07-12）：终端组件新增 `TerminalCursorShape` 状态，通过 vt100 `unhandled_csi` 回调识别 DECSCUSR (`CSI Ps SP q`) 光标样式序列；`TerminalHandle::cursor_shape()` 可查询当前 shape。渲染路径不再一律对 cursor cell 加 `REVERSED`，而是按 shape 分别渲染 block（reverse video）、underline（UNDERLINED modifier）与 bar（单格 bar glyph），`CSI 0/1/2 q` 保持默认 block 行为以维持既有默认视觉。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test input_encoding terminal_cursor_shape_sequences_update_rendered_cursor -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M7.2 keypad 模式** - 接 `application_keypad()`（DECCKM `application_cursor` 已接）。
-  - 完成记录（2026-07-12）：终端输入编码接入 vt100 `Screen::application_keypad()`；当 crossterm 事件带 `KeyEventState::KEYPAD` 且处于 application keypad 模式时，数字键、运算符、Enter、KeypadBegin 以及 num-lock-off 的 keypad 导航键会按 DEC/xterm application keypad SS3 序列发送。普通顶排行数字与非 keypad-origin 方向键保持原有行为，`ESC >` 退出 application keypad 后恢复普通编码。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --test input_encoding terminal_application_keypad -- --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M7.3 配置模型** - 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格，参考 `src/theme/config.rs`）。
-  - 完成记录（2026-07-12）：新增 `atto-ui-terminal` 公开配置 API，提供集中式 `TerminalConfig`，覆盖 scrollback、ANSI 色板、前缀键、release 快捷键、alt screen 滚动分流键位/开关、session profile（shell/command/cwd）、shell integration 注入开关与默认光标形状。配置默认值保持既有行为，并提供 JSON/YAML 解析、格式推断、load/save 持久化、验证与运行时类型转换入口。新增单测覆盖默认值、JSON/YAML roundtrip、无效配置拒绝与 profile 到 `TerminalSessionSpec` 转换。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --lib config -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M7.4 配置界面** - 新增可视化**设置窗口**：复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets（`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`）分组编辑各配置项，支持即时预览/应用与保存；从菜单入口打开。
-  - 完成记录（2026-07-12）：新增 `TerminalSettingsView` 可视化设置窗口与 `TerminalSettingsDraft`/`TerminalSettingsHandle` 视图模型，使用声明式 `VStack`/`HStack`/`Grid` 和现有 `TextBox`/`Checkbox`/`RadioGroup`/`ListBox` 分组编辑 scrollback、前缀键、release 快捷键、alt-screen 滚动、色板、默认 profile、shell integration 与默认光标形状。设置窗口提供即时 preview、Apply、Save、Reset，Save 按 `ATTO_UI_TERMINAL_CONFIG` / XDG / HOME 默认路径持久化 YAML/JSON；terminal viewer 与 `snapshot_terminal_window_app` 均新增 File → Settings 菜单入口。新增单测覆盖 draft roundtrip、apply、无效输入状态与保存；新增 PTY 覆盖菜单打开设置窗口并保存配置文件。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --lib terminal_settings -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_file_menu_opens_settings_window_and_saves_config -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
-- [x] **[DONE] M7.5 配置生效接线** - 组件层各写死项（scrollback、色板、release 快捷键 `terminal.rs:121`、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。
-  - 完成记录（2026-07-12）：终端组件新增 `TerminalConfig` 运行时应用路径，scrollback 长度、ANSI/默认色板、release 快捷键、前缀键、alternate-screen 滚轮开关/步长/发送键、shell integration 与默认光标形状均可从配置初始化并通过 `TerminalHandle::apply_config` 更新已有实例。`TerminalPaneGroup` 同步接入配置，现有 pane 与 pane-level 前缀处理会随配置更新；terminal viewer 与 PTY window fixture 使用同一配置 binding 创建、重启和 split 新 pane，并在设置窗口 Apply/Save 后用 dirty observer 将改动应用到所有存活终端。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal terminal_config -- --nocapture`、`cargo test -p atto-ui-terminal --test input_encoding terminal_apply_config_updates_live_terminal -- --nocapture`、`cargo test -p atto-ui-terminal pane_group_apply_config_updates_prefix_shortcut --lib -- --nocapture`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M7.6 测试** - PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
-  - 完成记录（2026-07-12）：补齐终端配置界面的 M7.6 PTY 端到端覆盖；新增测试通过 File → Settings 打开设置窗口，真实编辑 scrollback、prefix key 与 ANSI palette 值，Save 后验证 live terminal scrollback/prefix/palette 已应用，旧前缀不再触发菜单、新前缀立即生效，且保存的配置在重启 fixture 后继续保留并影响渲染。补充 PTY cursor-shape 覆盖，真实子进程输出 DECSCUSR 序列后验证 block/underline/bar 状态与 bar glyph 渲染。为 PTY fixture 增加仅测试用的 live config 状态行，并为 `atto-ui-test-host` 增加 cell inverse/underline 查询以支持样式断言。
-  - 验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- pty_terminal_settings_apply_save_and_reload_runtime_config pty_terminal_cursor_shape_sequences_render_in_window_app --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 均通过。
-- [x] **[DONE] M7.R Review** - 复核配置默认值不改变既有行为、配置持久化格式向后兼容、界面对无效输入有校验，验证通过。
-  - 完成记录（2026-07-12）：复核 M7 配置模型、运行时接线与设置窗口；确认默认 scrollback、Ctrl+B 前缀、Ctrl+Shift+Esc release、alt-screen wheel=3x Up/Down、默认 ANSI 0-15 色板、shell integration 关闭、block 光标与默认 shell profile 均保持 M7 前既有行为。补充回归覆盖：最小/部分旧配置文件缺字段时会通过 serde defaults 保持兼容并忽略未来未知字段；设置界面对非法 prefix、palette color、profile args、scrollback=0 均返回错误，不会更新 live binding，也不会保存无效文件。
-  - 验证：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test -p atto-ui-terminal --lib terminal_config -- --nocapture`、`cargo test -p atto-ui-terminal --lib terminal_settings -- --nocapture`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
+---
+
+## 阶段 M2 - 第 2 层 scriptable（语义动作 + 查询 + 等待）
+
+目标：在第 1 层「读」之上加「触发」和「等待」。核心是补齐叶子组件 `apply_command`，并提供按可序列化设计的进程内 `invoke`/`query`/`wait_for`。依赖 M1。
+
+- [ ] **[TODO] M2-1 Checkbox `apply_command`**
+  - 上下文：`src/widgets/checkbox.rs`，`#[derive(ComponentProperties)]`（`:17`），`impl Component`（`:74`），已有 `checked: Binding<bool>` 属性可被 `get_property("checked")` 读到。当前 `apply_command` 走 trait 默认实现（`component.rs:488`，返回 `ignored()`），外部触发只能退回合成点击。
+  - 实现：实现 `Checkbox::apply_command`，`ComponentCommand::Toggle` 翻转 `checked`、`ComponentCommand::Click` 等价于用户点击（与键盘 Space/Enter 及鼠标点击相同的状态转移与回调触发路径，复用组件内既有的 toggle 逻辑，勿另写一套）。命中返回 `EventResult::consumed()`/合适结果，未命中的命令返回 `ignored()`。
+  - 验证：进程内单测：`invoke`/`apply_command(Toggle)` 后 `checked` 的 `Binding` 翻转、`on_toggle` 类回调按既有语义触发；`cargo test -p atto-ui checkbox -- --nocapture`；全套通过。
+
+- [ ] **[TODO] M2-2 Button `apply_command`**
+  - 上下文：`src/widgets/button.rs`，`impl Component`（`:97`）。按钮激活当前靠 Enter/Space/鼠标点击触发 `on_activate` 类回调。
+  - 实现：`ComponentCommand::Click`/`Submit` 触发与用户激活相同的回调路径；不改变禁用态语义（禁用时应 `ignored()`）。
+  - 验证：进程内单测：`apply_command(Click)` 触发激活回调、禁用按钮 `ignored()` 且不触发回调；全套通过。
+
+- [ ] **[TODO] M2-3 TextBox `apply_command`**
+  - 上下文：`src/widgets/textbox.rs`，`impl Component`（`:135`），基于 `TextBuffer`（Unicode 感知），有 `text` 属性。现有 `inspect.rs` 的 `InputText` 兜底靠合成点击 + `Event::Paste`（`inspect.rs:246-271`）。
+  - 实现：`ComponentCommand::InputText(s)` 直接把文本写入缓冲（语义级：设置 / 插入文本，遵循组件既有的粘贴 / 输入路径以保持光标、滚动、Unicode 行为一致），使 `get_property("text")` 随即反映新值。明确定义是「替换全部」还是「在光标处插入」——建议对齐现有 `Event::Paste` 语义（插入）并在完成记录中写明。
+  - 验证：进程内单测：`apply_command(InputText("你好👋"))` 后 `text` 属性等于预期、宽字符 / emoji 不裂；全套通过。
+
+- [ ] **[TODO] M2-4 Slider `apply_command`**
+  - 上下文：`src/widgets/slider.rs`，`impl Component`（`:186`），有 min/max/value 类属性（见 `inspect.rs:724` 白名单含 `min`/`max`/`progress`）。
+  - 实现：为 Slider 选一个语义动作落地——建议复用 `ComponentCommand::SelectIndex(usize)` 或 `Custom` 表示「设为某刻度 / 值」，与键盘左右箭头调值走相同的 clamp / 步进逻辑。在完成记录中写明选用的命令形态（供 M2-5 的 `invoke` 与将来 M4 序列化对齐）。
+  - 验证：进程内单测：设值后 `value`/`progress` 属性更新且被 min/max clamp；越界值不 panic；全套通过。
+
+- [ ] **[TODO] M2-5 进程内语义 API：`invoke` / `query` / `wait_for`**
+  - 上下文：`inspect.rs` 已有 `action`/`action_target`（`:167`）与 `get_property`（`:136`），`ComponentTarget`（`component_api.rs:52`）支持 `Id`/`Focused`。本任务把它们收敛成第 2 层稳定语义 API，并新增 `wait_for`。
+  - 实现：
+    1. `invoke(target, action)`：语义级派发。目标组件实现了 `apply_command` 就走语义派发（M2-1..M2-4）；未实现才退回坐标注入兜底（`inspect.rs:222-278` 的现有逻辑保留）。返回值要能区分「语义派发成功」vs「退回坐标」以便可观测。
+    2. `query(target, prop)`：= 第 1 层 `get_property`，统一命名对齐 API 形状。
+    3. `wait_for(predicate, timeout)`：进程内循环——推进 UI（draw / tick）→ 用 M1-4 变更信号或直接重查 `predicate`（对 `query` 结果判定）→ 未成立则继续到超时。**替代 chat helper 的 `sleep` 轮询屏幕**。predicate 建议接受 `&mut DesktopInspector` 或以 `(target, prop, 期望值)` 表达以便将来序列化。
+    4. **可序列化约束**：`invoke`/`query`/`wait_for` 的入参（target、action、prop、期望值）都用第 3 层能直接序列化的值（`ComponentCommand` 已 `Clone+PartialEq`，`ComponentValue` 已 serde）。在完成记录中确认无进程内独有的闭包 / 引用泄漏到 API 边界（`wait_for` 的 predicate 闭包属例外，M4 时再定序列化表达）。
+  - 验证：进程内单测：`invoke("checkbox", Toggle)` 直接翻转 `Binding` 且可观测到「走了语义派发」而非坐标；`wait_for` 能等到由后台 / 定时驱动的状态成立、且超时返回错误不挂死；全套通过。
+
+- [ ] **[TODO] M2-6 用 `wait_for` / `invoke` 迁移一批 chat 逻辑测试**
+  - 上下文：延续 M1-5，把 `pty_chat.rs`（`crates/atto-ui-chat/tests/pty_chat.rs`）中依赖 `sleep` 轮询（`:22`/`:73` 等多处 `thread::sleep`）+ 字形推断的一批逻辑用例，迁到 `wait_for` + 读值断言。
+  - 实现：迁移一批（非全量）「测逻辑 / 状态」的用例；`sleep` 轮询屏幕改 `wait_for`；坐标点击改 `invoke(Id, action)`。保留纯渲染 / 端到端 PTY 用例。补齐所需 tag。
+  - 明确边界：不改 chat 组件交互语义；不删渲染覆盖。
+  - 验证：迁移用例不含 `find_text_position`/字形推断/裸 `sleep` 轮询；`cargo test -p atto-ui-chat`；全套通过。
+
+- [ ] **[TODO] M2-R Review — 第 2 层完整性与正确性复核**
+  - 复核点：
+    1. 四个叶子组件（Checkbox/Button/TextBox/Slider）的 `apply_command` 与各自既有鼠标 / 键盘交互**走同一状态转移与回调路径**，无重复 / 分叉逻辑；禁用态正确 `ignored()`。
+    2. `invoke` 语义优先、坐标兜底，且路径可观测；`query` 与第 1 层 `get_property` 语义一致。
+    3. `wait_for` 超时可控、不挂死、不轮询屏幕字符。
+    4. API 入参可序列化（为 M4 铺路），无引用 / 闭包泄漏到边界（`wait_for` predicate 例外并记录）。
+    5. 第 2 层不依赖第 3/4 层。
+  - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论。
+
+---
+
+## 阶段 M3 - 第 4 层 L0+L1（tmux 甜点区，可与 M1/M2 并行）
+
+目标：近乎免费、立刻见效的 tmux 伪装地基。**不依赖第 3 层**。让「已在为 tmux 适配」的程序（claude code / opencode / vim 插件）在 terminal view 里直接享受环境探测与原生剪贴板 passthrough。
+
+- [ ] **[TODO] M3-1 L0 环境探测注入**
+  - 上下文：`crates/atto-ui-terminal/src/terminal.rs` 的 `spawn_command`（`:2775`）已统一设置 `TERM=xterm-256color`/`COLORTERM=truecolor`（M6.3 引入）。程序靠 `$TMUX`（socket,pid,session）、`$TMUX_PANE`、`$TERM=screen*/tmux*` 探测「在 tmux 里」。
+  - 实现：在 `spawn_command` 的环境准备处，可选注入 `$TMUX`（格式 `socket_path,pid,session_id`）、`$TMUX_PANE`（如 `%<id>`）。是否注入 / socket 路径由配置或 builder 开关控制（默认关闭，避免误导未预期程序）。`$TMUX` 的 socket 路径此阶段可为占位 / 尚未监听的路径（真正 socket 在 M4 起来）——注入的目的先满足「探测存在性」。`$TERM` 是否改为 `tmux-256color` 作为开关项，默认保持现值以免破坏渲染。
+  - 明确边界：只注入环境变量，不实现任何 tmux 子命令；关闭开关时行为与现状完全一致。
+  - 验证：PTY 覆盖——开启开关后子进程 `echo $TMUX` / `echo $TMUX_PANE` 能读到注入值（复用 `snapshot_terminal_*` fixture + 子进程 probe）；关闭时子进程读到空；`cargo test -p atto-ui-terminal`；全套通过。
+
+- [ ] **[TODO] M3-2 L1 DCS `tmux;` passthrough 解包 → 原生 OSC**
+  - 上下文：程序在 tmux 里发剪贴板 / 进度会用 DCS passthrough 包裹：`\033Ptmux;<escaped-inner>\033\\`（内层每个 `\033` 被转义成 `\033\033`）。解开后内层通常是 OSC 52 剪贴板（`\033]52;...\a`）或 OSC 9;4 进度。终端已有系统剪贴板后端 `TerminalSystemClipboard`（M4.6，terminal.rs）与 OSC 52 处理路径。
+  - 实现：在终端输出解析链中识别 `\033Ptmux;` … `\033\\` 包裹，还原内层转义（`\033\033` → `\033`），把还原出的 OSC 52 走现有剪贴板后端（OSC 52 优先、arboard 兜底）、OSC 9;4 走进度处理（若已有则复用，否则先安全忽略）。
+  - 降级：非 tmux DCS、包裹不完整 / 解析失败时不崩、不误写系统剪贴板、原样降级。
+  - 明确边界：只做「解包 → 转交已有原生处理」，不新增剪贴板 / 进度后端。
+  - 验证：单测 / PTY：`\033Ptmux;\033\033]52;c;<base64>\a\033\\` 被解包并写入剪贴板后端（复用 M4.6 可注入的假后端断言）；畸形包裹不崩;无包裹路径回归不变；`cargo test -p atto-ui-terminal`；全套通过。
+
+- [ ] **[TODO] M3-R Review — 第 4 层 L0+L1 复核**
+  - 复核点：
+    1. 环境注入受开关控制，默认关闭时 spawn 行为与现状逐字节一致；开启时 `$TMUX`/`$TMUX_PANE` 格式符合程序探测预期。
+    2. DCS passthrough 解包正确还原内层转义，转交现有 OSC 52 / 进度路径，不新造后端；畸形输入健壮降级、不误写剪贴板。
+    3. 本阶段**未引入对第 3 层的任何依赖**。
+    4. 保持 `#![forbid(unsafe_code)]`。
+  - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论与手动验证提示（`cargo run -p atto-ui-terminal --example terminal_viewer`）。
+
+---
+
+## 阶段 M4 - 第 3 层 ipc（暴露到进程外）
+
+目标：Unix domain socket + 自定义 JSON-RPC 类协议，把第 2 层语义 API 暴露给外部进程。依赖 M2 的可序列化 API 设计（决策 C/D）。
+
+- [ ] **[TODO] M4-1 协议定义（可序列化请求 / 响应）**
+  - 上下文：M2 的 `invoke`/`query`/`wait_for`/`tree` 入参已按可序列化值设计（`ComponentCommand` `Clone+PartialEq`、`ComponentValue` serde、`DesktopSnapshot` serde 见 `inspect.rs:60`）。
+  - 实现：定义 serde 序列化的请求 / 响应枚举（JSON-RPC 类：`id` + `method` + `params` / `result` / `error`），method 覆盖 `query`/`invoke`/`wait_for`/`tree`(export_snapshot)/`property_names`。`error` 映射 `ComponentError`（`component_api.rs:58`）。放在合适模块（建议新 crate 或 `src/` 下新模块，避免污染第 1/2 层）。
+  - 验证：单测：每种请求 / 响应 JSON roundtrip；`ComponentError` 各变体可序列化；全套通过。
+
+- [ ] **[TODO] M4-2 Unix socket server + 主循环请求分发**
+  - 上下文：`DesktopInspector` 持 `&mut Desktop`，只能在持有 Desktop 的 UI 线程执行。外部请求需线程安全地转交该线程。
+  - 实现：Unix domain socket 监听（路径由环境变量指定，为 M5 的 `$TMUX` socket 铺路）；接收线程解析 M4-1 协议 → 通过 channel 把请求交给 UI 线程，在其 tick / 事件循环中用 `desktop.inspect()` 执行 → 回传响应。定义清晰的集成点（UI 主循环每帧 drain 请求队列）。`wait_for` 在服务端循环，不阻塞其他请求处理的设计需说明。
+  - 验证：集成测试：起 server → 客户端连 socket 发 `query`/`invoke` → 读到 / 改变状态 → 响应正确；modal 边界与进程内一致；全套通过。
+
+- [ ] **[TODO] M4-3 外部 `atto` CLI 客户端**
+  - 上下文：第一个进程外消费者（类 iTerm `it2`），也是端到端测试载体。
+  - 实现：最小 CLI（新 bin / crate）连 socket，子命令 `query <tag> <prop>` / `invoke <tag> <action>` / `tree`，走 M4-1 协议。输出人类可读 + 可选 JSON。
+  - 验证：端到端测试：启动带 server 的 fixture app → CLI 子命令驱动 UI 并读回状态；全套通过。
+
+- [ ] **[TODO] M4-R Review — 第 3 层完整性与正确性复核**
+  - 复核点：
+    1. 协议是「加传输 + 序列化」，**未重新设计语义**——method 与第 2 层 API 一一对应。
+    2. 跨线程分发对持有 `Desktop` 的线程安全，无数据竞争；`wait_for` 不阻塞其他请求。
+    3. 错误路径（未知 tag / 不支持动作 / 畸形请求）映射到协议 `error` 而非 panic。
+    4. socket 路径策略为 M5 `$TMUX` 指向预留。
+  - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论。
+
+---
+
+## 阶段 M5 - 第 4 层 L2/L3（tmux 子命令 + 本地 pane 补全）
+
+目标：把 tmux 接口面翻译成第 3 层调用（shim 为 client，非新协议），并补全本地 pane 体验。依赖 M4。
+
+- [ ] **[TODO] M5-1 send-keys / capture-pane 映射**
+  - 上下文：`TerminalHandle::send_input_bytes`（`terminal.rs:3443`）= send-keys 载体，`snapshot`（`:3738`）= capture-pane 载体，`TerminalPaneGroupHandle`（`pane.rs:76`）暴露 `panes()`/`active_pane`/`pane_at_screen_position`。
+  - 实现：在第 3 层协议 / server 侧提供 `send-keys`/`capture-pane`/`list-panes` 语义方法，映射到上述 handle。pane 寻址用 pane id（`TerminalPaneId`，`pane.rs:25`）。
+  - 验证：集成测试：经第 3 层 send-keys 把字节送入目标 pane 的子进程、capture-pane 取回该 pane 屏幕快照；全套通过。
+
+- [ ] **[TODO] M5-2 pane 管理命令映射**
+  - 上下文：`TerminalPaneGroup`（`pane.rs:203`）已支持 `Ctrl+B %`/`"` 分屏、`o`/Tab 切焦点。tmux `split-window`/`select-pane -LRUD`/`list-panes`/`break-pane`/`display-popup` 需映射到原生 pane 与 `WindowManager`。
+  - 实现：协议 / server 侧提供 pane 管理方法：`split-window`（→ pane 分屏）、`select-pane -LRUD`（→ 几何方向选 pane）、`break-pane`（pane→独立 Window）、`display-popup`（→ 浮动窗口）、`list-panes`。`break-pane` 参考 `SCRIPTING_LAYERS.md`「特色项」——常用、值得顺手触发。
+  - 验证：集成测试：`split-window` 后 pane 数增加、`select-pane -L/-R` 按几何切换、`break-pane` 把 pane 变独立窗口；全套通过。
+
+- [ ] **[TODO] M5-3 `tmux` shim 可执行文件（决策 E 乙）**
+  - 上下文：决策 E 倾向乙——shim 假 `tmux` 放子进程 `$PATH` 前列，拦截命令转第 3 层调用（薄翻译层），比逆向 tmux server 协议可控。配合 M3-1 注入的 `$TMUX`。
+  - 实现：一个小 `tmux` shim bin：解析常用子命令（`send-keys`/`capture-pane`/`split-window`/`select-pane`/`list-panes`/`display-popup`/`break-pane`）→ 连 M4 socket（`$TMUX` 指向）→ 调 M5-1/M5-2 方法。不支持的子命令明确报错 / 降级，不静默假成功。`spawn_command` 把 shim 目录前置到子进程 `$PATH`。
+  - 明确边界：不做 control mode（`-CC`，决策 F）；程序用绝对路径 / 查版本可能露馅，属已知限制，记录即可。
+  - 验证：集成测试：子进程 `PATH` 前置 shim 后，`tmux send-keys` / `tmux capture-pane` / `tmux split-window` 经 socket 驱动原生 pane；不支持子命令返回非零并提示；全套通过。
+
+- [ ] **[TODO] M5-4 本地 pane 层体验补全**
+  - 上下文：`SCRIPTING_LAYERS.md`「本地 pane 层剩余缺口」——与第 4 层伪装无关，属 tmux-like 体验：方向性 pane 导航（`prefix+方向键`，现仅 `o`/Tab 线性）、pane resize（现固定五五分，可复用 `Splitter` 拖动）、pane zoom（`z` 临时全屏，现仅窗口级 ToggleMaximize）、pane 关闭（`x`）+ 重布局。
+  - 实现：在 `TerminalPaneGroup`（`pane.rs`）的前缀命令处理中加 `prefix+方向键` 几何导航、`prefix+z` pane zoom、`prefix+x` pane 关闭 + 重布局、pane resize（键盘调分隔比例）。默认键位对齐 tmux 习惯。
+  - 验证：PTY 覆盖：`Ctrl+B` + 方向键几何切 pane、`Ctrl+B z` pane 全屏 / 还原、`Ctrl+B x` 关 pane 后布局重排、resize 改变分隔比例；`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions`；全套通过。
+
+- [ ] **[TODO] M5-R Review — 第 4 层 L2/L3 完整性与正确性复核**
+  - 复核点：
+    1. shim / 子命令映射是第 3 层之上的**纯 client 翻译**，未在 socket 上重实现 tmux server 协议；未做 control mode（决策 F）。
+    2. send-keys / capture-pane / pane 管理正确落到目标 pane / 原生窗口，pane 寻址稳定。
+    3. 本地 pane 补全（方向导航 / resize / zoom / close）不破坏既有 `%`/`"`/`o`/Tab 与外层 WM 浮动窗口行为。
+    4. 不支持的 tmux 子命令显式失败、不静默假成功。
+  - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论与手动验证提示。
+
+---
 
 ## 收尾
 
-- [x] **[DONE] Docs 更新** - 根据实际实现更新 `TERMINAL_GAP.md`（标注已闭合缺口）、README 或新增终端 app README；更新 `IMPLEMENTATION_PLAN.md` 里程碑状态（见 `AGENTS.md`）。
-  - 完成记录（2026-07-12）：`TERMINAL_GAP.md` 已标注 P0-P3 缺口均由 M1-M7 闭合，并为每个历史缺口补充对应闭合里程碑；根 `README.md` 新增 terminal app quick start、配置路径、快捷键与终端 README 链接；新增 `crates/atto-ui-terminal/README.md`，覆盖 terminal viewer 功能、copy-mode/分屏/命令块/设置界面、配置 YAML 示例、组件用法与 focused validation 命令。仓库根目录不存在 `IMPLEMENTATION_PLAN.md`，本轮按当前阶段计划文件 `PLAN.md` 更新 M1-M7 里程碑状态。
-  - 验证：本任务仅修改 Markdown 文档与 `memory/claude_plan.md` 进度文件，未改动编译产物；沿用 M7.R 完成记录中的 `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets` 全套通过结果，未重跑全套。
-- [x] **[DONE] 示例升级** - 把 `terminal_viewer` demo 升级为体现全功能（前缀键、copy-mode、分屏、会话管理、配置界面）的示例。
-  - 完成记录（2026-07-12）：`terminal_viewer` 现在启动时显示可关闭的 `Terminal Feature Guide` 浮动窗口，并可通过 Help → Feature guide 重新打开；该指南集中说明 capture/release、前缀键、copy-mode、分屏、会话新建/重启、命令块右键操作、配置界面与 OSC 标题联动。终端 pane 启动 banner 同步补充 copy-mode、内部 copy buffer 粘贴、会话菜单、设置窗口与命令块右键提示。`File > New command window` 在未传入命令参数时改用内置 `Demo Command` profile，区别于默认 shell profile，便于示例直接展示会话管理入口；设置窗口和指南窗口重复打开时会聚焦已有窗口而非创建重复实例。
-  - 验证：`cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`（30 分钟上限）均通过。
+- [ ] **[TODO] FINAL 文档与示例更新**
+  - 根据实际实现更新 `SCRIPTING_LAYERS.md`（标注已落地层级 / 收敛后的最终决策）、`README.md`（若新增 `atto` CLI / tmux shim 用法）、`AGENTS.md`（如涉及代理使用）。若引入新 crate，更新 `CLAUDE.md` 的工作区 crates 清单与项目规模。
+  - 验证：仅改文档时可沿用最近一次全套通过结果并注明；涉及代码则重跑全套。

@@ -1,162 +1,153 @@
-# 执行计划：全功能多窗口终端 App
+# 执行计划：脚本化 / Introspection 控制平面
 
-本计划对应 [`TERMINAL_GAP.md`](TERMINAL_GAP.md)。目标是把 `crates/atto-ui-terminal` 的 `terminal_viewer` demo 从「能跑一个 shell 的多窗口外壳」扩展为**全功能多窗口终端 app**：进程生命周期闭环、tmux 式前缀键、文本选择/复制、alt screen 滚动分流、语义提示符标记、分屏/会话管理，以及一个完整的**配置界面**。
+本计划对应 [`SCRIPTING_LAYERS.md`](SCRIPTING_LAYERS.md)。目标是把一个稳定的**控制平面分四层依次叠加**地建起来：组件可寻址、状态可读（introspection）→ 语义动作 + 等待（scriptable）→ 暴露到进程外（ipc）→ 伪装成 tmux 让第三方程序驱动原生 UI（tmux adapter）。每层是上一层的地基，依赖方向单向、不回头。
 
-上一阶段的 TUI Agent / DeepSeek 接入计划已归档至 [`docs/archive/2026-07-11-tui-agent-deepseek/`](docs/archive/2026-07-11-tui-agent-deepseek/)。
+上一阶段的「全功能多窗口终端 App」计划（M1-M7）已归档至 [`docs/archive/2026-07-12-terminal-app/`](docs/archive/2026-07-12-terminal-app/)。
 
-## 历史基线（2026-07-11）
+## 动机
 
-组件层的「终端芯」`TerminalEmulator`（`crates/atto-ui-terminal/src/terminal.rs`，~1300 行）已相当扎实：PTY spawn、reader 线程、按键/鼠标 ANSI 编码、scrollback、DSR 光标查询响应、bracketed paste、capture/release 快捷键、宽字符渲染、鼠标协议转发均已就绪。外壳层 `examples/terminal_viewer.rs`（~280 行 demo）已具备菜单、new/close/minimize/maximize、窗口列表切换。
+直接触发点：PTY 测试框架（`crates/atto-ui-test-host`）在测**逻辑与状态变化**时非常繁琐——靠屏幕文字反查坐标（`find_text_position`）、靠轮询屏幕字形猜状态（`wait_for_disclosure_text` + `sleep`）、断言只能断字符断不了值。见 `crates/atto-ui-chat/tests/pty_chat.rs` 开头的 helper。
 
-当时缺口集中在**进程生命周期闭环、OSC/标题回调、体验层（选择复制、分屏、会话管理）与配置面**。详见 `TERMINAL_GAP.md` 的 P0-P3 分级。
+**结论**：PTY 测试不该被取代，应回归「渲染正确性 / 端到端」主场；把被误塞进它的「逻辑 / 状态测试」用一条**语义操作 + 语义断言**的新路径接出来。这条新路径的通用形态就是一个控制平面——测试只是它的第一个、也是风险最低的消费者。
 
-## 当前状态（2026-07-12）
+## 现状基线（2026-07-15）
 
-M1-M7 已全部完成；详细任务级完成记录、验证命令与 review 记录见 [`TODO.md`](TODO.md)。`TERMINAL_GAP.md` 已改为历史缺口分析与闭合索引，当前实现包含：
+摸底 `src/inspect.rs` + `src/runtime/` + `src/reactive/` 后确认，**第 1 层读取链基本齐备**，是本计划最重要的起点：
 
-| 阶段 | 状态 | 结果 |
+| 能力 | 现状 | 位置 |
 |---|---|---|
-| M1 | 已完成 | 进程退出信号、运行状态查询、vt100 callbacks/title/bell/clipboard 桥接。 |
-| M2 | 已完成 | 死窗口退出提示/重启、OSC 标题同步到窗口标题与 Windows 菜单。 |
-| M3 | 已完成 | tmux 式可配置前缀键、命令表、typed shell action 桥接、copy-mode 入口与前缀转义。 |
-| M4 | 已完成 | selection/copy-mode、鼠标本地框选、内部/系统剪贴板、OSC 52、alt-screen 滚轮分流。 |
-| M5 | 已完成 | OSC 133/7 命令块感知、命令级呈现/交互、可选 shell integration 注入。 |
-| M6 | 已完成 | 单窗口 split panes、session profile/cwd 管理、死会话重启、spawn 环境与显式 resize。 |
-| M7 | 已完成 | 光标形状、application keypad、`TerminalConfig`、设置窗口、运行时配置生效与持久化。 |
+| 稳定寻址键 | 字符串 `tag`（spec 层叫 `id`），贯穿组件/窗口/菜单 | `src/composable/component_tag.rs`、`src/runtime/spec.rs` |
+| 状态读取 | `Component::get_property/set_property/property_names` 由 `#[derive(ComponentProperties)]` 自动填充，直连活 `Binding<T>` | `src/composable/component.rs:476-488` |
+| 门面雏形 | `DesktopInspector`：`tree()`/`export_snapshot()`/`get_property`/`set_property`/`action`，内部按 `tag` 递归寻址活树 | `src/inspect.rs` |
+| 动作抽象 | `apply_command(ComponentCommand)` + `ComponentCommand` | `src/composable/component.rs:488`、`src/component_api.rs:42` |
+
+**关键缺口**（本计划要补的）：
+1. 寻址实现分散：`inspect.rs` 自己写了递归 `component_find`（`inspect.rs:1147-1170`），`runtime/tree.rs` 有私有 `ViewPathIndex`，缺一个**公共 `find_by_tag`**。
+2. `apply_command` **只有约 10 个容器/控件实现**（disclosure/tab_view/list/table/radio/typeahead/scroll_container/visibility/border/min_size_view）。**Checkbox / Button / TextBox / Slider 等关键叶子组件未实现**，外部触发只能退化成合成坐标鼠标事件。
+3. 只能拉不能推：reactive 是 `DirtyFlag`/`DirtyObserver` 版本号拉模型（`src/reactive/dirty.rs`），第 2 层 `wait_for` 需要一个统一的进程内变更信号。
+4. `DesktopInspector` 是**进程内**门面（持 `&mut Desktop`）；跨进程消费（PtyTestHost、外部 CLI）要等第 3 层 ipc。
 
 ## 范围
 
 | 范围 | 说明 |
 |---|---|
-| 组件层增强 | `TerminalEmulator` 增补进程退出信号、`new_with_callbacks`（title/bell/clipboard/OSC）、selection 状态机、alt screen 滚动分流、tmux 式前缀键状态机、语义提示符标记感知、光标形状/keypad。 |
-| 外壳层增强 | `terminal_viewer` 死窗口回收、标题联动、选择→剪贴板、分屏/标签页、会话管理、语义标记呈现/交互。 |
-| 配置界面 | 新增可视化设置界面（scrollback、色板、前缀键、release 快捷键、滚动分流键位、shell/命令、cwd/profile 等），配套配置模型与持久化。 |
-| shell integration | OSC 133/7 的可选注入脚本（第 3 层），零侵入降级为默认。 |
+| 第 1 层 introspection | 公共 `find_by_tag`；`DesktopInspector` 收敛为第 1 层门面；tag 覆盖诊断；进程内「读值断言」测试范式落地并示范迁移一例 chat 逻辑测试。 |
+| 第 2 层 scriptable | 补齐叶子组件 `apply_command`；进程内语义 API `invoke`/`query`/`wait_for`（按可序列化设计）；接入进程内测试。 |
+| 第 4 层 L0+L1（甜点区，可提前） | spawn 时注入 `$TMUX`/`$TMUX_PANE`/`$TERM`；DCS `\033Ptmux;` passthrough 解包 → 复用现有 OSC 52 / arboard。**不依赖第 3 层。** |
+| 第 3 层 ipc | Unix domain socket + 自定义 JSON-RPC 类协议，把第 2 层语义 API 暴露给外部进程；外部 CLI 客户端。 |
+| 第 4 层 L2/L3 | tmux `send-keys`/`capture-pane`/pane 管理子命令映射；本地 pane 层体验补全（方向导航、resize、zoom、close）。 |
 
 ## 非范围
 
 | 非范围 | 说明 |
 |---|---|
-| fork vt100 | OSC 133/7 走 `Callbacks::unhandled_osc` 透传，无需 fork。 |
-| 系统级沙箱 | 终端本就托管任意子进程，不承诺隔离。 |
-| GUI 原生键空间 | 不依赖 `Cmd` / 可靠 `Ctrl+Shift`；键盘类命令统一走 tmux 式前缀。 |
-| 远程/SSH 会话托管 | 本计划只做本地 PTY 会话，远程 profile 后续单独排期。 |
+| 用 introspection 取代 PTY 渲染测试 | 渲染 / 端到端仍走 PTY；只把「逻辑 / 状态」测试接到控制平面。 |
+| tmux window 层 / `n/p` 切换 / `c` 新窗口 | 已被原生 `WindowManager` 覆盖，明确不做（见 `SCRIPTING_LAYERS.md`「概念映射」）。 |
+| tmux control mode（`-CC`） | 那是「消费外部真 tmux」的另一条路，与「伪装成 tmux」目标相反，不做（决策 F）。 |
+| 反射非 `Binding` 的任意业务态 | 第 1 层以 `Binding` 反射为主干，复杂状态按需补结构化描述，不追求全反射。 |
 
 ## 原则
 
 | 原则 | 要求 |
 |---|---|
-| 组件/外壳分层 | 「认出来并暴露」属组件层，「怎么用/怎么显示」属外壳层；两层解耦，语义标记的第 1 层不得硬依赖第 2/3 层。 |
-| 前缀造命名空间 | 我们是跑在宿主字节流里的复用器，无 collision-free 键空间；键盘类外壳/模式命令统一收敛到**一个可配置的 plain `Ctrl+<字母>` 前缀**（默认 `Ctrl+B`）。 |
-| 信号分流而非猜测 | alt screen 滚动分流用 `mouse_protocol_mode()` + `alternate_screen()` 两个稳定信号，不用 `application_cursor()` 或清屏启发式。 |
-| 降级不崩 | 有语义标记则增强，无标记则退回普通 scrollback；shell integration 注入失败不影响前两层。 |
-| 小步可编译 | 每阶段结束必须能 build/test/clippy/fmt，PTY 覆盖关键交互。 |
-| 配置可回归 | 配置项默认值不变行为；配置界面改动通过 PTY 快照验证。 |
+| 单向依赖不回头 | 上层是下层的 consumer，不是重新实现；第 1 层不得依赖第 2/3/4 层。 |
+| 第 1 层自身即有价值 | 做完即可独立交付：逻辑测试从「OCR 屏幕」变成「读值」，不必等上面三层。 |
+| 语义而非坐标 | `invoke(target, action)` 是语义级动作，不是合成坐标鼠标事件；只有目标不支持该动作时才允许退回坐标注入。 |
+| 可序列化优先 | 第 2 层命令/查询/事件都设计成可序列化的值，让第 3 层只是「加传输 + 序列化」，不重新设计语义。 |
+| 甜点区先行 | 第 4 层 L0+L1 近乎免费、立刻见效，不依赖第 3 层，可与前两层并行。 |
+| 小步可编译 | 每阶段结束必须 `fmt`/`clippy`/`test` 全绿，关键路径有测试覆盖。 |
 
 ## 阶段划分
 
-落地顺序遵循 `TERMINAL_GAP.md`「落地顺序建议」。
+落地顺序遵循 `SCRIPTING_LAYERS.md`「落地顺序建议」：第 1 层 → 第 2 层 →（第 4 层 L0+L1 可提前）→ 第 3 层 → 第 4 层 L2/L3。
 
-### M1 - 进程生命周期 + Callbacks 基础（P0.1 + P0.3 组件层）
+### M1 - 第 1 层 introspection（地基）
 
-一次性引入 `new_with_callbacks`，同时补进程退出回调与 title/bell/clipboard 桥接。这是组件层的硬缺陷，后续一切依赖它。
-
-| 产出 | 说明 |
-|---|---|
-| 进程退出信号 | reader 线程 EOF 或 `child` 退出时 `try_wait()` 记录 `ExitStatus` 到 `TerminalShared`，触发 `on_exit(status)` 回调（区别于析构期 `on_close`）。 |
-| 查询接口 | `TerminalHandle` 暴露 `is_running()` / `exit_status()`。 |
-| callbacks 改造 | `TerminalEmulator::new` 改用 `Parser::new_with_callbacks`，桥接 `set_window_title` / `set_window_icon_name` / `audible_bell` / `copy_to_clipboard` 到 `TerminalShared`，经 handle/回调暴露。 |
-
-验收：单测/PTY 覆盖 shell `exit` 后组件报告退出码、`is_running()` 翻转；title/bell/clipboard 回调可被外壳观察到。
-
-### M2 - 死窗口回收 + 标题联动（P0.2 + P1.1 外壳层）
-
-让多窗口外壳「活」起来。
+把分散的寻址收敛成公共能力，兑现「逻辑测试改用读值断言」的独立价值。
 
 | 产出 | 说明 |
 |---|---|
-| 死窗口回收 | tick 或 `on_exit` 检测进程退出，按策略关窗，或原地显示 `[Process exited: code N — press R to restart]`。 |
-| 标题联动 | 把组件暴露的标题同步到 `Window.title`，刷新 Windows 菜单窗口列表。 |
+| 公共 `find_by_tag` | 新增 `pub fn find_by_tag` / `find_by_tag_mut`（进程内、纯只读寻址），`inspect.rs` 的 `component_find`/`component_find_mut` 改为委托它。 |
+| 门面收敛 | `DesktopInspector` 明确为第 1 层门面：`tree`/`export_snapshot`/`get_property`/`property_names` 复用公共寻址。 |
+| tag 覆盖诊断 | 提供一个「列出可交互但未标 tag 的节点」的诊断辅助，支撑「可脚本组件必须显式标 tag」约定。 |
+| 变更信号聚合 | 为第 2 层 `wait_for` 预留：基于 `DirtyObserver` 的进程内变更检测封装（拉模型即可，不强求 push）。 |
+| 读值断言范式 | 落地进程内测试范式（构造 `Desktop` → `inspect()` → 读值断言），并**示范迁移一例** chat 里靠 OCR/字形推断状态的逻辑测试。 |
 
-验收：PTY 覆盖 shell 退出后窗口回收/退出提示；shell/vim 设置 `OSC 0/2` 标题后窗口标题与菜单同步更新。
+验收：`find_by_tag` 单测覆盖命中/未命中/嵌套；示范迁移的逻辑测试不再依赖屏幕字符反查，改为读 `Binding` 活值断言；全套验证通过。
 
-### M3 - tmux 式前缀键框架（P1.6 组件层 + 外壳层）
+### M2 - 第 2 层 scriptable（语义动作 + 查询 + 等待）
 
-先落地前缀键解析，因为 copy-mode（P1.2 入口）与外壳快捷键通路都挂在它上面。
-
-| 产出 | 说明 |
-|---|---|
-| 前缀态状态机 | capture 分支收到前缀键进入前缀态（不转发），下一个键查前缀命令表。 |
-| 可配置前缀 | 默认 `Ctrl+B`，必须是 plain `Ctrl+<字母>`；前缀键与命令表可配置。 |
-| 前缀命令表 | `前缀 + F10` 激活菜单、`前缀 + w` 窗口模式、`前缀 + z` 最大化/还原、`前缀 + [` 进 copy-mode、`前缀 + 前缀` 转义一个字面前缀给子进程。 |
-| 事件派发 | 命中外壳命令通过 typed `ComponentAction` 交给 Desktop 处理（比 raw-key 冒泡更适合 `前缀+w/z` 这类非全局原始键），命中 `[` 进 copy-mode。 |
-
-验收：PTY 覆盖 capture 态下 `前缀 + F10` 能激活菜单、`前缀 + w` 进窗口模式、`前缀 + 前缀` 把字面前缀发给子进程；非终端窗口快捷键仍直达。
-
-### M4 - 选择复制 + 剪贴板 + alt screen 滚动分流（P1.2 + P1.3 + P1.5）
-
-三者共用同一片鼠标/键盘处理代码，一起重写最省。
+在第 1 层「读」之上加「触发」和「等待」。
 
 | 产出 | 说明 |
 |---|---|
-| selection 状态机 | 选区高亮 + 命中测试 + 从 vt100 `screen` 提取选中文本；鼠标与键盘两条入口共享。 |
-| 鼠标本地框选 | 子进程开鼠标报告时 `Shift+拖拽`=本地框选、不按=转发；未开鼠标报告时直接拖拽即框选（修掉 `capture_on_click` recapture 浪费点击）。 |
-| copy-mode | 经 `前缀 + [` 进入；方向键与 hjkl、起选 `v`/`Space`、复制 `y`/`Enter`、`Esc`/`q` 取消；滚轮/方向键永远本地 scrollback 导航。 |
-| 剪贴板（首版） | 选择 → 组件内部 copy buffer + 粘贴回子进程。 |
-| 剪贴板（后续） | 接系统剪贴板（`arboard`）与 OSC 52（依赖 M1 clipboard 回调），OSC 52 优先、`arboard` 兜底。 |
-| alt screen 滚动分流 | 滚轮前置三级决策树：`mouse_protocol_mode() != None` → 转发 SGR 滚轮；`alternate_screen()` → alternate scroll 翻方向键（默认 ×3）发子进程；else → 本地 `set_scrollback`。 |
+| 叶子组件 `apply_command` | Checkbox（`Toggle`/`Click`）、Button（`Click`/`Submit`）、TextBox（`InputText`）、Slider（调值）落地 `apply_command`，与既有鼠标/键盘交互语义一致。 |
+| 语义 API | 进程内 `invoke(target, action)` / `query(target, prop)` / `wait_for(predicate, timeout)`，`target` 支持 `Id`/`Focused`，全部按可序列化值设计。 |
+| 退回策略 | 组件实现了 `apply_command` 就语义派发；未实现才允许退回坐标注入（保留 `inspect.rs` 现有兜底），并可观测走了哪条路径。 |
+| 接入测试 | `wait_for` 替代 chat helper 的 `sleep` 轮询屏幕；再迁移一批逻辑测试作为回归。 |
 
-验收：PTY 覆盖鼠标框选/复制、`前缀 + [` copy-mode 选择复制、vim(开/关鼠标)/less/htop/fzf 滚轮各自落到正确分支、主屏 scrollback 仍正常。
+验收：`invoke("checkbox-id", Toggle)` 直接翻转 `Binding<bool>` 而非合成点击；`wait_for` 能等到异步驱动的状态成立且超时可控；单测覆盖每个新叶子组件动作；全套验证通过。
 
-### M5 - 语义提示符标记（P1.4，OSC 133/7）
+### M3 - 第 4 层 L0+L1（tmux 甜点区，可提前 / 可与 M1-M2 并行）
 
-三层互相独立、职责与依赖方向不同，不混在一起实现。
+近乎免费、立刻见效，**不依赖第 3 层**。
 
 | 产出 | 说明 |
 |---|---|
-| 第 1 层 感知与信号【组件层】 | 与 M1 共用 callbacks，接 `unhandled_osc` 识别 `133`/`7`，推进小状态机记 `command_marks: Vec<CommandBlock>`（prompt/command/output/end 行号、exit_code、cwd）；`TerminalHandle` 暴露 `command_blocks()` / `last_exit_code()`，可选 `on_command_finished`。 |
-| 第 2 层 呈现与交互【外壳层】 | 命令块分隔线/底色、失败命令标红、命令级导航（`Ctrl+↑/↓`）、选择粒度升级到整条命令输出、右键重跑/复制命令/复制输出。可独立演进、可不做。 |
-| 第 3 层 shell integration【配置面】 | 方案 A 零侵入（用户已配则用，未配降级）；方案 B spawn 时按 shell 类型注入 integration 脚本。第 1/2 层不得硬依赖注入成功。 |
+| L0 环境探测注入 | `spawn_command`（`crates/atto-ui-terminal/src/terminal.rs:2775`）注入 `$TMUX`（socket,pid,session）、`$TMUX_PANE`、`$TERM`，让 opencode/claude code/vim 插件探测到「在 tmux 里」。 |
+| L1 DCS passthrough | 识别 `\033Ptmux;...\033\\` 包裹 → 拆开内层转义 → 走原生 OSC 52 剪贴板（复用 M4.6 的 `TerminalSystemClipboard`/arboard）与 OSC 9;4 进度。 |
+| 降级 | 未探测到 / 未包裹时行为不变；passthrough 解析失败不崩、不误写系统剪贴板。 |
 
-验收：单测覆盖 OSC 133/7 解析与 `command_blocks()` 状态机；无标记时退回普通 scrollback 不崩；第 2 层导航/命令级复制、第 3 层注入按体验需求排期，互不阻塞。
+验收：PTY 覆盖子进程读到注入的 `$TMUX`/`$TMUX_PANE`；`\033Ptmux;\033]52;...\a\033\\` 包裹的 OSC 52 被解包并写入剪贴板后端；无包裹路径回归不变。
 
-### M6 - 分屏/标签页 + 会话管理 + spawn 环境（P2）
+### M4 - 第 3 层 ipc（暴露到进程外）
 
-| 产出 | 说明 |
-|---|---|
-| 分屏 | 基于现有组件和功能在单窗口内做 tmux 式 split panes。 |
-| 会话管理 | 新建时选 shell/命令入口；重启已死会话（配合 M1 `exit_status`）；每窗口独立 cwd/profile（cwd 可继承 M5 OSC 7）。 |
-| spawn 环境 | `spawn_command` 设 `TERM` / `COLORTERM`、初始 `cwd`；提供显式 resize 接口（不再仅在 `draw` 被动触发）。 |
-
-验收：PTY 覆盖单窗口内分屏布局、死会话重启、新建时选择 shell/命令并落到指定 cwd。
-
-### M7 - 渲染保真度 + 配置界面（P3.1 + P3.2）
-
-**本阶段包含用户明确要求的「配置界面」**，作为整个终端 app 的设置面板。
+传输 + 序列化，把第 2 层语义 API 暴露给外部进程。**依赖 M2 的可序列化 API 设计。**
 
 | 产出 | 说明 |
 |---|---|
-| 光标形状 | 光标渲染读取 vt100 光标形状（block/bar/underline），不再一律 REVERSED 涂格。 |
-| keypad 模式 | 接 `application_keypad()`（DECCKM `application_cursor` 已接）。 |
-| 配置模型 | 集中式 `TerminalConfig`：scrollback 长度、色板、前缀键、release 快捷键、alt screen 滚动键位与开关、shell/命令、cwd/profile、shell integration 注入开关、光标形状默认值等；配套默认值与持久化（沿用项目 JSON/YAML 主题配置风格）。 |
-| 配置界面 | 新增可视化**设置窗口**（复用声明式 `VStack`/`HStack`/`Grid` + 现有 widgets：`TextBox`/`Checkbox`/`RadioGroup`/`ListBox`），分组编辑上述配置项，支持即时预览/应用与保存；从菜单入口打开。 |
-| 配置生效 | 组件层各写死项（scrollback、色板、release 快捷键、前缀键、滚动键位）改读 `TerminalConfig`，配置界面改动运行时生效。 |
+| 传输 | Unix domain socket server（决策 C），socket 路径可由环境变量指定，为第 4 层的 `$TMUX` 指向铺路。 |
+| 协议 | 自定义干净协议（JSON-RPC 类，决策 D）：`invoke`/`query`/`wait_for`/`tree` 请求-响应，命令/查询/结果复用第 2 层可序列化值。 |
+| 集成 | UI 主循环侧的请求分发（线程安全地把外部请求交给持有 `Desktop` 的线程执行）。 |
+| 外部客户端 | 一个最小 `atto` CLI（类 iTerm `it2`）连 socket 驱动 UI，作为第一个进程外消费者与端到端测试载体。 |
 
-验收：PTY 覆盖打开配置界面、修改 scrollback/前缀键/色板等并应用后行为随之改变、保存后重启保留；光标形状随 vt100 序列切换正确渲染。
+验收：外部进程经 socket 发 `query`/`invoke` 能读到/改变 UI 状态；协议往返序列化正确；CLI 端到端跑通；modal 等边界行为与进程内一致。
+
+### M5 - 第 4 层 L2/L3（tmux 子命令 + 本地 pane 补全）
+
+把 tmux 接口面翻译成第 3 层调用。**它是第 3 层之上的 client，不是新协议实现。**
+
+| 产出 | 说明 |
+|---|---|
+| send-keys / capture-pane | 映射到 `TerminalHandle::send_input_bytes`（`terminal.rs:3443`）/ `snapshot`（`terminal.rs:3738`）。 |
+| pane 管理命令 | `split-window`/`select-pane -LRUD`/`display-popup`/`list-panes`/`break-pane` 映射到 `TerminalPaneGroup`（`crates/atto-ui-terminal/src/pane.rs:203`）与原生 `WindowManager`。 |
+| 伪装载体 | shim `tmux` 可执行文件（决策 E 倾向乙：可控、薄翻译层）拦截命令转第 3 层调用；`$PATH` 前置注入。 |
+| 本地 pane 补全 | 方向性 pane 导航（`prefix+方向键`）、pane resize、pane zoom（`z`）、pane 关闭（`x`）——属 tmux-like 体验补全，与第 4 层伪装无关。 |
+
+验收：shim 的 `tmux send-keys`/`capture-pane` 经第 3 层驱动原生 pane；`split-window`/`select-pane` 落到原生 pane 布局；本地 pane 方向导航/resize/zoom/close 有 PTY 覆盖。
 
 ## 依赖关系
 
 | 阶段 | 依赖 |
 |---|---|
-| M1 | 无，组件层硬缺陷先做。 |
-| M2 | 依赖 M1 的 `on_exit` / `is_running` / 标题回调。 |
-| M3 | 依赖 M1（capture 路径稳定），是 M4 copy-mode 的前置。 |
-| M4 | 依赖 M3 前缀键（copy-mode 入口）与 M1 clipboard 回调（后续剪贴板）。 |
-| M5 | 第 1 层依赖 M1 的 `new_with_callbacks`；第 2 层依赖第 1 层的 `command_blocks()`；第 3 层依赖 M6 的 spawn 环境（方案 B）。 |
-| M6 | 分屏独立；死会话重启依赖 M1 `exit_status`；cwd 继承依赖 M5 OSC 7。 |
-| M7 | 配置模型贯穿全程；配置界面依赖各阶段已暴露的可配置项与 M6 的 shell/profile。 |
+| M1 | 无。是所有东西的地基。 |
+| M2 | 依赖 M1 的公共寻址与门面；`wait_for` 依赖 M1 变更信号聚合。 |
+| M3 | 与 M1/M2 并行，仅依赖终端组件已有的 spawn/OSC 能力，**不依赖第 3 层**。 |
+| M4 | 依赖 M2 的可序列化语义 API。 |
+| M5 | 依赖 M4 的 socket + 协议；pane 命令依赖既有 `TerminalPaneGroup`；本地 pane 补全独立。 |
 
-建议顺序：M1 → M2 → M3 → M4 → M5（第 1 层可与 M1 顺带） → M6 → M7。M5 第 2/3 层、M6、M7 可按体验需求灵活穿插，互不阻塞。
+建议顺序：M1 → M2 →（M3 可提前/并行）→ M4 → M5。
+
+## 待拍板的关键决策（汇总，默认取 `SCRIPTING_LAYERS.md` 倾向）
+
+| # | 决策 | 默认倾向 | 落地阶段 |
+|---|---|---|---|
+| A | 第 1 层寻址方案 | 复用字符串 `tag` + 提炼公共 `find_by_tag`，约定可脚本组件必须标 tag | M1 |
+| B | 第 1 层状态读取 | 以 `get_property`（Binding 反射）为主干，复杂状态按需补 | M1 |
+| C | 第 3 层传输 | Unix domain socket | M4 |
+| D | 第 3 层协议 | 自定义干净协议（JSON-RPC 类），tmux 语法作为第 4 层翻译目标 | M4 |
+| E | 第 4 层 tmux 子命令伪装 | 乙（shim `tmux` 可执行文件，薄翻译层） | M5 |
+| F | 第 4 层是否做 control mode | 不做 | M5 |
 
 ## 验证
 
@@ -168,4 +159,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 ```
 
-终端交互优先走 PTY 快照（`snapshot_terminal_app` / `snapshot_terminal_window_app` + `pty_terminal_*` 测试），不依赖真实交互终端。手动验证用 `cargo run -p atto-ui-terminal --example terminal_viewer`。
+第 1/2 层逻辑测试优先走**进程内**读值断言（直接构造 `Desktop` → `inspect()`），不经 PTY；渲染 / 端到端仍走 PTY 快照。第 4 层终端交互走 PTY 快照（`snapshot_terminal_app` / `snapshot_terminal_window_app` + `pty_terminal_*`）。
