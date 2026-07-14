@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_terminal::{TerminalConfig, TerminalShortcutConfig};
+use atto_ui_terminal::{TerminalConfig, TerminalShortcutConfig, TerminalTmuxEnvironmentConfig};
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
@@ -146,6 +146,25 @@ fn isolated_default_config(label: &str) -> (std::path::PathBuf, String) {
         .expect("write default terminal config");
     let arg = config_path.to_string_lossy().into_owned();
     (root, arg)
+}
+
+fn isolated_config(label: &str, config: &TerminalConfig) -> (std::path::PathBuf, String) {
+    let root = std::path::PathBuf::from(format!("/tmp/aui-{label}-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create config temp dir");
+    let config_path = root.join("terminal.yaml");
+    config
+        .save_path_infer(&config_path)
+        .expect("write terminal config");
+    let arg = config_path.to_string_lossy().into_owned();
+    (root, arg)
+}
+
+fn spawn_snapshot_without_host_tmux(args: &[&str], cols: u16, rows: u16) -> PtyTestHost {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut env_args = vec!["-u", "TMUX", "-u", "TMUX_PANE", bin];
+    env_args.extend_from_slice(args);
+    PtyTestHost::spawn("/usr/bin/env", &env_args, cols, rows).expect("spawn PTY app")
 }
 
 fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
@@ -532,6 +551,52 @@ fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_tmux_probe_environment_is_configurable() {
+    let _guard = pty_window_test_guard();
+    let script = concat!(
+        "printf 'TMUX=<%s> TMUX_PANE=<%s> TERM=<%s>\\r\\n' ",
+        "\"${TMUX-}\" \"${TMUX_PANE-}\" \"${TERM-}\"; ",
+        "sleep 10"
+    );
+
+    let (default_root, default_config_arg) = isolated_default_config("tmux-probe-default");
+    let mut host = spawn_snapshot_without_host_tmux(
+        &["--config", &default_config_arg, "/bin/sh", "-c", script],
+        90,
+        26,
+    );
+    wait_for_text(&host, "TMUX=<> TMUX_PANE=<> TERM=<xterm-256color>");
+    host.send_ctrl('q').expect("quit default probe");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean default probe exit");
+    let _ = fs::remove_dir_all(default_root);
+
+    let enabled_config = TerminalConfig {
+        tmux: TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-m3-1.sock".to_string(),
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: true,
+        },
+        ..TerminalConfig::default()
+    };
+    let (enabled_root, enabled_config_arg) = isolated_config("tmux-probe-enabled", &enabled_config);
+    let mut host = spawn_snapshot_without_host_tmux(
+        &["--config", &enabled_config_arg, "/bin/sh", "-c", script],
+        90,
+        26,
+    );
+    wait_for_text(&host, "TMUX=</tmp/atto-ui-m3-1.sock,4242,7> TMUX_PANE=<");
+    wait_for_text(&host, "%3> TERM=<tmux-256color>");
+    host.send_ctrl('q').expect("quit enabled probe");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean enabled probe exit");
+    let _ = fs::remove_dir_all(enabled_root);
 }
 
 #[test]

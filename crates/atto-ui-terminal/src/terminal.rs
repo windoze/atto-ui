@@ -35,10 +35,14 @@ use crate::selection::{
     visible_top_row,
 };
 use crate::session::TerminalSessionSpec;
-use crate::{TerminalAlternateScreenScrollConfig, TerminalConfig, TerminalPaletteConfig};
+use crate::{
+    TerminalAlternateScreenScrollConfig, TerminalConfig, TerminalPaletteConfig,
+    TerminalTmuxEnvironmentConfig,
+};
 
 const DEFAULT_TERM_ENV: &str = "xterm-256color";
 const DEFAULT_COLORTERM_ENV: &str = "truecolor";
+const TMUX_TERM_ENV: &str = "tmux-256color";
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
 const COMMAND_FAILURE_SYMBOL: &str = "!";
 const CURSOR_BAR_SYMBOL: &str = "▏";
@@ -106,6 +110,7 @@ struct TerminalRuntimeConfig {
     prefix_shortcut: TerminalShortcut,
     alternate_screen_scroll: TerminalAlternateScreenScroll,
     shell_integration: TerminalShellIntegration,
+    tmux_environment: TerminalTmuxEnvironmentConfig,
     cursor_shape: TerminalCursorShape,
 }
 
@@ -121,6 +126,7 @@ impl TerminalRuntimeConfig {
                 &config.alternate_screen_scroll,
             )?,
             shell_integration: config.shell_integration_policy(),
+            tmux_environment: config.tmux.clone(),
             cursor_shape: config.cursor.default_shape.into(),
         })
     }
@@ -234,6 +240,7 @@ mod tests {
             system_clipboard: None,
             pty_resize: None,
             shell_integration: runtime_config.shell_integration,
+            tmux_environment: runtime_config.tmux_environment,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -552,18 +559,43 @@ mod tests {
     }
 
     #[test]
+    fn tmux_environment_mode_is_queryable_and_mutable() {
+        let terminal = TerminalEmulator::new().tmux_environment(TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-builder.sock".to_string(),
+            server_pid: Some(1111),
+            session_id: 2,
+            pane_id: 4,
+            override_term: false,
+        });
+        let handle = terminal.handle();
+
+        assert_eq!(
+            handle.tmux_environment().tmux_env_value(),
+            "/tmp/atto-ui-builder.sock,1111,2"
+        );
+        handle.set_tmux_environment(TerminalTmuxEnvironmentConfig::default());
+        assert!(!handle.tmux_environment().inject);
+    }
+
+    #[test]
     fn spawn_command_preparation_sets_terminal_env_and_default_cwd() {
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.env("TERM", "host-term");
         cmd.env("COLORTERM", "host-colorterm");
+        cmd.env_remove("TMUX");
+        cmd.env_remove("TMUX_PANE");
 
-        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+        prepare_spawn_command(&mut cmd, &TerminalTmuxEnvironmentConfig::default())
+            .expect("prepare spawn command");
 
         assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(DEFAULT_TERM_ENV)));
         assert_eq!(
             cmd.get_env("COLORTERM"),
             Some(OsStr::new(DEFAULT_COLORTERM_ENV))
         );
+        assert_eq!(cmd.get_env("TMUX"), None);
+        assert_eq!(cmd.get_env("TMUX_PANE"), None);
         assert_eq!(
             cmd.get_cwd().and_then(|cwd| cwd.to_str()),
             env::current_dir().expect("current dir").as_path().to_str()
@@ -571,11 +603,49 @@ mod tests {
     }
 
     #[test]
+    fn spawn_command_preparation_injects_tmux_probe_environment_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-test.sock".to_string(),
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: false,
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(DEFAULT_TERM_ENV)));
+        assert_eq!(
+            cmd.get_env("TMUX"),
+            Some(OsStr::new("/tmp/atto-ui-test.sock,4242,7"))
+        );
+        assert_eq!(cmd.get_env("TMUX_PANE"), Some(OsStr::new("%3")));
+    }
+
+    #[test]
+    fn spawn_command_preparation_can_use_tmux_term_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            override_term: true,
+            ..TerminalTmuxEnvironmentConfig::default()
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(TMUX_TERM_ENV)));
+        assert_eq!(cmd.get_env("TMUX_PANE"), Some(OsStr::new("%0")));
+    }
+
+    #[test]
     fn spawn_command_preparation_preserves_explicit_cwd() {
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.cwd(OsStr::new("/tmp"));
 
-        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+        prepare_spawn_command(&mut cmd, &TerminalTmuxEnvironmentConfig::default())
+            .expect("prepare spawn command");
 
         assert_eq!(cmd.get_cwd().and_then(|cwd| cwd.to_str()), Some("/tmp"));
     }
@@ -1193,9 +1263,23 @@ fn create_shell_integration_temp_dir() -> Result<PathBuf> {
     bail!("failed to allocate a unique shell integration temp directory")
 }
 
-fn prepare_spawn_command(cmd: &mut CommandBuilder) -> Result<()> {
-    cmd.env("TERM", DEFAULT_TERM_ENV);
+fn prepare_spawn_command(
+    cmd: &mut CommandBuilder,
+    tmux_environment: &TerminalTmuxEnvironmentConfig,
+) -> Result<()> {
+    tmux_environment.validate()?;
+    let term = if tmux_environment.inject && tmux_environment.override_term {
+        TMUX_TERM_ENV
+    } else {
+        DEFAULT_TERM_ENV
+    };
+
+    cmd.env("TERM", term);
     cmd.env("COLORTERM", DEFAULT_COLORTERM_ENV);
+    if tmux_environment.inject {
+        cmd.env("TMUX", tmux_environment.tmux_env_value());
+        cmd.env("TMUX_PANE", tmux_environment.tmux_pane_env_value());
+    }
     if cmd.get_cwd().is_none() {
         let cwd = env::current_dir()?;
         cmd.cwd(cwd.as_os_str());
@@ -1392,6 +1476,7 @@ struct TerminalShared {
     system_clipboard: Option<SystemClipboard>,
     pty_resize: Option<TerminalPtyResize>,
     shell_integration: TerminalShellIntegration,
+    tmux_environment: TerminalTmuxEnvironmentConfig,
     last_shell_integration_error: Option<String>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
@@ -1435,6 +1520,7 @@ impl TerminalShared {
         self.set_prefix_shortcut(config.prefix_shortcut);
         self.alternate_screen_scroll = config.alternate_screen_scroll;
         self.shell_integration = config.shell_integration;
+        self.tmux_environment = config.tmux_environment;
         self.cursor_shape = config.cursor_shape;
     }
 
@@ -2545,6 +2631,7 @@ impl TerminalEmulator {
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
             pty_resize: None,
             shell_integration: runtime_config.shell_integration,
+            tmux_environment: runtime_config.tmux_environment,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -2687,6 +2774,12 @@ impl TerminalEmulator {
         self
     }
 
+    /// Configures tmux-compatible probe variables for future subprocess spawns.
+    pub fn tmux_environment(self, config: TerminalTmuxEnvironmentConfig) -> Self {
+        self.shared.lock().tmux_environment = config;
+        self
+    }
+
     pub fn on_input<F>(self, callback: F) -> Self
     where
         F: Fn(&[u8]) + Send + Sync + 'static,
@@ -2773,8 +2866,11 @@ impl TerminalEmulator {
 
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, mut cmd: CommandBuilder) -> Result<()> {
-        prepare_spawn_command(&mut cmd)?;
-        let shell_integration = { self.shared.lock().shell_integration };
+        let (shell_integration, tmux_environment) = {
+            let shared = self.shared.lock();
+            (shared.shell_integration, shared.tmux_environment.clone())
+        };
+        prepare_spawn_command(&mut cmd, &tmux_environment)?;
         let shell_integration_files = match prepare_shell_integration(&mut cmd, shell_integration) {
             Ok(files) => {
                 self.shared.lock().last_shell_integration_error = None;
@@ -3498,6 +3594,16 @@ impl TerminalHandle {
     /// Returns the current spawn-time shell integration policy.
     pub fn shell_integration(&self) -> TerminalShellIntegration {
         self.shared.lock().shell_integration
+    }
+
+    /// Updates tmux-compatible probe variables used by future subprocess spawns.
+    pub fn set_tmux_environment(&self, config: TerminalTmuxEnvironmentConfig) {
+        self.shared.lock().tmux_environment = config;
+    }
+
+    /// Returns the current tmux-compatible probe environment configuration.
+    pub fn tmux_environment(&self) -> TerminalTmuxEnvironmentConfig {
+        self.shared.lock().tmux_environment.clone()
     }
 
     /// Returns the last non-fatal shell integration injection error, if any.

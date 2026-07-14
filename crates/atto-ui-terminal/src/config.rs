@@ -39,6 +39,8 @@ pub struct TerminalConfig {
     #[serde(default)]
     pub shell_integration: TerminalShellIntegrationConfig,
     #[serde(default)]
+    pub tmux: TerminalTmuxEnvironmentConfig,
+    #[serde(default)]
     pub close_window_on_shell_exit: bool,
     #[serde(default)]
     pub cursor: TerminalCursorConfig,
@@ -165,6 +167,9 @@ impl TerminalConfig {
         self.sessions
             .validate()
             .context("invalid terminal sessions")?;
+        self.tmux
+            .validate()
+            .context("invalid terminal tmux environment")?;
         Ok(())
     }
 
@@ -194,6 +199,7 @@ impl Default for TerminalConfig {
             alternate_screen_scroll: TerminalAlternateScreenScrollConfig::default(),
             sessions: TerminalSessionsConfig::default(),
             shell_integration: TerminalShellIntegrationConfig::default(),
+            tmux: TerminalTmuxEnvironmentConfig::default(),
             close_window_on_shell_exit: false,
             cursor: TerminalCursorConfig::default(),
         }
@@ -551,6 +557,74 @@ impl TerminalShellIntegrationConfig {
     }
 }
 
+/// Optional tmux-compatible environment variables injected when spawning a child process.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalTmuxEnvironmentConfig {
+    #[serde(default)]
+    pub inject: bool,
+    #[serde(default = "default_tmux_socket_path")]
+    pub socket_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_pid: Option<u32>,
+    #[serde(default)]
+    pub session_id: u64,
+    #[serde(default)]
+    pub pane_id: u64,
+    #[serde(default)]
+    pub override_term: bool,
+}
+
+impl TerminalTmuxEnvironmentConfig {
+    /// Validates the pieces that become the comma-delimited `$TMUX` value.
+    pub fn validate(&self) -> Result<()> {
+        if !self.inject {
+            return Ok(());
+        }
+
+        ensure!(
+            !self.socket_path.trim().is_empty(),
+            "tmux socket_path must not be empty when injection is enabled"
+        );
+        ensure!(
+            !self.socket_path.contains(','),
+            "tmux socket_path must not contain commas"
+        );
+        ensure!(
+            !self.socket_path.contains('\0'),
+            "tmux socket_path must not contain NUL bytes"
+        );
+        Ok(())
+    }
+
+    /// Formats `$TMUX` as `socket_path,pid,session_id`.
+    pub fn tmux_env_value(&self) -> String {
+        format!(
+            "{},{},{}",
+            self.socket_path,
+            self.server_pid.unwrap_or_else(std::process::id),
+            self.session_id
+        )
+    }
+
+    /// Formats `$TMUX_PANE` using tmux's `%<id>` pane identifier shape.
+    pub fn tmux_pane_env_value(&self) -> String {
+        format!("%{}", self.pane_id)
+    }
+}
+
+impl Default for TerminalTmuxEnvironmentConfig {
+    fn default() -> Self {
+        Self {
+            inject: false,
+            socket_path: default_tmux_socket_path(),
+            server_pid: None,
+            session_id: 0,
+            pane_id: 0,
+            override_term: false,
+        }
+    }
+}
+
 /// Cursor defaults applied before a child process sends DECSCUSR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalCursorConfig {
@@ -619,6 +693,10 @@ fn default_profile_name() -> String {
 
 fn default_profiles() -> Vec<TerminalProfileConfig> {
     vec![TerminalProfileConfig::shell_from_env()]
+}
+
+fn default_tmux_socket_path() -> String {
+    "/tmp/atto-ui-tmux.sock".to_string()
 }
 
 fn default_prefix_key_config() -> TerminalShortcutConfig {
@@ -852,6 +930,8 @@ mod tests {
             config.shell_integration_policy(),
             TerminalShellIntegration::Disabled
         );
+        assert!(!config.tmux.inject);
+        assert!(!config.tmux.override_term);
         assert!(!config.close_window_on_shell_exit);
         assert_eq!(
             TerminalCursorShape::from(config.cursor.default_shape),
@@ -907,6 +987,7 @@ mod tests {
             TerminalCursorShape::Block
         );
         assert!(!config.close_window_on_shell_exit);
+        assert!(!config.tmux.inject);
         assert_eq!(
             config.sessions.default_profile().unwrap().name,
             DEFAULT_TERMINAL_PROFILE_NAME
@@ -939,6 +1020,14 @@ mod tests {
                 ],
             },
             shell_integration: TerminalShellIntegrationConfig { inject: true },
+            tmux: TerminalTmuxEnvironmentConfig {
+                inject: true,
+                socket_path: "/tmp/atto-ui-test.sock".to_string(),
+                server_pid: Some(4242),
+                session_id: 7,
+                pane_id: 3,
+                override_term: true,
+            },
             close_window_on_shell_exit: true,
             cursor: TerminalCursorConfig {
                 default_shape: TerminalCursorShapeConfig::Bar,
@@ -1001,6 +1090,14 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("sessions")
+        );
+
+        let invalid_tmux = r#"{"tmux":{"inject":true,"socket_path":"/tmp/with,comma"}}"#;
+        assert!(
+            TerminalConfig::from_str(invalid_tmux, TerminalConfigFormat::Json)
+                .unwrap_err()
+                .to_string()
+                .contains("tmux")
         );
     }
 

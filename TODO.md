@@ -172,11 +172,13 @@ cargo test --workspace --all-targets
 
 目标：近乎免费、立刻见效的 tmux 伪装地基。**不依赖第 3 层**。让「已在为 tmux 适配」的程序（claude code / opencode / vim 插件）在 terminal view 里直接享受环境探测与原生剪贴板 passthrough。
 
-- [ ] **[TODO] M3-1 L0 环境探测注入**
+- [x] **[DONE] M3-1 L0 环境探测注入**
   - 上下文：`crates/atto-ui-terminal/src/terminal.rs` 的 `spawn_command`（`:2775`）已统一设置 `TERM=xterm-256color`/`COLORTERM=truecolor`（M6.3 引入）。程序靠 `$TMUX`（socket,pid,session）、`$TMUX_PANE`、`$TERM=screen*/tmux*` 探测「在 tmux 里」。
   - 实现：在 `spawn_command` 的环境准备处，可选注入 `$TMUX`（格式 `socket_path,pid,session_id`）、`$TMUX_PANE`（如 `%<id>`）。是否注入 / socket 路径由配置或 builder 开关控制（默认关闭，避免误导未预期程序）。`$TMUX` 的 socket 路径此阶段可为占位 / 尚未监听的路径（真正 socket 在 M4 起来）——注入的目的先满足「探测存在性」。`$TERM` 是否改为 `tmux-256color` 作为开关项，默认保持现值以免破坏渲染。
   - 明确边界：只注入环境变量，不实现任何 tmux 子命令；关闭开关时行为与现状完全一致。
   - 验证：PTY 覆盖——开启开关后子进程 `echo $TMUX` / `echo $TMUX_PANE` 能读到注入值（复用 `snapshot_terminal_*` fixture + 子进程 probe）；关闭时子进程读到空；`cargo test -p atto-ui-terminal`；全套通过。
+  - 完成记录：新增 `TerminalTmuxEnvironmentConfig` 作为持久化配置与 builder / handle 运行时开关，默认 `inject = false`，因此默认不向子进程写入 `$TMUX` / `$TMUX_PANE`，`TERM` 仍保持 `xterm-256color`，`COLORTERM` 仍保持 `truecolor`。开启后 `prepare_spawn_command` 注入 `$TMUX=socket_path,pid,session_id` 与 `$TMUX_PANE=%<pane_id>`；`server_pid` 可显式配置，未配置时使用当前进程 id；`override_term` 可选把 `TERM` 改为 `tmux-256color`。`TerminalEmulator::tmux_environment` 与 `TerminalHandle::{set_tmux_environment,tmux_environment}` 提供 builder / handle 入口；`TerminalConfig`、settings draft 与 YAML/JSON roundtrip 会保留 tmux 配置。实现只注入环境变量，不实现 tmux 子命令，也不在默认关闭时额外清理宿主继承环境；PTY 测试通过 `/usr/bin/env -u TMUX -u TMUX_PANE` 控制外层环境，验证默认关闭为空和开启后可读指定值。
+  - 验证：`cargo test -p atto-ui-terminal tmux -- --nocapture`；`cargo test -p atto-ui-terminal terminal_config -- --nocapture`；`cargo test -p atto-ui-terminal terminal_settings_draft_round_trips_config -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
 - [ ] **[TODO] M3-2 L1 DCS `tmux;` passthrough 解包 → 原生 OSC**
   - 上下文：程序在 tmux 里发剪贴板 / 进度会用 DCS passthrough 包裹：`\033Ptmux;<escaped-inner>\033\\`（内层每个 `\033` 被转义成 `\033\033`）。解开后内层通常是 OSC 52 剪贴板（`\033]52;...\a`）或 OSC 9;4 进度。终端已有系统剪贴板后端 `TerminalSystemClipboard`（M4.6，terminal.rs）与 OSC 52 处理路径。

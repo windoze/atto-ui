@@ -19,6 +19,7 @@ pub use config::{
     TerminalConfig, TerminalConfigFormat, TerminalCursorConfig, TerminalCursorShapeConfig,
     TerminalPaletteConfig, TerminalProfileConfig, TerminalSessionsConfig,
     TerminalShellIntegrationConfig, TerminalShortcutConfig, TerminalShortcutModifier,
+    TerminalTmuxEnvironmentConfig,
 };
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,
