@@ -75,9 +75,14 @@ fn scroll_chat_up(host: &mut PtyTestHost) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn activate_message_action(host: &mut PtyTestHost, label: &str) -> anyhow::Result<()> {
-    click_text_center(host, label)?;
-    thread::sleep(Duration::from_millis(80));
+/// Opens the right-click context menu on the given message body, then clicks
+/// the menu item with `label`. Message action buttons are no longer inline;
+/// they live in this popup menu.
+fn activate_message_action(host: &mut PtyTestHost, body: &str, label: &str) -> anyhow::Result<()> {
+    let (x, y) =
+        find_text_position(host, body).unwrap_or_else(|| panic!("expected body {body:?} visible"));
+    host.right_click(x, y)?;
+    host.wait_for_text(label, PTY_WAIT)?;
     click_text_center(host, label)
 }
 
@@ -250,16 +255,16 @@ fn agent_retry_and_edit_resubmit_restart_turns_from_pty() -> anyhow::Result<()> 
     host.wait_for_text("agent-pty-retry-edit-seed", PTY_WAIT)?;
     host.wait_for_text("Done.", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
-    host.wait_for_text("Retry", PTY_WAIT)?;
-    host.wait_for_text("Edit", PTY_WAIT)?;
 
-    activate_message_action(&mut host, "Retry")?;
+    // Retry the assistant turn via its right-click context menu.
+    activate_message_action(&mut host, "Mock retry/edit turn 1:", "Retry")?;
     host.wait_for_text("Mock retry/edit turn 2:", PTY_WAIT)?;
     host.wait_for_text("agent-pty-retry-edit-seed", PTY_WAIT)?;
     host.wait_for_text("Done.", PTY_WAIT)?;
     host.wait_for_text("ready", PTY_WAIT)?;
 
-    activate_message_action(&mut host, "Edit")?;
+    // Edit the original user turn via its right-click context menu.
+    activate_message_action(&mut host, "agent-pty-retry-edit-seed", "Edit")?;
     focus_message_input(&mut host)?;
     host.key_with_mods(KeyCode::End, KeyModifiers::NONE)?;
     host.send_str(" edited")?;

@@ -881,7 +881,7 @@ fn chat_turn_header_renders_meta_and_structured_error() -> anyhow::Result<()> {
 }
 
 #[test]
-fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<()> {
+fn chat_context_menu_emits_turn_and_block_actions() -> anyhow::Result<()> {
     let _guard = chat_pty_lock();
     let bin = env!("CARGO_BIN_EXE_snapshot_chat_app");
     let mut host = PtyTestHost::spawn(bin, &["--message-actions"], 110, 32)?;
@@ -889,22 +889,21 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
     host.wait_for_text("ACTION-USER-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("ACTION-ASSISTANT-MESSAGE", Duration::from_secs(2))?;
     host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
-    host.wait_for_text("Retry", Duration::from_secs(2))?;
-    host.wait_for_text("Regenerate", Duration::from_secs(2))?;
-    host.wait_for_text("Copy block", Duration::from_secs(2))?;
+    // Action buttons no longer render inline; the body carries no menu labels.
+    assert_text_absent_for(&host, "Regenerate", Duration::from_millis(120));
 
-    for _ in 0..6 {
-        host.wheel_up(5, 6)?;
-    }
-    host.wait_for_text("Edit", Duration::from_secs(2))?;
-
+    // Copy shortcut on the focused block still works without the menu.
     let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("copy target body");
     host.click(x, y)?;
     host.key_with_mods(KeyCode::Char('c'), KeyModifiers::CONTROL)?;
     host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
 
-    let (x, y) = find_text_position(&host, "Copy").expect("copy action");
-    host.click(x, y)?;
+    // Right-click the user turn -> context menu offers Copy / Edit.
+    let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("user body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Edit", Duration::from_secs(2))?;
+    let (cx, cy) = find_text_position(&host, "Copy").expect("copy action");
+    host.click(cx, cy)?;
     host.wait_for_screen(
         |snapshot| {
             snapshot
@@ -914,26 +913,39 @@ fn chat_message_action_buttons_emit_turn_and_block_actions() -> anyhow::Result<(
         Duration::from_secs(2),
     )?;
 
-    let (x, y) = find_text_position(&host, "Edit").expect("edit user action");
-    host.click(x, y)?;
+    let (x, y) = find_text_position(&host, "ACTION-USER-MESSAGE").expect("user body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Edit", Duration::from_secs(2))?;
+    let (ex, ey) = find_text_position(&host, "Edit").expect("edit user action");
+    host.click(ex, ey)?;
     host.wait_for_text("MESSAGE_ACTION: 1/edit_user", Duration::from_secs(2))?;
 
-    for _ in 0..6 {
-        host.wheel_down(5, 20)?;
-    }
-    host.wait_for_text("ACTION-ASSISTANT-RETRY-MESSAGE", Duration::from_secs(2))?;
+    // Right-click an assistant block -> Copy block (non-destructive, run before
+    // the Retry/Regenerate actions truncate the turn).
+    let (x, y) =
+        find_text_position(&host, "ACTION-ASSISTANT-MESSAGE").expect("assistant block body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Copy block", Duration::from_secs(2))?;
+    let (bx, by) = find_text_position(&host, "Copy block").expect("copy block action");
+    host.click(bx, by)?;
+    host.wait_for_text("MESSAGE_ACTION: 2/copy_block:2001", Duration::from_secs(2))?;
 
-    let (x, y) = find_last_text_position(&host, "Retry").expect("retry action");
-    host.click(x, y)?;
+    // Right-click the retry assistant turn -> Retry (truncates from turn 3).
+    let (x, y) =
+        find_text_position(&host, "ACTION-ASSISTANT-RETRY-MESSAGE").expect("retry assistant body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Retry", Duration::from_secs(2))?;
+    let (rx, ry) = find_text_position(&host, "Retry").expect("retry action");
+    host.click(rx, ry)?;
     host.wait_for_text("MESSAGE_ACTION: 3/retry", Duration::from_secs(2))?;
 
-    let (x, y) = find_text_position(&host, "Regenerate").expect("regenerate action");
-    host.click(x, y)?;
+    // Right-click the first assistant turn -> Regenerate (truncates from turn 2).
+    let (x, y) = find_text_position(&host, "ACTION-ASSISTANT-MESSAGE").expect("assistant body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Regenerate", Duration::from_secs(2))?;
+    let (gx, gy) = find_text_position(&host, "Regenerate").expect("regenerate action");
+    host.click(gx, gy)?;
     host.wait_for_text("MESSAGE_ACTION: 2/regenerate", Duration::from_secs(2))?;
-
-    let (x, y) = find_text_position(&host, "Copy block").expect("copy block action");
-    host.click(x, y)?;
-    host.wait_for_text("MESSAGE_ACTION: 1/copy_block:1001", Duration::from_secs(2))?;
 
     host.send_ctrl('q')?;
     Ok(())
@@ -949,6 +961,9 @@ fn chat_p3_edit_resubmit_truncates_old_branch() -> anyhow::Result<()> {
     host.wait_for_text("P3-EDIT-OLD-ASSISTANT", Duration::from_secs(2))?;
     host.wait_for_text("P3-EDIT-OLD-TAIL", Duration::from_secs(2))?;
 
+    let (x, y) = find_text_position(&host, "P3-EDIT-USER-OLD").expect("edit target body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Edit", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Edit").expect("edit action");
     host.click(x, y)?;
     host.wait_for_screen(
@@ -1003,6 +1018,9 @@ fn chat_p3_retry_resubmit_truncates_assistant_turn() -> anyhow::Result<()> {
     host.wait_for_text("P3-RETRY-ASSISTANT-OLD", Duration::from_secs(2))?;
     host.wait_for_text("P3-RETRY-OLD-TAIL", Duration::from_secs(2))?;
 
+    let (x, y) = find_text_position(&host, "P3-RETRY-ASSISTANT-OLD").expect("retry target body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Retry", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Retry").expect("retry action");
     host.click(x, y)?;
 
@@ -1093,6 +1111,9 @@ fn chat_p5_turn_fold_collapses_and_expands() -> anyhow::Result<()> {
     host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
     host.wait_for_text("Info: P5-FOLD-QUOTE-NOTICE", Duration::from_secs(2))?;
 
+    let (x, y) = find_text_position(&host, "P5-FOLD-QUOTE-BODY").expect("fold target body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Collapse", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Collapse").expect("collapse action");
     host.click(x, y)?;
     host.wait_for_text("Collapsed · 2 blocks hidden", Duration::from_secs(2))?;
@@ -1103,6 +1124,10 @@ fn chat_p5_turn_fold_collapses_and_expands() -> anyhow::Result<()> {
         Duration::from_millis(120),
     );
 
+    let (x, y) =
+        find_text_position(&host, "Collapsed · 2 blocks hidden").expect("collapsed header");
+    host.right_click(x, y)?;
+    host.wait_for_text("Expand", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Expand").expect("expand action");
     host.click(x, y)?;
     host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
@@ -1119,9 +1144,11 @@ fn chat_p5_quote_reply_attaches_and_removes_references() -> anyhow::Result<()> {
     let mut host = PtyTestHost::spawn(bin, &["--p5-fold-quote"], 100, 28)?;
 
     host.wait_for_text("P5-FOLD-QUOTE-BODY", Duration::from_secs(2))?;
-    host.wait_for_text("Quote", Duration::from_secs(2))?;
-    host.wait_for_text("Quote block", Duration::from_secs(2))?;
 
+    // Right-click the block body -> menu offers turn "Quote" and "Quote block".
+    let (x, y) = find_text_position(&host, "P5-FOLD-QUOTE-BODY").expect("quote target body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Quote block", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Quote").expect("turn quote action");
     host.click(x, y)?;
     host.wait_for_text("Quote: Assistant #1", Duration::from_secs(2))?;
@@ -1137,6 +1164,9 @@ fn chat_p5_quote_reply_attaches_and_removes_references() -> anyhow::Result<()> {
         Duration::from_secs(2),
     )?;
 
+    let (x, y) = find_text_position(&host, "P5-FOLD-QUOTE-BODY").expect("quote target body");
+    host.right_click(x, y)?;
+    host.wait_for_text("Quote block", Duration::from_secs(2))?;
     let (x, y) = find_text_position(&host, "Quote block").expect("block quote action");
     host.click(x, y)?;
     host.wait_for_text("Quote: Block #1001", Duration::from_secs(2))?;

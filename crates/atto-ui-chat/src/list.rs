@@ -55,6 +55,18 @@ type EditAndResubmitCallback = Arc<dyn Fn(EditAndResubmitEvent) + Send + Sync>;
 type PlanDecisionCallback = Arc<dyn Fn(PlanDecisionEvent) + Send + Sync>;
 type MessageActionCallback = Arc<dyn Fn(MessageAction) + Send + Sync>;
 type CancelCallback = Arc<dyn Fn(ChatMessageId) + Send + Sync>;
+type ContextMenuCallback = Arc<dyn Fn(ChatContextMenuRequest) + Send + Sync>;
+
+/// A ready-to-display context menu surfaced by a right-click on a chat row.
+///
+/// The chat crate owns menu construction (it has all the controllers and
+/// dispatch helpers), while the host only needs a `Desktop` to spawn the popup
+/// window at `anchor` (absolute screen coordinates).
+#[derive(Clone)]
+pub struct ChatContextMenuRequest {
+    pub items: Vec<atto_ui::app::MenuItem>,
+    pub anchor: (u16, u16),
+}
 
 #[derive(Clone)]
 pub(crate) struct StreamingCancelController {
@@ -232,6 +244,7 @@ struct ChatMessageListConfig {
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
+    on_context_menu: Option<ContextMenuCallback>,
 }
 
 #[derive(Clone)]
@@ -251,6 +264,7 @@ struct ChatMessageRowConfig {
     on_plan_decision: Option<PlanDecisionCallback>,
     on_message_action: Option<MessageActionCallback>,
     on_cancel: Option<CancelCallback>,
+    on_context_menu: Option<ContextMenuCallback>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -328,6 +342,7 @@ impl ChatMessageList {
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
+            on_context_menu: None,
         };
         let messages = store.binding();
         let has_initial_messages = messages.with(|messages| !messages.is_empty());
@@ -498,6 +513,20 @@ impl ChatMessageList {
         F: Fn(ChatMessageId) + Send + Sync + 'static,
     {
         self.config.on_cancel = Some(Arc::new(callback));
+        self.rebuild_list();
+        self
+    }
+
+    /// Register a handler invoked when the user right-clicks a chat row.
+    ///
+    /// The chat list builds a ready-to-display [`ChatContextMenuRequest`]
+    /// (menu items + absolute anchor) and hands it to the host, which spawns a
+    /// popup menu window (the list has no `Desktop` access itself).
+    pub fn on_context_menu<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ChatContextMenuRequest) + Send + Sync + 'static,
+    {
+        self.config.on_context_menu = Some(Arc::new(callback));
         self.rebuild_list();
         self
     }
@@ -1018,6 +1047,7 @@ fn build_list(
         on_plan_decision: config.on_plan_decision.clone(),
         on_message_action: config.on_message_action.clone(),
         on_cancel: config.on_cancel.clone(),
+        on_context_menu: config.on_context_menu.clone(),
     };
     let control = VirtualChatRowsControl::new();
     let content = VirtualChatRowsContent::new(
@@ -1238,6 +1268,11 @@ struct VirtualChatRowsContent {
     focused_row: Option<ChatRowId>,
     captured_row: Option<ChatRowId>,
     turn_restore_offsets: HashMap<ChatMessageId, (u16, u16)>,
+    /// Snapshot of `collapsed_turns` from the previous frame. Collapse is now
+    /// driven by the right-click context menu (a separate window), so the change
+    /// must be detected across frames rather than within this content's own
+    /// event handling.
+    last_collapsed: HashSet<ChatMessageId>,
     last_area: Option<Rect>,
 }
 
@@ -1249,6 +1284,7 @@ impl VirtualChatRowsContent {
         spacing: Binding<u16>,
         control: VirtualChatRowsControl,
     ) -> Self {
+        let last_collapsed = config.collapsed_turns.get();
         Self {
             row_keys,
             store,
@@ -1261,6 +1297,7 @@ impl VirtualChatRowsContent {
             focused_row: None,
             captured_row: None,
             turn_restore_offsets: HashMap::new(),
+            last_collapsed,
             last_area: None,
         }
     }
@@ -1275,20 +1312,17 @@ impl VirtualChatRowsContent {
             ));
     }
 
-    fn sync_turn_collapse_change(
-        &mut self,
-        previous: &HashSet<ChatMessageId>,
-        scroll_offset: (u16, u16),
-    ) {
+    fn sync_turn_collapse_change(&mut self, scroll_offset: (u16, u16)) {
         let current = self.config.collapsed_turns.get();
-        if &current == previous {
+        if current == self.last_collapsed {
             return;
         }
+        let previous = std::mem::replace(&mut self.last_collapsed, current.clone());
 
         let messages = self.store.messages();
         self.row_keys
             .set(row_keys_from_messages_with_collapsed(&messages, &current));
-        if let Some(message_id) = changed_turn_id(previous, &current) {
+        if let Some(message_id) = changed_turn_id(&previous, &current) {
             if current.contains(&message_id) {
                 self.turn_restore_offsets.insert(message_id, scroll_offset);
                 self.control
@@ -1504,8 +1538,68 @@ impl VirtualChatRowsContent {
             .cloned()
     }
 
+    /// Finds the row nearest to a content-space `y` that falls between rows
+    /// (e.g. in the inter-row spacing gap). Used for right-click hit-testing so a
+    /// click in the gap still targets a message.
+    fn nearest_row_at_content_y(&self, y: u16) -> Option<VirtualRowLayout> {
+        self.last_layout
+            .iter()
+            .min_by_key(|row| {
+                let start = row.y;
+                let end = row.y.saturating_add(row.height);
+                if y < start {
+                    start - y
+                } else if y >= end {
+                    y - end.saturating_sub(1)
+                } else {
+                    0
+                }
+            })
+            .cloned()
+    }
+
     fn row_layout_by_id(&self, id: ChatRowId) -> Option<VirtualRowLayout> {
         self.last_layout.iter().find(|row| row.id == id).cloned()
+    }
+
+    /// Handles a right-click by hit-testing the row under the cursor, building
+    /// its context menu, and firing the `on_context_menu` callback with an
+    /// absolute anchor. Returns `None` when there is no handler or no row was
+    /// hit (so normal dispatch proceeds).
+    fn handle_context_menu_request(
+        &mut self,
+        event: &MouseEvent,
+        ctx: ScrollContentContext<'_>,
+    ) -> Option<EventResult> {
+        let callback = self.config.on_context_menu.clone()?;
+        let content_y = event.row.saturating_add(ctx.info.scroll_offset.y);
+        let layout = self
+            .row_at_content_y(content_y)
+            .or_else(|| self.nearest_row_at_content_y(content_y))?;
+        let block_id = match layout.id {
+            ChatRowId::Block { block_id, .. }
+            | ChatRowId::PendingToolResult {
+                tool_use_id: block_id,
+                ..
+            } => Some(block_id),
+            ChatRowId::Header(_) => None,
+        };
+        let message_id = layout.key.message_id();
+        let items = self.store.with_message(message_id, |message| {
+            let block = block_id.and_then(|id| find_block(message, id));
+            context_menu_items(message, block, &self.config)
+        })?;
+        if items.is_empty() {
+            return Some(EventResult::consumed());
+        }
+        let anchor = self.last_area.map_or((event.column, event.row), |area| {
+            (
+                area.x.saturating_add(event.column),
+                area.y.saturating_add(event.row),
+            )
+        });
+        callback(ChatContextMenuRequest { items, anchor });
+        Some(EventResult::consumed())
     }
 
     fn handle_mouse_event(
@@ -1513,6 +1607,11 @@ impl VirtualChatRowsContent {
         event: &MouseEvent,
         ctx: ScrollContentContext<'_>,
     ) -> EventResult {
+        if matches!(event.kind, MouseEventKind::Down(MouseButton::Right))
+            && let Some(res) = self.handle_context_menu_request(event, ctx)
+        {
+            return res;
+        }
         let content_y = event.row.saturating_add(ctx.info.scroll_offset.y);
         let Some(layout) = self
             .captured_row
@@ -1614,7 +1713,10 @@ impl ScrollContent for VirtualChatRowsContent {
             || self.config.on_cancel.is_some()
     }
 
-    fn content_size(&mut self, viewport: (u16, u16), _ctx: ScrollContentContext<'_>) -> (u16, u16) {
+    fn content_size(&mut self, viewport: (u16, u16), ctx: ScrollContentContext<'_>) -> (u16, u16) {
+        // Detect menu-driven collapse toggles before the layout is (re)built so
+        // this frame reflects the new fold state.
+        self.sync_turn_collapse_change((ctx.info.scroll_offset.x, ctx.info.scroll_offset.y));
         self.rebuild_layout(viewport.0)
     }
 
@@ -1630,15 +1732,11 @@ impl ScrollContent for VirtualChatRowsContent {
     ) -> EventResult {
         self.rebuild_layout(ctx.info.viewport_size.0);
         let _ = self.realize_visible_rows(ctx.info.scroll_offset.y, ctx.info.viewport_size.1);
-        let previous_collapsed = self.config.collapsed_turns.get();
         let result = match event {
             Event::Mouse(mouse) => self.handle_mouse_event(mouse, ctx),
             _ => self.handle_keyboard_event(event, ctx),
         };
-        self.sync_turn_collapse_change(
-            &previous_collapsed,
-            (ctx.info.scroll_offset.x, ctx.info.scroll_offset.y),
-        );
+        self.sync_turn_collapse_change((ctx.info.scroll_offset.x, ctx.info.scroll_offset.y));
         result
     }
 
@@ -1784,7 +1882,7 @@ fn estimate_block_row_height(
         config.bubble_width_percent,
     )
     .unwrap_or(1);
-    let mut height = match block {
+    let height = match block {
         Some(ChatBlock::Text(text)) => estimate_markdown_height(
             &markdown_for_render(&text.markdown, text.streaming, config),
             bubble_width,
@@ -1826,9 +1924,8 @@ fn estimate_block_row_height(
         ),
         Some(ChatBlock::Todo(todo)) => todo.items.len().max(1).min(u16::MAX as usize) as u16,
     };
-    if block.is_some() && config.on_message_action.is_some() {
-        height = height.saturating_add(2);
-    }
+    // Block action rows (Copy block / Quote block) moved to the right-click
+    // context menu, so no extra height is reserved for them anymore.
     height.max(1)
 }
 
@@ -2682,6 +2779,7 @@ struct ChatMessageRowBindings {
 }
 
 struct ChatMessageRow {
+    message_id: ChatMessageId,
     row_ref: ChatRowRef,
     store: ChatMessageStore,
     last_message_version: Cell<u64>,
@@ -2711,6 +2809,7 @@ impl ChatMessageRow {
             ChatRowRef::PendingToolResult(tool_use_id) => store.block_version(tool_use_id),
         };
         Self {
+            message_id,
             row_ref,
             store,
             last_message_version: Cell::new(last_message_version),
@@ -2934,11 +3033,55 @@ fn block_disclosure_status(block: &ChatBlock) -> Option<DisclosureStatus> {
     }
 }
 
+impl ChatMessageRow {
+    /// Resolves the message role for this row so the background band can be
+    /// tinted per role. Falls back to `Assistant` for placeholder rows whose
+    /// message is no longer in the store.
+    fn message_role(&self) -> ChatRole {
+        self.store
+            .with_message(self.message_id, |message| message.role.clone())
+            .unwrap_or(ChatRole::Assistant)
+    }
+}
+
 impl ::atto_ui::composable::Component for ChatMessageRow {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.sync_body_bindings();
-        self.view.draw(frame, area, ctx);
+        let role = self.message_role();
+        match role_band_theme(&role, ctx.theme) {
+            Some(tinted) => {
+                // Fill the whole row with the role band, then draw the view with a
+                // theme whose surface backgrounds match the band so body content
+                // (markdown, disclosures, text) reads as one solid band.
+                if area.width > 0 && area.height > 0 {
+                    let bg = tinted.window_bg;
+                    frame.render_widget(ratatui::widgets::Block::default().style(bg), area);
+                }
+                let tinted_ctx = ComponentContext {
+                    theme: &tinted,
+                    ..ctx
+                };
+                self.view.draw(frame, area, tinted_ctx);
+            }
+            None => self.view.draw(frame, area, ctx),
+        }
     }
+}
+
+/// Builds a role-tinted theme clone whose surface backgrounds are recolored to
+/// the role's band (`chat-user-bg` / `chat-assistant-bg`), so a whole message
+/// row renders as one solid band. Returns `None` when the role band matches the
+/// window background (no visible band needed).
+fn role_band_theme(role: &ChatRole, theme: &Theme) -> Option<Theme> {
+    let key = match role {
+        ChatRole::User => "chat-user-bg",
+        _ => "chat-assistant-bg",
+    };
+    let bg = theme.named_style(key).and_then(|style| style.bg)?;
+    if Some(bg) == theme.window_bg.bg {
+        return None;
+    }
+    Some(theme.with_surface_background(bg))
 }
 
 impl ::atto_ui::composable::DragAndDrop for ChatMessageRow {}
@@ -3129,124 +3272,50 @@ fn build_block_bubble(
         ..LayoutParams::default()
     };
 
-    let mut bubble = VStack::new()
+    // Block-scoped actions (Copy block / Quote block) live in the right-click
+    // context menu now, so the bubble is just the body.
+    let bubble = VStack::new()
         .with_spacing(1)
         .child_with_layout(body, content_layout);
-
-    if let Some(block) = block
-        && let Some(actions) = block_action_row(message_id, block, config)
-    {
-        bubble = bubble.child_with_layout(actions, content_layout);
-    }
 
     (bubble, body_bindings)
 }
 
 fn has_turn_action_row(message: &ChatMessage, config: &ChatMessageRowConfig) -> bool {
-    let show_cancel = config.on_cancel.is_some() && message.status.is_streaming();
-    has_turn_collapse_control(message)
-        || show_cancel
-        || config.quote_replies.is_some()
-        || config.on_message_action.is_some()
-        || (config.edit_and_resubmit.is_some() && editable_user_message_text(message).is_some())
+    // Only the streaming Cancel button remains inline; every other action moved
+    // to the right-click context menu.
+    config.on_cancel.is_some() && message.status.is_streaming()
 }
 
 fn has_turn_collapse_control(message: &ChatMessage) -> bool {
     !message.blocks.is_empty()
 }
 
+/// Builds the inline action row shown beneath a turn header. All management
+/// actions (Collapse/Copy/Edit/Retry/Regenerate/Quote) now live in the
+/// right-click context menu; the only inline control that remains is the
+/// streaming `Cancel` button, which is meaningful solely while the turn is
+/// generating and hides itself once the turn completes (see
+/// [`StreamingCancelButton`]).
 fn turn_action_row(
     message: &ChatMessage,
     turn_status: Binding<ChatTurnStatus>,
     config: &ChatMessageRowConfig,
 ) -> Option<HStack> {
-    let show_cancel = config.on_cancel.is_some() && turn_status.get().is_streaming();
-    let editable_text = config
-        .edit_and_resubmit
-        .as_ref()
-        .and_then(|_| editable_user_message_text(message));
-    if config.on_message_action.is_none()
-        && editable_text.is_none()
-        && !show_cancel
-        && config.quote_replies.is_none()
-        && !has_turn_collapse_control(message)
-    {
+    let callback = config.on_cancel.clone()?;
+    if !turn_status.get().is_streaming() {
         return None;
     }
-    let mut row = HStack::new().with_spacing(1);
-    if has_turn_collapse_control(message) {
-        let collapsed = config.collapsed_turns.get().contains(&message.id);
-        let label = if collapsed { "Expand" } else { "Collapse" };
-        row = row.child_with_layout(
-            turn_collapse_button(label, message.id, collapsed, config.collapsed_turns.clone()),
-            LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
-    }
-    if show_cancel && let Some(callback) = config.on_cancel.clone() {
-        let label = "Cancel";
-        let controller = StreamingCancelController::new(config.store.clone(), callback);
-        row = row.child_with_layout(
-            streaming_cancel_button(label, message.id, turn_status, controller),
-            LayoutParams {
-                width: Size::Content,
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
-    }
-    if let Some(controller) = config.quote_replies.clone() {
-        let label = "Quote";
-        row = row.child_with_layout(
-            quote_message_button(label, message, controller),
-            LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
-    }
-    if let Some(callback) = config.on_message_action.clone() {
-        for (label, kind) in turn_action_specs(&message.role) {
-            if matches!(kind, MessageActionKind::EditUser)
-                && let (Some(controller), Some(original_text)) =
-                    (config.edit_and_resubmit.clone(), editable_text.clone())
-            {
-                row = row.child_with_layout(
-                    edit_and_resubmit_button(label, message.id, original_text, controller),
-                    LayoutParams {
-                        width: Size::Fixed(button_width_for_label(label)),
-                        height: Size::Content,
-                        ..LayoutParams::default()
-                    },
-                );
-                continue;
-            }
-            row = row.child_with_layout(
-                turn_message_action_button(label, message.id, kind, config, callback.clone()),
-                LayoutParams {
-                    width: Size::Fixed(button_width_for_label(label)),
-                    height: Size::Content,
-                    ..LayoutParams::default()
-                },
-            );
-        }
-    } else if let (Some(controller), Some(original_text)) =
-        (config.edit_and_resubmit.clone(), editable_text)
-    {
-        let label = "Edit";
-        row = row.child_with_layout(
-            edit_and_resubmit_button(label, message.id, original_text, controller),
-            LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
-    }
+    let label = "Cancel";
+    let controller = StreamingCancelController::new(config.store.clone(), callback);
+    let row = HStack::new().with_spacing(1).child_with_layout(
+        streaming_cancel_button(label, message.id, turn_status, controller),
+        LayoutParams {
+            width: Size::Content,
+            height: Size::Content,
+            ..LayoutParams::default()
+        },
+    );
     Some(row)
 }
 
@@ -3280,72 +3349,128 @@ fn turn_action_specs(role: &ChatRole) -> Vec<(&'static str, MessageActionKind)> 
     }
 }
 
-fn block_action_row(
-    message_id: ChatMessageId,
-    block: &ChatBlock,
+/// Builds the right-click context-menu items for a chat row. `block` is the
+/// specific block under the cursor (adds block-scoped Copy/Quote entries); when
+/// `None`, only turn-level actions are offered. Each item's closure reuses the
+/// same dispatch paths as the (now removed) inline buttons: `on_message_action`
+/// for Copy/Retry/Regenerate/CopyBlock, the edit/quote controllers, and the
+/// local `collapsed_turns` binding for Collapse/Expand.
+fn context_menu_items(
+    message: &ChatMessage,
+    block: Option<&ChatBlock>,
     config: &ChatMessageRowConfig,
-) -> Option<HStack> {
-    if config.on_message_action.is_none() && config.quote_replies.is_none() {
-        return None;
+) -> Vec<atto_ui::app::MenuItem> {
+    use atto_ui::app::MenuItem;
+    let mut items = Vec::new();
+
+    // Collapse / Expand (local state, mirrors turn_collapse_button).
+    if has_turn_collapse_control(message) {
+        let collapsed = config.collapsed_turns.get().contains(&message.id);
+        let label = if collapsed { "Expand" } else { "Collapse" };
+        let collapsed_turns = config.collapsed_turns.clone();
+        let message_id = message.id;
+        items.push(MenuItem::action(label, move || {
+            set_turn_collapsed(&collapsed_turns, message_id, !collapsed);
+        }));
     }
-    let mut row = HStack::new().with_spacing(1);
+
+    // Turn-level actions (Copy / Edit / Retry / Regenerate).
     if let Some(callback) = config.on_message_action.clone() {
-        let label = "Copy block";
-        row = row.child_with_layout(
-            message_action_button(
+        let editable_text = config
+            .edit_and_resubmit
+            .as_ref()
+            .and_then(|_| editable_user_message_text(message));
+        for (label, kind) in turn_action_specs(&message.role) {
+            if matches!(kind, MessageActionKind::EditUser)
+                && let (Some(controller), Some(original_text)) =
+                    (config.edit_and_resubmit.clone(), editable_text.clone())
+            {
+                // A dedicated edit-and-resubmit controller takes over Edit.
+                let message_id = message.id;
+                items.push(MenuItem::action(label, move || {
+                    let _ = controller.begin_edit(message_id, original_text.clone());
+                }));
+                continue;
+            }
+            items.push(message_action_menu_item(
                 label,
-                message_id,
-                MessageActionKind::CopyBlock(block.id()),
-                callback,
-            ),
-            LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
+                message.id,
+                kind,
+                config,
+                callback.clone(),
+            ));
+        }
+    } else if let (Some(controller), Some(original_text)) = (
+        config.edit_and_resubmit.clone(),
+        editable_user_message_text(message),
+    ) {
+        let message_id = message.id;
+        items.push(MenuItem::action("Edit", move || {
+            let _ = controller.begin_edit(message_id, original_text.clone());
+        }));
     }
+
+    // Quote turn.
     if let Some(controller) = config.quote_replies.clone() {
-        let label = "Quote block";
-        row = row.child_with_layout(
-            quote_block_button(label, message_id, block, controller),
-            LayoutParams {
-                width: Size::Fixed(button_width_for_label(label)),
-                height: Size::Content,
-                ..LayoutParams::default()
-            },
-        );
+        let reference = quote_message_reference(message);
+        items.push(MenuItem::action("Quote", move || {
+            controller.attach(reference.clone());
+        }));
     }
-    Some(row)
+
+    // Block-scoped actions (Copy block / Quote block).
+    if let Some(block) = block {
+        if let Some(callback) = config.on_message_action.clone() {
+            let action = MessageAction {
+                message_id: message.id,
+                kind: MessageActionKind::CopyBlock(block.id()),
+            };
+            items.push(MenuItem::action("Copy block", move || {
+                callback(action.clone());
+            }));
+        }
+        if let Some(controller) = config.quote_replies.clone() {
+            let reference = quote_block_reference(message.id, block);
+            items.push(MenuItem::action("Quote block", move || {
+                controller.attach(reference.clone());
+            }));
+        }
+    }
+
+    items
 }
 
-fn message_action_button(
+/// Builds a menu item that emits a [`MessageAction`], mirroring
+/// `turn_message_action_button`: Retry/Regenerate first truncate the assistant
+/// turn (via the store) before invoking the callback.
+fn message_action_menu_item(
     label: &'static str,
     message_id: ChatMessageId,
     kind: MessageActionKind,
+    config: &ChatMessageRowConfig,
     callback: MessageActionCallback,
-) -> Button {
-    let action = MessageAction { message_id, kind };
-    Button::new(label).on_click(move || callback(action.clone()))
-}
-
-fn quote_message_button(
-    label: &'static str,
-    message: &ChatMessage,
-    controller: QuoteReplyController,
-) -> Button {
-    let reference = quote_message_reference(message);
-    Button::new(label).on_click(move || controller.attach(reference.clone()))
-}
-
-fn quote_block_button(
-    label: &'static str,
-    message_id: ChatMessageId,
-    block: &ChatBlock,
-    controller: QuoteReplyController,
-) -> Button {
-    let reference = quote_block_reference(message_id, block);
-    Button::new(label).on_click(move || controller.attach(reference.clone()))
+) -> atto_ui::app::MenuItem {
+    use atto_ui::app::MenuItem;
+    if matches!(
+        kind,
+        MessageActionKind::Retry | MessageActionKind::Regenerate
+    ) {
+        let store = config.store.clone();
+        let action = MessageAction { message_id, kind };
+        MenuItem::action(label, move || {
+            let is_assistant = store
+                .with_message(message_id, |message| {
+                    matches!(message.role, ChatRole::Assistant)
+                })
+                .unwrap_or(false);
+            if is_assistant && store.truncate_from(message_id).is_some() {
+                callback(action.clone());
+            }
+        })
+    } else {
+        let action = MessageAction { message_id, kind };
+        MenuItem::action(label, move || callback(action.clone()))
+    }
 }
 
 fn quote_message_reference(message: &ChatMessage) -> ChatInputReference {
@@ -3420,17 +3545,6 @@ fn compact_quote_preview(text: &str) -> String {
     compact
 }
 
-fn turn_collapse_button(
-    label: &'static str,
-    message_id: ChatMessageId,
-    collapsed: bool,
-    collapsed_turns: Binding<HashSet<ChatMessageId>>,
-) -> Button {
-    Button::new(label).on_click(move || {
-        set_turn_collapsed(&collapsed_turns, message_id, !collapsed);
-    })
-}
-
 fn set_turn_collapsed(
     collapsed_turns: &Binding<HashSet<ChatMessageId>>,
     message_id: ChatMessageId,
@@ -3445,54 +3559,6 @@ fn set_turn_collapsed(
     if changed {
         collapsed_turns.set(next);
     }
-}
-
-fn turn_message_action_button(
-    label: &'static str,
-    message_id: ChatMessageId,
-    kind: MessageActionKind,
-    config: &ChatMessageRowConfig,
-    callback: MessageActionCallback,
-) -> Button {
-    if matches!(
-        kind,
-        MessageActionKind::Retry | MessageActionKind::Regenerate
-    ) {
-        retry_or_regenerate_button(label, message_id, kind, config.store.clone(), callback)
-    } else {
-        message_action_button(label, message_id, kind, callback)
-    }
-}
-
-fn retry_or_regenerate_button(
-    label: &'static str,
-    message_id: ChatMessageId,
-    kind: MessageActionKind,
-    store: ChatMessageStore,
-    callback: MessageActionCallback,
-) -> Button {
-    let action = MessageAction { message_id, kind };
-    Button::new(label).on_click(move || {
-        let is_assistant = store
-            .with_message(message_id, |message| {
-                matches!(message.role, ChatRole::Assistant)
-            })
-            .unwrap_or(false);
-        if is_assistant && store.truncate_from(message_id).is_some() {
-            callback(action.clone());
-        }
-    })
-}
-
-fn edit_and_resubmit_button(
-    label: &'static str,
-    message_id: ChatMessageId,
-    original_text: String,
-    controller: EditAndResubmitController,
-) -> Button {
-    Button::new(label).on_click(move || {
-        let _ = controller.begin_edit(message_id, original_text.clone());
-    })
 }
 
 fn streaming_cancel_button(
@@ -7625,6 +7691,7 @@ mod tests {
             on_plan_decision: None,
             on_message_action: None,
             on_cancel: None,
+            on_context_menu: None,
         }
     }
 
@@ -7658,26 +7725,51 @@ mod tests {
         );
     }
 
+    /// Finds a context-menu item by label and invokes its `on_activate`
+    /// closure, mirroring what `PopupMenu` does when the item is selected.
+    fn activate_menu_item(items: &[atto_ui::app::MenuItem], label: &str) {
+        let item = items
+            .iter()
+            .find(|item| item.label.get() == label)
+            .unwrap_or_else(|| panic!("menu item {label:?} not found"));
+        let callback = item
+            .on_activate
+            .as_ref()
+            .unwrap_or_else(|| panic!("menu item {label:?} has no action"));
+        callback();
+    }
+
+    fn menu_labels(items: &[atto_ui::app::MenuItem]) -> Vec<String> {
+        items.iter().map(|item| item.label.get()).collect()
+    }
+
     #[test]
-    fn message_action_button_emits_selected_action() {
+    fn context_menu_copy_block_emits_selected_action() {
+        let store = ChatMessageStore::new();
         let message_id = ChatMessageId::new(50);
         let block_id = ChatBlockId::new(50_001);
+        let message = ChatMessage::new(
+            message_id,
+            ChatRole::Assistant,
+            vec![ChatBlock::Text(TextBlock {
+                id: block_id,
+                markdown: "body".to_string(),
+                streaming: false,
+            })],
+        );
+        store.push(message.clone());
+
         let actions = Arc::new(Mutex::new(Vec::new()));
         let captured = actions.clone();
-        let mut button = message_action_button(
-            "Copy block",
-            message_id,
-            MessageActionKind::CopyBlock(block_id),
-            Arc::new(move |action| {
-                captured.lock().expect("actions lock").push(action);
-            }),
-        );
-        let theme = Theme::dark();
+        let mut config = row_config_for_tests();
+        config.store = store;
+        config.on_message_action = Some(Arc::new(move |action| {
+            captured.lock().expect("actions lock").push(action);
+        }));
 
-        button.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        let block = message.blocks.first();
+        let items = context_menu_items(&message, block, &config);
+        activate_menu_item(&items, "Copy block");
 
         assert_eq!(
             *actions.lock().expect("actions lock"),
@@ -7689,18 +7781,15 @@ mod tests {
     }
 
     #[test]
-    fn quote_message_button_attaches_turn_reference() {
+    fn context_menu_quote_attaches_turn_reference() {
         let input = ChatInputHandle::new();
-        let controller = QuoteReplyController::new(input.references_binding());
         let message =
             ChatMessage::text(ChatMessageId::new(70), ChatRole::Assistant, "hello\nthere");
-        let mut button = quote_message_button("Quote", &message, controller);
-        let theme = Theme::dark();
+        let mut config = row_config_for_tests();
+        config.quote_replies = Some(QuoteReplyController::new(input.references_binding()));
 
-        button.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        let items = context_menu_items(&message, None, &config);
+        activate_menu_item(&items, "Quote");
 
         assert_eq!(
             input.references(),
@@ -7713,22 +7802,19 @@ mod tests {
     }
 
     #[test]
-    fn quote_block_button_attaches_block_reference() {
+    fn context_menu_quote_block_attaches_block_reference() {
         let input = ChatInputHandle::new();
-        let controller = QuoteReplyController::new(input.references_binding());
         let block = ChatBlock::Text(TextBlock {
             id: ChatBlockId::new(71_001),
             markdown: "block quote body".to_string(),
             streaming: false,
         });
-        let mut button =
-            quote_block_button("Quote block", ChatMessageId::new(71), &block, controller);
-        let theme = Theme::dark();
+        let message = ChatMessage::new(ChatMessageId::new(71), ChatRole::Assistant, vec![block]);
+        let mut config = row_config_for_tests();
+        config.quote_replies = Some(QuoteReplyController::new(input.references_binding()));
 
-        button.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        let items = context_menu_items(&message, message.blocks.first(), &config);
+        activate_menu_item(&items, "Quote block");
 
         assert_eq!(
             input.references(),
@@ -7742,7 +7828,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_and_regenerate_buttons_truncate_assistant_before_callback() {
+    fn context_menu_retry_and_regenerate_truncate_assistant_before_callback() {
         for (kind, label) in [
             (MessageActionKind::Retry, "Retry"),
             (MessageActionKind::Regenerate, "Regenerate"),
@@ -7764,29 +7850,22 @@ mod tests {
             let captured = observations.clone();
             let store_for_callback = store.clone();
             let expected_kind = kind.clone();
-            let mut button = turn_message_action_button(
-                label,
-                assistant_id,
-                kind,
-                &config,
-                Arc::new(move |action| {
-                    let visible_ids = store_for_callback
-                        .messages()
-                        .iter()
-                        .map(|message| message.id)
-                        .collect::<Vec<_>>();
-                    captured
-                        .lock()
-                        .expect("observations lock")
-                        .push((action, visible_ids));
-                }),
-            );
-            let theme = Theme::dark();
+            config.on_message_action = Some(Arc::new(move |action| {
+                let visible_ids = store_for_callback
+                    .messages()
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<Vec<_>>();
+                captured
+                    .lock()
+                    .expect("observations lock")
+                    .push((action, visible_ids));
+            }));
+            let assistant = ChatMessage::text(assistant_id, ChatRole::Assistant, "old answer");
 
-            button.handle_event(
-                &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-                component_context(&theme),
-            );
+            let items = context_menu_items(&assistant, None, &config);
+            let _ = label;
+            activate_menu_item(&items, label);
 
             assert_eq!(
                 store
@@ -7810,7 +7889,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_and_regenerate_buttons_ignore_non_assistant_or_missing_target() {
+    fn context_menu_retry_ignores_non_assistant_or_missing_target() {
         let store = ChatMessageStore::new();
         let user_id = store.next_message_id();
         store.push(ChatMessage::text(user_id, ChatRole::User, "prompt"));
@@ -7818,33 +7897,19 @@ mod tests {
         config.store = store.clone();
         let actions = Arc::new(Mutex::new(Vec::new()));
         let captured = actions.clone();
-        let callback: MessageActionCallback = Arc::new(move |action| {
+        config.on_message_action = Some(Arc::new(move |action| {
             captured.lock().expect("actions lock").push(action);
-        });
-        let theme = Theme::dark();
-        let mut user_retry = turn_message_action_button(
-            "Retry",
-            user_id,
-            MessageActionKind::Retry,
-            &config,
-            callback.clone(),
-        );
-        let mut missing_regenerate = turn_message_action_button(
-            "Regenerate",
-            ChatMessageId::new(999),
-            MessageActionKind::Regenerate,
-            &config,
-            callback,
-        );
+        }));
 
-        user_retry.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
-        missing_regenerate.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        // A user turn offers no Retry item; a menu built from a missing target's
+        // placeholder must not truncate or emit.
+        let user = ChatMessage::text(user_id, ChatRole::User, "prompt");
+        let user_items = context_menu_items(&user, None, &config);
+        assert!(!menu_labels(&user_items).iter().any(|l| l == "Retry"));
+
+        let missing = ChatMessage::text(ChatMessageId::new(999), ChatRole::Assistant, "gone");
+        let missing_items = context_menu_items(&missing, None, &config);
+        activate_menu_item(&missing_items, "Regenerate");
 
         assert_eq!(
             store
@@ -8002,7 +8067,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_button_uses_dedicated_resubmit_controller_when_configured() {
+    fn context_menu_edit_uses_dedicated_resubmit_controller_when_configured() {
         let store = ChatMessageStore::new();
         let input = ChatInputHandle::new();
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -8010,23 +8075,13 @@ mod tests {
             let events = events.clone();
             move |event| events.lock().expect("events lock").push(event)
         });
-        let controller = list
-            .config
-            .edit_and_resubmit
-            .clone()
-            .expect("edit controller should be registered");
-        let mut button = edit_and_resubmit_button(
-            "Edit",
-            ChatMessageId::new(70),
-            "draft text".to_string(),
-            controller,
-        );
-        let theme = Theme::dark();
+        let mut config = row_config_for_tests();
+        config.store = store;
+        config.edit_and_resubmit = list.config.edit_and_resubmit.clone();
 
-        button.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        let message = ChatMessage::text(ChatMessageId::new(70), ChatRole::User, "draft text");
+        let items = context_menu_items(&message, None, &config);
+        activate_menu_item(&items, "Edit");
 
         assert_eq!(input.draft_binding().get(), "draft text");
         assert!(events.lock().expect("events lock").is_empty());
@@ -8236,25 +8291,83 @@ mod tests {
     }
 
     #[test]
-    fn turn_collapse_button_toggles_collapsed_state() {
+    fn context_menu_collapse_toggles_collapsed_state() {
         let message_id = ChatMessageId::new(90);
+        let message = ChatMessage::text(message_id, ChatRole::Assistant, "body");
         let collapsed_turns = Binding::new(HashSet::new());
-        let theme = Theme::dark();
+        let mut config = row_config_for_tests();
+        config.collapsed_turns = collapsed_turns.clone();
 
-        let mut collapse =
-            turn_collapse_button("Collapse", message_id, false, collapsed_turns.clone());
-        collapse.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        // Not yet collapsed: the menu offers "Collapse".
+        let items = context_menu_items(&message, None, &config);
+        activate_menu_item(&items, "Collapse");
         assert!(collapsed_turns.get().contains(&message_id));
 
-        let mut expand = turn_collapse_button("Expand", message_id, true, collapsed_turns.clone());
-        expand.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        // Now collapsed: the menu offers "Expand".
+        let items = context_menu_items(&message, None, &config);
+        activate_menu_item(&items, "Expand");
         assert!(!collapsed_turns.get().contains(&message_id));
+    }
+
+    #[test]
+    fn role_background_bands_differ_between_user_and_assistant() {
+        let theme = Theme::dark();
+        let user_bg = theme.named_style("chat-user-bg").and_then(|s| s.bg);
+        let assistant_bg = theme.named_style("chat-assistant-bg").and_then(|s| s.bg);
+        assert!(user_bg.is_some(), "chat-user-bg should define a background");
+        assert!(
+            assistant_bg.is_some(),
+            "chat-assistant-bg should define a background"
+        );
+        assert_ne!(
+            user_bg, assistant_bg,
+            "user and assistant bands should be visually distinct"
+        );
+
+        // The rendered rows should paint those role backgrounds across the row.
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::User,
+            "USER-BAND",
+        ));
+        let mut user_list = ChatMessageList::new(store.clone())
+            .show_timestamps(false)
+            .auto_scroll(false)
+            .bubble_width_percent(100);
+        let (user_lines, user_colors) = draw_component_bg_snapshot(&mut user_list, 40, 6);
+        let user_row = user_lines
+            .iter()
+            .position(|line| line.contains("USER-BAND"))
+            .expect("user row rendered");
+        assert!(
+            user_colors[user_row]
+                .iter()
+                .any(|bg| *bg == user_bg.unwrap()),
+            "user row should paint the user band background"
+        );
+
+        let store = ChatMessageStore::new();
+        store.push(ChatMessage::text(
+            store.next_message_id(),
+            ChatRole::Assistant,
+            "ASSISTANT-BAND",
+        ));
+        let mut assistant_list = ChatMessageList::new(store)
+            .show_timestamps(false)
+            .auto_scroll(false)
+            .bubble_width_percent(100);
+        let (asst_lines, asst_colors) = draw_component_bg_snapshot(&mut assistant_list, 40, 6);
+        let asst_row = asst_lines
+            .iter()
+            .position(|line| line.contains("ASSISTANT-BAND"))
+            .expect("assistant row rendered");
+        assert!(
+            asst_colors[asst_row]
+                .iter()
+                .any(|bg| *bg == assistant_bg.unwrap()),
+            "assistant row should paint the assistant band background"
+        );
     }
 
     #[test]
@@ -8302,20 +8415,19 @@ mod tests {
         let mut list = ChatMessageList::new(store)
             .show_timestamps(false)
             .auto_scroll(false);
-        let theme = Theme::dark();
+        let collapsed_turns = list.config.collapsed_turns.clone();
 
+        // Action buttons no longer render inline; the body is present but the
+        // "Collapse" label only appears in the context menu.
         let (initial, _) = draw_component_snapshot(&mut list, 80, 8);
-        assert!(initial.iter().any(|line| line.contains("Collapse")));
+        assert!(!initial.iter().any(|line| line.contains("Collapse")));
         assert!(initial.iter().any(|line| line.contains("TURN-FOLD-BODY")));
 
-        list.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        // Collapse via the binding, as the context-menu item does.
+        set_turn_collapsed(&collapsed_turns, message_id, true);
         let (collapsed, _) = draw_component_snapshot(&mut list, 80, 8);
 
         assert!(list.config.collapsed_turns.get().contains(&message_id));
-        assert!(collapsed.iter().any(|line| line.contains("Expand")));
         assert!(
             collapsed
                 .iter()
@@ -8323,14 +8435,10 @@ mod tests {
         );
         assert!(!collapsed.iter().any(|line| line.contains("TURN-FOLD-BODY")));
 
-        list.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        set_turn_collapsed(&collapsed_turns, message_id, false);
         let (expanded, _) = draw_component_snapshot(&mut list, 80, 8);
 
         assert!(!list.config.collapsed_turns.get().contains(&message_id));
-        assert!(expanded.iter().any(|line| line.contains("Collapse")));
         assert!(expanded.iter().any(|line| line.contains("TURN-FOLD-BODY")));
     }
 
@@ -8358,24 +8466,20 @@ mod tests {
         let mut list = ChatMessageList::new(store)
             .show_timestamps(false)
             .auto_scroll(false);
-        let theme = Theme::dark();
+        let collapsed_turns = list.config.collapsed_turns.clone();
         draw_chat_list(&mut list, 80, 6);
         list.set_scroll_offset(0, 2);
         list.sync_follow_tail_from_scroll();
         let restore_y = list.scroll_offset().1;
 
-        list.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        // Collapse via the binding (as the context menu does); the draw pass
+        // detects the change and captures the current scroll offset.
+        set_turn_collapsed(&collapsed_turns, message_id, true);
         draw_chat_list(&mut list, 80, 6);
         assert!(list.config.collapsed_turns.get().contains(&message_id));
 
         list.set_scroll_offset(0, 0);
-        list.handle_event(
-            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-            component_context(&theme),
-        );
+        set_turn_collapsed(&collapsed_turns, message_id, false);
         draw_chat_list(&mut list, 80, 6);
 
         assert!(!list.config.collapsed_turns.get().contains(&message_id));
@@ -9188,20 +9292,24 @@ mod tests {
     }
 
     #[test]
-    fn virtual_chat_rows_dispatch_mouse_to_visible_buttons() {
+    fn virtual_chat_rows_dispatch_right_click_to_context_menu() {
         let store = ChatMessageStore::new();
         store.push(ChatMessage::text(
             store.next_message_id(),
             ChatRole::User,
             "ACTION-USER-MESSAGE",
         ));
-        let actions = Arc::new(Mutex::new(Vec::new()));
-        let captured = actions.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
         let mut list = ChatMessageList::new(store)
             .show_timestamps(false)
             .auto_scroll(false)
-            .on_message_action(move |action| {
-                captured.lock().expect("actions lock").push(action);
+            .on_message_action(|_| {})
+            .on_context_menu(move |request| {
+                captured
+                    .lock()
+                    .expect("requests lock")
+                    .push(menu_labels(&request.items));
             });
         let theme = Theme::dark();
         let ctx = component_context(&theme);
@@ -9220,31 +9328,25 @@ mod tests {
         let (y, x) = lines
             .iter()
             .enumerate()
-            .find_map(|(y, line)| line.find("Edit").map(|x| (y as u16, x as u16)))
-            .expect("edit button should render");
-        let down = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: x,
-            row: y,
-            modifiers: KeyModifiers::empty(),
-        });
-        let up = Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Up(MouseButton::Left),
+            .find_map(|(y, line)| {
+                line.find("ACTION-USER-MESSAGE")
+                    .map(|x| (y as u16, x as u16))
+            })
+            .expect("user body should render");
+        let right_down = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
             column: x,
             row: y,
             modifiers: KeyModifiers::empty(),
         });
 
-        list.handle_event(&down, component_context(&theme));
-        list.handle_event(&up, component_context(&theme));
+        list.handle_event(&right_down, component_context(&theme));
 
-        assert_eq!(
-            *actions.lock().expect("actions lock"),
-            vec![MessageAction {
-                message_id: ChatMessageId::new(1),
-                kind: MessageActionKind::EditUser,
-            }]
-        );
+        let requests = requests.lock().expect("requests lock");
+        assert_eq!(requests.len(), 1, "one context menu request expected");
+        // A user turn's menu offers Copy and Edit.
+        assert!(requests[0].iter().any(|label| label == "Copy"));
+        assert!(requests[0].iter().any(|label| label == "Edit"));
     }
 
     #[test]

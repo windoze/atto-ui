@@ -139,6 +139,16 @@ impl Theme {
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         );
+        // Chat role bands: User a cool blue-gray, Assistant a slightly lifted
+        // neutral, both readable against the near-black window background.
+        theme.named_styles.insert(
+            "chat-user-bg".into(),
+            Style::default().bg(Color::Rgb(24, 34, 52)),
+        );
+        theme.named_styles.insert(
+            "chat-assistant-bg".into(),
+            Style::default().bg(Color::Rgb(28, 28, 32)),
+        );
         theme
     }
 
@@ -211,6 +221,20 @@ impl Theme {
             named_styles_revision: next_theme_revision(),
         };
         theme.populate_named_styles();
+        // Chat role bands: User a soft blue tint, Assistant a light gray, both
+        // subtly distinct from the near-white window background.
+        theme.named_styles.insert(
+            "chat-user-bg".into(),
+            Style::default()
+                .bg(Color::Rgb(224, 234, 250))
+                .fg(Color::Black),
+        );
+        theme.named_styles.insert(
+            "chat-assistant-bg".into(),
+            Style::default()
+                .bg(Color::Rgb(238, 238, 240))
+                .fg(Color::Black),
+        );
         theme
     }
 
@@ -276,6 +300,16 @@ impl Theme {
             named_styles_revision: next_theme_revision(),
         };
         theme.populate_named_styles();
+        // Chat role bands: User a cyan-tinted band, Assistant keeps the gray
+        // window background so the two roles read distinctly.
+        theme.named_styles.insert(
+            "chat-user-bg".into(),
+            Style::default().bg(Color::Cyan).fg(Color::Black),
+        );
+        theme.named_styles.insert(
+            "chat-assistant-bg".into(),
+            Style::default().bg(Color::Gray).fg(Color::Black),
+        );
         theme
     }
 
@@ -296,6 +330,24 @@ impl Theme {
         };
         theme.apply_config_overlay(&config)?;
         Ok(theme)
+    }
+
+    /// Returns a clone of this theme with the window/surface background recolored
+    /// to `bg`. Every style whose background currently matches `window_bg` (the
+    /// surface fill used by markdown, disclosures, text, etc.) is re-tinted to
+    /// `bg`, so content drawn with the returned theme reads as a solid band of
+    /// that color. Used by the chat list to tint whole message rows per role.
+    pub fn with_surface_background(&self, bg: Color) -> Theme {
+        let original = self.window_bg.bg;
+        let mut theme = self.clone();
+        theme.window_bg = theme.window_bg.bg(bg);
+        for style in theme.named_styles.values_mut() {
+            if style.bg == original {
+                style.bg = Some(bg);
+            }
+        }
+        theme.bump_named_styles_revision();
+        theme
     }
 
     pub fn apply_config_overlay(&mut self, cfg: &ThemeConfig) -> Result<()> {
@@ -575,6 +627,15 @@ impl Theme {
         );
         self.named_styles
             .insert("image-fallback".into(), self.widget.dim);
+
+        // Chat message role background bands. These default to the window
+        // background; the built-in themes override them below with
+        // distinguishable tints (see Theme::dark/light/turbo). Custom/loaded
+        // themes can override via the same named-style keys.
+        self.named_styles
+            .insert("chat-user-bg".into(), self.window_bg);
+        self.named_styles
+            .insert("chat-assistant-bg".into(), self.window_bg);
 
         let markdown_base = self.window_bg.patch(self.widget.normal);
         self.named_styles

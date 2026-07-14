@@ -19,18 +19,19 @@ use anyhow::Result;
 use atto_ui::CancellationToken;
 use atto_ui::app::{
     AppControl, CrosstermAppConfig, CursorMode, Desktop, MenuBar, MenuItem, MenuSpec,
-    StatusSegment, StatusSegmentAlign, run_crossterm_desktop_with_actions,
+    StatusSegment, StatusSegmentAlign, popup_menu_window, run_crossterm_desktop_with_actions,
 };
 use atto_ui::reactive::{Binding, DirtyObserver, EventQueue, Property};
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_chat::{
     ApprovalAction, ApprovalDecision, ApprovalLevel, ApprovalOption, ApprovalRequest, ChatBlock,
-    ChatBlockId, ChatBranchToken, ChatError, ChatErrorKind, ChatInputHandle, ChatInputResponse,
-    ChatMessage, ChatMessageId, ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel,
-    ChatRole, ChatSlashCommand, ChatTurnStatus, DiffData, EditAndResubmitEvent, MessageAction,
-    MessageActionKind, PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, TextBlock,
-    ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
+    ChatBlockId, ChatBranchToken, ChatContextMenuRequest, ChatError, ChatErrorKind,
+    ChatInputHandle, ChatInputResponse, ChatMessage, ChatMessageId, ChatMessageList,
+    ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
+    DiffData, EditAndResubmitEvent, MessageAction, MessageActionKind, PlanBlock, PlanDecision,
+    PlanDecisionEvent, PlanItem, TextBlock, ThinkingBlock, ToolInput, ToolOutput, ToolResultBlock,
+    ToolStatus, ToolUseBlock,
 };
 use futures_util::future::{AbortHandle, AbortRegistration, Abortable};
 use ratatui::layout::Rect;
@@ -282,6 +283,9 @@ struct AgentRuntime {
     tool_count_state: Property<String>,
     skill_count_state: Property<String>,
     transcript_status: TranscriptStatusState,
+    /// Right-click context menus surfaced by the chat list, drained in the run
+    /// loop where a `Desktop` is available to spawn the popup window.
+    context_menus: EventQueue<ChatContextMenuRequest>,
 }
 
 #[derive(Clone)]
@@ -391,6 +395,7 @@ impl AgentRuntime {
             tool_count_state,
             skill_count_state,
             transcript_status,
+            context_menus: EventQueue::new(),
         }
     }
 
@@ -557,6 +562,7 @@ impl AgentApp {
             },
             runtime.slash_runtime(),
             runtime.tool_runtime(),
+            runtime.context_menus.clone(),
         );
 
         let mut desktop = Desktop::new(Theme::dark(), agent_menu(quit_events));
@@ -725,6 +731,7 @@ fn run_with_config_mock_token_delay_and_compact_policy(
     )));
     let runtime_for_build = runtime.clone();
     let runtime_for_actions = runtime.clone();
+    let context_menus_for_loop = runtime.context_menus.clone();
     let persistence_for_actions = transcript_persistence.clone();
     let persistence_for_loop = transcript_persistence.clone();
 
@@ -761,7 +768,13 @@ fn run_with_config_mock_token_delay_and_compact_policy(
             }
             Ok(AppControl::Continue)
         },
-        move |_desktop, _screen| {
+        move |desktop, screen| {
+            for request in context_menus_for_loop.drain() {
+                desktop.add_window(
+                    popup_menu_window(request.items, request.anchor, screen, "Message"),
+                    screen,
+                );
+            }
             persistence_for_loop
                 .lock()
                 .expect("transcript persistence lock poisoned")
@@ -803,6 +816,7 @@ fn build_chat_panel(
     turn_launcher: AgentTurnLauncher,
     slash_runtime: SlashRuntime,
     tool_runtime: ToolRuntime,
+    context_menus: EventQueue<ChatContextMenuRequest>,
 ) -> ChatPanel {
     // Compose the reusable chat list and input controls around shared state handles.
     let input_handle_for_cancel = slash_runtime.input_handle.clone();
@@ -863,7 +877,8 @@ fn build_chat_panel(
                 &turn_budgets_for_cancel,
                 message_id,
             );
-        });
+        })
+        .on_context_menu(move |request| context_menus.push(request));
     let store_for_submit = store.clone();
     let slash_runtime_for_submit = slash_runtime.clone();
     let turn_launcher_for_submit = turn_launcher.clone();
@@ -4353,6 +4368,7 @@ Use this skill for {name} tasks.
                 test_tool_registry(),
                 test_tool_permissions(),
             ),
+            atto_ui::reactive::EventQueue::new(),
         );
         let theme = Theme::dark();
 

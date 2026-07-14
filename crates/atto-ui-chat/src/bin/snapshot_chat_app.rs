@@ -18,7 +18,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 
-use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec};
+use atto_ui::app::{Desktop, MenuBar, MenuItem, MenuSpec, popup_menu_window};
 use atto_ui::reactive::EventQueue;
 use atto_ui::theme::Theme;
 use atto_ui::wm::{Window, WindowKind};
@@ -27,12 +27,12 @@ use atto_ui::ComponentValue;
 use atto_ui_chat::{
     ApprovalDecision, ApprovalOption, ApprovalRequest, Artifact, ArtifactBlock, ArtifactId,
     ArtifactKind, ArtifactViewer, AttachmentBlock, ChatBlock, ChatBlockId, ChatChoiceInputConfig,
-    ChatConfirmInputConfig, ChatError, ChatErrorKind, ChatInputHandle, ChatInputMode,
-    ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId, ChatMessageList,
-    ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand, ChatTurnStatus,
-    CompactBlock, CompactStatus, DiffBlock, DiffData, EditAndResubmitEvent, EditDecision,
-    EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel, PlanBlock,
-    PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
+    ChatConfirmInputConfig, ChatContextMenuRequest, ChatError, ChatErrorKind, ChatInputHandle,
+    ChatInputMode, ChatInputResponse, ChatMentionCandidate, ChatMessage, ChatMessageId,
+    ChatMessageList, ChatMessageMeta, ChatMessageStore, ChatPanel, ChatRole, ChatSlashCommand,
+    ChatTurnStatus, CompactBlock, CompactStatus, DiffBlock, DiffData, EditAndResubmitEvent,
+    EditDecision, EditDecisionEvent, MessageAction, MessageActionKind, NoticeBlock, NoticeLevel,
+    PlanBlock, PlanDecision, PlanDecisionEvent, PlanItem, StopReason, TaskBlock, TaskStatus,
     TaskTranscriptItem, TextArtifactViewer, TextBlock, ThinkingBlock, TodoBlock, TodoItem,
     TodoState, TokenUsage, ToolInput, ToolOutput, ToolResultBlock, ToolStatus, ToolUseBlock,
 };
@@ -257,6 +257,7 @@ fn main() -> Result<()> {
     let plan_decisions: EventQueue<PlanDecisionEvent> = EventQueue::new();
     let message_action_events: EventQueue<MessageAction> = EventQueue::new();
     let cancel_events: EventQueue<ChatMessageId> = EventQueue::new();
+    let context_menus: EventQueue<ChatContextMenuRequest> = EventQueue::new();
     let mut list = ChatMessageList::new(store.clone());
     if text_selection {
         list = list.wrap_width(24);
@@ -320,6 +321,12 @@ fn main() -> Result<()> {
     }
     if p5_fold_quote {
         list = list.with_quote_replies(&input_handle);
+    }
+    if message_actions || text_selection || retry_resubmit || edit_resubmit || p5_fold_quote {
+        list = list.on_context_menu({
+            let context_menus = context_menus.clone();
+            move |request| context_menus.push(request)
+        });
     }
     let mut input_panel = input_handle.panel().on_submit({
         let store = store.clone();
@@ -711,6 +718,13 @@ fn main() -> Result<()> {
                     message_action_label(&action.kind)
                 ));
             }
+        }
+
+        for request in context_menus.drain() {
+            desktop.add_window(
+                popup_menu_window(request.items, request.anchor, screen, "Message"),
+                screen,
+            );
         }
 
         for message_id in cancel_events.drain() {
