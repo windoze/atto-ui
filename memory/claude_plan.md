@@ -1,53 +1,31 @@
 # 执行计划
 
-## 当前目标
+## 当前状态
+- 已读取 `TODO.md`，第一个标题未带 `[DONE]` 的任务是 `M4-2 Unix socket server + 主循环请求分发`。
+- 最新提交为 `[M4-1] Define scripting protocol messages`，未发现明确提到与 `M4-2` 直接相关的未完成 blocker。
+- 当前仅处理 `M4-2`，完成并提交后停止，不继续 `M4-3`。
+- 已新增 `src/ipc.rs`，实现 Unix socket listener、JSON line request/response、UI 请求 channel、pending `wait_for` 非阻塞轮询，以及测试客户端 helper。
+- 已在 `AppHost::step` 与 crossterm runner 主循环中接入每帧 drain；`AppHost` 新增显式 IPC 启停方法，runner 支持 `ATTO_UI_SOCKET` 自动绑定。
+- 已给 `DesktopInspector` 增加 crate 内部单次 wait 条件检查入口，供 IPC pending wait 每帧轮询使用。
 
-按 `TODO.md` 的权威顺序完成第一个标题尚未带 `[DONE]` 的任务，完成后更新任务记录、运行要求的验证、提交 Git 提交，然后停止，不继续处理下一个任务。
+## 约束与依据
+- `TODO.md` 是任务排序和完成状态的唯一权威来源。
+- 只处理第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 若遇到阻塞当前任务的规格不匹配、失败测试或缺失前置条件，优先修复；无法直接修复时，在 `TODO.md` 中插入最小必要前置任务并提交后停止。
+- 完成任务后必须更新 `TODO.md`，标题加 `[DONE]`，填写完成记录，必要时才更新 `PLAN.md`。
+- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试套件。若仅文档变化且已有可复用的绿色完整测试结果，可按要求跳过完整测试并记录原因。
+- 完成后创建清晰 Git 提交，不继续下一个任务。
 
-## 关键约束
-
-- 输出和进度记录使用中文。
-- `TODO.md` 是任务顺序、完成状态、依赖和验证要求的唯一权威来源。
-- 任务只有标题显式带 `[DONE]` 才算完成。
-- 不做开放式历史问题扫描；只处理会阻塞当前任务、破坏当前任务指定行为、或当前执行引入的直接回归。
-- 不通过缩小范围、替换表示方式、临时兼容层或特例绕过规格问题。
-- 如发现未安排的测试失败，必须修复，或在 `TODO.md` 中加入最小必要的前置任务并提交后停止。
-- 常规每任务记录只更新 `TODO.md` 和本文件；仅当阶段级计划变化时才更新 `PLAN.md`。
-- 编辑代码前先说明将要修改的内容；手工文件修改使用小而明确的补丁。
-- 验证顺序为 `cargo fmt`、`cargo clippy --all-targets -- -D warnings`、完整测试；完整测试最长 30 分钟。
-- 完成后必须提交 Git 提交，并停止。
-
-## 步骤计划
-
-1. 读取 `TODO.md`，定位第一个标题未带 `[DONE]` 的任务，并记录任务编号、标题、依赖、要求和验证标准。
-2. 查看最近提交信息，判断是否明确提到与当前任务直接相关的未完成问题；如有，将其纳入当前任务或作为前置任务写入 `TODO.md`。
-3. 只读取与当前任务直接相关的项目文件，理解现有实现、测试结构和局部约定。
-4. 如果当前任务能直接实施，则按现有代码风格完成实现；如果发现具体前置阻塞，则向 `TODO.md` 插入最小必要前置任务，保持当前任务未完成，提交后停止。
-5. 为实现添加或调整聚焦测试，覆盖任务要求和相关边界。
-6. 运行 `cargo fmt`。
-7. 运行 `cargo clippy --all-targets -- -D warnings`，修复所有警告。
-8. 运行完整测试套件，优先使用 `cargo test --all --all-targets` 并设置不超过 30 分钟的超时；如任务自身指定更严格验证，一并执行。
-9. 验证通过后，在 `TODO.md` 中给当前任务标题加 `[DONE]`，并更新完成记录，包含变更摘要、验证命令和结果。
-10. 检查 Git 工作区，确认只包含本次任务相关变更以及需要纳入的既有未提交恢复状态。
-11. 创建清晰的 Git 提交。
-12. 停止，不处理下一个任务。
-
-## 进度记录
-
-- 已创建初始计划文件；下一步读取 `TODO.md` 识别当前任务。
-- 已读取 `TODO.md`，本轮首个未完成任务确定为 `M4-1 协议定义（可序列化请求 / 响应）`。
-- 已检查最近一次提交 `cc51320`，提交主题为 `[M3-R] Review tmux L0 L1 layer`，未明确提到与 `M4-1` 直接相关的未完成问题。
-- 当前未提交变更只有本计划文件；下一步读取 `ComponentCommand` / `ComponentTarget` / `ComponentError`、`DesktopInspector` 的 M2 API 和 crate 导出结构。
-- 已读取相关 API：M2 的 `ComponentCommand`、`ComponentTarget`、`ComponentValue`、`DesktopSnapshot`、`InvokeResult`、`WaitCondition`、`WaitResult` 均已 serde 化；`ComponentError` 尚未 serde 化，`InvalidValue.expected` 当前是 `&'static str`。
-- 实施方案：新增 `src/protocol.rs`，定义 JSON-RPC 类 `ProtocolRequest` / `ProtocolResponse`，请求采用顶层 `id` + `method` + `params` 的 tagged enum，响应采用顶层 `id` + `result` 或 `error`。method 覆盖 `query`、`invoke`、`wait_for`、`tree`、`property_names`。`invoke` / `wait_for` / `tree` 参数包含可序列化 `runtime::Rect` 屏幕区域与毫秒 timeout，供 M4-2 转换为进程内 API 使用。
-- 同步方案：把 `ComponentError::InvalidValue.expected` 改为拥有的 `String`，并为 `ComponentError` 派生 `Serialize` / `Deserialize`，使所有错误变体可直接 roundtrip；构造函数继续接收字符串字面量等 `Into<String>` 输入。
-- 测试方案：在 `src/protocol.rs` 单测中覆盖每种请求 roundtrip、每种成功响应 roundtrip、每种 `ComponentError` 错误响应 roundtrip，并检查响应构造器不会同时设置 `result` 和 `error`。
-- 已实现 `src/protocol.rs`、`ComponentError` serde 化和 `src/lib.rs` 模块导出。
-- 聚焦验证 `cargo test -p atto-ui protocol -- --nocapture` 通过。
-- `cargo fmt --all` 和 `cargo fmt --all -- --check` 通过。
-- `cargo clippy --workspace --all-targets -- -D warnings` 通过，无 warning。
-- 30 分钟超时保护下的完整 `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 通过。
-- 下一步更新 `TODO.md`：将 `M4-1` 标记为 `[DONE]`，补完成记录和验证记录；`PLAN.md` 不需要更新。
-- 已更新 `TODO.md` 中 `M4-1` 的 `[DONE]` 状态、完成记录和验证记录；之后只修改了 Markdown 任务记录，不需要重新运行完整测试。
-- 下一步执行 diff 检查、查看 git status，然后提交本任务变更。
-- 已创建本任务提交，提交信息为 `[M4-1] Define scripting protocol messages`；本轮停止，不继续处理 `M4-2`。
+## 初始步骤
+1. 已完成：读取 `TODO.md`，定位第一个未完成任务为 `M4-2`。
+2. 已完成：查看最新提交信息，未发现直接相关未完成问题。
+3. 读取 M4-2 涉及的协议、inspect、Desktop 主循环、测试宿主和现有 socket/channel 模式。
+4. 已完成初版：设计并实现 Unix socket server：监听路径来自环境变量，接收线程解析 M4-1 协议，经 channel 转交 UI 线程，UI 线程 drain 请求并用 `desktop.inspect()` 执行。
+5. 已完成初版：实现响应回传和错误映射，确保畸形请求、执行错误返回协议 `error`，不 panic。
+6. 已完成初版：服务端 `wait_for` 不调用阻塞式 inspector wait，而是保存 pending wait，每帧按 poll interval 检查一次，满足或超时后回响应，因此不阻塞其他请求。
+7. 已完成初版：新增 IPC 测试覆盖 query/invoke、wait_for 不阻塞其他 query、Focused target 在 modal 激活时命中 modal 焦点。
+8. 已完成：`cargo test -p atto-ui ipc -- --nocapture`、`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、30 分钟超时保护下的完整 `cargo test --workspace --all-targets` 均通过。
+9. 已完成：更新 `TODO.md`，将 `M4-2` 标为 `[DONE]` 并填写完成记录和验证命令。
+10. 说明：完整测试后只修改了 `TODO.md` 和本计划文件，未改动编译输出，因此不需要重跑完整测试。
+11. 已完成：检查 Git 状态并提交本次任务相关全部未提交文件，提交信息为 `[M4-2] Add IPC socket server dispatch`。
+12. 本轮停止，不处理下一项任务。

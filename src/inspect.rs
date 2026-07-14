@@ -382,6 +382,15 @@ impl<'a> DesktopInspector<'a> {
         }
     }
 
+    pub(crate) fn poll_wait_condition(
+        &mut self,
+        screen: Rect,
+        condition: &WaitCondition,
+    ) -> Result<Option<ComponentValue>, ComponentError> {
+        draw_desktop(self.desktop, screen)?;
+        self.evaluate_wait_condition(condition)
+    }
+
     pub fn wait_for_predicate<F>(
         &mut self,
         screen: Rect,

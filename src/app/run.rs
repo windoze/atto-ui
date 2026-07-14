@@ -1,4 +1,5 @@
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
 use crate::app::{Toast, ToastLevel};
 use crate::composable::EventOutcome;
 use crate::inspect::{DesktopInspector, DesktopSnapshot};
+use crate::ipc::{IpcServer, IpcServerConfig};
 use crate::reactive::{global_tick_rate_nanos, set_global_tick_rate, tick_global_timers};
 
 /// Cap on how many timer ticks a single `step` may dispatch, so a long pause
@@ -222,6 +224,12 @@ fn handle_desktop_action(desktop: &mut Desktop, action: &DesktopAction) {
     }
 }
 
+fn drain_ipc_server(ipc_server: &mut Option<IpcServer>, desktop: &mut Desktop, screen: Rect) {
+    if let Some(server) = ipc_server.as_mut() {
+        server.drain_pending(desktop, screen);
+    }
+}
+
 fn is_escape_press(event: &Event) -> bool {
     matches!(
         event,
@@ -259,6 +267,7 @@ pub struct AppHost {
     session: HostSession,
     desktop: Desktop,
     task_registry: TaskRegistry,
+    ipc_server: Option<IpcServer>,
     on_tick: Option<Box<TickCallBack>>,
     on_event: Option<Box<EventCallBack>>,
     /// Wall-clock anchor for advancing global timers by elapsed time rather than
@@ -282,6 +291,7 @@ impl AppHost {
             session: HostSession::Terminal(session),
             desktop,
             task_registry: TaskRegistry::new(),
+            ipc_server: None,
             on_tick: None,
             on_event: None,
             last_timer_instant: None,
@@ -300,6 +310,7 @@ impl AppHost {
             session: HostSession::Headless { screen },
             desktop,
             task_registry: TaskRegistry::new(),
+            ipc_server: None,
             on_tick: None,
             on_event: None,
             last_timer_instant: None,
@@ -320,6 +331,28 @@ impl AppHost {
 
     pub fn screen(&self) -> Result<Rect> {
         self.session.screen()
+    }
+
+    pub fn enable_ipc(&mut self, socket_path: impl Into<PathBuf>) -> Result<()> {
+        self.ipc_server = Some(IpcServer::bind(socket_path.into())?);
+        Ok(())
+    }
+
+    pub fn enable_ipc_from_env(&mut self) -> Result<Option<PathBuf>> {
+        let Some(config) = IpcServerConfig::from_env() else {
+            return Ok(None);
+        };
+        let socket_path = config.socket_path().to_path_buf();
+        self.ipc_server = Some(IpcServer::from_config(config)?);
+        Ok(Some(socket_path))
+    }
+
+    pub fn disable_ipc(&mut self) {
+        self.ipc_server = None;
+    }
+
+    pub fn ipc_socket_path(&self) -> Option<&Path> {
+        self.ipc_server.as_ref().map(IpcServer::socket_path)
     }
 
     pub fn restore_terminal(&mut self) {
@@ -500,6 +533,7 @@ impl AppHost {
         {
             return Ok(AppControl::Exit);
         }
+        drain_ipc_server(&mut self.ipc_server, &mut self.desktop, screen);
 
         self.session.draw(&mut self.desktop)?;
 
@@ -566,6 +600,7 @@ where
     let mut session = TerminalSession::new(config)?;
     let screen: Rect = session.terminal.size()?.into();
     let mut desktop = build(screen)?;
+    let mut ipc_server = IpcServer::from_env()?;
     set_global_tick_rate(config.tick_rate);
 
     loop {
@@ -575,6 +610,7 @@ where
         if on_tick(&mut desktop, screen)? == AppControl::Exit {
             break;
         }
+        drain_ipc_server(&mut ipc_server, &mut desktop, screen);
 
         session.terminal.draw(|f| desktop.draw(f))?;
 
@@ -648,6 +684,7 @@ where
     let mut session = TerminalSession::new(config)?;
     let screen: Rect = session.terminal.size()?.into();
     let mut desktop = build(screen)?;
+    let mut ipc_server = IpcServer::from_env()?;
     set_global_tick_rate(config.tick_rate);
 
     loop {
@@ -664,6 +701,7 @@ where
                 return Ok(());
             }
         }
+        drain_ipc_server(&mut ipc_server, &mut desktop, screen);
 
         session.terminal.draw(|f| desktop.draw(f))?;
 

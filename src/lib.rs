@@ -10,6 +10,7 @@ pub mod dialogs;
 pub mod drawing;
 pub mod fuzzy;
 pub mod inspect;
+pub mod ipc;
 pub mod protocol;
 pub mod reactive;
 pub mod runtime;
@@ -32,6 +33,7 @@ pub use inspect::{
     DesktopChangeTracker, DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode,
     InspectSnapshot, InvokeDispatch, InvokeResult, NodeKind, WaitCondition, WaitResult,
 };
+pub use ipc::{IPC_SOCKET_ENV, IpcServer, IpcServerConfig, send_protocol_request};
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,
     ComponentSchema, ComponentSpec, ComponentSpecChild, ComponentValue, EventMeta, PropertyMeta,
