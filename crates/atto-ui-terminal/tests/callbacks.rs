@@ -56,6 +56,19 @@ fn terminal_osc_zero_updates_title_and_icon_name() {
 }
 
 #[test]
+fn terminal_empty_osc_title_clears_window_title() {
+    let terminal = TerminalEmulator::new();
+    let handle = terminal.handle();
+
+    handle.process_output_str("\x1b]2;Claude Code\x07");
+    assert_eq!(handle.window_title().as_deref(), Some("Claude Code"));
+
+    // 应用退出时用空的 OSC 0/2 清空标题,应归一化为 None,而不是保留成 Some("")。
+    handle.process_output_str("\x1b]2;\x07");
+    assert_eq!(handle.window_title(), None);
+}
+
+#[test]
 fn terminal_callbacks_report_audible_bells() {
     let (tx, rx) = mpsc::channel();
     let terminal = TerminalEmulator::new().on_audible_bell(move || {

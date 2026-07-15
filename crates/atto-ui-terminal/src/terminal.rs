@@ -1840,7 +1840,14 @@ impl TerminalShared {
         for event in events {
             match event {
                 TerminalCallbackEvent::WindowTitle(title) => {
-                    self.window_title = Some(title.clone());
+                    // 某些应用 (如 Claude Code) 退出时会用 OSC 0/2 发送一个空标题来"清空"
+                    // 标题。把空标题归一化为 None,表示"当前没有有效标题",这样调用方无需
+                    // 自行区分空串,可直接回退到自己的默认标题。
+                    self.window_title = if title.trim().is_empty() {
+                        None
+                    } else {
+                        Some(title.clone())
+                    };
                     if let Some(callback) = self.on_window_title.clone() {
                         dispatches.push(TerminalCallbackDispatch::WindowTitle(callback, title));
                     }
