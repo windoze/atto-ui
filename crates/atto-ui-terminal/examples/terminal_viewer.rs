@@ -308,10 +308,13 @@ fn seed_terminal_banner(
     ));
     let prefix = shortcut_label(config.prefix_shortcut()?);
     handle.process_output_str(&format!(
-        "{prefix} %: split right; {prefix} \" split below; {prefix} o: next pane.\r\n"
+        "{prefix} %/\": split; {prefix} arrows: select; {prefix} Ctrl+arrows: resize.\r\n"
     ));
     handle.process_output_str(&format!(
-        "{prefix} [: copy-mode; {prefix} ]: paste copy buffer; {prefix} z: maximize window.\r\n"
+        "{prefix} z: zoom pane; {prefix} x: close pane; {prefix} o/Tab: next pane.\r\n"
+    ));
+    handle.process_output_str(&format!(
+        "{prefix} [: copy-mode; {prefix} ]: paste copy buffer.\r\n"
     ));
     handle.process_output_str(
         "File > New shell/command: sessions; File > Settings: live config including close-on-exit.\r\n",
@@ -782,12 +785,12 @@ fn feature_guide_lines(
         String::new(),
         format!("Capture: {release} releases keyboard capture; click a terminal to recapture."),
         format!(
-            "Prefix: {prefix} F10 menu, {prefix} w window mode, {prefix} z maximize, {prefix} {prefix} sends a literal prefix."
+            "Prefix: {prefix} F10 menu, {prefix} w window mode, {prefix} z zooms a pane, {prefix} {prefix} sends a literal prefix."
         ),
         format!(
             "Copy-mode: {prefix} [ enters; arrows/hjkl move; v or Space starts selection; y or Enter copies; {prefix} ] pastes."
         ),
-        format!("Splits: {prefix} % splits right, {prefix} \" splits below, {prefix} o or Tab focuses the next pane."),
+        format!("Splits: {prefix} % splits right, {prefix} \" splits below, arrows select panes, Ctrl+arrows resize, {prefix} x closes a pane."),
         format!(
             "Sessions: File > New shell window uses profile '{}'; File > New command window uses profile '{}'.",
             shell_spec.profile(),

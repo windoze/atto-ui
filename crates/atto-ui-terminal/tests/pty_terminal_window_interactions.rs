@@ -289,10 +289,25 @@ fn wait_for_pane_rects(host: &PtyTestHost, count: usize) -> Vec<(u64, Rect)> {
     );
 }
 
-fn terminal_border_is_flush_left(screen: &str) -> bool {
-    screen
-        .lines()
-        .any(|line| line.starts_with('╔') && line.contains(" Terminal "))
+fn wait_for_pane_rects_matching(
+    host: &PtyTestHost,
+    description: &str,
+    mut predicate: impl FnMut(&[(u64, Rect)]) -> bool,
+) -> Vec<(u64, Rect)> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if let Some(rects) = parse_pane_rects_from_screen(&screen)
+            && predicate(&rects)
+        {
+            return rects;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected pane rects matching {description}\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
 }
 
 fn send_f10(host: &mut PtyTestHost) {
@@ -357,9 +372,65 @@ fn pty_terminal_prefix_splits_panes_inside_one_window() {
     wait_for_text(&host, "PANES=2 ACTIVE=1");
 
     host.send_ctrl('b').expect("prefix");
+    host.key_with_mods(KeyCode::Right, KeyModifiers::NONE)
+        .expect("select pane right");
+    wait_for_text(&host, "PANES=2 ACTIVE=2");
+
+    host.send_ctrl('b').expect("prefix");
+    host.key_with_mods(KeyCode::Left, KeyModifiers::CONTROL)
+        .expect("resize pane left");
+    let resized_rects =
+        wait_for_pane_rects_matching(&host, "right pane wider after resize", |rects| {
+            let left_after = rects.iter().find(|(id, _)| *id == 1).map(|(_, rect)| *rect);
+            let right_after = rects.iter().find(|(id, _)| *id == 2).map(|(_, rect)| *rect);
+            matches!(
+                (left_after, right_after),
+                (Some(left_after), Some(right_after))
+                    if left_after.width < left.width && right_after.width > right.width
+            )
+        });
+    let resized_left = resized_rects
+        .iter()
+        .find(|(id, _)| *id == 1)
+        .map(|(_, rect)| *rect)
+        .expect("resized left pane rect");
+    let resized_right = resized_rects
+        .iter()
+        .find(|(id, _)| *id == 2)
+        .map(|(_, rect)| *rect)
+        .expect("resized right pane rect");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("z").expect("zoom active pane");
+    let zoomed_rects =
+        wait_for_pane_rects_matching(&host, "only active pane visible while zoomed", |rects| {
+            rects.len() == 1
+                && rects[0].0 == 2
+                && rects[0].1.width > resized_right.width
+                && rects[0].1.x <= resized_left.x
+        });
+    assert_eq!(zoomed_rects[0].0, 2);
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("z").expect("restore active pane");
+    wait_for_pane_rects_matching(&host, "both panes visible after zoom restore", |rects| {
+        rects.len() == 2
+            && rects.iter().any(|(id, _)| *id == 1)
+            && rects.iter().any(|(id, _)| *id == 2)
+    });
+    wait_for_text(&host, "PANES=2 ACTIVE=2");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("x").expect("close active pane");
+    wait_for_text(&host, "PANES=1 ACTIVE=1");
+    wait_for_pane_rects_matching(&host, "closed pane removed from layout", |rects| {
+        rects.len() == 1 && rects[0].0 == 1 && rects[0].1.width > resized_left.width
+    });
+
+    host.send_ctrl('b').expect("prefix");
     host.send_str("\"").expect("split below");
-    wait_for_text(&host, "PANES=3 ACTIVE=3");
-    wait_for_text(&host, "TTY READY PANE=3");
+    wait_for_text(&host, "PANES=2 ACTIVE=3");
+    wait_for_pane_rects(&host, 2);
 
     let (_, tools_rect) = rects_from_screen(&host.screen_contents().unwrap_or_default())
         .expect("read tools rect after split below");
@@ -370,7 +441,7 @@ fn pty_terminal_prefix_splits_panes_inside_one_window() {
     )
     .expect("focus tools window");
     wait_for_text(&host, "FOCUS=TOOLS");
-    wait_for_text(&host, "PANES=3 ACTIVE=3");
+    wait_for_text(&host, "PANES=2 ACTIVE=3");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
@@ -494,34 +565,6 @@ fn pty_terminal_prefix_commands_drive_desktop_chrome() {
 
     host.send_str("\x1b").expect("leave window mode");
     wait_for_text(&host, "F10 Menu");
-
-    let before = rects_from_screen(&host.screen_contents().unwrap_or_default())
-        .and_then(|(term, _)| term)
-        .expect("terminal rect before maximize");
-    host.send_ctrl('b').expect("prefix");
-    host.send_str("z").expect("toggle maximize");
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut maximized = false;
-    while Instant::now() < deadline {
-        let screen = host.screen_contents().unwrap_or_default();
-        if let Some((Some(after), _)) = rects_from_screen(&screen)
-            && (after.width > before.width || after.height > before.height)
-        {
-            maximized = true;
-            break;
-        }
-        if terminal_border_is_flush_left(&screen) {
-            maximized = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        maximized,
-        "prefix+z should maximize the terminal window\n--- screen ---\n{}",
-        host.screen_contents().unwrap_or_default()
-    );
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))

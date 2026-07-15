@@ -19,6 +19,7 @@ use ratatui::layout::Rect;
 use crate::{TerminalConfig, TerminalEmulator, TerminalHandle, TerminalShortcut};
 
 const DIVIDER_THICKNESS: u16 = 1;
+const PANE_RESIZE_STEP: u16 = 1;
 
 /// Stable identifier for one terminal pane inside a [`TerminalPaneGroup`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,6 +97,7 @@ struct TerminalPaneGroupShared {
     last_error: Option<String>,
     last_area: Option<Rect>,
     last_layouts: Vec<TerminalPaneLayout>,
+    zoomed_pane_id: Option<TerminalPaneId>,
     pane_factory: Option<Arc<TerminalPaneFactory>>,
 }
 
@@ -112,6 +114,7 @@ impl Default for TerminalPaneGroupShared {
             last_error: None,
             last_area: None,
             last_layouts: Vec::new(),
+            zoomed_pane_id: None,
             pane_factory: None,
         }
     }
@@ -236,12 +239,22 @@ enum TerminalPaneNode {
     Leaf(TerminalPaneId),
     Split {
         direction: TerminalPaneSplit,
+        first_len: Option<u16>,
         first: Box<TerminalPaneNode>,
         second: Box<TerminalPaneNode>,
     },
 }
 
 impl TerminalPaneNode {
+    fn contains_leaf(&self, target: TerminalPaneId) -> bool {
+        match self {
+            Self::Leaf(id) => *id == target,
+            Self::Split { first, second, .. } => {
+                first.contains_leaf(target) || second.contains_leaf(target)
+            }
+        }
+    }
+
     fn split_leaf(
         &mut self,
         target: TerminalPaneId,
@@ -252,6 +265,7 @@ impl TerminalPaneNode {
             Self::Leaf(id) if *id == target => {
                 *self = Self::Split {
                     direction,
+                    first_len: None,
                     first: Box::new(Self::Leaf(target)),
                     second: Box::new(Self::Leaf(new_id)),
                 };
@@ -265,17 +279,98 @@ impl TerminalPaneNode {
         }
     }
 
+    fn resize_leaf(
+        &mut self,
+        target: TerminalPaneId,
+        direction: TerminalPaneSelectDirection,
+        amount: u16,
+        area: Rect,
+    ) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split {
+                direction: split_direction,
+                first_len,
+                first,
+                second,
+            } => {
+                let target_in_first = first.contains_leaf(target);
+                let target_in_second = second.contains_leaf(target);
+                if !target_in_first && !target_in_second {
+                    return false;
+                }
+
+                let (first_rect, _, second_rect) = split_rect(area, *split_direction, *first_len);
+                let child_resized = if target_in_first {
+                    first.resize_leaf(target, direction, amount, first_rect)
+                } else {
+                    second.resize_leaf(target, direction, amount, second_rect)
+                };
+                if child_resized {
+                    return true;
+                }
+
+                let delta = match (
+                    *split_direction,
+                    direction,
+                    target_in_first,
+                    target_in_second,
+                ) {
+                    (
+                        TerminalPaneSplit::Vertical,
+                        TerminalPaneSelectDirection::Right,
+                        true,
+                        false,
+                    )
+                    | (
+                        TerminalPaneSplit::Horizontal,
+                        TerminalPaneSelectDirection::Down,
+                        true,
+                        false,
+                    ) => amount as i16,
+                    (
+                        TerminalPaneSplit::Vertical,
+                        TerminalPaneSelectDirection::Left,
+                        false,
+                        true,
+                    )
+                    | (
+                        TerminalPaneSplit::Horizontal,
+                        TerminalPaneSelectDirection::Up,
+                        false,
+                        true,
+                    ) => -(amount as i16),
+                    _ => return false,
+                };
+
+                let axis_len = match split_direction {
+                    TerminalPaneSplit::Vertical => area.width,
+                    TerminalPaneSplit::Horizontal => area.height,
+                };
+                let current = split_first_len(axis_len, *first_len);
+                let next = adjust_split_first_len(axis_len, current, delta);
+                if next == current {
+                    return false;
+                }
+                *first_len = Some(next);
+                true
+            }
+        }
+    }
+
     fn without_leaf(self, target: TerminalPaneId) -> Option<Self> {
         match self {
             Self::Leaf(id) if id == target => None,
             Self::Leaf(id) => Some(Self::Leaf(id)),
             Self::Split {
                 direction,
+                first_len,
                 first,
                 second,
             } => match (first.without_leaf(target), second.without_leaf(target)) {
                 (Some(first), Some(second)) => Some(Self::Split {
                     direction,
+                    first_len,
                     first: Box::new(first),
                     second: Box::new(second),
                 }),
@@ -343,6 +438,9 @@ impl TerminalPaneGroupShared {
             return false;
         }
         self.active_id = Some(id);
+        if self.zoomed_pane_id.is_some() {
+            self.zoomed_pane_id = Some(id);
+        }
         for pane in &self.panes {
             pane.handle.set_capture(capture && pane.id == id);
         }
@@ -362,14 +460,34 @@ impl TerminalPaneGroupShared {
         let Some(area) = self.last_area else {
             return;
         };
+        let (layouts, _) = self.visible_layouts_for_area(area);
+        self.last_layouts = layouts;
+    }
+
+    fn full_layouts_for_area(
+        &self,
+        area: Rect,
+    ) -> (Vec<TerminalPaneLayout>, Vec<(Rect, TerminalPaneSplit)>) {
         let Some(tree) = &self.tree else {
-            self.last_layouts.clear();
-            return;
+            return (Vec::new(), Vec::new());
         };
         let mut layouts = Vec::new();
         let mut dividers = Vec::new();
         layout_pane_node(tree, area, &mut layouts, &mut dividers);
-        self.last_layouts = layouts;
+        (layouts, dividers)
+    }
+
+    fn visible_layouts_for_area(
+        &self,
+        area: Rect,
+    ) -> (Vec<TerminalPaneLayout>, Vec<(Rect, TerminalPaneSplit)>) {
+        let (layouts, dividers) = self.full_layouts_for_area(area);
+        if let Some(id) = self.zoomed_pane_id
+            && self.pane_index(id).is_some()
+        {
+            return (vec![TerminalPaneLayout { id, rect: area }], Vec::new());
+        }
+        (layouts, dividers)
     }
 
     fn create_terminal_for_new_pane(&self, pane_number: usize) -> Result<TerminalEmulator> {
@@ -436,17 +554,56 @@ impl TerminalPaneGroupShared {
         })
     }
 
+    fn resize_active_pane(&mut self, direction: TerminalPaneSelectDirection, amount: u16) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        let Some(area) = self.last_area else {
+            return false;
+        };
+        let Some(tree) = self.tree.as_mut() else {
+            return false;
+        };
+        if !tree.resize_leaf(active_id, direction, amount, area) {
+            return false;
+        }
+        self.refresh_layouts_from_last_area();
+        true
+    }
+
+    fn toggle_zoom_active_pane(&mut self) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        self.zoomed_pane_id = if self.zoomed_pane_id == Some(active_id) {
+            None
+        } else {
+            Some(active_id)
+        };
+        self.refresh_layouts_from_last_area();
+        true
+    }
+
+    fn close_active_pane(&mut self) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        self.close_pane(active_id).is_ok()
+    }
+
     fn neighbor_pane(
         &self,
         source: TerminalPaneId,
         direction: TerminalPaneSelectDirection,
     ) -> Option<TerminalPaneId> {
-        let active = self
-            .last_layouts
-            .iter()
-            .find(|layout| layout.id == source)?;
+        let layouts = if let Some(area) = self.last_area {
+            self.full_layouts_for_area(area).0
+        } else {
+            self.last_layouts.clone()
+        };
+        let active = layouts.iter().find(|layout| layout.id == source)?;
         let active_center = rect_center(active.rect);
-        self.last_layouts
+        layouts
             .iter()
             .filter(|layout| layout.id != source)
             .filter(|layout| pane_is_in_direction(active.rect, layout.rect, direction))
@@ -455,8 +612,30 @@ impl TerminalPaneGroupShared {
     }
 
     fn break_pane(&mut self, pane_id: TerminalPaneId) -> Result<TerminalPaneBreakOutcome> {
-        if self.panes.len() <= 1 {
+        let Some((pane, rect)) = self.remove_pane(pane_id)? else {
             bail!("cannot break the last pane in a group");
+        };
+        Ok(TerminalPaneBreakOutcome {
+            pane_id,
+            terminal: pane.terminal,
+            rect,
+            remaining_pane_count: self.panes.len(),
+        })
+    }
+
+    fn close_pane(&mut self, pane_id: TerminalPaneId) -> Result<()> {
+        let Some((_pane, _rect)) = self.remove_pane(pane_id)? else {
+            bail!("cannot close the last pane in a group");
+        };
+        Ok(())
+    }
+
+    fn remove_pane(
+        &mut self,
+        pane_id: TerminalPaneId,
+    ) -> Result<Option<(TerminalPane, Option<Rect>)>> {
+        if self.panes.len() <= 1 {
+            return Ok(None);
         }
         let Some(index) = self.pane_index(pane_id) else {
             bail!("pane {} does not exist", pane_id.raw());
@@ -475,6 +654,9 @@ impl TerminalPaneGroupShared {
             .find(|layout| layout.id == pane_id)
             .map(|layout| layout.rect);
         self.last_layouts.retain(|layout| layout.id != pane_id);
+        if self.zoomed_pane_id == Some(pane_id) {
+            self.zoomed_pane_id = None;
+        }
         if self.active_id == Some(pane_id) {
             self.active_id = self.panes.first().map(|pane| pane.id);
         }
@@ -482,12 +664,7 @@ impl TerminalPaneGroupShared {
             self.focus_pane(active_id, true);
         }
         self.refresh_layouts_from_last_area();
-        Ok(TerminalPaneBreakOutcome {
-            pane_id,
-            terminal: pane.terminal,
-            rect,
-            remaining_pane_count: self.panes.len(),
-        })
+        Ok(Some((pane, rect)))
     }
 }
 
@@ -562,6 +739,28 @@ impl TerminalPaneGroup {
         self.shared.lock().split_active(direction).is_ok()
     }
 
+    fn select_active_neighbor(&mut self, direction: TerminalPaneSelectDirection) -> bool {
+        let mut shared = self.shared.lock();
+        let Some(active_id) = shared.active_pane_id() else {
+            return false;
+        };
+        shared.select_pane(active_id, direction).is_ok()
+    }
+
+    fn resize_active_pane(&mut self, direction: TerminalPaneSelectDirection) -> bool {
+        self.shared
+            .lock()
+            .resize_active_pane(direction, PANE_RESIZE_STEP)
+    }
+
+    fn toggle_zoom_active_pane(&mut self) -> bool {
+        self.shared.lock().toggle_zoom_active_pane()
+    }
+
+    fn close_active_pane(&mut self) -> bool {
+        self.shared.lock().close_active_pane()
+    }
+
     fn pane_at_screen_position(&self, x: u16, y: u16) -> Option<(usize, Rect)> {
         let shared = self.shared.lock();
         let layout = shared
@@ -611,6 +810,22 @@ impl TerminalPaneGroup {
                 let _ = self.focus_next_pane();
                 EventResult::consumed()
             }
+            Some(PaneCommand::Select(direction)) => {
+                let _ = self.select_active_neighbor(direction);
+                EventResult::consumed()
+            }
+            Some(PaneCommand::Resize(direction)) => {
+                let _ = self.resize_active_pane(direction);
+                EventResult::consumed()
+            }
+            Some(PaneCommand::ToggleZoom) => {
+                let _ = self.toggle_zoom_active_pane();
+                EventResult::consumed()
+            }
+            Some(PaneCommand::Close) => {
+                let _ = self.close_active_pane();
+                EventResult::consumed()
+            }
             None => self.replay_prefix_to_active_pane(key, ctx),
         }
     }
@@ -654,11 +869,7 @@ impl Component for TerminalPaneGroup {
             return;
         }
 
-        let mut layouts = Vec::new();
-        let mut dividers = Vec::new();
-        if let Some(tree) = &shared.tree {
-            layout_pane_node(tree, area, &mut layouts, &mut dividers);
-        }
+        let (layouts, dividers) = shared.visible_layouts_for_area(area);
         shared.last_layouts = layouts;
 
         for layout in shared.last_layouts.clone() {
@@ -793,6 +1004,10 @@ enum PaneCommand {
     SplitVertical,
     SplitHorizontal,
     FocusNext,
+    Select(TerminalPaneSelectDirection),
+    Resize(TerminalPaneSelectDirection),
+    ToggleZoom,
+    Close,
 }
 
 fn pane_command_for_key(key: KeyEvent) -> Option<PaneCommand> {
@@ -812,6 +1027,40 @@ fn pane_command_for_key(key: KeyEvent) -> Option<PaneCommand> {
             Some(PaneCommand::FocusNext)
         }
         KeyCode::Tab if key.modifiers == KeyModifiers::NONE => Some(PaneCommand::FocusNext),
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Left))
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Right))
+        }
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Up))
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Down))
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Left))
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Right))
+        }
+        KeyCode::Up if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Up))
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Down))
+        }
+        KeyCode::Char(ch)
+            if key.modifiers == KeyModifiers::NONE && ch.eq_ignore_ascii_case(&'z') =>
+        {
+            Some(PaneCommand::ToggleZoom)
+        }
+        KeyCode::Char(ch)
+            if key.modifiers == KeyModifiers::NONE && ch.eq_ignore_ascii_case(&'x') =>
+        {
+            Some(PaneCommand::Close)
+        }
         _ => None,
     }
 }
@@ -852,10 +1101,11 @@ fn layout_pane_node(
         }),
         TerminalPaneNode::Split {
             direction,
+            first_len,
             first,
             second,
         } => {
-            let (first_rect, divider, second_rect) = split_rect(area, *direction);
+            let (first_rect, divider, second_rect) = split_rect(area, *direction, *first_len);
             layout_pane_node(first, first_rect, panes, dividers);
             if divider.width > 0 && divider.height > 0 {
                 dividers.push((divider, *direction));
@@ -865,19 +1115,43 @@ fn layout_pane_node(
     }
 }
 
-fn split_rect(area: Rect, direction: TerminalPaneSplit) -> (Rect, Rect, Rect) {
+fn split_rect(
+    area: Rect,
+    direction: TerminalPaneSplit,
+    first_len: Option<u16>,
+) -> (Rect, Rect, Rect) {
     match direction {
-        TerminalPaneSplit::Vertical => split_rect_vertical(area),
-        TerminalPaneSplit::Horizontal => split_rect_horizontal(area),
+        TerminalPaneSplit::Vertical => split_rect_vertical(area, first_len),
+        TerminalPaneSplit::Horizontal => split_rect_horizontal(area, first_len),
     }
 }
 
-fn split_rect_vertical(area: Rect) -> (Rect, Rect, Rect) {
+fn split_first_len(axis_len: u16, requested: Option<u16>) -> u16 {
+    let available = axis_len.saturating_sub(DIVIDER_THICKNESS);
+    if available <= 1 {
+        return available;
+    }
+    requested
+        .unwrap_or(available / 2)
+        .clamp(1, available.saturating_sub(1))
+}
+
+fn adjust_split_first_len(axis_len: u16, current: u16, delta: i16) -> u16 {
+    let available = axis_len.saturating_sub(DIVIDER_THICKNESS);
+    if available <= 1 {
+        return available;
+    }
+    let min = 1i32;
+    let max = available.saturating_sub(1) as i32;
+    (current as i32 + delta as i32).clamp(min, max) as u16
+}
+
+fn split_rect_vertical(area: Rect, first_len: Option<u16>) -> (Rect, Rect, Rect) {
     if area.width <= DIVIDER_THICKNESS {
         return (area, Rect::default(), Rect::default());
     }
     let available = area.width.saturating_sub(DIVIDER_THICKNESS);
-    let first_width = available / 2;
+    let first_width = split_first_len(area.width, first_len);
     let second_width = available.saturating_sub(first_width);
     let first = Rect {
         width: first_width,
@@ -898,12 +1172,12 @@ fn split_rect_vertical(area: Rect) -> (Rect, Rect, Rect) {
     (first, divider, second)
 }
 
-fn split_rect_horizontal(area: Rect) -> (Rect, Rect, Rect) {
+fn split_rect_horizontal(area: Rect, first_len: Option<u16>) -> (Rect, Rect, Rect) {
     if area.height <= DIVIDER_THICKNESS {
         return (area, Rect::default(), Rect::default());
     }
     let available = area.height.saturating_sub(DIVIDER_THICKNESS);
-    let first_height = available / 2;
+    let first_height = split_first_len(area.height, first_len);
     let second_height = available.saturating_sub(first_height);
     let first = Rect {
         height: first_height,
@@ -1065,15 +1339,20 @@ mod tests {
     #[test]
     fn split_rects_reserve_one_cell_divider() {
         let area = Rect::new(2, 3, 11, 7);
-        let (left, divider, right) = split_rect_vertical(area);
+        let (left, divider, right) = split_rect_vertical(area, None);
         assert_eq!(left, Rect::new(2, 3, 5, 7));
         assert_eq!(divider, Rect::new(7, 3, 1, 7));
         assert_eq!(right, Rect::new(8, 3, 5, 7));
 
-        let (top, divider, bottom) = split_rect_horizontal(area);
+        let (top, divider, bottom) = split_rect_horizontal(area, None);
         assert_eq!(top, Rect::new(2, 3, 11, 3));
         assert_eq!(divider, Rect::new(2, 6, 11, 1));
         assert_eq!(bottom, Rect::new(2, 7, 11, 3));
+
+        let (left, divider, right) = split_rect_vertical(area, Some(3));
+        assert_eq!(left, Rect::new(2, 3, 3, 7));
+        assert_eq!(divider, Rect::new(5, 3, 1, 7));
+        assert_eq!(right, Rect::new(6, 3, 7, 7));
     }
 
     #[test]
@@ -1090,6 +1369,134 @@ mod tests {
             pane_command_for_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)),
             Some(PaneCommand::FocusNext)
         );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            Some(PaneCommand::FocusNext)
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Left))
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL)),
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Right))
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)),
+            Some(PaneCommand::ToggleZoom)
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Some(PaneCommand::Close)
+        );
+    }
+
+    #[test]
+    fn pane_resize_adjusts_nearest_split_for_active_pane() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 21, 8));
+            shared.refresh_layouts_from_last_area();
+        }
+
+        handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+        let before = handle.panes();
+        let left_before = before
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .and_then(|pane| pane.rect)
+            .expect("left rect before resize");
+        let right_before = before
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .and_then(|pane| pane.rect)
+            .expect("right rect before resize");
+
+        assert!(
+            group
+                .shared
+                .lock()
+                .resize_active_pane(TerminalPaneSelectDirection::Left, 1)
+        );
+
+        let after = handle.panes();
+        let left_after = after
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .and_then(|pane| pane.rect)
+            .expect("left rect after resize");
+        let right_after = after
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .and_then(|pane| pane.rect)
+            .expect("right rect after resize");
+        assert_eq!(left_after.width, left_before.width.saturating_sub(1));
+        assert_eq!(right_after.width, right_before.width.saturating_add(1));
+    }
+
+    #[test]
+    fn pane_zoom_exposes_only_active_pane_until_restored() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        let area = Rect::new(3, 4, 30, 10);
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(area);
+            shared.refresh_layouts_from_last_area();
+        }
+        handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+
+        assert!(group.shared.lock().toggle_zoom_active_pane());
+        let zoomed = handle.panes();
+        assert_eq!(
+            zoomed
+                .iter()
+                .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+                .and_then(|pane| pane.rect),
+            Some(area)
+        );
+        assert_eq!(
+            zoomed
+                .iter()
+                .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+                .and_then(|pane| pane.rect),
+            None
+        );
+
+        assert!(group.shared.lock().toggle_zoom_active_pane());
+        let restored = handle.panes();
+        assert!(
+            restored.iter().all(|pane| pane.rect.is_some()),
+            "all panes should have visible rects after restoring zoom"
+        );
+    }
+
+    #[test]
+    fn pane_close_active_removes_pane_and_reflows_layout() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 21, 8));
+            shared.refresh_layouts_from_last_area();
+        }
+        let split = handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+        assert_eq!(split.new_pane_id, TerminalPaneId::from_raw(2));
+        assert!(group.shared.lock().close_active_pane());
+
+        let panes = handle.panes();
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].id, TerminalPaneId::from_raw(1));
+        assert!(panes[0].is_active);
+        assert_eq!(panes[0].rect, Some(Rect::new(0, 0, 21, 8)));
     }
 
     #[test]

@@ -54,3 +54,27 @@
 - 正式验证已通过：`cargo fmt --all`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 - 已更新 `TODO.md`，将 M5-3 标题标记为 `[DONE]`，并补充完成记录与验证记录。
 - 下一步：检查最终 diff / status，提交本轮变更，然后停止。
+
+## M5-4 任务执行计划
+
+1. 读取 `TODO.md`，确认第一个未完成任务是 M5-4，并检查最新提交是否有直接相关未完成事项。
+2. 阅读 `crates/atto-ui-terminal/src/pane.rs`、`SCRIPTING_LAYERS.md` 和 `pty_terminal_window_interactions` 中现有 pane 测试，确认实现边界。
+3. 在 `TerminalPaneGroup` 的 split tree 中为 split 节点保存可调分隔尺寸，默认保持五五分布局。
+4. 复用现有几何邻居选择逻辑，为 `prefix+方向键` 增加方向性 pane 导航。
+5. 为 active pane 增加 `prefix+Ctrl+方向键` resize，调整最近相邻分隔线并夹紧到有效布局范围。
+6. 增加 `prefix+z` pane 级 zoom / restore；zoom 时只绘制 active pane 到整个 pane group 区域。
+7. 增加 `prefix+x` close active pane；关闭后复用 tree 移除和重布局路径，最后一个 pane 不关闭。
+8. 更新或新增单元测试与 PTY 测试，覆盖方向导航、resize、zoom/restore、close/reflow。
+9. 按顺序运行 `cargo fmt`、聚焦测试、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、完整 workspace 测试。
+10. 更新 `TODO.md` M5-4 为 `[DONE]` 并补完成记录，提交本轮变更后停止。
+
+## M5-4 进度
+
+- 已读取 `TODO.md`，确认本轮第一个未完成任务是 `M5-4 本地 pane 层体验补全`。
+- 已查看最新提交：`b4d6561 [M5-3] Add tmux shim executable`，提交标题未提示需要先处理的直接相关未完成事项。
+- 已阅读 `crates/atto-ui-terminal/src/pane.rs`、`SCRIPTING_LAYERS.md` 和相关 PTY fixture。现有 pane tree 只保存 split 方向，布局固定五五分；已有 IPC 几何选择和 break-pane 可作为本地方向导航 / close 的基础。
+- 决策：按 M5-4 规格让 `TerminalPaneGroup` 优先处理 `prefix+z` 为 pane zoom；这会替代单窗口测试里旧的“终端内部 prefix+z 触发窗口最大化”路径，相关测试已改成验证 pane zoom。
+- 已完成实现：split node 记录 `first_len`，新增 active pane resize / zoom / close，前缀键支持方向选择、Ctrl+方向 resize、`z` zoom、`x` close；PT测试扩展覆盖新增交互，`terminal_viewer` 可见提示已同步。
+- 已完成验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal pane_ -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_prefix_splits_panes_inside_one_window -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 均通过。
+- 已更新 `TODO.md`，将 M5-4 标题标记为 `[DONE]`，并补充完成记录与验证记录。
+- 下一步：检查最终 diff / status，提交本轮变更，然后停止。
