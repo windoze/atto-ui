@@ -334,6 +334,27 @@ fn print_human_result(result: ProtocolResult) -> Result<()> {
                 );
             }
         }
+        ProtocolResult::SplitWindow(result) => {
+            println!(
+                "pane_id={} new_pane_id={} pane_count={}",
+                result.pane_id, result.new_pane_id, result.pane_count
+            );
+        }
+        ProtocolResult::SelectPane(result) => {
+            println!(
+                "previous_pane_id={} pane_id={}",
+                result.previous_pane_id, result.pane_id
+            );
+        }
+        ProtocolResult::BreakPane(result) => {
+            println!(
+                "pane_id={} window_id={} remaining_pane_count={}",
+                result.pane_id, result.window_id, result.remaining_pane_count
+            );
+        }
+        ProtocolResult::DisplayPopup(result) => {
+            println!("window_id={}", result.window_id);
+        }
     }
     Ok(())
 }

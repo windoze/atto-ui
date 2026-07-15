@@ -1,49 +1,87 @@
 # 执行计划
 
-## 约束说明
-
-- 本文件记录本次执行的可审计计划、决策依据、关键进展和验证结果。
-- 不记录不可公开的内部推理细节；后续如计划变化或关键步骤完成，会及时更新本文件。
-- 本次只完成 `TODO.md` 中第一个未完成任务，完成后提交 Git commit 并停止。
-
-## 初始计划
-
-1. 读取 `TODO.md`，按文档顺序识别第一个标题未带 `[DONE]` 前缀的任务。
-2. 检查最新提交信息；仅当它明确提到与当前任务直接相关的未完成问题时，将其纳入当前任务或作为前置项记录到 `TODO.md`。
-3. 阅读当前任务相关的代码、测试、计划文档和上下文，确认任务要求、依赖、完成标准和验证要求。
-4. 如任务可以直接完成，按现有代码风格实现；如遇到阻塞当前任务的真实前置缺陷，则在 `TODO.md` 中插入最小必要前置任务并停止。
-5. 在修改代码前更新本文件，说明将要修改的范围。
-6. 完成实现后运行 `cargo fmt`。
-7. 运行 `cargo clippy --all-targets -- -D warnings`，修复所有告警。
-8. 运行相关测试；若需要完整验证，则运行完整测试套件并设置不超过 30 分钟的超时。
-9. 根据验证结果更新 `TODO.md`：完成当前任务时在任务标题前加 `[DONE]`，并填写 completion record；如只修改了文档且可复用上一轮绿色全量测试，则记录跳过原因。
-10. 检查 `git status`，将本次相关变更作为一个清晰的 Git commit 提交。
-11. 停止，不处理下一个任务。
-
 ## 当前状态
 
-- 状态：已读取 `TODO.md`，首个未完成任务为 `M5-1 send-keys / capture-pane 映射`。
-- 最新提交：`47c3948 [M4-R] Review IPC control plane`，未明确提到与 M5-1 直接相关的未完成问题。
-- 当前任务要求：在第 3 层协议 / server 侧提供 `send-keys`、`capture-pane`、`list-panes` 语义方法；映射到 `TerminalHandle::send_input_bytes`、`TerminalHandle::snapshot` 与 `TerminalPaneGroupHandle::{panes,active_pane,pane_at_screen_position}`；pane 寻址使用 `TerminalPaneId`；新增集成测试验证经第 3 层发送字节和抓取 pane 快照。
-- 已完成关键步骤：
-  - 核心 `src/protocol.rs` 新增 `send_keys` / `capture_pane` / `list_panes` 请求和对应成功响应类型，并补 JSON roundtrip 样例。
-  - 核心 `src/ipc.rs` 新增可选 UI-thread 扩展分发器，未注册时对 pane 方法返回显式 `ActionNotSupported`。
-  - `atto-ui-terminal` 新增 `TerminalPaneIpc` 映射模块，负责把 pane 协议方法映射到 `TerminalPaneGroupHandle` / `TerminalHandle`。
-  - 新增 `crates/atto-ui-terminal/tests/ipc_pane.rs`，覆盖 list/capture 和真实子进程 send/capture 回显路径。
-  - `cargo fmt --all -- --check` 通过。
-  - `cargo clippy --workspace --all-targets -- -D warnings` 通过。
-  - `python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 通过。
-  - `TODO.md` 已将 M5-1 标记为 `[DONE]` 并补完成记录 / 验证记录。
-  - 已创建 Git commit：`[M5-1] Add terminal pane IPC methods`。
-- 下一步：停止，不处理 M5-2。
+- 尚未读取 `TODO.md`，因此当前任务编号和任务正文待确认。
+- 本文件用于记录可审计的执行计划、关键决策和进度更新；不会记录隐藏推理逐字稿。
 
-## M5-1 执行步骤
+## 执行原则
 
-1. 阅读 `src/protocol.rs`、`src/ipc.rs`、`crates/atto-ui-terminal/src/terminal.rs`、`crates/atto-ui-terminal/src/pane.rs` 和现有 IPC / CLI 测试，确认第 3 层协议扩展点与终端 pane API 形状。
-2. 找到 `TerminalHandle` / `TerminalPaneGroupHandle` 是否已能从 UI 线程或组件树中稳定寻址；如果缺少必要的公开桥接 API，优先补齐通用 API，不做任务私有 workaround。
-3. 扩展协议数据结构，加入 `send-keys`、`capture-pane`、`list-panes` 请求 / 响应类型，并补充 JSON roundtrip 单测。
-4. 扩展 server 分发逻辑，使请求在线程安全边界内落到 UI 线程，并映射到目标 pane 的终端 handle。
-5. 增加集成测试，验证经协议发送输入到目标 pane 子进程、抓取目标 pane 快照、列出 pane 信息。
-6. 运行 `cargo fmt --all`，再运行 clippy 与相关测试；最后按要求运行完整 workspace 测试。
-7. 更新 `TODO.md` 的 M5-1 标题为 `[DONE]` 并填写完成记录与验证命令。
-8. 检查变更并提交一个描述清晰的 Git commit，然后停止。
+- 以 `TODO.md` 为唯一任务顺序和完成状态来源。
+- 只完成第一个标题未带 `[DONE]` 的任务，完成后停止。
+- 不做开放式历史问题排查；只处理阻塞当前任务、影响当前任务指定行为、或测试策略要求必须处理的问题。
+- 若遇到不能直接完成的具体阻塞，向 `TODO.md` 插入最小必要前置任务，提交后停止。
+- 完成任务前必须按要求运行格式化、lint 和相关测试；若观察到未被明确排期的失败测试，必须修复或排期。
+
+## 步骤计划
+
+1. 读取 `TODO.md`，确认第一个未完成任务及其验收要求。
+2. 查看最新提交信息，判断是否明确提到与当前任务直接相关的未完成问题。
+3. 按当前任务需要读取相关源码、测试和计划文档；避免无关排查。
+4. 实现任务要求，编辑前在对话中说明将修改的区域，并在本文件记录关键进展。
+5. 运行 `cargo fmt`。
+6. 运行 `cargo clippy --all-targets -- -D warnings`。
+7. 运行必要测试；若涉及代码行为变更，运行完整测试套件并设置不超过 30 分钟的超时。
+8. 更新 `TODO.md`：给已完成任务标题加 `[DONE]`，补全 completion record。
+9. 仅当阶段级计划发生变化时更新 `PLAN.md`。
+10. 检查 git 状态，提交本次任务涉及的所有未提交更改。
+11. 停止，不进入下一个任务。
+
+## 进度记录
+
+- 已创建初始执行计划，下一步读取 `TODO.md` 并确认当前任务。
+- 已读取 `TODO.md`，确认第一个未完成任务为 `M5-2 pane 管理命令映射`。
+- 最新提交为 `[M5-1] Add terminal pane IPC methods`，与当前任务直接相关：M5-2 应在 M5-1 的 pane IPC 协议、server 扩展分发和 terminal pane handler 基础上继续实现。
+
+## M5-2 任务计划
+
+1. 精读 `M5-2` 任务正文、`SCRIPTING_LAYERS.md` 中 tmux / pane 管理相关设计，以及 M5-1 已提交的协议和 terminal IPC 代码。
+2. 梳理现有 `TerminalPaneGroup` / `TerminalPaneGroupHandle` 是否已经暴露 split、方向选中、break pane、popup 所需能力；若缺少公共 handle 方法，优先补齐通用能力，而不是在 IPC 层绕过内部状态。
+3. 扩展第 3 层协议，增加可序列化 pane 管理方法和结果类型：
+   - `split_window`
+   - `select_pane`
+   - `break_pane`
+   - `display_popup`
+   - 复用或保持现有 `list_panes`
+4. 扩展 `IpcServer` 的 extension dispatch 和 `atto-ui-terminal` 的 pane IPC handler，把协议方法映射到原生 pane / window 行为。
+5. 根据实现边界补充测试，至少覆盖：
+   - split 后 pane 数增加；
+   - `select-pane -L/-R` 等几何方向选择能切换 active pane；
+   - `break-pane` 能把 pane 脱离为独立窗口，或在发现缺少必要架构入口时添加最小前置任务并停止。
+6. 更新 `atto` CLI 的人类可读输出，避免新增协议结果导致客户端不可用。
+7. 执行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`，并按观察到的失败测试策略处理。
+8. 将 `TODO.md` 中 `M5-2` 标记 `[DONE]` 并写入完成记录 / 验证记录。
+9. 提交本次任务所有变更后停止。
+
+## M5-2 设计确认
+
+- `IpcMethodHandler` 当前只接收 `&mut Desktop` 和 `ProtocolMethod`，不接收屏幕区域；`break-pane` / `display-popup` 创建窗口时需要屏幕区域进行窗口 placement，因此需要把核心 handler 签名扩展为接收当前 screen。
+- `TerminalPaneGroupHandle` 当前只保存 pane 快照，不能同步执行 mutating pane 管理命令。为了避免“响应成功但实际命令稍后才执行”的伪完成，本任务会把 pane group 的权威状态移入共享 mutex，让 handle 可以在 UI 线程通过同一份状态立即执行 split、几何 select、break。
+- `break-pane` 将从 pane group 中移出目标 `TerminalEmulator`，重建 pane tree，并把该 terminal 作为新的 normal `Window` view 加到 `Desktop`。
+- `display-popup` 将创建一个 floating terminal window。若协议携带命令，则在新 terminal 中 spawn 该命令；否则创建空 terminal view。该方法不实现 tmux shim 参数解析，解析工作留给 M5-3。
+
+## M5-2 当前进度
+
+- 已扩展 `src/protocol.rs`：新增 `split_window`、`select_pane`、`break_pane`、`display_popup` 请求 / 响应类型，并补充 JSON roundtrip 测试。
+- 已扩展核心 IPC extension handler 签名：handler 现在接收当前 screen，新增 pane 管理方法在未注册 terminal handler 时会继续映射为 `ActionNotSupported`。
+- 已重构 `TerminalPaneGroup`：pane tree、pane 列表、active pane、last layout 与 pane factory 进入共享权威状态，`TerminalPaneGroupHandle` 可同步执行 split/select/break。
+- 已实现 terminal IPC 映射：
+  - `split_window` → 原生 pane split；
+  - `select_pane` → 基于 pane rect center 与重叠区的 LRUD 几何选择；
+  - `break_pane` → 从 group 移出 pane 并加入独立 normal window；
+  - `display_popup` → 创建 floating terminal window，可选 spawn argv command。
+- 已补充 `crates/atto-ui-terminal/tests/ipc_pane.rs` 集成测试，覆盖 split、LRUD select、break 到独立窗口、display popup。
+- 已通过验证：
+  - `cargo test -p atto-ui protocol -- --nocapture`
+  - `cargo test -p atto-ui-terminal --test ipc_pane -- --nocapture`
+  - `cargo test -p atto-ui-terminal pane_group -- --nocapture`
+  - `cargo test -p atto-ui ipc_server_reports_extension_methods_unsupported_without_handler -- --nocapture`
+
+## M5-2 完成状态
+
+- 已运行 `cargo fmt --all` 并通过最终 `cargo fmt --all -- --check`。
+- 已通过最终 `cargo clippy --workspace --all-targets -- -D warnings`。
+- 已通过最终完整测试：`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
+- 已将 `TODO.md` 中 `M5-2 pane 管理命令映射` 标记为 `[DONE]`，并写入完成记录与验证记录。
+- 已完成提交前检查：变更范围仅包含 M5-2 相关协议、IPC、terminal pane 实现、测试、`TODO.md` 和本执行计划。
+- 下一步：提交本次任务所有变更，然后停止。

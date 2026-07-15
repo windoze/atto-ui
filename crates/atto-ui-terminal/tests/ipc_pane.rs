@@ -8,11 +8,16 @@ use std::time::{Duration, Instant};
 
 use atto_ui::app::{Desktop, MenuBar};
 use atto_ui::ipc::{IpcServer, send_protocol_request};
-use atto_ui::protocol::{ProtocolRequest, ProtocolResponse, ProtocolResult};
+use atto_ui::protocol::{
+    PaneSelectDirection, PaneSplitDirection, ProtocolRequest, ProtocolResponse, ProtocolResult,
+};
 use atto_ui::theme::Theme;
+use atto_ui::wm::{Window, WindowId, WindowKind};
 use atto_ui_terminal::{
     TerminalEmulator, TerminalPaneGroup, TerminalPaneIpc, terminal_pane_ipc_handler,
 };
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
 static NEXT_SOCKET_ID: AtomicUsize = AtomicUsize::new(0);
@@ -31,6 +36,26 @@ fn screen() -> Rect {
 
 fn empty_desktop() -> Desktop {
     Desktop::new(Theme::dark(), MenuBar::new(vec![]))
+}
+
+fn desktop_with_group(group: TerminalPaneGroup) -> Desktop {
+    let mut desktop = empty_desktop();
+    desktop.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Terminal Panes",
+            Rect::new(2, 2, 70, 18),
+            Box::new(group),
+        ),
+        screen(),
+    );
+    desktop
+}
+
+fn draw_desktop(desktop: &mut Desktop) {
+    let backend = TestBackend::new(screen().width, screen().height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| desktop.draw(frame)).expect("draw");
 }
 
 fn spawn_request(
@@ -184,4 +209,213 @@ fn terminal_pane_ipc_send_keys_reaches_target_subprocess_and_capture_reads_echo(
     }
 
     handle.send_input_bytes(b"quit\n");
+}
+
+#[test]
+fn terminal_pane_ipc_splits_and_selects_panes_by_geometry() {
+    let socket_path = temp_socket_path("split-select");
+    let group = TerminalPaneGroup::new(TerminalEmulator::new());
+    let panes = group.handle();
+    let first_pane_id = panes.active_pane_id().expect("active pane").raw();
+    let mut desktop = desktop_with_group(group);
+    draw_desktop(&mut desktop);
+
+    let mut server = IpcServer::bind(&socket_path).expect("bind ipc");
+    server.set_method_handler(terminal_pane_ipc_handler(TerminalPaneIpc::new(
+        panes.clone(),
+    )));
+
+    let split =
+        ProtocolRequest::split_window("split", Some(first_pane_id), PaneSplitDirection::Vertical);
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), split),
+    );
+    let new_pane_id = match response.result {
+        Some(ProtocolResult::SplitWindow(result)) => {
+            assert_eq!(result.pane_id, first_pane_id);
+            assert_eq!(result.pane_count, 2);
+            result.new_pane_id
+        }
+        other => panic!("expected split_window result, got {other:?}"),
+    };
+    let list = ProtocolRequest::list_panes("list-after-split");
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), list),
+    );
+    match response.result {
+        Some(ProtocolResult::ListPanes(panes)) => {
+            assert_eq!(panes.len(), 2);
+            assert!(
+                panes
+                    .iter()
+                    .any(|pane| pane.pane_id == new_pane_id && pane.is_active)
+            );
+            assert!(panes.iter().all(|pane| pane.rect.is_some()));
+        }
+        other => panic!("expected list_panes result, got {other:?}"),
+    }
+
+    let select_left =
+        ProtocolRequest::select_pane("select-left", Some(new_pane_id), PaneSelectDirection::Left);
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), select_left),
+    );
+    match response.result {
+        Some(ProtocolResult::SelectPane(result)) => {
+            assert_eq!(result.previous_pane_id, new_pane_id);
+            assert_eq!(result.pane_id, first_pane_id);
+        }
+        other => panic!("expected select_pane result, got {other:?}"),
+    }
+
+    let select_right = ProtocolRequest::select_pane(
+        "select-right",
+        Some(first_pane_id),
+        PaneSelectDirection::Right,
+    );
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), select_right),
+    );
+    match response.result {
+        Some(ProtocolResult::SelectPane(result)) => {
+            assert_eq!(result.previous_pane_id, first_pane_id);
+            assert_eq!(result.pane_id, new_pane_id);
+        }
+        other => panic!("expected select_pane result, got {other:?}"),
+    }
+
+    let split_down = ProtocolRequest::split_window(
+        "split-down",
+        Some(first_pane_id),
+        PaneSplitDirection::Horizontal,
+    );
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), split_down),
+    );
+    let lower_pane_id = match response.result {
+        Some(ProtocolResult::SplitWindow(result)) => {
+            assert_eq!(result.pane_id, first_pane_id);
+            assert_eq!(result.pane_count, 3);
+            result.new_pane_id
+        }
+        other => panic!("expected split_window result, got {other:?}"),
+    };
+
+    let select_up =
+        ProtocolRequest::select_pane("select-up", Some(lower_pane_id), PaneSelectDirection::Up);
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), select_up),
+    );
+    match response.result {
+        Some(ProtocolResult::SelectPane(result)) => {
+            assert_eq!(result.previous_pane_id, lower_pane_id);
+            assert_eq!(result.pane_id, first_pane_id);
+        }
+        other => panic!("expected select_pane result, got {other:?}"),
+    }
+
+    let select_down = ProtocolRequest::select_pane(
+        "select-down",
+        Some(first_pane_id),
+        PaneSelectDirection::Down,
+    );
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path, select_down),
+    );
+    match response.result {
+        Some(ProtocolResult::SelectPane(result)) => {
+            assert_eq!(result.previous_pane_id, first_pane_id);
+            assert_eq!(result.pane_id, lower_pane_id);
+        }
+        other => panic!("expected select_pane result, got {other:?}"),
+    }
+}
+
+#[test]
+fn terminal_pane_ipc_breaks_pane_into_window_and_displays_popup_window() {
+    let socket_path = temp_socket_path("break-popup");
+    let group = TerminalPaneGroup::new(TerminalEmulator::new());
+    let panes = group.handle();
+    let first_pane_id = panes.active_pane_id().expect("active pane").raw();
+    let mut desktop = desktop_with_group(group);
+    draw_desktop(&mut desktop);
+
+    let mut server = IpcServer::bind(&socket_path).expect("bind ipc");
+    server.set_method_handler(terminal_pane_ipc_handler(TerminalPaneIpc::new(
+        panes.clone(),
+    )));
+
+    let split = ProtocolRequest::split_window(
+        "split-before-break",
+        Some(first_pane_id),
+        PaneSplitDirection::Vertical,
+    );
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), split),
+    );
+    let pane_to_break = match response.result {
+        Some(ProtocolResult::SplitWindow(result)) => result.new_pane_id,
+        other => panic!("expected split_window result, got {other:?}"),
+    };
+    let break_pane = ProtocolRequest::break_pane("break", pane_to_break);
+    let response = drive_until_response(
+        &mut server,
+        &mut desktop,
+        spawn_request(socket_path.clone(), break_pane),
+    );
+    let detached_window_id = match response.result {
+        Some(ProtocolResult::BreakPane(result)) => {
+            assert_eq!(result.pane_id, pane_to_break);
+            assert_eq!(result.remaining_pane_count, 1);
+            result.window_id
+        }
+        other => panic!("expected break_pane result, got {other:?}"),
+    };
+    assert_eq!(panes.pane_count(), 1);
+    assert!(
+        desktop
+            .wm
+            .window(WindowId::from_raw(detached_window_id))
+            .is_some(),
+        "detached pane should be hosted in an independent window"
+    );
+
+    let popup = ProtocolRequest::display_popup(
+        "popup",
+        Some("Popup".to_string()),
+        Some(atto_ui::runtime::Rect {
+            x: 10,
+            y: 5,
+            width: 30,
+            height: 8,
+        }),
+        None,
+    );
+    let response =
+        drive_until_response(&mut server, &mut desktop, spawn_request(socket_path, popup));
+    let popup_window_id = match response.result {
+        Some(ProtocolResult::DisplayPopup(result)) => result.window_id,
+        other => panic!("expected display_popup result, got {other:?}"),
+    };
+    let popup = desktop
+        .wm
+        .window(WindowId::from_raw(popup_window_id))
+        .expect("popup window");
+    assert_eq!(popup.kind, WindowKind::Floating);
 }

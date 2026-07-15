@@ -33,7 +33,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(10);
 const DEFAULT_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Optional UI-thread method hook for protocol extensions owned by downstream crates.
-pub type IpcMethodHandler = dyn FnMut(&mut Desktop, &ProtocolMethod) -> Result<Option<ProtocolResult>, ComponentError>
+pub type IpcMethodHandler = dyn FnMut(&mut Desktop, Rect, &ProtocolMethod) -> Result<Option<ProtocolResult>, ComponentError>
     + Send;
 
 /// Configuration for binding an IPC server.
@@ -131,7 +131,11 @@ impl IpcServer {
     /// Registers an extension dispatcher that runs on the UI thread.
     pub fn set_method_handler<F>(&mut self, handler: F)
     where
-        F: FnMut(&mut Desktop, &ProtocolMethod) -> Result<Option<ProtocolResult>, ComponentError>
+        F: FnMut(
+                &mut Desktop,
+                Rect,
+                &ProtocolMethod,
+            ) -> Result<Option<ProtocolResult>, ComponentError>
             + Send
             + 'static,
     {
@@ -160,6 +164,7 @@ impl IpcServer {
             method => {
                 let response = execute_immediate_method(
                     desktop,
+                    fallback_screen,
                     id,
                     method,
                     self.method_handler.as_deref_mut(),
@@ -391,6 +396,7 @@ fn write_json_line<T: serde::Serialize>(stream: &mut UnixStream, value: &T) -> i
 
 fn execute_immediate_method(
     desktop: &mut Desktop,
+    screen: Rect,
     id: ProtocolId,
     method: ProtocolMethod,
     method_handler: Option<&mut IpcMethodHandler>,
@@ -425,8 +431,12 @@ fn execute_immediate_method(
         )),
         method @ (ProtocolMethod::SendKeys(_)
         | ProtocolMethod::CapturePane(_)
-        | ProtocolMethod::ListPanes(_)) => {
-            execute_extension_method(desktop, &method, method_handler)
+        | ProtocolMethod::ListPanes(_)
+        | ProtocolMethod::SplitWindow(_)
+        | ProtocolMethod::SelectPane(_)
+        | ProtocolMethod::BreakPane(_)
+        | ProtocolMethod::DisplayPopup(_)) => {
+            execute_extension_method(desktop, screen, &method, method_handler)
         }
     };
 
@@ -438,6 +448,7 @@ fn execute_immediate_method(
 
 fn execute_extension_method(
     desktop: &mut Desktop,
+    screen: Rect,
     method: &ProtocolMethod,
     method_handler: Option<&mut IpcMethodHandler>,
 ) -> Result<ProtocolResult, ComponentError> {
@@ -446,7 +457,7 @@ fn execute_extension_method(
             method,
         )));
     };
-    match handler(desktop, method)? {
+    match handler(desktop, screen, method)? {
         Some(result) => Ok(result),
         None => Err(ComponentError::action_not_supported(protocol_method_name(
             method,
@@ -464,6 +475,10 @@ fn protocol_method_name(method: &ProtocolMethod) -> &'static str {
         ProtocolMethod::SendKeys(_) => "send_keys",
         ProtocolMethod::CapturePane(_) => "capture_pane",
         ProtocolMethod::ListPanes(_) => "list_panes",
+        ProtocolMethod::SplitWindow(_) => "split_window",
+        ProtocolMethod::SelectPane(_) => "select_pane",
+        ProtocolMethod::BreakPane(_) => "break_pane",
+        ProtocolMethod::DisplayPopup(_) => "display_popup",
     }
 }
 
@@ -740,12 +755,44 @@ mod tests {
         .expect("host");
         host.enable_ipc(&socket_path).expect("enable ipc");
 
-        let request = ProtocolRequest::send_keys("send", 1, b"input".to_vec());
-        let response = drive_until_response(&mut host, spawn_request(socket_path, request));
-        assert_eq!(
-            response.error,
-            Some(ComponentError::ActionNotSupported("send_keys".to_string()))
-        );
+        let requests = [
+            (
+                ProtocolRequest::send_keys("send", 1, b"input".to_vec()),
+                "send_keys",
+            ),
+            (ProtocolRequest::capture_pane("capture", 1), "capture_pane"),
+            (ProtocolRequest::list_panes("list"), "list_panes"),
+            (
+                ProtocolRequest::split_window(
+                    "split",
+                    None,
+                    crate::protocol::PaneSplitDirection::Vertical,
+                ),
+                "split_window",
+            ),
+            (
+                ProtocolRequest::select_pane(
+                    "select",
+                    None,
+                    crate::protocol::PaneSelectDirection::Left,
+                ),
+                "select_pane",
+            ),
+            (ProtocolRequest::break_pane("break", 1), "break_pane"),
+            (
+                ProtocolRequest::display_popup("popup", None, None, None),
+                "display_popup",
+            ),
+        ];
+
+        for (request, method) in requests {
+            let response =
+                drive_until_response(&mut host, spawn_request(socket_path.clone(), request));
+            assert_eq!(
+                response.error,
+                Some(ComponentError::ActionNotSupported(method.to_string()))
+            );
+        }
     }
 
     #[test]

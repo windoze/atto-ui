@@ -27,8 +27,9 @@ pub use dynamic::{
 };
 pub use ipc::{TerminalPaneIpc, terminal_pane_ipc_handler};
 pub use pane::{
-    TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalPaneSnapshot,
-    TerminalPaneSplit,
+    TerminalPaneBreakOutcome, TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId,
+    TerminalPaneSelectDirection, TerminalPaneSelectOutcome, TerminalPaneSnapshot,
+    TerminalPaneSplit, TerminalPaneSplitOutcome,
 };
 pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use session::TerminalSessionSpec;

@@ -142,6 +142,55 @@ impl ProtocolRequest {
             method: ProtocolMethod::ListPanes(ListPanesParams {}),
         }
     }
+
+    /// Build a `split_window` request for the active or addressed terminal pane.
+    pub fn split_window(
+        id: impl Into<ProtocolId>,
+        pane_id: Option<u64>,
+        direction: PaneSplitDirection,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::SplitWindow(SplitWindowParams { pane_id, direction }),
+        }
+    }
+
+    /// Build a `select_pane` request that moves focus geometrically from a pane.
+    pub fn select_pane(
+        id: impl Into<ProtocolId>,
+        pane_id: Option<u64>,
+        direction: PaneSelectDirection,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::SelectPane(SelectPaneParams { pane_id, direction }),
+        }
+    }
+
+    /// Build a `break_pane` request that detaches a terminal pane into a window.
+    pub fn break_pane(id: impl Into<ProtocolId>, pane_id: u64) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::BreakPane(BreakPaneParams { pane_id }),
+        }
+    }
+
+    /// Build a `display_popup` request that opens a floating terminal window.
+    pub fn display_popup(
+        id: impl Into<ProtocolId>,
+        title: Option<String>,
+        rect: Option<Rect>,
+        command: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            method: ProtocolMethod::DisplayPopup(DisplayPopupParams {
+                title,
+                rect,
+                command,
+            }),
+        }
+    }
 }
 
 /// Supported method names and their typed parameter payloads.
@@ -156,6 +205,10 @@ pub enum ProtocolMethod {
     SendKeys(SendKeysParams),
     CapturePane(CapturePaneParams),
     ListPanes(ListPanesParams),
+    SplitWindow(SplitWindowParams),
+    SelectPane(SelectPaneParams),
+    BreakPane(BreakPaneParams),
+    DisplayPopup(DisplayPopupParams),
 }
 
 /// Parameters for `query`.
@@ -212,6 +265,60 @@ pub struct CapturePaneParams {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListPanesParams {}
 
+/// Direction used by `split_window`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSplitDirection {
+    /// Split into left/right panes and place the new pane on the right.
+    Vertical,
+    /// Split into top/bottom panes and place the new pane below.
+    Horizontal,
+}
+
+/// Geometric focus direction used by `select_pane`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSelectDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Parameters for `split_window`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplitWindowParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<u64>,
+    pub direction: PaneSplitDirection,
+}
+
+/// Parameters for `select_pane`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectPaneParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<u64>,
+    pub direction: PaneSelectDirection,
+}
+
+/// Parameters for `break_pane`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreakPaneParams {
+    pub pane_id: u64,
+}
+
+/// Parameters for `display_popup`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayPopupParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rect: Option<Rect>,
+    /// Command vector in argv form: first element is the program, remaining elements are args.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+}
+
 /// Top-level response envelope: `{ id, result }` or `{ id, error }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProtocolResponse {
@@ -264,6 +371,10 @@ pub enum ProtocolResult {
     SendKeys(SendKeysResult),
     CapturePane(CapturePaneResult),
     ListPanes(Vec<PaneInfo>),
+    SplitWindow(SplitWindowResult),
+    SelectPane(SelectPaneResult),
+    BreakPane(BreakPaneResult),
+    DisplayPopup(DisplayPopupResult),
 }
 
 /// Success payload for `send_keys`.
@@ -298,6 +409,35 @@ pub struct PaneInfo {
     pub is_active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rect: Option<Rect>,
+}
+
+/// Success payload for `split_window`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplitWindowResult {
+    pub pane_id: u64,
+    pub new_pane_id: u64,
+    pub pane_count: usize,
+}
+
+/// Success payload for `select_pane`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectPaneResult {
+    pub previous_pane_id: u64,
+    pub pane_id: u64,
+}
+
+/// Success payload for `break_pane`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreakPaneResult {
+    pub pane_id: u64,
+    pub window_id: u64,
+    pub remaining_pane_count: usize,
+}
+
+/// Success payload for `display_popup`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayPopupResult {
+    pub window_id: u64,
 }
 
 #[cfg(test)]
@@ -370,6 +510,19 @@ mod tests {
             ProtocolRequest::send_keys(6, 7, b"echo hi\n".to_vec()),
             ProtocolRequest::capture_pane(7, 8),
             ProtocolRequest::list_panes(8),
+            ProtocolRequest::split_window(9, Some(8), PaneSplitDirection::Vertical),
+            ProtocolRequest::select_pane(10, Some(8), PaneSelectDirection::Left),
+            ProtocolRequest::break_pane(11, 8),
+            ProtocolRequest::display_popup(
+                12,
+                Some("Popup".to_string()),
+                Some(screen()),
+                Some(vec![
+                    "/bin/sh".to_string(),
+                    "-lc".to_string(),
+                    "echo hi".to_string(),
+                ]),
+            ),
         ];
 
         for request in requests {
@@ -428,6 +581,33 @@ mod tests {
                     is_active: true,
                     rect: Some(screen()),
                 }]),
+            ),
+            ProtocolResponse::success(
+                9,
+                ProtocolResult::SplitWindow(SplitWindowResult {
+                    pane_id: 9,
+                    new_pane_id: 10,
+                    pane_count: 2,
+                }),
+            ),
+            ProtocolResponse::success(
+                10,
+                ProtocolResult::SelectPane(SelectPaneResult {
+                    previous_pane_id: 10,
+                    pane_id: 9,
+                }),
+            ),
+            ProtocolResponse::success(
+                11,
+                ProtocolResult::BreakPane(BreakPaneResult {
+                    pane_id: 9,
+                    window_id: 3,
+                    remaining_pane_count: 1,
+                }),
+            ),
+            ProtocolResponse::success(
+                12,
+                ProtocolResult::DisplayPopup(DisplayPopupResult { window_id: 4 }),
             ),
         ];
 
