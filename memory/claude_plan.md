@@ -78,3 +78,25 @@
 - 已完成验证：`cargo fmt --all`、`cargo test -p atto-ui-terminal pane_ -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_prefix_splits_panes_inside_one_window -- --nocapture`、`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`、`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 均通过。
 - 已更新 `TODO.md`，将 M5-4 标题标记为 `[DONE]`，并补充完成记录与验证记录。
 - 下一步：检查最终 diff / status，提交本轮变更，然后停止。
+
+## M5-R 任务执行计划
+
+1. 定向复核 M5-1 到 M5-4 的协议、IPC handler、`tmux` shim、pane 管理和本地 pane 交互实现。
+2. 确认 shim / 子命令映射只是第 3 层 socket 之上的 client 翻译，没有实现 tmux server 协议或 control mode。
+3. 确认 `send-keys` / `capture-pane` / pane 管理落到目标 pane 或原生窗口，pane id 寻址逻辑稳定且错误路径显式失败。
+4. 确认本地 pane 方向导航、resize、zoom、close 不破坏既有 `%` / `"` / `o` / Tab 行为，也不影响外层窗口管理行为。
+5. 按顺序运行 `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --all-targets`。
+6. 若验证通过，更新 `TODO.md` 中 M5-R 标题为 `[DONE]` 并填写完成记录和验证命令。
+7. 提交所有本轮相关变更后停止。
+
+## M5-R 进度
+
+- 已读取 `TODO.md`：第一个未完成任务是 `M5-R Review — 第 4 层 L2/L3 完整性与正确性复核`。
+- 已检查最近提交：`dc3ff56 [M5-4] Complete local pane interactions`，未发现提交信息中明确提到与 M5-R 直接相关的未完成问题。
+- 复核结论：协议层只新增 M5 pane 方法的数据形状和成功载荷，核心 IPC server 对这些方法走 `IpcMethodHandler` 扩展分发；未注册 terminal handler 时返回 `ActionNotSupported`。
+- 复核结论：terminal IPC handler 将 `send_keys` / `capture_pane` / `list_panes` / `split_window` / `select_pane` / `break_pane` / `display_popup` 映射到 `TerminalPaneGroupHandle`、`TerminalHandle` 和原生 `Desktop` 窗口操作；多 pane group 下 pane id 冲突或省略 target 都会显式报错。
+- 复核结论：`tmux` shim 是纯客户端翻译器，只解析常用子命令并通过 M4 socket 发送协议请求；`-CC` control mode、未知命令和未知选项均显式失败。
+- 复核结论：本地 pane 交互复用 pane group 的共享 tree / active pane / layout 状态，新增方向选择、resize、zoom、close，同时保留 `%` / `"` / `o` / Tab 键位。
+- 已完成验证：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets` 均通过。
+- 已更新 `TODO.md`，将 M5-R 标题标为 `[DONE]`，并写入复核结论、手动验证提示和验证命令；完成记录写入后仅文档记录变化，复用刚才的绿色验证结果。
+- 下一步：检查最终 diff / status，提交本轮变更，然后停止。

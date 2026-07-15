@@ -271,13 +271,15 @@ cargo test --workspace --all-targets
   - 完成记录：`TerminalPaneGroup` 的 split tree 现为 split 节点保存可调 `first_len`，默认仍按五五分计算，`prefix+Ctrl+方向键` 会调整当前 active pane 最近相邻分隔线并在布局面积内夹紧，避免任一侧被压成无效尺寸。前缀命令新增 `prefix+方向键` 几何选择（复用现有 `select_pane` / `neighbor_pane` 几何逻辑）、`prefix+z` pane 级 zoom / restore（zoom 时仅 active pane 以整个 pane group 区域绘制，隐藏分隔线与其他 pane 可见 rect）、`prefix+x` close active pane 并通过现有 tree 移除 / 重布局路径回流；最后一个 pane 不会被关闭。`break_pane` / IPC pane 管理继续使用同一 tree 权威状态，方向选择在 zoom 状态下仍基于完整底层布局计算。`terminal_viewer` 的可见提示已同步为 pane zoom / resize / close 键位，旧的 `prefix+z` 窗口最大化 PTY 断言改为由 pane zoom 覆盖。
   - 验证：`cargo fmt --all`；`cargo test -p atto-ui-terminal pane_ -- --nocapture`；`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions pty_terminal_prefix_splits_panes_inside_one_window -- --nocapture`；`cargo test -p atto-ui-terminal --test pty_terminal_window_interactions -- --nocapture`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。
 
-- [ ] **[TODO] M5-R Review — 第 4 层 L2/L3 完整性与正确性复核**
+- [x] **[DONE] M5-R Review — 第 4 层 L2/L3 完整性与正确性复核**
   - 复核点：
     1. shim / 子命令映射是第 3 层之上的**纯 client 翻译**，未在 socket 上重实现 tmux server 协议；未做 control mode（决策 F）。
     2. send-keys / capture-pane / pane 管理正确落到目标 pane / 原生窗口，pane 寻址稳定。
     3. 本地 pane 补全（方向导航 / resize / zoom / close）不破坏既有 `%`/`"`/`o`/Tab 与外层 WM 浮动窗口行为。
     4. 不支持的 tmux 子命令显式失败、不静默假成功。
   - 验证：全套 fmt/clippy/test 通过；完成记录列出复核结论与手动验证提示。
+  - 完成记录：第 4 层 L2/L3 复核通过。M5 新增的 `send_keys` / `capture_pane` / `list_panes` / `split_window` / `select_pane` / `break_pane` / `display_popup` 只是 M4 协议上的可序列化方法与 terminal 扩展分发，核心 `IpcServer` 未重新实现 tmux server 协议；未注册 terminal handler 时显式返回 `ActionNotSupported`。`tmux` shim 只是纯客户端翻译器，从 `-S`、`$TMUX` 第一段或 `ATTO_UI_SOCKET` 解析 socket 后发送既有协议请求；`-CC` control mode、未知子命令和未知选项均非零失败，不静默假成功。terminal IPC handler 复用 `TerminalPaneGroupHandle` / `TerminalHandle` / `Desktop` 原生窗口操作，`send-keys` 与 `capture-pane` 按 pane id 命中目标 pane，多 pane group 下 pane id 冲突或缺省 target 会显式报错；`split-window`、方向性 `select-pane`、`break-pane` 和 `display-popup` 分别落到共享 pane tree 与原生 normal / floating 窗口。M5-4 的本地 pane 方向导航、resize、zoom、close 均复用同一共享 pane tree / active id / last layout 状态，保留 `%` / `"` / `o` / Tab 行为，PTY 覆盖确认 pane 分屏不改变外层 terminal window rect，也不扰动 sibling floating window。手动验证提示：可运行 `cargo run -p atto-ui-terminal --example terminal_viewer` 打开真实 viewer，再在启用 tmux 环境注入 / shim PATH 的终端子进程中试用 `tmux list-panes`、`tmux capture-pane -p`、`tmux send-keys`、`tmux split-window -h` 与 pane prefix 键位。
+  - 验证：`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。完成记录写入后仅 `TODO.md` / `memory/claude_plan.md` 文档记录变化，未再重跑测试，复用上述绿色结果。
 
 ---
 
