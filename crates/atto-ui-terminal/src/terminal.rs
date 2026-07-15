@@ -3442,9 +3442,14 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
-        let command_blocks = if self.command_block_presentation.is_enabled() {
+        let command_blocks = if self.command_block_presentation.is_enabled()
+            && !shared.parser.screen().alternate_screen()
+        {
             shared.command_marks.clone()
         } else {
+            // Command-block decorations (separators, output shading, failure
+            // markers) belong to the primary scrollback. Full-screen apps on the
+            // alternate screen manage their own layout, so suppress them there.
             Vec::new()
         };
         let max_scrollback = shared.max_scrollback();
