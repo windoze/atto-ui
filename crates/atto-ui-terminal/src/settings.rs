@@ -1089,6 +1089,7 @@ mod tests {
             tmux: TerminalTmuxEnvironmentConfig {
                 inject: true,
                 socket_path: "/tmp/atto-ui-settings.sock".to_string(),
+                shim_path: Some("/tmp/atto-ui-shim".to_string()),
                 server_pid: Some(5150),
                 session_id: 8,
                 pane_id: 13,

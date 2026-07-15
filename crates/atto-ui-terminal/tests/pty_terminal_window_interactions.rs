@@ -578,6 +578,7 @@ fn pty_terminal_tmux_probe_environment_is_configurable() {
         tmux: TerminalTmuxEnvironmentConfig {
             inject: true,
             socket_path: "/tmp/atto-ui-m3-1.sock".to_string(),
+            shim_path: None,
             server_pid: Some(4242),
             session_id: 7,
             pane_id: 3,

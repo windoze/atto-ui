@@ -565,6 +565,8 @@ pub struct TerminalTmuxEnvironmentConfig {
     #[serde(default = "default_tmux_socket_path")]
     pub socket_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shim_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_pid: Option<u32>,
     #[serde(default)]
     pub session_id: u64,
@@ -593,6 +595,16 @@ impl TerminalTmuxEnvironmentConfig {
             !self.socket_path.contains('\0'),
             "tmux socket_path must not contain NUL bytes"
         );
+        if let Some(shim_path) = &self.shim_path {
+            ensure!(
+                !shim_path.trim().is_empty(),
+                "tmux shim_path must not be empty when set"
+            );
+            ensure!(
+                !shim_path.contains('\0'),
+                "tmux shim_path must not contain NUL bytes"
+            );
+        }
         Ok(())
     }
 
@@ -617,6 +629,7 @@ impl Default for TerminalTmuxEnvironmentConfig {
         Self {
             inject: false,
             socket_path: default_tmux_socket_path(),
+            shim_path: None,
             server_pid: None,
             session_id: 0,
             pane_id: 0,
@@ -1023,6 +1036,7 @@ mod tests {
             tmux: TerminalTmuxEnvironmentConfig {
                 inject: true,
                 socket_path: "/tmp/atto-ui-test.sock".to_string(),
+                shim_path: Some("/tmp/atto-ui-shim".to_string()),
                 server_pid: Some(4242),
                 session_id: 7,
                 pane_id: 3,

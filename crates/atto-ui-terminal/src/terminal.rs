@@ -564,6 +564,7 @@ mod tests {
         let terminal = TerminalEmulator::new().tmux_environment(TerminalTmuxEnvironmentConfig {
             inject: true,
             socket_path: "/tmp/atto-ui-builder.sock".to_string(),
+            shim_path: None,
             server_pid: Some(1111),
             session_id: 2,
             pane_id: 4,
@@ -609,6 +610,7 @@ mod tests {
         let tmux = TerminalTmuxEnvironmentConfig {
             inject: true,
             socket_path: "/tmp/atto-ui-test.sock".to_string(),
+            shim_path: None,
             server_pid: Some(4242),
             session_id: 7,
             pane_id: 3,
@@ -623,6 +625,29 @@ mod tests {
             Some(OsStr::new("/tmp/atto-ui-test.sock,4242,7"))
         );
         assert_eq!(cmd.get_env("TMUX_PANE"), Some(OsStr::new("%3")));
+    }
+
+    #[test]
+    fn spawn_command_preparation_prepends_tmux_shim_path_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.env("PATH", "/usr/bin:/bin");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-test.sock".to_string(),
+            shim_path: Some("/tmp/atto-ui-shim".to_string()),
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: false,
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        let path = cmd.get_env("PATH").expect("PATH env");
+        let paths = env::split_paths(path).collect::<Vec<_>>();
+        assert_eq!(paths.first(), Some(&PathBuf::from("/tmp/atto-ui-shim")));
+        assert_eq!(paths.get(1), Some(&PathBuf::from("/usr/bin")));
+        assert_eq!(paths.get(2), Some(&PathBuf::from("/bin")));
     }
 
     #[test]
@@ -1476,11 +1501,36 @@ fn prepare_spawn_command(
     if tmux_environment.inject {
         cmd.env("TMUX", tmux_environment.tmux_env_value());
         cmd.env("TMUX_PANE", tmux_environment.tmux_pane_env_value());
+        prepend_tmux_shim_to_path(cmd, tmux_environment)?;
     }
     if cmd.get_cwd().is_none() {
         let cwd = env::current_dir()?;
         cmd.cwd(cwd.as_os_str());
     }
+    Ok(())
+}
+
+fn prepend_tmux_shim_to_path(
+    cmd: &mut CommandBuilder,
+    tmux_environment: &TerminalTmuxEnvironmentConfig,
+) -> Result<()> {
+    let shim_path = tmux_environment
+        .shim_path
+        .as_ref()
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| {
+            let current_exe = env::current_exe()?;
+            current_exe
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| anyhow!("failed to resolve current executable directory"))
+        })?;
+    let mut paths = vec![shim_path];
+    if let Some(existing_path) = cmd.get_env("PATH") {
+        paths.extend(env::split_paths(existing_path).filter(|path| !path.as_os_str().is_empty()));
+    }
+    cmd.env("PATH", env::join_paths(paths)?);
     Ok(())
 }
 

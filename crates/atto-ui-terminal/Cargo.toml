@@ -35,3 +35,8 @@ test = false
 name = "terminal_viewer"
 path = "src/bin/terminal_viewer.rs"
 test = false
+
+[[bin]]
+name = "tmux"
+path = "src/bin/tmux.rs"
+test = false
