@@ -285,6 +285,8 @@ cargo test --workspace --all-targets
 
 ## 收尾
 
-- [ ] **[TODO] FINAL 文档与示例更新**
+- [x] **[DONE] FINAL 文档与示例更新**
   - 根据实际实现更新 `SCRIPTING_LAYERS.md`（标注已落地层级 / 收敛后的最终决策）、`README.md`（若新增 `atto` CLI / tmux shim 用法）、`AGENTS.md`（如涉及代理使用）。若引入新 crate，更新 `CLAUDE.md` 的工作区 crates 清单与项目规模。
   - 验证：仅改文档时可沿用最近一次全套通过结果并注明；涉及代码则重跑全套。
+  - 完成记录：`SCRIPTING_LAYERS.md` 已新增最终落地状态总览，并把第 1-4 层的“待定 / 建议 / 缺口”表述收敛为当前实现和最终决策：`tag` 寻址、`Binding` 属性读取、Unix socket + JSON-RPC 类协议、`atto` CLI、terminal pane IPC、client-side `tmux` shim，以及不实现 tmux server 协议 / control mode 的边界。根 `README.md` 已补充 `atto` CLI 的 `ATTO_UI_SOCKET` 使用示例、terminal pane IPC handler 边界、tmux shim 构建与能力说明，并同步 pane zoom / resize / close 快捷键摘要。`crates/atto-ui-terminal/README.md` 已补充 tmux 配置字段、shim 构建说明、pane IPC handler 注册说明和最新 pane 快捷键。`AGENTS.md` 已从旧 `IMPLEMENTATION_PLAN.md` 记账提示更新为当前 `TODO.md` / `PLAN.md` 约定。`CLAUDE.md` 已更新当前 workspace crate 清单、粗略项目规模、控制平面实现状态和文档资源入口。未更新 `PLAN.md`，因为本轮没有改变阶段级计划、依赖或完成标准。
+  - 验证：`git diff --check` 通过。未运行 `cargo fmt` / `cargo clippy` / `cargo test`，因为本轮仅修改 Markdown 文档与 `memory/claude_plan.md` 进度记录，没有代码或编译输出相关变更；复用 M5-R 最近一次绿色结果：`cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`python3 -c 'import subprocess, sys; subprocess.run(sys.argv[1:], timeout=1800, check=True)' cargo test --workspace --all-targets`。

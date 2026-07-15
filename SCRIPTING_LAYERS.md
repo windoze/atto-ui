@@ -2,6 +2,19 @@
 
 本文记录 atto-ui 引入"组件 introspection + 脚本化 + 外部控制"能力的分层设计与讨论结论。目标是把一个稳定的控制平面**分四层依次叠加**地建起来,每层是上一层的地基,依赖方向单向、不回头。
 
+## 最终落地状态
+
+截至当前实现,四层控制平面已按本文路线落地:
+
+| 层级 | 状态 | 最终决策 / 已实现入口 |
+|---|---|---|
+| 第 1 层 introspection | 已落地 | 公共 `find_by_tag` / `find_by_tag_mut`;`DesktopInspector` 提供 `tree`、`export_snapshot`、`property_names`、`get_property`、`set_property`、tag 覆盖诊断与变更信号聚合。 |
+| 第 2 层 scriptable | 已落地 | `DesktopInspector::query` / `invoke` / `wait_for`;关键叶子控件补齐 `apply_command`,逻辑测试可直接读活 `Binding` 值。 |
+| 第 3 层 ipc | 已落地 | Unix domain socket + JSON-RPC 类协议;`ATTO_UI_SOCKET`;外部 `atto` CLI 支持 `query` / `invoke` / `tree`。 |
+| 第 4 层 tmux adapter | 已落地 | L0 环境注入、L1 tmux DCS passthrough、L2/L3 pane 方法与 client-side `tmux` shim;未实现 tmux server 协议和 control mode。 |
+
+最终决策:寻址复用稳定字符串 `tag`;状态读取以 `Binding` 反射出的 `ComponentValue` 为主;IPC 传输使用 Unix domain socket;协议使用 atto-ui 自有 JSON-RPC 类 envelope;tmux 子命令采用 **shim 可执行文件** 翻译到第 3 层,而不是逆向实现 tmux server 协议;control mode 明确不做。
+
 ## 动机:从"测试繁琐"倒推出来的通用能力
 
 直接触发点是 PTY 测试框架(`crates/atto-ui-test-host`)在测**逻辑与状态变化**时非常繁琐。
@@ -79,10 +92,10 @@
 3. **反射受限**:只反射 `Binding` 字段,且类型受宏白名单限制;非 Binding 的业务态(自定义枚举等)默认不可见。
 4. **只能拉、不能推**:reactive 变更是版本号拉模型(`DirtyFlag`/`DirtyObserver`),没有 push 式订阅——第 2 层"等待状态"要么轮询版本号,要么给关键状态补事件。
 
-### 第 1 层待定决策
+### 第 1 层最终决策
 
-- **A. 寻址方案**:倾向复用字符串 `tag`(已稳定、贯穿 spec/活树),并把 `inspect.rs`/`runtime` 的寻址提炼成公共 `find_by_tag`。约定"可测/可脚本组件必须显式标 `tag`"。
-- **B. 状态读取**:倾向以 `get_property`(复用 `Binding` 反射,大量白拿)为主干,复杂/非 Binding 状态按需补充结构化描述。
+- **A. 寻址方案**:复用字符串 `tag`(已稳定、贯穿 spec/活树),并把 `inspect.rs` 的递归寻址收敛为公共 `find_by_tag` / `find_by_tag_mut`。约定"可测/可脚本组件必须显式标 `tag`"。
+- **B. 状态读取**:以 `get_property` / `property_names`(复用 `Binding` 反射)为主干,复杂/非 Binding 状态按需补充结构化描述。`DesktopInspector::untagged_interactive_nodes` 用于测试期发现漏标 tag 的交互节点。
 
 ---
 
@@ -111,10 +124,10 @@
 
 **职责**:传输 + 序列化,把第 2 层语义 API 暴露给外部进程。
 
-- 若第 2 层 API 设计得当(可序列化值),第 3 层 ≈ "socket server + 序列化",不重新设计语义。
-- **待定决策(此前讨论已搁置,留待第 3 层启动时定)**:
-  - 传输:倾向 **Unix domain socket**(跨进程;`$TMUX` 天然指向 socket 路径,对第 4 层友好;iTerm/tmux 的成熟选择)。
-  - 协议形态:倾向 **自定义干净协议(JSON-RPC 类)**,tmux 语法作为第 4 层的翻译目标——因为控制平面要同时服务原生 CLI / 配置驱动 / 未来 language binding(参见 node binding + react 规划),不该被 tmux 语法锁死。
+- 第 3 层实现为 "socket server + 序列化",不重新设计第 1/2 层语义。
+- **最终决策**:
+  - 传输:**Unix domain socket**。默认环境变量为 `ATTO_UI_SOCKET`;`AppHost::enable_ipc` / `enable_ipc_from_env` 和 crossterm runner 都会在 UI 线程每帧 drain 请求。
+  - 协议形态:**自定义 JSON-RPC 类协议**。method 覆盖 `query` / `invoke` / `wait_for` / `tree` / `property_names`,并扩展 terminal pane 的 `send_keys` / `capture_pane` / `list_panes` / `split_window` / `select_pane` / `break_pane` / `display_popup`。tmux 语法只作为第 4 层翻译目标。
 - **消费者不止 tmux**:脚本化(外部 `atto` CLI 连 socket 驱动 UI,类 iTerm 的 `it2`)、配置驱动(启动读声明式布局文件 = 控制平面命令的批处理)都在这一层受益。
 
 ---
@@ -133,7 +146,7 @@
 |---|---|---|---|
 | **环境探测** | `$TMUX`(socket,pid,session)、`$TMUX_PANE`、`$TERM=screen*/tmux*` | opencode/claude code/vim 插件全靠 `$TMUX` | L0(几行,地基) |
 | **转义序列行为** | DCS passthrough `\033Ptmux;...\033\\`、OSC 52 剪贴板、OSC 9;4 进度 | claude code `/copy`、opencode `writeOsc52`、status shimmer | L1(低成本,复用现有 `on_clipboard_copy`+arboard) |
-| **`tmux` 子命令** | `send-keys` / `capture-pane` / `display-popup` / `split-window` / `select-pane -LRUD` / `list-panes` | fzf `--tmux`、vim-tmux-navigator、agent 编排/dashboard | L2/L3(重,需 socket 上实现 tmux server 协议子集) |
+| **`tmux` 子命令** | `send-keys` / `capture-pane` / `display-popup` / `split-window` / `select-pane -LRUD` / `list-panes` / `break-pane` | fzf `--tmux`、vim-tmux-navigator、agent 编排/dashboard | L2/L3(已通过 shim 翻译到第 3 层,不实现 tmux server 协议) |
 
 **性价比分层**:
 
@@ -141,15 +154,28 @@
 |---|---|---|---|
 | **L0 环境探测** | spawn 子进程时注入 `$TMUX`/`$TMUX_PANE`/`$TERM` | 极低 | 地基,不做全灭 |
 | **L1 DCS/OSC passthrough** | 认 `\033Ptmux;` 包裹 → 拆开 → 走原生 OSC 52/9(已有 `on_clipboard_copy`/arboard) | **低** | **最高**:claude code/opencode 立即受益 |
-| **L2 send-keys/capture-pane** | 在 `$TMUX` socket 上实现最小 tmux server,支持这两条 | 中高 | agent 编排/dashboard/fzf 关键 |
-| **L3 pane 管理命令** | split/select/display-popup/break/join 映射到原生窗口 | 高 | vim-tmux-navigator、fzf popup、并行 agent |
+| **L2 send-keys/capture-pane** | `tmux` shim 解析子命令后调用第 3 层 pane IPC 方法 | 中 | agent 编排/dashboard/fzf 关键 |
+| **L3 pane 管理命令** | split/select/display-popup/break 映射到原生 pane / 原生窗口 | 中高 | vim-tmux-navigator、fzf popup、并行 agent |
 
 **甜点区 = L0 + L1**:近乎免费、立刻见效——已有 OSC 52 回调 + arboard + 环境变量注入 + 一个 `\033Ptmux;` 解包,就能让"已经在为 tmux 适配"的程序在 terminal view 里直接享受原生剪贴板/passthrough。强烈建议先做。
 
-### `tmux` 子命令伪装的两种做法(待定)
-- **(甲) 实现 tmux server 协议**:在 `$TMUX` socket 上监听,让真 `tmux` 客户端连过来。兼容最好,但逆向实现 socket 协议极重。
-- **(乙) shim `tmux` 可执行文件**:把假 `tmux` 放进子进程 `$PATH` 前列,拦截命令转成第 3 层调用。可控得多,但程序用绝对路径调 tmux 或查版本会露馅。
-- 无论甲乙,背后都连到**同一个第 3 层控制平面**,所以这个选择被第 3 层的存在大大简化(shim 只是薄翻译层)。
+### `tmux` 子命令伪装的最终做法
+
+最终采用 **shim `tmux` 可执行文件**。`atto-ui-terminal` 提供一个名为 `tmux` 的小二进制,把假 `tmux` 放进子进程 `$PATH` 前列后,常用子命令会被解析成第 3 层协议请求。shim 从 `-S PATH`、`$TMUX` 第一段或 `ATTO_UI_SOCKET` 找 Unix socket。
+
+已支持的子命令:
+- `send-keys [-t %PANE] [-l] [-N COUNT] <key>...`
+- `capture-pane [-p] [-t %PANE]`
+- `list-panes [-F FORMAT]`
+- `split-window [-h|-v] [-t %PANE]`
+- `select-pane [-L|-R|-U|-D] [-t %PANE]`
+- `break-pane [-t %PANE]`
+- `display-popup [-T TITLE] [-x X -y Y -w W -h H] [--] [command ...]`
+
+明确不做:
+- 不实现 tmux server socket 协议。
+- 不支持 control mode(`-CC`)。
+- 不支持完整 tmux CLI 兼容性;使用绝对路径调用系统 tmux、做完整版本探测或依赖未实现子命令的程序可能绕过 / 识别 shim。不支持的命令必须显式失败,不能静默假成功。
 
 ---
 
@@ -167,38 +193,41 @@ tmux 的 session/window/pane 三层,其 window 层本质是"被困在单个宿�
 
 **特色项(我们强于 tmux)**:pane ↔ window 互转。`break-pane`(pane→window)常用、值得给顺手触发(前缀键 / 拖 pane 标题拽出,借鉴浏览器拖标签);`join-pane`(window→pane)罕见且几乎全靠手动,放进命令模式/菜单即可,不占主快捷键。参照:tmux `break-pane`/`join-pane`、zellij float/embed、Emacs window/frame(`C-x 4`/`C-x 5`)、浏览器拖标签成窗口、VS Code "Move Editor into New Window"。
 
-### 现有引擎已就绪(第 4 层几乎只差翻译层)
-- 本地 tmux-like 分屏已实现:`crates/atto-ui-terminal/src/pane.rs` 的 `TerminalPaneGroup`(二叉树布局、`%`竖分/`"`横分/`o`·Tab 切焦点、`Ctrl+b` 前缀、鼠标点击聚焦)。
-- `TerminalHandle` 已有 `send_input_bytes`(=send-keys)、`snapshot`(=capture-pane)、`resize`、`is_running`/`exit_status`。
-- `TerminalPaneGroupHandle` 已有 `panes()`(=list-panes)、`active_pane`、`pane_at_screen_position`。
-- 关键改造点(路线 B 若做深):reader 线程当前把 PTY 字节**无条件**喂给 vt100(`terminal.rs` reader→`process_output`),control mode(`-CC`)那种"控制帧混在 stdout"的协议需要在 reader→parser 之间加拦截层。**但仿装成 tmux(第 4 层)不需要 control mode**——那是"消费外部真 tmux"的另一条路,此处不采用。
+### 已落地的 terminal / pane 引擎
 
-### 本地 pane 层剩余缺口(与第 4 层无关,属 tmux-like 体验补全)
-| 缺口 | 现状 |
+- 本地 tmux-like 分屏位于 `crates/atto-ui-terminal/src/pane.rs` 的 `TerminalPaneGroup`:二叉树布局、`%` 竖分、`"` 横分、`o` / Tab 线性切焦点、方向键几何选 pane、`Ctrl+方向键` 调整相邻分隔比例、`z` pane 级 zoom、`x` 关闭 pane 并重布局、`Ctrl+B` 前缀、鼠标点击聚焦。
+- `TerminalHandle` 提供 `send_input_bytes`(=send-keys)、`snapshot`(=capture-pane)、`resize`、`is_running` / `exit_status`。
+- `TerminalPaneGroupHandle` 提供 `panes()`(=list-panes)、`active_pane`、`pane_at_screen_position`、`split_pane`、方向性 `select_pane`、`break_pane`。
+- `atto-ui-terminal::terminal_pane_ipc_handler` 把第 3 层 pane 协议方法映射到上述 handle 和原生 `WindowManager`。
+- control mode(`-CC`)不在本路线内。若未来要"消费外部真 tmux",才需要在 reader→parser 之间增加控制帧拦截层;当前"伪装成 tmux"路线不需要它。
+
+### 本地 pane 层状态
+
+| 能力 | 当前状态 |
 |---|---|
-| 方向性 pane 导航(`prefix+方向键`) | 只有 `o`/Tab 线性循环(缺几何方向导航) |
-| pane resize(键盘调分隔比例) | 固定五五分(可复用 `Splitter` 拖动) |
-| pane zoom(`z` 临时全屏) | 有窗口级 ToggleMaximize,缺 pane 级 |
-| pane 关闭(`x`) + 重布局 | 待确认 |
-| copy-mode 搜索(`/`) | 待确认 |
+| 方向性 pane 导航(`prefix+方向键`) | 已实现,基于 pane 几何邻居选择。 |
+| pane resize(`prefix+Ctrl+方向键`) | 已实现,调整当前 pane 附近的 split 比例并夹紧有效尺寸。 |
+| pane zoom(`prefix+z`) | 已实现,pane 级临时全屏 / 还原。 |
+| pane 关闭(`prefix+x`) + 重布局 | 已实现,最后一个 pane 不会被关闭。 |
+| copy-mode 搜索(`/`) | 不属于本阶段已落地范围。 |
 
 ---
 
-## 落地顺序建议
+## 实际落地顺序
 
-1. **第 1 层 introspection** —— 把 `inspect.rs`/`runtime` 的寻址提炼成公共 `find_by_tag`;约定可测组件标 `tag`;确认 `get_property` 覆盖面。**独立交付:PTY 逻辑测试改用读值断言。**
-2. **第 2 层 scriptable** —— 补齐叶子组件(Checkbox/Button/TextBox/Slider…)的 `apply_command`,提供进程内语义 API(invoke/query/wait_for),API 按可序列化设计。接入 `PtyTestHost`。
-3. **第 4 层 L0+L1(甜点区,可提前)** —— 环境变量注入 + DCS/OSC passthrough,复用现有 arboard/`on_clipboard_copy`。**不依赖第 3 层**,可与前两层并行。
-4. **第 3 层 ipc** —— Unix socket + 自定义协议,把第 2 层暴露到进程外(测试→CLI→配置驱动)。
-5. **第 4 层 L2/L3** —— tmux server 协议子集 / shim,pane 管理命令映射到原生窗口。
+1. **第 1 层 introspection** —— 公共 `find_by_tag`;可测组件标 `tag`;`DesktopInspector` 只读门面、tag 诊断、dirty change tracker;chat 示例逻辑测试改用读值断言。
+2. **第 2 层 scriptable** —— 叶子组件 `apply_command`;进程内 `invoke` / `query` / `wait_for`;`PtyTestHost` scriptable helper。
+3. **第 4 层 L0+L1** —— 环境变量注入 + tmux DCS/OSC passthrough,不依赖第 3 层。
+4. **第 3 层 ipc** —— Unix socket + JSON-RPC 类协议 + `atto` CLI。
+5. **第 4 层 L2/L3** —— pane IPC 方法 + client-side `tmux` shim + 本地 pane 方向导航 / resize / zoom / close。
 
-## 待你拍板的关键决策(汇总)
+## 最终关键决策(汇总)
 
 | # | 决策 | 倾向 |
 |---|---|---|
-| A | 第 1 层寻址方案 | 复用字符串 `tag` + 提炼公共 `find_by_tag`,约定可脚本组件必须标 tag |
-| B | 第 1 层状态读取 | 以 `get_property`(Binding 反射)为主干,复杂状态按需补 |
-| C | 第 3 层传输 | Unix domain socket |
-| D | 第 3 层协议 | 自定义干净协议(JSON-RPC 类),tmux 语法作为第 4 层翻译目标 |
-| E | 第 4 层 tmux 子命令伪装 | 甲(真 server 协议)还是乙(shim);背后统一连第 3 层 |
+| A | 第 1 层寻址方案 | 复用字符串 `tag` + 公共 `find_by_tag`,约定可脚本组件必须标 tag |
+| B | 第 1 层状态读取 | 以 `get_property` / `property_names`(Binding 反射)为主干,复杂状态按需补 |
+| C | 第 3 层传输 | Unix domain socket,路径由 `ATTO_UI_SOCKET` 或显式配置指定 |
+| D | 第 3 层协议 | 自定义 JSON-RPC 类协议,tmux 语法只是第 4 层翻译目标 |
+| E | 第 4 层 tmux 子命令伪装 | 乙:client-side `tmux` shim;背后统一连第 3 层 |
 | F | 第 4 层是否做 control mode | 不做(那是"消费外部 tmux"的另一条路,与"伪装成 tmux"目标相反) |
