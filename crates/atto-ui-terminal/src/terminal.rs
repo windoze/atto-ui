@@ -459,6 +459,45 @@ mod tests {
     }
 
     #[test]
+    fn clear_screen_drops_stale_command_marks() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        // Run one command to completion, leaving a recorded block on rows 0-2.
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo ok\
+             \x1b]133;B\x07\x1b]133;C\x07ok\r\n\
+             \x1b]133;D;0\x07",
+        );
+        assert_eq!(terminal.shared.lock().command_marks.len(), 1);
+
+        // A bare Ctrl-L clears the screen and homes the cursor without any new
+        // OSC 133 marker (zsh/bash `clear-screen` does not re-run precmd). The
+        // stale block's rows are now blank, so it must be pruned immediately,
+        // not only once the next command cycle emits a fresh prompt marker.
+        handle.process_output_str("\x1b[H\x1b[2J");
+
+        assert!(terminal.shared.lock().command_marks.is_empty());
+    }
+
+    #[test]
+    fn clear_screen_keeps_marks_still_visible_on_screen() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        // Finished command whose rows remain populated on screen: an in-place
+        // cursor repaint (no erase) must not drop the still-visible block.
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo ok\
+             \x1b]133;B\x07\x1b]133;C\x07ok\r\n\
+             \x1b]133;D;0\x07",
+        );
+        handle.process_output_str("\x1b[H$ echo ok");
+
+        assert_eq!(terminal.shared.lock().command_marks.len(), 1);
+    }
+
+    #[test]
     fn osc7_decodes_file_uri_paths() {
         assert_eq!(
             parse_osc7_cwd(b"file://localhost/Users/test/project%20one").as_deref(),
@@ -1656,6 +1695,16 @@ fn command_row_presentation(blocks: &[TerminalCommandBlock], row: usize) -> Comm
     presentation
 }
 
+/// Returns whether a visible screen row has no drawable content, used to detect
+/// rows blanked by an in-place erase (see `prune_cleared_command_marks`).
+fn command_mark_row_is_blank(screen: &vt100::Screen, row: u16, width: u16) -> bool {
+    (0..width).all(|x| {
+        screen
+            .cell(row, x)
+            .is_none_or(|cell| cell.is_wide_continuation() || cell.contents().is_empty())
+    })
+}
+
 fn command_separator_start(screen: &vt100::Screen, row: u16, width: u16) -> u16 {
     let mut content_end = 0;
     for x in 0..width {
@@ -1988,6 +2037,59 @@ impl TerminalShared {
             });
         }
         self.command_marks.last_mut().expect("command block exists")
+    }
+
+    /// Drops command marks whose recorded rows were blanked by an in-place
+    /// screen erase (Ctrl-L, the `clear`/`tput clear` command, or a full-screen
+    /// app repainting the primary screen).
+    ///
+    /// Such an erase clears the visible rows without scrolling them into
+    /// history, so the marks keep pointing at now-empty rows and paint ghost
+    /// separators / output shading there. Shell integration does not re-emit an
+    /// OSC 133 prompt marker on a bare Ctrl-L, so this runs after *every* output
+    /// batch rather than only when a marker arrives.
+    ///
+    /// A mark is stale when *every* screen row it spans is blank. A live block
+    /// always keeps non-blank rows (the typed command, its output), so requiring
+    /// the whole span to be blank avoids false positives from a completed block
+    /// whose trailing `end` row happens to be empty, or from a redraw that only
+    /// repaints part of a block. A cleared block is blank throughout. Rows still
+    /// in real scrollback are treated as non-blank (preserved as history).
+    fn prune_cleared_command_marks(&mut self) {
+        if self.command_marks.is_empty() {
+            return;
+        }
+        let max_scrollback = self.max_scrollback();
+        let marks = std::mem::take(&mut self.command_marks);
+        let screen = self.parser.screen();
+        let (rows, width) = screen.size();
+        self.command_marks = marks
+            .into_iter()
+            .filter(|block| {
+                // Only real commands (with a recorded command/output span) leave
+                // ghost decorations behind after a clear. Marker-only partial
+                // blocks that legitimately sit on an empty line are preserved.
+                if !block.has_command_activity() {
+                    return true;
+                }
+                let (Some(anchor), Some(last)) = (block.anchor_row(), block.last_row()) else {
+                    return true;
+                };
+                (anchor..=last).any(|absolute_row| {
+                    // A row outside the live viewport (still in scrollback, or
+                    // past the bottom) counts as non-blank so the mark survives.
+                    let Some(visible) = absolute_row.checked_sub(max_scrollback) else {
+                        return true;
+                    };
+                    match u16::try_from(visible) {
+                        Ok(visible) if visible < rows => {
+                            !command_mark_row_is_blank(screen, visible, width)
+                        }
+                        _ => true,
+                    }
+                })
+            })
+            .collect();
     }
 
     fn current_command_block_mut(&mut self) -> Option<&mut TerminalCommandBlock> {
@@ -3769,6 +3871,7 @@ impl TerminalHandle {
             let events = shared.parser.callbacks_mut().take_events();
             let responses = collect_dsr_responses(&mut shared, &decoded);
             let dispatches = shared.apply_callback_events(events);
+            shared.prune_cleared_command_marks();
             (responses, dispatches)
         };
         for response in responses {
