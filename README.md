@@ -2,6 +2,8 @@
 
 `atto-ui` is a multi-window terminal UI framework built on Crossterm and Ratatui. The repository contains the Rust runtime, a Node N-API binding, a typed `@atto-ui/core` JavaScript facade, and a React reconciler package for JSX-driven terminal apps.
 
+<img src="images/terminal.png" />
+
 ## Packages
 
 | Package | Purpose |
