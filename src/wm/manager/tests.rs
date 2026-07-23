@@ -1275,6 +1275,50 @@ fn normal_window_minimize_updates_focus_and_restore_refocuses() {
 }
 
 #[test]
+fn restore_focused_restores_topmost_minimized_window() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let first = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "First",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+    let second = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Second",
+            Rect::new(4, 4, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    // Minimize the focused (topmost) window. Focus falls back to `first`; `second` is minimized.
+    assert_eq!(wm.focused(), Some(second));
+    wm.minimize_focused();
+    assert_eq!(
+        wm.window(second).expect("second").state.get(),
+        WindowState::Minimized
+    );
+    assert_eq!(wm.focused(), Some(first));
+
+    // restore_focused must find the minimized window even though it is not the focused one.
+    assert!(wm.restore_focused());
+    assert_eq!(
+        wm.window(second).expect("second").state.get(),
+        WindowState::Normal
+    );
+    assert_eq!(wm.focused(), Some(second));
+
+    // Nothing minimized left → no-op returning false.
+    assert!(!wm.restore_focused());
+}
+
+#[test]
 fn tooltip_windows_do_not_steal_focus_or_accept_focus() {
     let bounds = Rect::new(0, 0, 80, 24);
     let mut wm = WindowManager::new();

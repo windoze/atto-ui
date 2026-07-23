@@ -148,13 +148,25 @@ impl WindowManager {
         self.focused = self.topmost_focusable_id();
     }
 
-    pub fn restore_focused(&mut self) {
-        let Some(id) = self.focused() else { return };
-        if let Some(w) = self.window_mut(id)
-            && w.state.get() == WindowState::Minimized
-        {
-            w.state.set(WindowState::Normal);
-        }
+    /// Restore the topmost minimized window and give it focus.
+    ///
+    /// This is the counterpart to [`Self::minimize_focused`] for the WM-mode `r` key and the
+    /// "Restore" menu action. It deliberately does *not* look at [`Self::focused`]: minimizing a
+    /// window transfers focus away from it (and `focused`/`topmost_focusable_id` skip minimized
+    /// windows), so the focused window is never itself minimized. Restoring "the focused window"
+    /// would therefore always be a no-op. Windows keep their z-order slot while minimized, so the
+    /// topmost minimized window is the most-recently-raised one — the natural restore target.
+    pub fn restore_focused(&mut self) -> bool {
+        let Some(id) = self
+            .windows
+            .iter()
+            .rev()
+            .find(|w| w.state.get() == WindowState::Minimized && w.kind.is_focusable())
+            .map(|w| w.id)
+        else {
+            return false;
+        };
+        self.restore_window(id)
     }
 
     pub fn restore_window(&mut self, id: WindowId) -> bool {

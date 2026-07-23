@@ -614,7 +614,9 @@ impl Desktop {
             WindowMenuOp::Tile => self.wm.tile(work_area),
             WindowMenuOp::MinimizeFocused => self.wm.minimize_focused(),
             WindowMenuOp::MaximizeFocused => self.wm.toggle_maximize_focused(work_area),
-            WindowMenuOp::RestoreFocused => self.wm.restore_focused(),
+            WindowMenuOp::RestoreFocused => {
+                self.wm.restore_focused();
+            }
             WindowMenuOp::CloseFocused => {
                 if let Some(id) = self.wm.focused() {
                     self.wm.request_close(id);
