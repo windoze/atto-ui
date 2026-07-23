@@ -308,7 +308,9 @@ fn step_once(
     ipc_server: &mut Option<IpcServer>,
     last_timer_instant: &mut Option<Instant>,
     on_tick: Option<&mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>>,
-    on_event: Option<&mut dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>>,
+    on_event: Option<
+        &mut dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
+    >,
     drain_actions: &mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>,
 ) -> Result<AppControl> {
     let screen = session.screen()?;
@@ -606,7 +608,12 @@ impl AppHost {
             .map(|h| h.as_mut() as &mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>);
         let on_event = on_event.as_mut().map(|h| {
             h.as_mut()
-                as &mut dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>
+                as &mut dyn FnMut(
+                    &mut Desktop,
+                    &Event,
+                    Rect,
+                    &DesktopEventResult,
+                ) -> Result<AppControl>
         });
         let mut drain_actions = |_desktop: &mut Desktop, _screen: Rect| Ok(AppControl::Continue);
         step_once(

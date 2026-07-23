@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use super::util::mouse_coords_local_to_area;
 use crate::ComponentValue;
 use crate::composable::{Component, ComponentContext, EventHandling, EventResult, Layout};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
-use super::util::mouse_coords_local_to_area;
 use crate::text::styled_text::{
     hit_test_link, inline_display_width, parse_inline, spans_from_segments,
 };

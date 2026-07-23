@@ -54,7 +54,9 @@ pub(crate) trait FocusableContainer {
 }
 
 pub(crate) fn first_focusable_child<C: FocusableContainer>(c: &C) -> Option<ComponentId> {
-    focusable_children_in_tab_order(c.children()).first().copied()
+    focusable_children_in_tab_order(c.children())
+        .first()
+        .copied()
 }
 
 fn move_focus<C: FocusableContainer>(c: &mut C, direction: TabDirection, wrap: bool) -> bool {
@@ -210,7 +212,12 @@ fn hit_test_child_scrolled<C: FocusableContainer>(
     viewport: (u16, u16),
 ) -> Option<ComponentId> {
     // Anchored children are treated as overlays and do not scroll.
-    for child in c.children().iter().rev().filter(|n| n.layout.anchor.is_some()) {
+    for child in c
+        .children()
+        .iter()
+        .rev()
+        .filter(|n| n.layout.anchor.is_some())
+    {
         if contains(child.bounds(), viewport_x, viewport_y) {
             return Some(child.id);
         }
@@ -220,7 +227,12 @@ fn hit_test_child_scrolled<C: FocusableContainer>(
     let content_x = viewport_x.saturating_add(scroll.x);
     let content_y = viewport_y.saturating_add(scroll.y);
 
-    for child in c.children().iter().rev().filter(|n| n.layout.anchor.is_none()) {
+    for child in c
+        .children()
+        .iter()
+        .rev()
+        .filter(|n| n.layout.anchor.is_none())
+    {
         if !bounds_intersects_viewport(child.bounds(), scroll, viewport) {
             continue;
         }
@@ -374,7 +386,9 @@ pub(crate) fn handle_event<C: FocusableContainer>(
                     row: child_y,
                     ..*m
                 });
-                let res = c.children_mut()[idx].view.handle_event(&child_event, cap_ctx);
+                let res = c.children_mut()[idx]
+                    .view
+                    .handle_event(&child_event, cap_ctx);
                 if matches!(res.capture, Capture::Release) {
                     c.set_captured_child(None);
                 }
@@ -397,7 +411,8 @@ pub(crate) fn handle_event<C: FocusableContainer>(
         let cfg = c.scroll_config();
         let padding = c.padding();
         let thickness = cfg.scrollbar_thickness.max(1);
-        let scrollbars = super::scroll::scrollbars_for_event(area, padding, thickness, c.scrollbars());
+        let scrollbars =
+            super::scroll::scrollbars_for_event(area, padding, thickness, c.scrollbars());
 
         if c.scrollable() {
             let scroll = c.scroll();

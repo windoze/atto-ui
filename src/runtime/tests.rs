@@ -994,14 +994,14 @@ fn builtin_schema_includes_rich_text_and_text_span() {
 #[test]
 fn component_tree_reconciles_view_edits_into_root_before_rebuild() {
     let callbacks = CallbackRegistry::new();
-    let root = ComponentSpec::new("VStack").with_id("root").with_child(
-        ComponentSpecChild::new(
+    let root = ComponentSpec::new("VStack")
+        .with_id("root")
+        .with_child(ComponentSpecChild::new(
             ComponentSpec::new("TextBox")
                 .with_id("name")
                 .with_prop("title", ComponentValue::String("Name".into()))
                 .with_prop("text", ComponentValue::String("old".into())),
-        ),
-    );
+        ));
     let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
 
     // Simulate user input: mutate the view only, never `root`. This mirrors keyboard input landing
@@ -1101,8 +1101,7 @@ fn prop_edge_insets_matches_codec_for_all_input_shapes() {
         let via_build = super::props::prop_edge_insets(&spec, "padding")
             .expect("prop_edge_insets")
             .expect("present");
-        let via_codec =
-            EdgeInsets::from_component_value(value.clone(), "padding").expect("codec");
+        let via_codec = EdgeInsets::from_component_value(value.clone(), "padding").expect("codec");
         assert_eq!(
             via_build, via_codec,
             "build and codec must agree for input {value:?}"

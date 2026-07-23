@@ -1877,8 +1877,14 @@ mod tests {
         // Window property set (title/rect/state/kind) proves the window backend won, not the
         // component (which would expose text/enabled).
         let names = inspector.property_names("shared").expect("resolved");
-        assert!(names.contains(&"rect".to_string()), "expected window backend, got {names:?}");
-        assert!(!names.contains(&"text".to_string()), "component must not win over window");
+        assert!(
+            names.contains(&"rect".to_string()),
+            "expected window backend, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"text".to_string()),
+            "component must not win over window"
+        );
     }
 
     #[test]

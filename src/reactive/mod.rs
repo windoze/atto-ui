@@ -11,9 +11,9 @@ mod timer;
 pub use dirty::{DirtyFlag, DirtyObserver, DirtySignal, DirtySignalSet};
 pub use property::{Binding, Property};
 pub use queue::{EventQueue, drain_channel};
+#[cfg(test)]
+pub use timer::GLOBAL_TIMER_TEST_GUARD;
 pub use timer::{
     TimerHandle, TimerWheel, cancel_timer, global_tick_rate_nanos, register_timer,
     register_timer_with_duration, set_global_tick_rate, tick_global_timers,
 };
-#[cfg(test)]
-pub use timer::GLOBAL_TIMER_TEST_GUARD;

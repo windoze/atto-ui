@@ -343,7 +343,10 @@ fn grid_captured_child_receives_mouse_up_outside_bounds() {
     // plain filler that the release will land on instead.
     let mut grid = Grid::new().with_columns(1usize);
     grid.add_child_with_layout(
-        Box::new(CapturingView::new(Arc::clone(&events), Arc::clone(&toggled))),
+        Box::new(CapturingView::new(
+            Arc::clone(&events),
+            Arc::clone(&toggled),
+        )),
         LayoutParams {
             height: Size::Fixed(1),
             ..LayoutParams::default()
