@@ -6,6 +6,7 @@ mod component;
 mod component_tag;
 mod drag;
 mod find;
+mod focus_container;
 mod for_each;
 mod geom;
 mod grid;
