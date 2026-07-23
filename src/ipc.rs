@@ -269,14 +269,29 @@ pub fn send_protocol_request(
 }
 
 fn bind_unix_listener(socket_path: &Path) -> io::Result<UnixListener> {
-    match UnixListener::bind(socket_path) {
-        Ok(listener) => Ok(listener),
+    let listener = match UnixListener::bind(socket_path) {
+        Ok(listener) => listener,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
             remove_stale_socket(socket_path, &err)?;
-            UnixListener::bind(socket_path)
+            UnixListener::bind(socket_path)?
         }
-        Err(err) => Err(err),
-    }
+        Err(err) => return Err(err),
+    };
+    restrict_socket_permissions(socket_path)?;
+    Ok(listener)
+}
+
+/// Restrict the socket to owner-only access (`0600`).
+///
+/// The IPC protocol can drive the whole UI — `invoke`, `input_text`, `send_keys` (inject bytes into
+/// terminal panes), `display_popup` (may launch a command). Without this the socket is created with
+/// the process umask's default mode, typically leaving it connectable by any local user. We tighten
+/// it immediately after bind. There is an unavoidable sub-millisecond window between `bind` and this
+/// call (setting the umask before bind would need `unsafe`/libc, which the crate forbids); for the
+/// stronger guarantee, place the socket in a private directory (e.g. `$XDG_RUNTIME_DIR`).
+fn restrict_socket_permissions(socket_path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
 }
 
 fn remove_stale_socket(socket_path: &Path, original: &io::Error) -> io::Result<()> {
@@ -895,5 +910,27 @@ mod tests {
         assert!(!normal_checked.get());
         assert!(modal_checked.get());
         assert_eq!(host.step().expect("post step"), AppControl::Continue);
+    }
+
+    #[test]
+    fn bound_socket_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let socket_path = temp_socket_path("perms");
+        let _ = fs::remove_file(&socket_path);
+        let server = IpcServer::bind(&socket_path).expect("bind");
+
+        let mode = fs::metadata(&socket_path)
+            .expect("socket metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "IPC socket must be owner-only (0600), got {mode:o}"
+        );
+
+        drop(server);
+        let _ = fs::remove_file(&socket_path);
     }
 }
