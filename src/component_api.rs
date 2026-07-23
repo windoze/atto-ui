@@ -181,7 +181,8 @@ impl ComponentValueCodec for u32 {
     }
 
     fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(expect_usize(value, name)? as u32)
+        // Clamp (not truncate) on overflow, matching the build-time `prop_u16`/`prop_*` rules.
+        Ok(expect_usize(value, name)?.min(u32::MAX as usize) as u32)
     }
 }
 
@@ -191,7 +192,8 @@ impl ComponentValueCodec for u16 {
     }
 
     fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(expect_usize(value, name)? as u16)
+        // Clamp (not truncate) on overflow, matching the build-time `prop_u16` rule.
+        Ok(expect_usize(value, name)?.min(u16::MAX as usize) as u16)
     }
 }
 

@@ -1049,3 +1049,64 @@ fn component_tree_reconciles_view_edits_into_root_before_rebuild() {
         "user input held only in the view was lost across a rebuild"
     );
 }
+
+// --- D3: build-time prop_edge_insets and the codec share one conversion ---
+
+#[test]
+fn prop_edge_insets_matches_codec_for_all_input_shapes() {
+    use crate::ComponentValueCodec;
+    use crate::composable::EdgeInsets;
+    use std::collections::BTreeMap;
+
+    let scalar = ComponentValue::U64(3);
+    let list = ComponentValue::List(vec![
+        ComponentValue::U64(1),
+        ComponentValue::U64(2),
+        ComponentValue::U64(3),
+        ComponentValue::U64(4),
+    ]);
+    let map = ComponentValue::Map(BTreeMap::from([
+        ("top".to_string(), ComponentValue::U64(5)),
+        ("right".to_string(), ComponentValue::U64(6)),
+        ("bottom".to_string(), ComponentValue::U64(7)),
+        ("left".to_string(), ComponentValue::U64(8)),
+    ]));
+
+    // Expected results pin the conversion so a break in the shared codec is caught (agreement
+    // alone would not: both paths route through the same codec and would break together).
+    let expected = [
+        (scalar, EdgeInsets::all(3)),
+        (
+            list,
+            EdgeInsets {
+                top: 1,
+                right: 2,
+                bottom: 3,
+                left: 4,
+            },
+        ),
+        (
+            map,
+            EdgeInsets {
+                top: 5,
+                right: 6,
+                bottom: 7,
+                left: 8,
+            },
+        ),
+    ];
+
+    for (value, want) in expected {
+        let spec = ComponentSpec::new("VStack").with_prop("padding", value.clone());
+        let via_build = super::props::prop_edge_insets(&spec, "padding")
+            .expect("prop_edge_insets")
+            .expect("present");
+        let via_codec =
+            EdgeInsets::from_component_value(value.clone(), "padding").expect("codec");
+        assert_eq!(
+            via_build, via_codec,
+            "build and codec must agree for input {value:?}"
+        );
+        assert_eq!(via_build, want, "unexpected conversion for input {value:?}");
+    }
+}
