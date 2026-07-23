@@ -109,6 +109,15 @@ impl InspectSnapshot {
     }
 }
 
+/// In-process control façade over a [`Desktop`] for scripting and tests.
+///
+/// Despite the "inspector" name this is **not read-only**. It holds `&mut Desktop` and exposes both
+/// reads (`tree`, `snapshot`, `get_property`, `query`, …) and writes (`set_property`, `action`,
+/// `invoke`, `click`, `input_text`, …). Even the read methods take `&mut self` and run a layout/draw
+/// pass (`draw_desktop`) so bounds and dirty state reflect the current frame — i.e. reading has
+/// rendering side effects. Treat it as a mutable handle, not a pure view. (This is the shared entry
+/// point for both the layer-1 introspection reads and the layer-2 scriptable writes; the two are not
+/// separated at the type level.)
 pub struct DesktopInspector<'a> {
     desktop: &'a mut Desktop,
 }

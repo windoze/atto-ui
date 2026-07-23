@@ -204,7 +204,7 @@ assert!(screen.contains("Expected"));
 
 当前主线是脚本化 / introspection 控制平面,详见 `TODO.md`、`PLAN.md` 和 `SCRIPTING_LAYERS.md`。已完成的核心能力包括:
 
-- **第 1 层 introspection**:公共 `find_by_tag` / `find_by_tag_mut`,`DesktopInspector` 只读门面、属性名查询、tag 覆盖诊断、dirty change tracker。
+- **第 1 层 introspection**:公共 `find_by_tag` / `find_by_tag_mut`,`DesktopInspector` 门面(可变句柄,读方法也会跑 layout/draw,非类型级只读)、属性名查询、tag 覆盖诊断、dirty change tracker。
 - **第 2 层 scriptable**:关键控件 `apply_command`,进程内 `query` / `invoke` / `wait_for`,以及测试侧 scriptable helper。
 - **第 3 层 IPC**:Unix socket + JSON-RPC 类协议,`ATTO_UI_SOCKET`,外部 `atto` CLI。
 - **第 4 层 tmux adapter**:tmux 环境注入、DCS passthrough、terminal pane IPC 方法、client-side `tmux` shim、本地 pane 方向导航 / resize / zoom / close。

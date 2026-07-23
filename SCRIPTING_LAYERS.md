@@ -68,7 +68,9 @@
 
 ## 第 1 层:introspection(地基)
 
-**职责**:组件能被稳定寻址;其当前状态能被读取。纯只读、进程内、无协议。
+**职责**:组件能被稳定寻址;其当前状态能被读取。进程内、无协议。
+
+> 注:这一层描述的是*能力目标*(状态可读)。落地的 `DesktopInspector` 门面并非类型级只读——它持 `&mut Desktop`,读方法(`tree`/`snapshot`/`get_property`)也取 `&mut self` 并跑一次 layout/draw 以刷新 bounds 与 dirty(即"读"带渲染副作用),且同一门面在第 2 层叠加了写方法。详见 `DesktopInspector` 的 doc。
 
 **做完即可独立交付**:逻辑测试从"OCR 屏幕"变成"读值"。
 
@@ -215,7 +217,7 @@ tmux 的 session/window/pane 三层,其 window 层本质是"被困在单个宿�
 
 ## 实际落地顺序
 
-1. **第 1 层 introspection** —— 公共 `find_by_tag`;可测组件标 `tag`;`DesktopInspector` 只读门面、tag 诊断、dirty change tracker;chat 示例逻辑测试改用读值断言。
+1. **第 1 层 introspection** —— 公共 `find_by_tag`;可测组件标 `tag`;`DesktopInspector` 门面(可变句柄,非类型级只读)、tag 诊断、dirty change tracker;chat 示例逻辑测试改用读值断言。
 2. **第 2 层 scriptable** —— 叶子组件 `apply_command`;进程内 `invoke` / `query` / `wait_for`;`PtyTestHost` scriptable helper。
 3. **第 4 层 L0+L1** —— 环境变量注入 + tmux DCS/OSC passthrough,不依赖第 3 层。
 4. **第 3 层 ipc** —— Unix socket + JSON-RPC 类协议 + `atto` CLI。
