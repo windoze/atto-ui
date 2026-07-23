@@ -6,10 +6,13 @@ struct TempThemeFile(std::path::PathBuf);
 
 impl TempThemeFile {
     fn new(ext: &str, contents: &str) -> Self {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before epoch")
-            .as_nanos();
+        // A process-wide counter guarantees a distinct path per file. A wall-clock timestamp is not
+        // enough: two theme tests running in parallel can observe the same nanosecond and collide on
+        // one path, so one test would read another's contents (e.g. reading valid config where it
+        // wrote `base: missing`), flaking intermittently.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
             "atto-ui-theme-test-{}-{unique}.{ext}",
             std::process::id()

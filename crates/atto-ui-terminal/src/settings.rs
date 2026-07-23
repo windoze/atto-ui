@@ -20,7 +20,7 @@ use crate::{
     TerminalAlternateScreenScrollConfig, TerminalColorSpec, TerminalConfig, TerminalCursorConfig,
     TerminalCursorShapeConfig, TerminalPaletteConfig, TerminalProfileConfig,
     TerminalSessionsConfig, TerminalShellIntegrationConfig, TerminalShortcutConfig,
-    TerminalShortcutModifier,
+    TerminalShortcutModifier, TerminalTmuxEnvironmentConfig,
 };
 
 const PALETTE_LEN: usize = 16;
@@ -77,6 +77,7 @@ pub struct TerminalSettingsDraft {
     pub profile_cwd: String,
     pub preserved_profiles: Vec<TerminalProfileConfig>,
     pub shell_integration_inject: bool,
+    pub tmux: TerminalTmuxEnvironmentConfig,
     pub close_window_on_shell_exit: bool,
     pub cursor_shape: TerminalCursorShapeConfig,
 }
@@ -122,6 +123,7 @@ impl TerminalSettingsDraft {
                 .unwrap_or_default(),
             preserved_profiles,
             shell_integration_inject: config.shell_integration.inject,
+            tmux: config.tmux.clone(),
             close_window_on_shell_exit: config.close_window_on_shell_exit,
             cursor_shape: config.cursor.default_shape,
         }
@@ -188,6 +190,7 @@ impl TerminalSettingsDraft {
             shell_integration: TerminalShellIntegrationConfig {
                 inject: self.shell_integration_inject,
             },
+            tmux: self.tmux.clone(),
             close_window_on_shell_exit: self.close_window_on_shell_exit,
             cursor: TerminalCursorConfig {
                 default_shape: self.cursor_shape,
@@ -219,6 +222,7 @@ struct TerminalSettingsBindings {
     profile_cwd: Binding<String>,
     preserved_profiles: Binding<Vec<TerminalProfileConfig>>,
     shell_integration_inject: Binding<bool>,
+    tmux: Binding<TerminalTmuxEnvironmentConfig>,
     close_window_on_shell_exit: Binding<bool>,
     cursor_shape_index: Binding<usize>,
 }
@@ -252,6 +256,7 @@ impl TerminalSettingsBindings {
             profile_cwd: Binding::new(draft.profile_cwd),
             preserved_profiles: Binding::new(draft.preserved_profiles),
             shell_integration_inject: Binding::new(draft.shell_integration_inject),
+            tmux: Binding::new(draft.tmux),
             close_window_on_shell_exit: Binding::new(draft.close_window_on_shell_exit),
             cursor_shape_index: Binding::new(cursor_shape_index(draft.cursor_shape)),
         }
@@ -282,6 +287,7 @@ impl TerminalSettingsBindings {
             profile_cwd: self.profile_cwd.get(),
             preserved_profiles: self.preserved_profiles.get(),
             shell_integration_inject: self.shell_integration_inject.get(),
+            tmux: self.tmux.get(),
             close_window_on_shell_exit: self.close_window_on_shell_exit.get(),
             cursor_shape: cursor_shape_from_index(self.cursor_shape_index.get()),
         }
@@ -316,6 +322,7 @@ impl TerminalSettingsBindings {
         self.preserved_profiles.set(draft.preserved_profiles);
         self.shell_integration_inject
             .set(draft.shell_integration_inject);
+        self.tmux.set(draft.tmux);
         self.close_window_on_shell_exit
             .set(draft.close_window_on_shell_exit);
         self.cursor_shape_index
@@ -1079,6 +1086,15 @@ mod tests {
                 ],
             },
             shell_integration: TerminalShellIntegrationConfig { inject: true },
+            tmux: TerminalTmuxEnvironmentConfig {
+                inject: true,
+                socket_path: "/tmp/atto-ui-settings.sock".to_string(),
+                shim_path: Some("/tmp/atto-ui-shim".to_string()),
+                server_pid: Some(5150),
+                session_id: 8,
+                pane_id: 13,
+                override_term: true,
+            },
             close_window_on_shell_exit: true,
             cursor: TerminalCursorConfig {
                 default_shape: TerminalCursorShapeConfig::Bar,

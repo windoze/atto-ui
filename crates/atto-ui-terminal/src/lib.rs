@@ -7,6 +7,7 @@
 
 mod config;
 mod dynamic;
+mod ipc;
 mod pane;
 mod selection;
 mod session;
@@ -19,13 +20,16 @@ pub use config::{
     TerminalConfig, TerminalConfigFormat, TerminalCursorConfig, TerminalCursorShapeConfig,
     TerminalPaletteConfig, TerminalProfileConfig, TerminalSessionsConfig,
     TerminalShellIntegrationConfig, TerminalShortcutConfig, TerminalShortcutModifier,
+    TerminalTmuxEnvironmentConfig,
 };
 pub use dynamic::{
     register_runtime_components, register_terminal_emulator, terminal_emulator_schema,
 };
+pub use ipc::{TerminalPaneIpc, terminal_pane_ipc_handler};
 pub use pane::{
-    TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId, TerminalPaneSnapshot,
-    TerminalPaneSplit,
+    TerminalPaneBreakOutcome, TerminalPaneGroup, TerminalPaneGroupHandle, TerminalPaneId,
+    TerminalPaneSelectDirection, TerminalPaneSelectOutcome, TerminalPaneSnapshot,
+    TerminalPaneSplit, TerminalPaneSplitOutcome,
 };
 pub use selection::{TerminalSelectionPosition, TerminalSelectionRange};
 pub use session::TerminalSessionSpec;

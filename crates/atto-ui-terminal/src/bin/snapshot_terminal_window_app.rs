@@ -461,9 +461,11 @@ fn sync_terminal_window_title(desktop: &mut Desktop, session: &TerminalWindowSes
     let Some(handle) = session.active_handle() else {
         return false;
     };
-    let Some(title) = handle.window_title() else {
-        return false;
-    };
+    // 应用清空标题时 window_title() 会返回 None,此时把标题恢复为初始值,
+    // 而不是显示成空标题。
+    let title = handle
+        .window_title()
+        .unwrap_or_else(|| terminal_window_title(session.window_number));
     let current_title = desktop.wm.window(session.id).map(|w| w.title.get());
     if current_title.as_deref() == Some(title.as_str()) {
         return false;

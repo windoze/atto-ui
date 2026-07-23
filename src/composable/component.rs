@@ -2,9 +2,11 @@ use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
+use serde::{Deserialize, Serialize};
 
 use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
+use crate::reactive::DirtySignal;
 use crate::runtime::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use crate::theme::Theme;
 use crate::wm::WindowId;
@@ -12,7 +14,7 @@ use crate::{ComponentCommand, ComponentError, ComponentValue};
 
 use super::drag::{DragContext, DragOffer, DragSource, DropFeedback};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventOutcome {
     Consumed,
     #[default]
@@ -126,7 +128,7 @@ impl TabMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComponentAction {
     #[default]
     None,
@@ -154,7 +156,7 @@ impl ComponentAction {
 /// down and `Release` on mouse up. The request bubbles up the container chain and
 /// the window manager routes subsequent mouse events straight back to the
 /// capturing component until it releases.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Capture {
     #[default]
     None,
@@ -175,7 +177,7 @@ macro_rules! impl_component_default_traits {
     };
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventResult {
     pub outcome: EventOutcome,
     pub action: ComponentAction,
@@ -391,6 +393,17 @@ pub trait DynamicTree: Send {
         children[index].view.rebuild_tree()
     }
 
+    /// The declarative **structural skeleton** of a dynamic subtree: type names, tree shape, event
+    /// bindings and child layout/meta.
+    ///
+    /// This is *not* an authoritative source for mutable property **values**. The live view owns
+    /// property state (user input, toggles, cursor position live in the view's `Binding`s), and the
+    /// spec's `props` are only reconciled from the view lazily, before a rebuild (see
+    /// `ComponentTree::sync_root_from_view`). Between reconciles the spec may hold stale prop values.
+    ///
+    /// To read a current property value, always go through [`Component::get_property`], which reads
+    /// the view directly — that is the path `inspect`, `query` and the language bindings already use.
+    /// Use `dynamic_root_spec` only for structure/existence checks and serialization of shape.
     fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
         self.children()
             .iter()
@@ -483,6 +496,14 @@ pub trait Component:
 
     fn set_property(&mut self, name: &str, _value: ComponentValue) -> Result<(), ComponentError> {
         Err(ComponentError::unsupported_property(name))
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        Vec::new()
+    }
+
+    fn supports_command(&self, _command: &ComponentCommand) -> bool {
+        false
     }
 
     fn apply_command(&mut self, _command: ComponentCommand) -> EventResult {
@@ -660,6 +681,14 @@ impl Component for Box<dyn Component> {
 
     fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.as_mut().set_property(name, value)
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        self.as_ref().dirty_signals()
+    }
+
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        self.as_ref().supports_command(command)
     }
 
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {

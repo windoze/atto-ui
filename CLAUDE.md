@@ -7,14 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Atto UI 是一个基于 Crossterm 和 Ratatui 构建的多窗口 TUI (Terminal User Interface) 应用框架,受 Turbo Vision 启发。它提供了完整的窗口管理系统、菜单栏、状态栏以及常用组件库。
 
 ### 项目规模
-- **源代码文件**: 54 个 Rust 源文件
-- **代码行数**: 约 18,300 行 (不含注释和空行)
-  - 主库: ~15,400 行
-  - 测试: ~1,100 行
-  - 示例: ~1,800 行
-- **主要模块**: 核心库 50 文件,测试二进制 4 个,集成测试 11 个,示例应用 1 个
-- **测试框架**: 独立的 PTY 测试工具 crate
-- **工作区 Crates**: atto-ui-test-host (测试框架), atto-ui-macros (过程宏), atto-ui-editor, atto-ui-file-tree, atto-ui-chat, atto-ui-markdown, atto-ui-terminal, atto-ui-components, atto-ui-python, atto-editor-app
+- **Rust 源代码文件**: 333 个 (按 `rg --files -g '*.rs'` 统计)
+- **Rust 代码行数**: 约 147,800 行非空非 `//` 开头行 (粗略统计,含测试、示例、应用与绑定)
+- **测试框架**: 独立的 PTY 测试工具 crate `atto-ui-test-host`,并补充进程内 introspection / scriptable 断言路径
+- **工作区 Crates**: `atto-ui-test-host` (测试框架),`atto-ui-async`,`atto-ui-macros` (过程宏),`atto-ui-chat`,`atto-ui-components`,`atto-ui-markdown`,`atto-ui-editor`,`atto-ui-terminal`,`atto-ui-python`,`atto-ui-node`,`atto-ui-file-tree`,`atto-agent-app`,`atto-editor-app`
+- **JavaScript packages**: `packages/core` (`@atto-ui/core`) 与 `packages/react` (`@atto-ui/react`)
 
 ## 常用命令
 
@@ -197,29 +194,22 @@ assert!(screen.contains("Expected"));
 
 根据 README.md 的说明,开发应遵循以下流程:
 
-1. 查看 `IMPLEMENTATION_PLAN.md` 了解当前进度和待办任务
-2. 按照计划逐步实现功能
-3. 为每个任务/里程碑编写充分的测试(使用 PTY 测试框架)
-4. 完成任务后更新 `IMPLEMENTATION_PLAN.md`
-5. 使用有意义的提交信息提交变更
+1. 查看 `TODO.md` 获取当前任务顺序、依赖、验收要求和完成记录;`PLAN.md` 只记录阶段级计划。
+2. 按照 `TODO.md` 中第一个未完成任务逐步实现功能。
+3. 为每个任务编写充分测试:逻辑 / 状态优先用进程内 introspection / scriptable 断言,渲染和端到端行为继续使用 PTY 测试框架。
+4. 完成任务后在 `TODO.md` 中把任务标题标为 `[DONE]` 并补完成记录;仅当阶段级计划变化时更新 `PLAN.md`。
+5. 使用有意义的提交信息提交变更。
 
 ### 当前实现状态
 
-根据 `IMPLEMENTATION_PLAN.md`,当前已完成的里程碑:
-- **M0-M5**: 核心框架、窗口系统、渲染、菜单栏、状态栏、组件库、PTY 测试框架 (已完成)
-- **M6**: 视图层次和布局管理 (布局容器、padding/margin、对齐、锚点定位) (已完成,现已迁移到声明式 API)
-- **M7**: 视口和滚动支持 (键盘滚动、鼠标滚轮、程序化滚动) (已完成)
-- **M8**: 滚动条 (渲染、拖动、点击轨道、箭头按钮、样式配置、边框挂载、窗口角落保留) (已完成)
-- **M9**: 虚拟滚动 (委托驱动的内容渲染,支持大规模数据集) (已完成)
-- **M10**: 主题文件 + 命名令牌 (从 JSON/YAML 加载主题,支持字形/样式/颜色的用户定义键) (已完成)
-- **声明式/反应式系统**: SwiftUI 风格声明式 API (VStack/HStack/Grid)、反应式属性系统、过程宏支持 (进行中)
+当前主线是脚本化 / introspection 控制平面,详见 `TODO.md`、`PLAN.md` 和 `SCRIPTING_LAYERS.md`。已完成的核心能力包括:
 
-**当前正在开发**:
-- 声明式 API 的完善和优化
-- 反应式状态管理的集成
-- 运行时动态更新路径与测试覆盖的完善
+- **第 1 层 introspection**:公共 `find_by_tag` / `find_by_tag_mut`,`DesktopInspector` 门面(可变句柄,读方法也会跑 layout/draw,非类型级只读)、属性名查询、tag 覆盖诊断、dirty change tracker。
+- **第 2 层 scriptable**:关键控件 `apply_command`,进程内 `query` / `invoke` / `wait_for`,以及测试侧 scriptable helper。
+- **第 3 层 IPC**:Unix socket + JSON-RPC 类协议,`ATTO_UI_SOCKET`,外部 `atto` CLI。
+- **第 4 层 tmux adapter**:tmux 环境注入、DCS passthrough、terminal pane IPC 方法、client-side `tmux` shim、本地 pane 方向导航 / resize / zoom / close。
 
-查看 `IMPLEMENTATION_PLAN.md` 和 `SWIFTUI_STYLE_REFACTOR.md` 了解详细的功能清单和未来计划。
+早期 M0-M7 终端 app 计划已归档到 `docs/archive/2026-07-12-terminal-app/`。`IMPLEMENTATION_PLAN.md` / `SWIFTUI_STYLE_REFACTOR.md` 仍可作为历史设计资料参考,但 routine 任务执行不再以它们为准。
 
 ## 声明式 API (SwiftUI 风格)
 
@@ -389,8 +379,11 @@ VStack::new()
 
 ## 文档资源
 
-- **IMPLEMENTATION_PLAN.md** - 详细的开发里程碑和功能规划
-- **SWIFTUI_STYLE_REFACTOR.md** - SwiftUI 风格重构设计文档
-- **TODO.md** - 当前待办任务和已知问题
+- **TODO.md** - 当前任务顺序、验收要求、依赖和完成记录
+- **PLAN.md** - 当前阶段级计划和完成标准
+- **SCRIPTING_LAYERS.md** - 脚本化 / introspection 控制平面分层设计与最终决策
+- **docs/archive/2026-07-12-terminal-app/** - 已归档的全功能多窗口终端 app 阶段资料
+- **SWIFTUI_STYLE_REFACTOR.md** - SwiftUI 风格重构历史设计文档
+- **IMPLEMENTATION_PLAN.md** - 历史开发里程碑资料
 - **README.md** - 项目概述和快速开始
 - **AGENTS.md** - 代理工具使用说明

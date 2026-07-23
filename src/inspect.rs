@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
@@ -8,7 +10,8 @@ use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{Desktop, DesktopLayout, MenuItem, MenuSpec};
-use crate::composable::{Component, EventResult};
+use crate::composable::{Component, EventResult, find_by_tag, find_by_tag_mut};
+use crate::reactive::{DirtySignal, DirtySignalSet};
 use crate::runtime::{ComponentValue, Rect as RuntimeRect};
 use crate::wm::{Window, WindowId};
 use crate::{ComponentCommand, ComponentError, ComponentTarget, ComponentValueCodec};
@@ -32,6 +35,7 @@ pub struct InspectNode {
     pub type_id: String,
     pub bounds: Option<Rect>,
     pub properties: Vec<String>,
+    pub focusable: bool,
     pub window_id: Option<WindowId>,
     pub children: Vec<InspectNode>,
 }
@@ -105,13 +109,119 @@ impl InspectSnapshot {
     }
 }
 
+/// In-process control façade over a [`Desktop`] for scripting and tests.
+///
+/// Despite the "inspector" name this is **not read-only**. It holds `&mut Desktop` and exposes both
+/// reads (`tree`, `snapshot`, `get_property`, `query`, …) and writes (`set_property`, `action`,
+/// `invoke`, `click`, `input_text`, …). Even the read methods take `&mut self` and run a layout/draw
+/// pass (`draw_desktop`) so bounds and dirty state reflect the current frame — i.e. reading has
+/// rendering side effects. Treat it as a mutable handle, not a pure view. (This is the shared entry
+/// point for both the layer-1 introspection reads and the layer-2 scriptable writes; the two are not
+/// separated at the type level.)
 pub struct DesktopInspector<'a> {
     desktop: &'a mut Desktop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InvokeDispatch {
+    Semantic,
+    CoordinateFallback,
+    Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InvokeResult {
+    pub dispatch: InvokeDispatch,
+    pub result: EventResult,
+}
+
+impl InvokeResult {
+    fn new(dispatch: InvokeDispatch, result: EventResult) -> Self {
+        Self { dispatch, result }
+    }
+
+    fn semantic(result: EventResult) -> Self {
+        Self::new(InvokeDispatch::Semantic, result)
+    }
+
+    fn coordinate_fallback(result: EventResult) -> Self {
+        Self::new(InvokeDispatch::CoordinateFallback, result)
+    }
+
+    fn unsupported() -> Self {
+        Self::new(InvokeDispatch::Unsupported, EventResult::ignored())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum WaitCondition {
+    PropertyEquals {
+        target: ComponentTarget,
+        property: String,
+        expected: ComponentValue,
+    },
+}
+
+impl WaitCondition {
+    pub fn property_equals(
+        target: ComponentTarget,
+        property: impl Into<String>,
+        expected: ComponentValue,
+    ) -> Self {
+        Self::PropertyEquals {
+            target,
+            property: property.into(),
+            expected,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WaitResult {
+    pub polls: u64,
+    pub value: Option<ComponentValue>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DesktopChangeTracker {
+    signals: DirtySignalSet,
+}
+
+impl DesktopChangeTracker {
+    pub fn new(signals: Vec<DirtySignal>) -> Self {
+        Self {
+            signals: DirtySignalSet::new(signals),
+        }
+    }
+
+    pub fn changed_since_last_poll(&mut self) -> bool {
+        self.signals.changed_since_last_poll()
+    }
+
+    pub fn refresh(&mut self, signals: Vec<DirtySignal>) {
+        self.signals.refresh(signals);
+    }
+
+    pub fn signal_count(&self) -> usize {
+        self.signals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.signals.is_empty()
+    }
 }
 
 impl<'a> DesktopInspector<'a> {
     pub fn new(desktop: &'a mut Desktop) -> Self {
         Self { desktop }
+    }
+
+    pub fn change_tracker(&self) -> DesktopChangeTracker {
+        DesktopChangeTracker::new(collect_desktop_dirty_signals(self.desktop))
+    }
+
+    pub fn refresh_change_tracker(&self, tracker: &mut DesktopChangeTracker) {
+        tracker.refresh(collect_desktop_dirty_signals(self.desktop));
     }
 
     pub fn tree(&mut self, screen: Rect) -> Result<InspectNode, ComponentError> {
@@ -134,16 +244,52 @@ impl<'a> DesktopInspector<'a> {
     }
 
     pub fn get_property(&mut self, id: &str, name: &str) -> Result<ComponentValue, ComponentError> {
-        if let Some(value) = menu_get_property(&self.desktop.menu, id, name) {
-            return Ok(value);
+        // Preserves the original chain's error: a resolved id whose backend does not expose `name`
+        // falls through to `not_found(id)` (not `unsupported_property`).
+        match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => menu_get_property(&self.desktop.menu, id, name),
+            Some(DispatchTarget::Window) => window_get_property(&self.desktop.wm, id, name),
+            Some(DispatchTarget::Component) => component_get_property(&self.desktop.wm, id, name),
+            None => None,
         }
-        if let Some(value) = window_get_property(&self.desktop.wm, id, name) {
-            return Ok(value);
+        .ok_or_else(|| ComponentError::not_found(id))
+    }
+
+    pub fn property_names(&mut self, id: &str) -> Result<Vec<String>, ComponentError> {
+        match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => menu_property_names(&self.desktop.menu, id),
+            Some(DispatchTarget::Window) => window_property_names(&self.desktop.wm, id),
+            Some(DispatchTarget::Component) => component_property_names(&self.desktop.wm, id),
+            None => None,
         }
-        if let Some(value) = component_get_property(&self.desktop.wm, id, name) {
-            return Ok(value);
+        .ok_or_else(|| ComponentError::not_found(id))
+    }
+
+    pub fn query(
+        &mut self,
+        target: ComponentTarget,
+        property: &str,
+    ) -> Result<ComponentValue, ComponentError> {
+        match target {
+            ComponentTarget::Id(id) => self.get_property(&id, property),
+            ComponentTarget::Focused => {
+                let Some(focused) = focused_component_mut(&mut self.desktop.wm) else {
+                    return Err(ComponentError::not_found("focused"));
+                };
+                focused
+                    .get_property(property)
+                    .ok_or_else(|| ComponentError::unsupported_property(property))
+            }
         }
-        Err(ComponentError::not_found(id))
+    }
+
+    /// Returns interactive nodes that cannot be targeted by tag-based scripts.
+    pub fn untagged_interactive_nodes(&mut self, screen: Rect) -> Vec<InspectNode> {
+        let _ = draw_desktop(self.desktop, screen);
+        let tree = build_desktop_tree(self.desktop, screen);
+        let mut nodes = Vec::new();
+        collect_untagged_interactive_nodes(&tree, &mut nodes);
+        nodes
     }
 
     pub fn set_property(
@@ -152,16 +298,23 @@ impl<'a> DesktopInspector<'a> {
         name: &str,
         value: ComponentValue,
     ) -> Result<(), ComponentError> {
-        if menu_set_property(&mut self.desktop.menu, id, name, value.clone())? {
-            return Ok(());
+        let handled = match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => {
+                menu_set_property(&mut self.desktop.menu, id, name, value)?
+            }
+            Some(DispatchTarget::Window) => {
+                window_set_property(&mut self.desktop.wm, id, name, value)?
+            }
+            Some(DispatchTarget::Component) => {
+                component_set_property(&mut self.desktop.wm, id, name, value)?
+            }
+            None => return Err(ComponentError::not_found(id)),
+        };
+        if handled {
+            Ok(())
+        } else {
+            Err(ComponentError::not_found(id))
         }
-        if window_set_property(&mut self.desktop.wm, id, name, value.clone())? {
-            return Ok(());
-        }
-        if component_set_property(&mut self.desktop.wm, id, name, value)? {
-            return Ok(());
-        }
-        Err(ComponentError::not_found(id))
     }
 
     pub fn action(
@@ -180,41 +333,168 @@ impl<'a> DesktopInspector<'a> {
         action: ComponentCommand,
     ) -> Result<EventResult, ComponentError> {
         match target {
-            ComponentTarget::Id(id) => self.action_by_id(screen, &id, action),
+            ComponentTarget::Id(id) => Ok(self.invoke_by_id(screen, &id, action)?.result),
             ComponentTarget::Focused => self.action_focused(action),
         }
     }
 
-    fn action_by_id(
+    pub fn invoke(
+        &mut self,
+        screen: Rect,
+        target: ComponentTarget,
+        action: ComponentCommand,
+    ) -> Result<InvokeResult, ComponentError> {
+        match target {
+            ComponentTarget::Id(id) => self.invoke_by_id(screen, &id, action),
+            ComponentTarget::Focused => self.invoke_focused(action),
+        }
+    }
+
+    pub fn wait_for(
+        &mut self,
+        screen: Rect,
+        condition: WaitCondition,
+        timeout: Duration,
+    ) -> Result<WaitResult, ComponentError> {
+        self.wait_for_with_interval(screen, condition, timeout, Duration::from_millis(10))
+    }
+
+    pub fn wait_for_with_interval(
+        &mut self,
+        screen: Rect,
+        condition: WaitCondition,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<WaitResult, ComponentError> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
+        let mut tracker = self.change_tracker();
+        let mut polls = 0;
+
+        loop {
+            draw_desktop(self.desktop, screen)?;
+            self.refresh_change_tracker(&mut tracker);
+            polls += 1;
+
+            if let Some(value) = self.evaluate_wait_condition(&condition)? {
+                return Ok(WaitResult {
+                    polls,
+                    value: Some(value),
+                });
+            }
+
+            if Instant::now() >= deadline {
+                return Err(ComponentError::timeout(format!(
+                    "condition not met after {polls} polls: {condition:?}"
+                )));
+            }
+
+            sleep_until_next_wait_poll(deadline, poll_interval, &mut tracker);
+        }
+    }
+
+    pub(crate) fn poll_wait_condition(
+        &mut self,
+        screen: Rect,
+        condition: &WaitCondition,
+    ) -> Result<Option<ComponentValue>, ComponentError> {
+        draw_desktop(self.desktop, screen)?;
+        self.evaluate_wait_condition(condition)
+    }
+
+    pub fn wait_for_predicate<F>(
+        &mut self,
+        screen: Rect,
+        timeout: Duration,
+        mut predicate: F,
+    ) -> Result<WaitResult, ComponentError>
+    where
+        F: FnMut(&mut Self) -> Result<bool, ComponentError>,
+    {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
+        let mut tracker = self.change_tracker();
+        let mut polls = 0;
+
+        loop {
+            draw_desktop(self.desktop, screen)?;
+            self.refresh_change_tracker(&mut tracker);
+            polls += 1;
+
+            if predicate(self)? {
+                return Ok(WaitResult { polls, value: None });
+            }
+
+            if Instant::now() >= deadline {
+                return Err(ComponentError::timeout(format!(
+                    "predicate not met after {polls} polls"
+                )));
+            }
+
+            sleep_until_next_wait_poll(deadline, poll_interval(), &mut tracker);
+        }
+    }
+
+    fn evaluate_wait_condition(
+        &mut self,
+        condition: &WaitCondition,
+    ) -> Result<Option<ComponentValue>, ComponentError> {
+        match condition {
+            WaitCondition::PropertyEquals {
+                target,
+                property,
+                expected,
+            } => match self.query(target.clone(), property) {
+                Ok(value) if value == *expected => Ok(Some(value)),
+                Ok(_) | Err(ComponentError::NotFound(_)) => Ok(None),
+                Err(err) => Err(err),
+            },
+        }
+    }
+
+    fn invoke_by_id(
         &mut self,
         screen: Rect,
         id: &str,
         action: ComponentCommand,
-    ) -> Result<EventResult, ComponentError> {
+    ) -> Result<InvokeResult, ComponentError> {
         let custom_name = match &action {
             ComponentCommand::Custom { name, .. } => Some(name.clone()),
             _ => None,
         };
 
-        if let Some(result) = menu_action(&mut self.desktop.menu, id, &action) {
-            return Ok(result);
-        }
-        if let Some(result) = window_action(&mut self.desktop.wm, id, &action) {
-            return Ok(result);
-        }
-        if let Some(result) = component_action(&mut self.desktop.wm, id, &action) {
-            if result.is_consumed() {
-                return Ok(result);
+        let target = resolve_dispatch_target(self.desktop, id);
+        let supported = match target {
+            Some(DispatchTarget::Menu) => {
+                menu_command_supported(&self.desktop.menu, id, &action).unwrap_or(false)
             }
-            if let Some(name) = custom_name {
-                return Err(ComponentError::action_not_supported(name));
+            Some(DispatchTarget::Window) => {
+                window_command_supported(&self.desktop.wm, id, &action).unwrap_or(false)
             }
+            Some(DispatchTarget::Component) => {
+                component_command_supported(&self.desktop.wm, id, &action).unwrap_or(false)
+            }
+            None => false,
+        };
+        if supported {
+            let result = match target {
+                Some(DispatchTarget::Menu) => menu_action(&mut self.desktop.menu, id, &action),
+                Some(DispatchTarget::Window) => window_action(&mut self.desktop.wm, id, &action),
+                Some(DispatchTarget::Component) => {
+                    component_action(&mut self.desktop.wm, id, &action)
+                }
+                None => None,
+            }
+            .unwrap_or_else(EventResult::ignored);
+            return Ok(InvokeResult::semantic(result));
         }
 
+        // Semantic command not supported by the resolved backend: a Custom command has no
+        // coordinate fallback, so a known id reports "action not supported".
         if let Some(name) = custom_name
-            && (menu_exists(&self.desktop.menu, id)
-                || window_exists(&self.desktop.wm, id)
-                || component_exists(&self.desktop.wm, id))
+            && target.is_some()
         {
             return Err(ComponentError::action_not_supported(name));
         }
@@ -237,11 +517,11 @@ impl<'a> DesktopInspector<'a> {
                 });
                 let result = self.desktop.handle_event(&event, screen);
                 apply_desktop_action(self.desktop, &result.action);
-                Ok(EventResult {
+                Ok(InvokeResult::coordinate_fallback(EventResult {
                     outcome: result.outcome,
                     action: crate::composable::ComponentAction::None,
                     capture: crate::composable::Capture::None,
-                })
+                }))
             }
             ComponentCommand::InputText(text) => {
                 let snapshot = self.snapshot(screen)?;
@@ -263,11 +543,11 @@ impl<'a> DesktopInspector<'a> {
                 let event = Event::Paste(text);
                 let result = self.desktop.handle_event(&event, screen);
                 apply_desktop_action(self.desktop, &result.action);
-                Ok(EventResult {
+                Ok(InvokeResult::coordinate_fallback(EventResult {
                     outcome: result.outcome,
                     action: crate::composable::ComponentAction::None,
                     capture: crate::composable::Capture::None,
-                })
+                }))
             }
             ComponentCommand::SelectIndex(_) => {
                 Err(ComponentError::action_not_supported("SelectIndex"))
@@ -278,11 +558,27 @@ impl<'a> DesktopInspector<'a> {
         }
     }
 
-    fn action_focused(&mut self, action: ComponentCommand) -> Result<EventResult, ComponentError> {
+    fn invoke_focused(&mut self, action: ComponentCommand) -> Result<InvokeResult, ComponentError> {
         let Some(focused) = focused_component_mut(&mut self.desktop.wm) else {
             return Err(ComponentError::not_found("focused"));
         };
-        let result = focused.apply_command(action.clone());
+        if !focused.supports_command(&action) {
+            return match action {
+                ComponentCommand::Custom { name, .. } => {
+                    Err(ComponentError::action_not_supported(name))
+                }
+                ComponentCommand::SelectIndex(_) => {
+                    Err(ComponentError::action_not_supported("SelectIndex"))
+                }
+                _ => Ok(InvokeResult::unsupported()),
+            };
+        }
+        let result = focused.apply_command(action);
+        Ok(InvokeResult::semantic(result))
+    }
+
+    fn action_focused(&mut self, action: ComponentCommand) -> Result<EventResult, ComponentError> {
+        let result = self.invoke_focused(action.clone())?.result;
         match action {
             ComponentCommand::Custom { name, .. } => {
                 if result.is_consumed() {
@@ -322,6 +618,24 @@ impl Desktop {
     }
 }
 
+fn poll_interval() -> Duration {
+    Duration::from_millis(10)
+}
+
+fn sleep_until_next_wait_poll(
+    deadline: Instant,
+    poll_interval: Duration,
+    tracker: &mut DesktopChangeTracker,
+) {
+    if tracker.changed_since_last_poll() {
+        return;
+    }
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+        return;
+    };
+    thread::sleep(remaining.min(poll_interval));
+}
+
 fn apply_desktop_action(desktop: &mut Desktop, action: &crate::app::DesktopAction) {
     if let crate::app::DesktopAction::CloseWindow(id) = *action {
         desktop.wm.close(id);
@@ -340,6 +654,55 @@ fn draw_desktop(
     Ok(terminal)
 }
 
+fn collect_desktop_dirty_signals(desktop: &Desktop) -> Vec<DirtySignal> {
+    let mut signals = Vec::new();
+    collect_menu_dirty_signals(&desktop.menu, &mut signals);
+    signals.extend(desktop.status.dirty_signals());
+    for window in desktop.wm.windows() {
+        collect_window_dirty_signals(window, &mut signals);
+    }
+    signals
+}
+
+fn collect_menu_dirty_signals(menu: &crate::app::MenuBar, signals: &mut Vec<DirtySignal>) {
+    for spec in menu.menus() {
+        signals.push(spec.title.dirty_signal());
+        collect_menu_item_dirty_signals(&spec.items, signals);
+    }
+}
+
+fn collect_menu_item_dirty_signals(items: &[MenuItem], signals: &mut Vec<DirtySignal>) {
+    for item in items {
+        signals.push(item.label.dirty_signal());
+        signals.push(item.shortcut.dirty_signal());
+        signals.push(item.accelerator.dirty_signal());
+        signals.push(item.mnemonic.dirty_signal());
+        signals.push(item.enabled.dirty_signal());
+        collect_menu_item_dirty_signals(&item.submenu, signals);
+    }
+}
+
+fn collect_window_dirty_signals(window: &Window, signals: &mut Vec<DirtySignal>) {
+    signals.push(window.title.dirty_signal());
+    signals.push(window.rect.dirty_signal());
+    signals.push(window.state.dirty_signal());
+    signals.push(window.dock.dirty_signal());
+    signals.push(window.decorations.dirty_signal());
+    signals.push(window.min_size.dirty_signal());
+    signals.push(window.min_size_mode.dirty_signal());
+    signals.push(window.movable.dirty_signal());
+    signals.push(window.resizable.dirty_signal());
+    signals.push(window.closable.dirty_signal());
+    collect_component_dirty_signals(window.view.as_ref(), signals);
+}
+
+fn collect_component_dirty_signals(view: &dyn Component, signals: &mut Vec<DirtySignal>) {
+    signals.extend(view.dirty_signals());
+    for child in view.children() {
+        collect_component_dirty_signals(child.view.as_ref(), signals);
+    }
+}
+
 fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
     let layout = Desktop::layout(screen);
     let mut root = InspectNode {
@@ -349,6 +712,7 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
         type_id: "Desktop".to_string(),
         bounds: Some(screen),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -361,6 +725,7 @@ fn build_desktop_tree(desktop: &Desktop, screen: Rect) -> InspectNode {
         type_id: "StatusBar".to_string(),
         bounds: Some(layout.status_bar),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     });
@@ -380,6 +745,7 @@ fn build_menu_tree(menu: &crate::app::MenuBar, layout: DesktopLayout) -> Inspect
         type_id: "MenuBar".to_string(),
         bounds: Some(layout.menu_bar),
         properties: Vec::new(),
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -397,6 +763,7 @@ fn build_menu_spec_tree(menu: &MenuSpec) -> InspectNode {
         type_id: "Menu".to_string(),
         bounds: None,
         properties: vec!["title".to_string()],
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -414,6 +781,7 @@ fn build_menu_item_tree(item: &MenuItem) -> InspectNode {
         type_id: "MenuItem".to_string(),
         bounds: None,
         properties: vec!["label".to_string(), "enabled".to_string()],
+        focusable: false,
         window_id: None,
         children: Vec::new(),
     };
@@ -437,6 +805,7 @@ fn build_window_tree(window: &Window) -> InspectNode {
             "state".to_string(),
             "kind".to_string(),
         ],
+        focusable: window.kind.is_focusable(),
         window_id: Some(window.id),
         children: Vec::new(),
     };
@@ -458,6 +827,7 @@ fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId)
             .into_iter()
             .map(|s| s.to_string())
             .collect(),
+        focusable: view.is_focusable(),
         window_id: Some(window_id),
         children: Vec::new(),
     };
@@ -469,6 +839,39 @@ fn build_component_tree(view: &dyn Component, bounds: Rect, window_id: WindowId)
     }
 
     node
+}
+
+fn collect_untagged_interactive_nodes(node: &InspectNode, nodes: &mut Vec<InspectNode>) {
+    if node.id.is_none() && is_interactive_inspect_node(node) {
+        nodes.push(node.clone());
+    }
+
+    for child in &node.children {
+        collect_untagged_interactive_nodes(child, nodes);
+    }
+}
+
+fn is_interactive_inspect_node(node: &InspectNode) -> bool {
+    node.focusable
+        || node
+            .properties
+            .iter()
+            .any(|name| is_interactive_component_property(name))
+}
+
+fn is_interactive_component_property(name: &str) -> bool {
+    matches!(
+        name,
+        "active"
+            | "checked"
+            | "index"
+            | "progress"
+            | "selected"
+            | "selected_index"
+            | "selection"
+            | "text"
+            | "value"
+    )
 }
 
 fn build_desktop_snapshot_tree(desktop: &Desktop, screen: Rect) -> DesktopSnapshotNode {
@@ -836,6 +1239,28 @@ fn center_point(bounds: Rect) -> Option<(u16, u16)> {
     Some((x, y))
 }
 
+/// Which backend owns a tag. The `menu → window → component` precedence lives here alone, so the
+/// property/action methods resolve ownership once and dispatch, instead of each re-deriving the
+/// same fallthrough chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DispatchTarget {
+    Menu,
+    Window,
+    Component,
+}
+
+fn resolve_dispatch_target(desktop: &Desktop, id: &str) -> Option<DispatchTarget> {
+    if menu_exists(&desktop.menu, id) {
+        Some(DispatchTarget::Menu)
+    } else if window_exists(&desktop.wm, id) {
+        Some(DispatchTarget::Window)
+    } else if component_exists(&desktop.wm, id) {
+        Some(DispatchTarget::Component)
+    } else {
+        None
+    }
+}
+
 fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option<ComponentValue> {
     if let Some(spec) = menu_find_spec(menu, id) {
         return match name {
@@ -854,6 +1279,19 @@ fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option
         "enabled" => Some(ComponentValue::Bool(item.enabled.get())),
         _ => None,
     }
+}
+
+fn menu_property_names(menu: &crate::app::MenuBar, id: &str) -> Option<Vec<String>> {
+    if menu_find_spec(menu, id).is_some() {
+        return Some(vec!["title".to_string()]);
+    }
+    menu_find_item(menu, id).map(|_| {
+        vec![
+            "label".to_string(),
+            "shortcut".to_string(),
+            "enabled".to_string(),
+        ]
+    })
 }
 
 fn menu_set_property(
@@ -922,6 +1360,18 @@ fn menu_action(
         }
         _ => None,
     }
+}
+
+fn menu_command_supported(
+    menu: &crate::app::MenuBar,
+    id: &str,
+    action: &ComponentCommand,
+) -> Option<bool> {
+    menu_find_item(menu, id)?;
+    Some(matches!(
+        action,
+        ComponentCommand::Click | ComponentCommand::Submit
+    ))
 }
 
 fn menu_find_item<'a>(menu: &'a crate::app::MenuBar, id: &str) -> Option<&'a MenuItem> {
@@ -1002,6 +1452,17 @@ fn window_get_property(
     }
 }
 
+fn window_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
+    window_find(wm, id).map(|_| {
+        vec![
+            "title".to_string(),
+            "rect".to_string(),
+            "state".to_string(),
+            "kind".to_string(),
+        ]
+    })
+}
+
 fn window_set_property(
     wm: &mut crate::wm::WindowManager,
     id: &str,
@@ -1052,6 +1513,14 @@ fn window_action(
     }
 }
 
+fn window_command_supported(
+    wm: &crate::wm::WindowManager,
+    id: &str,
+    action: &ComponentCommand,
+) -> Option<bool> {
+    window_find(wm, id).map(|_| matches!(action, ComponentCommand::Click))
+}
+
 fn window_find<'a>(wm: &'a crate::wm::WindowManager, id: &str) -> Option<&'a Window> {
     wm.windows().iter().find(|w| w.tag.as_deref() == Some(id))
 }
@@ -1072,8 +1541,23 @@ fn component_get_property(
     name: &str,
 ) -> Option<ComponentValue> {
     for window in wm.windows() {
-        if let Some(found) = component_find(window.view.as_ref(), id) {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
             return found.get_property(name);
+        }
+    }
+    None
+}
+
+fn component_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
+    for window in wm.windows() {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
+            return Some(
+                found
+                    .property_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            );
         }
     }
     None
@@ -1086,7 +1570,7 @@ fn component_set_property(
     value: ComponentValue,
 ) -> Result<bool, ComponentError> {
     for window in wm.windows_mut() {
-        if let Some(found) = component_find_mut(window.view.as_mut(), id) {
+        if let Some(found) = find_by_tag_mut(window.view.as_mut(), id) {
             found.set_property(name, value)?;
             return Ok(true);
         }
@@ -1100,8 +1584,21 @@ fn component_action(
     action: &ComponentCommand,
 ) -> Option<EventResult> {
     for window in wm.windows_mut() {
-        if let Some(found) = component_find_mut(window.view.as_mut(), id) {
+        if let Some(found) = find_by_tag_mut(window.view.as_mut(), id) {
             return Some(found.apply_command(action.clone()));
+        }
+    }
+    None
+}
+
+fn component_command_supported(
+    wm: &crate::wm::WindowManager,
+    id: &str,
+    action: &ComponentCommand,
+) -> Option<bool> {
+    for window in wm.windows() {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
+            return Some(found.supports_command(action));
         }
     }
     None
@@ -1109,7 +1606,7 @@ fn component_action(
 
 fn component_exists(wm: &crate::wm::WindowManager, id: &str) -> bool {
     for window in wm.windows() {
-        if component_find(window.view.as_ref(), id).is_some() {
+        if find_by_tag(window.view.as_ref(), id).is_some() {
             return true;
         }
     }
@@ -1144,36 +1641,16 @@ fn focused_component_in_view(view: &mut dyn Component) -> Option<&mut dyn Compon
     }
 }
 
-fn component_find<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
-    if view.tag() == Some(id) {
-        return Some(view);
-    }
-    for child in view.children() {
-        if let Some(found) = component_find(child.view.as_ref(), id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a mut dyn Component> {
-    if view.tag() == Some(id) {
-        return Some(view);
-    }
-    let children = view.children_mut()?;
-    for child in children {
-        if let Some(found) = component_find_mut(child.view.as_mut(), id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
+    use std::thread;
+    use std::time::Duration;
+
     use super::*;
     use crate::app::MenuBar;
-    use crate::composable::{ComponentTagExt, Label, TabView, TableView, Visibility};
+    use crate::composable::{
+        Checkbox, ComponentTagExt, Label, TabView, TableView, VStack, Visibility,
+    };
     use crate::reactive::Binding;
     use crate::theme::Theme;
     use crate::wm::{Window, WindowKind};
@@ -1326,6 +1803,349 @@ mod tests {
         assert!(!table.properties.contains_key("headers"));
         assert!(!table.properties.contains_key("rows"));
         assert!(!table.properties.contains_key("title"));
+    }
+
+    #[test]
+    fn inspect_property_names_resolves_menu_window_and_component_ids() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![
+            MenuSpec::new(
+                "File",
+                vec![MenuItem::action("Open", || {}).with_tag("menu_open")],
+            )
+            .with_tag("menu_file"),
+        ]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = Label::new("Hello").tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        )
+        .with_tag("win1");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+
+        assert_eq!(
+            inspector.property_names("menu_file").expect("menu spec"),
+            vec!["title".to_string()]
+        );
+        assert_eq!(
+            inspector.property_names("menu_open").expect("menu item"),
+            vec![
+                "label".to_string(),
+                "shortcut".to_string(),
+                "enabled".to_string(),
+            ]
+        );
+        assert_eq!(
+            inspector.property_names("win1").expect("window"),
+            vec![
+                "title".to_string(),
+                "rect".to_string(),
+                "state".to_string(),
+                "kind".to_string(),
+            ]
+        );
+
+        let component_names = inspector.property_names("label").expect("component");
+        assert!(component_names.contains(&"text".to_string()));
+        assert!(component_names.contains(&"enabled".to_string()));
+    }
+
+    #[test]
+    fn dispatch_precedence_prefers_window_over_component_on_tag_collision() {
+        // The menu → window → component precedence now lives in `resolve_dispatch_target`. Pin it:
+        // a window and one of its child components sharing a tag must resolve to the window.
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+
+        let view = Label::new("Hello").tag("shared");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        )
+        .with_tag("shared");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        // Window property set (title/rect/state/kind) proves the window backend won, not the
+        // component (which would expose text/enabled).
+        let names = inspector.property_names("shared").expect("resolved");
+        assert!(
+            names.contains(&"rect".to_string()),
+            "expected window backend, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"text".to_string()),
+            "component must not win over window"
+        );
+    }
+
+    #[test]
+    fn inspect_property_names_unknown_id_returns_not_found() {
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let mut inspector = desktop.inspect();
+
+        assert_eq!(
+            inspector.property_names("missing"),
+            Err(ComponentError::NotFound("missing".to_string()))
+        );
+    }
+
+    #[test]
+    fn untagged_interactive_nodes_reports_only_interactive_nodes_without_tags() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = VStack::new()
+            .child(Checkbox::new("Tagged", Binding::new(false)).tag("tagged_checkbox"))
+            .child(Checkbox::new("Missing tag", Binding::new(false)))
+            .tag("root_stack");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Checks",
+            Rect::new(1, 1, 32, 8),
+            Box::new(view),
+        )
+        .with_tag("checks_window");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let nodes = inspector.untagged_interactive_nodes(screen);
+
+        assert_eq!(nodes.len(), 1);
+        let node = &nodes[0];
+        assert_eq!(node.kind, NodeKind::Component);
+        assert_eq!(node.id, None);
+        assert_eq!(node.name, "Checkbox");
+        assert!(node.focusable);
+        assert!(node.properties.contains(&"checked".to_string()));
+    }
+
+    #[test]
+    fn desktop_change_tracker_reports_binding_changes_once() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let text = Binding::new("Hello".to_string());
+        let view = Label::new(text.clone()).tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let mut tracker = desktop.inspect().change_tracker();
+        assert!(!tracker.is_empty());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.set("Updated".to_string());
+        assert!(tracker.changed_since_last_poll());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.mark_clean();
+        assert!(!tracker.changed_since_last_poll());
+    }
+
+    #[test]
+    fn desktop_change_tracker_refreshes_new_binding_sources() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let mut tracker = desktop.inspect().change_tracker();
+        assert!(tracker.is_empty());
+
+        let text = Binding::new("First".to_string());
+        let view = Label::new(text.clone()).tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        desktop.inspect().refresh_change_tracker(&mut tracker);
+        assert!(!tracker.is_empty());
+        assert!(!tracker.changed_since_last_poll());
+
+        text.set("Second".to_string());
+        assert!(tracker.changed_since_last_poll());
+        assert!(!tracker.changed_since_last_poll());
+    }
+
+    #[test]
+    fn invoke_checkbox_toggle_uses_semantic_dispatch_and_updates_binding() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let checked = Binding::new(false);
+        let view = Checkbox::new("Check", checked.clone()).tag("checkbox");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Checks",
+            Rect::new(1, 1, 30, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let result = inspector
+            .invoke(
+                screen,
+                ComponentTarget::Id("checkbox".to_string()),
+                ComponentCommand::Toggle,
+            )
+            .expect("invoke");
+
+        assert_eq!(result.dispatch, InvokeDispatch::Semantic);
+        assert!(result.result.is_consumed());
+        assert!(checked.get());
+    }
+
+    #[test]
+    fn query_matches_get_property_for_component_ids() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let checked = Binding::new(true);
+        let view = Checkbox::new("Check", checked).tag("checkbox");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Checks",
+            Rect::new(1, 1, 30, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        let queried = inspector
+            .query(ComponentTarget::Id("checkbox".to_string()), "checked")
+            .expect("query");
+        let read = inspector
+            .get_property("checkbox", "checked")
+            .expect("get_property");
+
+        assert_eq!(queried, read);
+    }
+
+    #[test]
+    fn invoke_reports_coordinate_fallback_when_no_semantic_command_exists() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = Label::new("Plain").tag("label");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Labels",
+            Rect::new(1, 1, 30, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let result = desktop
+            .inspect()
+            .invoke(
+                screen,
+                ComponentTarget::Id("label".to_string()),
+                ComponentCommand::Click,
+            )
+            .expect("fallback invoke");
+
+        assert_eq!(result.dispatch, InvokeDispatch::CoordinateFallback);
+    }
+
+    #[test]
+    fn wait_for_property_equals_observes_background_binding_change() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let text = Binding::new("pending".to_string());
+        let view = Label::new(text.clone()).tag("status");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Status",
+            Rect::new(1, 1, 30, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let writer = {
+            let text = text.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(20));
+                text.set("ready".to_string());
+            })
+        };
+
+        let result = desktop
+            .inspect()
+            .wait_for(
+                screen,
+                WaitCondition::property_equals(
+                    ComponentTarget::Id("status".to_string()),
+                    "text",
+                    ComponentValue::String("ready".to_string()),
+                ),
+                Duration::from_secs(1),
+            )
+            .expect("wait_for");
+        writer.join().expect("writer thread");
+
+        assert_eq!(
+            result.value,
+            Some(ComponentValue::String("ready".to_string()))
+        );
+        assert!(result.polls >= 1);
+    }
+
+    #[test]
+    fn wait_for_property_equals_times_out_without_hanging() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let menu = MenuBar::new(vec![]);
+        let mut desktop = Desktop::new(Theme::dark(), menu);
+
+        let view = Label::new("pending").tag("status");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Status",
+            Rect::new(1, 1, 30, 6),
+            Box::new(view),
+        );
+        desktop.add_window(window, screen);
+
+        let err = desktop
+            .inspect()
+            .wait_for_with_interval(
+                screen,
+                WaitCondition::property_equals(
+                    ComponentTarget::Id("status".to_string()),
+                    "text",
+                    ComponentValue::String("never".to_string()),
+                ),
+                Duration::from_millis(20),
+                Duration::from_millis(1),
+            )
+            .expect_err("wait_for should time out");
+
+        assert!(matches!(err, ComponentError::Timeout(_)));
     }
 
     #[test]

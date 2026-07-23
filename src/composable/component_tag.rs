@@ -10,7 +10,7 @@ use super::node::{ComponentId, ComponentNode};
 use super::scroll::ScrollConfig;
 use crate::{
     CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue, TreeError,
-    TreeOp,
+    TreeOp, reactive::DirtySignal,
 };
 use atto_ui_macros::{ComponentProperties, component_properties};
 
@@ -68,6 +68,14 @@ impl Component for ComponentTag {
 
     fn set_property(&mut self, name: &str, value: ComponentValue) -> Result<(), ComponentError> {
         self.inner.set_property(name, value)
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        self.inner.dirty_signals()
+    }
+
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        self.inner.supports_command(command)
     }
 
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {

@@ -69,6 +69,10 @@ name = "demo-12-tab-view"
 path = "demos/12-tab-view/main.rs"
 
 [[bin]]
+name = "atto"
+path = "src/bin/atto.rs"
+
+[[bin]]
 name = "snapshot_app"
 path = "src/bin/snapshot_app.rs"
 test = false

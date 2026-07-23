@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock as ParkingRwLock;
 use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
 
 use crate::composable::EdgeInsets;
 use crate::runtime::{ComponentValue, PropertyMeta, Rect as RuntimeRect};
@@ -39,7 +40,7 @@ impl<T: ComponentPropertySchema> ComponentPropertySchema for std::sync::RwLock<T
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ComponentCommand {
     Click,
     Toggle,
@@ -49,22 +50,20 @@ pub enum ComponentCommand {
     Custom { name: String, payload: Vec<u8> },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComponentTarget {
     Id(String),
     Focused,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComponentError {
     NotFound(String),
     UnsupportedProperty(String),
-    InvalidValue {
-        name: String,
-        expected: &'static str,
-    },
+    InvalidValue { name: String, expected: String },
     ActionNotSupported(String),
     RenderFailed(String),
+    Timeout(String),
 }
 
 impl ComponentError {
@@ -76,10 +75,10 @@ impl ComponentError {
         ComponentError::UnsupportedProperty(name.into())
     }
 
-    pub fn invalid_value(name: impl Into<String>, expected: &'static str) -> Self {
+    pub fn invalid_value(name: impl Into<String>, expected: impl Into<String>) -> Self {
         ComponentError::InvalidValue {
             name: name.into(),
-            expected,
+            expected: expected.into(),
         }
     }
 
@@ -89,6 +88,10 @@ impl ComponentError {
 
     pub(crate) fn render_failed(err: impl ToString) -> Self {
         ComponentError::RenderFailed(err.to_string())
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        ComponentError::Timeout(message.into())
     }
 }
 
@@ -178,7 +181,8 @@ impl ComponentValueCodec for u32 {
     }
 
     fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(expect_usize(value, name)? as u32)
+        // Clamp (not truncate) on overflow, matching the build-time `prop_u16`/`prop_*` rules.
+        Ok(expect_usize(value, name)?.min(u32::MAX as usize) as u32)
     }
 }
 
@@ -188,7 +192,8 @@ impl ComponentValueCodec for u16 {
     }
 
     fn from_component_value(value: ComponentValue, name: &str) -> Result<Self, ComponentError> {
-        Ok(expect_usize(value, name)? as u16)
+        // Clamp (not truncate) on overflow, matching the build-time `prop_u16` rule.
+        Ok(expect_usize(value, name)?.min(u16::MAX as usize) as u16)
     }
 }
 

@@ -7,7 +7,7 @@ use super::component::{Component, ComponentContext, EventResult, ScrollbarHost};
 use super::geom::{contains, mouse_coords_local_to_area};
 use super::node::ComponentId;
 use super::scroll::ScrollConfig;
-use crate::reactive::Binding;
+use crate::reactive::{Binding, DirtySignal};
 use crate::{
     CallbackRegistry, ComponentCommand, ComponentError, ComponentSpec, ComponentValue,
     ComponentValueCodec, TreeError, TreeOp,
@@ -86,6 +86,16 @@ impl ::atto_ui::composable::Component for Border {
             }
             _ => self.inner.set_property(name, value),
         }
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        let mut signals = self.__component_dirty_signals();
+        signals.extend(self.inner.dirty_signals());
+        signals
+    }
+
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        self.inner.supports_command(command)
     }
 
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {

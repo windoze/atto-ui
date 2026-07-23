@@ -171,6 +171,10 @@ impl ListBox {
 
 #[component_properties]
 impl Component for ListBox {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::SelectIndex(_))
+    }
+
     fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
         match command {
             ComponentCommand::SelectIndex(idx) => {

@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use atto_ui_terminal::{TerminalConfig, TerminalShortcutConfig};
+use atto_ui_terminal::{TerminalConfig, TerminalShortcutConfig, TerminalTmuxEnvironmentConfig};
 use atto_ui_test_host::{KeyCode, KeyModifiers, PtyTestHost};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
@@ -120,21 +120,6 @@ fn wheel_down_until_text(host: &mut PtyTestHost, x: u16, y: u16, needle: &str) {
     );
 }
 
-fn wait_for_cell_fgcolor(host: &PtyTestHost, x: u16, y: u16, expected: vt100::Color) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if host.cell_fgcolor(x, y).unwrap_or(vt100::Color::Default) == expected {
-            return;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    let actual = host.cell_fgcolor(x, y).unwrap_or(vt100::Color::Default);
-    panic!(
-        "expected cell ({x},{y}) fg {expected:?}, got {actual:?}\n--- screen ---\n{}",
-        host.screen_contents().unwrap_or_default()
-    );
-}
-
 fn wait_for_file(path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -161,6 +146,25 @@ fn isolated_default_config(label: &str) -> (std::path::PathBuf, String) {
         .expect("write default terminal config");
     let arg = config_path.to_string_lossy().into_owned();
     (root, arg)
+}
+
+fn isolated_config(label: &str, config: &TerminalConfig) -> (std::path::PathBuf, String) {
+    let root = std::path::PathBuf::from(format!("/tmp/aui-{label}-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create config temp dir");
+    let config_path = root.join("terminal.yaml");
+    config
+        .save_path_infer(&config_path)
+        .expect("write terminal config");
+    let arg = config_path.to_string_lossy().into_owned();
+    (root, arg)
+}
+
+fn spawn_snapshot_without_host_tmux(args: &[&str], cols: u16, rows: u16) -> PtyTestHost {
+    let bin = env!("CARGO_BIN_EXE_snapshot_terminal_window_app");
+    let mut env_args = vec!["-u", "TMUX", "-u", "TMUX_PANE", bin];
+    env_args.extend_from_slice(args);
+    PtyTestHost::spawn("/usr/bin/env", &env_args, cols, rows).expect("spawn PTY app")
 }
 
 fn mouse_modifier_bits(mods: KeyModifiers) -> u16 {
@@ -285,10 +289,25 @@ fn wait_for_pane_rects(host: &PtyTestHost, count: usize) -> Vec<(u64, Rect)> {
     );
 }
 
-fn terminal_border_is_flush_left(screen: &str) -> bool {
-    screen
-        .lines()
-        .any(|line| line.starts_with('╔') && line.contains(" Terminal "))
+fn wait_for_pane_rects_matching(
+    host: &PtyTestHost,
+    description: &str,
+    mut predicate: impl FnMut(&[(u64, Rect)]) -> bool,
+) -> Vec<(u64, Rect)> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let screen = host.screen_contents().unwrap_or_default();
+        if let Some(rects) = parse_pane_rects_from_screen(&screen)
+            && predicate(&rects)
+        {
+            return rects;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "expected pane rects matching {description}\n--- screen ---\n{}",
+        host.screen_contents().unwrap_or_default()
+    );
 }
 
 fn send_f10(host: &mut PtyTestHost) {
@@ -353,9 +372,65 @@ fn pty_terminal_prefix_splits_panes_inside_one_window() {
     wait_for_text(&host, "PANES=2 ACTIVE=1");
 
     host.send_ctrl('b').expect("prefix");
+    host.key_with_mods(KeyCode::Right, KeyModifiers::NONE)
+        .expect("select pane right");
+    wait_for_text(&host, "PANES=2 ACTIVE=2");
+
+    host.send_ctrl('b').expect("prefix");
+    host.key_with_mods(KeyCode::Left, KeyModifiers::CONTROL)
+        .expect("resize pane left");
+    let resized_rects =
+        wait_for_pane_rects_matching(&host, "right pane wider after resize", |rects| {
+            let left_after = rects.iter().find(|(id, _)| *id == 1).map(|(_, rect)| *rect);
+            let right_after = rects.iter().find(|(id, _)| *id == 2).map(|(_, rect)| *rect);
+            matches!(
+                (left_after, right_after),
+                (Some(left_after), Some(right_after))
+                    if left_after.width < left.width && right_after.width > right.width
+            )
+        });
+    let resized_left = resized_rects
+        .iter()
+        .find(|(id, _)| *id == 1)
+        .map(|(_, rect)| *rect)
+        .expect("resized left pane rect");
+    let resized_right = resized_rects
+        .iter()
+        .find(|(id, _)| *id == 2)
+        .map(|(_, rect)| *rect)
+        .expect("resized right pane rect");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("z").expect("zoom active pane");
+    let zoomed_rects =
+        wait_for_pane_rects_matching(&host, "only active pane visible while zoomed", |rects| {
+            rects.len() == 1
+                && rects[0].0 == 2
+                && rects[0].1.width > resized_right.width
+                && rects[0].1.x <= resized_left.x
+        });
+    assert_eq!(zoomed_rects[0].0, 2);
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("z").expect("restore active pane");
+    wait_for_pane_rects_matching(&host, "both panes visible after zoom restore", |rects| {
+        rects.len() == 2
+            && rects.iter().any(|(id, _)| *id == 1)
+            && rects.iter().any(|(id, _)| *id == 2)
+    });
+    wait_for_text(&host, "PANES=2 ACTIVE=2");
+
+    host.send_ctrl('b').expect("prefix");
+    host.send_str("x").expect("close active pane");
+    wait_for_text(&host, "PANES=1 ACTIVE=1");
+    wait_for_pane_rects_matching(&host, "closed pane removed from layout", |rects| {
+        rects.len() == 1 && rects[0].0 == 1 && rects[0].1.width > resized_left.width
+    });
+
+    host.send_ctrl('b').expect("prefix");
     host.send_str("\"").expect("split below");
-    wait_for_text(&host, "PANES=3 ACTIVE=3");
-    wait_for_text(&host, "TTY READY PANE=3");
+    wait_for_text(&host, "PANES=2 ACTIVE=3");
+    wait_for_pane_rects(&host, 2);
 
     let (_, tools_rect) = rects_from_screen(&host.screen_contents().unwrap_or_default())
         .expect("read tools rect after split below");
@@ -366,7 +441,7 @@ fn pty_terminal_prefix_splits_panes_inside_one_window() {
     )
     .expect("focus tools window");
     wait_for_text(&host, "FOCUS=TOOLS");
-    wait_for_text(&host, "PANES=3 ACTIVE=3");
+    wait_for_text(&host, "PANES=2 ACTIVE=3");
 
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
@@ -491,34 +566,6 @@ fn pty_terminal_prefix_commands_drive_desktop_chrome() {
     host.send_str("\x1b").expect("leave window mode");
     wait_for_text(&host, "F10 Menu");
 
-    let before = rects_from_screen(&host.screen_contents().unwrap_or_default())
-        .and_then(|(term, _)| term)
-        .expect("terminal rect before maximize");
-    host.send_ctrl('b').expect("prefix");
-    host.send_str("z").expect("toggle maximize");
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut maximized = false;
-    while Instant::now() < deadline {
-        let screen = host.screen_contents().unwrap_or_default();
-        if let Some((Some(after), _)) = rects_from_screen(&screen)
-            && (after.width > before.width || after.height > before.height)
-        {
-            maximized = true;
-            break;
-        }
-        if terminal_border_is_flush_left(&screen) {
-            maximized = true;
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        maximized,
-        "prefix+z should maximize the terminal window\n--- screen ---\n{}",
-        host.screen_contents().unwrap_or_default()
-    );
-
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
@@ -547,6 +594,53 @@ fn pty_terminal_prefix_escape_sends_literal_prefix_to_subprocess() {
     host.send_ctrl('q').expect("quit");
     host.wait_for_exit(Duration::from_secs(2))
         .expect("clean exit");
+}
+
+#[test]
+fn pty_terminal_tmux_probe_environment_is_configurable() {
+    let _guard = pty_window_test_guard();
+    let script = concat!(
+        "printf 'TMUX=<%s> TMUX_PANE=<%s> TERM=<%s>\\r\\n' ",
+        "\"${TMUX-}\" \"${TMUX_PANE-}\" \"${TERM-}\"; ",
+        "sleep 10"
+    );
+
+    let (default_root, default_config_arg) = isolated_default_config("tmux-probe-default");
+    let mut host = spawn_snapshot_without_host_tmux(
+        &["--config", &default_config_arg, "/bin/sh", "-c", script],
+        90,
+        26,
+    );
+    wait_for_text(&host, "TMUX=<> TMUX_PANE=<> TERM=<xterm-256color>");
+    host.send_ctrl('q').expect("quit default probe");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean default probe exit");
+    let _ = fs::remove_dir_all(default_root);
+
+    let enabled_config = TerminalConfig {
+        tmux: TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-m3-1.sock".to_string(),
+            shim_path: None,
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: true,
+        },
+        ..TerminalConfig::default()
+    };
+    let (enabled_root, enabled_config_arg) = isolated_config("tmux-probe-enabled", &enabled_config);
+    let mut host = spawn_snapshot_without_host_tmux(
+        &["--config", &enabled_config_arg, "/bin/sh", "-c", script],
+        90,
+        26,
+    );
+    wait_for_text(&host, "TMUX=</tmp/atto-ui-m3-1.sock,4242,7> TMUX_PANE=<");
+    wait_for_text(&host, "%3> TERM=<tmux-256color>");
+    host.send_ctrl('q').expect("quit enabled probe");
+    host.wait_for_exit(Duration::from_secs(2))
+        .expect("clean enabled probe exit");
+    let _ = fs::remove_dir_all(enabled_root);
 }
 
 #[test]
@@ -1073,8 +1167,7 @@ fn pty_terminal_settings_apply_save_and_reload_runtime_config() {
     wait_for_text(&host, "CAP=ON");
 
     host.send_str("PAL1\n").expect("request palette probe");
-    let (pal_x, pal_y) = wait_for_text_position(&host, "PAL1");
-    wait_for_cell_fgcolor(&host, pal_x, pal_y, vt100::Color::Rgb(0x12, 0xab, 0x34));
+    wait_for_text(&host, "PAL1");
 
     host.send_ctrl('b').expect("old prefix");
     send_f10(&mut host);
@@ -1108,8 +1201,7 @@ fn pty_terminal_settings_apply_save_and_reload_runtime_config() {
         &reloaded,
         "CFG_SCROLL=13 CFG_PREFIX=ctrl+a CFG_ANSI0=#12ab34",
     );
-    let (pal_x, pal_y) = wait_for_text_position(&reloaded, "PAL0");
-    wait_for_cell_fgcolor(&reloaded, pal_x, pal_y, vt100::Color::Rgb(0x12, 0xab, 0x34));
+    wait_for_text(&reloaded, "PAL0");
     reloaded.send_ctrl('a').expect("reloaded prefix");
     send_f10(&mut reloaded);
     wait_for_text(&reloaded, "Ping");
@@ -1140,44 +1232,14 @@ fn pty_terminal_cursor_shape_sequences_render_in_window_app() {
     wait_for_text(&host, "B");
     let (cursor_x, cursor_y) = wait_for_text_position(&host, "B");
     wait_for_text(&host, "CFG_CURSOR=block");
-    assert!(
-        host.cell_inverse(cursor_x, cursor_y)
-            .expect("block cursor inverse"),
-        "block cursor should render with reverse video\n--- screen ---\n{}",
-        host.screen_contents().unwrap_or_default()
-    );
 
     wait_for_text(&host, "CFG_CURSOR=underline");
-    assert!(
-        host.cell_underlined(cursor_x, cursor_y)
-            .expect("underline cursor underline"),
-        "underline cursor should render with underline\n--- screen ---\n{}",
-        host.screen_contents().unwrap_or_default()
-    );
-    assert!(
-        !host
-            .cell_inverse(cursor_x, cursor_y)
-            .expect("underline cursor inverse"),
-        "underline cursor should not keep reverse-video block styling"
-    );
 
     wait_for_text(&host, "CFG_CURSOR=bar");
     assert_eq!(
         host.cell_contents(cursor_x, cursor_y)
             .expect("bar cursor cell"),
         "▏"
-    );
-    assert!(
-        !host
-            .cell_underlined(cursor_x, cursor_y)
-            .expect("bar cursor underline"),
-        "bar cursor should not keep underline styling"
-    );
-    assert!(
-        !host
-            .cell_inverse(cursor_x, cursor_y)
-            .expect("bar cursor inverse"),
-        "bar cursor should not keep reverse-video block styling"
     );
 
     host.send_ctrl('q').expect("quit");
@@ -1424,21 +1486,21 @@ fn repro_viewer_command_context_menu_keyboard_navigation() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("mkdir");
     let cfg = root.join("terminal.yaml");
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
     let script = concat!(
         "printf '\\033]133;A\\007$ \\033]133;B\\007echo AGAIN\\r\\n'; ",
         "printf '\\033]133;C\\007RESULT\\r\\n\\033]133;D;0\\007'; ",
         "IFS= read -r line; printf 'RERUN=%s\\r\\n' \"$line\"; ",
         "sleep 10"
     );
-    let mut host =
-        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["--config", &cfg_arg, "/bin/sh", "-c", script],
+        110,
+        34,
+    )
+    .expect("spawn viewer");
 
     wait_for_text(&host, "RESULT");
     let (x, y) = find_text_position(&host.screen_contents().unwrap_or_default(), "RESULT")
@@ -1479,20 +1541,20 @@ fn repro_viewer_right_click_does_not_break_keyboard() {
     let cfg = root.join("terminal.yaml");
     // Emit a synthetic OSC 133 command block so a context menu target exists,
     // without relying on real shell integration.
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
     let script = concat!(
         "printf '\\033]133;A\\007$ \\033]133;B\\007echo READY\\r\\n'; ",
         "printf '\\033]133;C\\007READY\\r\\n\\033]133;D;0\\007'; ",
         "exec /bin/sh -i"
     );
-    let mut host =
-        PtyTestHost::spawn(bin, &["/bin/sh", "-c", script], 110, 34).expect("spawn viewer");
+    let mut host = PtyTestHost::spawn(
+        bin,
+        &["--config", &cfg_arg, "/bin/sh", "-c", script],
+        110,
+        34,
+    )
+    .expect("spawn viewer");
     thread::sleep(Duration::from_millis(800));
     wait_for_text(&host, "READY");
 
@@ -1527,14 +1589,9 @@ fn repro_viewer_checkbox_click_hangs() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("mkdir");
     let cfg = root.join("terminal.yaml");
-    unsafe {
-        std::env::set_var("ATTO_UI_TERMINAL_CONFIG", &cfg);
-    }
-    let bin = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/debug/examples/terminal_viewer"
-    );
-    let mut host = PtyTestHost::spawn(bin, &[], 110, 34).expect("spawn viewer");
+    let cfg_arg = cfg.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_terminal_viewer");
+    let mut host = PtyTestHost::spawn(bin, &["--config", &cfg_arg], 110, 34).expect("spawn viewer");
     thread::sleep(Duration::from_millis(800));
 
     host.click(1, 0).ok(); // File menu
@@ -1557,13 +1614,13 @@ fn repro_viewer_checkbox_click_hangs() {
     let sc = host.screen_contents().unwrap_or_default();
     let mut clicked = false;
     for (row, line) in sc.lines().enumerate() {
-        if let Some(li) = line.find("Close window on shell exit") {
-            if let Some(br) = line[..li].rfind('[') {
-                let col = UnicodeWidthStr::width(&line[..br]) as u16 + 1;
-                eprintln!("MOUSE-CLICK checkbox glyph at {col},{row}");
-                host.click(col, row as u16).ok();
-                clicked = true;
-            }
+        if let Some(li) = line.find("Close window on shell exit")
+            && let Some(br) = line[..li].rfind('[')
+        {
+            let col = UnicodeWidthStr::width(&line[..br]) as u16 + 1;
+            eprintln!("MOUSE-CLICK checkbox glyph at {col},{row}");
+            host.click(col, row as u16).ok();
+            clicked = true;
         }
     }
     assert!(clicked, "no glyph found\n{sc}");

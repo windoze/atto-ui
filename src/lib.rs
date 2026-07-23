@@ -10,6 +10,8 @@ pub mod dialogs;
 pub mod drawing;
 pub mod fuzzy;
 pub mod inspect;
+pub mod ipc;
+pub mod protocol;
 pub mod reactive;
 pub mod runtime;
 pub mod task;
@@ -26,8 +28,13 @@ pub use app::{
 pub use component_api::{
     ComponentCommand, ComponentError, ComponentPropertySchema, ComponentTarget, ComponentValueCodec,
 };
+pub use composable::{find_by_tag, find_by_tag_mut};
 pub use inspect::{
-    DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode, InspectSnapshot, NodeKind,
+    DesktopChangeTracker, DesktopInspector, DesktopSnapshot, DesktopSnapshotNode, InspectNode,
+    InspectSnapshot, InvokeDispatch, InvokeResult, NodeKind, WaitCondition, WaitResult,
+};
+pub use ipc::{
+    IPC_SOCKET_ENV, IpcMethodHandler, IpcServer, IpcServerConfig, send_protocol_request,
 };
 pub use runtime::{
     ActionMeta, CallbackId, CallbackInvocation, CallbackRegistry, ComponentRegistry,

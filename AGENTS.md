@@ -40,4 +40,4 @@
 - Commit messages use imperative present tense (examples in history: “Add …”, “Fix …”, “Implement …”).
 - Make small commits per bug/feature; each commit should pass `cargo test`.
 - PRs should include: what changed, how to test, and (for UI changes) a PTY buffer snippet or screenshot.
-- Update `IMPLEMENTATION_PLAN.md` when milestone status changes.
+- Update `TODO.md` for task completion records, and update `PLAN.md` only when phase-level sequencing or completion criteria change.

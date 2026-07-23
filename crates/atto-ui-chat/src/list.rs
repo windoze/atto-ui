@@ -9668,6 +9668,33 @@ mod tests {
     }
 
     #[test]
+    fn diff_display_lines_highlights_context_payload_syntax_spans() {
+        let theme = Theme::dark();
+        let lines = diff_display_lines(
+            " let stable_value = 0;",
+            Style::default(),
+            Some("src/main.rs"),
+            &theme,
+        );
+        let keyword = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == "let")
+            .expect("rust keyword span");
+        let variable = lines[0]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref().contains("stable_value"))
+            .expect("rust variable payload span");
+
+        assert_eq!(line_text(&lines[0]), " let stable_value = 0;");
+        assert_ne!(
+            keyword.style.fg, variable.style.fg,
+            "context diff payload should receive syntax-level coloring"
+        );
+    }
+
+    #[test]
     fn diff_display_lines_preserves_addition_semantics_over_syntax() {
         let theme = Theme::dark();
         let lines = diff_display_lines(

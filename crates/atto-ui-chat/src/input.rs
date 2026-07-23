@@ -8,7 +8,7 @@ use atto_ui::composable::{
 };
 use atto_ui::reactive::{Binding, DirtyObserver, Property};
 use atto_ui::widgets::{Button, RadioGroup, TextArea, TextBox};
-use atto_ui::{ComponentError, ComponentValue, ComponentValueCodec};
+use atto_ui::{ComponentCommand, ComponentError, ComponentValue, ComponentValueCodec};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -1211,6 +1211,7 @@ enum ChatInputView {
 }
 
 pub struct ChatInputPanel {
+    tag: Option<String>,
     mode: Binding<ChatInputMode>,
     draft: Binding<String>,
     custom: Binding<String>,
@@ -1298,6 +1299,7 @@ impl ChatInputPanel {
             .title("Files")
             .empty_label("No files");
         let mut panel = Self {
+            tag: None,
             mode: mode.clone(),
             draft: draft.clone(),
             custom: custom.clone(),
@@ -1352,6 +1354,12 @@ impl ChatInputPanel {
         F: Fn(ChatInputResponse) + Send + Sync + 'static,
     {
         self.on_submit = Some(Arc::new(callback));
+        self
+    }
+
+    /// Assigns an introspection tag so tests and scripts can read this panel directly.
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
         self
     }
 
@@ -1937,6 +1945,18 @@ impl ChatInputPanel {
         }
     }
 
+    fn select_index_from_command(&mut self, index: usize) -> EventResult {
+        let next = match &self.mode.get() {
+            ChatInputMode::Choice(cfg) if !cfg.options.is_empty() => {
+                index.min(cfg.options.len().saturating_sub(1))
+            }
+            ChatInputMode::Confirm(_) => index.min(1),
+            _ => return EventResult::ignored(),
+        };
+        self.selection.set(next);
+        EventResult::changed()
+    }
+
     fn estimated_height_for_mode(&self, mode: &ChatInputMode) -> u16 {
         const TEXTBOX_HEIGHT: u16 = 3;
         const BUTTON_HEIGHT: u16 = 3;
@@ -1977,6 +1997,37 @@ impl ChatInputPanel {
 }
 
 impl ::atto_ui::composable::Component for ChatInputPanel {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        match command {
+            ComponentCommand::InputText(_) => matches!(self.mode.get(), ChatInputMode::Text(_)),
+            ComponentCommand::SelectIndex(_) => matches!(
+                self.mode.get(),
+                ChatInputMode::Choice(ChatChoiceInputConfig { .. }) | ChatInputMode::Confirm(_)
+            ),
+            ComponentCommand::Submit => !matches!(self.mode.get(), ChatInputMode::Custom),
+            _ => false,
+        }
+    }
+
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        if !self.enabled.get() {
+            return EventResult::ignored();
+        }
+        self.sync_mode();
+        match command {
+            ComponentCommand::InputText(text) => self.handle_text_paste(&text),
+            ComponentCommand::SelectIndex(index) => self.select_index_from_command(index),
+            ComponentCommand::Submit => {
+                if self.emit_response() {
+                    EventResult::submitted()
+                } else {
+                    EventResult::ignored()
+                }
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn property_names(&self) -> Vec<&'static str> {
         vec![
             "mode",
@@ -2196,7 +2247,11 @@ impl ::atto_ui::composable::FocusNav for ChatInputPanel {
     }
 }
 
-impl ::atto_ui::composable::DynamicTree for ChatInputPanel {}
+impl ::atto_ui::composable::DynamicTree for ChatInputPanel {
+    fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
+    }
+}
 
 impl ::atto_ui::composable::EventHandling for ChatInputPanel {
     fn handle_event_capture(&mut self, event: &Event, ctx: ComponentContext<'_>) -> EventResult {

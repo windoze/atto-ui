@@ -1,3 +1,4 @@
+use crate::ComponentValueCodec;
 use crate::composable::{Align, Anchor, AnchorPlacement, EdgeInsets, LayoutParams, Size};
 
 use super::{
@@ -153,70 +154,11 @@ fn edge_insets_from_value(
     name: &str,
     value: &ComponentValue,
 ) -> Result<EdgeInsets, TreeError> {
-    match value {
-        ComponentValue::U64(v) => {
-            let val = (*v).min(u16::MAX as u64) as u16;
-            Ok(EdgeInsets::all(val))
-        }
-        ComponentValue::I64(v) if *v >= 0 => {
-            let val = (*v as u64).min(u16::MAX as u64) as u16;
-            Ok(EdgeInsets::all(val))
-        }
-        ComponentValue::F64(v) if *v >= 0.0 => {
-            let val = (*v as u64).min(u16::MAX as u64) as u16;
-            Ok(EdgeInsets::all(val))
-        }
-        ComponentValue::Map(map) => {
-            let top = map
-                .get("top")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                .min(u16::MAX as u64) as u16;
-            let right = map
-                .get("right")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                .min(u16::MAX as u64) as u16;
-            let bottom = map
-                .get("bottom")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                .min(u16::MAX as u64) as u16;
-            let left = map
-                .get("left")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                .min(u16::MAX as u64) as u16;
-            Ok(EdgeInsets {
-                top,
-                right,
-                bottom,
-                left,
-            })
-        }
-        ComponentValue::List(values) => {
-            if values.len() != 4 {
-                return Err(invalid_prop(spec, name, "padding list of 4", value));
-            }
-            let to_u16 = |idx: usize| -> Option<u16> {
-                values
-                    .get(idx)
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v.min(u16::MAX as u64) as u16)
-            };
-            let top = to_u16(0).unwrap_or(0);
-            let right = to_u16(1).unwrap_or(0);
-            let bottom = to_u16(2).unwrap_or(0);
-            let left = to_u16(3).unwrap_or(0);
-            Ok(EdgeInsets {
-                top,
-                right,
-                bottom,
-                left,
-            })
-        }
-        _ => Err(invalid_prop(spec, name, "padding", value)),
-    }
+    // Single source of truth for the ComponentValue -> EdgeInsets conversion lives on the codec
+    // (`component_api.rs`); the build path just adapts the error into `TreeError`. Keeping one
+    // implementation prevents the build-time and set_property-time rules from drifting apart.
+    EdgeInsets::from_component_value(value.clone(), name)
+        .map_err(|_| invalid_prop(spec, name, "padding", value))
 }
 
 pub fn invalid_prop(

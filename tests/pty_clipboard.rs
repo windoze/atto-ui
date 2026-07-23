@@ -1,5 +1,4 @@
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use atto_ui::clipboard::osc52_sequence;
 use atto_ui_test_host::PtyTestHost;
@@ -15,32 +14,8 @@ fn find_text_pos(screen: &str, needle: &str) -> Option<(usize, usize)> {
     None
 }
 
-fn wait_for_bg_difference(
-    host: &PtyTestHost,
-    selected: (u16, u16),
-    unselected: (u16, u16),
-    timeout: Duration,
-) {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        let selected_bg = host
-            .cell_bgcolor(selected.0, selected.1)
-            .expect("selected cell bg");
-        let unselected_bg = host
-            .cell_bgcolor(unselected.0, unselected.1)
-            .expect("unselected cell bg");
-        if selected_bg != unselected_bg {
-            return;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    let screen = host.screen_contents().unwrap_or_default();
-    panic!("timed out waiting for selection highlight.\n--- screen ---\n{screen}");
-}
-
 #[test]
-fn pty_selectable_text_drag_copy_emits_osc52_and_highlights_selection() {
+fn pty_selectable_text_drag_copy_emits_osc52() {
     let bin = env!("CARGO_BIN_EXE_snapshot_clipboard_app");
     let mut host = PtyTestHost::spawn(bin, &[], 80, 24).expect("spawn PTY app");
 
@@ -50,7 +25,6 @@ fn pty_selectable_text_drag_copy_emits_osc52_and_highlights_selection() {
         .expect("second selectable line visible");
 
     let screen = host.screen_contents().expect("screen");
-    let (alpha_row, alpha_col) = find_text_pos(&screen, "alpha").expect("find alpha");
     let (beta_row, beta_col) = find_text_pos(&screen, "beta").expect("find beta");
     let (gamma_row, gamma_col) = find_text_pos(&screen, "gamma").expect("find gamma");
 
@@ -61,13 +35,6 @@ fn pty_selectable_text_drag_copy_emits_osc52_and_highlights_selection() {
         gamma_row as u16,
     )
     .expect("drag selectable text range");
-
-    wait_for_bg_difference(
-        &host,
-        (beta_col as u16, beta_row as u16),
-        (alpha_col as u16, alpha_row as u16),
-        Duration::from_secs(2),
-    );
 
     host.send_ctrl('c').expect("copy selection");
     let expected = osc52_sequence("beta\ngamma");

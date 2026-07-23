@@ -1,4 +1,5 @@
 use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ use crate::app::{Desktop, DesktopAction, DesktopEventResult, WindowInfo};
 use crate::app::{Toast, ToastLevel};
 use crate::composable::EventOutcome;
 use crate::inspect::{DesktopInspector, DesktopSnapshot};
+use crate::ipc::{IpcServer, IpcServerConfig};
 use crate::reactive::{global_tick_rate_nanos, set_global_tick_rate, tick_global_timers};
 
 /// Cap on how many timer ticks a single `step` may dispatch, so a long pause
@@ -222,6 +224,12 @@ fn handle_desktop_action(desktop: &mut Desktop, action: &DesktopAction) {
     }
 }
 
+fn drain_ipc_server(ipc_server: &mut Option<IpcServer>, desktop: &mut Desktop, screen: Rect) {
+    if let Some(server) = ipc_server.as_mut() {
+        server.drain_pending(desktop, screen);
+    }
+}
+
 fn is_escape_press(event: &Event) -> bool {
     matches!(
         event,
@@ -254,11 +262,105 @@ pub type TickCallBack = dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>;
 pub type EventCallBack =
     dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>;
 
+/// Advance global timers by the real elapsed time since `*last_timer_instant`, dispatching one tick
+/// per `tick_rate` of wall-clock time (capped by [`MAX_TIMER_CATCHUP_TICKS`]).
+///
+/// This keeps duration-based timers running at real speed regardless of how often the host driver
+/// iterates: the React tick loop calls `step` far more often than the tick rate, and a fixed
+/// one-tick-per-iteration would run timers (e.g. a spinner) at the loop frequency instead of real
+/// time. Shared by [`AppHost::step`] and the free-function run loops so both advance timers
+/// identically.
+fn advance_global_timers(config: &CrosstermAppConfig, last_timer_instant: &mut Option<Instant>) {
+    let rate_nanos = if config.tick_rate.is_zero() {
+        global_tick_rate_nanos()
+    } else {
+        config.tick_rate.as_nanos().min(u64::MAX as u128) as u64
+    };
+    let rate = Duration::from_nanos(rate_nanos.max(1));
+    let now = Instant::now();
+    let prev = *last_timer_instant.get_or_insert(now);
+    let mut cursor = prev;
+    let mut ticks = 0u32;
+    while now.saturating_duration_since(cursor) >= rate && ticks < MAX_TIMER_CATCHUP_TICKS {
+        cursor += rate;
+        ticks += 1;
+    }
+    if ticks > 0 {
+        *last_timer_instant = Some(cursor);
+        for _ in 0..ticks {
+            tick_global_timers();
+        }
+    }
+}
+
+/// One iteration of the main loop, shared by [`AppHost::step`] and the free-function run loops so
+/// the tick/draw/poll/dispatch sequence exists exactly once.
+///
+/// The sequence is: advance timers (wall-clock) → `on_tick` → `drain_actions` → drain IPC → draw →
+/// (headless: stop here) → poll/read one event → dispatch → Esc-cancel → quit check → `on_event`.
+/// `drain_actions` is a no-op for run loops without an action channel.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn step_once(
+    config: &CrosstermAppConfig,
+    session: &mut HostSession,
+    desktop: &mut Desktop,
+    task_registry: &TaskRegistry,
+    ipc_server: &mut Option<IpcServer>,
+    last_timer_instant: &mut Option<Instant>,
+    on_tick: Option<&mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>>,
+    on_event: Option<
+        &mut dyn FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
+    >,
+    drain_actions: &mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>,
+) -> Result<AppControl> {
+    let screen = session.screen()?;
+
+    advance_global_timers(config, last_timer_instant);
+    if let Some(handler) = on_tick
+        && handler(desktop, screen)? == AppControl::Exit
+    {
+        return Ok(AppControl::Exit);
+    }
+    if drain_actions(desktop, screen)? == AppControl::Exit {
+        return Ok(AppControl::Exit);
+    }
+    drain_ipc_server(ipc_server, desktop, screen);
+
+    session.draw(desktop)?;
+
+    if session.is_headless() {
+        return Ok(AppControl::Continue);
+    }
+
+    if !event::poll(config.tick_rate)? {
+        return Ok(AppControl::Continue);
+    }
+
+    let ev = event::read()?;
+    let screen = session.screen()?;
+    let mut result = desktop.handle_event(&ev, screen);
+    handle_desktop_action(desktop, &result.action);
+    mark_consumed_if_escape_cancelled(&ev, &mut result, task_registry);
+
+    if should_quit_default(&ev, result.outcome) {
+        return Ok(AppControl::Exit);
+    }
+
+    if let Some(handler) = on_event
+        && handler(desktop, &ev, screen, &result)? == AppControl::Exit
+    {
+        return Ok(AppControl::Exit);
+    }
+
+    Ok(AppControl::Continue)
+}
+
 pub struct AppHost {
     config: CrosstermAppConfig,
     session: HostSession,
     desktop: Desktop,
     task_registry: TaskRegistry,
+    ipc_server: Option<IpcServer>,
     on_tick: Option<Box<TickCallBack>>,
     on_event: Option<Box<EventCallBack>>,
     /// Wall-clock anchor for advancing global timers by elapsed time rather than
@@ -282,6 +384,7 @@ impl AppHost {
             session: HostSession::Terminal(session),
             desktop,
             task_registry: TaskRegistry::new(),
+            ipc_server: None,
             on_tick: None,
             on_event: None,
             last_timer_instant: None,
@@ -300,6 +403,7 @@ impl AppHost {
             session: HostSession::Headless { screen },
             desktop,
             task_registry: TaskRegistry::new(),
+            ipc_server: None,
             on_tick: None,
             on_event: None,
             last_timer_instant: None,
@@ -320,6 +424,28 @@ impl AppHost {
 
     pub fn screen(&self) -> Result<Rect> {
         self.session.screen()
+    }
+
+    pub fn enable_ipc(&mut self, socket_path: impl Into<PathBuf>) -> Result<()> {
+        self.ipc_server = Some(IpcServer::bind(socket_path.into())?);
+        Ok(())
+    }
+
+    pub fn enable_ipc_from_env(&mut self) -> Result<Option<PathBuf>> {
+        let Some(config) = IpcServerConfig::from_env() else {
+            return Ok(None);
+        };
+        let socket_path = config.socket_path().to_path_buf();
+        self.ipc_server = Some(IpcServer::from_config(config)?);
+        Ok(Some(socket_path))
+    }
+
+    pub fn disable_ipc(&mut self) {
+        self.ipc_server = None;
+    }
+
+    pub fn ipc_socket_path(&self) -> Option<&Path> {
+        self.ipc_server.as_ref().map(IpcServer::socket_path)
     }
 
     pub fn restore_terminal(&mut self) {
@@ -464,70 +590,43 @@ impl AppHost {
         self.on_event = Some(Box::new(handler));
     }
 
-    /// Advance global timers by the real elapsed time since the previous step,
-    /// dispatching one tick per `tick_rate` of wall-clock time (capped). This
-    /// keeps duration-based timers running at real speed regardless of how often
-    /// the host driver calls `step`.
-    fn advance_global_timers(&mut self) {
-        let rate_nanos = if self.config.tick_rate.is_zero() {
-            global_tick_rate_nanos()
-        } else {
-            self.config.tick_rate.as_nanos().min(u64::MAX as u128) as u64
-        };
-        let rate = Duration::from_nanos(rate_nanos.max(1));
-        let now = Instant::now();
-        let prev = *self.last_timer_instant.get_or_insert(now);
-        let mut cursor = prev;
-        let mut ticks = 0u32;
-        while now.saturating_duration_since(cursor) >= rate && ticks < MAX_TIMER_CATCHUP_TICKS {
-            cursor += rate;
-            ticks += 1;
-        }
-        if ticks > 0 {
-            self.last_timer_instant = Some(cursor);
-            for _ in 0..ticks {
-                tick_global_timers();
-            }
-        }
-    }
-
     pub fn step(&mut self) -> Result<AppControl> {
-        let screen = self.screen()?;
-
-        self.advance_global_timers();
-        if let Some(handler) = self.on_tick.as_mut()
-            && handler(&mut self.desktop, screen)? == AppControl::Exit
-        {
-            return Ok(AppControl::Exit);
-        }
-
-        self.session.draw(&mut self.desktop)?;
-
-        if self.session.is_headless() {
-            return Ok(AppControl::Continue);
-        }
-
-        if !event::poll(self.config.tick_rate)? {
-            return Ok(AppControl::Continue);
-        }
-
-        let ev = event::read()?;
-        let screen = self.screen()?;
-        let mut result = self.desktop.handle_event(&ev, screen);
-        handle_desktop_action(&mut self.desktop, &result.action);
-        mark_consumed_if_escape_cancelled(&ev, &mut result, &self.task_registry);
-
-        if should_quit_default(&ev, result.outcome) {
-            return Ok(AppControl::Exit);
-        }
-
-        if let Some(handler) = self.on_event.as_mut()
-            && handler(&mut self.desktop, &ev, screen, &result)? == AppControl::Exit
-        {
-            return Ok(AppControl::Exit);
-        }
-
-        Ok(AppControl::Continue)
+        // Disjoint field borrows so `on_tick`/`on_event` can be passed as `&mut dyn FnMut` while the
+        // rest of `self` is borrowed by `step_once`.
+        let Self {
+            config,
+            session,
+            desktop,
+            task_registry,
+            ipc_server,
+            on_tick,
+            on_event,
+            last_timer_instant,
+        } = self;
+        let on_tick = on_tick
+            .as_mut()
+            .map(|h| h.as_mut() as &mut dyn FnMut(&mut Desktop, Rect) -> Result<AppControl>);
+        let on_event = on_event.as_mut().map(|h| {
+            h.as_mut()
+                as &mut dyn FnMut(
+                    &mut Desktop,
+                    &Event,
+                    Rect,
+                    &DesktopEventResult,
+                ) -> Result<AppControl>
+        });
+        let mut drain_actions = |_desktop: &mut Desktop, _screen: Rect| Ok(AppControl::Continue);
+        step_once(
+            config,
+            session,
+            desktop,
+            task_registry,
+            ipc_server,
+            last_timer_instant,
+            on_tick,
+            on_event,
+            &mut drain_actions,
+        )
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -563,34 +662,29 @@ where
     TTick: FnMut(&mut Desktop, Rect) -> Result<AppControl>,
     TEvent: FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
 {
-    let mut session = TerminalSession::new(config)?;
+    let session = TerminalSession::new(config)?;
     let screen: Rect = session.terminal.size()?.into();
+    let mut session = HostSession::Terminal(session);
     let mut desktop = build(screen)?;
+    let mut ipc_server = IpcServer::from_env()?;
+    let task_registry = TaskRegistry::new();
+    let mut last_timer_instant = None;
     set_global_tick_rate(config.tick_rate);
 
+    let mut drain_actions = |_desktop: &mut Desktop, _screen: Rect| Ok(AppControl::Continue);
     loop {
-        let screen: Rect = session.terminal.size()?.into();
-
-        tick_global_timers();
-        if on_tick(&mut desktop, screen)? == AppControl::Exit {
-            break;
-        }
-
-        session.terminal.draw(|f| desktop.draw(f))?;
-
-        if !event::poll(config.tick_rate)? {
-            continue;
-        }
-
-        let ev = event::read()?;
-        let screen: Rect = session.terminal.size()?.into();
-        let result = desktop.handle_event(&ev, screen);
-        handle_desktop_action(&mut desktop, &result.action);
-
-        if should_quit_default(&ev, result.outcome) {
-            break;
-        }
-        if on_event(&mut desktop, &ev, screen, &result)? == AppControl::Exit {
+        if step_once(
+            &config,
+            &mut session,
+            &mut desktop,
+            &task_registry,
+            &mut ipc_server,
+            &mut last_timer_instant,
+            Some(&mut on_tick),
+            Some(&mut on_event),
+            &mut drain_actions,
+        )? == AppControl::Exit
+        {
             break;
         }
     }
@@ -645,42 +739,38 @@ where
     TTick: FnMut(&mut Desktop, Rect) -> Result<AppControl>,
     TEvent: FnMut(&mut Desktop, &Event, Rect, &DesktopEventResult) -> Result<AppControl>,
 {
-    let mut session = TerminalSession::new(config)?;
+    let session = TerminalSession::new(config)?;
     let screen: Rect = session.terminal.size()?.into();
+    let mut session = HostSession::Terminal(session);
     let mut desktop = build(screen)?;
+    let mut ipc_server = IpcServer::from_env()?;
+    let mut last_timer_instant = None;
     set_global_tick_rate(config.tick_rate);
 
-    loop {
-        let screen: Rect = session.terminal.size()?.into();
-
-        tick_global_timers();
-        if on_tick(&mut desktop, screen)? == AppControl::Exit {
-            break;
-        }
-
-        // Drain background actions before drawing so their effects are visible immediately.
+    // Drain background actions before drawing so their effects are visible immediately. Runs in the
+    // post-`on_tick`, pre-IPC/draw slot of `step_once`, matching the original ordering.
+    let mut drain_actions = |desktop: &mut Desktop, screen: Rect| {
         while let Ok(action) = action_receiver.try_recv() {
-            if on_action(&mut desktop, action, screen)? == AppControl::Exit {
-                return Ok(());
+            if on_action(desktop, action, screen)? == AppControl::Exit {
+                return Ok(AppControl::Exit);
             }
         }
+        Ok(AppControl::Continue)
+    };
 
-        session.terminal.draw(|f| desktop.draw(f))?;
-
-        if !event::poll(config.tick_rate)? {
-            continue;
-        }
-
-        let ev = event::read()?;
-        let screen: Rect = session.terminal.size()?.into();
-        let mut result = desktop.handle_event(&ev, screen);
-        handle_desktop_action(&mut desktop, &result.action);
-        mark_consumed_if_escape_cancelled(&ev, &mut result, &task_registry);
-
-        if should_quit_default(&ev, result.outcome) {
-            break;
-        }
-        if on_event(&mut desktop, &ev, screen, &result)? == AppControl::Exit {
+    loop {
+        if step_once(
+            &config,
+            &mut session,
+            &mut desktop,
+            &task_registry,
+            &mut ipc_server,
+            &mut last_timer_instant,
+            Some(&mut on_tick),
+            Some(&mut on_event),
+            &mut drain_actions,
+        )? == AppControl::Exit
+        {
             break;
         }
     }
@@ -696,7 +786,15 @@ mod tests {
         Component, ComponentContext, ComponentTagExt, EventHandling, EventOutcome, EventResult,
         Label,
     };
+    use crate::reactive::GLOBAL_TIMER_TEST_GUARD;
     use crate::theme::Theme;
+
+    /// Serialize with every other test touching the process-global timer wheel / tick rate. Every
+    /// `AppHost` here ticks the global wheel and sets the global tick rate, so parallel runs would
+    /// otherwise perturb the timing-sensitive `step_advances_timers_by_real_elapsed_time`.
+    fn timer_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+        GLOBAL_TIMER_TEST_GUARD.lock()
+    }
     use crate::wm::{Window, WindowKind};
 
     struct ConsumeEscView;
@@ -725,6 +823,7 @@ mod tests {
 
     #[test]
     fn headless_apphost_snapshot_uses_in_memory_layout() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut host = AppHost::new_headless(screen, |screen| {
             let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
@@ -759,6 +858,7 @@ mod tests {
 
     #[test]
     fn pointer_capture_routes_release_outside_button_without_click() {
+        let _guard = timer_test_guard();
         use crate::widgets::Button;
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
         use std::sync::Arc;
@@ -828,6 +928,7 @@ mod tests {
 
     #[test]
     fn step_advances_timers_by_real_elapsed_time() {
+        let _guard = timer_test_guard();
         use crate::reactive::{cancel_timer, register_timer_with_duration};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -866,6 +967,7 @@ mod tests {
 
     #[test]
     fn apphost_escape_cancels_current_task_when_event_is_ignored() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut window_id = None;
         let mut host = AppHost::new_headless(screen, |screen| {
@@ -905,6 +1007,7 @@ mod tests {
 
     #[test]
     fn apphost_escape_does_not_cancel_task_when_view_consumes_event() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut window_id = None;
         let mut host = AppHost::new_headless(screen, |screen| {

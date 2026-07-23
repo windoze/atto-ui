@@ -32,11 +32,12 @@ The viewer is a complete multi-window terminal app built on the reusable `Termin
 | Process lifecycle | Exit status tracking, `on_exit`, dead-session prompt, and `R` restart using the window's session profile/cwd. |
 | Window shell | Floating terminal windows, title sync from OSC 0/2, Windows menu refresh, minimize/maximize/close, and File menu entries for shell/command windows. |
 | Prefix commands | Configurable tmux-style plain `Ctrl+<letter>` prefix, default `Ctrl+B`, with shell actions and literal-prefix escape. |
-| Split panes | `Ctrl+B %` splits right, `Ctrl+B "` splits below, and `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane inside the current window. |
-| Selection/copy | Mouse selection, `Shift+drag` local selection when child mouse reporting is enabled, copy-mode via `Ctrl+B [`, internal copy buffer, OSC 52, and system clipboard backend. |
+| Split panes | `Ctrl+B %` splits right, `Ctrl+B "` splits below, `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane, arrow keys select geometrically, `Ctrl+Arrow` resizes, `z` zooms, and `x` closes the active pane. |
+| Selection/copy | Mouse selection, `Shift+drag` local selection when child mouse reporting is enabled, copy-mode via `Ctrl+B [`, internal copy buffer, OSC 52, tmux DCS passthrough for OSC 52, and system clipboard backend. |
 | Scroll routing | Mouse-reporting apps receive SGR wheel events, alt-screen apps without mouse reporting receive configured scroll keys, and normal shell output uses local scrollback. |
 | Command blocks | OSC 133/7 command marks drive command-block presentation, `Ctrl+Up` / `Ctrl+Down` navigation, right-click Rerun / Copy command / Copy output, command exit codes, and cwd inheritance. |
 | Rendering fidelity | Wide-character-aware cells, selectable block/underline/bar cursor shapes, application cursor mode, and application keypad encoding. |
+| IPC / tmux shim | `TerminalPaneIpc` maps pane protocol methods to terminal handles, and the `tmux` shim binary translates common tmux subcommands into those IPC calls. |
 | Settings | Visual File -> Settings window for scrollback, palette, prefix/release shortcuts, alt-screen scrolling, profiles/cwd, shell integration, and default cursor shape. |
 
 ## Shortcuts
@@ -45,13 +46,16 @@ The viewer is a complete multi-window terminal app built on the reusable `Termin
 |---|---|
 | `Ctrl+B F10` | Open the menu while the terminal is capturing input. |
 | `Ctrl+B w` | Enter window-management mode. |
-| `Ctrl+B z` | Maximize or restore the focused terminal window. |
 | `Ctrl+B [` | Enter copy-mode. |
 | `Ctrl+B ]` | Paste the component copy buffer into the child process. |
 | `Ctrl+B Ctrl+B` | Send one literal prefix key to the child process. |
 | `Ctrl+B %` | Split the active terminal pane to the right. |
 | `Ctrl+B "` | Split the active terminal pane below. |
 | `Ctrl+B o` / `Ctrl+B Tab` | Focus the next pane. |
+| `Ctrl+B Left/Right/Up/Down` | Select the nearest pane in that direction. |
+| `Ctrl+B Ctrl+Left/Right/Up/Down` | Resize the nearest split around the active pane. |
+| `Ctrl+B z` | Zoom or restore the active pane. |
+| `Ctrl+B x` | Close the active pane when another pane remains. |
 | `Ctrl+Up` / `Ctrl+Down` | Jump to the previous or next OSC 133 command block when command marks are available. |
 | `R` | Restart a focused dead terminal session after the exit prompt appears. |
 
@@ -84,6 +88,11 @@ alternate_screen_scroll:
   scroll_down_key: { key: down }
 shell_integration:
   inject: false
+tmux:
+  inject: false
+  socket_path: /tmp/atto-ui-tmux.sock
+  shim_path: target/debug
+  override_term: false
 cursor:
   default_shape: block
 sessions:
@@ -115,6 +124,16 @@ palette:
 
 Supported color specs are Ratatui color names, `#rgb`, `#rrggbb`, and `indexed:<n>`. Prefix keys must be plain `Ctrl+<ASCII letter>` so they work reliably in traditional terminal byte streams.
 
+`tmux.inject` is opt-in. When enabled, spawned child processes receive `$TMUX` formatted as `socket_path,pid,session_id`, `$TMUX_PANE` formatted as `%pane_id`, and `shim_path` is prepended to `PATH` so a built `tmux` shim can intercept supported subcommands. `override_term=true` changes `TERM` to `tmux-256color`; otherwise the terminal keeps the default `xterm-256color`.
+
+Build the shim with:
+
+```sh
+cargo build -p atto-ui-terminal --bin tmux
+```
+
+The shim is a client translator, not a tmux server. It supports `send-keys`, `capture-pane`, `list-panes`, `split-window`, `select-pane`, `break-pane`, and `display-popup`; unsupported subcommands and control mode (`-CC`) fail explicitly.
+
 ## Component Usage
 
 Use `TerminalEmulator::from_config(&config)?` for a single terminal widget, or wrap it in `TerminalPaneGroup` for split panes. `TerminalHandle` exposes running state, process exit status, title/bell/clipboard callbacks, scrollback, selection/copy helpers, command-block queries, live config application, and PTY resize.
@@ -127,6 +146,8 @@ let mut terminal = TerminalEmulator::from_config(&config)?;
 terminal.spawn_session(&TerminalSessionSpec::shell_from_env())?;
 let handle = terminal.handle();
 ```
+
+To expose pane operations over the core IPC server, register `terminal_pane_ipc_handler(TerminalPaneIpc::new(group_handle))` on the `IpcServer` that is drained by your app. The handler maps pane protocol methods to `send_input_bytes`, `snapshot`, `panes`, split/select, `break_pane`, and floating popup window creation. Without that handler, generic IPC methods such as `query`, `invoke`, and `tree` still work, but terminal pane methods return `ActionNotSupported`.
 
 ## Validation
 

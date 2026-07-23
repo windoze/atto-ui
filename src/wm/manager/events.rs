@@ -956,7 +956,9 @@ impl WindowManager {
                 }
             }
             KeyCode::Char('m') => self.minimize_focused(),
-            KeyCode::Char('r') => self.restore_focused(),
+            KeyCode::Char('r') => {
+                self.restore_focused();
+            }
             KeyCode::Char('x') => self.toggle_maximize_focused(bounds),
             _ => action.consumed = false,
         }

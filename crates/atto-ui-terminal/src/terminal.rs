@@ -35,10 +35,14 @@ use crate::selection::{
     visible_top_row,
 };
 use crate::session::TerminalSessionSpec;
-use crate::{TerminalAlternateScreenScrollConfig, TerminalConfig, TerminalPaletteConfig};
+use crate::{
+    TerminalAlternateScreenScrollConfig, TerminalConfig, TerminalPaletteConfig,
+    TerminalTmuxEnvironmentConfig,
+};
 
 const DEFAULT_TERM_ENV: &str = "xterm-256color";
 const DEFAULT_COLORTERM_ENV: &str = "truecolor";
+const TMUX_TERM_ENV: &str = "tmux-256color";
 const COMMAND_SEPARATOR_SYMBOL: &str = "─";
 const COMMAND_FAILURE_SYMBOL: &str = "!";
 const CURSOR_BAR_SYMBOL: &str = "▏";
@@ -106,6 +110,7 @@ struct TerminalRuntimeConfig {
     prefix_shortcut: TerminalShortcut,
     alternate_screen_scroll: TerminalAlternateScreenScroll,
     shell_integration: TerminalShellIntegration,
+    tmux_environment: TerminalTmuxEnvironmentConfig,
     cursor_shape: TerminalCursorShape,
 }
 
@@ -121,6 +126,7 @@ impl TerminalRuntimeConfig {
                 &config.alternate_screen_scroll,
             )?,
             shell_integration: config.shell_integration_policy(),
+            tmux_environment: config.tmux.clone(),
             cursor_shape: config.cursor.default_shape.into(),
         })
     }
@@ -234,6 +240,7 @@ mod tests {
             system_clipboard: None,
             pty_resize: None,
             shell_integration: runtime_config.shell_integration,
+            tmux_environment: runtime_config.tmux_environment,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -256,6 +263,7 @@ mod tests {
             current_cwd: None,
             cursor_shape: TerminalCursorShape::default(),
             dsr_tail: Vec::new(),
+            tmux_dcs_passthrough: TmuxDcsPassthroughDecoder::default(),
         }
     }
 
@@ -451,6 +459,45 @@ mod tests {
     }
 
     #[test]
+    fn clear_screen_drops_stale_command_marks() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        // Run one command to completion, leaving a recorded block on rows 0-2.
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo ok\
+             \x1b]133;B\x07\x1b]133;C\x07ok\r\n\
+             \x1b]133;D;0\x07",
+        );
+        assert_eq!(terminal.shared.lock().command_marks.len(), 1);
+
+        // A bare Ctrl-L clears the screen and homes the cursor without any new
+        // OSC 133 marker (zsh/bash `clear-screen` does not re-run precmd). The
+        // stale block's rows are now blank, so it must be pruned immediately,
+        // not only once the next command cycle emits a fresh prompt marker.
+        handle.process_output_str("\x1b[H\x1b[2J");
+
+        assert!(terminal.shared.lock().command_marks.is_empty());
+    }
+
+    #[test]
+    fn clear_screen_keeps_marks_still_visible_on_screen() {
+        let terminal = TerminalEmulator::new();
+        let handle = terminal.handle();
+
+        // Finished command whose rows remain populated on screen: an in-place
+        // cursor repaint (no erase) must not drop the still-visible block.
+        handle.process_output_str(
+            "\x1b]133;A\x07$ echo ok\
+             \x1b]133;B\x07\x1b]133;C\x07ok\r\n\
+             \x1b]133;D;0\x07",
+        );
+        handle.process_output_str("\x1b[H$ echo ok");
+
+        assert_eq!(terminal.shared.lock().command_marks.len(), 1);
+    }
+
+    #[test]
     fn osc7_decodes_file_uri_paths() {
         assert_eq!(
             parse_osc7_cwd(b"file://localhost/Users/test/project%20one").as_deref(),
@@ -552,18 +599,44 @@ mod tests {
     }
 
     #[test]
+    fn tmux_environment_mode_is_queryable_and_mutable() {
+        let terminal = TerminalEmulator::new().tmux_environment(TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-builder.sock".to_string(),
+            shim_path: None,
+            server_pid: Some(1111),
+            session_id: 2,
+            pane_id: 4,
+            override_term: false,
+        });
+        let handle = terminal.handle();
+
+        assert_eq!(
+            handle.tmux_environment().tmux_env_value(),
+            "/tmp/atto-ui-builder.sock,1111,2"
+        );
+        handle.set_tmux_environment(TerminalTmuxEnvironmentConfig::default());
+        assert!(!handle.tmux_environment().inject);
+    }
+
+    #[test]
     fn spawn_command_preparation_sets_terminal_env_and_default_cwd() {
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.env("TERM", "host-term");
         cmd.env("COLORTERM", "host-colorterm");
+        cmd.env_remove("TMUX");
+        cmd.env_remove("TMUX_PANE");
 
-        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+        prepare_spawn_command(&mut cmd, &TerminalTmuxEnvironmentConfig::default())
+            .expect("prepare spawn command");
 
         assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(DEFAULT_TERM_ENV)));
         assert_eq!(
             cmd.get_env("COLORTERM"),
             Some(OsStr::new(DEFAULT_COLORTERM_ENV))
         );
+        assert_eq!(cmd.get_env("TMUX"), None);
+        assert_eq!(cmd.get_env("TMUX_PANE"), None);
         assert_eq!(
             cmd.get_cwd().and_then(|cwd| cwd.to_str()),
             env::current_dir().expect("current dir").as_path().to_str()
@@ -571,11 +644,73 @@ mod tests {
     }
 
     #[test]
+    fn spawn_command_preparation_injects_tmux_probe_environment_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-test.sock".to_string(),
+            shim_path: None,
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: false,
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(DEFAULT_TERM_ENV)));
+        assert_eq!(
+            cmd.get_env("TMUX"),
+            Some(OsStr::new("/tmp/atto-ui-test.sock,4242,7"))
+        );
+        assert_eq!(cmd.get_env("TMUX_PANE"), Some(OsStr::new("%3")));
+    }
+
+    #[test]
+    fn spawn_command_preparation_prepends_tmux_shim_path_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.env("PATH", "/usr/bin:/bin");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            socket_path: "/tmp/atto-ui-test.sock".to_string(),
+            shim_path: Some("/tmp/atto-ui-shim".to_string()),
+            server_pid: Some(4242),
+            session_id: 7,
+            pane_id: 3,
+            override_term: false,
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        let path = cmd.get_env("PATH").expect("PATH env");
+        let paths = env::split_paths(path).collect::<Vec<_>>();
+        assert_eq!(paths.first(), Some(&PathBuf::from("/tmp/atto-ui-shim")));
+        assert_eq!(paths.get(1), Some(&PathBuf::from("/usr/bin")));
+        assert_eq!(paths.get(2), Some(&PathBuf::from("/bin")));
+    }
+
+    #[test]
+    fn spawn_command_preparation_can_use_tmux_term_when_enabled() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        let tmux = TerminalTmuxEnvironmentConfig {
+            inject: true,
+            override_term: true,
+            ..TerminalTmuxEnvironmentConfig::default()
+        };
+
+        prepare_spawn_command(&mut cmd, &tmux).expect("prepare spawn command");
+
+        assert_eq!(cmd.get_env("TERM"), Some(OsStr::new(TMUX_TERM_ENV)));
+        assert_eq!(cmd.get_env("TMUX_PANE"), Some(OsStr::new("%0")));
+    }
+
+    #[test]
     fn spawn_command_preparation_preserves_explicit_cwd() {
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.cwd(OsStr::new("/tmp"));
 
-        prepare_spawn_command(&mut cmd).expect("prepare spawn command");
+        prepare_spawn_command(&mut cmd, &TerminalTmuxEnvironmentConfig::default())
+            .expect("prepare spawn command");
 
         assert_eq!(cmd.get_cwd().and_then(|cwd| cwd.to_str()), Some("/tmp"));
     }
@@ -689,6 +824,8 @@ type ClipboardCopyCallback = Arc<dyn Fn(&TerminalClipboardCopy) + Send + Sync>;
 type CommandFinishedCallback = Arc<dyn Fn(&TerminalCommandBlock) + Send + Sync>;
 type SystemClipboard = Arc<dyn TerminalSystemClipboard>;
 type TerminalParser = vt100::Parser<TerminalCallbacks>;
+const TMUX_DCS_PREFIX: &[u8] = b"tmux;";
+const TMUX_DCS_MAX_BUFFERED: usize = 1024 * 1024;
 
 /// System clipboard sink used by [`TerminalEmulator`] copy operations.
 ///
@@ -744,6 +881,200 @@ impl TerminalClipboardCopy {
         String::from_utf8(bytes)
             .map_err(|error| anyhow!("OSC 52 clipboard payload is not UTF-8 text: {error}"))
     }
+}
+
+#[derive(Default)]
+struct TmuxDcsPassthroughDecoder {
+    state: TmuxDcsPassthroughState,
+}
+
+#[derive(Default)]
+enum TmuxDcsPassthroughState {
+    #[default]
+    Ground,
+    Esc,
+    DcsPrefix {
+        raw: Vec<u8>,
+        matched: usize,
+    },
+    IgnoredDcs {
+        pending_esc: bool,
+    },
+    TmuxBody {
+        raw: Vec<u8>,
+        body: Vec<u8>,
+        pending_esc: bool,
+    },
+}
+
+impl TmuxDcsPassthroughDecoder {
+    /// Unwraps complete tmux DCS passthrough frames before vt100 sees the output stream.
+    fn decode(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(bytes.len());
+        for &byte in bytes {
+            self.push_byte(byte, &mut output);
+        }
+        output
+    }
+
+    fn push_byte(&mut self, byte: u8, output: &mut Vec<u8>) {
+        let state = std::mem::take(&mut self.state);
+        match state {
+            TmuxDcsPassthroughState::Ground => {
+                if byte == 0x1b {
+                    self.state = TmuxDcsPassthroughState::Esc;
+                } else {
+                    output.push(byte);
+                }
+            }
+            TmuxDcsPassthroughState::Esc => {
+                if byte == b'P' {
+                    self.state = TmuxDcsPassthroughState::DcsPrefix {
+                        raw: vec![0x1b, b'P'],
+                        matched: 0,
+                    };
+                } else {
+                    output.push(0x1b);
+                    if byte == 0x1b {
+                        self.state = TmuxDcsPassthroughState::Esc;
+                    } else {
+                        output.push(byte);
+                    }
+                }
+            }
+            TmuxDcsPassthroughState::DcsPrefix { raw, matched } => {
+                self.push_dcs_prefix_byte(raw, matched, byte);
+            }
+            TmuxDcsPassthroughState::IgnoredDcs { pending_esc } => {
+                self.push_ignored_dcs_byte(pending_esc, byte);
+            }
+            TmuxDcsPassthroughState::TmuxBody {
+                mut raw,
+                mut body,
+                pending_esc,
+            } => {
+                self.push_tmux_body_byte(&mut raw, &mut body, pending_esc, byte, output);
+            }
+        }
+    }
+
+    fn push_dcs_prefix_byte(&mut self, mut raw: Vec<u8>, matched: usize, byte: u8) {
+        raw.push(byte);
+        if byte == TMUX_DCS_PREFIX[matched] {
+            let matched = matched + 1;
+            if matched == TMUX_DCS_PREFIX.len() {
+                self.state = TmuxDcsPassthroughState::TmuxBody {
+                    raw,
+                    body: Vec::new(),
+                    pending_esc: false,
+                };
+            } else {
+                self.state = TmuxDcsPassthroughState::DcsPrefix { raw, matched };
+            }
+        } else {
+            // Unknown DCS content must remain non-executable. vt100 treats ESC
+            // inside DCS too eagerly, so consume the control string instead of
+            // exposing nested OSC bytes such as clipboard requests.
+            self.state = TmuxDcsPassthroughState::IgnoredDcs {
+                pending_esc: byte == 0x1b,
+            };
+        }
+    }
+
+    fn push_ignored_dcs_byte(&mut self, pending_esc: bool, byte: u8) {
+        self.state = if pending_esc && byte == b'\\' {
+            TmuxDcsPassthroughState::Ground
+        } else {
+            TmuxDcsPassthroughState::IgnoredDcs {
+                pending_esc: byte == 0x1b,
+            }
+        };
+    }
+
+    fn push_tmux_body_byte(
+        &mut self,
+        raw: &mut Vec<u8>,
+        body: &mut Vec<u8>,
+        pending_esc: bool,
+        byte: u8,
+        output: &mut Vec<u8>,
+    ) {
+        raw.push(byte);
+        if pending_esc {
+            if byte == b'\\' {
+                if let Some(decoded) = unescape_tmux_dcs_body(body) {
+                    output.extend(decoded);
+                }
+                // Malformed tmux passthrough is not forwarded, because the raw
+                // frame can contain nested OSC that must not execute.
+                self.state = TmuxDcsPassthroughState::Ground;
+                return;
+            }
+            body.push(0x1b);
+            body.push(byte);
+            self.state = TmuxDcsPassthroughState::TmuxBody {
+                raw: std::mem::take(raw),
+                body: std::mem::take(body),
+                pending_esc: false,
+            };
+        } else if byte == 0x1b {
+            self.state = TmuxDcsPassthroughState::TmuxBody {
+                raw: std::mem::take(raw),
+                body: std::mem::take(body),
+                pending_esc: true,
+            };
+        } else {
+            body.push(byte);
+            self.state = TmuxDcsPassthroughState::TmuxBody {
+                raw: std::mem::take(raw),
+                body: std::mem::take(body),
+                pending_esc: false,
+            };
+        }
+
+        if self.buffered_len() > TMUX_DCS_MAX_BUFFERED {
+            self.drop_pending_control_string();
+        }
+    }
+
+    fn buffered_len(&self) -> usize {
+        match &self.state {
+            TmuxDcsPassthroughState::Ground => 0,
+            TmuxDcsPassthroughState::Esc => 1,
+            TmuxDcsPassthroughState::IgnoredDcs { .. } => 0,
+            TmuxDcsPassthroughState::DcsPrefix { raw, .. }
+            | TmuxDcsPassthroughState::TmuxBody { raw, .. } => raw.len(),
+        }
+    }
+
+    fn drop_pending_control_string(&mut self) {
+        match std::mem::take(&mut self.state) {
+            TmuxDcsPassthroughState::Ground => {}
+            TmuxDcsPassthroughState::Esc => {}
+            TmuxDcsPassthroughState::IgnoredDcs { .. } => {}
+            TmuxDcsPassthroughState::DcsPrefix { .. }
+            | TmuxDcsPassthroughState::TmuxBody { .. } => {}
+        }
+        self.state = TmuxDcsPassthroughState::Ground;
+    }
+}
+
+fn unescape_tmux_dcs_body(body: &[u8]) -> Option<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(body.len());
+    let mut index = 0;
+    while index < body.len() {
+        if body[index] == 0x1b {
+            if body.get(index + 1) != Some(&0x1b) {
+                return None;
+            }
+            decoded.push(0x1b);
+            index += 2;
+        } else {
+            decoded.push(body[index]);
+            index += 1;
+        }
+    }
+    Some(decoded)
 }
 
 /// Command selected by the terminal prefix key table.
@@ -1193,13 +1524,52 @@ fn create_shell_integration_temp_dir() -> Result<PathBuf> {
     bail!("failed to allocate a unique shell integration temp directory")
 }
 
-fn prepare_spawn_command(cmd: &mut CommandBuilder) -> Result<()> {
-    cmd.env("TERM", DEFAULT_TERM_ENV);
+fn prepare_spawn_command(
+    cmd: &mut CommandBuilder,
+    tmux_environment: &TerminalTmuxEnvironmentConfig,
+) -> Result<()> {
+    tmux_environment.validate()?;
+    let term = if tmux_environment.inject && tmux_environment.override_term {
+        TMUX_TERM_ENV
+    } else {
+        DEFAULT_TERM_ENV
+    };
+
+    cmd.env("TERM", term);
     cmd.env("COLORTERM", DEFAULT_COLORTERM_ENV);
+    if tmux_environment.inject {
+        cmd.env("TMUX", tmux_environment.tmux_env_value());
+        cmd.env("TMUX_PANE", tmux_environment.tmux_pane_env_value());
+        prepend_tmux_shim_to_path(cmd, tmux_environment)?;
+    }
     if cmd.get_cwd().is_none() {
         let cwd = env::current_dir()?;
         cmd.cwd(cwd.as_os_str());
     }
+    Ok(())
+}
+
+fn prepend_tmux_shim_to_path(
+    cmd: &mut CommandBuilder,
+    tmux_environment: &TerminalTmuxEnvironmentConfig,
+) -> Result<()> {
+    let shim_path = tmux_environment
+        .shim_path
+        .as_ref()
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| {
+            let current_exe = env::current_exe()?;
+            current_exe
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| anyhow!("failed to resolve current executable directory"))
+        })?;
+    let mut paths = vec![shim_path];
+    if let Some(existing_path) = cmd.get_env("PATH") {
+        paths.extend(env::split_paths(existing_path).filter(|path| !path.as_os_str().is_empty()));
+    }
+    cmd.env("PATH", env::join_paths(paths)?);
     Ok(())
 }
 
@@ -1325,6 +1695,16 @@ fn command_row_presentation(blocks: &[TerminalCommandBlock], row: usize) -> Comm
     presentation
 }
 
+/// Returns whether a visible screen row has no drawable content, used to detect
+/// rows blanked by an in-place erase (see `prune_cleared_command_marks`).
+fn command_mark_row_is_blank(screen: &vt100::Screen, row: u16, width: u16) -> bool {
+    (0..width).all(|x| {
+        screen
+            .cell(row, x)
+            .is_none_or(|cell| cell.is_wide_continuation() || cell.contents().is_empty())
+    })
+}
+
 fn command_separator_start(screen: &vt100::Screen, row: u16, width: u16) -> u16 {
     let mut content_end = 0;
     for x in 0..width {
@@ -1392,6 +1772,7 @@ struct TerminalShared {
     system_clipboard: Option<SystemClipboard>,
     pty_resize: Option<TerminalPtyResize>,
     shell_integration: TerminalShellIntegration,
+    tmux_environment: TerminalTmuxEnvironmentConfig,
     last_shell_integration_error: Option<String>,
     exit_status: Option<ExitStatus>,
     process_running: bool,
@@ -1418,6 +1799,7 @@ struct TerminalShared {
     current_cwd: Option<String>,
     cursor_shape: TerminalCursorShape,
     dsr_tail: Vec<u8>,
+    tmux_dcs_passthrough: TmuxDcsPassthroughDecoder,
 }
 
 impl TerminalShared {
@@ -1435,6 +1817,7 @@ impl TerminalShared {
         self.set_prefix_shortcut(config.prefix_shortcut);
         self.alternate_screen_scroll = config.alternate_screen_scroll;
         self.shell_integration = config.shell_integration;
+        self.tmux_environment = config.tmux_environment;
         self.cursor_shape = config.cursor_shape;
     }
 
@@ -1506,7 +1889,14 @@ impl TerminalShared {
         for event in events {
             match event {
                 TerminalCallbackEvent::WindowTitle(title) => {
-                    self.window_title = Some(title.clone());
+                    // 某些应用 (如 Claude Code) 退出时会用 OSC 0/2 发送一个空标题来"清空"
+                    // 标题。把空标题归一化为 None,表示"当前没有有效标题",这样调用方无需
+                    // 自行区分空串,可直接回退到自己的默认标题。
+                    self.window_title = if title.trim().is_empty() {
+                        None
+                    } else {
+                        Some(title.clone())
+                    };
                     if let Some(callback) = self.on_window_title.clone() {
                         dispatches.push(TerminalCallbackDispatch::WindowTitle(callback, title));
                     }
@@ -1647,6 +2037,59 @@ impl TerminalShared {
             });
         }
         self.command_marks.last_mut().expect("command block exists")
+    }
+
+    /// Drops command marks whose recorded rows were blanked by an in-place
+    /// screen erase (Ctrl-L, the `clear`/`tput clear` command, or a full-screen
+    /// app repainting the primary screen).
+    ///
+    /// Such an erase clears the visible rows without scrolling them into
+    /// history, so the marks keep pointing at now-empty rows and paint ghost
+    /// separators / output shading there. Shell integration does not re-emit an
+    /// OSC 133 prompt marker on a bare Ctrl-L, so this runs after *every* output
+    /// batch rather than only when a marker arrives.
+    ///
+    /// A mark is stale when *every* screen row it spans is blank. A live block
+    /// always keeps non-blank rows (the typed command, its output), so requiring
+    /// the whole span to be blank avoids false positives from a completed block
+    /// whose trailing `end` row happens to be empty, or from a redraw that only
+    /// repaints part of a block. A cleared block is blank throughout. Rows still
+    /// in real scrollback are treated as non-blank (preserved as history).
+    fn prune_cleared_command_marks(&mut self) {
+        if self.command_marks.is_empty() {
+            return;
+        }
+        let max_scrollback = self.max_scrollback();
+        let marks = std::mem::take(&mut self.command_marks);
+        let screen = self.parser.screen();
+        let (rows, width) = screen.size();
+        self.command_marks = marks
+            .into_iter()
+            .filter(|block| {
+                // Only real commands (with a recorded command/output span) leave
+                // ghost decorations behind after a clear. Marker-only partial
+                // blocks that legitimately sit on an empty line are preserved.
+                if !block.has_command_activity() {
+                    return true;
+                }
+                let (Some(anchor), Some(last)) = (block.anchor_row(), block.last_row()) else {
+                    return true;
+                };
+                (anchor..=last).any(|absolute_row| {
+                    // A row outside the live viewport (still in scrollback, or
+                    // past the bottom) counts as non-blank so the mark survives.
+                    let Some(visible) = absolute_row.checked_sub(max_scrollback) else {
+                        return true;
+                    };
+                    match u16::try_from(visible) {
+                        Ok(visible) if visible < rows => {
+                            !command_mark_row_is_blank(screen, visible, width)
+                        }
+                        _ => true,
+                    }
+                })
+            })
+            .collect();
     }
 
     fn current_command_block_mut(&mut self) -> Option<&mut TerminalCommandBlock> {
@@ -2545,6 +2988,7 @@ impl TerminalEmulator {
             system_clipboard: Some(Arc::new(DefaultTerminalSystemClipboard)),
             pty_resize: None,
             shell_integration: runtime_config.shell_integration,
+            tmux_environment: runtime_config.tmux_environment,
             last_shell_integration_error: None,
             exit_status: None,
             process_running: false,
@@ -2567,6 +3011,7 @@ impl TerminalEmulator {
             current_cwd: None,
             cursor_shape: runtime_config.cursor_shape,
             dsr_tail: Vec::with_capacity(4),
+            tmux_dcs_passthrough: TmuxDcsPassthroughDecoder::default(),
         };
 
         Self {
@@ -2687,6 +3132,12 @@ impl TerminalEmulator {
         self
     }
 
+    /// Configures tmux-compatible probe variables for future subprocess spawns.
+    pub fn tmux_environment(self, config: TerminalTmuxEnvironmentConfig) -> Self {
+        self.shared.lock().tmux_environment = config;
+        self
+    }
+
     pub fn on_input<F>(self, callback: F) -> Self
     where
         F: Fn(&[u8]) + Send + Sync + 'static,
@@ -2773,8 +3224,11 @@ impl TerminalEmulator {
 
     /// Spawns a subprocess using a custom command builder.
     pub fn spawn_command(&mut self, mut cmd: CommandBuilder) -> Result<()> {
-        prepare_spawn_command(&mut cmd)?;
-        let shell_integration = { self.shared.lock().shell_integration };
+        let (shell_integration, tmux_environment) = {
+            let shared = self.shared.lock();
+            (shared.shell_integration, shared.tmux_environment.clone())
+        };
+        prepare_spawn_command(&mut cmd, &tmux_environment)?;
         let shell_integration_files = match prepare_shell_integration(&mut cmd, shell_integration) {
             Ok(files) => {
                 self.shared.lock().last_shell_integration_error = None;
@@ -3097,9 +3551,14 @@ impl ::atto_ui::composable::Component for TerminalEmulator {
         }
         let selection_range = shared.selection.range();
         let copy_mode_cursor = shared.copy_mode.as_ref().map(|mode| mode.cursor);
-        let command_blocks = if self.command_block_presentation.is_enabled() {
+        let command_blocks = if self.command_block_presentation.is_enabled()
+            && !shared.parser.screen().alternate_screen()
+        {
             shared.command_marks.clone()
         } else {
+            // Command-block decorations (separators, output shading, failure
+            // markers) belong to the primary scrollback. Full-screen apps on the
+            // alternate screen manage their own layout, so suppress them there.
             Vec::new()
         };
         let max_scrollback = shared.max_scrollback();
@@ -3407,10 +3866,12 @@ impl TerminalHandle {
     pub fn process_output(&self, bytes: &[u8]) {
         let (responses, dispatches) = {
             let mut shared = self.shared.lock();
-            shared.parser.process(bytes);
+            let decoded = shared.tmux_dcs_passthrough.decode(bytes);
+            shared.parser.process(&decoded);
             let events = shared.parser.callbacks_mut().take_events();
-            let responses = collect_dsr_responses(&mut shared, bytes);
+            let responses = collect_dsr_responses(&mut shared, &decoded);
             let dispatches = shared.apply_callback_events(events);
+            shared.prune_cleared_command_marks();
             (responses, dispatches)
         };
         for response in responses {
@@ -3498,6 +3959,16 @@ impl TerminalHandle {
     /// Returns the current spawn-time shell integration policy.
     pub fn shell_integration(&self) -> TerminalShellIntegration {
         self.shared.lock().shell_integration
+    }
+
+    /// Updates tmux-compatible probe variables used by future subprocess spawns.
+    pub fn set_tmux_environment(&self, config: TerminalTmuxEnvironmentConfig) {
+        self.shared.lock().tmux_environment = config;
+    }
+
+    /// Returns the current tmux-compatible probe environment configuration.
+    pub fn tmux_environment(&self) -> TerminalTmuxEnvironmentConfig {
+        self.shared.lock().tmux_environment.clone()
     }
 
     /// Returns the last non-fatal shell integration injection error, if any.

@@ -330,6 +330,91 @@ fn clipped_captured_child_receives_translated_mouse_up() {
     );
 }
 
+/// B3: a capturing widget (Button/Checkbox) inside a `Grid` must keep pointer capture, so a
+/// press-then-release-outside still delivers the mouse-up to the widget. Before Grid gained capture
+/// routing, the up was hit-tested against the release position, missed the widget, and the widget
+/// stayed stuck pressed (never releasing capture).
+#[test]
+fn grid_captured_child_receives_mouse_up_outside_bounds() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let toggled = Arc::new(Mutex::new(false));
+
+    // Two 1-row cells in a single column. The capturing widget is the first cell; the second is a
+    // plain filler that the release will land on instead.
+    let mut grid = Grid::new().with_columns(1usize);
+    grid.add_child_with_layout(
+        Box::new(CapturingView::new(
+            Arc::clone(&events),
+            Arc::clone(&toggled),
+        )),
+        LayoutParams {
+            height: Size::Fixed(1),
+            ..LayoutParams::default()
+        },
+    );
+    grid.add_child_with_layout(
+        Box::new(SizedView::new(1, 1)),
+        LayoutParams {
+            height: Size::Fixed(1),
+            ..LayoutParams::default()
+        },
+    );
+
+    let area = Rect::new(0, 0, 20, 4);
+    draw_view(&mut grid, area);
+
+    // Press down on the capturing child (row 0).
+    let _ = grid.handle_event(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }),
+        test_context(),
+    );
+    assert!(
+        !events.lock().expect("lock").is_empty(),
+        "mouse-down must reach the capturing child"
+    );
+
+    // Release on row 1 — outside the captured child's own bounds. With capture routing the up is
+    // sent to the captured child (translated to out-of-range local coords), so it releases capture;
+    // the child's `hit` is false there, so it does NOT toggle. The key assertion is that the child
+    // saw the up at all (capture routed it) rather than the release hit-testing to the filler.
+    *toggled.lock().expect("lock") = false;
+    events.lock().expect("lock").clear();
+    let _ = grid.handle_event(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }),
+        test_context(),
+    );
+    assert!(
+        !events.lock().expect("lock").is_empty(),
+        "captured child in a Grid must receive the mouse-up even when released outside its bounds"
+    );
+
+    // Capture released: a subsequent event on the filler row must no longer be routed to the child.
+    events.lock().expect("lock").clear();
+    let _ = grid.handle_event(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 1,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        }),
+        test_context(),
+    );
+    assert!(
+        events.lock().expect("lock").is_empty(),
+        "after release, events must no longer be routed to the previously-captured child"
+    );
+}
+
 fn draw_view(view: &mut dyn Component, area: Rect) {
     let theme = Theme::dark();
     let ctx = ComponentContext {

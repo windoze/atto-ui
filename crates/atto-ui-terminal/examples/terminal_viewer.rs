@@ -308,10 +308,13 @@ fn seed_terminal_banner(
     ));
     let prefix = shortcut_label(config.prefix_shortcut()?);
     handle.process_output_str(&format!(
-        "{prefix} %: split right; {prefix} \" split below; {prefix} o: next pane.\r\n"
+        "{prefix} %/\": split; {prefix} arrows: select; {prefix} Ctrl+arrows: resize.\r\n"
     ));
     handle.process_output_str(&format!(
-        "{prefix} [: copy-mode; {prefix} ]: paste copy buffer; {prefix} z: maximize window.\r\n"
+        "{prefix} z: zoom pane; {prefix} x: close pane; {prefix} o/Tab: next pane.\r\n"
+    ));
+    handle.process_output_str(&format!(
+        "{prefix} [: copy-mode; {prefix} ]: paste copy buffer.\r\n"
     ));
     handle.process_output_str(
         "File > New shell/command: sessions; File > Settings: live config including close-on-exit.\r\n",
@@ -452,9 +455,11 @@ fn sync_terminal_window_titles(desktop: &mut Desktop, sessions: &[TerminalWindow
         let Some(handle) = session.active_handle() else {
             continue;
         };
-        let Some(title) = handle.window_title() else {
-            continue;
-        };
+        // 应用清空标题时 window_title() 会返回 None,此时回退到窗口的初始标题,
+        // 而不是显示成空标题。
+        let title = handle
+            .window_title()
+            .unwrap_or_else(|| terminal_window_title(session.window_number));
         let current_title = desktop.wm.window(session.id).map(|w| w.title.get());
         if current_title.as_deref() == Some(title.as_str()) {
             continue;
@@ -782,12 +787,12 @@ fn feature_guide_lines(
         String::new(),
         format!("Capture: {release} releases keyboard capture; click a terminal to recapture."),
         format!(
-            "Prefix: {prefix} F10 menu, {prefix} w window mode, {prefix} z maximize, {prefix} {prefix} sends a literal prefix."
+            "Prefix: {prefix} F10 menu, {prefix} w window mode, {prefix} z zooms a pane, {prefix} {prefix} sends a literal prefix."
         ),
         format!(
             "Copy-mode: {prefix} [ enters; arrows/hjkl move; v or Space starts selection; y or Enter copies; {prefix} ] pastes."
         ),
-        format!("Splits: {prefix} % splits right, {prefix} \" splits below, {prefix} o or Tab focuses the next pane."),
+        format!("Splits: {prefix} % splits right, {prefix} \" splits below, arrows select panes, Ctrl+arrows resize, {prefix} x closes a pane."),
         format!(
             "Sessions: File > New shell window uses profile '{}'; File > New command window uses profile '{}'.",
             shell_spec.profile(),
@@ -924,7 +929,13 @@ fn refresh_windows_menu(desktop: &mut Desktop, action_tx: &mpsc::Sender<Terminal
 }
 
 fn main() -> Result<()> {
-    let argv: Vec<String> = env::args().skip(1).collect();
+    let mut argv: Vec<String> = env::args().skip(1).collect();
+    let mut terminal_config_path = default_terminal_config_path();
+    if argv.first().is_some_and(|arg| arg == "--config") && argv.len() >= 2 {
+        terminal_config_path = Some(PathBuf::from(argv.remove(1)));
+        argv.remove(0);
+    }
+
     let shell_spec = TerminalSessionSpec::shell_from_env();
     let command_spec = argv
         .split_first()
@@ -937,7 +948,6 @@ fn main() -> Result<()> {
     } else {
         command_spec.clone()
     };
-    let terminal_config_path = default_terminal_config_path();
     let terminal_config = Binding::new(load_viewer_terminal_config(
         terminal_config_path.as_deref(),
     )?);

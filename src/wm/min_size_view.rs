@@ -14,7 +14,7 @@ use crate::composable::{
     DynamicTree, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig,
     ScrollOffset, Scrollable, TitleBarContent, TitleBarContext,
 };
-use crate::reactive::Binding;
+use crate::reactive::{Binding, DirtySignal};
 use crate::wm::WindowMinSizeMode;
 use crate::{CallbackRegistry, ComponentSpec, TreeError, TreeOp};
 use atto_ui_macros::{ComponentProperties, component_properties};
@@ -349,6 +349,16 @@ impl Component for WindowMinSizeView {
             return Ok(());
         }
         self.inner.set_property(name, value)
+    }
+
+    fn dirty_signals(&self) -> Vec<DirtySignal> {
+        let mut signals = self.__component_dirty_signals();
+        signals.extend(self.inner.dirty_signals());
+        signals
+    }
+
+    fn supports_command(&self, action: &::atto_ui::ComponentCommand) -> bool {
+        self.inner.supports_command(action)
     }
 
     fn apply_command(&mut self, action: ::atto_ui::ComponentCommand) -> EventResult {

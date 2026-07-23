@@ -11,9 +11,10 @@
 | `packages/core` / `@atto-ui/core` | Typed CommonJS facade, native loader, low-level spec builders, and runtime types. |
 | `packages/react` / `@atto-ui/react` | React reconciler, JSX host components, event bridge, and `render()` loop. |
 | `crates/atto-ui-node/npm/*` | Platform binary npm packages used by optional dependencies. |
+| `atto` CLI | External IPC client binary from the root crate for scripted `query`, `invoke`, and `tree` calls over `ATTO_UI_SOCKET`. |
 | `crates/atto-editor-app` | Multi-window terminal editor app with Explorer, tabs, split views, command palette, file/symbol/search pickers, and LSP-backed editor features. |
 | `crates/atto-agent-app` | Single-window TUI agent app built on `atto-ui-chat`, with DeepSeek protocol/client modules, local tools, skills, plan mode, context compaction, and deterministic mock PTY fixtures. |
-| `crates/atto-ui-terminal` | Full-featured terminal emulator component and `terminal_viewer` demo with multi-window sessions, split panes, copy-mode, command blocks, and a visual settings window. |
+| `crates/atto-ui-terminal` | Full-featured terminal emulator component and `terminal_viewer` demo with multi-window sessions, split panes, copy-mode, command blocks, terminal pane IPC helpers, and a client-side `tmux` shim. |
 
 ## Requirements
 
@@ -44,6 +45,24 @@ The deterministic test target used by PTY tests is available with:
 cargo run --bin snapshot_app
 ```
 
+## Scripting And IPC Quick Start
+
+Atto UI apps can expose the in-process `DesktopInspector` control plane over a Unix domain socket. For crossterm apps, set `ATTO_UI_SOCKET` before launch; the runner drains requests on the UI thread during each frame:
+
+```sh
+ATTO_UI_SOCKET=/tmp/atto-ui.sock cargo run --example demo
+```
+
+The root `atto` CLI is the first external client. It talks to that socket and returns either human-readable output or the raw protocol response with `--json`:
+
+```sh
+cargo run --bin atto -- --socket /tmp/atto-ui.sock --json tree
+cargo run --bin atto -- --socket /tmp/atto-ui.sock query my-checkbox checked
+cargo run --bin atto -- --socket /tmp/atto-ui.sock invoke my-checkbox toggle
+```
+
+The CLI currently covers the generic control-plane methods `query`, `invoke`, and `tree`. Terminal pane methods such as `send_keys`, `capture_pane`, `split_window`, and `display_popup` are available to Rust apps that register `atto_ui_terminal::terminal_pane_ipc_handler(...)` on their `IpcServer`; they are also the backend used by the `tmux` shim described below.
+
 ## Terminal App Quick Start
 
 Launch the full terminal viewer demo with your login shell, or pass a command to make the initial terminal window run that command:
@@ -53,9 +72,17 @@ cargo run -p atto-ui-terminal --example terminal_viewer
 cargo run -p atto-ui-terminal --example terminal_viewer -- top
 ```
 
-The viewer supports floating terminal windows, tmux-style split panes, dead-session restart, OSC title sync, command-block navigation for OSC 133/7 shell integration, local selection/copy-mode, OSC 52/system clipboard integration, alt-screen wheel routing, and a File -> Settings window backed by JSON/YAML `TerminalConfig`.
+The viewer supports floating terminal windows, tmux-style split panes, pane zoom/resize/close, dead-session restart, OSC title sync, command-block navigation for OSC 133/7 shell integration, local selection/copy-mode, OSC 52/system clipboard integration, tmux DCS passthrough for OSC 52, alt-screen wheel routing, and a File -> Settings window backed by JSON/YAML `TerminalConfig`.
 
-Key defaults: `Ctrl+B` is the terminal prefix, `Ctrl+B [` enters copy-mode, `Ctrl+B %` / `Ctrl+B "` split panes, `Ctrl+B o` focuses the next pane, and `Ctrl+B F10` opens the menu while capture is active. Without a saved config, `terminal_viewer` uses `Ctrl+Shift+L` to release capture so plain `F10` can reach the menu; saved configs can change the release shortcut.
+Key defaults: `Ctrl+B` is the terminal prefix, `Ctrl+B [` enters copy-mode, `Ctrl+B %` / `Ctrl+B "` split panes, `Ctrl+B o` / `Ctrl+B Tab` focuses the next pane, `Ctrl+B` + an arrow key selects a pane geometrically, `Ctrl+B Ctrl+Arrow` resizes the nearest split, `Ctrl+B z` toggles pane zoom, `Ctrl+B x` closes the active pane, and `Ctrl+B F10` opens the menu while capture is active. Without a saved config, `terminal_viewer` uses `Ctrl+Shift+L` to release capture so plain `F10` can reach the menu; saved configs can change the release shortcut.
+
+The terminal crate also builds a client-side `tmux` shim:
+
+```sh
+cargo build -p atto-ui-terminal --bin tmux
+```
+
+When a terminal app both enables the IPC socket and registers the terminal pane IPC handler, `TerminalConfig.tmux.inject=true` can make child processes see `$TMUX` / `$TMUX_PANE` and put the shim directory at the front of `PATH`. The shim supports common client commands such as `send-keys`, `capture-pane -p`, `list-panes`, `split-window`, `select-pane`, `break-pane`, and `display-popup`; it is not a tmux server implementation and does not support control mode (`-CC`).
 
 Configuration is loaded from `ATTO_UI_TERMINAL_CONFIG` when set, then `$XDG_CONFIG_HOME/atto-ui/terminal.yaml`, then `~/.config/atto-ui/terminal.yaml`. See `crates/atto-ui-terminal/README.md` for feature details, config examples, and focused validation commands.
 

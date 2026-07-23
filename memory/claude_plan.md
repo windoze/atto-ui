@@ -1,27 +1,63 @@
-# Claude execution plan
+# 当前执行计划
 
-I cannot provide private chain-of-thought, but this file records the actionable execution plan and progress for this invocation.
+## 约束记录
 
-## Current status
+- 本轮只处理 `TODO.md` 中第一个标题未带 `[DONE]` 的任务，完成后停止。
+- `TODO.md` 是任务顺序、依赖、验收和完成记录的唯一权威来源。
+- 在读取任务前不做开放式历史问题排查；只在阻塞当前任务、使当前任务行为无效，或是执行当前任务时引入的直接回归时处理相关问题。
+- 如发现未被明确排期的测试失败，必须修复，或把最小必要的前置/跟进任务写入 `TODO.md`，不能把当前任务标记为完成后留下未排期失败。
+- routine 进度只更新 `TODO.md` 和本文件；仅当阶段级计划、依赖或完成标准变化时才更新 `PLAN.md`。
+- 代码或文档修改后需要提交 Git；如果最终完成任务，提交应包含本轮相关改动。
+- 按要求使用中文记录过程和结果。
 
-- Selected first incomplete task from `TODO.md`: **示例升级**.
-- Latest commit is `[Docs] Update terminal app documentation`; it does not mention unfinished work that changes this task's scope.
-- Current direction: upgrade `crates/atto-ui-terminal/examples/terminal_viewer.rs` so the demo visibly showcases the already-implemented full terminal app features, rather than leaving those features discoverable only through hidden shortcuts.
+## 初始步骤
 
-## Step-by-step plan
+1. 读取 `TODO.md`，只定位第一个标题未带 `[DONE]` 的任务。
+2. 查看该任务的正文、依赖、验收要求和完成记录，判断是否可以作为单个执行单元完成。
+3. 检查最近一次提交信息；如果它明确提到与当前任务直接相关的未完成问题，则把该问题纳入当前任务或作为前置项写入 `TODO.md`。
+4. 读取与当前任务直接相关的源码、测试和项目文档，不做无边界排查。
 
-1. Read the existing `terminal_viewer` example and nearby terminal window fixture patterns.
-2. Add an explicit full-feature guide surface to the demo UI, including prefix-key commands, copy-mode, split panes, session management, command-block actions, and settings/config persistence.
-3. Ensure the startup banner also advertises the full feature set from inside the terminal pane.
-4. Build/check the example with the smallest relevant validation, then run formatting, clippy, and workspace tests if code changed.
-5. Mark **示例升级** as `[DONE]` in `TODO.md` with a completion record.
-6. Commit the task changes with the required co-author trailer and stop.
+## 执行策略
 
-## Progress
+1. 如果当前任务可以直接完成：
+   - 按仓库现有结构和风格实现。
+   - 变更前先阅读相关模块，避免覆盖用户已有改动。
+   - 用小而集中的补丁逐步修改文件。
+2. 如果当前任务被具体缺陷或缺失能力阻塞：
+   - 精确记录阻塞点。
+   - 在 `TODO.md` 中插入最小必要的前置任务，并让原任务显式依赖它。
+   - 只在阶段级计划受影响时更新 `PLAN.md`。
+   - 提交这些任务清单/计划变更后停止。
+3. 如果实现过程中发现同类根因影响一组行为：
+   - 修复已识别的整类问题，而不是只修一个狭窄用例。
+   - 增加或调整覆盖该类行为的测试。
 
-- Identified **示例升级** as the first incomplete task.
-- Confirmed the latest commit has no explicit unfinished issue relevant to this task.
-- Reviewed the current `terminal_viewer` implementation; it already wires sessions, splits, copy-mode, command context menus, and settings, so the missing piece is making the demo explicitly present those full-feature paths.
-- Updated `terminal_viewer` with a startup/reopenable feature guide, a Help menu entry, a richer in-terminal banner, a distinct default demo command profile for `File > New command window`, and duplicate-prevention for settings/guide windows.
-- Ran `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --all-targets`; all passed.
-- Marked **示例升级** as `[DONE]` in `TODO.md` with the completion and validation record.
+## 验证策略
+
+1. 先运行 `cargo fmt`。
+2. 再运行 `cargo clippy --all-targets -- -D warnings`。
+3. clippy 通过后运行完整测试，优先使用 `cargo test --all --all-targets`，并确保超时时间不超过 30 分钟。
+4. 如果本轮只有文档或注释变更且自上次绿色完整测试后没有编译输出相关变化，可跳过完整测试，并在 `TODO.md` 完成记录中说明原因。
+5. 对发现的失败测试按测试失败策略处理，不能忽略。
+
+## 完成步骤
+
+1. 将当前任务标题加上 `[DONE]`。
+2. 更新该任务的完成记录，写明实现内容、验证命令和结果。
+3. 如任务拆分、改名、重排或新增依赖，更新 `TODO.md` 的顺序和依赖说明。
+4. 检查工作区状态，确保不误回滚用户已有改动。
+5. 用清晰提交信息提交所有本轮相关改动。
+6. 停止，不继续处理下一个任务。
+
+## 当前状态
+
+- 已创建本执行计划。
+- 已读取 `TODO.md` 并定位第一个未完成任务：`FINAL 文档与示例更新`。
+- 最近提交为 `[M5-R] Review tmux L2 L3 implementation`，未明确留下与当前 FINAL 文档任务直接相关的未完成问题。
+- 当前任务性质：根据实际实现更新 `SCRIPTING_LAYERS.md`、`README.md`，并按需更新 `AGENTS.md` / `CLAUDE.md`；若只改文档，可沿用最近一次全套绿色结果并在完成记录注明。
+- 已完成文档更新：`SCRIPTING_LAYERS.md`、根 `README.md`、`crates/atto-ui-terminal/README.md`、`AGENTS.md`、`CLAUDE.md`。
+- 已更新 `TODO.md`，将 FINAL 任务标记为 `[DONE]` 并补完成记录 / 验证记录。
+- 已运行 `git diff --check`，结果通过。
+- 本轮没有代码变更；按任务规则跳过 `cargo fmt` / `cargo clippy` / `cargo test`，复用最近一次 M5-R 记录的完整绿色结果。
+- 已确认 `TODO.md` 中除使用约定说明外没有剩余 `[TODO]` 任务。
+- 下一步：按收尾规则提交最终文档收尾变更，创建 `endtag`，然后停止。

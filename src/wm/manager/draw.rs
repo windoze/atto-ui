@@ -70,10 +70,6 @@ impl WindowManager {
                     )
                 });
 
-                if modal.is_some() && Some(window.id) != modal {
-                    // Block non-modal windows visually by dimming their chrome.
-                }
-
                 let decorations = window.decorations.get();
                 if decorations.shadow {
                     draw_shadow(frame.buffer_mut(), rect, bounds, theme.window_shadow);

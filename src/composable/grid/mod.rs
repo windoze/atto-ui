@@ -1,5 +1,4 @@
 mod events;
-mod layout;
 mod scrollbars;
 
 use crossterm::event::Event;
@@ -42,6 +41,7 @@ pub struct Grid {
     row_gap: Binding<u16>,
     column_gap: Binding<u16>,
     focused: Option<ComponentId>,
+    captured_child: Option<ComponentId>,
     last_area: Option<Rect>,
     scrollable: Binding<bool>,
     scroll: Binding<ScrollOffset>,
@@ -62,6 +62,7 @@ impl Default for Grid {
             row_gap: 0u16.into(),
             column_gap: 0u16.into(),
             focused: None,
+            captured_child: None,
             last_area: None,
             scrollable: false.into(),
             scroll: ScrollOffset::ZERO.into(),

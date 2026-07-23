@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow, bail};
 use atto_ui::composable::{
     Component, ComponentContext, DynamicTree, EventHandling, EventResult, FocusNav, Layout,
     MouseCoordinateSpace, Scrollable, ScrollbarHost, TabMode,
@@ -19,12 +19,18 @@ use ratatui::layout::Rect;
 use crate::{TerminalConfig, TerminalEmulator, TerminalHandle, TerminalShortcut};
 
 const DIVIDER_THICKNESS: u16 = 1;
+const PANE_RESIZE_STEP: u16 = 1;
 
 /// Stable identifier for one terminal pane inside a [`TerminalPaneGroup`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TerminalPaneId(u64);
 
 impl TerminalPaneId {
+    /// Builds a pane id from its protocol/display value.
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
     /// Returns the numeric pane id for display and tests.
     pub const fn raw(self) -> u64 {
         self.0
@@ -40,6 +46,38 @@ pub enum TerminalPaneSplit {
     Horizontal,
 }
 
+/// Direction used when selecting a neighboring terminal pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalPaneSelectDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Result of splitting one pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalPaneSplitOutcome {
+    pub pane_id: TerminalPaneId,
+    pub new_pane_id: TerminalPaneId,
+    pub pane_count: usize,
+}
+
+/// Result of selecting a neighboring pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalPaneSelectOutcome {
+    pub previous_pane_id: TerminalPaneId,
+    pub pane_id: TerminalPaneId,
+}
+
+/// Result of detaching one pane from a group.
+pub struct TerminalPaneBreakOutcome {
+    pub pane_id: TerminalPaneId,
+    pub terminal: TerminalEmulator,
+    pub rect: Option<Rect>,
+    pub remaining_pane_count: usize,
+}
+
 /// Observable state for one pane.
 #[derive(Clone)]
 pub struct TerminalPaneSnapshot {
@@ -50,23 +88,34 @@ pub struct TerminalPaneSnapshot {
     pub handle: TerminalHandle,
 }
 
-#[derive(Clone)]
 struct TerminalPaneGroupShared {
-    panes: Vec<TerminalPaneSnapshot>,
+    panes: Vec<TerminalPane>,
+    tree: Option<TerminalPaneNode>,
     active_id: Option<TerminalPaneId>,
+    next_id: u64,
     prefix_shortcut: TerminalShortcut,
     last_error: Option<String>,
+    last_area: Option<Rect>,
+    last_layouts: Vec<TerminalPaneLayout>,
+    zoomed_pane_id: Option<TerminalPaneId>,
+    pane_factory: Option<Arc<TerminalPaneFactory>>,
 }
 
 impl Default for TerminalPaneGroupShared {
     fn default() -> Self {
         Self {
             panes: Vec::new(),
+            tree: None,
             active_id: None,
+            next_id: 1,
             prefix_shortcut: TerminalConfig::default()
                 .prefix_shortcut()
                 .expect("default terminal prefix shortcut must be valid"),
             last_error: None,
+            last_area: None,
+            last_layouts: Vec::new(),
+            zoomed_pane_id: None,
+            pane_factory: None,
         }
     }
 }
@@ -80,7 +129,7 @@ pub struct TerminalPaneGroupHandle {
 impl TerminalPaneGroupHandle {
     /// Returns snapshots for all panes in stable pane order.
     pub fn panes(&self) -> Vec<TerminalPaneSnapshot> {
-        self.shared.lock().panes.clone()
+        self.shared.lock().snapshots()
     }
 
     /// Returns the number of panes currently owned by the group.
@@ -90,17 +139,16 @@ impl TerminalPaneGroupHandle {
 
     /// Returns the active pane id, if any.
     pub fn active_pane_id(&self) -> Option<TerminalPaneId> {
-        self.shared.lock().active_id
+        self.shared.lock().active_pane_id()
     }
 
     /// Returns the active pane snapshot, if any.
     pub fn active_pane(&self) -> Option<TerminalPaneSnapshot> {
         self.shared
             .lock()
-            .panes
-            .iter()
+            .snapshots()
+            .into_iter()
             .find(|pane| pane.is_active)
-            .cloned()
     }
 
     /// Returns the active terminal handle, if any.
@@ -112,10 +160,9 @@ impl TerminalPaneGroupHandle {
     pub fn pane_at_screen_position(&self, x: u16, y: u16) -> Option<TerminalPaneSnapshot> {
         self.shared
             .lock()
-            .panes
-            .iter()
+            .snapshots()
+            .into_iter()
             .find(|pane| pane.rect.is_some_and(|rect| rect_contains(rect, x, y)))
-            .cloned()
     }
 
     /// Returns and clears the last split creation error.
@@ -130,12 +177,43 @@ impl TerminalPaneGroupHandle {
         let panes = {
             let mut shared = self.shared.lock();
             shared.prefix_shortcut = prefix_shortcut;
-            shared.panes.clone()
+            shared.snapshots()
         };
         for pane in panes {
             pane.handle.apply_config(config)?;
         }
         Ok(())
+    }
+
+    /// Splits the addressed pane, or the active pane when `pane_id` is `None`.
+    pub fn split_window(
+        &self,
+        pane_id: Option<TerminalPaneId>,
+        direction: TerminalPaneSplit,
+    ) -> Result<TerminalPaneSplitOutcome> {
+        let mut shared = self.shared.lock();
+        match pane_id {
+            Some(pane_id) => shared.split_pane(pane_id, direction),
+            None => shared.split_active(direction),
+        }
+    }
+
+    /// Selects the nearest pane in `direction` from the addressed or active pane.
+    pub fn select_pane(
+        &self,
+        pane_id: Option<TerminalPaneId>,
+        direction: TerminalPaneSelectDirection,
+    ) -> Result<TerminalPaneSelectOutcome> {
+        let mut shared = self.shared.lock();
+        let source = pane_id
+            .or_else(|| shared.active_pane_id())
+            .ok_or_else(|| anyhow!("no active pane"))?;
+        shared.select_pane(source, direction)
+    }
+
+    /// Removes a pane from this group and returns its terminal for hosting elsewhere.
+    pub fn break_pane(&self, pane_id: TerminalPaneId) -> Result<TerminalPaneBreakOutcome> {
+        self.shared.lock().break_pane(pane_id)
     }
 }
 
@@ -161,12 +239,22 @@ enum TerminalPaneNode {
     Leaf(TerminalPaneId),
     Split {
         direction: TerminalPaneSplit,
+        first_len: Option<u16>,
         first: Box<TerminalPaneNode>,
         second: Box<TerminalPaneNode>,
     },
 }
 
 impl TerminalPaneNode {
+    fn contains_leaf(&self, target: TerminalPaneId) -> bool {
+        match self {
+            Self::Leaf(id) => *id == target,
+            Self::Split { first, second, .. } => {
+                first.contains_leaf(target) || second.contains_leaf(target)
+            }
+        }
+    }
+
     fn split_leaf(
         &mut self,
         target: TerminalPaneId,
@@ -177,6 +265,7 @@ impl TerminalPaneNode {
             Self::Leaf(id) if *id == target => {
                 *self = Self::Split {
                     direction,
+                    first_len: None,
                     first: Box::new(Self::Leaf(target)),
                     second: Box::new(Self::Leaf(new_id)),
                 };
@@ -189,6 +278,107 @@ impl TerminalPaneNode {
             }
         }
     }
+
+    fn resize_leaf(
+        &mut self,
+        target: TerminalPaneId,
+        direction: TerminalPaneSelectDirection,
+        amount: u16,
+        area: Rect,
+    ) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split {
+                direction: split_direction,
+                first_len,
+                first,
+                second,
+            } => {
+                let target_in_first = first.contains_leaf(target);
+                let target_in_second = second.contains_leaf(target);
+                if !target_in_first && !target_in_second {
+                    return false;
+                }
+
+                let (first_rect, _, second_rect) = split_rect(area, *split_direction, *first_len);
+                let child_resized = if target_in_first {
+                    first.resize_leaf(target, direction, amount, first_rect)
+                } else {
+                    second.resize_leaf(target, direction, amount, second_rect)
+                };
+                if child_resized {
+                    return true;
+                }
+
+                let delta = match (
+                    *split_direction,
+                    direction,
+                    target_in_first,
+                    target_in_second,
+                ) {
+                    (
+                        TerminalPaneSplit::Vertical,
+                        TerminalPaneSelectDirection::Right,
+                        true,
+                        false,
+                    )
+                    | (
+                        TerminalPaneSplit::Horizontal,
+                        TerminalPaneSelectDirection::Down,
+                        true,
+                        false,
+                    ) => amount as i16,
+                    (
+                        TerminalPaneSplit::Vertical,
+                        TerminalPaneSelectDirection::Left,
+                        false,
+                        true,
+                    )
+                    | (
+                        TerminalPaneSplit::Horizontal,
+                        TerminalPaneSelectDirection::Up,
+                        false,
+                        true,
+                    ) => -(amount as i16),
+                    _ => return false,
+                };
+
+                let axis_len = match split_direction {
+                    TerminalPaneSplit::Vertical => area.width,
+                    TerminalPaneSplit::Horizontal => area.height,
+                };
+                let current = split_first_len(axis_len, *first_len);
+                let next = adjust_split_first_len(axis_len, current, delta);
+                if next == current {
+                    return false;
+                }
+                *first_len = Some(next);
+                true
+            }
+        }
+    }
+
+    fn without_leaf(self, target: TerminalPaneId) -> Option<Self> {
+        match self {
+            Self::Leaf(id) if id == target => None,
+            Self::Leaf(id) => Some(Self::Leaf(id)),
+            Self::Split {
+                direction,
+                first_len,
+                first,
+                second,
+            } => match (first.without_leaf(target), second.without_leaf(target)) {
+                (Some(first), Some(second)) => Some(Self::Split {
+                    direction,
+                    first_len,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,17 +389,289 @@ struct TerminalPaneLayout {
 
 type TerminalPaneFactory = dyn Fn(usize) -> Result<TerminalEmulator> + Send + Sync;
 
+impl TerminalPaneGroupShared {
+    fn new(initial: TerminalPane) -> Self {
+        let first_id = initial.id;
+        Self {
+            panes: vec![initial],
+            tree: Some(TerminalPaneNode::Leaf(first_id)),
+            active_id: Some(first_id),
+            next_id: first_id.raw().saturating_add(1),
+            ..Self::default()
+        }
+    }
+
+    fn pane_index(&self, id: TerminalPaneId) -> Option<usize> {
+        self.panes.iter().position(|pane| pane.id == id)
+    }
+
+    fn active_pane_index(&self) -> Option<usize> {
+        self.panes
+            .iter()
+            .position(|pane| Some(pane.id) == self.active_id)
+    }
+
+    fn active_pane_id(&self) -> Option<TerminalPaneId> {
+        self.active_id
+    }
+
+    fn snapshots(&self) -> Vec<TerminalPaneSnapshot> {
+        self.panes
+            .iter()
+            .enumerate()
+            .map(|(index, pane)| TerminalPaneSnapshot {
+                id: pane.id,
+                index,
+                is_active: Some(pane.id) == self.active_id,
+                rect: self
+                    .last_layouts
+                    .iter()
+                    .find(|layout| layout.id == pane.id)
+                    .map(|layout| layout.rect),
+                handle: pane.handle.clone(),
+            })
+            .collect()
+    }
+
+    fn focus_pane(&mut self, id: TerminalPaneId, capture: bool) -> bool {
+        if self.pane_index(id).is_none() {
+            return false;
+        }
+        self.active_id = Some(id);
+        if self.zoomed_pane_id.is_some() {
+            self.zoomed_pane_id = Some(id);
+        }
+        for pane in &self.panes {
+            pane.handle.set_capture(capture && pane.id == id);
+        }
+        true
+    }
+
+    fn focus_next_pane(&mut self) -> bool {
+        let Some(active_idx) = self.active_pane_index() else {
+            return false;
+        };
+        let next_idx = (active_idx + 1) % self.panes.len().max(1);
+        let next_id = self.panes[next_idx].id;
+        self.focus_pane(next_id, true)
+    }
+
+    fn refresh_layouts_from_last_area(&mut self) {
+        let Some(area) = self.last_area else {
+            return;
+        };
+        let (layouts, _) = self.visible_layouts_for_area(area);
+        self.last_layouts = layouts;
+    }
+
+    fn full_layouts_for_area(
+        &self,
+        area: Rect,
+    ) -> (Vec<TerminalPaneLayout>, Vec<(Rect, TerminalPaneSplit)>) {
+        let Some(tree) = &self.tree else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut layouts = Vec::new();
+        let mut dividers = Vec::new();
+        layout_pane_node(tree, area, &mut layouts, &mut dividers);
+        (layouts, dividers)
+    }
+
+    fn visible_layouts_for_area(
+        &self,
+        area: Rect,
+    ) -> (Vec<TerminalPaneLayout>, Vec<(Rect, TerminalPaneSplit)>) {
+        let (layouts, dividers) = self.full_layouts_for_area(area);
+        if let Some(id) = self.zoomed_pane_id
+            && self.pane_index(id).is_some()
+        {
+            return (vec![TerminalPaneLayout { id, rect: area }], Vec::new());
+        }
+        (layouts, dividers)
+    }
+
+    fn create_terminal_for_new_pane(&self, pane_number: usize) -> Result<TerminalEmulator> {
+        if let Some(factory) = &self.pane_factory {
+            factory(pane_number)
+        } else {
+            Ok(TerminalEmulator::new())
+        }
+    }
+
+    fn split_pane(
+        &mut self,
+        pane_id: TerminalPaneId,
+        direction: TerminalPaneSplit,
+    ) -> Result<TerminalPaneSplitOutcome> {
+        if self.pane_index(pane_id).is_none() {
+            bail!("pane {} does not exist", pane_id.raw());
+        }
+        let new_id = TerminalPaneId(self.next_id);
+        let pane_number = self.panes.len().saturating_add(1);
+        let terminal = match self.create_terminal_for_new_pane(pane_number) {
+            Ok(terminal) => terminal,
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                return Err(error);
+            }
+        };
+        let Some(tree) = self.tree.as_mut() else {
+            bail!("pane tree is empty");
+        };
+        if !tree.split_leaf(pane_id, new_id, direction) {
+            bail!("pane {} is not present in the pane tree", pane_id.raw());
+        }
+        self.next_id = self.next_id.saturating_add(1);
+        self.panes.push(TerminalPane::new(new_id, terminal));
+        self.focus_pane(new_id, true);
+        self.refresh_layouts_from_last_area();
+        Ok(TerminalPaneSplitOutcome {
+            pane_id,
+            new_pane_id: new_id,
+            pane_count: self.panes.len(),
+        })
+    }
+
+    fn split_active(&mut self, direction: TerminalPaneSplit) -> Result<TerminalPaneSplitOutcome> {
+        let Some(active_id) = self.active_id else {
+            bail!("no active pane");
+        };
+        self.split_pane(active_id, direction)
+    }
+
+    fn select_pane(
+        &mut self,
+        source: TerminalPaneId,
+        direction: TerminalPaneSelectDirection,
+    ) -> Result<TerminalPaneSelectOutcome> {
+        let target = self
+            .neighbor_pane(source, direction)
+            .ok_or_else(|| anyhow!("no pane {:?} of pane {}", direction, source.raw()))?;
+        self.focus_pane(target, true);
+        Ok(TerminalPaneSelectOutcome {
+            previous_pane_id: source,
+            pane_id: target,
+        })
+    }
+
+    fn resize_active_pane(&mut self, direction: TerminalPaneSelectDirection, amount: u16) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        let Some(area) = self.last_area else {
+            return false;
+        };
+        let Some(tree) = self.tree.as_mut() else {
+            return false;
+        };
+        if !tree.resize_leaf(active_id, direction, amount, area) {
+            return false;
+        }
+        self.refresh_layouts_from_last_area();
+        true
+    }
+
+    fn toggle_zoom_active_pane(&mut self) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        self.zoomed_pane_id = if self.zoomed_pane_id == Some(active_id) {
+            None
+        } else {
+            Some(active_id)
+        };
+        self.refresh_layouts_from_last_area();
+        true
+    }
+
+    fn close_active_pane(&mut self) -> bool {
+        let Some(active_id) = self.active_id else {
+            return false;
+        };
+        self.close_pane(active_id).is_ok()
+    }
+
+    fn neighbor_pane(
+        &self,
+        source: TerminalPaneId,
+        direction: TerminalPaneSelectDirection,
+    ) -> Option<TerminalPaneId> {
+        let layouts = if let Some(area) = self.last_area {
+            self.full_layouts_for_area(area).0
+        } else {
+            self.last_layouts.clone()
+        };
+        let active = layouts.iter().find(|layout| layout.id == source)?;
+        let active_center = rect_center(active.rect);
+        layouts
+            .iter()
+            .filter(|layout| layout.id != source)
+            .filter(|layout| pane_is_in_direction(active.rect, layout.rect, direction))
+            .min_by_key(|layout| pane_direction_score(active_center, layout.rect, direction))
+            .map(|layout| layout.id)
+    }
+
+    fn break_pane(&mut self, pane_id: TerminalPaneId) -> Result<TerminalPaneBreakOutcome> {
+        let Some((pane, rect)) = self.remove_pane(pane_id)? else {
+            bail!("cannot break the last pane in a group");
+        };
+        Ok(TerminalPaneBreakOutcome {
+            pane_id,
+            terminal: pane.terminal,
+            rect,
+            remaining_pane_count: self.panes.len(),
+        })
+    }
+
+    fn close_pane(&mut self, pane_id: TerminalPaneId) -> Result<()> {
+        let Some((_pane, _rect)) = self.remove_pane(pane_id)? else {
+            bail!("cannot close the last pane in a group");
+        };
+        Ok(())
+    }
+
+    fn remove_pane(
+        &mut self,
+        pane_id: TerminalPaneId,
+    ) -> Result<Option<(TerminalPane, Option<Rect>)>> {
+        if self.panes.len() <= 1 {
+            return Ok(None);
+        }
+        let Some(index) = self.pane_index(pane_id) else {
+            bail!("pane {} does not exist", pane_id.raw());
+        };
+        let Some(tree) = self.tree.take() else {
+            bail!("pane tree is empty");
+        };
+        let Some(next_tree) = tree.without_leaf(pane_id) else {
+            bail!("cannot break the last pane in a group");
+        };
+        self.tree = Some(next_tree);
+        let pane = self.panes.remove(index);
+        let rect = self
+            .last_layouts
+            .iter()
+            .find(|layout| layout.id == pane_id)
+            .map(|layout| layout.rect);
+        self.last_layouts.retain(|layout| layout.id != pane_id);
+        if self.zoomed_pane_id == Some(pane_id) {
+            self.zoomed_pane_id = None;
+        }
+        if self.active_id == Some(pane_id) {
+            self.active_id = self.panes.first().map(|pane| pane.id);
+        }
+        if let Some(active_id) = self.active_id {
+            self.focus_pane(active_id, true);
+        }
+        self.refresh_layouts_from_last_area();
+        Ok(Some((pane, rect)))
+    }
+}
+
 /// A tmux-like split-pane container for terminal emulators.
 pub struct TerminalPaneGroup {
-    panes: Vec<TerminalPane>,
-    tree: TerminalPaneNode,
-    active_id: TerminalPaneId,
-    next_id: u64,
     prefix_shortcut: TerminalShortcut,
     prefix_pending: bool,
-    last_area: Option<Rect>,
-    last_layouts: Vec<TerminalPaneLayout>,
-    pane_factory: Option<Arc<TerminalPaneFactory>>,
     shared: Arc<Mutex<TerminalPaneGroupShared>>,
 }
 
@@ -218,22 +680,13 @@ impl TerminalPaneGroup {
     pub fn new(initial: TerminalEmulator) -> Self {
         let first_id = TerminalPaneId(1);
         let pane = TerminalPane::new(first_id, initial);
-        let shared = Arc::new(Mutex::new(TerminalPaneGroupShared::default()));
+        let shared = Arc::new(Mutex::new(TerminalPaneGroupShared::new(pane)));
         let prefix_shortcut = shared.lock().prefix_shortcut;
-        let mut group = Self {
-            panes: vec![pane],
-            tree: TerminalPaneNode::Leaf(first_id),
-            active_id: first_id,
-            next_id: 2,
+        Self {
             prefix_shortcut,
             prefix_pending: false,
-            last_area: None,
-            last_layouts: Vec::new(),
-            pane_factory: None,
             shared,
-        };
-        group.sync_shared_state();
-        group
+        }
     }
 
     /// Returns a handle for observing panes from the app shell.
@@ -258,16 +711,12 @@ impl TerminalPaneGroup {
     }
 
     /// Configures how new panes are created when a split command is invoked.
-    pub fn pane_factory<F>(mut self, factory: F) -> Self
+    pub fn pane_factory<F>(self, factory: F) -> Self
     where
         F: Fn(usize) -> Result<TerminalEmulator> + Send + Sync + 'static,
     {
-        self.pane_factory = Some(Arc::new(factory));
+        self.shared.lock().pane_factory = Some(Arc::new(factory));
         self
-    }
-
-    fn active_pane_index(&self) -> Option<usize> {
-        self.panes.iter().position(|pane| pane.id == self.active_id)
     }
 
     fn sync_prefix_from_shared(&mut self) {
@@ -278,99 +727,47 @@ impl TerminalPaneGroup {
         }
     }
 
-    fn pane_index(&self, id: TerminalPaneId) -> Option<usize> {
-        self.panes.iter().position(|pane| pane.id == id)
-    }
-
     fn focus_pane(&mut self, id: TerminalPaneId, capture: bool) -> bool {
-        if self.pane_index(id).is_none() {
-            return false;
-        }
-        self.active_id = id;
-        for pane in &self.panes {
-            pane.handle.set_capture(capture && pane.id == id);
-        }
-        self.sync_shared_state();
-        true
+        self.shared.lock().focus_pane(id, capture)
     }
 
     fn focus_next_pane(&mut self) -> bool {
-        let Some(active_idx) = self.active_pane_index() else {
-            return false;
-        };
-        let next_idx = (active_idx + 1) % self.panes.len().max(1);
-        let next_id = self.panes[next_idx].id;
-        self.focus_pane(next_id, true)
-    }
-
-    fn create_terminal_for_new_pane(&self, pane_number: usize) -> Result<TerminalEmulator> {
-        if let Some(factory) = &self.pane_factory {
-            factory(pane_number)
-        } else {
-            Ok(TerminalEmulator::new())
-        }
+        self.shared.lock().focus_next_pane()
     }
 
     fn split_active(&mut self, direction: TerminalPaneSplit) -> bool {
-        let Some(active_idx) = self.active_pane_index() else {
-            return false;
-        };
-        let active_id = self.panes[active_idx].id;
-        let new_id = TerminalPaneId(self.next_id);
-        let pane_number = self.panes.len().saturating_add(1);
-        let terminal = match self.create_terminal_for_new_pane(pane_number) {
-            Ok(terminal) => terminal,
-            Err(error) => {
-                self.shared.lock().last_error = Some(error.to_string());
-                return false;
-            }
-        };
-        if !self.tree.split_leaf(active_id, new_id, direction) {
-            return false;
-        }
-        self.next_id = self.next_id.saturating_add(1);
-        self.panes.push(TerminalPane::new(new_id, terminal));
-        self.focus_pane(new_id, true);
-        true
+        self.shared.lock().split_active(direction).is_ok()
     }
 
-    fn sync_shared_state(&mut self) {
+    fn select_active_neighbor(&mut self, direction: TerminalPaneSelectDirection) -> bool {
         let mut shared = self.shared.lock();
-        shared.active_id = Some(self.active_id);
-        shared.panes = self
-            .panes
-            .iter()
-            .enumerate()
-            .map(|(index, pane)| TerminalPaneSnapshot {
-                id: pane.id,
-                index,
-                is_active: pane.id == self.active_id,
-                rect: self
-                    .last_layouts
-                    .iter()
-                    .find(|layout| layout.id == pane.id)
-                    .map(|layout| layout.rect),
-                handle: pane.handle.clone(),
-            })
-            .collect();
+        let Some(active_id) = shared.active_pane_id() else {
+            return false;
+        };
+        shared.select_pane(active_id, direction).is_ok()
     }
 
-    fn layout_for_area(
-        &self,
-        area: Rect,
-    ) -> (Vec<TerminalPaneLayout>, Vec<(Rect, TerminalPaneSplit)>) {
-        let mut panes = Vec::new();
-        let mut dividers = Vec::new();
-        layout_pane_node(&self.tree, area, &mut panes, &mut dividers);
-        (panes, dividers)
+    fn resize_active_pane(&mut self, direction: TerminalPaneSelectDirection) -> bool {
+        self.shared
+            .lock()
+            .resize_active_pane(direction, PANE_RESIZE_STEP)
+    }
+
+    fn toggle_zoom_active_pane(&mut self) -> bool {
+        self.shared.lock().toggle_zoom_active_pane()
+    }
+
+    fn close_active_pane(&mut self) -> bool {
+        self.shared.lock().close_active_pane()
     }
 
     fn pane_at_screen_position(&self, x: u16, y: u16) -> Option<(usize, Rect)> {
-        let layout = self
+        let shared = self.shared.lock();
+        let layout = shared
             .last_layouts
             .iter()
             .find(|layout| rect_contains(layout.rect, x, y))?;
-        let index = self.pane_index(layout.id)?;
+        let index = shared.pane_index(layout.id)?;
         Some((index, layout.rect))
     }
 
@@ -387,8 +784,12 @@ impl TerminalPaneGroup {
             self.prefix_pending = false;
             return Some(self.handle_prefixed_key(key, ctx));
         }
-        let active = self.active_pane_index()?;
-        if !self.panes[active].handle.capture() || !shortcut_matches(self.prefix_shortcut, key) {
+        let capture = {
+            let shared = self.shared.lock();
+            let active = shared.active_pane_index()?;
+            shared.panes[active].handle.capture()
+        };
+        if !capture || !shortcut_matches(self.prefix_shortcut, key) {
             return None;
         }
         self.prefix_pending = true;
@@ -409,6 +810,22 @@ impl TerminalPaneGroup {
                 let _ = self.focus_next_pane();
                 EventResult::consumed()
             }
+            Some(PaneCommand::Select(direction)) => {
+                let _ = self.select_active_neighbor(direction);
+                EventResult::consumed()
+            }
+            Some(PaneCommand::Resize(direction)) => {
+                let _ = self.resize_active_pane(direction);
+                EventResult::consumed()
+            }
+            Some(PaneCommand::ToggleZoom) => {
+                let _ = self.toggle_zoom_active_pane();
+                EventResult::consumed()
+            }
+            Some(PaneCommand::Close) => {
+                let _ = self.close_active_pane();
+                EventResult::consumed()
+            }
             None => self.replay_prefix_to_active_pane(key, ctx),
         }
     }
@@ -418,7 +835,8 @@ impl TerminalPaneGroup {
         key: KeyEvent,
         ctx: ComponentContext<'_>,
     ) -> EventResult {
-        let Some(active_idx) = self.active_pane_index() else {
+        let mut shared = self.shared.lock();
+        let Some(active_idx) = shared.active_pane_index() else {
             return EventResult::ignored();
         };
         let prefix_event = Event::Key(KeyEvent::new(
@@ -426,10 +844,10 @@ impl TerminalPaneGroup {
             self.prefix_shortcut.modifiers,
         ));
         let child_ctx = child_context(ctx, true);
-        let prefix_result = self.panes[active_idx]
+        let prefix_result = shared.panes[active_idx]
             .terminal
             .handle_event(&prefix_event, child_ctx);
-        let key_result = self.panes[active_idx]
+        let key_result = shared.panes[active_idx]
             .terminal
             .handle_event(&Event::Key(key), child_ctx);
         if key_result.is_consumed() {
@@ -444,25 +862,24 @@ impl TerminalPaneGroup {
 
 impl Component for TerminalPaneGroup {
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
-        self.last_area = Some(area);
+        let mut shared = self.shared.lock();
+        shared.last_area = Some(area);
         if area.width == 0 || area.height == 0 {
-            self.last_layouts.clear();
-            self.sync_shared_state();
+            shared.last_layouts.clear();
             return;
         }
 
-        let (layouts, dividers) = self.layout_for_area(area);
-        self.last_layouts = layouts;
-        self.sync_shared_state();
+        let (layouts, dividers) = shared.visible_layouts_for_area(area);
+        shared.last_layouts = layouts;
 
-        for layout in self.last_layouts.clone() {
+        for layout in shared.last_layouts.clone() {
             if layout.rect.width == 0 || layout.rect.height == 0 {
                 continue;
             }
-            let Some(index) = self.pane_index(layout.id) else {
+            let Some(index) = shared.pane_index(layout.id) else {
                 continue;
             };
-            let focused = ctx.is_focused && layout.id == self.active_id;
+            let focused = ctx.is_focused && Some(layout.id) == shared.active_id;
             let pane_ctx = ComponentContext {
                 is_focused: focused,
                 scrollbar_host: ScrollbarHost::Window,
@@ -471,7 +888,7 @@ impl Component for TerminalPaneGroup {
                 drag: None,
                 ..ctx
             };
-            self.panes[index]
+            shared.panes[index]
                 .terminal
                 .draw(frame, layout.rect, pane_ctx);
         }
@@ -523,17 +940,18 @@ impl TerminalPaneGroup {
         event: &Event,
         ctx: ComponentContext<'_>,
     ) -> EventResult {
-        let Some(active_idx) = self.active_pane_index() else {
+        let mut shared = self.shared.lock();
+        let Some(active_idx) = shared.active_pane_index() else {
             return EventResult::ignored();
         };
         let child_ctx = child_context(ctx, ctx.is_focused);
-        self.panes[active_idx]
+        shared.panes[active_idx]
             .terminal
             .handle_event(event, child_ctx)
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent, ctx: ComponentContext<'_>) -> EventResult {
-        let Some(area) = self.last_area else {
+        let Some(area) = self.shared.lock().last_area else {
             return EventResult::ignored();
         };
         let Some((screen_x, screen_y)) =
@@ -546,8 +964,15 @@ impl TerminalPaneGroup {
         };
 
         if matches!(mouse.kind, crossterm::event::MouseEventKind::Down(_)) {
-            let id = self.panes[pane_idx].id;
-            let capture = self.panes[pane_idx].handle.capture();
+            let Some((id, capture)) = ({
+                let shared = self.shared.lock();
+                shared
+                    .panes
+                    .get(pane_idx)
+                    .map(|pane| (pane.id, pane.handle.capture()))
+            }) else {
+                return EventResult::ignored();
+            };
             let _ = self.focus_pane(id, capture);
         }
 
@@ -556,7 +981,12 @@ impl TerminalPaneGroup {
             row: screen_y.saturating_sub(rect.y),
             ..mouse
         });
-        let child_focused = ctx.is_focused && self.panes[pane_idx].id == self.active_id;
+        let mut shared = self.shared.lock();
+        let active_id = shared.active_id;
+        let Some(pane) = shared.panes.get_mut(pane_idx) else {
+            return EventResult::ignored();
+        };
+        let child_focused = ctx.is_focused && Some(pane.id) == active_id;
         let child_ctx = ComponentContext {
             mouse_coordinate_space: MouseCoordinateSpace::Local,
             is_focused: child_focused,
@@ -565,9 +995,7 @@ impl TerminalPaneGroup {
             drag: None,
             ..ctx
         };
-        self.panes[pane_idx]
-            .terminal
-            .handle_event(&child_event, child_ctx)
+        pane.terminal.handle_event(&child_event, child_ctx)
     }
 }
 
@@ -576,6 +1004,10 @@ enum PaneCommand {
     SplitVertical,
     SplitHorizontal,
     FocusNext,
+    Select(TerminalPaneSelectDirection),
+    Resize(TerminalPaneSelectDirection),
+    ToggleZoom,
+    Close,
 }
 
 fn pane_command_for_key(key: KeyEvent) -> Option<PaneCommand> {
@@ -595,6 +1027,40 @@ fn pane_command_for_key(key: KeyEvent) -> Option<PaneCommand> {
             Some(PaneCommand::FocusNext)
         }
         KeyCode::Tab if key.modifiers == KeyModifiers::NONE => Some(PaneCommand::FocusNext),
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Left))
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Right))
+        }
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Up))
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Down))
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Left))
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Right))
+        }
+        KeyCode::Up if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Up))
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::CONTROL => {
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Down))
+        }
+        KeyCode::Char(ch)
+            if key.modifiers == KeyModifiers::NONE && ch.eq_ignore_ascii_case(&'z') =>
+        {
+            Some(PaneCommand::ToggleZoom)
+        }
+        KeyCode::Char(ch)
+            if key.modifiers == KeyModifiers::NONE && ch.eq_ignore_ascii_case(&'x') =>
+        {
+            Some(PaneCommand::Close)
+        }
         _ => None,
     }
 }
@@ -635,10 +1101,11 @@ fn layout_pane_node(
         }),
         TerminalPaneNode::Split {
             direction,
+            first_len,
             first,
             second,
         } => {
-            let (first_rect, divider, second_rect) = split_rect(area, *direction);
+            let (first_rect, divider, second_rect) = split_rect(area, *direction, *first_len);
             layout_pane_node(first, first_rect, panes, dividers);
             if divider.width > 0 && divider.height > 0 {
                 dividers.push((divider, *direction));
@@ -648,19 +1115,43 @@ fn layout_pane_node(
     }
 }
 
-fn split_rect(area: Rect, direction: TerminalPaneSplit) -> (Rect, Rect, Rect) {
+fn split_rect(
+    area: Rect,
+    direction: TerminalPaneSplit,
+    first_len: Option<u16>,
+) -> (Rect, Rect, Rect) {
     match direction {
-        TerminalPaneSplit::Vertical => split_rect_vertical(area),
-        TerminalPaneSplit::Horizontal => split_rect_horizontal(area),
+        TerminalPaneSplit::Vertical => split_rect_vertical(area, first_len),
+        TerminalPaneSplit::Horizontal => split_rect_horizontal(area, first_len),
     }
 }
 
-fn split_rect_vertical(area: Rect) -> (Rect, Rect, Rect) {
+fn split_first_len(axis_len: u16, requested: Option<u16>) -> u16 {
+    let available = axis_len.saturating_sub(DIVIDER_THICKNESS);
+    if available <= 1 {
+        return available;
+    }
+    requested
+        .unwrap_or(available / 2)
+        .clamp(1, available.saturating_sub(1))
+}
+
+fn adjust_split_first_len(axis_len: u16, current: u16, delta: i16) -> u16 {
+    let available = axis_len.saturating_sub(DIVIDER_THICKNESS);
+    if available <= 1 {
+        return available;
+    }
+    let min = 1i32;
+    let max = available.saturating_sub(1) as i32;
+    (current as i32 + delta as i32).clamp(min, max) as u16
+}
+
+fn split_rect_vertical(area: Rect, first_len: Option<u16>) -> (Rect, Rect, Rect) {
     if area.width <= DIVIDER_THICKNESS {
         return (area, Rect::default(), Rect::default());
     }
     let available = area.width.saturating_sub(DIVIDER_THICKNESS);
-    let first_width = available / 2;
+    let first_width = split_first_len(area.width, first_len);
     let second_width = available.saturating_sub(first_width);
     let first = Rect {
         width: first_width,
@@ -681,12 +1172,12 @@ fn split_rect_vertical(area: Rect) -> (Rect, Rect, Rect) {
     (first, divider, second)
 }
 
-fn split_rect_horizontal(area: Rect) -> (Rect, Rect, Rect) {
+fn split_rect_horizontal(area: Rect, first_len: Option<u16>) -> (Rect, Rect, Rect) {
     if area.height <= DIVIDER_THICKNESS {
         return (area, Rect::default(), Rect::default());
     }
     let available = area.height.saturating_sub(DIVIDER_THICKNESS);
-    let first_height = available / 2;
+    let first_height = split_first_len(area.height, first_len);
     let second_height = available.saturating_sub(first_height);
     let first = Rect {
         height: first_height,
@@ -762,6 +1253,71 @@ fn rect_contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
+fn rect_center(rect: Rect) -> (u32, u32) {
+    (
+        rect.x as u32 * 2 + rect.width as u32,
+        rect.y as u32 * 2 + rect.height as u32,
+    )
+}
+
+fn pane_is_in_direction(
+    active: Rect,
+    candidate: Rect,
+    direction: TerminalPaneSelectDirection,
+) -> bool {
+    let (active_x, active_y) = rect_center(active);
+    let (candidate_x, candidate_y) = rect_center(candidate);
+    match direction {
+        TerminalPaneSelectDirection::Left => {
+            candidate_x < active_x
+                && ranges_overlap(active.y, active.height, candidate.y, candidate.height)
+        }
+        TerminalPaneSelectDirection::Right => {
+            candidate_x > active_x
+                && ranges_overlap(active.y, active.height, candidate.y, candidate.height)
+        }
+        TerminalPaneSelectDirection::Up => {
+            candidate_y < active_y
+                && ranges_overlap(active.x, active.width, candidate.x, candidate.width)
+        }
+        TerminalPaneSelectDirection::Down => {
+            candidate_y > active_y
+                && ranges_overlap(active.x, active.width, candidate.x, candidate.width)
+        }
+    }
+}
+
+fn pane_direction_score(
+    active_center: (u32, u32),
+    candidate: Rect,
+    direction: TerminalPaneSelectDirection,
+) -> (u32, u32) {
+    let candidate_center = rect_center(candidate);
+    let primary = match direction {
+        TerminalPaneSelectDirection::Left | TerminalPaneSelectDirection::Right => {
+            active_center.0.abs_diff(candidate_center.0)
+        }
+        TerminalPaneSelectDirection::Up | TerminalPaneSelectDirection::Down => {
+            active_center.1.abs_diff(candidate_center.1)
+        }
+    };
+    let secondary = match direction {
+        TerminalPaneSelectDirection::Left | TerminalPaneSelectDirection::Right => {
+            active_center.1.abs_diff(candidate_center.1)
+        }
+        TerminalPaneSelectDirection::Up | TerminalPaneSelectDirection::Down => {
+            active_center.0.abs_diff(candidate_center.0)
+        }
+    };
+    (primary, secondary)
+}
+
+fn ranges_overlap(a_start: u16, a_len: u16, b_start: u16, b_len: u16) -> bool {
+    let a_end = a_start.saturating_add(a_len);
+    let b_end = b_start.saturating_add(b_len);
+    a_start < b_end && b_start < a_end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,15 +1339,20 @@ mod tests {
     #[test]
     fn split_rects_reserve_one_cell_divider() {
         let area = Rect::new(2, 3, 11, 7);
-        let (left, divider, right) = split_rect_vertical(area);
+        let (left, divider, right) = split_rect_vertical(area, None);
         assert_eq!(left, Rect::new(2, 3, 5, 7));
         assert_eq!(divider, Rect::new(7, 3, 1, 7));
         assert_eq!(right, Rect::new(8, 3, 5, 7));
 
-        let (top, divider, bottom) = split_rect_horizontal(area);
+        let (top, divider, bottom) = split_rect_horizontal(area, None);
         assert_eq!(top, Rect::new(2, 3, 11, 3));
         assert_eq!(divider, Rect::new(2, 6, 11, 1));
         assert_eq!(bottom, Rect::new(2, 7, 11, 3));
+
+        let (left, divider, right) = split_rect_vertical(area, Some(3));
+        assert_eq!(left, Rect::new(2, 3, 3, 7));
+        assert_eq!(divider, Rect::new(5, 3, 1, 7));
+        assert_eq!(right, Rect::new(6, 3, 7, 7));
     }
 
     #[test]
@@ -808,6 +1369,134 @@ mod tests {
             pane_command_for_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)),
             Some(PaneCommand::FocusNext)
         );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            Some(PaneCommand::FocusNext)
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+            Some(PaneCommand::Select(TerminalPaneSelectDirection::Left))
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL)),
+            Some(PaneCommand::Resize(TerminalPaneSelectDirection::Right))
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)),
+            Some(PaneCommand::ToggleZoom)
+        );
+        assert_eq!(
+            pane_command_for_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Some(PaneCommand::Close)
+        );
+    }
+
+    #[test]
+    fn pane_resize_adjusts_nearest_split_for_active_pane() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 21, 8));
+            shared.refresh_layouts_from_last_area();
+        }
+
+        handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+        let before = handle.panes();
+        let left_before = before
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .and_then(|pane| pane.rect)
+            .expect("left rect before resize");
+        let right_before = before
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .and_then(|pane| pane.rect)
+            .expect("right rect before resize");
+
+        assert!(
+            group
+                .shared
+                .lock()
+                .resize_active_pane(TerminalPaneSelectDirection::Left, 1)
+        );
+
+        let after = handle.panes();
+        let left_after = after
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+            .and_then(|pane| pane.rect)
+            .expect("left rect after resize");
+        let right_after = after
+            .iter()
+            .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+            .and_then(|pane| pane.rect)
+            .expect("right rect after resize");
+        assert_eq!(left_after.width, left_before.width.saturating_sub(1));
+        assert_eq!(right_after.width, right_before.width.saturating_add(1));
+    }
+
+    #[test]
+    fn pane_zoom_exposes_only_active_pane_until_restored() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        let area = Rect::new(3, 4, 30, 10);
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(area);
+            shared.refresh_layouts_from_last_area();
+        }
+        handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+
+        assert!(group.shared.lock().toggle_zoom_active_pane());
+        let zoomed = handle.panes();
+        assert_eq!(
+            zoomed
+                .iter()
+                .find(|pane| pane.id == TerminalPaneId::from_raw(2))
+                .and_then(|pane| pane.rect),
+            Some(area)
+        );
+        assert_eq!(
+            zoomed
+                .iter()
+                .find(|pane| pane.id == TerminalPaneId::from_raw(1))
+                .and_then(|pane| pane.rect),
+            None
+        );
+
+        assert!(group.shared.lock().toggle_zoom_active_pane());
+        let restored = handle.panes();
+        assert!(
+            restored.iter().all(|pane| pane.rect.is_some()),
+            "all panes should have visible rects after restoring zoom"
+        );
+    }
+
+    #[test]
+    fn pane_close_active_removes_pane_and_reflows_layout() {
+        let group = TerminalPaneGroup::new(TerminalEmulator::new());
+        let handle = group.handle();
+        {
+            let mut shared = group.shared.lock();
+            shared.last_area = Some(Rect::new(0, 0, 21, 8));
+            shared.refresh_layouts_from_last_area();
+        }
+        let split = handle
+            .split_window(None, TerminalPaneSplit::Vertical)
+            .expect("split right");
+        assert_eq!(split.new_pane_id, TerminalPaneId::from_raw(2));
+        assert!(group.shared.lock().close_active_pane());
+
+        let panes = handle.panes();
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].id, TerminalPaneId::from_raw(1));
+        assert!(panes[0].is_active);
+        assert_eq!(panes[0].rect, Some(Rect::new(0, 0, 21, 8)));
     }
 
     #[test]

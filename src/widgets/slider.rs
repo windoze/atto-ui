@@ -4,12 +4,15 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, EventHandling, EventResult, FocusNav, Layout, MouseCoordinateSpace,
 };
 use crate::reactive::Binding;
 use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
+
+use super::util::mouse_coords_local_to_area;
 
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct Slider {
@@ -138,6 +141,24 @@ impl Slider {
         self.snap_value(value)
     }
 
+    fn value_from_index(&self, index: usize) -> f64 {
+        let (min, _max) = self.normalized_range();
+        let step = self.step.get().abs();
+        if !step.is_finite() || step <= f64::EPSILON {
+            return min;
+        }
+        self.snap_value(min + index as f64 * step)
+    }
+
+    fn progress(&self) -> f64 {
+        let (min, max) = self.normalized_range();
+        let range = max - min;
+        if range.abs() <= f64::EPSILON {
+            return 0.0;
+        }
+        (self.clamp_value(self.value.get()) - min) / range
+    }
+
     fn thumb_pos(&self, width: u16) -> u16 {
         let (min, max) = self.normalized_range();
         let range = max - min;
@@ -184,6 +205,32 @@ impl Slider {
 
 #[component_properties]
 impl Component for Slider {
+    fn supports_command(&self, command: &ComponentCommand) -> bool {
+        matches!(command, ComponentCommand::SelectIndex(_))
+    }
+
+    fn property_names(&self) -> Vec<&'static str> {
+        let mut names = self.__component_property_names();
+        names.push("progress");
+        names
+    }
+
+    fn get_property(&self, name: &str) -> Option<ComponentValue> {
+        if name == "progress" {
+            return Some(ComponentValue::F64(self.progress()));
+        }
+        self.__component_get_property(name)
+    }
+
+    fn apply_command(&mut self, command: ComponentCommand) -> EventResult {
+        match command {
+            ComponentCommand::SelectIndex(index) if self.enabled.get() => {
+                self.set_value_and_emit(self.value_from_index(index))
+            }
+            _ => EventResult::ignored(),
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, ctx: ComponentContext<'_>) {
         self.last_area = Some(area);
         if area.width == 0 || area.height == 0 {
@@ -285,31 +332,6 @@ impl EventHandling for Slider {
 
 crate::impl_component_default_traits!(Slider => Scrollable, DynamicTree);
 
-fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => (area.width > 0
-            && area.height > 0
-            && m.column >= area.x
-            && m.column < area.x.saturating_add(area.width)
-            && m.row >= area.y
-            && m.row < area.y.saturating_add(area.height))
-        .then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyModifiers, MouseEvent};
@@ -317,6 +339,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use crate::composable::{ScrollbarHost, TabMode};
+    use crate::runtime::{CallbackHandle, CallbackRegistry};
     use crate::theme::Theme;
     use crate::wm::WindowId;
 
@@ -332,6 +355,16 @@ mod tests {
             mouse_coordinate_space: MouseCoordinateSpace::Absolute,
             drag: None,
         }
+    }
+
+    fn assert_f64_property(slider: &Slider, name: &str, expected: f64) {
+        let Some(ComponentValue::F64(actual)) = slider.get_property(name) else {
+            panic!("expected {name} to be an f64 property");
+        };
+        assert!(
+            (actual - expected).abs() <= f64::EPSILON,
+            "expected {name}={expected}, got {actual}"
+        );
     }
 
     #[test]
@@ -389,5 +422,90 @@ mod tests {
             EventResult::ignored()
         );
         assert_eq!(value.get(), 6.0);
+    }
+
+    #[test]
+    fn apply_command_select_index_sets_stepped_value_and_progress() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(
+            callbacks.clone(),
+            callback_id,
+            Some("slider".into()),
+            "change",
+        );
+        let value = Binding::new(0.0);
+        let mut slider = Slider::new(0.0, 10.0, value.clone())
+            .step(2.0)
+            .on_change_callback(callback);
+
+        assert!(slider.property_names().contains(&"progress"));
+        assert_eq!(
+            slider.apply_command(ComponentCommand::SelectIndex(3)),
+            EventResult::changed()
+        );
+
+        assert_eq!(value.get(), 6.0);
+        assert_f64_property(&slider, "value", 6.0);
+        assert_f64_property(&slider, "progress", 0.6);
+
+        let events = callbacks.drain();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].callback_id, callback_id);
+        assert_eq!(events[0].target_id.as_deref(), Some("slider"));
+        assert_eq!(events[0].event, "change");
+        assert_eq!(events[0].payload, Some(ComponentValue::F64(6.0)));
+    }
+
+    #[test]
+    fn apply_command_select_index_clamps_out_of_range_index() {
+        let value = Binding::new(5.0);
+        let mut slider = Slider::new(0.0, 10.0, value.clone()).step(2.0);
+
+        assert_eq!(
+            slider.apply_command(ComponentCommand::SelectIndex(usize::MAX)),
+            EventResult::changed()
+        );
+
+        assert_eq!(value.get(), 10.0);
+        assert_f64_property(&slider, "value", 10.0);
+        assert_f64_property(&slider, "progress", 1.0);
+    }
+
+    #[test]
+    fn apply_command_select_index_uses_normalized_reversed_range() {
+        let value = Binding::new(10.0);
+        let mut slider = Slider::new(10.0, 0.0, value.clone()).step(2.0);
+
+        assert_eq!(
+            slider.apply_command(ComponentCommand::SelectIndex(1)),
+            EventResult::changed()
+        );
+
+        assert_eq!(value.get(), 2.0);
+        assert_f64_property(&slider, "value", 2.0);
+        assert_f64_property(&slider, "progress", 0.2);
+    }
+
+    #[test]
+    fn apply_command_select_index_ignored_when_disabled() {
+        let callbacks = CallbackRegistry::new();
+        let callback_id = callbacks.register();
+        let callback = CallbackHandle::new(callbacks.clone(), callback_id, None, "change");
+        let value = Binding::new(4.0);
+        let mut slider = Slider::new(0.0, 10.0, value.clone())
+            .step(2.0)
+            .enabled(false)
+            .on_change_callback(callback);
+
+        assert_eq!(
+            slider.apply_command(ComponentCommand::SelectIndex(3)),
+            EventResult::ignored()
+        );
+
+        assert_eq!(value.get(), 4.0);
+        assert_f64_property(&slider, "value", 4.0);
+        assert_f64_property(&slider, "progress", 0.4);
+        assert!(callbacks.is_empty());
     }
 }
