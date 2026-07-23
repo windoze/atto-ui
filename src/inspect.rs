@@ -235,29 +235,25 @@ impl<'a> DesktopInspector<'a> {
     }
 
     pub fn get_property(&mut self, id: &str, name: &str) -> Result<ComponentValue, ComponentError> {
-        if let Some(value) = menu_get_property(&self.desktop.menu, id, name) {
-            return Ok(value);
+        // Preserves the original chain's error: a resolved id whose backend does not expose `name`
+        // falls through to `not_found(id)` (not `unsupported_property`).
+        match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => menu_get_property(&self.desktop.menu, id, name),
+            Some(DispatchTarget::Window) => window_get_property(&self.desktop.wm, id, name),
+            Some(DispatchTarget::Component) => component_get_property(&self.desktop.wm, id, name),
+            None => None,
         }
-        if let Some(value) = window_get_property(&self.desktop.wm, id, name) {
-            return Ok(value);
-        }
-        if let Some(value) = component_get_property(&self.desktop.wm, id, name) {
-            return Ok(value);
-        }
-        Err(ComponentError::not_found(id))
+        .ok_or_else(|| ComponentError::not_found(id))
     }
 
     pub fn property_names(&mut self, id: &str) -> Result<Vec<String>, ComponentError> {
-        if let Some(names) = menu_property_names(&self.desktop.menu, id) {
-            return Ok(names);
+        match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => menu_property_names(&self.desktop.menu, id),
+            Some(DispatchTarget::Window) => window_property_names(&self.desktop.wm, id),
+            Some(DispatchTarget::Component) => component_property_names(&self.desktop.wm, id),
+            None => None,
         }
-        if let Some(names) = window_property_names(&self.desktop.wm, id) {
-            return Ok(names);
-        }
-        if let Some(names) = component_property_names(&self.desktop.wm, id) {
-            return Ok(names);
-        }
-        Err(ComponentError::not_found(id))
+        .ok_or_else(|| ComponentError::not_found(id))
     }
 
     pub fn query(
@@ -293,16 +289,23 @@ impl<'a> DesktopInspector<'a> {
         name: &str,
         value: ComponentValue,
     ) -> Result<(), ComponentError> {
-        if menu_set_property(&mut self.desktop.menu, id, name, value.clone())? {
-            return Ok(());
+        let handled = match resolve_dispatch_target(self.desktop, id) {
+            Some(DispatchTarget::Menu) => {
+                menu_set_property(&mut self.desktop.menu, id, name, value)?
+            }
+            Some(DispatchTarget::Window) => {
+                window_set_property(&mut self.desktop.wm, id, name, value)?
+            }
+            Some(DispatchTarget::Component) => {
+                component_set_property(&mut self.desktop.wm, id, name, value)?
+            }
+            None => return Err(ComponentError::not_found(id)),
+        };
+        if handled {
+            Ok(())
+        } else {
+            Err(ComponentError::not_found(id))
         }
-        if window_set_property(&mut self.desktop.wm, id, name, value.clone())? {
-            return Ok(());
-        }
-        if component_set_property(&mut self.desktop.wm, id, name, value)? {
-            return Ok(());
-        }
-        Err(ComponentError::not_found(id))
     }
 
     pub fn action(
@@ -453,26 +456,36 @@ impl<'a> DesktopInspector<'a> {
             _ => None,
         };
 
-        if menu_command_supported(&self.desktop.menu, id, &action).unwrap_or(false) {
-            let result = menu_action(&mut self.desktop.menu, id, &action)
-                .unwrap_or_else(EventResult::ignored);
-            return Ok(InvokeResult::semantic(result));
-        }
-        if window_command_supported(&self.desktop.wm, id, &action).unwrap_or(false) {
-            let result = window_action(&mut self.desktop.wm, id, &action)
-                .unwrap_or_else(EventResult::ignored);
-            return Ok(InvokeResult::semantic(result));
-        }
-        if component_command_supported(&self.desktop.wm, id, &action).unwrap_or(false) {
-            let result = component_action(&mut self.desktop.wm, id, &action)
-                .unwrap_or_else(EventResult::ignored);
+        let target = resolve_dispatch_target(self.desktop, id);
+        let supported = match target {
+            Some(DispatchTarget::Menu) => {
+                menu_command_supported(&self.desktop.menu, id, &action).unwrap_or(false)
+            }
+            Some(DispatchTarget::Window) => {
+                window_command_supported(&self.desktop.wm, id, &action).unwrap_or(false)
+            }
+            Some(DispatchTarget::Component) => {
+                component_command_supported(&self.desktop.wm, id, &action).unwrap_or(false)
+            }
+            None => false,
+        };
+        if supported {
+            let result = match target {
+                Some(DispatchTarget::Menu) => menu_action(&mut self.desktop.menu, id, &action),
+                Some(DispatchTarget::Window) => window_action(&mut self.desktop.wm, id, &action),
+                Some(DispatchTarget::Component) => {
+                    component_action(&mut self.desktop.wm, id, &action)
+                }
+                None => None,
+            }
+            .unwrap_or_else(EventResult::ignored);
             return Ok(InvokeResult::semantic(result));
         }
 
+        // Semantic command not supported by the resolved backend: a Custom command has no
+        // coordinate fallback, so a known id reports "action not supported".
         if let Some(name) = custom_name
-            && (menu_exists(&self.desktop.menu, id)
-                || window_exists(&self.desktop.wm, id)
-                || component_exists(&self.desktop.wm, id))
+            && target.is_some()
         {
             return Err(ComponentError::action_not_supported(name));
         }
@@ -1217,6 +1230,28 @@ fn center_point(bounds: Rect) -> Option<(u16, u16)> {
     Some((x, y))
 }
 
+/// Which backend owns a tag. The `menu → window → component` precedence lives here alone, so the
+/// property/action methods resolve ownership once and dispatch, instead of each re-deriving the
+/// same fallthrough chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DispatchTarget {
+    Menu,
+    Window,
+    Component,
+}
+
+fn resolve_dispatch_target(desktop: &Desktop, id: &str) -> Option<DispatchTarget> {
+    if menu_exists(&desktop.menu, id) {
+        Some(DispatchTarget::Menu)
+    } else if window_exists(&desktop.wm, id) {
+        Some(DispatchTarget::Window)
+    } else if component_exists(&desktop.wm, id) {
+        Some(DispatchTarget::Component)
+    } else {
+        None
+    }
+}
+
 fn menu_get_property(menu: &crate::app::MenuBar, id: &str, name: &str) -> Option<ComponentValue> {
     if let Some(spec) = menu_find_spec(menu, id) {
         return match name {
@@ -1497,7 +1532,7 @@ fn component_get_property(
     name: &str,
 ) -> Option<ComponentValue> {
     for window in wm.windows() {
-        if let Some(found) = component_find(window.view.as_ref(), id) {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
             return found.get_property(name);
         }
     }
@@ -1506,7 +1541,7 @@ fn component_get_property(
 
 fn component_property_names(wm: &crate::wm::WindowManager, id: &str) -> Option<Vec<String>> {
     for window in wm.windows() {
-        if let Some(found) = component_find(window.view.as_ref(), id) {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
             return Some(
                 found
                     .property_names()
@@ -1526,7 +1561,7 @@ fn component_set_property(
     value: ComponentValue,
 ) -> Result<bool, ComponentError> {
     for window in wm.windows_mut() {
-        if let Some(found) = component_find_mut(window.view.as_mut(), id) {
+        if let Some(found) = find_by_tag_mut(window.view.as_mut(), id) {
             found.set_property(name, value)?;
             return Ok(true);
         }
@@ -1540,7 +1575,7 @@ fn component_action(
     action: &ComponentCommand,
 ) -> Option<EventResult> {
     for window in wm.windows_mut() {
-        if let Some(found) = component_find_mut(window.view.as_mut(), id) {
+        if let Some(found) = find_by_tag_mut(window.view.as_mut(), id) {
             return Some(found.apply_command(action.clone()));
         }
     }
@@ -1553,7 +1588,7 @@ fn component_command_supported(
     action: &ComponentCommand,
 ) -> Option<bool> {
     for window in wm.windows() {
-        if let Some(found) = component_find(window.view.as_ref(), id) {
+        if let Some(found) = find_by_tag(window.view.as_ref(), id) {
             return Some(found.supports_command(action));
         }
     }
@@ -1562,7 +1597,7 @@ fn component_command_supported(
 
 fn component_exists(wm: &crate::wm::WindowManager, id: &str) -> bool {
     for window in wm.windows() {
-        if component_find(window.view.as_ref(), id).is_some() {
+        if find_by_tag(window.view.as_ref(), id).is_some() {
             return true;
         }
     }
@@ -1595,14 +1630,6 @@ fn focused_component_in_view(view: &mut dyn Component) -> Option<&mut dyn Compon
 
         return None;
     }
-}
-
-fn component_find<'a>(view: &'a dyn Component, id: &str) -> Option<&'a dyn Component> {
-    find_by_tag(view, id)
-}
-
-fn component_find_mut<'a>(view: &'a mut dyn Component, id: &str) -> Option<&'a mut dyn Component> {
-    find_by_tag_mut(view, id)
 }
 
 #[cfg(test)]
@@ -1818,6 +1845,31 @@ mod tests {
         let component_names = inspector.property_names("label").expect("component");
         assert!(component_names.contains(&"text".to_string()));
         assert!(component_names.contains(&"enabled".to_string()));
+    }
+
+    #[test]
+    fn dispatch_precedence_prefers_window_over_component_on_tag_collision() {
+        // The menu → window → component precedence now lives in `resolve_dispatch_target`. Pin it:
+        // a window and one of its child components sharing a tag must resolve to the window.
+        let screen = Rect::new(0, 0, 80, 24);
+        let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
+
+        let view = Label::new("Hello").tag("shared");
+        let window = Window::new(
+            WindowKind::Normal,
+            "Win",
+            Rect::new(2, 2, 20, 6),
+            Box::new(view),
+        )
+        .with_tag("shared");
+        desktop.add_window(window, screen);
+
+        let mut inspector = desktop.inspect();
+        // Window property set (title/rect/state/kind) proves the window backend won, not the
+        // component (which would expose text/enabled).
+        let names = inspector.property_names("shared").expect("resolved");
+        assert!(names.contains(&"rect".to_string()), "expected window backend, got {names:?}");
+        assert!(!names.contains(&"text".to_string()), "component must not win over window");
     }
 
     #[test]
