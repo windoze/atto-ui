@@ -779,7 +779,15 @@ mod tests {
         Component, ComponentContext, ComponentTagExt, EventHandling, EventOutcome, EventResult,
         Label,
     };
+    use crate::reactive::GLOBAL_TIMER_TEST_GUARD;
     use crate::theme::Theme;
+
+    /// Serialize with every other test touching the process-global timer wheel / tick rate. Every
+    /// `AppHost` here ticks the global wheel and sets the global tick rate, so parallel runs would
+    /// otherwise perturb the timing-sensitive `step_advances_timers_by_real_elapsed_time`.
+    fn timer_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+        GLOBAL_TIMER_TEST_GUARD.lock()
+    }
     use crate::wm::{Window, WindowKind};
 
     struct ConsumeEscView;
@@ -808,6 +816,7 @@ mod tests {
 
     #[test]
     fn headless_apphost_snapshot_uses_in_memory_layout() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut host = AppHost::new_headless(screen, |screen| {
             let mut desktop = Desktop::new(Theme::dark(), MenuBar::new(vec![]));
@@ -842,6 +851,7 @@ mod tests {
 
     #[test]
     fn pointer_capture_routes_release_outside_button_without_click() {
+        let _guard = timer_test_guard();
         use crate::widgets::Button;
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
         use std::sync::Arc;
@@ -911,6 +921,7 @@ mod tests {
 
     #[test]
     fn step_advances_timers_by_real_elapsed_time() {
+        let _guard = timer_test_guard();
         use crate::reactive::{cancel_timer, register_timer_with_duration};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -949,6 +960,7 @@ mod tests {
 
     #[test]
     fn apphost_escape_cancels_current_task_when_event_is_ignored() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut window_id = None;
         let mut host = AppHost::new_headless(screen, |screen| {
@@ -988,6 +1000,7 @@ mod tests {
 
     #[test]
     fn apphost_escape_does_not_cancel_task_when_view_consumes_event() {
+        let _guard = timer_test_guard();
         let screen = Rect::new(0, 0, 80, 24);
         let mut window_id = None;
         let mut host = AppHost::new_headless(screen, |screen| {

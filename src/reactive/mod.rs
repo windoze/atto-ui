@@ -15,3 +15,5 @@ pub use timer::{
     TimerHandle, TimerWheel, cancel_timer, global_tick_rate_nanos, register_timer,
     register_timer_with_duration, set_global_tick_rate, tick_global_timers,
 };
+#[cfg(test)]
+pub use timer::GLOBAL_TIMER_TEST_GUARD;

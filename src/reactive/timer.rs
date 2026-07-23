@@ -162,6 +162,17 @@ impl Default for TimerWheel {
 static GLOBAL_TIMER_WHEEL: Lazy<Mutex<TimerWheel>> = Lazy::new(|| Mutex::new(TimerWheel::new()));
 static GLOBAL_TICK_RATE_NANOS: AtomicU64 = AtomicU64::new(16_000_000);
 
+/// Serializes tests that touch the process-global timer wheel / tick rate.
+///
+/// `GLOBAL_TIMER_WHEEL` and `GLOBAL_TICK_RATE_NANOS` are process-wide, so any two tests that
+/// register timers, tick the wheel, or set the tick rate (every `AppHost`-based test does the
+/// latter two) interfere when cargo runs them in parallel. Timing-sensitive tests like
+/// `step_advances_timers_by_real_elapsed_time` would then flake. Hold this guard for the duration
+/// of any such test. A `parking_lot::Mutex` is used because it does not poison on panic, so one
+/// failing test cannot cascade into spurious failures in the others.
+#[cfg(test)]
+pub static GLOBAL_TIMER_TEST_GUARD: Mutex<()> = Mutex::new(());
+
 /// Register a timer on the global timer wheel with an interval in ticks.
 pub fn register_timer<F>(interval_ticks: u64, callback: F) -> TimerHandle
 where

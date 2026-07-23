@@ -592,6 +592,13 @@ mod tests {
         Rect::new(0, 0, 80, 24)
     }
 
+    /// Serialize with every other test touching the process-global timer wheel / tick rate. Each
+    /// `AppHost` here ticks the global wheel and sets the global tick rate; without this, a parallel
+    /// run could perturb the timing-sensitive timer test in `app::run`.
+    fn timer_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+        crate::reactive::GLOBAL_TIMER_TEST_GUARD.lock()
+    }
+
     fn protocol_screen() -> ProtocolRect {
         ProtocolRect {
             x: 0,
@@ -646,6 +653,7 @@ mod tests {
 
     #[test]
     fn ipc_server_queries_and_invokes_on_ui_thread() {
+        let _guard = timer_test_guard();
         let socket_path = temp_socket_path("query-invoke");
         let checked = Binding::new(false);
         let checked_for_window = checked.clone();
@@ -693,6 +701,7 @@ mod tests {
 
     #[test]
     fn ipc_server_maps_boundary_failures_to_protocol_errors() {
+        let _guard = timer_test_guard();
         let socket_path = temp_socket_path("errors");
         let checked = Binding::new(false);
         let checked_for_window = checked.clone();
@@ -763,6 +772,7 @@ mod tests {
 
     #[test]
     fn ipc_server_reports_extension_methods_unsupported_without_handler() {
+        let _guard = timer_test_guard();
         let socket_path = temp_socket_path("extension-unsupported");
         let mut host = AppHost::new_headless(screen(), move |_screen| {
             Ok(Desktop::new(Theme::dark(), MenuBar::new(vec![])))
@@ -812,6 +822,7 @@ mod tests {
 
     #[test]
     fn ipc_wait_for_is_polled_without_blocking_other_requests() {
+        let _guard = timer_test_guard();
         let socket_path = temp_socket_path("wait-for");
         let ready = Binding::new(false);
         let ready_for_window = ready.clone();
@@ -866,6 +877,7 @@ mod tests {
 
     #[test]
     fn ipc_focused_target_respects_modal_focus_boundary() {
+        let _guard = timer_test_guard();
         let socket_path = temp_socket_path("modal");
         let normal_checked = Binding::new(false);
         let modal_checked = Binding::new(false);
@@ -914,6 +926,7 @@ mod tests {
 
     #[test]
     fn bound_socket_is_owner_only() {
+        let _guard = timer_test_guard();
         use std::os::unix::fs::PermissionsExt;
 
         let socket_path = temp_socket_path("perms");
