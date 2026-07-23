@@ -86,10 +86,7 @@ impl<T: Clone + PartialEq> Property<T> {
     }
 
     pub fn binding(&self) -> Binding<T> {
-        Binding {
-            value: self.value.clone(),
-            dirty_flag: self.dirty_flag.clone(),
-        }
+        Binding(self.clone())
     }
 }
 
@@ -103,11 +100,13 @@ impl<T> Clone for Property<T> {
 }
 
 /// A two-way binding to a [`Property`].
+///
+/// `Binding<T>` is a thin newtype over [`Property<T>`]; both share the same
+/// `Arc<RwLock<T>>` value and `DirtyFlag`, so a binding and the property it came from observe each
+/// other's writes. It exists as a distinct type mainly to carry the ergonomic `From<T>` / `From<&str>`
+/// conversions used by widget builders. All state operations delegate to the inner `Property`.
 #[derive(Debug)]
-pub struct Binding<T> {
-    value: Arc<RwLock<T>>,
-    dirty_flag: DirtyFlag,
-}
+pub struct Binding<T>(Property<T>);
 
 impl<T: Clone + PartialEq> Binding<T> {
     pub fn new(initial: T) -> Self {
@@ -115,78 +114,58 @@ impl<T: Clone + PartialEq> Binding<T> {
     }
 
     pub fn get(&self) -> T {
-        self.value.read().clone()
+        self.0.get()
     }
 
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        let guard = self.value.read();
-        f(&*guard)
+        self.0.with(f)
     }
 
     pub fn set(&self, new_value: T) {
-        let mut guard = self.value.write();
-        if *guard != new_value {
-            *guard = new_value;
-            drop(guard);
-            self.dirty_flag.mark_dirty();
-        }
+        self.0.set(new_value);
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.dirty_flag.is_dirty()
+        self.0.is_dirty()
     }
 
     pub fn mark_clean(&self) {
-        self.dirty_flag.mark_clean();
+        self.0.mark_clean();
     }
 
     /// Creates a per-consumer dirty observer initialized to the current version.
     pub fn dirty_observer(&self) -> DirtyObserver {
-        self.dirty_flag.observer()
+        self.0.dirty_observer()
     }
 
     /// Creates a per-consumer dirty signal initialized to the current version.
     pub fn dirty_signal(&self) -> DirtySignal {
-        self.dirty_flag.signal()
+        self.0.dirty_signal()
     }
 
     /// Returns `true` if the value changed since the observer last checked.
     pub fn check_dirty(&self, observer: &mut DirtyObserver) -> bool {
-        self.dirty_flag.check(observer)
+        self.0.check_dirty(observer)
     }
 
     pub fn update<F>(&self, f: F)
     where
         F: FnOnce(&mut T),
     {
-        {
-            let mut guard = self.value.write();
-            f(&mut *guard);
-        }
-        self.dirty_flag.mark_dirty();
+        self.0.update(f);
     }
 
     pub fn update_if<F>(&self, f: F) -> bool
     where
         F: FnOnce(&mut T) -> bool,
     {
-        let changed = {
-            let mut guard = self.value.write();
-            f(&mut *guard)
-        };
-        if changed {
-            self.dirty_flag.mark_dirty();
-        }
-        changed
+        self.0.update_if(f)
     }
 }
 
 impl<T> Clone for Binding<T> {
     fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            dirty_flag: self.dirty_flag.clone(),
-        }
+        Self(self.0.clone())
     }
 }
 
