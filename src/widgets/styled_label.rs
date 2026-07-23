@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
 use crate::ComponentValue;
-use crate::composable::{
-    Component, ComponentContext, EventHandling, EventResult, Layout, MouseCoordinateSpace,
-};
+use crate::composable::{Component, ComponentContext, EventHandling, EventResult, Layout};
 use crate::reactive::Binding;
 use crate::runtime::CallbackHandle;
+use super::util::mouse_coords_local_to_area;
 use crate::text::styled_text::{
     hit_test_link, inline_display_width, parse_inline, spans_from_segments,
 };
 use atto_ui_macros::{ComponentProperties, component_properties};
-use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{Event, MouseButton, MouseEventKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -144,28 +143,3 @@ impl EventHandling for StyledLabel {
 }
 
 crate::impl_component_default_traits!(StyledLabel => Scrollable, FocusNav, DynamicTree);
-
-fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => (area.width > 0
-            && area.height > 0
-            && m.column >= area.x
-            && m.column < area.x.saturating_add(area.width)
-            && m.row >= area.y
-            && m.row < area.y.saturating_add(area.height))
-        .then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}

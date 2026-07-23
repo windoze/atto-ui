@@ -10,11 +10,13 @@ use unicode_width::UnicodeWidthStr;
 use crate::ComponentCommand;
 use crate::composable::{
     Component, ComponentContext, ComponentId, ComponentNode, DynamicTree, EventHandling,
-    EventResult, FocusNav, Layout, MouseCoordinateSpace, ScrollConfig, Scrollable, ScrollbarHost,
+    EventResult, FocusNav, Layout, ScrollConfig, Scrollable, ScrollbarHost,
 };
 use crate::reactive::Binding;
 use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
+
+use super::util::{contains, mouse_coords_local_to_area};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabHeaderPosition {
@@ -341,34 +343,6 @@ impl TabView {
             }
         }
         EventResult::changed()
-    }
-}
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    rect.width > 0
-        && rect.height > 0
-        && x >= rect.x
-        && x < rect.x.saturating_add(rect.width)
-        && y >= rect.y
-        && y < rect.y.saturating_add(rect.height)
-}
-
-fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => contains(area, m.column, m.row).then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
     }
 }
 

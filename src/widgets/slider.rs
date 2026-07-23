@@ -12,6 +12,8 @@ use crate::reactive::Binding;
 use crate::runtime::{CallbackHandle, ComponentValue};
 use atto_ui_macros::{ComponentProperties, component_properties};
 
+use super::util::mouse_coords_local_to_area;
+
 #[derive(Clone, Debug, ComponentProperties)]
 pub struct Slider {
     min: Binding<f64>,
@@ -329,31 +331,6 @@ impl EventHandling for Slider {
 }
 
 crate::impl_component_default_traits!(Slider => Scrollable, DynamicTree);
-
-fn mouse_coords_local_to_area(
-    area: Rect,
-    m: MouseEvent,
-    coordinate_space: MouseCoordinateSpace,
-) -> Option<(u16, u16)> {
-    match coordinate_space {
-        MouseCoordinateSpace::Absolute => (area.width > 0
-            && area.height > 0
-            && m.column >= area.x
-            && m.column < area.x.saturating_add(area.width)
-            && m.row >= area.y
-            && m.row < area.y.saturating_add(area.height))
-        .then(|| {
-            (
-                m.column.saturating_sub(area.x),
-                m.row.saturating_sub(area.y),
-            )
-        }),
-        MouseCoordinateSpace::Local => {
-            (area.width > 0 && area.height > 0 && m.column < area.width && m.row < area.height)
-                .then_some((m.column, m.row))
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
