@@ -52,6 +52,9 @@ impl ComponentTree {
         &self.callbacks
     }
 
+    /// The structural skeleton spec. Authoritative for tree shape / events / child layout, but its
+    /// `props` may lag the live view between reconciles — read current property values via
+    /// [`Component::get_property`]. See [`Self::sync_root_from_view`].
     pub fn root_spec(&self) -> &ComponentSpec {
         &self.root
     }

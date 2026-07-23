@@ -393,6 +393,17 @@ pub trait DynamicTree: Send {
         children[index].view.rebuild_tree()
     }
 
+    /// The declarative **structural skeleton** of a dynamic subtree: type names, tree shape, event
+    /// bindings and child layout/meta.
+    ///
+    /// This is *not* an authoritative source for mutable property **values**. The live view owns
+    /// property state (user input, toggles, cursor position live in the view's `Binding`s), and the
+    /// spec's `props` are only reconciled from the view lazily, before a rebuild (see
+    /// `ComponentTree::sync_root_from_view`). Between reconciles the spec may hold stale prop values.
+    ///
+    /// To read a current property value, always go through [`Component::get_property`], which reads
+    /// the view directly — that is the path `inspect`, `query` and the language bindings already use.
+    /// Use `dynamic_root_spec` only for structure/existence checks and serialization of shape.
     fn dynamic_root_spec(&self) -> Option<&ComponentSpec> {
         self.children()
             .iter()

@@ -1,8 +1,8 @@
 # 动态组件树：单一真值改造方案（消除 view/spec 双真值）
 
-状态：实施中（采用 reconcile 方案）
+状态：已实施（reconcile 方案，B4 症状1 根治 / 症状2 以契约固化）
 关联问题：`DESIGN_REVIEW.md` B4
-涉及文件：`src/runtime/tree.rs`（唯一改动点）
+涉及文件：`src/runtime/tree.rs`（核心）、`src/composable/component.rs` 与 `src/runtime/tree.rs` 的 doc 契约
 
 ---
 
@@ -61,19 +61,22 @@ pub struct ComponentTree {
 
 **spec 的正确定位**：出向序列化投影，服务非 Rust 消费者（Python/Node 绑定、React reconciler、introspection 快照）。需要时由 `view.to_spec()` 现场生成，只在跨语言/序列化边界物化。
 
-目标形态（呼应"单一结构 + 两接口"）：
+目标形态（reconcile 落地版："单一真值语义 + 惰性同步镜像"）：
 
 ```
-         ┌─────────────── ComponentTree ───────────────┐
-入向 ───► │  apply_ops(patch)                            │
-(tree-ops)│      ↓ 直接改                                │
-          │  view: Box<dyn Component>  ← 唯一真值        │
-          │      ↑ 派生                                  │
-出向 ◄─── │  to_spec() -> ComponentSpec                  │
-(序列化)  └──────────────────────────────────────────────┘
+          ┌─────────────── ComponentTree ───────────────┐
+入向 ────► │  apply_ops(patch)  ── 改结构，同步 root       │
+(tree-ops) │       │                                      │
+交互 ─────►│  set_property/apply_command ── 只改 view      │
+           │       ▼                                      │
+           │  view: Box<dyn Component>  ← props 唯一权威   │
+           │       │  reconcile_spec_props (rebuild 前)   │
+           │       ▼                                      │
+镜像 ◄──── │  root: ComponentSpec  ← 结构骨架 + props 镜像 │
+           └──────────────────────────────────────────────┘
 ```
 
-`root: ComponentSpec` 字段被移除。
+`root: ComponentSpec` 字段**保留**（作结构骨架 + props 惰性镜像），不删除。语义上 view 是 props 的唯一权威。
 
 ### 为什么不选 spec 当真值（方案 B）
 
@@ -81,97 +84,81 @@ spec 当真值 = React controlled-component 模型，用户输入不许停在 vi
 
 ---
 
-## 3. 落地清单
+## 3. 落地实现（as-built）
 
-### 3.1 前置：让反射面无损（最关键，其余步骤都依赖它）
+改动仅限 `src/runtime/tree.rs`（核心）+ 两处 doc（`component.rs`、`tree.rs`）。
 
-`to_spec()` 要能无损重建 `ComponentSpec` 的全部字段，但当前反射面有缺口：
+### 3.1 核心：`reconcile_spec_props`
 
-| ComponentSpec 字段 | 现有反射能力 | 缺口 |
-|---|---|---|
-| `type_name` | `Component::type_name()` | ✅ 有 |
-| `id` | `Component::tag()` | ✅ 有 |
-| `props` | `property_names()` + `get_property()` | ⚠️ 依赖组件如实列全部 prop（需审计各 builtin） |
-| `events` | 无 | ❌ 无法读回 `BindEvent` 绑定的 `CallbackId` |
-| `children` | `children()` → `ComponentNode` | ⚠️ 有子节点，但下面两项随子附加数据丢失 |
-| `children[].layout` | 无统一 getter | ❌ `ComponentSpecChild.layout` 读不回 |
-| `children[].meta` | 无 | ❌ `ComponentSpecChild.meta` 读不回 |
-
-佐证：`view_shape_matches_spec`（`tree.rs:600`）目前只能比对 `id` 和 `children.len()`，正说明反射面还不足以做无损往返。
-
-**要做的事：**
-1. 在 `Component`（或 `DynamicTree`）trait 上新增：
-   - `fn event_bindings(&self) -> BTreeMap<String, CallbackId>`（默认返回空），由动态 builtin 实现，回读 `BindEvent`/`ClearEvent` 维护的绑定表。
-   - `fn child_layout(&self, index: usize) -> Option<LayoutSpec>` 与 `fn child_meta(&self, index: usize) -> BTreeMap<String, ComponentValue>`（默认空），供容器回读子附加数据；或让 `children()` 返回的 `ComponentNode` 直接带上 layout/meta（更内聚，优先）。
-2. 审计 `builtins.rs` 中每个内置组件，确保 `property_names()` 列全、`get_property()` 对每个可 set 的 prop 都可读（与 `set_property` 对称）。这是 `to_spec` 正确性的基础，也顺带修 inspect 快照裁剪那类信息丢失。
-
-**验收**：对任意 builtin 树，`build(spec).to_spec() == spec`（round-trip 相等，用 `ComponentSpec: PartialEq` 断言）。这是整个改造的核心测试。
-
-### 3.2 新增 `to_spec()`
-
-在 `Component` trait 上加：
+按 `tag` 让 spec 与 view 在层级上对齐，用现有 `get_property` 把 view 当前 props 刷回 spec：
 
 ```rust
-/// 从活实例派生声明式快照。默认实现按反射面组装；动态容器可覆写以直连内部结构。
-fn to_spec(&self) -> Option<ComponentSpec> { None }
+fn reconcile_spec_props(spec: &mut ComponentSpec, view: &dyn Component) {
+    if spec.id.as_deref() != view.tag() {
+        return;
+    }
+    for (name, value) in spec.props.iter_mut() {
+        if let Some(current) = view.get_property(name) {
+            *value = current;               // 只刷新已声明的键
+        }
+    }
+    let children = view.children();
+    if spec.children.len() != children.len() {
+        return;                             // 形状不符则跳过该子树，交给 view_shape_matches_spec
+    }
+    for (child_spec, child_view) in spec.children.iter_mut().zip(children.iter()) {
+        reconcile_spec_props(child_spec.node.as_mut(), child_view.view.as_ref());
+    }
+}
 ```
 
-- 动态 builtin 提供实现：`type_name` + `tag()` → id + 遍历 `property_names()`/`get_property()` → props + `event_bindings()` → events + 递归 `children()` 各自 `to_spec()` + 附 layout/meta → children。
-- `ComponentTree` 覆写 `dynamic_root_spec()`：不再返回 `&self.root`，改为返回由 `to_spec()` 现场生成的 spec（注意：签名要从 `Option<&ComponentSpec>` 改为返回 owned `Option<ComponentSpec>`，因为派生值无处借用——见 3.5 兼容性）。
+关键设计点：
 
-### 3.3 移除 `root` 字段，重写 tree-ops 应用
+- **只刷新 `spec.props` 里已存在的键，绝不新增**。这就绕开了"默认值物化"陷阱——spec 省略的键（如 `enabled`）不会被 `get_property` 读到的默认值污染，spec 保持为宿主声明的忠实镜像。
+- **`get_property` 返回 `None` 的键保持不动**，不删除。
+- **形状不符即跳过**该子树的 reconcile，形状一致性仍由既有 `view_shape_matches_spec` 负责，职责不重叠。
 
-`apply_ops_incremental` 现在依赖 `root` 做两件事，都要替换：
+### 3.2 调用点（症状1：rebuild 吞输入）
 
-1. **回滚基线**：现用 `original_root.clone()`。改为**事务前 clone 一份 view 兜底**——进入前 `let backup = self.view.clone_boxed()`（需要 `Component: clone_boxed`，见下），失败时 `self.view = backup`。或让每个可失败的结构 op 保证"失败时 view 不变"（部分 op 如 `move_node_indexed` 注释已声称保持 view 完整），逐 op 校验后仅在真正破坏时回滚。
-2. **形状校验 `view_shape_matches_spec(root_after_op, view)`**：不再需要拿 spec 比 view——因为不再有独立 root 需要保持一致。校验目标变成"op 是否成功应用到 view"，可用 op 本身的后置条件（如 Insert 后目标父节点 children 数 +1）替代。
+`ComponentTree::sync_root_from_view()` 封装 reconcile，在所有"从 root 重建 view"之前调用：
 
-`SetTree` 全量替换：直接 `self.view = registry.build(&spec)`，无 root 可留。
+- `apply_ops_incremental` 入口（clone `original_root`/`next_root` **之前**，使两个快照都带上最新 props；随后 ops 应用在其上，故入向 ops 仍然覆盖 reconcile 的值——ops 优先）。
+- `apply_ops_and_rebuild` 入口。
+- `rebuild()` 入口。
 
-**关于回滚介质（已核实，结论确定）**：`Box<dyn Component>` **当前不可克隆**——`Component` trait 没有 `Clone` 约束、没有 `clone_boxed`、未接入 `dyn_clone`；`ComponentNode`（持有 `Box<dyn Component>`）自身不可 `Clone`（`node.rs` 中 `#[derive(Clone, Copy, …)]` 属于紧邻的 `ComponentId`，非 `ComponentNode`）；`tree.rs` 里所有 `.clone()` 克隆的都是 `ComponentSpec` 或 `CallbackRegistry`，无一克隆 view。
+效果：任何回退式 rebuild 前，view 的用户输入已回写 root，不再被陈旧 root 覆盖丢弃。
 
-因此有两条路，且推荐已成唯一务实选择：
+### 3.3 症状2（两读接口对 props 值不一致）—— 核实后不改代码，仅明确契约
 
-- **（推荐）临时 spec 快照回滚**：进入事务前 `let backup = self.view.to_spec()`，失败时 `self.view = registry.build(&backup)?`。这等价于旧的 `original_root.clone()` 行为，但真值仍是 view，spec 只作临时回滚介质、不常驻。**无需给全体 Component 加 Clone 约束**，改动最小。此路直接依赖 3.1/3.2 的无损 `to_spec()`——回滚正确性因此与 round-trip 测试绑定，是额外收益。
-- **（不推荐）引入 dyn-clone**：给 `Component` 加 `clone_boxed`（或接 `dyn_clone` crate），事务前 clone view。代价是全体 Component 实现都要能克隆（含内部 `Binding`、缓存等），基础设施改动大、约束污染广，不划算。
+落地阶段核实发现：**生产代码里没有从 `dynamic_root_spec` 读取 props 值的消费者**。
 
-结论：采用临时 spec 快照方案。
+- inspect 快照（Python/Node 消费的 `DesktopSnapshot`）的 `properties` 由 `view.get_property()` 组装（`inspect.rs:component_snapshot_fields`），总是新鲜。
+- `query` / 绑定的 `get_property` 直接读 view。
+- 唯一从 `dynamic_root_spec().props` 读值的是一个 wm 测试（`wm/manager/tests.rs`），且因 tree-ops 已同步 root 而正确。
+- 其余 `dynamic_root_spec` 调用点（`tab_window`、`desktop`、`wm/window`、`border`、`visibility`…）都只做**结构/存在性**检查，不读 props 值。
 
-### 3.4 读接口统一
+而把 `dynamic_root_spec(&self) -> Option<&ComponentSpec>` 改成能 reconcile（需 `&mut self` 或内部可变），要动 ~11 个调用点 + 两个 trait 默认实现，且会危及那些真正在用的借用式结构读取。**投入大、生产收益近乎为零**。
 
-- `get_property` / `property_names`：已读 view，不动。
-- `dynamic_root_spec()` / `root_spec()` 所有调用点（`file_dialog.rs:674`、`component_tag.rs:196`、`visibility.rs:263`、`border.rs:334`、`tab_window.rs:195/495`、`component.rs:399/609/703`）：语义从"读常驻 root"变为"派生当前 spec"。因返回值从借用变 owned，逐点改为持有临时变量。
+因此症状2 采取"明确契约"而非改代码：给 `DynamicTree::dynamic_root_spec`（`component.rs`）和 `ComponentTree::root_spec`（`tree.rs`）加 doc，声明它是**结构骨架快照**，其 `props` 值在两次 reconcile 之间可能滞后；**读当前属性值一律用 `Component::get_property`（读 view）**。这与现有生产代码路径一致，把隐性约定固化为显式契约。
 
-### 3.5 绑定侧（Python/Node）
+### 3.4 未纳入本次改造
 
-- spec 现在总是反映 view 当前状态，跨语言查询不再读到陈旧值——这是本改造对绑定的主要收益。
-- 顺带修 M1（回调存活性）：与本方案独立，但可一并处理——把存活性过滤下沉到 `CallbackRegistry`（提供 `unregister`），让两个绑定共享语义。
+- 绑定回调存活性（`DESIGN_REVIEW.md` M1）：独立问题，不在 B4 范围。
+- inspect 快照裁剪信息丢失（inspect M1）：独立问题。
 
 ---
 
-## 4. 影响与风险
+## 4. 影响与验证
 
 **收益**
-- B4 两个症状（rebuild 吞输入、读接口矛盾）从根上消失。
-- introspection / 跨语言查询永远看到当前真实状态。
-- 顺带迫使反射面无损，改善 inspect 快照信息丢失（`DESIGN_REVIEW.md` 中 inspect M1）。
+- 症状1（rebuild 吞输入）从根上消除：view 成为 props 的唯一权威，rebuild 前必先 reconcile。
+- 症状2（读接口矛盾）：生产路径本就统一走 view，现以 doc 契约固化，杜绝未来误用 `dynamic_root_spec` 读 props 值。
+- 改动面极小（一个文件 + 两处 doc），无 builtin 改动，无 API 破坏。
 
-**风险 / 代价**
-- **反射面无损是硬要求**：任何 builtin 漏报 prop / event，`to_spec` 就会丢信息，round-trip 测试是防线。工作量集中在审计 builtins。
-- **`dynamic_root_spec` 返回类型改 owned**：波及约 8 处调用点，机械改动，编译器可导航。
-- **`to_spec` 有序列化成本**：仅在出向边界（introspection、跨语言查询）调用，不在渲染热路径，可接受；如成瓶颈可加脏标记缓存。
-- **回滚正确性**：新回滚（view 快照 / spec 临时快照）需覆盖所有 op 失败分支的测试，确保失败后 view 与"未应用该批 ops"一致。
+**验证**
+- 新增 `component_tree_reconciles_view_edits_into_root_before_rebuild`：仅在 view 上编辑，触发回退式 rebuild，断言编辑存活；**临时禁用 reconcile 时该测试失败**（left=`"old"`, right=`"typed"`），证明它真的守护该行为。
+- 既有 42 个 runtime 测试（含 root 回滚、默认值 rebuild、增量 ops 全套）全绿；全 413 个 lib 测试全绿；clippy 干净。
 
-**回滚介质选型结论（已核实）**：`Box<dyn Component>` 当前不可克隆（`Component` 无 Clone 约束、无 `clone_boxed`、未接 dyn-clone）。故采用 3.3 的"事务前 `to_spec()` 快照 + 失败时 build 回来"，不给 Component 加 Clone 约束，改动最小且真值仍单一（view）。引入 dyn-clone 的替代路径因约束污染面过大，不采纳。
-
----
-
-## 5. 实施顺序（建议）
-
-1. **反射面无损 + round-trip 测试**（3.1）——独立可测，不改行为，先落地。
-2. **`to_spec()` 实现**（3.2）——依赖 1，加测试 `build(spec).to_spec() == spec`。
-3. **`dynamic_root_spec` 改派生 + 调用点适配**（3.4 + 3.5 读侧）——依赖 2，此时 root 字段仍在但读接口已统一，B4 的"读矛盾"症状先消除。
-4. **移除 `root` 字段 + 重写回滚/校验**（3.3）——最后做，消除"rebuild 吞输入"，完成单一真值。
-5. （可选）绑定回调存活性下沉（M1）。
-
-每步都可独立编译、独立测试、独立提交。第 3 步后 B4 已缓解一半，第 4 步彻底根治。
+**残留（有意未做）**
+- `root` 字段物理保留（本方案只追求 props 单一真值语义，不追求删字段）。
+- 结构信息（type_name/events/layout/meta）仍以 root 为准——它们只由 tree-ops 改且已同步，无双真值问题。
