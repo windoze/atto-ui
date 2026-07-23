@@ -70,16 +70,24 @@ impl WindowManager {
         };
         window.rect.set(rect);
 
-        if window.kind == WindowKind::Modal {
-            // Ensure modals are always on top and focused.
-            self.focused = Some(id);
-        } else if window.kind.is_focusable() {
+        // A window added while a modal is showing must not usurp the modal: it should neither steal
+        // focus nor be raised above it. `raise_below_modals` keeps such windows beneath every modal;
+        // focus stays with the modal (`focused()` already prefers the active modal, but we also avoid
+        // repointing `self.focused` so focus is correct once the modal closes).
+        let modal_active = self.active_modal_id().is_some();
+        let new_is_modal = window.kind == WindowKind::Modal;
+
+        if new_is_modal || (window.kind.is_focusable() && !modal_active) {
             self.focused = Some(id);
         }
 
         self.windows.push(window);
         self.rebuild_window_index();
-        self.bring_to_front(id);
+        if modal_active && !new_is_modal {
+            self.raise_below_modals(id);
+        } else {
+            self.bring_to_front(id);
+        }
         id
     }
 

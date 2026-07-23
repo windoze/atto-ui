@@ -578,6 +578,46 @@ fn modal_window_blocks_focus_changes() {
 }
 
 #[test]
+fn window_added_while_modal_active_stays_below_modal() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let mut wm = WindowManager::new();
+    let modal_id = wm.add_window(
+        Window::new(
+            WindowKind::Modal,
+            "Modal",
+            Rect::new(10, 8, 30, 8),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    // A plain window created (e.g. via IPC/script) while the modal is up must not cover it.
+    let late_id = wm.add_window(
+        Window::new(
+            WindowKind::Normal,
+            "Late",
+            Rect::new(1, 1, 20, 6),
+            Box::new(DummyView),
+        ),
+        bounds,
+    );
+
+    // Draw order = vec order (later index draws on top). The modal must remain topmost, and the
+    // late window must not steal focus from the modal.
+    let modal_pos = wm.window_index_of(modal_id).expect("modal present");
+    let late_pos = wm.window_index_of(late_id).expect("late present");
+    assert!(
+        late_pos < modal_pos,
+        "late window (idx {late_pos}) must be below modal (idx {modal_pos})"
+    );
+    assert_eq!(wm.focused(), Some(modal_id));
+
+    // Once the modal closes, focus falls to the topmost focusable window — the late one.
+    wm.close(modal_id);
+    assert_eq!(wm.focused(), Some(late_id));
+}
+
+#[test]
 fn normal_window_maximize_and_restore_preserves_rect() {
     let bounds = Rect::new(0, 0, 80, 24);
     let original = Rect::new(4, 3, 24, 8);
