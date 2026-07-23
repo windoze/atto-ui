@@ -1,5 +1,4 @@
 mod events;
-mod layout;
 mod scrollbars;
 
 use crossterm::event::Event;

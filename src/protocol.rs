@@ -1,9 +1,9 @@
 //! Serializable IPC protocol shapes for the scripting control plane.
 //!
 //! The protocol mirrors the in-process `DesktopInspector` API without
-//! embedding transport, socket, or event-loop concerns. M4 server code can
-//! deserialize these values, execute the corresponding inspector call on the UI
-//! thread, and serialize a matching response.
+//! embedding transport, socket, or event-loop concerns. The IPC server
+//! (`ipc.rs`) deserializes these values, executes the corresponding inspector
+//! call on the UI thread, and serializes a matching response.
 
 use serde::{Deserialize, Serialize};
 

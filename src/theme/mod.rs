@@ -840,11 +840,6 @@ fn default_glyphs() -> HashMap<String, String> {
     g.insert("scrollbar-left-arrow".into(), "◄".into());
     g.insert("scrollbar-right-arrow".into(), "►".into());
 
-    // Tabs.
-    g.insert("tab-separator".into(), "|".into());
-    g.insert("tab-active-left".into(), "▶".into());
-    g.insert("tab-active-right".into(), "◀".into());
-
     // Status bar.
     g.insert("status-separator".into(), " ".into());
 

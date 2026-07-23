@@ -632,10 +632,10 @@ fn register_stack<T: StackBuilder + Component + ComponentPropertySchema + 'stati
         let spacing = prop_u16(spec, "spacing")?.unwrap_or(0);
         let padding = prop_edge_insets(spec, "padding")?.unwrap_or(EdgeInsets::ZERO);
         let scrollable = prop_bool(spec, "scrollable")?.unwrap_or(false);
-        let mut stack = match axis {
-            StackAxis::Vertical => T::new().with_spacing(spacing).with_padding(padding),
-            StackAxis::Horizontal => T::new().with_spacing(spacing).with_padding(padding),
-        };
+        // Axis affects only child default layout (see `stack_child_default_layout`); the builder
+        // wiring is identical for both, so there is no per-axis branch here. The concrete stack type
+        // `T` (VStack/HStack) already encodes the axis.
+        let mut stack = T::new().with_spacing(spacing).with_padding(padding);
         if scrollable {
             stack = stack.with_scrollable(scrollable);
         }
