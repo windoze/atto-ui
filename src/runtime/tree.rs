@@ -69,8 +69,24 @@ impl ComponentTree {
     }
 
     pub fn rebuild(&mut self) -> Result<(), TreeError> {
+        self.sync_root_from_view();
         self.view = self.registry.build(&self.root)?;
         Ok(())
+    }
+
+    /// Reconcile mutable `props` from the live view back into `self.root`.
+    ///
+    /// The view is the single source of truth for property state (user input, toggles, cursor
+    /// position live only in the view's `Binding`s). `root` is the structural skeleton and stays
+    /// authoritative for tree shape, event bindings and child layout/meta — none of which the view
+    /// can lose. This bridges the two before any operation that rebuilds the view from `root`, so a
+    /// rebuild never resurrects stale property values and drops user input.
+    ///
+    /// Only prop keys already declared in the spec are updated, never added. This deliberately
+    /// avoids materializing builtin defaults (e.g. `enabled` omitted from the spec but defaulted to
+    /// `true` at build time), which would otherwise make the spec grow keys it never had.
+    fn sync_root_from_view(&mut self) {
+        reconcile_spec_props(&mut self.root, self.view.as_ref());
     }
 
     fn replace_with_rebuilt_root(&mut self, root: ComponentSpec) -> Result<(), TreeError> {
@@ -108,6 +124,7 @@ impl ComponentTree {
     }
 
     pub fn apply_ops_and_rebuild(&mut self, ops: &[TreeOp]) -> Result<(), TreeError> {
+        self.sync_root_from_view();
         let mut next_root = self.root.clone();
         super::apply_tree_ops(&mut next_root, ops)?;
         self.replace_with_rebuilt_root(next_root)
@@ -117,6 +134,12 @@ impl ComponentTree {
         if ops.is_empty() {
             return Ok(false);
         }
+
+        // Capture live property state from the view into `root` before snapshotting. Every rebuild
+        // path below reconstructs the view from a spec derived from `root`; without this, user input
+        // held only in the view (and never written back to `root`) would be silently dropped on any
+        // fallback rebuild. Incoming ops are applied on top afterwards, so they still win.
+        self.sync_root_from_view();
 
         let has_set_tree = ops.iter().any(|op| matches!(op, TreeOp::SetTree(_)));
         let original_root = self.root.clone();
@@ -613,6 +636,37 @@ fn view_shape_matches_spec(spec: &ComponentSpec, view: &dyn Component) -> bool {
         .all(|(child_spec, child_view)| {
             view_shape_matches_spec(child_spec.node.as_ref(), child_view.view.as_ref())
         })
+}
+
+/// Refresh the `props` already declared on `spec` from the current state of `view`, recursing into
+/// children in lockstep.
+///
+/// Only keys already present in `spec.props` are refreshed — never inserted. This keeps the spec a
+/// faithful mirror of what the host declared (no materialized builtin defaults) while making the
+/// view the authority for the *values* of those declared props. Keys the view cannot report
+/// (`get_property` returns `None`) are left untouched rather than removed.
+///
+/// If the tree shapes diverge (a structural op landed on the view but not this spec, or vice
+/// versa), reconciliation of the mismatched subtree is skipped; the surrounding rebuild logic
+/// handles shape via `view_shape_matches_spec`.
+fn reconcile_spec_props(spec: &mut ComponentSpec, view: &dyn Component) {
+    if spec.id.as_deref() != view.tag() {
+        return;
+    }
+
+    for (name, value) in spec.props.iter_mut() {
+        if let Some(current) = view.get_property(name) {
+            *value = current;
+        }
+    }
+
+    let children = view.children();
+    if spec.children.len() != children.len() {
+        return;
+    }
+    for (child_spec, child_view) in spec.children.iter_mut().zip(children.iter()) {
+        reconcile_spec_props(child_spec.node.as_mut(), child_view.view.as_ref());
+    }
 }
 
 impl ViewPathIndex {

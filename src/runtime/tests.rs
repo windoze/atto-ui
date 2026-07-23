@@ -988,3 +988,64 @@ fn builtin_schema_includes_rich_text_and_text_span() {
         );
     }
 }
+
+// --- B4 reconcile: props edited only in the view survive a fallback rebuild ---
+
+#[test]
+fn component_tree_reconciles_view_edits_into_root_before_rebuild() {
+    let callbacks = CallbackRegistry::new();
+    let root = ComponentSpec::new("VStack").with_id("root").with_child(
+        ComponentSpecChild::new(
+            ComponentSpec::new("TextBox")
+                .with_id("name")
+                .with_prop("title", ComponentValue::String("Name".into()))
+                .with_prop("text", ComponentValue::String("old".into())),
+        ),
+    );
+    let mut tree = ComponentTree::new(root, callbacks.clone()).expect("tree");
+
+    // Simulate user input: mutate the view only, never `root`. This mirrors keyboard input landing
+    // in the widget's Binding — `set_property`/`apply_command` forward to the view and leave `root`
+    // untouched, which is exactly the divergence B4 describes.
+    {
+        let child = tree
+            .view_mut()
+            .children_mut()
+            .and_then(|children| children.first_mut())
+            .expect("child node");
+        child
+            .view
+            .set_property("text", ComponentValue::String("typed".into()))
+            .expect("set view text");
+    }
+
+    // Sanity: the divergence exists — view has the edit, root still has the stale value.
+    assert_eq!(
+        find_view_by_tag(tree.view(), "name").and_then(|v| v.get_property("text")),
+        Some(ComponentValue::String("typed".into()))
+    );
+    assert_eq!(
+        tree.root_spec().children[0].node.props.get("text"),
+        Some(&ComponentValue::String("old".into())),
+        "root should still hold the stale declared value before reconcile"
+    );
+
+    // A ClearProp on an unrelated declared prop rebuilds the affected subtree from spec, which is
+    // the fallback path that would drop view-only edits without reconcile.
+    let changed = tree
+        .apply_ops_incremental(&[TreeOp::ClearProp {
+            id: "name".into(),
+            name: "title".into(),
+        }])
+        .expect("apply");
+    assert!(changed);
+
+    // After the rebuild, the user's edit must NOT have been dropped: reconcile wrote it into root
+    // before the subtree was rebuilt from spec.
+    let name = find_view_by_tag(tree.view(), "name").expect("name view");
+    assert_eq!(
+        name.get_property("text"),
+        Some(ComponentValue::String("typed".into())),
+        "user input held only in the view was lost across a rebuild"
+    );
+}
